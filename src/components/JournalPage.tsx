@@ -44,6 +44,7 @@ import { insertTemplateBlocks, loadJournalTemplate } from '../lib/template-utils
 import { useBlockStore } from '../stores/blocks'
 import { useJournalStore } from '../stores/journal'
 import { useNavigationStore } from '../stores/navigation'
+import { pageBlockRegistry } from '../stores/page-blocks'
 import { useResolveStore } from '../stores/resolve'
 import { AgendaView } from './journal/AgendaView'
 import { DailyView } from './journal/DailyView'
@@ -118,7 +119,6 @@ export function JournalPage({
   // Track per-day pageIds that were created by handleAddBlock so we can
   // immediately show BlockTree without waiting for a full refetch.
   const [createdPages, setCreatedPages] = useState<Map<string, string>>(new Map())
-  const load = useBlockStore((s) => s.load)
 
   /** Fetch all pages and build a dateStr->pageId lookup. */
   const fetchPages = useCallback(async () => {
@@ -206,7 +206,7 @@ export function JournalPage({
             const ids = await insertTemplateBlocks(journalTemplate.id, pageId, {
               pageTitle: dateStr,
             })
-            await load(pageId)
+            await pageBlockRegistry.get(pageId)?.getState().load()
             if (ids.length > 0) {
               useBlockStore.setState({ focusedBlockId: ids[0] ?? null })
             }
@@ -216,7 +216,7 @@ export function JournalPage({
               content: '',
               parentId: pageId,
             })
-            await load(pageId)
+            await pageBlockRegistry.get(pageId)?.getState().load()
             useBlockStore.setState({ focusedBlockId: block.id })
           }
         } else {
@@ -225,14 +225,14 @@ export function JournalPage({
             content: '',
             parentId: pageId,
           })
-          await load(pageId)
+          await pageBlockRegistry.get(pageId)?.getState().load()
           useBlockStore.setState({ focusedBlockId: block.id })
         }
       } catch {
         toast.error(t('journal.addBlockFailed'))
       }
     },
-    [createdPages, pageMap, load, t],
+    [createdPages, pageMap, t],
   )
 
   // Auto-create the displayed day's page on mount / date change in daily mode

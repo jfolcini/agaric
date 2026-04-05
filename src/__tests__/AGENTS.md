@@ -197,33 +197,66 @@ Generated docs may have adjacent text nodes with identical marks that the parser
 
 ## Store Testing (Zustand)
 
-Zustand stores are tested by directly calling `getState()` and `setState()` — no React rendering needed.
+### Global stores (useBlockStore, useNavigationStore, etc.)
 
-### Pattern
+Global singleton stores are tested by directly calling `getState()` and `setState()` — no React rendering needed.
 
 ```ts
 beforeEach(() => {
-  useBlockStore.setState({ blocks: [], focusedBlockId: null, loading: false })
+  useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: [], pendingFocusId: null })
   vi.clearAllMocks()
 })
 
-it('sets loading=true while the request is in flight', async () => {
-  let resolvePromise!: (v: unknown) => void
-  const pending = new Promise((resolve) => { resolvePromise = resolve })
-  mockedInvoke.mockReturnValueOnce(pending)
-
-  const loadPromise = useBlockStore.getState().load()
-  expect(useBlockStore.getState().loading).toBe(true)
-
-  resolvePromise({ items: [], next_cursor: null, has_more: false })
-  await loadPromise
-  expect(useBlockStore.getState().loading).toBe(false)
+it('sets the focused block id', () => {
+  useBlockStore.getState().setFocused('BLOCK_A')
+  expect(useBlockStore.getState().focusedBlockId).toBe('BLOCK_A')
 })
+```
+
+### Per-page block store (PageBlockStore)
+
+Per-page stores use the `createPageBlockStore(pageId)` factory — each test gets a fresh instance:
+
+```ts
+import { createPageBlockStore, PageBlockContext, type PageBlockState } from '../page-blocks'
+import type { StoreApi } from 'zustand'
+
+let store: StoreApi<PageBlockState>
+
+beforeEach(() => {
+  store = createPageBlockStore('PAGE_1')
+  vi.clearAllMocks()
+})
+
+it('loads blocks from the backend', async () => {
+  mockedInvoke.mockResolvedValueOnce({ items: [...], next_cursor: null, has_more: false })
+  await store.getState().load()
+  expect(store.getState().blocks).toHaveLength(2)
+})
+```
+
+Components that use per-page store hooks (`usePageBlockStore`, `usePageBlockStoreApi`) need a provider wrapper:
+
+```tsx
+let pageStore: StoreApi<PageBlockState>
+
+beforeEach(() => {
+  pageStore = createPageBlockStore('PAGE_1')
+})
+
+function renderWithStore(ui: React.ReactElement) {
+  return render(
+    <PageBlockContext.Provider value={pageStore}>
+      {ui}
+    </PageBlockContext.Provider>
+  )
+}
 ```
 
 ### Key conventions
 
-- **Always reset store state in `beforeEach`** — stores are singletons, state leaks between tests otherwise
+- **Global stores: reset in `beforeEach`** — singletons, state leaks between tests otherwise
+- **Per-page stores: create fresh in `beforeEach`** — each test gets its own instance, no leak risk
 - Use **deferred promises** to observe intermediate states (loading, recovering)
 - Use `useBootStore.subscribe()` to capture state transition sequences
 - Test both success and error paths — verify state doesn't change on backend error

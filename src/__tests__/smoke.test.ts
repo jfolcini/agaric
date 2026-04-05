@@ -16,6 +16,14 @@ describe('module smoke tests', () => {
     expect(typeof mod.useBlockStore.getState).toBe('function')
   })
 
+  it('page-block store exports are importable', async () => {
+    const mod = await import('../stores/page-blocks')
+    expect(mod.createPageBlockStore).toBeDefined()
+    expect(typeof mod.createPageBlockStore).toBe('function')
+    expect(mod.PageBlockContext).toBeDefined()
+    expect(mod.pageBlockRegistry).toBeDefined()
+  })
+
   it('navigation store exports are importable', async () => {
     const mod = await import('../stores/navigation')
     expect(mod.useNavigationStore).toBeDefined()

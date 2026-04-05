@@ -18,13 +18,20 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import type { StoreApi } from 'zustand'
 import { useNavigationStore } from '../../stores/navigation'
+import {
+  createPageBlockStore,
+  PageBlockContext,
+  type PageBlockState,
+} from '../../stores/page-blocks'
 import { useResolveStore } from '../../stores/resolve'
 import { useUndoStore } from '../../stores/undo'
 import { PageHeader } from '../PageHeader'
 
 const mockedInvoke = vi.mocked(invoke)
 const emptyPage = { items: [], next_cursor: null, has_more: false }
+let pageStore: StoreApi<PageBlockState>
 
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
@@ -55,6 +62,7 @@ const mockedToastError = vi.mocked(toast.error)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  pageStore = createPageBlockStore('PAGE_1')
   useNavigationStore.setState({
     currentView: 'page-editor',
     pageStack: [{ pageId: 'PAGE_1', title: 'My Page' }],
@@ -134,9 +142,14 @@ function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) 
   })
 }
 
+/** Wrap PageHeader with PageBlockStoreProvider so usePageBlockStoreApi() resolves */
+function renderPageHeader(el: JSX.Element) {
+  return render(<PageBlockContext.Provider value={pageStore}>{el}</PageBlockContext.Provider>)
+}
+
 describe('PageHeader rendering', () => {
   it('renders title', () => {
-    render(<PageHeader pageId="PAGE_1" title="My Test Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Test Page" />)
 
     const titleEl = screen.getByRole('textbox', { name: /page title/i })
     expect(titleEl).toBeInTheDocument()
@@ -144,14 +157,14 @@ describe('PageHeader rendering', () => {
   })
 
   it('renders back button when onBack provided', () => {
-    render(<PageHeader pageId="PAGE_1" title="My Page" onBack={() => {}} />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" onBack={() => {}} />)
 
     const backBtn = screen.getByRole('button', { name: /go back/i })
     expect(backBtn).toBeInTheDocument()
   })
 
   it('does not render back button when onBack omitted', () => {
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     expect(screen.queryByRole('button', { name: /go back/i })).not.toBeInTheDocument()
   })
@@ -159,7 +172,7 @@ describe('PageHeader rendering', () => {
   it('renders tag badges for applied tags', async () => {
     setupTagMock(['TAG_1'])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     // Wait for tags to load
     await waitFor(() => {
@@ -176,7 +189,7 @@ describe('PageHeader title editing', () => {
     const user = userEvent.setup()
     setupTagMock([])
 
-    render(<PageHeader pageId="PAGE_1" title="Old Title" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Old Title" />)
 
     const titleEl = screen.getByRole('textbox', { name: /page title/i })
 
@@ -195,7 +208,7 @@ describe('PageHeader title editing', () => {
   it('reverts empty title on blur', async () => {
     const user = userEvent.setup()
 
-    render(<PageHeader pageId="PAGE_1" title="Original Title" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Original Title" />)
 
     const titleEl = screen.getByRole('textbox', { name: /page title/i })
 
@@ -212,7 +225,7 @@ describe('PageHeader title editing', () => {
     const user = userEvent.setup()
     setupTagMock([])
 
-    render(<PageHeader pageId="PAGE_1" title="Old Title" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Old Title" />)
 
     const titleEl = screen.getByRole('textbox', { name: /page title/i })
 
@@ -234,7 +247,7 @@ describe('PageHeader tag management', () => {
     const user = userEvent.setup()
     setupTagMock(['TAG_1'])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     // Wait for tags to load
     await waitFor(() => {
@@ -263,7 +276,7 @@ describe('PageHeader tag management', () => {
     const user = userEvent.setup()
     setupTagMock(['TAG_1'])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     // Wait for the tag badge to appear
     await waitFor(() => {
@@ -286,7 +299,7 @@ describe('PageHeader tag management', () => {
     const user = userEvent.setup()
     setupTagMock([])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     // Open kebab menu and click "Add tag"
     await user.click(screen.getByRole('button', { name: /page actions/i }))
@@ -321,7 +334,7 @@ describe('PageHeader tag management', () => {
     const user = userEvent.setup()
     setupTagMock([])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     // Open kebab menu and click "Add tag"
     await user.click(screen.getByRole('button', { name: /page actions/i }))
@@ -348,7 +361,7 @@ describe('PageHeader tag management', () => {
     const user = userEvent.setup()
     setupTagMock([])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     // Open kebab menu and click "Add tag"
     await user.click(screen.getByRole('button', { name: /page actions/i }))
@@ -373,7 +386,7 @@ describe('PageHeader integration', () => {
     const user = userEvent.setup()
     setupTagMock(['TAG_1'])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     // Wait for initial badge
     await waitFor(() => {
@@ -402,7 +415,7 @@ describe('PageHeader integration', () => {
     const user = userEvent.setup()
     setupTagMock(['TAG_1', 'TAG_2'])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     // Wait for both badges
     await waitFor(() => {
@@ -426,7 +439,7 @@ describe('PageHeader integration', () => {
 
 describe('PageHeader edge cases', () => {
   it('no tags hides tag section in header', () => {
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     // Tag section should not be visible when no tags applied
     expect(screen.queryByRole('button', { name: /add tag/i })).not.toBeInTheDocument()
@@ -443,7 +456,7 @@ describe('PageHeader edge cases', () => {
       return null
     })
 
-    render(<PageHeader pageId="PAGE_1" title="Original Title" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Original Title" />)
 
     const titleEl = screen.getByRole('textbox', { name: /page title/i })
 
@@ -462,7 +475,7 @@ describe('PageHeader edge cases', () => {
 
 describe('PageHeader accessibility', () => {
   it('has no a11y violations', async () => {
-    const { container } = render(
+    const { container } = renderPageHeader(
       <PageHeader pageId="PAGE_1" title="Accessible Page" onBack={() => {}} />,
     )
 
@@ -476,7 +489,7 @@ describe('PageHeader accessibility', () => {
     const user = userEvent.setup()
     setupTagMock([])
 
-    const { container } = render(<PageHeader pageId="PAGE_1" title="A11y Page" />)
+    const { container } = renderPageHeader(<PageHeader pageId="PAGE_1" title="A11y Page" />)
 
     // Open kebab menu and click "Add tag" to show tag picker
     await user.click(screen.getByRole('button', { name: /page actions/i }))
@@ -499,7 +512,7 @@ describe('PageHeader alias display', () => {
   it('fetches and displays aliases on mount', async () => {
     setupTagMock([], ['daily-note', 'DN'])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     await waitFor(() => {
       expect(screen.getByText('Also known as:')).toBeInTheDocument()
@@ -514,7 +527,7 @@ describe('PageHeader alias display', () => {
   it('hides alias section when no aliases', async () => {
     setupTagMock([])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     // Alias section should not be visible when no aliases exist
     await waitFor(() => {
@@ -527,7 +540,7 @@ describe('PageHeader alias display', () => {
     const user = userEvent.setup()
     setupTagMock([], ['my-alias'])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     // Wait for aliases to render
     await waitFor(() => {
@@ -552,7 +565,7 @@ describe('PageHeader alias display', () => {
     const user = userEvent.setup()
     setupTagMock([], ['existing-alias'])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     // Wait for aliases to render, then enter edit mode
     await waitFor(() => {
@@ -582,7 +595,7 @@ describe('PageHeader alias display', () => {
     const user = userEvent.setup()
     setupTagMock([], ['alias-a', 'alias-b'])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     // Wait for aliases to render
     await waitFor(() => {
@@ -610,7 +623,7 @@ describe('PageHeader alias display', () => {
     const user = userEvent.setup()
     setupTagMock([])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     // Open kebab menu
     await user.click(screen.getByRole('button', { name: /page actions/i }))
@@ -622,7 +635,7 @@ describe('PageHeader alias display', () => {
   it('shows "Edit" button (not "Add Alias") when aliases exist', async () => {
     setupTagMock([], ['my-alias'])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     await waitFor(() => {
       expect(screen.getByText('my-alias')).toBeInTheDocument()
@@ -635,7 +648,7 @@ describe('PageHeader alias display', () => {
   it('alias section not rendered when no aliases and not editing', async () => {
     setupTagMock([], [])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     // No alias editing UI should be visible
     await waitFor(() => {
@@ -647,7 +660,7 @@ describe('PageHeader alias display', () => {
   it('does not show Plus icon when aliases exist', async () => {
     setupTagMock([], ['some-alias'])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     await waitFor(() => {
       expect(screen.getByText('some-alias')).toBeInTheDocument()
@@ -661,7 +674,7 @@ describe('PageHeader alias display', () => {
   it('alias badges use the same styling pattern as tag badges', async () => {
     setupTagMock(['TAG_1'], ['alias-1'])
 
-    render(<PageHeader pageId="PAGE_1" title="Test" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
 
     // Wait for both alias and tag badges to render
     await waitFor(() => {
@@ -687,14 +700,14 @@ describe('PageHeader alias display', () => {
 
 describe('PageHeader page-level undo/redo buttons', () => {
   it('renders page undo button', () => {
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     const undoBtn = screen.getByRole('button', { name: /undo last page action/i })
     expect(undoBtn).toBeInTheDocument()
   })
 
   it('renders page redo button', () => {
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     const redoBtn = screen.getByRole('button', { name: /redo last page action/i })
     expect(redoBtn).toBeInTheDocument()
@@ -731,7 +744,7 @@ describe('PageHeader page-level undo/redo buttons', () => {
       return null
     })
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     const undoBtn = screen.getByRole('button', { name: /undo last page action/i })
     await user.click(undoBtn)
@@ -749,7 +762,7 @@ describe('PageHeader page-level undo/redo buttons', () => {
 
 describe('PageHeader breadcrumb', () => {
   it('shows breadcrumb for namespaced page title', () => {
-    render(<PageHeader pageId="PAGE_1" title="work/project-alpha/tasks" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="work/project-alpha/tasks" />)
 
     const nav = screen.getByRole('navigation', { name: /page breadcrumb/i })
     expect(nav).toBeInTheDocument()
@@ -766,14 +779,14 @@ describe('PageHeader breadcrumb', () => {
   })
 
   it('does not show breadcrumb for flat page title', () => {
-    render(<PageHeader pageId="PAGE_1" title="Simple Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Simple Page" />)
 
     expect(screen.queryByRole('navigation', { name: /page breadcrumb/i })).not.toBeInTheDocument()
   })
 
   it('breadcrumb ancestor navigates to pages view', async () => {
     const user = userEvent.setup()
-    render(<PageHeader pageId="PAGE_1" title="work/project-alpha" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="work/project-alpha" />)
 
     const workBtn = screen.getByRole('button', { name: 'work' })
     await user.click(workBtn)
@@ -782,7 +795,7 @@ describe('PageHeader breadcrumb', () => {
   })
 
   it('a11y: no violations with breadcrumb', async () => {
-    const { container } = render(
+    const { container } = renderPageHeader(
       <PageHeader pageId="PAGE_1" title="work/project-alpha/tasks" onBack={() => {}} />,
     )
 
@@ -797,7 +810,7 @@ describe('PageHeader breadcrumb', () => {
 
 describe('PageHeader kebab menu (#639)', () => {
   it('renders page actions menu button', async () => {
-    render(<PageHeader pageId="PAGE_1" title="Test Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /page actions/i })).toBeInTheDocument()
@@ -814,7 +827,7 @@ describe('PageHeader kebab menu (#639)', () => {
       if (cmd === 'get_page_aliases') return []
       return null
     })
-    render(<PageHeader pageId="PAGE_1" title="Test Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
 
@@ -840,7 +853,7 @@ describe('PageHeader kebab menu (#639)', () => {
       if (cmd === 'get_page_aliases') return []
       return null
     })
-    render(<PageHeader pageId="PAGE_1" title="Test Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
 
@@ -857,7 +870,7 @@ describe('PageHeader kebab menu (#639)', () => {
       if (cmd === 'get_page_aliases') return []
       return null
     })
-    render(<PageHeader pageId="PAGE_1" title="Test Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
 
@@ -883,7 +896,7 @@ describe('PageHeader kebab menu (#639)', () => {
       if (cmd === 'get_page_aliases') return []
       return null
     })
-    render(<PageHeader pageId="PAGE_1" title="Test Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
 
@@ -901,7 +914,7 @@ describe('PageHeader kebab menu (#639)', () => {
       if (cmd === 'set_property') return null
       return null
     })
-    render(<PageHeader pageId="PAGE_1" title="Test Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
     await user.click(await screen.findByText(/Save as template/i))
@@ -920,7 +933,7 @@ describe('PageHeader kebab menu (#639)', () => {
 
   it('shows Export as Markdown option', async () => {
     const user = userEvent.setup()
-    render(<PageHeader pageId="PAGE_1" title="Test Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
 
@@ -929,7 +942,7 @@ describe('PageHeader kebab menu (#639)', () => {
 
   it('shows Delete page option', async () => {
     const user = userEvent.setup()
-    render(<PageHeader pageId="PAGE_1" title="Test Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
 
@@ -943,7 +956,7 @@ describe('PageHeader kebab menu reorganization (UX-H10/H12)', () => {
   it('alias section hidden when no aliases exist', async () => {
     setupTagMock([])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     await waitFor(() => {
       expect(screen.queryByText('Also known as:')).not.toBeInTheDocument()
@@ -951,7 +964,7 @@ describe('PageHeader kebab menu reorganization (UX-H10/H12)', () => {
   })
 
   it('tag section hidden when no tags exist', () => {
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     expect(screen.queryByRole('button', { name: /add tag/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /remove tag/i })).not.toBeInTheDocument()
@@ -959,7 +972,7 @@ describe('PageHeader kebab menu reorganization (UX-H10/H12)', () => {
 
   it('kebab menu shows "Add alias", "Add tag", "Add property" items', async () => {
     const user = userEvent.setup()
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
 
@@ -972,7 +985,7 @@ describe('PageHeader kebab menu reorganization (UX-H10/H12)', () => {
     const user = userEvent.setup()
     setupTagMock([])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     // Open kebab and click "Add alias"
     await user.click(screen.getByRole('button', { name: /page actions/i }))
@@ -989,7 +1002,7 @@ describe('PageHeader kebab menu reorganization (UX-H10/H12)', () => {
     const user = userEvent.setup()
     setupTagMock([])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     // Open kebab and click "Add tag"
     await user.click(screen.getByRole('button', { name: /page actions/i }))
@@ -1005,7 +1018,7 @@ describe('PageHeader kebab menu reorganization (UX-H10/H12)', () => {
     const user = userEvent.setup()
     setupTagMock([])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     // Open kebab and click "Add property"
     await user.click(screen.getByRole('button', { name: /page actions/i }))
@@ -1020,7 +1033,7 @@ describe('PageHeader kebab menu reorganization (UX-H10/H12)', () => {
   it('aliases shown when aliases exist', async () => {
     setupTagMock([], ['my-alias'])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     await waitFor(() => {
       expect(screen.getByText('Also known as:')).toBeInTheDocument()
@@ -1031,7 +1044,7 @@ describe('PageHeader kebab menu reorganization (UX-H10/H12)', () => {
   it('tags shown when tags exist', async () => {
     setupTagMock(['TAG_1'])
 
-    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     await waitFor(() => {
       expect(screen.getByText('urgent')).toBeInTheDocument()

@@ -10,7 +10,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -84,6 +84,7 @@ import { toast } from 'sonner'
 
 import { useBlockStore } from '../../stores/blocks'
 import { useNavigationStore } from '../../stores/navigation'
+import { pageBlockRegistry } from '../../stores/page-blocks'
 import { useUndoStore } from '../../stores/undo'
 import { PageEditor } from '../PageEditor'
 
@@ -117,11 +118,10 @@ beforeEach(() => {
   capturedPageHeaderProps = null
   // Reset the Zustand stores to a clean state before each test
   useBlockStore.setState({
-    blocks: [],
-    rootParentId: null,
     focusedBlockId: null,
-    loading: false,
+    selectedBlockIds: [],
   })
+  pageBlockRegistry.clear()
   useUndoStore.setState({ pages: new Map() })
   useNavigationStore.setState({
     currentView: 'page-editor',
@@ -203,13 +203,6 @@ describe('PageEditor', () => {
   it('Add block button creates a new block when blocks exist', async () => {
     const user = userEvent.setup()
 
-    // Pre-populate store with a block
-    useBlockStore.setState({
-      blocks: [makeBlock('B1', 'First block', 'PAGE_1', 0)],
-      focusedBlockId: null,
-      loading: false,
-    })
-
     // Mock createBlock response for the new block
     mockedInvoke.mockResolvedValueOnce({
       id: 'B2',
@@ -220,6 +213,13 @@ describe('PageEditor', () => {
     })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    // Pre-populate per-page store with a block (via registry after mount)
+    act(() => {
+      pageBlockRegistry.get('PAGE_1')?.setState({
+        blocks: [makeBlock('B1', 'First block', 'PAGE_1', 0)],
+      })
+    })
 
     const addBtn = screen.getByRole('button', { name: /add block/i })
     await user.click(addBtn)
@@ -243,12 +243,7 @@ describe('PageEditor', () => {
   it('Add block button creates first block when no blocks exist', async () => {
     const user = userEvent.setup()
 
-    // Store starts empty
-    useBlockStore.setState({
-      blocks: [],
-      focusedBlockId: null,
-      loading: false,
-    })
+    // Store starts empty (per-page store is fresh)
 
     // Mock createBlock response for the new block
     mockedInvoke.mockResolvedValueOnce({
@@ -283,22 +278,6 @@ describe('PageEditor', () => {
   it('Add block button creates top-level block when page has nested blocks', async () => {
     const user = userEvent.setup()
 
-    // Pre-populate store with a nested block tree:
-    //   B1 (depth 0, parent PAGE_1)
-    //     B2 (depth 1, parent B1)
-    //       B3 (depth 2, parent B2)
-    // The last entry in the flat tree is B3 (deeply nested).
-    // "Add block" must create a top-level sibling of B1, NOT a sibling of B3.
-    useBlockStore.setState({
-      blocks: [
-        { ...makeBlock('B1', 'Top-level block', 'PAGE_1', 0), depth: 0 },
-        { ...makeBlock('B2', 'Nested child', 'B1', 0), depth: 1 },
-        { ...makeBlock('B3', 'Deeply nested', 'B2', 0), depth: 2 },
-      ],
-      focusedBlockId: null,
-      loading: false,
-    })
-
     // Mock createBlock response — the new block should be under PAGE_1
     mockedInvoke.mockResolvedValueOnce({
       id: 'B4',
@@ -309,6 +288,22 @@ describe('PageEditor', () => {
     })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    // Pre-populate per-page store with a nested block tree:
+    //   B1 (depth 0, parent PAGE_1)
+    //     B2 (depth 1, parent B1)
+    //       B3 (depth 2, parent B2)
+    // The last entry in the flat tree is B3 (deeply nested).
+    // "Add block" must create a top-level sibling of B1, NOT a sibling of B3.
+    act(() => {
+      pageBlockRegistry.get('PAGE_1')?.setState({
+        blocks: [
+          { ...makeBlock('B1', 'Top-level block', 'PAGE_1', 0), depth: 0 },
+          { ...makeBlock('B2', 'Nested child', 'B1', 0), depth: 1 },
+          { ...makeBlock('B3', 'Deeply nested', 'B2', 0), depth: 2 },
+        ],
+      })
+    })
 
     const addBtn = screen.getByRole('button', { name: /add block/i })
     await user.click(addBtn)
@@ -332,11 +327,7 @@ describe('PageEditor', () => {
   it('Add block button shows toast on failure when no blocks exist', async () => {
     const user = userEvent.setup()
 
-    useBlockStore.setState({
-      blocks: [],
-      focusedBlockId: null,
-      loading: false,
-    })
+    // Per-page store starts empty
 
     mockedInvoke.mockRejectedValueOnce(new Error('backend error'))
 
@@ -413,9 +404,7 @@ describe('PageEditor undo/redo integration', () => {
 describe('PageEditor background mousedown (UX-M9)', () => {
   it('mousedown on page background closes active editor', () => {
     useBlockStore.setState({
-      blocks: [makeBlock('B1', 'Hello', 'PAGE_1', 0)],
       focusedBlockId: 'B1',
-      loading: false,
     })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
@@ -429,9 +418,7 @@ describe('PageEditor background mousedown (UX-M9)', () => {
 
   it('mousedown on child element does not close editor', () => {
     useBlockStore.setState({
-      blocks: [makeBlock('B1', 'Hello', 'PAGE_1', 0)],
       focusedBlockId: 'B1',
-      loading: false,
     })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
@@ -458,11 +445,7 @@ describe('PageEditor BlockTree auto-creation prop', () => {
   it('manual add block works when page is empty and creates block directly', async () => {
     const user = userEvent.setup()
 
-    useBlockStore.setState({
-      blocks: [],
-      focusedBlockId: null,
-      loading: false,
-    })
+    // Per-page store starts empty
 
     // Mock createBlock and subsequent load
     mockedInvoke.mockResolvedValueOnce({

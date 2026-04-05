@@ -12,6 +12,11 @@ import { toast } from 'sonner'
 import type { NavigateToPageFn } from '../lib/block-events'
 import { useBlockStore } from '../stores/blocks'
 import { useNavigationStore } from '../stores/navigation'
+import {
+  PageBlockStoreProvider,
+  usePageBlockStore,
+  usePageBlockStoreApi,
+} from '../stores/page-blocks'
 import { useUndoStore } from '../stores/undo'
 import { AddBlockButton } from './AddBlockButton'
 import { BlockTree } from './BlockTree'
@@ -32,10 +37,29 @@ export function PageEditor({
   onBack,
   onNavigateToPage,
 }: PageEditorProps): React.ReactElement {
+  return (
+    <PageBlockStoreProvider pageId={pageId}>
+      <PageEditorInner
+        pageId={pageId}
+        title={title}
+        onBack={onBack}
+        onNavigateToPage={onNavigateToPage}
+      />
+    </PageBlockStoreProvider>
+  )
+}
+
+function PageEditorInner({
+  pageId,
+  title,
+  onBack,
+  onNavigateToPage,
+}: PageEditorProps): React.ReactElement {
   const { t } = useTranslation()
-  const blocks = useBlockStore((s) => s.blocks)
-  const createBelow = useBlockStore((s) => s.createBelow)
+  const blocks = usePageBlockStore((s) => s.blocks)
+  const createBelow = usePageBlockStore((s) => s.createBelow)
   const setFocused = useBlockStore((s) => s.setFocused)
+  const pageStore = usePageBlockStoreApi()
 
   // Scroll to and focus a specific block when navigating via a link
   const selectedBlockId = useNavigationStore((s) => s.selectedBlockId)
@@ -89,14 +113,13 @@ export function PageEditor({
           position: 0,
         })
         // Reload blocks via the store to pick up the new block
-        const { load } = useBlockStore.getState()
-        await load(pageId)
+        await pageStore.getState().load()
         setFocused(result.id)
       } catch {
         toast.error(t('error.createBlockFailed'))
       }
     }
-  }, [blocks, createBelow, setFocused, pageId, t])
+  }, [blocks, createBelow, setFocused, pageId, t, pageStore])
 
   // ── Click on page background whitespace closes active editor (UX-M9) ──
   const handleBackgroundMouseDown = useCallback((e: React.MouseEvent) => {

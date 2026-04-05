@@ -4,41 +4,71 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mapBackendState, useSyncEvents } from '../useSyncEvents'
 
-// -- Mock @tauri-apps/api/event ------------------------------------------------
+// -- Hoisted mocks (vi.mock factories are hoisted above module scope) ---------
 
-const mockUnlisten = vi.fn()
-const mockListen = vi.fn().mockResolvedValue(mockUnlisten)
+const {
+  mockUnlisten,
+  mockListen,
+  toastMock,
+  mockSetState,
+  mockSetOpsReceived,
+  mockSetOpsSent,
+  mockUpdateLastSynced,
+  mockLoad,
+  mockPageBlockRegistry,
+  mockPreload,
+  mockGetConflicts,
+} = vi.hoisted(() => {
+  const mockUnlisten = vi.fn()
+  const mockListen = vi.fn().mockResolvedValue(mockUnlisten)
 
-vi.mock('@tauri-apps/api/event', () => ({
-  listen: (...args: unknown[]) => mockListen(...args),
-}))
-
-// -- Mock sonner ---------------------------------------------------------------
-
-const { toastMock } = vi.hoisted(() => {
   const mock: ReturnType<typeof vi.fn> & {
     error: ReturnType<typeof vi.fn>
     success: ReturnType<typeof vi.fn>
     warning: ReturnType<typeof vi.fn>
   } = Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn(), warning: vi.fn() })
-  return { toastMock: mock }
+
+  const mockSetState = vi.fn()
+  const mockSetOpsReceived = vi.fn()
+  const mockSetOpsSent = vi.fn()
+  const mockUpdateLastSynced = vi.fn()
+  const mockLoad = vi.fn().mockResolvedValue(undefined)
+
+  const mockPageBlockRegistry = new Map()
+  mockPageBlockRegistry.set('PAGE_1', {
+    getState: () => ({
+      load: mockLoad,
+      rootParentId: 'PAGE_1',
+    }),
+  })
+
+  const mockPreload = vi.fn().mockResolvedValue(undefined)
+  const mockGetConflicts = vi
+    .fn()
+    .mockResolvedValue({ items: [], next_cursor: null, has_more: false })
+
+  return {
+    mockUnlisten,
+    mockListen,
+    toastMock: mock,
+    mockSetState,
+    mockSetOpsReceived,
+    mockSetOpsSent,
+    mockUpdateLastSynced,
+    mockLoad,
+    mockPageBlockRegistry,
+    mockPreload,
+    mockGetConflicts,
+  }
 })
 
+// -- vi.mock calls (hoisted to top — only reference vi.hoisted vars) ----------
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: (...args: unknown[]) => mockListen(...args),
+}))
+
 vi.mock('sonner', () => ({ toast: toastMock }))
-
-import { toast } from 'sonner'
-
-const mockedToastSuccess = vi.mocked(toast.success)
-const mockedToastError = vi.mocked(toast.error)
-const mockedToastWarning = vi.mocked(toast.warning)
-
-// -- Mock stores ---------------------------------------------------------------
-
-const mockSetState = vi.fn()
-const mockSetOpsReceived = vi.fn()
-const mockSetOpsSent = vi.fn()
-const mockUpdateLastSynced = vi.fn()
-const mockLoad = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('@/stores/sync', () => ({
   useSyncStore: {
@@ -51,15 +81,9 @@ vi.mock('@/stores/sync', () => ({
   },
 }))
 
-vi.mock('@/stores/blocks', () => ({
-  useBlockStore: {
-    getState: vi.fn(() => ({
-      load: mockLoad,
-    })),
-  },
+vi.mock('@/stores/page-blocks', () => ({
+  pageBlockRegistry: mockPageBlockRegistry,
 }))
-
-const mockPreload = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('@/stores/resolve', () => ({
   useResolveStore: {
@@ -69,15 +93,15 @@ vi.mock('@/stores/resolve', () => ({
   },
 }))
 
-// -- Mock @/lib/tauri ----------------------------------------------------------
-
-const mockGetConflicts = vi
-  .fn()
-  .mockResolvedValue({ items: [], next_cursor: null, has_more: false })
-
 vi.mock('@/lib/tauri', () => ({
   getConflicts: (...args: unknown[]) => mockGetConflicts(...args),
 }))
+
+import { toast } from 'sonner'
+
+const mockedToastSuccess = vi.mocked(toast.success)
+const mockedToastError = vi.mocked(toast.error)
+const mockedToastWarning = vi.mocked(toast.warning)
 
 // -- Minimal renderHook (matches project pattern) -----------------------------
 

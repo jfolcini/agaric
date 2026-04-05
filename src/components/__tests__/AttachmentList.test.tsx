@@ -16,6 +16,12 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import type { StoreApi } from 'zustand'
+import {
+  createPageBlockStore,
+  PageBlockContext,
+  type PageBlockState,
+} from '../../stores/page-blocks'
 import { AttachmentList, formatSize } from '../AttachmentList'
 
 vi.mock('sonner', () => ({
@@ -28,6 +34,12 @@ vi.mock('sonner', () => ({
 const mockedInvoke = vi.mocked(invoke)
 const mockedToast = vi.mocked(toast)
 const mockedToastSuccess = vi.mocked(toast.success)
+
+let pageStore: StoreApi<PageBlockState>
+
+function renderWithProvider(ui: React.ReactElement) {
+  return render(<PageBlockContext.Provider value={pageStore}>{ui}</PageBlockContext.Provider>)
+}
 
 function makeAttachment(
   id: string,
@@ -47,6 +59,7 @@ function makeAttachment(
 
 beforeEach(() => {
   vi.clearAllMocks()
+  pageStore = createPageBlockStore('PAGE_1')
   // Default: list_attachments returns empty
   mockedInvoke.mockResolvedValue([])
 })
@@ -59,7 +72,7 @@ describe('AttachmentList', () => {
   it('renders empty state when no attachments', async () => {
     mockedInvoke.mockResolvedValueOnce([])
 
-    render(<AttachmentList blockId="block-1" />)
+    renderWithProvider(<AttachmentList blockId="block-1" />)
 
     expect(await screen.findByText(/No attachments yet/)).toBeInTheDocument()
   })
@@ -70,7 +83,7 @@ describe('AttachmentList', () => {
       makeAttachment('a2', 'photo.png', { mimeType: 'image/png' }),
     ])
 
-    render(<AttachmentList blockId="block-1" />)
+    renderWithProvider(<AttachmentList blockId="block-1" />)
 
     expect(await screen.findByText('report.pdf')).toBeInTheDocument()
     expect(screen.getByText('photo.png')).toBeInTheDocument()
@@ -80,7 +93,7 @@ describe('AttachmentList', () => {
     // Never-resolving promise keeps loading state
     mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
 
-    const { container } = render(<AttachmentList blockId="block-1" />)
+    const { container } = renderWithProvider(<AttachmentList blockId="block-1" />)
 
     const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
     expect(skeletons.length).toBe(2)
@@ -94,7 +107,7 @@ describe('AttachmentList', () => {
       makeAttachment('a3', 'large.zip', { sizeBytes: 1048576 * 5 }),
     ])
 
-    render(<AttachmentList blockId="block-1" />)
+    renderWithProvider(<AttachmentList blockId="block-1" />)
 
     expect(await screen.findByText('500 B')).toBeInTheDocument()
     expect(screen.getByText('2.0 KB')).toBeInTheDocument()
@@ -107,7 +120,7 @@ describe('AttachmentList', () => {
 
     mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'to-delete.txt')])
 
-    render(<AttachmentList blockId="block-1" />)
+    renderWithProvider(<AttachmentList blockId="block-1" />)
 
     expect(await screen.findByText('to-delete.txt')).toBeInTheDocument()
 
@@ -132,7 +145,7 @@ describe('AttachmentList', () => {
 
     mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'timeout-test.txt')])
 
-    render(<AttachmentList blockId="block-1" />)
+    renderWithProvider(<AttachmentList blockId="block-1" />)
 
     expect(await screen.findByText('timeout-test.txt')).toBeInTheDocument()
 
@@ -157,7 +170,7 @@ describe('AttachmentList', () => {
   it('calls list_attachments with the correct blockId', async () => {
     mockedInvoke.mockResolvedValueOnce([])
 
-    render(<AttachmentList blockId="my-block-42" />)
+    renderWithProvider(<AttachmentList blockId="my-block-42" />)
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_attachments', { blockId: 'my-block-42' })
@@ -167,7 +180,7 @@ describe('AttachmentList', () => {
   it('has no a11y violations (empty state)', async () => {
     mockedInvoke.mockResolvedValueOnce([])
 
-    const { container } = render(<AttachmentList blockId="block-1" />)
+    const { container } = renderWithProvider(<AttachmentList blockId="block-1" />)
 
     await waitFor(async () => {
       const results = await axe(container)
@@ -181,7 +194,7 @@ describe('AttachmentList', () => {
       makeAttachment('a2', 'photo.jpg', { mimeType: 'image/jpeg' }),
     ])
 
-    const { container } = render(<AttachmentList blockId="block-1" />)
+    const { container } = renderWithProvider(<AttachmentList blockId="block-1" />)
 
     await waitFor(async () => {
       const results = await axe(container)

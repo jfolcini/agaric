@@ -38,7 +38,7 @@ import {
   setProperty,
   setScheduledDate as setScheduledDateCmd,
 } from '../lib/tauri'
-import { useBlockStore } from '../stores/blocks'
+import { usePageBlockStore, usePageBlockStoreApi } from '../stores/page-blocks'
 
 const BUILTIN_PROPERTY_KEYS = new Set([
   'todo_state',
@@ -75,7 +75,10 @@ export function BlockPropertyDrawer({
 
   // Subscribe to built-in date fields from the block store so the drawer
   // updates reactively when dates are set via toolbar (H-12).
-  const block = useBlockStore((s) => (blockId ? s.blocks.find((b) => b.id === blockId) : undefined))
+  const pageStore = usePageBlockStoreApi()
+  const block = usePageBlockStore((s) =>
+    blockId ? s.blocks.find((b) => b.id === blockId) : undefined,
+  )
   const dueDate = block?.due_date ?? null
   const scheduledDate = block?.scheduled_date ?? null
 
@@ -155,7 +158,7 @@ export function BlockPropertyDrawer({
         } else {
           await setScheduledDateCmd(blockId, null)
         }
-        useBlockStore.setState((s) => ({
+        pageStore.setState((s) => ({
           blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, [field]: null } : b)),
         }))
         announce('Date cleared')
@@ -163,7 +166,7 @@ export function BlockPropertyDrawer({
         toast.error(t('property.saveFailed'))
       }
     },
-    [blockId, t],
+    [blockId, t, pageStore.setState],
   )
 
   // Update a built-in date field
@@ -176,7 +179,7 @@ export function BlockPropertyDrawer({
         } else {
           await setScheduledDateCmd(blockId, value)
         }
-        useBlockStore.setState((s) => ({
+        pageStore.setState((s) => ({
           blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, [field]: value } : b)),
         }))
         announce('Date updated')
@@ -184,7 +187,7 @@ export function BlockPropertyDrawer({
         toast.error(t('property.saveFailed'))
       }
     },
-    [blockId, t],
+    [blockId, t, pageStore.setState],
   )
 
   const hasBuiltinDates = dueDate !== null || scheduledDate !== null

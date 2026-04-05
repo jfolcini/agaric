@@ -5,30 +5,52 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useUndoShortcuts } from '../useUndoShortcuts'
 
-// -- Mock sonner ---------------------------------------------------------------
+// -- Hoisted mocks (vi.mock factories are hoisted above module scope) ---------
 
-const { toastMock } = vi.hoisted(() => {
+const {
+  toastMock,
+  mockUndo,
+  mockRedo,
+  mockLoad,
+  mockReplacePage,
+  mockGetBlock,
+  mockPageBlockRegistry,
+} = vi.hoisted(() => {
   const mock: ReturnType<typeof vi.fn> & { error: ReturnType<typeof vi.fn> } = Object.assign(
     vi.fn(),
     { error: vi.fn() },
   )
-  return { toastMock: mock }
+
+  const mockUndo = vi.fn().mockResolvedValue(null)
+  const mockRedo = vi.fn().mockResolvedValue(null)
+  const mockLoad = vi.fn().mockResolvedValue(undefined)
+  const mockReplacePage = vi.fn()
+  const mockGetBlock = vi.fn().mockResolvedValue(null)
+
+  const mockPageBlockStoreState = {
+    load: mockLoad,
+    rootParentId: 'PAGE_1',
+  }
+  const mockPageBlockRegistry = new Map()
+  mockPageBlockRegistry.set('PAGE_1', { getState: () => mockPageBlockStoreState })
+  mockPageBlockRegistry.set('PAGE_3', {
+    getState: () => ({ ...mockPageBlockStoreState, rootParentId: 'PAGE_3' }),
+  })
+
+  return {
+    toastMock: mock,
+    mockUndo,
+    mockRedo,
+    mockLoad,
+    mockReplacePage,
+    mockGetBlock,
+    mockPageBlockRegistry,
+  }
 })
 
+// -- vi.mock calls (hoisted to top — only reference vi.hoisted vars) ----------
+
 vi.mock('sonner', () => ({ toast: toastMock }))
-
-import { toast } from 'sonner'
-
-const mockedToast = vi.mocked(toast)
-const mockedToastError = vi.mocked(toast.error)
-
-// -- Mock stores --------------------------------------------------------------
-
-const mockUndo = vi.fn().mockResolvedValue(null)
-const mockRedo = vi.fn().mockResolvedValue(null)
-const mockLoad = vi.fn().mockResolvedValue(undefined)
-const mockReplacePage = vi.fn()
-const mockGetBlock = vi.fn().mockResolvedValue(null)
 
 vi.mock('@/stores/navigation', () => ({
   useNavigationStore: {
@@ -49,22 +71,21 @@ vi.mock('@/stores/undo', () => ({
   },
 }))
 
-vi.mock('@/stores/blocks', () => ({
-  useBlockStore: {
-    getState: vi.fn(() => ({
-      load: mockLoad,
-    })),
-  },
+vi.mock('@/stores/page-blocks', () => ({
+  pageBlockRegistry: mockPageBlockRegistry,
 }))
 
 vi.mock('../../lib/tauri', () => ({
   getBlock: (...args: unknown[]) => mockGetBlock(...args),
 }))
 
+import { toast } from 'sonner'
 import { useNavigationStore } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
 import { useUndoStore } from '@/stores/undo'
 
+const mockedToast = vi.mocked(toast)
+const mockedToastError = vi.mocked(toast.error)
 const mockedNavGetState = vi.mocked(useNavigationStore.getState)
 const mockedUndoGetState = vi.mocked(useUndoStore.getState)
 
@@ -441,7 +462,7 @@ describe('refresh after undo/redo', () => {
     fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
 
     await vi.waitFor(() => {
-      expect(mockLoad).toHaveBeenCalledWith('PAGE_1')
+      expect(mockLoad).toHaveBeenCalled()
     })
 
     unmount()
@@ -471,7 +492,7 @@ describe('refresh after undo/redo', () => {
     fireEvent.keyDown(document, { key: 'y', ctrlKey: true })
 
     await vi.waitFor(() => {
-      expect(mockLoad).toHaveBeenCalledWith('PAGE_1')
+      expect(mockLoad).toHaveBeenCalled()
     })
 
     unmount()
@@ -500,7 +521,7 @@ describe('refresh after undo/redo', () => {
     fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
 
     await vi.waitFor(() => {
-      expect(mockLoad).toHaveBeenCalledWith('PAGE_1')
+      expect(mockLoad).toHaveBeenCalled()
     })
 
     // replacePage should NOT have been called since getBlock failed
@@ -534,7 +555,7 @@ describe('refresh after undo/redo', () => {
     fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
 
     await vi.waitFor(() => {
-      expect(mockLoad).toHaveBeenCalledWith('PAGE_1')
+      expect(mockLoad).toHaveBeenCalled()
     })
 
     // Resolve cache should remain empty (getBlock failed, so set() was never called)

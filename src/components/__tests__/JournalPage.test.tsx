@@ -135,10 +135,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   filterChangeRef.current = null
   useBlockStore.setState({
-    blocks: [],
-    rootParentId: null,
     focusedBlockId: null,
-    loading: false,
+    selectedBlockIds: [],
   })
   // Reset journal store to defaults
   useJournalStore.setState({

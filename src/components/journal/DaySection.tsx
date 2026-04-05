@@ -14,6 +14,7 @@ import type { DayEntry } from '../../lib/date-utils'
 import { formatDate } from '../../lib/date-utils'
 import type { JournalMode } from '../../stores/journal'
 import { useJournalStore } from '../../stores/journal'
+import { PageBlockStoreProvider } from '../../stores/page-blocks'
 import { AddBlockButton } from '../AddBlockButton'
 import { BlockTree } from '../BlockTree'
 import { DonePanel } from '../DonePanel'
@@ -154,11 +155,13 @@ export function DaySection({
       )}
 
       {entry.pageId && (
-        <BlockTree
-          parentId={entry.pageId}
-          onNavigateToPage={onNavigateToPage}
-          autoCreateFirstBlock={mode === 'daily'}
-        />
+        <PageBlockStoreProvider pageId={entry.pageId}>
+          <BlockTree
+            parentId={entry.pageId}
+            onNavigateToPage={onNavigateToPage}
+            autoCreateFirstBlock={mode === 'daily'}
+          />
+        </PageBlockStoreProvider>
       )}
 
       {/* DuePanel + LinkedReferences + DonePanel — only in daily mode */}

@@ -601,8 +601,8 @@ shows the ancestor path with clickable navigation. Home button exits zoom. State
 
 ### Block multi-selection
 
-`useBlockStore` exposes `selectedBlockIds` (a `Set<string>`-like array) for multi-block selection
-orthogonal to the roving editor. Selection gestures:
+`useBlockStore` (global singleton) exposes `selectedBlockIds` (a `Set<string>`-like array) for multi-block selection
+orthogonal to the roving editor. Selection actions take `visibleIds` from the per-page store since blocks live in per-page context. Selection gestures:
 
 - **Ctrl+Click** on a block bullet toggles its selection state.
 - **Shift+Click** selects the range from the last-selected block to the clicked block.
@@ -630,12 +630,15 @@ with month-end clamping.
 | Store | Purpose | Key state |
 |-------|---------|-----------|
 | `useBootStore` | App initialization state machine | booting → recovering → ready \| error |
-| `useBlockStore` | Block tree CRUD, focus management, multi-selection | blocks[], focusedBlockId, rootParentId, selectedBlockIds[], toggleSelected, rangeSelect, selectAll, clearSelected |
+| `useBlockStore` | Global focus/selection (singleton) | focusedBlockId, selectedBlockIds[], pendingFocusId, setFocused, toggleSelected, rangeSelect(id, visibleIds), selectAll(visibleIds), clearSelected |
+| `PageBlockStore` | Per-page block tree CRUD (per-instance via context) | blocks[], rootParentId, loading, load(), createBelow, edit, remove, splitBlock, reorder, moveToParent, indent, dedent, moveUp, moveDown |
 | `useNavigationStore` | Page routing and view state | currentView, pageStack[], selectedBlockId |
 | `useJournalStore` | Journal mode and date selection | mode (daily/weekly/monthly/agenda), currentDate |
 | `useResolveStore` | Centralized ULID → title cache | cache Map, pagesList[], version counter |
 | `useUndoStore` | Page-level undo/redo state | undoDepth per page, redoStack (OpRef[]) |
 | `useSyncStore` | Peer-to-peer sync lifecycle | state (idle/discovering/pairing/syncing/error/offline), peers[], opsReceived/opsSent |
+
+**Per-page block store pattern (R-18):** Each `<BlockTree>` gets its own `PageBlockStore` instance via `<PageBlockStoreProvider pageId={...}>`. The provider creates a store with `createPageBlockStore(pageId)`, registers it in the module-level `pageBlockRegistry` (Map<pageId, StoreApi>), and unregisters on unmount. Global hooks (`useSyncEvents`, `useUndoShortcuts`) use the registry to reload pages without provider context. The global `useBlockStore` holds only focus/selection state since only one block can be focused at a time across all pages. Per-page mutation actions that affect focus (e.g., `remove`) call into the global store — one-directional dependency.
 
 `useResolveStore` is preloaded on boot (`preload()` fetches all pages and tags) and updated
 incrementally on create/edit/delete. Both JournalPage and BlockTree consume from the same store —

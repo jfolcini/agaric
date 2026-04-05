@@ -13,10 +13,16 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook } from '@testing-library/react'
+import { createElement, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { StoreApi } from 'zustand'
 import { announce } from '../../lib/announcer'
-import { useBlockStore } from '../../stores/blocks'
+import {
+  createPageBlockStore,
+  PageBlockContext,
+  type PageBlockState,
+} from '../../stores/page-blocks'
 import { useUndoStore } from '../../stores/undo'
 import { useBlockProperties } from '../useBlockProperties'
 
@@ -24,6 +30,10 @@ vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 vi.mock('../../lib/announcer', () => ({ announce: vi.fn() }))
 
 const mockedInvoke = vi.mocked(invoke)
+
+let pageStore: StoreApi<PageBlockState>
+const wrapper = ({ children }: { children: ReactNode }) =>
+  createElement(PageBlockContext.Provider, { value: pageStore }, children)
 
 function makeBlock(id: string, todoState: string | null = null, priority: string | null = null) {
   return {
@@ -46,33 +56,28 @@ function makeBlock(id: string, todoState: string | null = null, priority: string
 beforeEach(() => {
   vi.clearAllMocks()
   mockedInvoke.mockResolvedValue(undefined)
-  useBlockStore.setState({
-    blocks: [],
-    rootParentId: null,
-    focusedBlockId: null,
-    loading: false,
-  })
+  pageStore = createPageBlockStore('PAGE_1')
 })
 
 describe('useBlockProperties getTodoState', () => {
   it('returns todo_state from block store', () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')] })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')] })
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     expect(result.current.getTodoState('BLOCK_1')).toBe('TODO')
   })
 
   it('returns null when block has no todo_state', () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1')] })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1')] })
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     expect(result.current.getTodoState('BLOCK_1')).toBeNull()
   })
 
   it('returns null for nonexistent block', () => {
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     expect(result.current.getTodoState('NONEXISTENT')).toBeNull()
   })
@@ -80,9 +85,9 @@ describe('useBlockProperties getTodoState', () => {
 
 describe('useBlockProperties handleToggleTodo', () => {
   it('cycles from none to TODO', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1')] })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1')] })
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleToggleTodo('BLOCK_1')
@@ -94,14 +99,14 @@ describe('useBlockProperties handleToggleTodo', () => {
     })
 
     // Block store should be updated
-    const block = useBlockStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
+    const block = pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
     expect(block?.todo_state).toBe('TODO')
   })
 
   it('cycles from TODO to DOING', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')] })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')] })
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleToggleTodo('BLOCK_1')
@@ -112,14 +117,14 @@ describe('useBlockProperties handleToggleTodo', () => {
       state: 'DOING',
     })
 
-    const block = useBlockStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
+    const block = pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
     expect(block?.todo_state).toBe('DOING')
   })
 
   it('cycles from DOING to DONE', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', 'DOING')] })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'DOING')] })
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleToggleTodo('BLOCK_1')
@@ -130,14 +135,14 @@ describe('useBlockProperties handleToggleTodo', () => {
       state: 'DONE',
     })
 
-    const block = useBlockStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
+    const block = pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
     expect(block?.todo_state).toBe('DONE')
   })
 
   it('cycles from DONE to none', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', 'DONE')] })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'DONE')] })
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleToggleTodo('BLOCK_1')
@@ -148,31 +153,31 @@ describe('useBlockProperties handleToggleTodo', () => {
       state: null,
     })
 
-    const block = useBlockStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
+    const block = pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
     expect(block?.todo_state).toBeNull()
   })
 
   it('reverts optimistic update on IPC failure', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')] })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')] })
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleToggleTodo('BLOCK_1')
     })
 
     // Should revert to original TODO state
-    const block = useBlockStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
+    const block = pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
     expect(block?.todo_state).toBe('TODO')
   })
 })
 
 describe('useBlockProperties handleTogglePriority', () => {
   it('cycles from none to 1', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1')] })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1')] })
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleTogglePriority('BLOCK_1')
@@ -183,14 +188,14 @@ describe('useBlockProperties handleTogglePriority', () => {
       level: '1',
     })
 
-    const block = useBlockStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
+    const block = pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
     expect(block?.priority).toBe('1')
   })
 
   it('cycles from 1 to 2', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')] })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')] })
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleTogglePriority('BLOCK_1')
@@ -201,14 +206,14 @@ describe('useBlockProperties handleTogglePriority', () => {
       level: '2',
     })
 
-    const block = useBlockStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
+    const block = pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
     expect(block?.priority).toBe('2')
   })
 
   it('cycles from 2 to 3', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, '2')] })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', null, '2')] })
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleTogglePriority('BLOCK_1')
@@ -219,14 +224,14 @@ describe('useBlockProperties handleTogglePriority', () => {
       level: '3',
     })
 
-    const block = useBlockStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
+    const block = pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
     expect(block?.priority).toBe('3')
   })
 
   it('cycles from 3 to none', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, '3')] })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', null, '3')] })
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleTogglePriority('BLOCK_1')
@@ -237,14 +242,14 @@ describe('useBlockProperties handleTogglePriority', () => {
       level: null,
     })
 
-    const block = useBlockStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
+    const block = pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
     expect(block?.priority).toBeNull()
   })
 
   it('handles unknown priority value by cycling to none', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, 'X')] })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', null, 'X')] })
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleTogglePriority('BLOCK_1')
@@ -258,33 +263,33 @@ describe('useBlockProperties handleTogglePriority', () => {
   })
 
   it('reverts optimistic update on IPC failure', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')] })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')] })
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleTogglePriority('BLOCK_1')
     })
 
     // Should revert to original 1 priority
-    const block = useBlockStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
+    const block = pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
     expect(block?.priority).toBe('1')
   })
 
   it('does not affect other blocks in the store', async () => {
-    useBlockStore.setState({
+    pageStore.setState({
       blocks: [makeBlock('BLOCK_1', null, '1'), makeBlock('BLOCK_2', 'TODO', '2')],
     })
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleTogglePriority('BLOCK_1')
     })
 
     // BLOCK_2 should be unchanged
-    const block2 = useBlockStore.getState().blocks.find((b) => b.id === 'BLOCK_2')
+    const block2 = pageStore.getState().blocks.find((b) => b.id === 'BLOCK_2')
     expect(block2?.priority).toBe('2')
     expect(block2?.todo_state).toBe('TODO')
   })
@@ -299,10 +304,10 @@ const mockedAnnounce = vi.mocked(announce)
 
 describe('useBlockProperties handleToggleTodo toast and announcer', () => {
   it('shows toast error on IPC failure', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')] })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')] })
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleToggleTodo('BLOCK_1')
@@ -312,9 +317,9 @@ describe('useBlockProperties handleToggleTodo toast and announcer', () => {
   })
 
   it('announces new state via announcer on successful toggle', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1')] })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1')] })
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleToggleTodo('BLOCK_1')
@@ -325,9 +330,9 @@ describe('useBlockProperties handleToggleTodo toast and announcer', () => {
   })
 
   it('announces "none" when cycling back to no state', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', 'DONE')] })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'DONE')] })
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleToggleTodo('BLOCK_1')
@@ -338,10 +343,10 @@ describe('useBlockProperties handleToggleTodo toast and announcer', () => {
   })
 
   it('does not announce on IPC failure', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')] })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')] })
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleToggleTodo('BLOCK_1')
@@ -353,10 +358,10 @@ describe('useBlockProperties handleToggleTodo toast and announcer', () => {
 
 describe('useBlockProperties handleTogglePriority toast and announcer', () => {
   it('shows toast error on IPC failure', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')] })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')] })
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleTogglePriority('BLOCK_1')
@@ -366,9 +371,9 @@ describe('useBlockProperties handleTogglePriority toast and announcer', () => {
   })
 
   it('does not call toast error on successful toggle', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')] })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')] })
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleTogglePriority('BLOCK_1')
@@ -391,9 +396,9 @@ describe('useBlockProperties undo notifications', () => {
   })
 
   it('handleToggleTodo calls onNewAction after successful IPC', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')], rootParentId: 'PAGE_1' })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')], rootParentId: 'PAGE_1' })
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleToggleTodo('BLOCK_1')
@@ -403,9 +408,9 @@ describe('useBlockProperties undo notifications', () => {
   })
 
   it('handleTogglePriority calls onNewAction after successful IPC', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')], rootParentId: 'PAGE_1' })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')], rootParentId: 'PAGE_1' })
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleTogglePriority('BLOCK_1')
@@ -415,10 +420,10 @@ describe('useBlockProperties undo notifications', () => {
   })
 
   it('handleToggleTodo does not call onNewAction on IPC failure', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')], rootParentId: 'PAGE_1' })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')], rootParentId: 'PAGE_1' })
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleToggleTodo('BLOCK_1')
@@ -428,10 +433,10 @@ describe('useBlockProperties undo notifications', () => {
   })
 
   it('handleTogglePriority does not call onNewAction on IPC failure', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')], rootParentId: 'PAGE_1' })
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')], rootParentId: 'PAGE_1' })
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
 
-    const { result } = renderHook(() => useBlockProperties())
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
     await act(async () => {
       await result.current.handleTogglePriority('BLOCK_1')

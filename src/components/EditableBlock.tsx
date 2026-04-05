@@ -10,6 +10,7 @@ import { EditorContent } from '@tiptap/react'
 import React, { useCallback, useEffect, useRef } from 'react'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { useBlockStore } from '../stores/blocks'
+import { usePageBlockStore } from '../stores/page-blocks'
 import { FormattingToolbar } from './FormattingToolbar'
 import { StaticBlock } from './StaticBlock'
 
@@ -63,9 +64,9 @@ function EditableBlockInner({
   onSelect,
 }: EditableBlockProps): React.ReactElement {
   const setFocused = useBlockStore((s) => s.setFocused)
-  const edit = useBlockStore((s) => s.edit)
-  const splitBlock = useBlockStore((s) => s.splitBlock)
-  const currentPriority = useBlockStore(
+  const edit = usePageBlockStore((s) => s.edit)
+  const splitBlock = usePageBlockStore((s) => s.splitBlock)
+  const currentPriority = usePageBlockStore(
     (s) => s.blocks.find((b) => b.id === blockId)?.priority ?? null,
   )
   const wrapperRef = useRef<HTMLElement>(null)

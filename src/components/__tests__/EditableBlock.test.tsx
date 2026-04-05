@@ -50,19 +50,27 @@ vi.mock('../StaticBlock', () => ({
   ),
 }))
 
-// Mock block store — capture calls to edit, splitBlock, setFocused
+// Mock block store — capture calls to setFocused (focus stays on global store)
 const mockEdit = vi.fn()
 const mockSplitBlock = vi.fn()
 const mockSetFocused = vi.fn()
-const _mockStore = {
+const _mockBlockStore = {
   setFocused: mockSetFocused,
+}
+vi.mock('../../stores/blocks', () => ({
+  useBlockStore: (selector?: (s: typeof _mockBlockStore) => unknown) =>
+    selector ? selector(_mockBlockStore) : _mockBlockStore,
+}))
+
+// Mock per-page block store — capture calls to edit, splitBlock
+const _mockPageStore = {
   edit: mockEdit,
   splitBlock: mockSplitBlock,
   blocks: [] as Array<{ id: string; priority?: string | null }>,
 }
-vi.mock('../../stores/blocks', () => ({
-  useBlockStore: (selector?: (s: typeof _mockStore) => unknown) =>
-    selector ? selector(_mockStore) : _mockStore,
+vi.mock('../../stores/page-blocks', () => ({
+  usePageBlockStore: (selector?: (s: typeof _mockPageStore) => unknown) =>
+    selector ? selector(_mockPageStore) : _mockPageStore,
 }))
 
 // ── Helpers ──────────────────────────────────────────────────────────────

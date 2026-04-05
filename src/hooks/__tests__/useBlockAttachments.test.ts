@@ -12,9 +12,15 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
+import { createElement, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useBlockStore } from '../../stores/blocks'
+import type { StoreApi } from 'zustand'
+import {
+  createPageBlockStore,
+  PageBlockContext,
+  type PageBlockState,
+} from '../../stores/page-blocks'
 import { useUndoStore } from '../../stores/undo'
 import { useBlockAttachments } from '../useBlockAttachments'
 
@@ -22,6 +28,10 @@ vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
+
+let pageStore: StoreApi<PageBlockState>
+const wrapper = ({ children }: { children: ReactNode }) =>
+  createElement(PageBlockContext.Provider, { value: pageStore }, children)
 
 function makeAttachmentRow(id: string, blockId: string, filename: string) {
   return {
@@ -38,12 +48,7 @@ function makeAttachmentRow(id: string, blockId: string, filename: string) {
 beforeEach(() => {
   vi.clearAllMocks()
   mockedInvoke.mockResolvedValue([])
-  useBlockStore.setState({
-    blocks: [],
-    rootParentId: null,
-    focusedBlockId: null,
-    loading: false,
-  })
+  pageStore = createPageBlockStore('PAGE_1')
 })
 
 // ---------------------------------------------------------------------------
@@ -61,7 +66,7 @@ describe('useBlockAttachments loading', () => {
       return []
     })
 
-    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'))
+    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(result.current.attachments).toHaveLength(2)
@@ -75,7 +80,7 @@ describe('useBlockAttachments loading', () => {
   })
 
   it('resets attachments when blockId is null', async () => {
-    const { result } = renderHook(() => useBlockAttachments(null))
+    const { result } = renderHook(() => useBlockAttachments(null), { wrapper })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -92,7 +97,7 @@ describe('useBlockAttachments loading', () => {
       return []
     })
 
-    renderHook(() => useBlockAttachments('BLOCK_1'))
+    renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith('Failed to load attachments')
@@ -116,7 +121,7 @@ describe('useBlockAttachments loading state', () => {
       return []
     })
 
-    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'))
+    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
 
     // loading should be true while waiting
     expect(result.current.loading).toBe(true)
@@ -140,7 +145,7 @@ describe('useBlockAttachments loading state', () => {
       return []
     })
 
-    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'))
+    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
 
     expect(result.current.loading).toBe(true)
 
@@ -152,7 +157,7 @@ describe('useBlockAttachments loading state', () => {
   })
 
   it('loading becomes false immediately when blockId is null', async () => {
-    const { result } = renderHook(() => useBlockAttachments(null))
+    const { result } = renderHook(() => useBlockAttachments(null), { wrapper })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -167,12 +172,7 @@ describe('useBlockAttachments loading state', () => {
 describe('useBlockAttachments handleAddAttachment', () => {
   it('calls addAttachment IPC and notifies undo store', async () => {
     const onNewActionSpy = vi.fn()
-    useBlockStore.setState({
-      blocks: [],
-      rootParentId: 'PAGE_1',
-      focusedBlockId: null,
-      loading: false,
-    })
+    // pageStore already has rootParentId: 'PAGE_1' from createPageBlockStore
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 
     const newRow = makeAttachmentRow('ATT_NEW', 'BLOCK_1', 'new.pdf')
@@ -183,7 +183,7 @@ describe('useBlockAttachments handleAddAttachment', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'))
+    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -212,12 +212,7 @@ describe('useBlockAttachments handleAddAttachment', () => {
 
   it('does not notify undo on failure', async () => {
     const onNewActionSpy = vi.fn()
-    useBlockStore.setState({
-      blocks: [],
-      rootParentId: 'PAGE_1',
-      focusedBlockId: null,
-      loading: false,
-    })
+    // pageStore already has rootParentId: 'PAGE_1' from createPageBlockStore
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -226,7 +221,7 @@ describe('useBlockAttachments handleAddAttachment', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'))
+    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -249,7 +244,7 @@ describe('useBlockAttachments handleAddAttachment', () => {
   it('does nothing when blockId is null', async () => {
     mockedInvoke.mockResolvedValue(undefined)
 
-    const { result } = renderHook(() => useBlockAttachments(null))
+    const { result } = renderHook(() => useBlockAttachments(null), { wrapper })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -276,12 +271,7 @@ describe('useBlockAttachments handleAddAttachment', () => {
 describe('useBlockAttachments handleDeleteAttachment', () => {
   it('calls deleteAttachment IPC and notifies undo store', async () => {
     const onNewActionSpy = vi.fn()
-    useBlockStore.setState({
-      blocks: [],
-      rootParentId: 'PAGE_1',
-      focusedBlockId: null,
-      loading: false,
-    })
+    // pageStore already has rootParentId: 'PAGE_1' from createPageBlockStore
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 
     const existing = [
@@ -295,7 +285,7 @@ describe('useBlockAttachments handleDeleteAttachment', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'))
+    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(result.current.attachments).toHaveLength(2)
@@ -316,12 +306,7 @@ describe('useBlockAttachments handleDeleteAttachment', () => {
 
   it('does not notify undo on failure', async () => {
     const onNewActionSpy = vi.fn()
-    useBlockStore.setState({
-      blocks: [],
-      rootParentId: 'PAGE_1',
-      focusedBlockId: null,
-      loading: false,
-    })
+    // pageStore already has rootParentId: 'PAGE_1' from createPageBlockStore
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 
     const existing = [makeAttachmentRow('ATT_1', 'BLOCK_1', 'file1.pdf')]
@@ -332,7 +317,7 @@ describe('useBlockAttachments handleDeleteAttachment', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'))
+    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(result.current.attachments).toHaveLength(1)
@@ -351,7 +336,7 @@ describe('useBlockAttachments handleDeleteAttachment', () => {
   it('does nothing when blockId is null', async () => {
     mockedInvoke.mockResolvedValue(undefined)
 
-    const { result } = renderHook(() => useBlockAttachments(null))
+    const { result } = renderHook(() => useBlockAttachments(null), { wrapper })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)

@@ -13,9 +13,15 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
+import { createElement, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useBlockStore } from '../../stores/blocks'
+import type { StoreApi } from 'zustand'
+import {
+  createPageBlockStore,
+  PageBlockContext,
+  type PageBlockState,
+} from '../../stores/page-blocks'
 import { useResolveStore } from '../../stores/resolve'
 import { useUndoStore } from '../../stores/undo'
 import { useBlockTags } from '../useBlockTags'
@@ -24,6 +30,10 @@ vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
+
+let pageStore: StoreApi<PageBlockState>
+const wrapper = ({ children }: { children: ReactNode }) =>
+  createElement(PageBlockContext.Provider, { value: pageStore }, children)
 
 function makeTagBlock(id: string, content: string) {
   return {
@@ -48,12 +58,7 @@ const emptyPage = { items: [], next_cursor: null, has_more: false }
 beforeEach(() => {
   vi.clearAllMocks()
   mockedInvoke.mockResolvedValue(emptyPage)
-  useBlockStore.setState({
-    blocks: [],
-    rootParentId: null,
-    focusedBlockId: null,
-    loading: false,
-  })
+  pageStore = createPageBlockStore('PAGE_1')
 })
 
 // ---------------------------------------------------------------------------
@@ -73,7 +78,7 @@ describe('useBlockTags allTags', () => {
       return emptyPage
     })
 
-    const { result } = renderHook(() => useBlockTags('BLOCK_1'))
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(result.current.allTags).toHaveLength(2)
@@ -104,7 +109,7 @@ describe('useBlockTags allTags', () => {
       return emptyPage
     })
 
-    renderHook(() => useBlockTags('BLOCK_1'))
+    renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith('Failed to load tags')
@@ -124,7 +129,7 @@ describe('useBlockTags appliedTagIds', () => {
       return emptyPage
     })
 
-    const { result } = renderHook(() => useBlockTags('BLOCK_1'))
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(result.current.appliedTagIds.size).toBe(2)
@@ -144,7 +149,7 @@ describe('useBlockTags appliedTagIds', () => {
       return emptyPage
     })
 
-    const { result } = renderHook(() => useBlockTags(null))
+    const { result } = renderHook(() => useBlockTags(null), { wrapper })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -163,7 +168,7 @@ describe('useBlockTags appliedTagIds', () => {
       return emptyPage
     })
 
-    renderHook(() => useBlockTags('BLOCK_1'))
+    renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith('Failed to load tags')
@@ -184,7 +189,7 @@ describe('useBlockTags handleAddTag', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockTags('BLOCK_1'))
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -208,7 +213,7 @@ describe('useBlockTags handleAddTag', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockTags(null))
+    const { result } = renderHook(() => useBlockTags(null), { wrapper })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -230,7 +235,7 @@ describe('useBlockTags handleAddTag', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockTags('BLOCK_1'))
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -246,12 +251,7 @@ describe('useBlockTags handleAddTag', () => {
 
   it('calls onNewAction after successful add when rootParentId is set', async () => {
     const onNewActionSpy = vi.fn()
-    useBlockStore.setState({
-      blocks: [],
-      rootParentId: 'PAGE_1',
-      focusedBlockId: null,
-      loading: false,
-    })
+    // pageStore already has rootParentId: 'PAGE_1' from createPageBlockStore
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -261,7 +261,7 @@ describe('useBlockTags handleAddTag', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockTags('BLOCK_1'))
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -288,7 +288,7 @@ describe('useBlockTags handleRemoveTag', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockTags('BLOCK_1'))
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(result.current.appliedTagIds.size).toBe(2)
@@ -313,7 +313,7 @@ describe('useBlockTags handleRemoveTag', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockTags(null))
+    const { result } = renderHook(() => useBlockTags(null), { wrapper })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -335,7 +335,7 @@ describe('useBlockTags handleRemoveTag', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockTags('BLOCK_1'))
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(result.current.appliedTagIds.has('TAG_1')).toBe(true)
@@ -352,12 +352,7 @@ describe('useBlockTags handleRemoveTag', () => {
 
   it('calls onNewAction after successful remove when rootParentId is set', async () => {
     const onNewActionSpy = vi.fn()
-    useBlockStore.setState({
-      blocks: [],
-      rootParentId: 'PAGE_1',
-      focusedBlockId: null,
-      loading: false,
-    })
+    // pageStore already has rootParentId: 'PAGE_1' from createPageBlockStore
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -367,7 +362,7 @@ describe('useBlockTags handleRemoveTag', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockTags('BLOCK_1'))
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(result.current.appliedTagIds.has('TAG_1')).toBe(true)
@@ -397,7 +392,7 @@ describe('useBlockTags handleCreateTag', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockTags('BLOCK_1'))
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -436,7 +431,7 @@ describe('useBlockTags handleCreateTag', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockTags('BLOCK_1'))
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -461,7 +456,7 @@ describe('useBlockTags handleCreateTag', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockTags('BLOCK_1'))
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -484,7 +479,7 @@ describe('useBlockTags handleCreateTag', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockTags(null))
+    const { result } = renderHook(() => useBlockTags(null), { wrapper })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -524,7 +519,7 @@ describe('useBlockTags handleCreateTag', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockTags('BLOCK_1'))
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -545,7 +540,7 @@ describe('useBlockTags handleCreateTag', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockTags('BLOCK_1'))
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -576,7 +571,7 @@ describe('useBlockTags loading state', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockTags('BLOCK_1'))
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     // loading should be true while waiting for listTagsForBlock
     expect(result.current.loading).toBe(true)
@@ -601,7 +596,7 @@ describe('useBlockTags loading state', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockTags('BLOCK_1'))
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     expect(result.current.loading).toBe(true)
 
@@ -618,7 +613,7 @@ describe('useBlockTags loading state', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBlockTags(null))
+    const { result } = renderHook(() => useBlockTags(null), { wrapper })
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)

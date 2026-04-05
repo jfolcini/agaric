@@ -3,7 +3,7 @@ import { toast } from 'sonner'
 import i18n from '../lib/i18n'
 import type { BlockRow } from '../lib/tauri'
 import { addTag, createBlock, listBlocks, listTagsForBlock, removeTag } from '../lib/tauri'
-import { useBlockStore } from '../stores/blocks'
+import { usePageBlockStoreApi } from '../stores/page-blocks'
 import { useResolveStore } from '../stores/resolve'
 import { useUndoStore } from '../stores/undo'
 
@@ -28,6 +28,7 @@ export interface UseBlockTagsReturn {
 }
 
 export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
+  const pageStore = usePageBlockStoreApi()
   const [allTags, setAllTags] = useState<TagEntry[]>([])
   const [appliedTagIds, setAppliedTagIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
@@ -67,14 +68,14 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
       if (!blockId) return
       try {
         await addTag(blockId, tagId)
-        const { rootParentId } = useBlockStore.getState()
+        const { rootParentId } = pageStore.getState()
         if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
         setAppliedTagIds((prev) => new Set([...prev, tagId]))
       } catch {
         toast.error(i18n.t('tags.addFailed'))
       }
     },
-    [blockId],
+    [blockId, pageStore],
   )
 
   const handleRemoveTag = useCallback(
@@ -82,7 +83,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
       if (!blockId) return
       try {
         await removeTag(blockId, tagId)
-        const { rootParentId } = useBlockStore.getState()
+        const { rootParentId } = pageStore.getState()
         if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
         setAppliedTagIds((prev) => {
           const next = new Set(prev)
@@ -93,7 +94,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
         toast.error(i18n.t('tags.deleteFailed'))
       }
     },
-    [blockId],
+    [blockId, pageStore],
   )
 
   const handleCreateTag = useCallback(
@@ -107,7 +108,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
         useResolveStore.getState().set(resp.id, trimmed, false)
         if (blockId) {
           await addTag(blockId, resp.id)
-          const { rootParentId } = useBlockStore.getState()
+          const { rootParentId } = pageStore.getState()
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
           setAppliedTagIds((prev) => new Set([...prev, resp.id]))
         }
@@ -115,7 +116,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
         toast.error(i18n.t('tags.createFailed'))
       }
     },
-    [blockId],
+    [blockId, pageStore],
   )
 
   return { allTags, appliedTagIds, loading, handleAddTag, handleRemoveTag, handleCreateTag }

@@ -15,8 +15,14 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import type { StoreApi } from 'zustand'
 import type { PickerItem } from '../../editor/SuggestionList'
 import { useBlockStore } from '../../stores/blocks'
+import {
+  createPageBlockStore,
+  PageBlockContext,
+  type PageBlockState,
+} from '../../stores/page-blocks'
 
 // Capture the options passed to useRovingEditor so we can call searchTags/searchPages directly.
 let capturedSearchTags: ((query: string) => PickerItem[] | Promise<PickerItem[]>) | undefined
@@ -226,6 +232,16 @@ import { BlockTree, guessMimeType, processCheckboxSyntax } from '../BlockTree'
 
 const mockedInvoke = vi.mocked(invoke)
 
+let pageStore: StoreApi<PageBlockState>
+
+function renderBlockTree(props: Record<string, unknown> = {}) {
+  return render(
+    <PageBlockContext.Provider value={pageStore}>
+      <BlockTree {...props} />
+    </PageBlockContext.Provider>,
+  )
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   try {
@@ -242,12 +258,12 @@ beforeEach(() => {
   capturedBlockKeyboardOpts = undefined
   mockCalendarOnSelect = undefined
   useMockEditor = false
+  pageStore = createPageBlockStore('PAGE_1')
+  pageStore.setState({ blocks: [], loading: false })
   useBlockStore.setState({
-    blocks: [],
-    rootParentId: null,
     focusedBlockId: null,
-    loading: false,
     selectedBlockIds: [],
+    pendingFocusId: null,
   })
 })
 
@@ -255,7 +271,7 @@ describe('BlockTree picker wiring', () => {
   it('passes searchTags to useRovingEditor', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchTags).toBeDefined()
@@ -266,7 +282,7 @@ describe('BlockTree picker wiring', () => {
   it('passes searchPages to useRovingEditor', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchPages).toBeDefined()
@@ -277,7 +293,7 @@ describe('BlockTree picker wiring', () => {
   it('searchTags calls list_tags_by_prefix with the query as prefix', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchTags).toBeDefined()
@@ -305,7 +321,7 @@ describe('BlockTree picker wiring', () => {
   it('searchTags returns "Create new tag" option when no tags match', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchTags).toBeDefined()
@@ -321,7 +337,7 @@ describe('BlockTree picker wiring', () => {
   it('searchPages uses FTS5 for longer queries and filters to pages', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchPages).toBeDefined()
@@ -381,7 +397,7 @@ describe('BlockTree picker wiring', () => {
   it('searchPages filters case-insensitively', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchPages).toBeDefined()
@@ -435,7 +451,7 @@ describe('BlockTree picker wiring', () => {
   it('searchPages shows Untitled for pages with null content', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchPages).toBeDefined()
@@ -472,7 +488,7 @@ describe('BlockTree picker wiring', () => {
   it('searchPages returns create-new item when no pages match query', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchPages).toBeDefined()
@@ -489,7 +505,7 @@ describe('BlockTree picker wiring', () => {
   it('searchPages appends create-new item when query partially matches but no exact match', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchPages).toBeDefined()
@@ -528,7 +544,7 @@ describe('BlockTree picker wiring', () => {
   it('searchPages does NOT append create-new when exact match exists (case-insensitive)', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchPages).toBeDefined()
@@ -564,7 +580,7 @@ describe('BlockTree picker wiring', () => {
   it('searchPages does NOT append create-new for empty query', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchPages).toBeDefined()
@@ -600,7 +616,7 @@ describe('BlockTree picker wiring', () => {
   it('searchPages does NOT append create-new for whitespace-only query', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchPages).toBeDefined()
@@ -616,7 +632,7 @@ describe('BlockTree picker wiring', () => {
   it('passes onCreatePage to useRovingEditor', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnCreatePage).toBeDefined()
@@ -627,7 +643,7 @@ describe('BlockTree picker wiring', () => {
   it('onCreatePage calls create_block with blockType page and returns the ID', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnCreatePage).toBeDefined()
@@ -653,9 +669,9 @@ describe('BlockTree picker wiring', () => {
   })
 
   it('renders loading state with skeleton placeholders', () => {
-    useBlockStore.setState({ loading: true })
+    pageStore.setState({ loading: true })
 
-    const { container } = render(<BlockTree />)
+    const { container } = renderBlockTree()
 
     const loadingEl = container.querySelector('.block-tree-loading')
     expect(loadingEl).toBeInTheDocument()
@@ -670,21 +686,19 @@ describe('BlockTree picker wiring', () => {
   it('renders empty state when no blocks', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree({ autoCreateFirstBlock: false })
 
     await waitFor(() => {
-      expect(useBlockStore.getState().loading).toBe(false)
+      expect(pageStore.getState().loading).toBe(false)
     })
 
-    expect(
-      screen.getByText('No blocks yet. Click + Add block below to start writing.'),
-    ).toBeInTheDocument()
+    expect(screen.getByText('Creating first block\u2026')).toBeInTheDocument()
   })
 
   it('has no a11y violations in empty state', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    const { container } = render(<BlockTree />)
+    const { container } = renderBlockTree()
 
     await waitFor(async () => {
       const results = await axe(container)
@@ -707,7 +721,7 @@ describe('BlockTree rendering edge cases', () => {
         id: 'ROOT',
         block_type: 'content',
         content: 'Root',
-        parent_id: null,
+        parent_id: 'PAGE_1',
         position: 0,
         deleted_at: null,
         is_conflict: false,
@@ -771,9 +785,7 @@ describe('BlockTree rendering edge cases', () => {
       has_more: false,
     })
 
-    useBlockStore.setState({ blocks: deepBlocks, loading: false, focusedBlockId: null })
-
-    render(<BlockTree />)
+    renderBlockTree({ autoCreateFirstBlock: false })
 
     // All 4 blocks should be rendered (BlockTree renders flat list)
     await waitFor(() => {
@@ -790,14 +802,12 @@ describe('BlockTree rendering edge cases', () => {
   it('renders empty state when children array is empty', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    useBlockStore.setState({ blocks: [], loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: [], loading: false })
 
-    render(<BlockTree />)
+    renderBlockTree({ autoCreateFirstBlock: false })
 
     await waitFor(() => {
-      expect(
-        screen.getByText('No blocks yet. Click + Add block below to start writing.'),
-      ).toBeInTheDocument()
+      expect(screen.getByText('Creating first block\u2026')).toBeInTheDocument()
     })
 
     // No sortable blocks should be rendered
@@ -813,7 +823,7 @@ describe('BlockTree rendering edge cases', () => {
         id: 'ONLY',
         block_type: 'content',
         content: 'Only block',
-        parent_id: null,
+        parent_id: 'PAGE_1',
         position: 0,
         deleted_at: null,
         is_conflict: false,
@@ -832,9 +842,7 @@ describe('BlockTree rendering edge cases', () => {
       has_more: false,
     })
 
-    useBlockStore.setState({ blocks: singleBlock, loading: false, focusedBlockId: null })
-
-    render(<BlockTree />)
+    renderBlockTree({ autoCreateFirstBlock: false })
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-ONLY')).toBeInTheDocument()
@@ -864,9 +872,9 @@ describe('BlockTree collapse/expand', () => {
       makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child' }),
     ]
 
-    useBlockStore.setState({ blocks: parentChild, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: parentChild, loading: false })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-has-children', 'true')
@@ -877,9 +885,9 @@ describe('BlockTree collapse/expand', () => {
   it('passes hasChildren=false for leaf blocks', async () => {
     const leaf = [makeBlock({ id: 'LEAF' })]
 
-    useBlockStore.setState({ blocks: leaf, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: leaf, loading: false })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-LEAF')).toHaveAttribute(
@@ -896,9 +904,9 @@ describe('BlockTree collapse/expand', () => {
       makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child' }),
     ]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     // Both visible initially
     await waitFor(() => {
@@ -923,9 +931,9 @@ describe('BlockTree collapse/expand', () => {
       makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child' }),
     ]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-B')).toBeInTheDocument()
@@ -950,9 +958,9 @@ describe('BlockTree collapse/expand', () => {
       makeBlock({ id: 'D', parent_id: 'C', depth: 3 }),
     ]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-D')).toBeInTheDocument()
@@ -976,9 +984,9 @@ describe('BlockTree collapse/expand', () => {
       makeBlock({ id: 'B1', parent_id: 'B', depth: 1 }),
     ]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A1')).toBeInTheDocument()
@@ -995,9 +1003,9 @@ describe('BlockTree collapse/expand', () => {
   it('does not show toggle button for leaf blocks (no children)', async () => {
     const tree = [makeBlock({ id: 'LEAF' })]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-LEAF')).toBeInTheDocument()
@@ -1020,10 +1028,10 @@ describe('BlockTree task cycling', () => {
   it('passes todoState to SortableBlock from block store field', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Task block', todo_state: 'TODO' })]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'TODO')
@@ -1033,10 +1041,10 @@ describe('BlockTree task cycling', () => {
   it('passes empty todoState when block has no todo_state', async () => {
     const tree = [makeBlock({ id: 'A', content: 'No task' })]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', '')
@@ -1047,10 +1055,10 @@ describe('BlockTree task cycling', () => {
     const user = userEvent.setup()
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
     mockedInvoke.mockResolvedValue(null)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('todo-toggle-A')).toBeInTheDocument()
@@ -1076,10 +1084,10 @@ describe('BlockTree task cycling', () => {
     const user = userEvent.setup()
     const tree = [makeBlock({ id: 'A', content: 'Block', todo_state: 'TODO' })]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
     mockedInvoke.mockResolvedValue(null)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'TODO')
@@ -1103,10 +1111,10 @@ describe('BlockTree task cycling', () => {
     const user = userEvent.setup()
     const tree = [makeBlock({ id: 'A', content: 'Block', todo_state: 'DONE' })]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
     mockedInvoke.mockResolvedValue(null)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'DONE')
@@ -1132,10 +1140,10 @@ describe('BlockTree task cycling', () => {
       makeBlock({ id: 'B', content: 'Second' }),
     ]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('todo-toggle-A')).toBeInTheDocument()
@@ -1146,10 +1154,11 @@ describe('BlockTree task cycling', () => {
   it('Ctrl+Enter cycles task state on focused block', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Focused block' })]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
     mockedInvoke.mockResolvedValue(null)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
@@ -1174,10 +1183,10 @@ describe('BlockTree task cycling', () => {
   it('Ctrl+Enter does nothing when no block is focused', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
@@ -1266,7 +1275,7 @@ describe('BlockTree slash command wiring', () => {
   it('passes searchSlashCommands to useRovingEditor', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -1277,7 +1286,7 @@ describe('BlockTree slash command wiring', () => {
   it('passes onSlashCommand to useRovingEditor', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -1288,7 +1297,7 @@ describe('BlockTree slash command wiring', () => {
   it('searchSlashCommands returns all commands for empty query', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -1322,7 +1331,7 @@ describe('BlockTree slash command wiring', () => {
   it('searchSlashCommands filters commands by query', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -1337,7 +1346,7 @@ describe('BlockTree slash command wiring', () => {
   it('searchSlashCommands returns empty array when nothing matches', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -1351,7 +1360,7 @@ describe('BlockTree slash command wiring', () => {
   it('searchSlashCommands is case-insensitive', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -1366,7 +1375,7 @@ describe('BlockTree slash command wiring', () => {
   it('searchSlashCommands returns /link command when query matches "link"', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -1380,7 +1389,7 @@ describe('BlockTree slash command wiring', () => {
   it('searchSlashCommands returns /tag command when query matches "tag"', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -1394,7 +1403,7 @@ describe('BlockTree slash command wiring', () => {
   it('searchSlashCommands returns /code command when query matches "code"', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -1408,7 +1417,7 @@ describe('BlockTree slash command wiring', () => {
   it('searchSlashCommands returns /effort command when query matches "effort"', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -1422,7 +1431,7 @@ describe('BlockTree slash command wiring', () => {
   it('searchSlashCommands returns /assignee command when query matches "assignee"', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -1436,7 +1445,7 @@ describe('BlockTree slash command wiring', () => {
   it('searchSlashCommands returns /location command when query matches "location"', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -1450,7 +1459,7 @@ describe('BlockTree slash command wiring', () => {
   it('searchSlashCommands returns /repeat command when query matches "repeat"', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -1464,7 +1473,7 @@ describe('BlockTree slash command wiring', () => {
   it('searchSlashCommands returns /query command when query matches "query"', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -1478,7 +1487,7 @@ describe('BlockTree slash command wiring', () => {
   it('searchSlashCommands returns parameterized table item for "table 4x6" query', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -1497,7 +1506,7 @@ describe('BlockTree slash command wiring', () => {
   it('searchSlashCommands returns default table for "table" query without dimensions', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -1513,7 +1522,7 @@ describe('BlockTree slash command wiring', () => {
   it('searchSlashCommands handles "table 2x2" with small dimensions', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -1528,7 +1537,7 @@ describe('BlockTree slash command wiring', () => {
     mockedInvoke.mockResolvedValue(emptyPage)
     useMockEditor = true
 
-    render(<BlockTree />)
+    renderBlockTree({ autoCreateFirstBlock: false })
 
     useBlockStore.setState({ focusedBlockId: 'BLOCK_01' })
 
@@ -1547,7 +1556,7 @@ describe('BlockTree slash command wiring', () => {
     mockedInvoke.mockResolvedValue(emptyPage)
     useMockEditor = true
 
-    render(<BlockTree />)
+    renderBlockTree({ autoCreateFirstBlock: false })
 
     useBlockStore.setState({ focusedBlockId: 'BLOCK_01' })
 
@@ -1566,7 +1575,7 @@ describe('BlockTree slash command wiring', () => {
     mockedInvoke.mockResolvedValue(emptyPage)
     useMockEditor = true
 
-    render(<BlockTree />)
+    renderBlockTree({ autoCreateFirstBlock: false })
 
     useBlockStore.setState({ focusedBlockId: 'BLOCK_01' })
 
@@ -1588,7 +1597,7 @@ describe('BlockTree slash command wiring', () => {
     mockedInvoke.mockResolvedValue(emptyPage)
     useMockEditor = true
 
-    render(<BlockTree />)
+    renderBlockTree({ autoCreateFirstBlock: false })
 
     useBlockStore.setState({ focusedBlockId: 'BLOCK_01' })
 
@@ -1655,7 +1664,7 @@ describe('BlockTree slash command wiring', () => {
     mockedInvoke.mockResolvedValue(emptyPage)
     useMockEditor = true
 
-    render(<BlockTree />)
+    renderBlockTree({ autoCreateFirstBlock: false })
 
     useBlockStore.setState({ focusedBlockId: 'BLOCK_01' })
 
@@ -1723,7 +1732,7 @@ describe('BlockTree cross-page navigation', () => {
     mockedInvoke.mockResolvedValue(emptyPage)
     const onNav = vi.fn()
 
-    render(<BlockTree onNavigateToPage={onNav} />)
+    renderBlockTree({ onNavigateToPage: onNav })
 
     await waitFor(() => {
       expect(capturedSearchTags).toBeDefined()
@@ -1741,7 +1750,7 @@ describe('BlockTree resolve cache preload', () => {
   it('does NOT fetch pages or tags on mount (App.tsx preloads those)', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchTags).toBeDefined()
@@ -1767,7 +1776,7 @@ describe('BlockTree resolve cache preload', () => {
       id: 'B1',
       block_type: 'content',
       content: `See [[${CONTENT_ULID}]] here`,
-      parent_id: null,
+      parent_id: 'PAGE_1',
       position: 0,
       deleted_at: null,
       is_conflict: false,
@@ -1777,11 +1786,14 @@ describe('BlockTree resolve cache preload', () => {
       due_date: null,
       scheduled_date: null,
     }
+    // biome-ignore lint/suspicious/noExplicitAny: test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'list_blocks') {
         if (args?.blockType === 'page') return emptyPage
-        // load() call — return block with link content
-        return { items: [blockWithLink], next_cursor: null, has_more: false }
+        const a = args as Record<string, unknown> | undefined
+        if (a?.parentId === 'PAGE_1')
+          return { items: [blockWithLink], next_cursor: null, has_more: false }
+        return emptyPage
       }
       if (cmd === 'batch_resolve') {
         // biome-ignore lint/suspicious/noExplicitAny: test mock
@@ -1803,7 +1815,7 @@ describe('BlockTree resolve cache preload', () => {
       return emptyPage
     })
 
-    render(<BlockTree />)
+    renderBlockTree({ autoCreateFirstBlock: false })
 
     await waitFor(
       () => {
@@ -1817,13 +1829,11 @@ describe('BlockTree resolve cache preload', () => {
   it('preload handles API errors gracefully', async () => {
     mockedInvoke.mockRejectedValue(new Error('Network failure'))
 
-    render(<BlockTree />)
+    renderBlockTree({ autoCreateFirstBlock: false })
 
     // Should not crash — component renders empty state
     await waitFor(() => {
-      expect(
-        screen.getByText('No blocks yet. Click + Add block below to start writing.'),
-      ).toBeInTheDocument()
+      expect(screen.getByText('Creating first block\u2026')).toBeInTheDocument()
     })
   })
 })
@@ -1837,6 +1847,7 @@ describe('BlockTree handleNavigate', () => {
     const PAGE_ID = '01TESTPAGE00000000000NAV01'
     const onNav = vi.fn()
 
+    // biome-ignore lint/suspicious/noExplicitAny: test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block' && args?.blockId === PAGE_ID) {
         return {
@@ -1862,7 +1873,7 @@ describe('BlockTree handleNavigate', () => {
       return emptyPage
     })
 
-    render(<BlockTree onNavigateToPage={onNav} />)
+    renderBlockTree({ onNavigateToPage: onNav })
 
     await waitFor(() => {
       expect(capturedOnNavigate).toBeDefined()
@@ -1882,6 +1893,7 @@ describe('BlockTree handleNavigate', () => {
     const PARENT_ID = '01TESTPAGE00000000000NAV03'
     const onNav = vi.fn()
 
+    // biome-ignore lint/suspicious/noExplicitAny: test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block' && args?.blockId === CONTENT_ID) {
         return {
@@ -1925,7 +1937,7 @@ describe('BlockTree handleNavigate', () => {
     })
 
     // parentId differs from PARENT_ID so handleNavigate goes cross-page
-    render(<BlockTree parentId="DIFFERENT_PARENT" onNavigateToPage={onNav} />)
+    renderBlockTree({ parentId: 'DIFFERENT_PARENT', onNavigateToPage: onNav })
 
     await waitFor(() => {
       expect(capturedOnNavigate).toBeDefined()
@@ -1945,6 +1957,7 @@ describe('BlockTree handleNavigate', () => {
   it('handles missing/deleted block without crashing', async () => {
     const onNav = vi.fn()
 
+    // biome-ignore lint/suspicious/noExplicitAny: test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block') throw new Error('Block not found')
       if (cmd === 'get_batch_properties') {
@@ -1955,7 +1968,7 @@ describe('BlockTree handleNavigate', () => {
       return emptyPage
     })
 
-    render(<BlockTree onNavigateToPage={onNav} />)
+    renderBlockTree({ onNavigateToPage: onNav })
 
     await waitFor(() => {
       expect(capturedOnNavigate).toBeDefined()
@@ -1979,7 +1992,7 @@ describe('BlockTree searchPages caching', () => {
   it('searchPages short-query fallback caches results for subsequent calls', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchPages).toBeDefined()
@@ -2040,7 +2053,7 @@ describe('BlockTree searchPages caching', () => {
   it('onCreatePage adds new page to search results', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnCreatePage).toBeDefined()
@@ -2079,7 +2092,7 @@ describe('BlockTree priority slash commands', () => {
   it('searchSlashCommands returns priority commands when query matches "priority"', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -2097,7 +2110,7 @@ describe('BlockTree priority slash commands', () => {
   it('priority commands have "PRIORITY 1/2/3" labels', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -2114,7 +2127,7 @@ describe('BlockTree priority slash commands', () => {
   it('priority commands are not shown for empty query', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -2130,11 +2143,12 @@ describe('BlockTree priority slash commands', () => {
 
   it('onSlashCommand sets priority 1 for priority-high', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -2156,11 +2170,12 @@ describe('BlockTree priority slash commands', () => {
 
   it('onSlashCommand sets priority 2 for priority-medium', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -2182,11 +2197,12 @@ describe('BlockTree priority slash commands', () => {
 
   it('onSlashCommand sets priority 3 for priority-low', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -2209,10 +2225,10 @@ describe('BlockTree priority slash commands', () => {
   it('passes priority prop to SortableBlock from block store field', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Priority block', priority: '2' })]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-priority', '2')
@@ -2225,11 +2241,11 @@ describe('BlockTree priority slash commands', () => {
       makeBlock({ id: 'B', content: 'Second' }),
     ]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('priority-toggle-A')).toBeInTheDocument()
@@ -2241,10 +2257,10 @@ describe('BlockTree priority slash commands', () => {
     const user = userEvent.setup()
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
     mockedInvoke.mockResolvedValue(null)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('priority-toggle-A')).toBeInTheDocument()
@@ -2275,7 +2291,7 @@ describe('BlockTree repeat slash commands', () => {
   it('searchSlashCommands returns repeat preset commands when query matches "repeat"', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -2294,7 +2310,7 @@ describe('BlockTree repeat slash commands', () => {
   it('repeat preset commands have correct labels', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -2312,7 +2328,7 @@ describe('BlockTree repeat slash commands', () => {
   it('repeat preset commands are not shown for empty query', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -2329,11 +2345,12 @@ describe('BlockTree repeat slash commands', () => {
 
   it('onSlashCommand sets repeat property to weekly for repeat-weekly', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -2359,11 +2376,12 @@ describe('BlockTree repeat slash commands', () => {
 
   it('onSlashCommand sets repeat property to daily for repeat-daily', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -2389,11 +2407,12 @@ describe('BlockTree repeat slash commands', () => {
 
   it('onSlashCommand sets repeat property to monthly for repeat-monthly', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -2419,11 +2438,12 @@ describe('BlockTree repeat slash commands', () => {
 
   it('onSlashCommand sets repeat property to yearly for repeat-yearly', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -2456,7 +2476,7 @@ describe('BlockTree repeat mode variants', () => {
   it('searchSlashCommands returns .+ and ++ mode variants for repeat query', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -2476,11 +2496,12 @@ describe('BlockTree repeat mode variants', () => {
 
   it('onSlashCommand sets repeat property with .+ prefix for from-completion mode', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -2509,11 +2530,12 @@ describe('BlockTree repeat mode variants', () => {
 
   it('onSlashCommand sets repeat property with ++ prefix for catch-up mode', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -2542,11 +2564,12 @@ describe('BlockTree repeat mode variants', () => {
 
   it('repeat-remove deletes the repeat property', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -2574,7 +2597,7 @@ describe('BlockTree repeat end-condition commands', () => {
   it('searchSlashCommands returns end-condition commands for repeat query', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -2593,12 +2616,13 @@ describe('BlockTree repeat end-condition commands', () => {
 
   it('repeat-until opens date picker with repeat-until mode', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
     useMockEditor = true
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -2618,12 +2642,13 @@ describe('BlockTree repeat end-condition commands', () => {
 
   it('handleDatePick sets repeat-until property when date is selected', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
     useMockEditor = true
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -2662,11 +2687,12 @@ describe('BlockTree repeat end-condition commands', () => {
 
   it('repeat-limit sets repeat-count property', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -2695,11 +2721,12 @@ describe('BlockTree repeat end-condition commands', () => {
 
   it('repeat-limit-remove deletes end condition properties', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -2735,7 +2762,7 @@ describe('BlockTree effort slash commands', () => {
   it('searchSlashCommands returns effort presets when query matches "effort"', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -2755,11 +2782,12 @@ describe('BlockTree effort slash commands', () => {
 
   it('effort-1h preset sets effort property to "1h"', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -2792,7 +2820,7 @@ describe('BlockTree due slash command', () => {
   it('searchSlashCommands returns due command when query matches "due"', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -2808,7 +2836,7 @@ describe('BlockTree due slash command', () => {
   it('due command has correct label', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -2824,7 +2852,7 @@ describe('BlockTree due slash command', () => {
   it('due command is not returned for non-matching query', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -2844,7 +2872,7 @@ describe('BlockTree schedule slash command', () => {
   it('searchSlashCommands returns schedule command when query matches "schedule"', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -2860,7 +2888,7 @@ describe('BlockTree schedule slash command', () => {
   it('schedule command has correct label', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -2876,7 +2904,7 @@ describe('BlockTree schedule slash command', () => {
   it('schedule command is not returned for non-matching query', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -2888,18 +2916,22 @@ describe('BlockTree schedule slash command', () => {
   })
 
   it('sets scheduled date on block when /schedule command is executed', async () => {
-    const tree = [makeBlock({ id: 'A', content: 'Some block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    const tree = [makeBlock({ id: 'A', content: 'Some block', parent_id: 'PAGE_1' })]
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     // Return block A for list_blocks so load() doesn't wipe the store
-    mockedInvoke.mockImplementation(async (cmd: string) => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'list_blocks') {
-        return { items: [tree[0]], next_cursor: null, has_more: false }
+        const a = args as Record<string, unknown> | undefined
+        if (a?.parentId === 'PAGE_1')
+          return { items: [tree[0]], next_cursor: null, has_more: false }
+        return emptyPage
       }
       return emptyPage
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -2946,7 +2978,7 @@ describe('BlockTree schedule slash command', () => {
 
     // Verify block store was updated optimistically
     await waitFor(() => {
-      const block = useBlockStore.getState().blocks.find((b) => b.id === 'A')
+      const block = pageStore.getState().blocks.find((b) => b.id === 'A')
       expect((block as unknown as Record<string, unknown>)?.scheduled_date).toBe('2025-03-15')
     })
 
@@ -2970,11 +3002,12 @@ describe('BlockTree heading slash command execution', () => {
 
   it('when /h1 is selected, block content gets "# " prefix', async () => {
     const tree = [makeBlock({ id: 'A', content: 'My heading text' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -2996,18 +3029,19 @@ describe('BlockTree heading slash command execution', () => {
 
     // Store should reflect the new content
     await waitFor(() => {
-      const block = useBlockStore.getState().blocks.find((b) => b.id === 'A')
+      const block = pageStore.getState().blocks.find((b) => b.id === 'A')
       expect(block?.content).toBe('# My heading text')
     })
   })
 
   it('when /h3 is selected, block content gets "### " prefix', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Small heading' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -3027,18 +3061,19 @@ describe('BlockTree heading slash command execution', () => {
     })
 
     await waitFor(() => {
-      const block = useBlockStore.getState().blocks.find((b) => b.id === 'A')
+      const block = pageStore.getState().blocks.find((b) => b.id === 'A')
       expect(block?.content).toBe('### Small heading')
     })
   })
 
   it('when /h2 is selected, block content gets "## " prefix', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Medium' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -3061,7 +3096,7 @@ describe('BlockTree heading slash command execution', () => {
   it('heading commands appear in searchSlashCommands when query matches', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -3097,11 +3132,12 @@ describe('BlockTree aria-live announcements', () => {
       makeBlock({ id: 'B', content: 'Second block' }),
     ]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'B' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedBlockKeyboardOpts?.onFocusPrev).toBeDefined()
@@ -3120,11 +3156,12 @@ describe('BlockTree aria-live announcements', () => {
       makeBlock({ id: 'B', content: 'Second block' }),
     ]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedBlockKeyboardOpts?.onFocusNext).toBeDefined()
@@ -3143,11 +3180,12 @@ describe('BlockTree aria-live announcements', () => {
       makeBlock({ id: 'B', content: 'Has content' }),
     ]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'B' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedBlockKeyboardOpts?.onFocusPrev).toBeDefined()
@@ -3167,11 +3205,12 @@ describe('BlockTree aria-live announcements', () => {
       makeBlock({ id: 'B', content: 'Short' }),
     ]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'B' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedBlockKeyboardOpts?.onFocusPrev).toBeDefined()
@@ -3192,11 +3231,12 @@ describe('BlockTree aria-live announcements', () => {
       makeBlock({ id: 'B', content: 'Second' }),
     ]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'B' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedBlockKeyboardOpts?.onDeleteBlock).toBeDefined()
@@ -3215,10 +3255,10 @@ describe('BlockTree aria-live announcements', () => {
     const user = userEvent.setup()
     const tree = [makeBlock({ id: 'A', content: 'Task block' })]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
     mockedInvoke.mockResolvedValue(null)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('todo-toggle-A')).toBeInTheDocument()
@@ -3235,10 +3275,10 @@ describe('BlockTree aria-live announcements', () => {
     const user = userEvent.setup()
     const tree = [makeBlock({ id: 'A', content: 'Task block', todo_state: 'TODO' })]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
     mockedInvoke.mockResolvedValue(null)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'TODO')
@@ -3255,10 +3295,10 @@ describe('BlockTree aria-live announcements', () => {
     const user = userEvent.setup()
     const tree = [makeBlock({ id: 'A', content: 'Task block', todo_state: 'DONE' })]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
     mockedInvoke.mockResolvedValue(null)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'DONE')
@@ -3281,6 +3321,7 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
     const BLOCK_ID = '01TESTLOCAL0000000000NAV01'
     const onNav = vi.fn()
 
+    // biome-ignore lint/suspicious/noExplicitAny: test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block' && args?.blockId === BLOCK_ID) {
         return {
@@ -3306,7 +3347,7 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
       return emptyPage
     })
 
-    render(<BlockTree onNavigateToPage={onNav} />)
+    renderBlockTree({ onNavigateToPage: onNav })
 
     await waitFor(() => {
       expect(capturedOnNavigate).toBeDefined()
@@ -3329,6 +3370,7 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
     const PARENT_ID = '01TESTPAGE00000000000NAV05'
     const onNav = vi.fn()
 
+    // biome-ignore lint/suspicious/noExplicitAny: test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block' && args?.blockId === CONTENT_ID) {
         return {
@@ -3358,7 +3400,7 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
       return emptyPage
     })
 
-    render(<BlockTree parentId="DIFFERENT_ROOT" onNavigateToPage={onNav} />)
+    renderBlockTree({ parentId: 'DIFFERENT_ROOT', onNavigateToPage: onNav })
 
     await waitFor(() => {
       expect(capturedOnNavigate).toBeDefined()
@@ -3390,11 +3432,12 @@ describe('BlockTree handleDeleteBlock', () => {
       makeBlock({ id: 'A', content: 'First' }),
       makeBlock({ id: 'B', content: 'Second' }),
     ]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'B' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedBlockKeyboardOpts?.onDeleteBlock).toBeDefined()
@@ -3412,11 +3455,12 @@ describe('BlockTree handleDeleteBlock', () => {
   it('deleting the only block in the tree is prevented (#75)', async () => {
     const { toast } = await import('sonner')
     const tree = [makeBlock({ id: 'ONLY', content: 'The only block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'ONLY' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'ONLY' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedBlockKeyboardOpts?.onDeleteBlock).toBeDefined()
@@ -3427,7 +3471,7 @@ describe('BlockTree handleDeleteBlock', () => {
     })
 
     // Block should NOT be deleted — guard prevents it
-    expect(useBlockStore.getState().blocks).toHaveLength(1)
+    expect(pageStore.getState().blocks).toHaveLength(1)
     expect(useBlockStore.getState().focusedBlockId).toBe('ONLY')
     expect(toast.error).toHaveBeenCalledWith('Cannot delete the last block on a page')
   })
@@ -3438,11 +3482,12 @@ describe('BlockTree handleDeleteBlock', () => {
       makeBlock({ id: 'B', content: 'Second' }),
       makeBlock({ id: 'C', content: 'Third' }),
     ]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'B' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedBlockKeyboardOpts?.onDeleteBlock).toBeDefined()
@@ -3463,11 +3508,12 @@ describe('BlockTree handleDeleteBlock', () => {
       makeBlock({ id: 'A', content: 'First' }),
       makeBlock({ id: 'B', content: 'Second' }),
     ]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedBlockKeyboardOpts?.onDeleteBlock).toBeDefined()
@@ -3499,11 +3545,12 @@ describe('BlockTree handleMergeWithPrev', () => {
       makeBlock({ id: 'A', content: 'Hello ' }),
       makeBlock({ id: 'B', content: 'World' }),
     ]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'B' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       const handler = capturedBlockKeyboardOpts?.onMergeWithPrev
@@ -3535,11 +3582,12 @@ describe('BlockTree handleMergeWithPrev', () => {
 
   it('merge on first block is a no-op', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Only block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       const handler = capturedBlockKeyboardOpts?.onMergeWithPrev
@@ -3572,11 +3620,12 @@ describe('BlockTree handleIndent / handleDedent', () => {
       makeBlock({ id: 'A', content: 'First' }),
       makeBlock({ id: 'B', content: 'Second' }),
     ]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'B' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       const handler = capturedBlockKeyboardOpts?.onIndent
@@ -3601,11 +3650,12 @@ describe('BlockTree handleIndent / handleDedent', () => {
       makeBlock({ id: 'A', content: 'Parent' }),
       makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child' }),
     ]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'B' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       const handler = capturedBlockKeyboardOpts?.onDedent
@@ -3627,11 +3677,12 @@ describe('BlockTree handleIndent / handleDedent', () => {
 
   it('indent on the first block is a no-op', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Only block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       const handler = capturedBlockKeyboardOpts?.onIndent
@@ -3649,11 +3700,12 @@ describe('BlockTree handleIndent / handleDedent', () => {
 
   it('dedent on a root-level block is a no-op', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Root block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       const handler = capturedBlockKeyboardOpts?.onDedent
@@ -3682,11 +3734,12 @@ describe('BlockTree priority keyboard shortcuts', () => {
 
   it('set-priority-1 event sets priority 1 on focused block', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue(null)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
@@ -3711,11 +3764,12 @@ describe('BlockTree priority keyboard shortcuts', () => {
 
   it('set-priority-2 event sets priority 2 on focused block', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue(null)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
@@ -3739,11 +3793,12 @@ describe('BlockTree priority keyboard shortcuts', () => {
 
   it('set-priority-3 event sets priority 3 on focused block', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue(null)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
@@ -3767,11 +3822,11 @@ describe('BlockTree priority keyboard shortcuts', () => {
 
   it('priority event does nothing when no block is focused', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
@@ -3797,13 +3852,21 @@ describe('BlockTree handleDatePick date format', () => {
   })
 
   it('creates date page in YYYY-MM-DD format (not DD/MM/YYYY)', async () => {
-    const tree = [makeBlock({ id: 'A', content: 'Some block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    const tree = [makeBlock({ id: 'A', content: 'Some block', parent_id: 'PAGE_1' })]
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     // Default response for load/preload/batch-resolve effects
-    mockedInvoke.mockResolvedValue(emptyPage)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_blocks') {
+        const a = args as Record<string, unknown> | undefined
+        if (a?.parentId === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
+        return emptyPage
+      }
+      return emptyPage
+    })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -3860,12 +3923,20 @@ describe('BlockTree handleDatePick date format', () => {
   })
 
   it('finds existing date page by YYYY-MM-DD format', async () => {
-    const tree = [makeBlock({ id: 'A', content: 'Some block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    const tree = [makeBlock({ id: 'A', content: 'Some block', parent_id: 'PAGE_1' })]
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockResolvedValue(emptyPage)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_blocks') {
+        const a = args as Record<string, unknown> | undefined
+        if (a?.parentId === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
+        return emptyPage
+      }
+      return emptyPage
+    })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -3914,18 +3985,22 @@ describe('BlockTree handleDatePick date format', () => {
   })
 
   it('sets due date on block when /due command is executed', async () => {
-    const tree = [makeBlock({ id: 'A', content: 'Some block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    const tree = [makeBlock({ id: 'A', content: 'Some block', parent_id: 'PAGE_1' })]
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     // Return block A for list_blocks so load() doesn't wipe the store
-    mockedInvoke.mockImplementation(async (cmd: string) => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'list_blocks') {
-        return { items: [tree[0]], next_cursor: null, has_more: false }
+        const a = args as Record<string, unknown> | undefined
+        if (a?.parentId === 'PAGE_1')
+          return { items: [tree[0]], next_cursor: null, has_more: false }
+        return emptyPage
       }
       return emptyPage
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -3971,7 +4046,7 @@ describe('BlockTree handleDatePick date format', () => {
 
     // Verify block store was updated optimistically
     await waitFor(() => {
-      const block = useBlockStore.getState().blocks.find((b) => b.id === 'A')
+      const block = pageStore.getState().blocks.find((b) => b.id === 'A')
       expect(block?.due_date).toBe('2025-03-15')
     })
 
@@ -3991,11 +4066,12 @@ describe('BlockTree link/tag/code slash commands', () => {
   it('onSlashCommand for /link inserts [[ via editor chain', async () => {
     useMockEditor = true
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -4011,11 +4087,12 @@ describe('BlockTree link/tag/code slash commands', () => {
   it('onSlashCommand for /tag inserts @ via editor chain', async () => {
     useMockEditor = true
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -4031,11 +4108,12 @@ describe('BlockTree link/tag/code slash commands', () => {
   it('onSlashCommand for /code calls toggleCodeBlock via editor chain', async () => {
     useMockEditor = true
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -4051,11 +4129,12 @@ describe('BlockTree link/tag/code slash commands', () => {
   it('onSlashCommand for /query inserts query template via editor chain', async () => {
     useMockEditor = true
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -4083,7 +4162,7 @@ describe('BlockTree /attach slash command', () => {
   it('/attach appears in the slash command list', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -4096,7 +4175,8 @@ describe('BlockTree /attach slash command', () => {
 
   it('/attach creates a hidden file input and clicks it', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
@@ -4113,7 +4193,7 @@ describe('BlockTree /attach slash command', () => {
       },
     )
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -4130,7 +4210,8 @@ describe('BlockTree /attach slash command', () => {
 
   it('/attach calls addAttachment on file selection with path', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue({
       id: 'att-1',
@@ -4156,7 +4237,7 @@ describe('BlockTree /attach slash command', () => {
       },
     )
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -4192,7 +4273,8 @@ describe('BlockTree /attach slash command', () => {
 
   it('/attach shows error toast when file has no path', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
@@ -4209,7 +4291,7 @@ describe('BlockTree /attach slash command', () => {
       },
     )
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -4237,7 +4319,8 @@ describe('BlockTree /attach slash command', () => {
 
   it('/attach uses guessMimeType when file.type is empty', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue({
       id: 'att-2',
@@ -4262,7 +4345,7 @@ describe('BlockTree /attach slash command', () => {
       },
     )
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -4347,12 +4430,20 @@ describe('DatePickerOverlay text input', () => {
   })
 
   it('date picker shows text input field', async () => {
-    const tree = [makeBlock({ id: 'A', content: 'Some block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    const tree = [makeBlock({ id: 'A', content: 'Some block', parent_id: 'PAGE_1' })]
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockResolvedValue(emptyPage)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_blocks') {
+        const a = args as Record<string, unknown> | undefined
+        if (a?.parentId === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
+        return emptyPage
+      }
+      return emptyPage
+    })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -4375,12 +4466,20 @@ describe('DatePickerOverlay text input', () => {
 
   it("typing 'tomorrow' shows parsed preview", async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock({ id: 'A', content: 'Some block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    const tree = [makeBlock({ id: 'A', content: 'Some block', parent_id: 'PAGE_1' })]
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockResolvedValue(emptyPage)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_blocks') {
+        const a = args as Record<string, unknown> | undefined
+        if (a?.parentId === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
+        return emptyPage
+      }
+      return emptyPage
+    })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -4406,12 +4505,20 @@ describe('DatePickerOverlay text input', () => {
 
   it('typing an invalid date shows error message', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock({ id: 'A', content: 'Some block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    const tree = [makeBlock({ id: 'A', content: 'Some block', parent_id: 'PAGE_1' })]
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockResolvedValue(emptyPage)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_blocks') {
+        const a = args as Record<string, unknown> | undefined
+        if (a?.parentId === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
+        return emptyPage
+      }
+      return emptyPage
+    })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -4434,20 +4541,24 @@ describe('DatePickerOverlay text input', () => {
 
   it('pressing Enter with valid date applies it via the date handler', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock({ id: 'A', content: 'Some block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    const tree = [makeBlock({ id: 'A', content: 'Some block', parent_id: 'PAGE_1' })]
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     // Use mockImplementation to handle set_due_date specifically
-    mockedInvoke.mockImplementation(async (cmd: string) => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'list_blocks') {
-        return { items: [tree[0]], next_cursor: null, has_more: false }
+        const a = args as Record<string, unknown> | undefined
+        if (a?.parentId === 'PAGE_1')
+          return { items: [tree[0]], next_cursor: null, has_more: false }
+        return emptyPage
       }
       if (cmd === 'set_due_date') {
         return {
           id: 'A',
           block_type: 'content',
           content: 'Some block',
-          parent_id: null,
+          parent_id: 'PAGE_1',
           position: 0,
           deleted_at: null,
           is_conflict: false,
@@ -4461,7 +4572,7 @@ describe('DatePickerOverlay text input', () => {
       return emptyPage
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -4491,7 +4602,7 @@ describe('DatePickerOverlay text input', () => {
 
     // Verify block store was updated
     await waitFor(() => {
-      const block = useBlockStore.getState().blocks.find((b) => b.id === 'A')
+      const block = pageStore.getState().blocks.find((b) => b.id === 'A')
       expect(block?.due_date).toBe('2025-04-15')
     })
   })
@@ -4509,10 +4620,12 @@ describe('BlockTree Enter creates new sibling block', () => {
 
   it('Enter creates a new sibling block below and focuses it', async () => {
     const tree = [makeBlock({ id: 'A', content: 'First block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     // Mock create_block to return a new block
     // Default return [] causes load() to fail silently, preserving pre-set store
+    // biome-ignore lint/suspicious/noExplicitAny: test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'create_block') {
         return {
@@ -4533,7 +4646,7 @@ describe('BlockTree Enter creates new sibling block', () => {
       return []
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedBlockKeyboardOpts?.onEnterSave).toBeDefined()
@@ -4559,14 +4672,16 @@ describe('BlockTree Enter creates new sibling block', () => {
     })
 
     // Verify the new block exists in the store
-    const newBlock = useBlockStore.getState().blocks.find((b) => b.id === 'NEW_BLOCK_01')
+    const newBlock = pageStore.getState().blocks.find((b) => b.id === 'NEW_BLOCK_01')
     expect(newBlock).toBeDefined()
   })
 
   it('empty just-created block is deleted when focus changes', async () => {
     const tree = [makeBlock({ id: 'A', content: 'First block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
+    // biome-ignore lint/suspicious/noExplicitAny: test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'create_block') {
         return {
@@ -4590,7 +4705,7 @@ describe('BlockTree Enter creates new sibling block', () => {
       return []
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedBlockKeyboardOpts?.onEnterSave).toBeDefined()
@@ -4619,8 +4734,10 @@ describe('BlockTree Enter creates new sibling block', () => {
 
   it('non-empty just-created block is NOT deleted when focus changes', async () => {
     const tree = [makeBlock({ id: 'A', content: 'First block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
+    // biome-ignore lint/suspicious/noExplicitAny: test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'create_block') {
         return {
@@ -4647,7 +4764,7 @@ describe('BlockTree Enter creates new sibling block', () => {
       return []
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedBlockKeyboardOpts?.onEnterSave).toBeDefined()
@@ -4665,7 +4782,7 @@ describe('BlockTree Enter creates new sibling block', () => {
 
     // Simulate the user typing content into the new block (update store state)
     act(() => {
-      useBlockStore.setState((s) => ({
+      pageStore.setState((s) => ({
         blocks: s.blocks.map((b) =>
           b.id === 'NEW_WITH_CONTENT' ? { ...b, content: 'User typed something' } : b,
         ),
@@ -4709,9 +4826,9 @@ describe('BlockTree zoom-in', () => {
       makeBlock({ id: 'C', parent_id: 'A', depth: 1, content: 'Child C' }),
     ]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     // All blocks visible initially
     await waitFor(() => {
@@ -4744,9 +4861,9 @@ describe('BlockTree zoom-in', () => {
       makeBlock({ id: 'C', parent_id: 'B', depth: 2, content: 'Grandchild C' }),
     ]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-B')).toBeInTheDocument()
@@ -4776,9 +4893,9 @@ describe('BlockTree zoom-in', () => {
       makeBlock({ id: 'C', parent_id: 'B', depth: 2, content: 'Grandchild C' }),
     ]
 
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+    pageStore.setState({ blocks: tree, loading: false })
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
@@ -4822,7 +4939,7 @@ describe('BlockTree /template slash command', () => {
   it('searchSlashCommands returns /template command when query matches "template"', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -4836,7 +4953,7 @@ describe('BlockTree /template slash command', () => {
   it('searchSlashCommands includes template in full command list', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -4856,7 +4973,7 @@ describe('BlockTree Ctrl+Shift+P keyboard shortcut', () => {
   it('passes onShowProperties to useBlockKeyboard', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedBlockKeyboardOpts).toBeDefined()
@@ -4874,7 +4991,7 @@ describe('BlockTree assignee slash command presets', () => {
   it('searchSlashCommands returns assignee presets when query matches "assignee"', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -4891,11 +5008,12 @@ describe('BlockTree assignee slash command presets', () => {
 
   it('assignee-me preset sets assignee property to "Me"', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -4921,11 +5039,12 @@ describe('BlockTree assignee slash command presets', () => {
 
   it('assignee-custom preset sets assignee property to empty string', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -4961,7 +5080,7 @@ describe('BlockTree location slash command presets', () => {
   it('searchSlashCommands returns location presets when query matches "location"', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedSearchSlashCommands).toBeDefined()
@@ -4980,11 +5099,12 @@ describe('BlockTree location slash command presets', () => {
 
   it('location-office preset sets location property to "Office"', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -5010,11 +5130,12 @@ describe('BlockTree location slash command presets', () => {
 
   it('location-custom preset sets location property to empty string', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
-    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     await waitFor(() => {
       expect(capturedOnSlashCommand).toBeDefined()
@@ -5057,14 +5178,13 @@ describe('BlockTree multi-selection (#657)', () => {
       makeBlock({ id: 'A', content: 'Alpha' }),
       makeBlock({ id: 'B', depth: 1, content: 'Beta' }),
     ]
+    pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
-      blocks: tree,
-      loading: false,
       focusedBlockId: null,
       selectedBlockIds: [],
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
     await screen.findByTestId('sortable-block-A')
 
     const selectA = screen.getByTestId('select-A')
@@ -5075,42 +5195,39 @@ describe('BlockTree multi-selection (#657)', () => {
 
   it('isSelected prop is passed to SortableBlock', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
+    pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
-      blocks: tree,
-      loading: false,
       focusedBlockId: null,
       selectedBlockIds: ['A'],
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
     const block = await screen.findByTestId('sortable-block-A')
     expect(block.dataset.selected).toBe('true')
   })
 
   it('unselected block has data-selected=false', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
+    pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
-      blocks: tree,
-      loading: false,
       focusedBlockId: null,
       selectedBlockIds: [],
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
     const block = await screen.findByTestId('sortable-block-A')
     expect(block.dataset.selected).toBe('false')
   })
 
   it('Escape clears selection when not editing', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
+    pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
-      blocks: tree,
-      loading: false,
       focusedBlockId: null,
       selectedBlockIds: ['A'],
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
     await screen.findByTestId('sortable-block-A')
 
     await userEvent.setup().keyboard('{Escape}')
@@ -5120,9 +5237,8 @@ describe('BlockTree multi-selection (#657)', () => {
 
   it('selection is cleared when entering edit mode (setFocused)', () => {
     const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
+    pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
-      blocks: tree,
-      loading: false,
       focusedBlockId: null,
       selectedBlockIds: ['A'],
     })
@@ -5147,14 +5263,13 @@ describe('BlockTree batch toolbar (#657)', () => {
       makeBlock({ id: 'A', content: 'Alpha' }),
       makeBlock({ id: 'B', depth: 1, content: 'Beta' }),
     ]
+    pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
-      blocks: tree,
-      loading: false,
       focusedBlockId: null,
       selectedBlockIds: ['A'],
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
     await screen.findByTestId('sortable-block-A')
 
     expect(screen.getByText('1 selected')).toBeInTheDocument()
@@ -5162,14 +5277,13 @@ describe('BlockTree batch toolbar (#657)', () => {
 
   it('batch toolbar hidden when no selection', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
+    pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
-      blocks: tree,
-      loading: false,
       focusedBlockId: null,
       selectedBlockIds: [],
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
     await screen.findByTestId('sortable-block-A')
 
     expect(screen.queryByText(/selected/)).not.toBeInTheDocument()
@@ -5181,14 +5295,13 @@ describe('BlockTree batch toolbar (#657)', () => {
       makeBlock({ id: 'A', content: 'Alpha' }),
       makeBlock({ id: 'B', depth: 1, content: 'Beta' }),
     ]
+    pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
-      blocks: tree,
-      loading: false,
       focusedBlockId: null,
       selectedBlockIds: ['A', 'B'],
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
     await screen.findByTestId('sortable-block-A')
 
     const deleteBtn = screen.getByRole('button', { name: /Delete/i })
@@ -5203,9 +5316,8 @@ describe('BlockTree batch toolbar (#657)', () => {
       makeBlock({ id: 'A', content: 'Alpha' }),
       makeBlock({ id: 'B', depth: 1, content: 'Beta' }),
     ]
+    pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
-      blocks: tree,
-      loading: false,
       focusedBlockId: null,
       selectedBlockIds: ['A', 'B'],
     })
@@ -5220,7 +5332,7 @@ describe('BlockTree batch toolbar (#657)', () => {
       return null
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
     await screen.findByTestId('sortable-block-A')
 
     // Click Delete, then confirm
@@ -5242,9 +5354,8 @@ describe('BlockTree batch toolbar (#657)', () => {
       makeBlock({ id: 'A', content: 'Alpha' }),
       makeBlock({ id: 'B', depth: 1, content: 'Beta' }),
     ]
+    pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
-      blocks: tree,
-      loading: false,
       focusedBlockId: null,
       selectedBlockIds: ['A', 'B'],
     })
@@ -5268,7 +5379,7 @@ describe('BlockTree batch toolbar (#657)', () => {
       return null
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
     await screen.findByTestId('sortable-block-A')
 
     // Click TODO button in the batch toolbar
@@ -5286,14 +5397,13 @@ describe('BlockTree batch toolbar (#657)', () => {
   it('clear selection button clears selectedBlockIds', async () => {
     const user = userEvent.setup()
     const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
+    pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
-      blocks: tree,
-      loading: false,
       focusedBlockId: null,
       selectedBlockIds: ['A'],
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
     await screen.findByTestId('sortable-block-A')
 
     await user.click(screen.getByRole('button', { name: /Clear selection/i }))
@@ -5308,14 +5418,13 @@ describe('BlockTree batch toolbar (#657)', () => {
       makeBlock({ id: 'A', content: 'Alpha' }),
       makeBlock({ id: 'B', depth: 1, content: 'Beta' }),
     ]
+    pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
-      blocks: tree,
-      loading: false,
       focusedBlockId: null,
       selectedBlockIds: ['A', 'B'],
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
     await screen.findByTestId('sortable-block-A')
 
     // Now mock set_todo_state to block, after initial render is done
@@ -5370,14 +5479,13 @@ describe('BlockTree unfocused-Escape handler (UX-M8)', () => {
 
   it('Escape on unfocused editor closes editor and saves content', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
+    pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
-      blocks: tree,
-      loading: false,
       focusedBlockId: 'A',
       selectedBlockIds: [],
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
     await screen.findByTestId('sortable-block-A')
 
     // No .ProseMirror in the DOM → editor is "unfocused"
@@ -5388,14 +5496,13 @@ describe('BlockTree unfocused-Escape handler (UX-M8)', () => {
 
   it('Escape on focused editor is handled by use-block-keyboard (no double-fire)', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
+    pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
-      blocks: tree,
-      loading: false,
       focusedBlockId: 'A',
       selectedBlockIds: [],
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
     await screen.findByTestId('sortable-block-A')
 
     // Create a fake .ProseMirror element that "contains" the active element
@@ -5418,14 +5525,13 @@ describe('BlockTree unfocused-Escape handler (UX-M8)', () => {
 
   it('Escape does nothing when no editor is mounted', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
+    pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
-      blocks: tree,
-      loading: false,
       focusedBlockId: null,
       selectedBlockIds: [],
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
     await screen.findByTestId('sortable-block-A')
 
     fireEvent.keyDown(document, { key: 'Escape' })
@@ -5446,14 +5552,13 @@ describe('BlockTree container mousedown (UX-M9)', () => {
 
   it('mousedown on whitespace within block tree closes active editor', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
+    pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
-      blocks: tree,
-      loading: false,
       focusedBlockId: 'A',
       selectedBlockIds: [],
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
     await screen.findByTestId('sortable-block-A')
 
     // The .block-tree div is the container with the onMouseDown handler.
@@ -5466,14 +5571,13 @@ describe('BlockTree container mousedown (UX-M9)', () => {
 
   it('mousedown on child element does not close editor', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
+    pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
-      blocks: tree,
-      loading: false,
       focusedBlockId: 'A',
       selectedBlockIds: [],
     })
 
-    render(<BlockTree />)
+    renderBlockTree()
     const block = await screen.findByTestId('sortable-block-A')
 
     // Clicking on a child element (block) should NOT close the editor
@@ -5497,7 +5601,7 @@ describe('H-9: auto-create first block on empty page', () => {
       return emptyPage
     })
 
-    render(<BlockTree parentId="PAGE_1" />)
+    renderBlockTree({ parentId: 'PAGE_1' })
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
@@ -5516,13 +5620,22 @@ describe('H-9: auto-create first block on empty page', () => {
       parent_id: 'PAGE_1',
     })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
+    // load() and auto-create race: load() calls list_blocks before
+    // create_block fires. Return the newBlock from list_blocks so
+    // load() and auto-create converge on the same final state.
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'create_block') return newBlock
+      if (cmd === 'list_blocks') {
+        const a = args as Record<string, unknown> | undefined
+        if (a?.parentId === 'PAGE_1')
+          return { items: [newBlock], next_cursor: null, has_more: false }
+        return emptyPage
+      }
       return emptyPage
     })
 
     await act(async () => {
-      render(<BlockTree parentId="PAGE_1" />)
+      renderBlockTree({ parentId: 'PAGE_1' })
     })
 
     // Flush the resolved promise microtask chain (create_block .then)
@@ -5530,7 +5643,8 @@ describe('H-9: auto-create first block on empty page', () => {
       await new Promise((r) => setTimeout(r, 50))
     })
 
-    const { blocks, focusedBlockId } = useBlockStore.getState()
+    const { blocks } = pageStore.getState()
+    const { focusedBlockId } = useBlockStore.getState()
     expect(blocks).toHaveLength(1)
     expect(blocks[0]?.id).toBe('NEW_BLOCK_1')
     expect(focusedBlockId).toBe('NEW_BLOCK_1')
@@ -5538,6 +5652,9 @@ describe('H-9: auto-create first block on empty page', () => {
 
   it('does not auto-create when blocks already exist', async () => {
     const existing = makeBlock({ id: 'EXISTING', content: 'Hello', parent_id: 'PAGE_1' })
+    // Pre-set blocks so the initial render sees blocks.length > 0,
+    // preventing auto-create from firing before load() completes.
+    pageStore.setState({ blocks: [existing], loading: false })
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
       const a = args as Record<string, unknown> | undefined
       if (cmd === 'list_blocks' && a?.parentId === 'PAGE_1')
@@ -5545,11 +5662,11 @@ describe('H-9: auto-create first block on empty page', () => {
       return emptyPage
     })
 
-    render(<BlockTree parentId="PAGE_1" />)
+    renderBlockTree({ parentId: 'PAGE_1' })
 
     // Wait for load to complete
     await waitFor(() => {
-      expect(useBlockStore.getState().blocks.length).toBeGreaterThan(0)
+      expect(pageStore.getState().blocks.length).toBeGreaterThan(0)
     })
 
     expect(mockedInvoke).not.toHaveBeenCalledWith(
@@ -5559,13 +5676,15 @@ describe('H-9: auto-create first block on empty page', () => {
   })
 
   it('does not auto-create while loading', async () => {
+    // Pre-set loading=true so the initial render's auto-create guard fires
+    pageStore.setState({ loading: true })
     // Use a never-resolving promise for list_blocks to keep loading=true
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return new Promise(() => {})
       return emptyPage
     })
 
-    render(<BlockTree parentId="PAGE_1" />)
+    renderBlockTree({ parentId: 'PAGE_1' })
 
     // Wait a tick to give effects a chance to fire
     await act(async () => {
@@ -5579,9 +5698,11 @@ describe('H-9: auto-create first block on empty page', () => {
   })
 
   it('does not auto-create when rootParentId is null', async () => {
+    // Set rootParentId to null to test the guard condition
+    pageStore.setState({ rootParentId: null })
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree />)
+    renderBlockTree()
 
     // Wait a tick to give effects a chance to fire
     await act(async () => {
@@ -5602,7 +5723,7 @@ describe('H-9: auto-create first block on empty page', () => {
       return emptyPage
     })
 
-    render(<BlockTree parentId="PAGE_1" />)
+    renderBlockTree({ parentId: 'PAGE_1' })
 
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalled()
@@ -5612,11 +5733,11 @@ describe('H-9: auto-create first block on empty page', () => {
   it('does not auto-create when autoCreateFirstBlock is false', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    render(<BlockTree parentId="PAGE_1" autoCreateFirstBlock={false} />)
+    renderBlockTree({ parentId: 'PAGE_1', autoCreateFirstBlock: false })
 
     // Wait for load to complete (blocks empty, page loaded)
     await waitFor(() => {
-      expect(useBlockStore.getState().loading).toBe(false)
+      expect(pageStore.getState().loading).toBe(false)
     })
 
     // Wait a tick to give effects a chance to fire
@@ -5641,7 +5762,7 @@ describe('H-9: auto-create first block on empty page', () => {
       return emptyPage
     })
 
-    render(<BlockTree parentId="PAGE_1" autoCreateFirstBlock={true} />)
+    renderBlockTree({ parentId: 'PAGE_1', autoCreateFirstBlock: true })
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
@@ -5664,7 +5785,7 @@ describe('H-9: auto-create first block on empty page', () => {
       return emptyPage
     })
 
-    render(<BlockTree parentId="PAGE_1" />)
+    renderBlockTree({ parentId: 'PAGE_1' })
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('create_block', {

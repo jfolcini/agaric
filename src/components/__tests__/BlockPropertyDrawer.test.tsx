@@ -12,10 +12,17 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { createElement } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import type { StoreApi } from 'zustand'
 import type { PropertyDefinition, PropertyRow as PropertyRowData } from '../../lib/tauri'
 import { useBlockStore } from '../../stores/blocks'
+import {
+  createPageBlockStore,
+  PageBlockContext,
+  type PageBlockState,
+} from '../../stores/page-blocks'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -71,6 +78,15 @@ vi.mock('@/components/ui/select', () => {
 
 import { BlockPropertyDrawer, PropertyRow } from '../BlockPropertyDrawer'
 
+let pageStore: StoreApi<PageBlockState>
+
+/** Render a component wrapped in the per-page store provider. */
+function renderWithProvider(ui: React.ReactElement) {
+  const wrapper = ({ children }: { children: React.ReactNode }) =>
+    createElement(PageBlockContext.Provider, { value: pageStore }, children)
+  return render(ui, { wrapper })
+}
+
 function makeProp(key: string, overrides?: Partial<PropertyRowData>): PropertyRowData {
   return {
     key,
@@ -105,11 +121,9 @@ function setupMock(props: PropertyRowData[] = [], defs: PropertyDefinition[] = [
 
 beforeEach(() => {
   vi.clearAllMocks()
+  pageStore = createPageBlockStore('PAGE_1')
   useBlockStore.setState({
-    blocks: [],
-    rootParentId: null,
     focusedBlockId: null,
-    loading: false,
     selectedBlockIds: [],
   })
 })
@@ -117,7 +131,7 @@ beforeEach(() => {
 describe('BlockPropertyDrawer', () => {
   it('renders "Block Properties" title when open', async () => {
     setupMock()
-    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     expect(screen.getByText('Block Properties')).toBeInTheDocument()
   })
@@ -125,7 +139,7 @@ describe('BlockPropertyDrawer', () => {
   it('shows loading state initially', () => {
     // Return a never-resolving promise to keep loading state
     mockedInvoke.mockReturnValue(new Promise(() => {}))
-    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     expect(screen.getByText('Loading...')).toBeInTheDocument()
   })
@@ -137,7 +151,7 @@ describe('BlockPropertyDrawer', () => {
     ]
     setupMock(props, [makeDef('status'), makeDef('priority', 'number')])
 
-    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('status')).toBeInTheDocument()
@@ -148,7 +162,7 @@ describe('BlockPropertyDrawer', () => {
   it('shows "No properties set" when block has no properties', async () => {
     setupMock([], [])
 
-    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('No properties set')).toBeInTheDocument()
@@ -160,7 +174,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('status', { value_text: 'active' })]
     setupMock(props, [makeDef('status')])
 
-    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('status')).toBeInTheDocument()
@@ -177,7 +191,9 @@ describe('BlockPropertyDrawer', () => {
 
   it('does not render content when open=false', () => {
     setupMock()
-    render(<BlockPropertyDrawer blockId="BLOCK_1" open={false} onOpenChange={vi.fn()} />)
+    renderWithProvider(
+      <BlockPropertyDrawer blockId="BLOCK_1" open={false} onOpenChange={vi.fn()} />,
+    )
 
     expect(screen.queryByText('Block Properties')).not.toBeInTheDocument()
   })
@@ -186,7 +202,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('status', { value_text: 'active' })]
     setupMock(props, [makeDef('status')])
 
-    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('status')).toBeInTheDocument()
@@ -204,7 +220,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('status', { value_text: 'active' })]
     setupMock(props, [makeDef('status')])
 
-    const { container } = render(
+    const { container } = renderWithProvider(
       <BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />,
     )
 
@@ -219,7 +235,7 @@ describe('BlockPropertyDrawer', () => {
   // ── H-12: Built-in date fields from block store ───────────────────────
 
   it('shows due_date from the block store', async () => {
-    useBlockStore.setState({
+    pageStore.setState({
       blocks: [
         {
           id: 'BLOCK_1',
@@ -240,7 +256,7 @@ describe('BlockPropertyDrawer', () => {
     })
     setupMock()
 
-    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByTitle('Due')).toBeInTheDocument()
@@ -250,7 +266,7 @@ describe('BlockPropertyDrawer', () => {
   })
 
   it('shows scheduled_date from the block store', async () => {
-    useBlockStore.setState({
+    pageStore.setState({
       blocks: [
         {
           id: 'BLOCK_1',
@@ -271,7 +287,7 @@ describe('BlockPropertyDrawer', () => {
     })
     setupMock()
 
-    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByTitle('Scheduled')).toBeInTheDocument()
@@ -281,7 +297,7 @@ describe('BlockPropertyDrawer', () => {
   })
 
   it('does not show "No properties set" when block has built-in dates', async () => {
-    useBlockStore.setState({
+    pageStore.setState({
       blocks: [
         {
           id: 'BLOCK_1',
@@ -302,7 +318,7 @@ describe('BlockPropertyDrawer', () => {
     })
     setupMock([], [])
 
-    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByTitle('Due')).toBeInTheDocument()
@@ -312,7 +328,7 @@ describe('BlockPropertyDrawer', () => {
 
   it('clear due date button calls set_due_date with null', async () => {
     const user = userEvent.setup()
-    useBlockStore.setState({
+    pageStore.setState({
       blocks: [
         {
           id: 'BLOCK_1',
@@ -333,7 +349,7 @@ describe('BlockPropertyDrawer', () => {
     })
     setupMock()
 
-    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByTitle('Due')).toBeInTheDocument()
@@ -349,7 +365,7 @@ describe('BlockPropertyDrawer', () => {
   })
 
   it('updates reactively when block store due_date changes', async () => {
-    useBlockStore.setState({
+    pageStore.setState({
       blocks: [
         {
           id: 'BLOCK_1',
@@ -370,7 +386,7 @@ describe('BlockPropertyDrawer', () => {
     })
     setupMock()
 
-    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     // Initially no date shown
     await waitFor(() => {
@@ -379,7 +395,7 @@ describe('BlockPropertyDrawer', () => {
     expect(screen.queryByTitle('Due')).not.toBeInTheDocument()
 
     // Simulate toolbar setting a due date
-    useBlockStore.setState((s) => ({
+    pageStore.setState((s) => ({
       blocks: s.blocks.map((b) => (b.id === 'BLOCK_1' ? { ...b, due_date: '2026-08-20' } : b)),
     }))
 
@@ -392,7 +408,7 @@ describe('BlockPropertyDrawer', () => {
   it('property value inputs have accessible labels', async () => {
     setupMock([makeProp('status', { value_text: 'active' })], [makeDef('status')])
 
-    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     const input = await screen.findByLabelText('status value')
     expect(input).toBeInTheDocument()
@@ -402,7 +418,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('created_at', { value_text: '2026-01-01' })]
     setupMock(props, [makeDef('created_at')])
 
-    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('Created At')).toBeInTheDocument()
@@ -415,7 +431,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('my_custom', { value_text: 'hello' })]
     setupMock(props, [makeDef('my_custom')])
 
-    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('my_custom')).toBeInTheDocument()
@@ -428,7 +444,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('repeat', { value_text: '+1w' })]
     setupMock(props, [makeDef('repeat')])
 
-    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('Repeat')).toBeInTheDocument()
@@ -443,7 +459,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('created_at', { value_text: '2026-01-01' })]
     setupMock(props, [makeDef('created_at')])
 
-    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('Created At')).toBeInTheDocument()
@@ -466,7 +482,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('effort', { value_num: 30 })]
     setupMock(props, [makeDef('effort', 'number')])
 
-    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('Effort')).toBeInTheDocument()
@@ -484,7 +500,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('my_custom', { value_text: 'hello' })]
     setupMock(props, [makeDef('my_custom')])
 
-    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('my_custom')).toBeInTheDocument()

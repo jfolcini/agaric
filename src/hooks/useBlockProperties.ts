@@ -16,7 +16,7 @@ import { toast } from 'sonner'
 import { announce } from '../lib/announcer'
 import i18n from '../lib/i18n'
 import { setPriority as setPriorityCmd, setTodoState as setTodoStateCmd } from '../lib/tauri'
-import { useBlockStore } from '../stores/blocks'
+import { usePageBlockStoreApi } from '../stores/page-blocks'
 import { useUndoStore } from '../stores/undo'
 
 /** Default task state cycle: none -> TODO -> DOING -> DONE -> none. */
@@ -51,68 +51,78 @@ export interface UseBlockPropertiesReturn {
 }
 
 export function useBlockProperties(): UseBlockPropertiesReturn {
+  const pageStore = usePageBlockStoreApi()
+
   /** Get the current todo state for a block from the block store. */
-  const getTodoState = useCallback((blockId: string): string | null => {
-    return useBlockStore.getState().blocks.find((b) => b.id === blockId)?.todo_state ?? null
-  }, [])
+  const getTodoState = useCallback(
+    (blockId: string): string | null => {
+      return pageStore.getState().blocks.find((b) => b.id === blockId)?.todo_state ?? null
+    },
+    [pageStore],
+  )
 
   /** Cycle through task states: none -> TODO -> DOING -> DONE -> none. */
-  const handleToggleTodo = useCallback(async (blockId: string) => {
-    const current =
-      useBlockStore.getState().blocks.find((b) => b.id === blockId)?.todo_state ?? null
-    const currentIdx = TASK_CYCLE.indexOf(current)
-    const nextIdx = (currentIdx + 1) % TASK_CYCLE.length
-    const nextState = TASK_CYCLE[nextIdx] ?? null
+  const handleToggleTodo = useCallback(
+    async (blockId: string) => {
+      const current = pageStore.getState().blocks.find((b) => b.id === blockId)?.todo_state ?? null
+      const currentIdx = TASK_CYCLE.indexOf(current)
+      const nextIdx = (currentIdx + 1) % TASK_CYCLE.length
+      const nextState = TASK_CYCLE[nextIdx] ?? null
 
-    // Optimistic update (before IPC) to prevent race on rapid toggles
-    useBlockStore.setState((s) => ({
-      blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, todo_state: nextState } : b)),
-    }))
-
-    try {
-      await setTodoStateCmd(blockId, nextState)
-      const { rootParentId } = useBlockStore.getState()
-      if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-    } catch {
-      // Revert optimistic update on failure
-      useBlockStore.setState((s) => ({
-        blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, todo_state: current } : b)),
+      // Optimistic update (before IPC) to prevent race on rapid toggles
+      pageStore.setState((s) => ({
+        blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, todo_state: nextState } : b)),
       }))
-      toast.error(i18n.t('blockTree.setTaskStateFailed'))
-      return
-    }
 
-    announce(`Task state: ${nextState ? (STATE_LABELS[nextState] ?? nextState) : 'none'}`)
-  }, [])
+      try {
+        await setTodoStateCmd(blockId, nextState)
+        const { rootParentId } = pageStore.getState()
+        if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
+      } catch {
+        // Revert optimistic update on failure
+        pageStore.setState((s) => ({
+          blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, todo_state: current } : b)),
+        }))
+        toast.error(i18n.t('blockTree.setTaskStateFailed'))
+        return
+      }
+
+      announce(`Task state: ${nextState ? (STATE_LABELS[nextState] ?? nextState) : 'none'}`)
+    },
+    [pageStore],
+  )
 
   /** Cycle through priority levels: none -> 1 -> 2 -> 3 -> none. */
-  const handleTogglePriority = useCallback(async (blockId: string) => {
-    const current = useBlockStore.getState().blocks.find((b) => b.id === blockId)?.priority ?? null
-    const currentIdx = PRIORITY_CYCLE.indexOf(current)
-    const nextIdx = (currentIdx + 1) % PRIORITY_CYCLE.length
-    const nextState = PRIORITY_CYCLE[nextIdx] ?? null
+  const handleTogglePriority = useCallback(
+    async (blockId: string) => {
+      const current = pageStore.getState().blocks.find((b) => b.id === blockId)?.priority ?? null
+      const currentIdx = PRIORITY_CYCLE.indexOf(current)
+      const nextIdx = (currentIdx + 1) % PRIORITY_CYCLE.length
+      const nextState = PRIORITY_CYCLE[nextIdx] ?? null
 
-    // Optimistic update (before IPC) to prevent race on rapid toggles
-    useBlockStore.setState((s) => ({
-      blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, priority: nextState } : b)),
-    }))
-
-    try {
-      await setPriorityCmd(blockId, nextState)
-      const { rootParentId } = useBlockStore.getState()
-      if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-    } catch {
-      // Revert optimistic update on failure
-      useBlockStore.setState((s) => ({
-        blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, priority: current } : b)),
+      // Optimistic update (before IPC) to prevent race on rapid toggles
+      pageStore.setState((s) => ({
+        blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, priority: nextState } : b)),
       }))
-      toast.error(i18n.t('blockTree.setPriorityFailed'))
-      return
-    }
 
-    const PRIORITY_LABELS: Record<string, string> = { '1': 'High', '2': 'Medium', '3': 'Low' }
-    announce(`Priority set to ${nextState ? (PRIORITY_LABELS[nextState] ?? nextState) : 'none'}`)
-  }, [])
+      try {
+        await setPriorityCmd(blockId, nextState)
+        const { rootParentId } = pageStore.getState()
+        if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
+      } catch {
+        // Revert optimistic update on failure
+        pageStore.setState((s) => ({
+          blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, priority: current } : b)),
+        }))
+        toast.error(i18n.t('blockTree.setPriorityFailed'))
+        return
+      }
+
+      const PRIORITY_LABELS: Record<string, string> = { '1': 'High', '2': 'Medium', '3': 'Low' }
+      announce(`Priority set to ${nextState ? (PRIORITY_LABELS[nextState] ?? nextState) : 'none'}`)
+    },
+    [pageStore],
+  )
 
   return {
     getTodoState,

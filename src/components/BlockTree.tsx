@@ -55,6 +55,7 @@ import { insertTemplateBlocks, loadTemplatePagesWithPreview } from '../lib/templ
 import { getDragDescendants } from '../lib/tree-utils'
 import { cn } from '../lib/utils'
 import { useBlockStore } from '../stores/blocks'
+import { usePageBlockStore, usePageBlockStoreApi } from '../stores/page-blocks'
 import { useResolveStore } from '../stores/resolve'
 import { useUndoStore } from '../stores/undo'
 import { BlockPropertyDrawer } from './BlockPropertyDrawer'
@@ -196,21 +197,19 @@ export function BlockTree({
   autoCreateFirstBlock = true,
 }: BlockTreeProps = {}): React.ReactElement {
   const { t } = useTranslation()
-  // Reactive state — single shallow-compared subscription
-  const { blocks, rootParentId, focusedBlockId, loading, selectedBlockIds } = useBlockStore(
-    useShallow((s) => ({
-      blocks: s.blocks,
-      rootParentId: s.rootParentId,
-      focusedBlockId: s.focusedBlockId,
-      loading: s.loading,
-      selectedBlockIds: s.selectedBlockIds,
-    })),
+  // Per-page data from context
+  const { blocks, rootParentId, loading } = usePageBlockStore(
+    useShallow((s) => ({ blocks: s.blocks, rootParentId: s.rootParentId, loading: s.loading })),
+  )
+  // Global focus/selection
+  const { focusedBlockId, selectedBlockIds } = useBlockStore(
+    useShallow((s) => ({ focusedBlockId: s.focusedBlockId, selectedBlockIds: s.selectedBlockIds })),
   )
 
-  // Stable actions — extracted via getState() (0 subscriptions)
+  // Per-page store API for imperative access
+  const pageStore = usePageBlockStoreApi()
   const {
     load,
-    setFocused,
     remove,
     edit,
     splitBlock,
@@ -221,11 +220,10 @@ export function BlockTree({
     moveUp,
     moveDown,
     createBelow,
-    toggleSelected,
-    rangeSelect,
-    selectAll,
-    clearSelected,
-  } = useBlockStore.getState()
+  } = pageStore.getState()
+  // Global focus/selection actions
+  const { setFocused, toggleSelected, clearSelected } = useBlockStore.getState()
+  const { rangeSelect: rawRangeSelect, selectAll: rawSelectAll } = useBlockStore.getState()
 
   // ── Collapse state (persisted in localStorage) ────────────────────
   const [collapsedIds, setCollapsedIdsRaw] = useState<Set<string>>(() => {
@@ -291,7 +289,7 @@ export function BlockTree({
         const ids = [...selectedBlockIds]
         const idSet = new Set(ids)
         // Single optimistic update for all blocks
-        useBlockStore.setState((s) => ({
+        pageStore.setState((s) => ({
           blocks: s.blocks.map((b) => (idSet.has(b.id) ? { ...b, todo_state: state } : b)),
         }))
         let successCount = 0
@@ -317,7 +315,7 @@ export function BlockTree({
         setBatchInProgress(false)
       }
     },
-    [selectedBlockIds, clearSelected, batchInProgress, rootParentId, t],
+    [selectedBlockIds, clearSelected, batchInProgress, rootParentId, t, pageStore],
   )
 
   const handleBatchDelete = useCallback(async () => {
@@ -328,7 +326,7 @@ export function BlockTree({
       // Filter out blocks whose parent is also in the selection (parent deletion cascades)
       const idsSet = new Set(ids)
       const toDelete = ids.filter((id) => {
-        const block = useBlockStore.getState().blocks.find((b) => b.id === id)
+        const block = pageStore.getState().blocks.find((b) => b.id === id)
         if (block?.parent_id && idsSet.has(block.parent_id)) return false
         return true
       })
@@ -337,7 +335,7 @@ export function BlockTree({
       for (const id of toDelete) {
         try {
           await deleteBlock(id)
-          useBlockStore.setState((s) => ({
+          pageStore.setState((s) => ({
             blocks: s.blocks.filter((b) => b.id !== id),
           }))
           successCount++
@@ -355,7 +353,7 @@ export function BlockTree({
     } finally {
       setBatchInProgress(false)
     }
-  }, [selectedBlockIds, clearSelected, batchInProgress, t])
+  }, [selectedBlockIds, clearSelected, batchInProgress, t, pageStore])
 
   const handleShowHistory = useCallback((blockId: string) => {
     setHistoryBlockId(blockId)
@@ -653,8 +651,9 @@ export function BlockTree({
 
   const viewport = useViewportObserver()
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: parentId triggers reload when page changes
   useEffect(() => {
-    load(parentId)
+    load()
     setZoomedBlockId(null)
   }, [load, parentId])
 
@@ -673,21 +672,21 @@ export function BlockTree({
     createBlock({ blockType: 'content', content: '', parentId: rootParentId, position: 0 })
       .then((result) => {
         // Only apply if we're still on the same page
-        if (useBlockStore.getState().rootParentId !== rootParentId) return
-        useBlockStore.setState({
+        if (pageStore.getState().rootParentId !== rootParentId) return
+        pageStore.setState({
           blocks: [
             {
               ...result,
               depth: 0,
             },
           ],
-          focusedBlockId: result.id,
         })
+        useBlockStore.setState({ focusedBlockId: result.id })
       })
       .catch(() => {
         toast.error(t('blockTree.createFirstBlockFailed'))
       })
-  }, [autoCreateFirstBlock, loading, blocks.length, rootParentId, t])
+  }, [autoCreateFirstBlock, loading, blocks.length, rootParentId, t, pageStore])
 
   // Scan loaded blocks for [[ULID]] tokens not yet in the resolve cache
   // and batch-fetch them.  Pages + tags are already preloaded by App.tsx
@@ -780,7 +779,7 @@ export function BlockTree({
               if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
             })
             .catch(() => toast.error(t('blockTree.setTaskStateFailed')))
-          useBlockStore.setState((s) => ({
+          pageStore.setState((s) => ({
             blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, todo_state: todoState } : b)),
           }))
           edit(blockId, cleanContent)
@@ -790,7 +789,7 @@ export function BlockTree({
       }
     }
     return changed
-  }, [rovingEditor, edit, splitBlock, rootParentId, t])
+  }, [rovingEditor, edit, splitBlock, rootParentId, t, pageStore])
 
   // ── DnD hook (needs handleFlush + collapsedVisible) ────────────────
   const dnd = useBlockDnD({
@@ -861,7 +860,7 @@ export function BlockTree({
         }
 
         // Same tree — navigate locally
-        await load(targetBlock.parent_id ?? undefined)
+        await load()
         setFocused(targetId)
         rovingEditor.mount(targetId, targetBlock.content ?? '')
       } catch {
@@ -885,7 +884,7 @@ export function BlockTree({
         try {
           await setTodoStateCmd(focusedBlockId, state)
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-          useBlockStore.setState((s) => ({
+          pageStore.setState((s) => ({
             blocks: s.blocks.map((b) =>
               b.id === focusedBlockId ? { ...b, todo_state: state } : b,
             ),
@@ -963,7 +962,7 @@ export function BlockTree({
         try {
           await setPriorityCmd(focusedBlockId, priority)
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-          useBlockStore.setState((s) => ({
+          pageStore.setState((s) => ({
             blocks: s.blocks.map((b) => (b.id === focusedBlockId ? { ...b, priority } : b)),
           }))
         } catch {
@@ -980,7 +979,7 @@ export function BlockTree({
           const json = rovingEditor.editor.getJSON() as DocNode
           currentContent = serialize(json)
         } else {
-          const block = useBlockStore.getState().blocks.find((b) => b.id === focusedBlockId)
+          const block = pageStore.getState().blocks.find((b) => b.id === focusedBlockId)
           currentContent = block?.content ?? ''
         }
         // Strip existing heading prefix (if any)
@@ -990,7 +989,7 @@ export function BlockTree({
         try {
           await editBlock(focusedBlockId, newContent)
           // Reload the block in the store
-          useBlockStore.setState((state) => ({
+          pageStore.setState((state) => ({
             blocks: state.blocks.map((b) =>
               b.id === focusedBlockId ? { ...b, content: newContent } : b,
             ),
@@ -1207,7 +1206,7 @@ export function BlockTree({
         try {
           await setDueDateCmd(focusedBlockId, dateStr)
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-          useBlockStore.setState((s) => ({
+          pageStore.setState((s) => ({
             blocks: s.blocks.map((b) =>
               b.id === focusedBlockId ? { ...b, due_date: dateStr } : b,
             ),
@@ -1236,7 +1235,7 @@ export function BlockTree({
         try {
           await setScheduledDateCmd(focusedBlockId, dateStr)
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-          useBlockStore.setState((s) => ({
+          pageStore.setState((s) => ({
             blocks: s.blocks.map((b) =>
               b.id === focusedBlockId ? { ...b, scheduled_date: dateStr } : b,
             ),
@@ -1294,7 +1293,7 @@ export function BlockTree({
         const pageTitle = useResolveStore.getState().cache.get(rootParentId ?? '')?.title ?? ''
         const ids = await insertTemplateBlocks(templatePageId, parentId, { pageTitle })
         if (ids.length > 0) {
-          await load(parentId)
+          await load()
           toast.success(t('slash.templateInserted'))
         }
       } catch {
@@ -1315,11 +1314,11 @@ export function BlockTree({
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
         })
         .catch(() => toast.error(t('blockTree.setTaskStateFailed')))
-      useBlockStore.setState((s) => ({
+      pageStore.setState((s) => ({
         blocks: s.blocks.map((b) => (b.id === focusedBlockId ? { ...b, todo_state: state } : b)),
       }))
     },
-    [focusedBlockId, rootParentId, t],
+    [focusedBlockId, rootParentId, t, pageStore],
   )
 
   handleCheckboxRef.current = handleCheckboxSyntax
@@ -1525,10 +1524,13 @@ export function BlockTree({
       if (mode === 'toggle') {
         toggleSelected(blockId)
       } else {
-        rangeSelect(blockId)
+        rawRangeSelect(
+          blockId,
+          blocks.map((b) => b.id),
+        )
       }
     },
-    [toggleSelected, rangeSelect],
+    [toggleSelected, rawRangeSelect, blocks],
   )
 
   // ── Escape: discard changes, unfocus ───────────────────────────────
@@ -1576,12 +1578,12 @@ export function BlockTree({
 
     if (prevId && prevId !== focusedBlockId && justCreatedBlockIds.current.has(prevId)) {
       justCreatedBlockIds.current.delete(prevId)
-      const block = useBlockStore.getState().blocks.find((b) => b.id === prevId)
+      const block = pageStore.getState().blocks.find((b) => b.id === prevId)
       if (block && (!block.content || block.content.trim() === '')) {
         remove(prevId)
       }
     }
-  }, [focusedBlockId, remove])
+  }, [focusedBlockId, remove, pageStore])
 
   // ── Keyboard shortcut for collapse toggle (Mod+.) ──────────────────
   useEffect(() => {
@@ -1603,7 +1605,7 @@ export function BlockTree({
       // Ctrl+A / Cmd+A — select all blocks (only when not editing)
       if ((e.ctrlKey || e.metaKey) && e.key === 'a' && !focusedBlockId) {
         e.preventDefault()
-        selectAll()
+        rawSelectAll(blocks.map((b) => b.id))
       }
       // Escape — clear selection (when not editing and there's an active selection)
       if (
@@ -1618,7 +1620,7 @@ export function BlockTree({
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
-  }, [focusedBlockId, selectedBlockIds.length, selectAll, clearSelected])
+  }, [focusedBlockId, selectedBlockIds.length, rawSelectAll, blocks, clearSelected])
 
   // ── Keyboard shortcut: Escape closes unfocused editor (UX-M8) ──────
   // The TipTap-level Escape handler (use-block-keyboard.ts) only fires when
@@ -1678,7 +1680,7 @@ export function BlockTree({
       try {
         await setPriorityCmd(focusedBlockId, priority)
         if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-        useBlockStore.setState((s) => ({
+        pageStore.setState((s) => ({
           blocks: s.blocks.map((b) => (b.id === focusedBlockId ? { ...b, priority } : b)),
         }))
       } catch {
@@ -1693,7 +1695,7 @@ export function BlockTree({
       cleanup2()
       cleanup3()
     }
-  }, [focusedBlockId, rootParentId, t])
+  }, [focusedBlockId, rootParentId, t, pageStore])
 
   // ── Listen for toolbar date picker event ────────────────────────────
   useEffect(() => {

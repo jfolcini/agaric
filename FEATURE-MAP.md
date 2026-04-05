@@ -407,6 +407,10 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **useDuePanelData** (`src/hooks/useDuePanelData.ts`): Data fetching hook for DuePanel encapsulating block/overdue/upcoming/projected queries and page title resolution. Returns fetched data, loading states, pageTitles map, and loadMore. Extracted from DuePanel (R-6). Used by DuePanel.
 - **useAgendaPreferences** (`src/hooks/useAgendaPreferences.ts`): LocalStorage-persisted agenda sort/group preferences hook. Returns `{ groupBy, sortBy, setGroupBy, setSortBy }`. Extracted from AgendaView (R-13). Used by AgendaView.
 
+### Per-Page Block Store (R-18)
+- **PageBlockStore** (`src/stores/page-blocks.ts`): Per-page Zustand store instances via React context. Factory `createPageBlockStore(pageId)`, context provider `PageBlockStoreProvider`, hooks `usePageBlockStore(selector)` / `usePageBlockStoreApi()`, module-level `pageBlockRegistry` for global access. Each BlockTree gets its own store. Replaces the block/loading/mutation portion of the old global useBlockStore.
+- **useBlockStore** (`src/stores/blocks.ts`): Slimmed global singleton — focus/selection only. `focusedBlockId`, `selectedBlockIds`, `pendingFocusId`, `setFocused`, `toggleSelected`, `rangeSelect(id, visibleIds)`, `selectAll(visibleIds)`, `clearSelected`, `setSelected`, `consumePendingFocus`.
+
 ### Shared Utilities
 - **block-events** (`src/lib/block-events.ts`): `BLOCK_EVENTS` constant object (10 event names), `dispatchBlockEvent()`/`onBlockEvent()` helpers for custom DOM event communication between FormattingToolbar and BlockTree. Exports `NavigateToPageFn` type alias for standardized navigation callbacks.
 - **date-property-colors** (`src/lib/date-property-colors.ts`): `getSourceColor(source)` returns light/dark mode Tailwind classes for agenda sources (due=orange, scheduled=blue, properties=purple). `getSourceLabel(source)` returns display labels. Used by DaySection colored pills.

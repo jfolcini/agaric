@@ -16,7 +16,7 @@ import { listen } from '@tauri-apps/api/event'
 import { useEffect } from 'react'
 import { toast } from 'sonner'
 import { getConflicts } from '@/lib/tauri'
-import { useBlockStore } from '@/stores/blocks'
+import { pageBlockRegistry } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useSyncStore } from '@/stores/sync'
 
@@ -104,11 +104,11 @@ export function useSyncEvents(): void {
       }
 
       // Reload blocks if we received ops (data changed).
-      // Pass the current rootParentId so we reload the page the user is
-      // viewing instead of resetting to the root tree.
+      // Reload ALL mounted page stores so every visible BlockTree updates.
       if (ops_received > 0) {
-        const { rootParentId } = useBlockStore.getState()
-        useBlockStore.getState().load(rootParentId ?? undefined)
+        for (const store of pageBlockRegistry.values()) {
+          store.getState().load()
+        }
         useResolveStore.getState().preload()
       }
 

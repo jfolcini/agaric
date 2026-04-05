@@ -37,8 +37,8 @@ import {
   setPageAliases,
   setProperty,
 } from '../lib/tauri'
-import { useBlockStore } from '../stores/blocks'
 import { useNavigationStore } from '../stores/navigation'
+import { usePageBlockStoreApi } from '../stores/page-blocks'
 import { useResolveStore } from '../stores/resolve'
 import { useUndoStore } from '../stores/undo'
 import { PagePropertyTable } from './PagePropertyTable'
@@ -51,6 +51,7 @@ export interface PageHeaderProps {
 
 export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   const { t } = useTranslation()
+  const pageStore = usePageBlockStoreApi()
 
   // --- Breadcrumb navigation for namespaced pages ---
   const navigateToNamespace = useCallback(() => {
@@ -98,7 +99,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         .then(async (result) => {
           if (result) {
             toast(t(successKey), { duration: 1500 })
-            await useBlockStore.getState().load(pageId)
+            await pageStore.getState().load()
             try {
               const pageBlock = await getBlock(pageId)
               if (pageBlock?.content) {
@@ -112,7 +113,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         })
         .catch(() => toast.error(t(errorKey)))
     },
-    [pageId, t],
+    [pageId, t, pageStore.getState],
   )
 
   const handlePageUndo = createUndoRedoHandler('undo')
