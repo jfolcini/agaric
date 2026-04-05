@@ -22,9 +22,7 @@ function keyEvent(key: string): KeyboardEvent {
 
 describe('useListKeyboardNavigation', () => {
   it('ArrowDown increments focusedIndex', () => {
-    const { result } = renderHook(() =>
-      useListKeyboardNavigation({ itemCount: 5 }),
-    )
+    const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 5 }))
 
     expect(result.current.focusedIndex).toBe(0)
 
@@ -36,9 +34,7 @@ describe('useListKeyboardNavigation', () => {
   })
 
   it('ArrowUp decrements focusedIndex', () => {
-    const { result } = renderHook(() =>
-      useListKeyboardNavigation({ itemCount: 5 }),
-    )
+    const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 5 }))
 
     // Move down first
     act(() => {
@@ -56,9 +52,7 @@ describe('useListKeyboardNavigation', () => {
 
   describe('wrapping behavior', () => {
     it('wrap: true wraps ArrowDown at the end to 0', () => {
-      const { result } = renderHook(() =>
-        useListKeyboardNavigation({ itemCount: 3, wrap: true }),
-      )
+      const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 3, wrap: true }))
 
       // Go to end
       act(() => {
@@ -75,9 +69,7 @@ describe('useListKeyboardNavigation', () => {
     })
 
     it('wrap: true wraps ArrowUp at 0 to end', () => {
-      const { result } = renderHook(() =>
-        useListKeyboardNavigation({ itemCount: 3, wrap: true }),
-      )
+      const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 3, wrap: true }))
 
       expect(result.current.focusedIndex).toBe(0)
 
@@ -89,9 +81,7 @@ describe('useListKeyboardNavigation', () => {
     })
 
     it('wrap: false clamps ArrowDown at the end', () => {
-      const { result } = renderHook(() =>
-        useListKeyboardNavigation({ itemCount: 3, wrap: false }),
-      )
+      const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 3, wrap: false }))
 
       // Go to end
       act(() => {
@@ -108,9 +98,7 @@ describe('useListKeyboardNavigation', () => {
     })
 
     it('wrap: false clamps ArrowUp at 0', () => {
-      const { result } = renderHook(() =>
-        useListKeyboardNavigation({ itemCount: 3, wrap: false }),
-      )
+      const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 3, wrap: false }))
 
       expect(result.current.focusedIndex).toBe(0)
 
@@ -124,9 +112,7 @@ describe('useListKeyboardNavigation', () => {
 
   describe('Vim keys', () => {
     it('j moves down when vim: true', () => {
-      const { result } = renderHook(() =>
-        useListKeyboardNavigation({ itemCount: 5, vim: true }),
-      )
+      const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 5, vim: true }))
 
       act(() => {
         result.current.handleKeyDown(keyEvent('j'))
@@ -136,9 +122,7 @@ describe('useListKeyboardNavigation', () => {
     })
 
     it('k moves up when vim: true', () => {
-      const { result } = renderHook(() =>
-        useListKeyboardNavigation({ itemCount: 5, vim: true }),
-      )
+      const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 5, vim: true }))
 
       // Move down first
       act(() => {
@@ -154,21 +138,19 @@ describe('useListKeyboardNavigation', () => {
     })
 
     it('j/k are ignored when vim: false', () => {
-      const { result } = renderHook(() =>
-        useListKeyboardNavigation({ itemCount: 5, vim: false }),
-      )
+      const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 5, vim: false }))
 
-      let handled: boolean
+      let handled = false
       act(() => {
         handled = result.current.handleKeyDown(keyEvent('j'))
       })
-      expect(handled!).toBe(false)
+      expect(handled).toBe(false)
       expect(result.current.focusedIndex).toBe(0)
 
       act(() => {
         handled = result.current.handleKeyDown(keyEvent('k'))
       })
-      expect(handled!).toBe(false)
+      expect(handled).toBe(false)
       expect(result.current.focusedIndex).toBe(0)
     })
   })
@@ -211,25 +193,23 @@ describe('useListKeyboardNavigation', () => {
         useListKeyboardNavigation({ itemCount: 5, homeEnd: false }),
       )
 
-      let handled: boolean
+      let handled = false
       act(() => {
         handled = result.current.handleKeyDown(keyEvent('Home'))
       })
-      expect(handled!).toBe(false)
+      expect(handled).toBe(false)
 
       act(() => {
         handled = result.current.handleKeyDown(keyEvent('End'))
       })
-      expect(handled!).toBe(false)
+      expect(handled).toBe(false)
     })
   })
 
   describe('onSelect', () => {
     it('calls onSelect with focusedIndex on Enter', () => {
       const onSelect = vi.fn()
-      const { result } = renderHook(() =>
-        useListKeyboardNavigation({ itemCount: 5, onSelect }),
-      )
+      const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 5, onSelect }))
 
       // Move to index 2
       act(() => {
@@ -248,9 +228,7 @@ describe('useListKeyboardNavigation', () => {
 
     it('calls onSelect with focusedIndex on Space', () => {
       const onSelect = vi.fn()
-      const { result } = renderHook(() =>
-        useListKeyboardNavigation({ itemCount: 5, onSelect }),
-      )
+      const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 5, onSelect }))
 
       act(() => {
         result.current.handleKeyDown(keyEvent('ArrowDown'))
@@ -265,15 +243,13 @@ describe('useListKeyboardNavigation', () => {
     })
 
     it('does not call onSelect when not provided', () => {
-      const { result } = renderHook(() =>
-        useListKeyboardNavigation({ itemCount: 5 }),
-      )
+      const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 5 }))
 
-      let handled: boolean
+      let handled = false
       act(() => {
         handled = result.current.handleKeyDown(keyEvent('Enter'))
       })
-      expect(handled!).toBe(false)
+      expect(handled).toBe(false)
     })
   })
 
@@ -309,84 +285,80 @@ describe('useListKeyboardNavigation', () => {
         }),
       )
 
-      let handled: boolean
+      let handled = false
 
       act(() => {
         handled = result.current.handleKeyDown(keyEvent('ArrowDown'))
       })
-      expect(handled!).toBe(true)
+      expect(handled).toBe(true)
 
       act(() => {
         handled = result.current.handleKeyDown(keyEvent('ArrowUp'))
       })
-      expect(handled!).toBe(true)
+      expect(handled).toBe(true)
 
       act(() => {
         handled = result.current.handleKeyDown(keyEvent('j'))
       })
-      expect(handled!).toBe(true)
+      expect(handled).toBe(true)
 
       act(() => {
         handled = result.current.handleKeyDown(keyEvent('k'))
       })
-      expect(handled!).toBe(true)
+      expect(handled).toBe(true)
 
       act(() => {
         handled = result.current.handleKeyDown(keyEvent('Home'))
       })
-      expect(handled!).toBe(true)
+      expect(handled).toBe(true)
 
       act(() => {
         handled = result.current.handleKeyDown(keyEvent('End'))
       })
-      expect(handled!).toBe(true)
+      expect(handled).toBe(true)
 
       act(() => {
         handled = result.current.handleKeyDown(keyEvent('Enter'))
       })
-      expect(handled!).toBe(true)
+      expect(handled).toBe(true)
     })
 
     it('returns false for unhandled keys', () => {
-      const { result } = renderHook(() =>
-        useListKeyboardNavigation({ itemCount: 5 }),
-      )
+      const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 5 }))
 
-      let handled: boolean
+      let handled = false
 
       act(() => {
         handled = result.current.handleKeyDown(keyEvent('Tab'))
       })
-      expect(handled!).toBe(false)
+      expect(handled).toBe(false)
 
       act(() => {
         handled = result.current.handleKeyDown(keyEvent('Escape'))
       })
-      expect(handled!).toBe(false)
+      expect(handled).toBe(false)
 
       act(() => {
         handled = result.current.handleKeyDown(keyEvent('a'))
       })
-      expect(handled!).toBe(false)
+      expect(handled).toBe(false)
     })
 
     it('returns false for all keys when itemCount is 0', () => {
       const onSelect = vi.fn()
-      const { result } = renderHook(() =>
-        useListKeyboardNavigation({ itemCount: 0, onSelect }),
-      )
+      const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 0, onSelect }))
 
-      let handled: boolean
+      let handled = false
 
       act(() => {
         handled = result.current.handleKeyDown(keyEvent('ArrowDown'))
       })
-      expect(handled!).toBe(false)
+      expect(handled).toBe(false)
 
       act(() => {
         handled = result.current.handleKeyDown(keyEvent('Enter'))
       })
-      expect(handled!).toBe(false)
+      expect(handled).toBe(false)
 
       expect(onSelect).not.toHaveBeenCalled()
     })

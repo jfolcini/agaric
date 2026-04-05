@@ -6,236 +6,30 @@
  * Includes delete with confirmation dialog and toast error feedback.
  */
 
-import { ChevronRight, Download, FileText, Plus, Search, Trash2 } from 'lucide-react'
+import { Download, FileText, Plus, Search, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { HighlightMatch } from '@/components/HighlightMatch'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
+import { PageTreeItem } from '@/components/PageTreeItem'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
-import { cn } from '@/lib/utils'
+import { buildPageTree } from '@/lib/page-tree'
+import { usePageDelete } from '../hooks/usePageDelete'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { downloadBlob, exportGraphAsZip } from '../lib/export-graph'
 import type { BlockRow } from '../lib/tauri'
-import { createBlock, deleteBlock, listBlocks } from '../lib/tauri'
-import { useResolveStore } from '../stores/resolve'
+import { createBlock, listBlocks } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
 import { LoadMoreButton } from './LoadMoreButton'
 
 interface PageBrowserProps {
   /** Called when a page is selected. */
   onPageSelect?: (pageId: string, title?: string) => void
-}
-
-interface PageTreeNode {
-  name: string // segment name (e.g., "work" or "project-alpha")
-  fullPath: string // full page name (e.g., "work/project-alpha")
-  pageId?: string // only set for leaf pages that exist
-  children: PageTreeNode[]
-}
-
-function buildPageTree(pages: Array<{ id: string; content: string | null }>): PageTreeNode[] {
-  const root: PageTreeNode[] = []
-
-  for (const page of pages) {
-    const path = page.content ?? 'Untitled'
-    const segments = path.split('/')
-    let current = root
-
-    for (let i = 0; i < segments.length; i++) {
-      const segment = segments[i] as string
-      const fullPath = segments.slice(0, i + 1).join('/')
-      let node = current.find((n) => n.name === segment)
-
-      if (!node) {
-        node = { name: segment, fullPath, children: [] }
-        current.push(node)
-      }
-
-      if (i === segments.length - 1) {
-        node.pageId = page.id
-      }
-
-      current = node.children
-    }
-  }
-
-  return root
-}
-
-/** Highlight matching segments of text when a filter is active. */
-function HighlightMatch({
-  text,
-  filterText,
-}: {
-  text: string
-  filterText: string
-}): React.ReactElement {
-  if (!filterText) return <>{text}</>
-  const idx = text.toLowerCase().indexOf(filterText.toLowerCase())
-  if (idx === -1) return <>{text}</>
-  return (
-    <>
-      {text.slice(0, idx)}
-      <mark className="bg-yellow-200 dark:bg-yellow-800 rounded-sm">
-        {text.slice(idx, idx + filterText.length)}
-      </mark>
-      {text.slice(idx + filterText.length)}
-    </>
-  )
-}
-
-function PageTreeItem({
-  node,
-  depth,
-  onNavigate,
-  onCreateUnder,
-  filterText,
-  forceExpand,
-  onDelete,
-}: {
-  node: PageTreeNode
-  depth: number
-  onNavigate: (pageId: string, title: string) => void
-  onCreateUnder: (namespacePath: string) => void
-  filterText: string
-  forceExpand: boolean
-  onDelete?: (pageId: string, name: string) => void
-}) {
-  const [expanded, setExpanded] = useState(true) // namespaces start expanded
-
-  if (node.pageId && node.children.length === 0) {
-    // Pure leaf page — clickable
-    const leafId = node.pageId
-    return (
-      <div
-        className="group flex w-full items-center gap-3 rounded-lg py-1 text-left text-sm transition-colors hover:bg-accent/50"
-        style={{ paddingLeft: `${depth * 16 + 12}px` }}
-      >
-        <button
-          type="button"
-          className="flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer"
-          onClick={() => onNavigate(leafId, node.fullPath)}
-        >
-          <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="truncate" title={node.fullPath}>
-            <HighlightMatch text={node.name} filterText={filterText} />
-          </span>
-        </button>
-        {onDelete && (
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-            aria-label={`Delete ${node.fullPath}`}
-            onClick={(e) => {
-              e.stopPropagation()
-              onDelete(leafId, node.fullPath)
-            }}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        )}
-      </div>
-    )
-  }
-
-  const isExpanded = forceExpand || expanded
-
-  if (!node.pageId && node.children.length > 0) {
-    // Pure namespace folder — collapsible
-    return (
-      <div>
-        <div className="group flex items-center" style={{ paddingLeft: `${depth * 16}px` }}>
-          <button
-            type="button"
-            onClick={() => !forceExpand && setExpanded(!expanded)}
-            className="flex-1 text-left px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 rounded flex items-center gap-1"
-          >
-            <ChevronRight
-              className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-90')}
-            />
-            <HighlightMatch text={node.name} filterText={filterText} />
-          </button>
-          <button
-            type="button"
-            className="opacity-0 group-hover:opacity-100 h-5 w-5 flex items-center justify-center rounded hover:bg-accent transition-opacity"
-            aria-label={`Create page under ${node.fullPath}`}
-            onClick={(e) => {
-              e.stopPropagation()
-              onCreateUnder(node.fullPath)
-            }}
-          >
-            <Plus size={12} />
-          </button>
-        </div>
-        {isExpanded &&
-          node.children.map((child) => (
-            <PageTreeItem
-              key={child.fullPath}
-              node={child}
-              depth={depth + 1}
-              onNavigate={onNavigate}
-              onCreateUnder={onCreateUnder}
-              filterText={filterText}
-              forceExpand={forceExpand}
-              {...(onDelete ? { onDelete } : {})}
-            />
-          ))}
-      </div>
-    )
-  }
-
-  // Hybrid: both a page AND a namespace folder
-  const hybridId = node.pageId ?? ''
-  return (
-    <div>
-      <div className="group flex items-center" style={{ paddingLeft: `${depth * 16}px` }}>
-        <button
-          type="button"
-          onClick={() => !forceExpand && setExpanded(!expanded)}
-          className="px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 rounded flex items-center"
-        >
-          <ChevronRight className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-90')} />
-        </button>
-        <button
-          type="button"
-          className="flex-1 text-left px-1 py-1 text-sm hover:bg-accent/50 rounded truncate"
-          onClick={() => onNavigate(hybridId, node.fullPath)}
-          title={node.fullPath}
-        >
-          <HighlightMatch text={node.name} filterText={filterText} />
-        </button>
-        <button
-          type="button"
-          className="opacity-0 group-hover:opacity-100 h-5 w-5 flex items-center justify-center rounded hover:bg-accent transition-opacity"
-          aria-label={`Create page under ${node.fullPath}`}
-          onClick={(e) => {
-            e.stopPropagation()
-            onCreateUnder(node.fullPath)
-          }}
-        >
-          <Plus size={12} />
-        </button>
-      </div>
-      {isExpanded &&
-        node.children.map((child) => (
-          <PageTreeItem
-            key={child.fullPath}
-            node={child}
-            depth={depth + 1}
-            onNavigate={onNavigate}
-            onCreateUnder={onCreateUnder}
-            filterText={filterText}
-            forceExpand={forceExpand}
-            {...(onDelete ? { onDelete } : {})}
-          />
-        ))}
-    </div>
-  )
 }
 
 export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElement {
@@ -254,8 +48,8 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     setItems: setPages,
   } = usePaginatedQuery(queryFn, { onError: t('pageBrowser.loadFailed') })
 
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
-  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const { deleteTarget, deletingId, setDeleteTarget, handleConfirmDelete } = usePageDelete(setPages)
+
   const [isCreating, setIsCreating] = useState(false)
   const [newPageName, setNewPageName] = useState('')
   const [filterText, setFilterText] = useState('')
@@ -303,32 +97,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     }
     setIsCreating(false)
   }, [newPageName, setPages, t, onPageSelect])
-
-  const handleDeletePage = useCallback(
-    async (pageId: string) => {
-      setDeletingId(pageId)
-      try {
-        await deleteBlock(pageId)
-        setPages((prev) => prev.filter((p) => p.id !== pageId))
-        useResolveStore.getState().set(pageId, '(deleted)', true)
-        toast.success(t('pageBrowser.deleteSuccess'))
-      } catch (error) {
-        toast.error(t('pageBrowser.deleteFailed', { error: String(error) }), {
-          action: { label: t('pageBrowser.retry'), onClick: () => handleDeletePage(pageId) },
-        })
-      } finally {
-        setDeletingId(null)
-      }
-    },
-    [setPages, t],
-  )
-
-  const handleConfirmDelete = useCallback(() => {
-    if (deleteTarget) {
-      handleDeletePage(deleteTarget.id)
-      setDeleteTarget(null)
-    }
-  }, [deleteTarget, handleDeletePage])
 
   const handleExportAll = useCallback(async () => {
     setExporting(true)

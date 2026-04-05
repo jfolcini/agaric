@@ -1,11 +1,16 @@
-import { ArrowDown, ArrowUp, ChevronDown, Search } from 'lucide-react'
+import { ChevronDown, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { BacklinkFilter, BlockRow } from '../lib/tauri'
+import { parseQueryExpression } from '../lib/query-utils'
+import type { BlockRow } from '../lib/tauri'
 import { batchResolve, listBlocks, queryByProperty, queryByTags } from '../lib/tauri'
-import { truncateContent } from '../lib/text-utils'
 import { cn } from '../lib/utils'
-import { PageLink } from './PageLink'
+import { QueryResultList } from './QueryResultList'
+import { QueryResultTable } from './QueryResultTable'
+
+export type { PropertyFilter } from '../lib/query-utils'
+// Re-export extracted utilities so existing consumers don't break
+export { buildFilters, parseQueryExpression } from '../lib/query-utils'
 
 /** Column definition for table mode. */
 interface TableColumn {
@@ -50,91 +55,6 @@ export interface QueryResultProps {
   onNavigate?: ((pageId: string) => void) | undefined
   /** Resolve block title by ID */
   resolveBlockTitle?: ((id: string) => string) | undefined
-}
-
-/** Parsed property filter from shorthand syntax (property:key=value). */
-export interface PropertyFilter {
-  key: string
-  value: string
-}
-
-/** Parse a query expression string into structured params.
- *
- * Supports both the legacy explicit-type syntax and the new shorthand:
- * - Legacy: `type:tag expr:project` or `type:property key:X value:Y`
- * - Shorthand: `property:key=value` and `tag:prefix`
- *
- * Multiple shorthand tokens are collected and produce a `'filtered'` type
- * with AND semantics.
- */
-export function parseQueryExpression(expr: string): {
-  type: 'tag' | 'property' | 'backlinks' | 'filtered' | 'unknown'
-  params: Record<string, string>
-  propertyFilters: PropertyFilter[]
-  tagFilters: string[]
-} {
-  const parts = expr.trim().split(/\s+/)
-  const params: Record<string, string> = {}
-  const propertyFilters: PropertyFilter[] = []
-  const tagFilters: string[] = []
-
-  for (const part of parts) {
-    const colonIdx = part.indexOf(':')
-    if (colonIdx > 0) {
-      const prefix = part.slice(0, colonIdx)
-      const rest = part.slice(colonIdx + 1)
-
-      if (prefix === 'property' && rest.includes('=')) {
-        // Shorthand: property:key=value
-        const eqIdx = rest.indexOf('=')
-        propertyFilters.push({ key: rest.slice(0, eqIdx), value: rest.slice(eqIdx + 1) })
-      } else if (prefix === 'tag' && rest !== '') {
-        // Shorthand: tag:prefix
-        tagFilters.push(rest)
-      } else {
-        params[prefix] = rest
-      }
-    }
-  }
-
-  // If shorthand filters were found, treat as a 'filtered' query
-  if (propertyFilters.length > 0 || tagFilters.length > 0) {
-    return { type: 'filtered', params, propertyFilters, tagFilters }
-  }
-
-  const explicitType = params.type as 'tag' | 'property' | 'backlinks' | undefined
-  return { type: explicitType ?? 'unknown', params, propertyFilters, tagFilters }
-}
-
-/** Build BacklinkFilter objects from parsed shorthand filters.
- *
- * Maps known fixed-field keys (todo_state, priority, due_date) to their
- * specialised filter variants, and falls back to PropertyText for custom
- * property keys.  Tag filters become HasTagPrefix filters.
- */
-export function buildFilters(
-  propertyFilters: PropertyFilter[],
-  tagFilters: string[],
-): BacklinkFilter[] {
-  const filters: BacklinkFilter[] = []
-
-  for (const pf of propertyFilters) {
-    if (pf.key === 'todo_state') {
-      filters.push({ type: 'TodoState', state: pf.value })
-    } else if (pf.key === 'priority') {
-      filters.push({ type: 'Priority', level: pf.value })
-    } else if (pf.key === 'due_date') {
-      filters.push({ type: 'DueDate', op: 'Eq', value: pf.value })
-    } else {
-      filters.push({ type: 'PropertyText', key: pf.key, op: 'Eq', value: pf.value })
-    }
-  }
-
-  for (const tf of tagFilters) {
-    filters.push({ type: 'HasTagPrefix', prefix: tf })
-  }
-
-  return filters
 }
 
 export function QueryResult({
@@ -337,127 +257,24 @@ export function QueryResult({
             <div className="px-3 py-2 text-xs text-muted-foreground italic">No results</div>
           )}
           {!loading && !error && results.length > 0 && !tableMode && (
-            <ul className="divide-y divide-muted-foreground/10">
-              {results.map((block) => {
-                const pageTitle = block.parent_id ? pageTitles.get(block.parent_id) : undefined
-                return (
-                  <li key={block.id} className="query-result-item" data-testid="query-result-item">
-                    <button
-                      type="button"
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted/40 transition-colors"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (block.parent_id && onNavigate) {
-                          onNavigate(block.parent_id)
-                        }
-                      }}
-                    >
-                      {block.todo_state && (
-                        <span
-                          className={cn(
-                            'shrink-0 rounded px-1 py-0.5 text-xs font-bold leading-none',
-                            block.todo_state === 'DONE'
-                              ? 'bg-status-done text-status-done-foreground'
-                              : block.todo_state === 'DOING'
-                                ? 'bg-status-active text-status-active-foreground'
-                                : 'bg-status-pending text-status-pending-foreground',
-                          )}
-                        >
-                          {block.todo_state}
-                        </span>
-                      )}
-                      <span className="flex-1 truncate">
-                        {resolveBlockTitle
-                          ? resolveBlockTitle(block.id) || truncateContent(block.content, 80)
-                          : truncateContent(block.content, 80)}
-                      </span>
-                      {pageTitle && block.parent_id && (
-                        <span className="shrink-0 text-[10px] text-muted-foreground/60 truncate max-w-[120px]">
-                          <PageLink pageId={block.parent_id} title={pageTitle} />
-                        </span>
-                      )}
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
+            <QueryResultList
+              results={results}
+              pageTitles={pageTitles}
+              onNavigate={onNavigate}
+              resolveBlockTitle={resolveBlockTitle}
+            />
           )}
           {!loading && !error && results.length > 0 && tableMode && (
-            <div className="overflow-x-auto">
-              {/* biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: table uses grid role for sortable column headers */}
-              <table className="w-full text-xs" role="grid">
-                <thead>
-                  <tr className="border-b border-muted-foreground/20">
-                    {columns.map((col) => (
-                      <th
-                        key={col.key}
-                        className="px-3 py-1.5 text-left font-medium text-muted-foreground cursor-pointer select-none hover:bg-muted/40 transition-colors"
-                        onClick={() => handleColumnSort(col.key)}
-                        aria-sort={
-                          sortKey === col.key
-                            ? sortDir === 'asc'
-                              ? 'ascending'
-                              : 'descending'
-                            : 'none'
-                        }
-                      >
-                        <span className="inline-flex items-center gap-1">
-                          {col.label}
-                          {sortKey === col.key &&
-                            (sortDir === 'asc' ? (
-                              <ArrowUp size={10} aria-hidden="true" />
-                            ) : (
-                              <ArrowDown size={10} aria-hidden="true" />
-                            ))}
-                        </span>
-                      </th>
-                    ))}
-                    <th className="px-3 py-1.5 text-left font-medium text-muted-foreground">
-                      Page
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-muted-foreground/10">
-                  {sortedResults.map((block) => {
-                    const pageTitle = block.parent_id ? pageTitles.get(block.parent_id) : undefined
-                    return (
-                      <tr key={block.id} className="hover:bg-muted/40 transition-colors">
-                        {columns.map((col) => (
-                          <td key={col.key} className="px-3 py-1.5">
-                            {col.key === 'content' ? (
-                              <button
-                                type="button"
-                                className="text-left hover:underline truncate max-w-[300px] block"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  if (block.parent_id && onNavigate) {
-                                    onNavigate(block.parent_id)
-                                  }
-                                }}
-                              >
-                                {resolveBlockTitle
-                                  ? resolveBlockTitle(block.id) ||
-                                    truncateContent(block.content, 80)
-                                  : truncateContent(block.content, 80)}
-                              </button>
-                            ) : (
-                              <span>{(block[col.key as keyof BlockRow] as string) ?? ''}</span>
-                            )}
-                          </td>
-                        ))}
-                        <td className="px-3 py-1.5 text-muted-foreground/60 truncate max-w-[120px]">
-                          {pageTitle && block.parent_id ? (
-                            <PageLink pageId={block.parent_id} title={pageTitle} />
-                          ) : (
-                            ''
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <QueryResultTable
+              results={sortedResults}
+              columns={columns}
+              pageTitles={pageTitles}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onColumnSort={handleColumnSort}
+              onNavigate={onNavigate}
+              resolveBlockTitle={resolveBlockTitle}
+            />
           )}
         </div>
       )}

@@ -41,12 +41,15 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
       [items, command],
     )
 
-    const { focusedIndex: selectedIndex, setFocusedIndex: setSelectedIndex, handleKeyDown } =
-      useListKeyboardNavigation({
-        itemCount: items.length,
-        wrap: true,
-        onSelect: selectItem,
-      })
+    const {
+      focusedIndex: selectedIndex,
+      setFocusedIndex: setSelectedIndex,
+      handleKeyDown,
+    } = useListKeyboardNavigation({
+      itemCount: items.length,
+      wrap: true,
+      onSelect: selectItem,
+    })
 
     // Scroll selected item into view on keyboard navigation
     // biome-ignore lint/correctness/useExhaustiveDependencies: selectedIndex IS the trigger — we scroll when selection changes

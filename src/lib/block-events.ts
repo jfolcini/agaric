@@ -23,10 +23,7 @@ export const BLOCK_EVENTS = {
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 /** Dispatch a block event on `document`. */
-export function dispatchBlockEvent(
-  name: keyof typeof BLOCK_EVENTS,
-  detail?: unknown,
-): void {
+export function dispatchBlockEvent(name: keyof typeof BLOCK_EVENTS, detail?: unknown): void {
   document.dispatchEvent(new CustomEvent(BLOCK_EVENTS[name], { detail }))
 }
 
