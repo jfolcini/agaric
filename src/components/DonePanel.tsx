@@ -12,6 +12,7 @@ import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
+import type { NavigateToPageFn } from '../lib/block-events'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, queryByProperty } from '../lib/tauri'
 import { truncateContent } from '../lib/text-utils'
@@ -21,7 +22,7 @@ import { PageLink } from './PageLink'
 
 export interface DonePanelProps {
   date: string // YYYY-MM-DD
-  onNavigateToPage?: ((pageId: string, title: string, blockId?: string) => void) | undefined
+  onNavigateToPage?: NavigateToPageFn | undefined
 }
 
 export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.ReactElement | null {

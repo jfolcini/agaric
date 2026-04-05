@@ -528,7 +528,7 @@ export function ConflictList(): React.ReactElement {
         </div>
       )}
 
-      <div className="conflict-items space-y-2">
+      <div className="conflict-items space-y-2" role="list">
         {blocks.map((block) => {
           const original = block.parent_id ? originals.get(block.parent_id) : undefined
           const conflictType = inferConflictType(block, original)
@@ -537,6 +537,7 @@ export function ConflictList(): React.ReactElement {
             <div
               key={block.id}
               className="conflict-item flex items-start justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
+              role="listitem"
               data-testid="conflict-item"
             >
               <label

@@ -28,6 +28,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
+import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { cn } from '../lib/utils'
 
 export interface BlockContextMenuProps {
@@ -120,7 +121,6 @@ export function BlockContextMenu({
 }: BlockContextMenuProps): React.ReactElement {
   const { t } = useTranslation()
   const menuRef = useRef<HTMLDivElement>(null)
-  const [focusedIndex, setFocusedIndex] = useState(0)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
 
   const handleCloseWithFocus = useCallback(() => {
@@ -156,11 +156,6 @@ export function BlockContextMenu({
   useEffect(() => {
     itemRefs.current[0]?.focus()
   }, [])
-
-  // ── Focus item on focusedIndex change ────────────────────────────
-  useEffect(() => {
-    itemRefs.current[focusedIndex]?.focus()
-  }, [focusedIndex])
 
   // ── Compute position with floating-ui ─────────────────────────────
   const [computedPos, setComputedPos] = useState(position)
@@ -306,28 +301,24 @@ export function BlockContextMenu({
   const visibleItems = groups.flat()
 
   // ── Keyboard navigation ──────────────────────────────────────────
+  const { focusedIndex, handleKeyDown: navHandleKeyDown } = useListKeyboardNavigation({
+    itemCount: visibleItems.length,
+    wrap: true,
+    homeEnd: true,
+  })
+
+  // ── Focus item on focusedIndex change ────────────────────────────
+  useEffect(() => {
+    itemRefs.current[focusedIndex]?.focus()
+  }, [focusedIndex])
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      switch (e.key) {
-        case 'ArrowDown':
-          e.preventDefault()
-          setFocusedIndex((prev) => (prev + 1) % visibleItems.length)
-          break
-        case 'ArrowUp':
-          e.preventDefault()
-          setFocusedIndex((prev) => (prev - 1 + visibleItems.length) % visibleItems.length)
-          break
-        case 'Home':
-          e.preventDefault()
-          setFocusedIndex(0)
-          break
-        case 'End':
-          e.preventDefault()
-          setFocusedIndex(visibleItems.length - 1)
-          break
+      if (navHandleKeyDown(e)) {
+        e.preventDefault()
       }
     },
-    [visibleItems.length],
+    [navHandleKeyDown],
   )
 
   let itemIndex = 0

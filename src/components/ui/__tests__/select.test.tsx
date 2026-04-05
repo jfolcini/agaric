@@ -132,6 +132,20 @@ describe('Select', () => {
     expect(trigger.className).toContain('text-xs')
   })
 
+  // -- Coarse pointer media query overrides -----------------------------------
+
+  it('default size includes coarse pointer height override', () => {
+    renderSelect()
+    const trigger = screen.getByRole('combobox')
+    expect(trigger.className).toContain('[@media(pointer:coarse)]:h-11')
+  })
+
+  it('sm size includes coarse pointer height override', () => {
+    renderSelect({ size: 'sm' })
+    const trigger = screen.getByRole('combobox')
+    expect(trigger.className).toContain('[@media(pointer:coarse)]:h-11')
+  })
+
   // -- a11y -------------------------------------------------------------------
 
   it('has no a11y violations', async () => {

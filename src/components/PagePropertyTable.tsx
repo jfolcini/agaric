@@ -7,7 +7,7 @@
  * creating new definitions.
  */
 
-import { ChevronDown, ChevronRight, Pencil, Plus, X } from 'lucide-react'
+import { Pencil, Plus, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -43,6 +43,7 @@ import {
   setProperty,
   updatePropertyDefOptions,
 } from '../lib/tauri'
+import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { LoadingSkeleton } from './LoadingSkeleton'
 
 // Properties designed for task blocks (content blocks with todo_state).
@@ -196,21 +197,14 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
 
   return (
     <div className="page-property-table">
-      <Button
-        variant="ghost"
-        size="sm"
-        className="gap-1 text-muted-foreground"
-        onClick={() => setExpanded((prev) => !prev)}
-        aria-label={t('pageProperty.toggleLabel')}
+      <CollapsiblePanelHeader
+        collapsed={!expanded}
+        onToggle={() => setExpanded((prev) => !prev)}
+        className="page-property-table-header"
       >
-        {expanded ? (
-          <ChevronDown className="h-3.5 w-3.5" />
-        ) : (
-          <ChevronRight className="h-3.5 w-3.5" />
-        )}
         {t('pageProperty.propertiesButton')}
         {propertyCount > 0 ? ` (${propertyCount})` : ''}
-      </Button>
+      </CollapsiblePanelHeader>
 
       {expanded && (
         <div className="mt-1 space-y-1.5 pl-2">

@@ -39,6 +39,7 @@ import {
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { dispatchBlockEvent } from '@/lib/block-events'
 import { LinkEditPopover } from './LinkEditPopover'
 import { Button } from './ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover'
@@ -249,31 +250,31 @@ export function FormattingToolbar({
         icon: CalendarDays,
         label: 'toolbar.insertDate',
         tip: 'toolbar.insertDateTip',
-        action: () => document.dispatchEvent(new CustomEvent('open-date-picker')),
+        action: () => dispatchBlockEvent('OPEN_DATE_PICKER'),
       },
       {
         icon: CalendarClock,
         label: 'toolbar.setDueDate',
         tip: 'toolbar.dueDateTip',
-        action: () => document.dispatchEvent(new CustomEvent('open-due-date-picker')),
+        action: () => dispatchBlockEvent('OPEN_DUE_DATE_PICKER'),
       },
       {
         icon: CalendarCheck2,
         label: 'toolbar.setScheduledDate',
         tip: 'toolbar.scheduledDateTip',
-        action: () => document.dispatchEvent(new CustomEvent('open-scheduled-date-picker')),
+        action: () => dispatchBlockEvent('OPEN_SCHEDULED_DATE_PICKER'),
       },
       {
         icon: CheckSquare,
         label: 'toolbar.todoToggle',
         tip: 'toolbar.todoToggleTip',
-        action: () => document.dispatchEvent(new CustomEvent('toggle-todo-state')),
+        action: () => dispatchBlockEvent('TOGGLE_TODO_STATE'),
       },
       {
         icon: Settings2,
         label: 'toolbar.properties',
         tip: 'toolbar.propertiesTip',
-        action: () => document.dispatchEvent(new CustomEvent('open-block-properties')),
+        action: () => dispatchBlockEvent('OPEN_BLOCK_PROPERTIES'),
       },
     ],
     [],
@@ -299,7 +300,7 @@ export function FormattingToolbar({
         icon: X,
         label: 'toolbar.discard',
         tip: 'toolbar.discardTip',
-        action: () => document.dispatchEvent(new CustomEvent('discard-block-edit')),
+        action: () => dispatchBlockEvent('DISCARD_BLOCK_EDIT'),
       },
     ],
     [editor],
@@ -423,7 +424,7 @@ export function FormattingToolbar({
             className={currentPriority != null ? 'bg-accent text-accent-foreground' : ''}
             onPointerDown={(e) => {
               e.preventDefault()
-              document.dispatchEvent(new CustomEvent('cycle-priority'))
+              dispatchBlockEvent('CYCLE_PRIORITY')
             }}
           >
             <span className="inline-flex items-center gap-1 text-xs font-semibold leading-none text-muted-foreground">

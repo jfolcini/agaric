@@ -24,6 +24,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
+import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { formatTimestamp } from '../lib/format'
 import { getPayloadPreview } from '../lib/history-utils'
@@ -96,7 +97,6 @@ function opBadgeClasses(opType: string): string {
 export function HistoryView(): React.ReactElement {
   const { t } = useTranslation()
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [focusedIndex, setFocusedIndex] = useState(-1)
   const [lastClickedIndex, setLastClickedIndex] = useState(-1)
   const [reverting, setReverting] = useState(false)
   const [opTypeFilter, setOpTypeFilter] = useState<string | null>(null)
@@ -140,20 +140,21 @@ export function HistoryView(): React.ReactElement {
     prevLengthRef.current = entries.length
   }, [entries.length])
 
+  // ── List keyboard navigation (ArrowUp/Down, j/k) ────────────────
+  const { focusedIndex, setFocusedIndex, handleKeyDown: navHandleKeyDown } =
+    useListKeyboardNavigation({
+      itemCount: entries.length,
+      wrap: false,
+      vim: true,
+    })
+
   // Reset selection when filter changes (entries are replaced by the hook)
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset UI state when filter changes
   useEffect(() => {
     setSelected(new Set())
-    setFocusedIndex(-1)
+    setFocusedIndex(0)
     setLastClickedIndex(-1)
-  }, [opTypeFilter])
-
-  // Set initial focus when entries load
-  useEffect(() => {
-    if (entries.length > 0 && focusedIndex === -1) {
-      setFocusedIndex(0)
-    }
-  }, [entries.length, focusedIndex])
+  }, [opTypeFilter, setFocusedIndex])
 
   // ── Selection helpers ────────────────────────────────────────────
 
@@ -250,17 +251,9 @@ export function HistoryView(): React.ReactElement {
       )
         return
 
-      // Arrow Up / k
-      if (e.key === 'ArrowUp' || e.key === 'k') {
+      // Delegate arrow/j/k navigation to the shared hook
+      if (navHandleKeyDown(e)) {
         e.preventDefault()
-        setFocusedIndex((prev) => Math.max(0, prev - 1))
-        return
-      }
-
-      // Arrow Down / j
-      if (e.key === 'ArrowDown' || e.key === 'j') {
-        e.preventDefault()
-        setFocusedIndex((prev) => Math.min(entries.length - 1, prev + 1))
         return
       }
 
@@ -294,7 +287,7 @@ export function HistoryView(): React.ReactElement {
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [entries.length, focusedIndex, toggleSelection, selectAll, selected.size, clearSelection])
+  }, [navHandleKeyDown, focusedIndex, toggleSelection, selectAll, selected.size, clearSelection])
 
   // Scroll focused item into view
   useEffect(() => {

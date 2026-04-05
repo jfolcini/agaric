@@ -30,6 +30,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
+import type { NavigateToPageFn } from '../lib/block-events'
 import type { DayEntry } from '../lib/date-utils'
 import {
   formatDate,
@@ -98,10 +99,10 @@ function computeSourceModifiers(data: Record<string, Record<string, number>>): {
 }
 
 interface JournalPageProps {
-  /** Called when a block is clicked — navigates to block editor. */
+  /** Called when a block is clicked -- navigates to block editor. */
   onBlockClick?: ((blockId: string) => void) | undefined
   /** Called to navigate to a page for editing. */
-  onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
+  onNavigateToPage?: NavigateToPageFn | undefined
 }
 
 // ── Component ─────────────────────────────────────────────────────────

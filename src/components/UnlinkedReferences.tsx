@@ -6,22 +6,25 @@
  * converts the first plain-text mention into a [[pageId]] link.
  */
 
-import { ChevronDown, ChevronRight, Link2, Loader2 } from 'lucide-react'
+import { Link2, Loader2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import type { BacklinkGroup } from '../lib/tauri'
 import { editBlock, listUnlinkedReferences } from '../lib/tauri'
+import { useBlockNavigation } from '../hooks/useBlockNavigation'
+import type { NavigateToPageFn } from '../lib/block-events'
 import { CollapsibleGroupList } from './CollapsibleGroupList'
+import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { EmptyState } from './EmptyState'
 import { LoadMoreButton } from './LoadMoreButton'
 
 export interface UnlinkedReferencesProps {
   pageId: string
   pageTitle: string
-  onNavigateToPage?: ((pageId: string, title: string, blockId?: string) => void) | undefined
+  onNavigateToPage?: NavigateToPageFn | undefined
 }
 
 /** Escape special regex characters so a literal string can be used in `new RegExp`. */
@@ -139,6 +142,20 @@ export function UnlinkedReferences({
     }
   }, [nextCursor, fetchGroups])
 
+  const pageTitles = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const g of groups) {
+      if (g.page_title) map.set(g.page_id, g.page_title)
+    }
+    return map
+  }, [groups])
+
+  const { handleBlockClick } = useBlockNavigation({
+    onNavigateToPage,
+    pageTitles,
+    untitledLabel: t('unlinkedRefs.untitled'),
+  })
+
   const headerLabel =
     totalCount === 0
       ? t('unlinkedRefs.headerNone')
@@ -149,19 +166,13 @@ export function UnlinkedReferences({
   return (
     <section className="unlinked-references" aria-label="Unlinked references">
       {/* Main header — collapsible, collapsed by default */}
-      <button
-        type="button"
-        onClick={toggleCollapsed}
-        className="unlinked-references-header flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent/50 transition-colors"
-        aria-expanded={!collapsed}
+      <CollapsiblePanelHeader
+        collapsed={collapsed}
+        onToggle={toggleCollapsed}
+        className="unlinked-references-header"
       >
-        {!collapsed ? (
-          <ChevronDown className="h-4 w-4 shrink-0" />
-        ) : (
-          <ChevronRight className="h-4 w-4 shrink-0" />
-        )}
         {headerLabel}
-      </button>
+      </CollapsiblePanelHeader>
 
       {!collapsed && (
         <div className="unlinked-references-content mt-1 space-y-2">
@@ -195,7 +206,7 @@ export function UnlinkedReferences({
             {...(onNavigateToPage && {
               onPageTitleClick: (pageId: string, title: string) => onNavigateToPage(pageId, title),
             })}
-            renderBlock={(block, group) => (
+            renderBlock={(block, _group) => (
               <li
                 key={block.id}
                 className="unlinked-reference-item flex items-center gap-3 border-b py-1.5 px-2 last:border-b-0"
@@ -203,13 +214,7 @@ export function UnlinkedReferences({
                 <button
                   type="button"
                   className="unlinked-reference-item-text text-sm flex-1 truncate cursor-pointer hover:bg-muted/50 text-left"
-                  onClick={() =>
-                    onNavigateToPage?.(
-                      group.page_id,
-                      group.page_title ?? t('unlinkedRefs.untitled'),
-                      block.id,
-                    )
-                  }
+                  onClick={() => handleBlockClick(block)}
                 >
                   {block.content || t('unlinkedRefs.empty')}
                 </button>

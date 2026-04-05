@@ -11,6 +11,7 @@ import { useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import type { NavigateToPageFn } from '../lib/block-events'
 import { useBlockStore } from '../stores/blocks'
 import { useNavigationStore } from '../stores/navigation'
 import { useUndoStore } from '../stores/undo'
@@ -23,7 +24,7 @@ export interface PageEditorProps {
   pageId: string
   title: string
   onBack?: (() => void) | undefined
-  onNavigateToPage?: ((pageId: string, title: string, blockId?: string) => void) | undefined
+  onNavigateToPage?: NavigateToPageFn | undefined
 }
 
 export function PageEditor({

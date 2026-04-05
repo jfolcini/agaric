@@ -687,7 +687,7 @@ function SortableBlockInner({
 
         {/* ── Property edit popover ─────────────────────────────────── */}
         {editingProp && (
-          <div className="absolute z-50 mt-1 rounded-md border bg-popover p-1 shadow-lg">
+          <div className="absolute z-50 mt-1 rounded-md border bg-popover p-1 shadow-lg" role="dialog" aria-label={t('block.editProperty')}>
             {selectOptions ? (
               <div className="flex flex-col gap-0.5" data-testid="select-options-dropdown">
                 {selectOptions.map((opt) => (

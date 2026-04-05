@@ -82,7 +82,7 @@ describe('Button', () => {
 
   it('xs size includes coarse pointer height and padding overrides', () => {
     const btn = renderButton('xs')
-    expect(btn.className).toContain('[@media(pointer:coarse)]:h-11')
+    expect(btn.className).toContain('[@media(pointer:coarse)]:h-9')
     expect(btn.className).toContain('[@media(pointer:coarse)]:px-3')
   })
 

@@ -149,7 +149,9 @@ describe('LinkedReferences', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_backlinks_grouped', expect.anything())
     })
 
-    expect(container.querySelector('.linked-references')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(container.querySelector('.linked-references')).not.toBeInTheDocument()
+    })
   })
 
   // 2. renders header with correct count

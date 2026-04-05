@@ -2158,4 +2158,32 @@ describe('ConflictList', () => {
     expect(actionsContainer).not.toBeNull()
     expect(actionsContainer?.className).toContain('flex-wrap')
   })
+
+  it('conflict list container has role="list" and items have role="listitem"', async () => {
+    const page = {
+      items: [
+        makeConflict({ id: 'C1', content: 'conflict one' }),
+        makeConflict({ id: 'C2', content: 'conflict two' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict one')
+
+    // Parent container should have role="list"
+    const list = screen.getByRole('list')
+    expect(list).toBeInTheDocument()
+    expect(list.className).toContain('conflict-items')
+
+    // Each conflict item should have role="listitem"
+    const listItems = screen.getAllByRole('listitem')
+    expect(listItems).toHaveLength(2)
+    for (const item of listItems) {
+      expect(item.className).toContain('conflict-item')
+    }
+  })
 })

@@ -2960,6 +2960,33 @@ describe('SortableBlock property chip click-to-edit', () => {
     })
     expect(screen.queryByTestId('select-options-dropdown')).not.toBeInTheDocument()
   })
+
+  it('property edit popover has role="dialog" when open', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[{ key: 'effort', value: '2h' }]}
+      />,
+    )
+
+    // No dialog initially
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    // Click the property chip to open the edit popover
+    const chip = screen.getByTestId('property-chip-effort')
+    await user.click(chip)
+
+    // The popover should now be visible as a dialog (non-modal — no focus trap)
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toBeInTheDocument()
+    expect(dialog).not.toHaveAttribute('aria-modal')
+    expect(dialog).toHaveAttribute('aria-label', 'Edit property')
+  })
 })
 
 // =========================================================================

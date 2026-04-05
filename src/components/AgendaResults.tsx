@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
+import type { NavigateToPageFn } from '../lib/block-events'
 import {
   type AgendaSortBy,
   groupByDate,
@@ -38,7 +39,7 @@ export interface AgendaResultsProps {
   /** Load more callback */
   onLoadMore: () => void
   /** Navigate to a block's source page */
-  onNavigateToPage?: ((pageId: string, title: string, blockId?: string) => void) | undefined
+  onNavigateToPage?: NavigateToPageFn | undefined
   /** Whether any filters are active (affects empty state messaging) */
   hasActiveFilters: boolean
   /** Clear all filters callback */

@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import type { NavigateToPageFn } from '../lib/block-events'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { priorityColor } from '../lib/priority-color'
 import type { BlockRow, ProjectedAgendaEntry } from '../lib/tauri'
@@ -24,7 +25,7 @@ import { PageLink } from './PageLink'
 
 export interface DuePanelProps {
   date: string // YYYY-MM-DD
-  onNavigateToPage?: ((pageId: string, title: string, blockId?: string) => void) | undefined
+  onNavigateToPage?: NavigateToPageFn | undefined
 }
 
 const GROUP_ORDER = ['DOING', 'TODO', 'DONE', null] as const

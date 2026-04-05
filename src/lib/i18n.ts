@@ -180,6 +180,7 @@ const resources = {
       'block.searchPages': 'Search pages...',
       'block.noPagesFound': 'No pages found',
       'block.refPickerLabel': 'Select a page',
+      'block.editProperty': 'Edit property',
 
       // Block references
       'blockRef.pickerLabel': 'Block references',

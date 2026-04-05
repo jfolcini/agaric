@@ -6,7 +6,8 @@
  * the Suggestion plugin via the imperative ref.
  */
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react'
+import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { cn } from '@/lib/utils'
 
 /** An item in the suggestion popup (tag or page). */
@@ -30,13 +31,22 @@ export interface SuggestionListRef {
 
 export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>(
   ({ items, command, label }, ref) => {
-    const [selectedIndex, setSelectedIndex] = useState(0)
     const listRef = useRef<HTMLDivElement>(null)
 
-    // biome-ignore lint/correctness/useExhaustiveDependencies: items is a prop — reset selection when picker results change
-    useEffect(() => {
-      setSelectedIndex(0)
-    }, [items])
+    const selectItem = useCallback(
+      (index: number) => {
+        const item = items[index]
+        if (item) command(item)
+      },
+      [items, command],
+    )
+
+    const { focusedIndex: selectedIndex, setFocusedIndex: setSelectedIndex, handleKeyDown } =
+      useListKeyboardNavigation({
+        itemCount: items.length,
+        wrap: true,
+        onSelect: selectItem,
+      })
 
     // Scroll selected item into view on keyboard navigation
     // biome-ignore lint/correctness/useExhaustiveDependencies: selectedIndex IS the trigger — we scroll when selection changes
@@ -49,31 +59,9 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
       }
     }, [selectedIndex])
 
-    const selectItem = useCallback(
-      (index: number) => {
-        const item = items[index]
-        if (item) command(item)
-      },
-      [items, command],
-    )
-
     useImperativeHandle(ref, () => ({
       onKeyDown: ({ event }) => {
-        if (items.length === 0) return false
-
-        if (event.key === 'ArrowUp') {
-          setSelectedIndex((prev) => (prev <= 0 ? items.length - 1 : prev - 1))
-          return true
-        }
-        if (event.key === 'ArrowDown') {
-          setSelectedIndex((prev) => (prev >= items.length - 1 ? 0 : prev + 1))
-          return true
-        }
-        if (event.key === 'Enter') {
-          selectItem(selectedIndex)
-          return true
-        }
-        return false
+        return handleKeyDown(event)
       },
     }))
 

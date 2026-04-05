@@ -31,6 +31,8 @@ import { useBlockProperties } from '../hooks/useBlockProperties'
 import { useBlockResolve } from '../hooks/useBlockResolve'
 import { useViewportObserver } from '../hooks/useViewportObserver'
 import { announce } from '../lib/announcer'
+import { BLOCK_EVENTS, onBlockEvent } from '../lib/block-events'
+import type { NavigateToPageFn } from '../lib/block-events'
 import { formatRepeatLabel } from '../lib/repeat-utils'
 import {
   addAttachment,
@@ -178,11 +180,11 @@ export function guessMimeType(filename: string): string {
 }
 
 interface BlockTreeProps {
-  /** Optional parent block ID — when set, loads children of this block. */
+  /** Optional parent block ID -- when set, loads children of this block. */
   parentId?: string | undefined
   /** Navigate to a page in the page editor (cross-page navigation).
    *  Optional blockId scrolls to a specific block within the target page. */
-  onNavigateToPage?: ((pageId: string, title: string, blockId?: string) => void) | undefined
+  onNavigateToPage?: NavigateToPageFn | undefined
   /** When true (default), auto-creates an empty first block on empty pages.
    *  Set to false to suppress auto-creation (e.g. weekly/monthly journal views). */
   autoCreateFirstBlock?: boolean | undefined
@@ -1564,8 +1566,7 @@ export function BlockTree({
         handleEscapeCancel()
       }
     }
-    document.addEventListener('discard-block-edit', handler)
-    return () => document.removeEventListener('discard-block-edit', handler)
+    return onBlockEvent(document, 'DISCARD_BLOCK_EDIT', handler)
   }, [focusedBlockId, handleEscapeCancel])
 
   // ── Empty-block cleanup: delete just-created blocks left empty ─────
@@ -1661,15 +1662,14 @@ export function BlockTree({
     const handler = () => {
       if (focusedBlockId) handleTogglePriority(focusedBlockId)
     }
-    document.addEventListener('cycle-priority', handler)
-    return () => document.removeEventListener('cycle-priority', handler)
+    return onBlockEvent(document, 'CYCLE_PRIORITY', handler)
   }, [focusedBlockId, handleTogglePriority])
 
   // ── Direct priority set from keyboard shortcuts (Ctrl+Shift+1/2/3) ──
   useEffect(() => {
     const handleSetPriority = async (e: Event) => {
       if (!focusedBlockId) return
-      const priority = e.type === 'set-priority-1' ? '1' : e.type === 'set-priority-2' ? '2' : '3'
+      const priority = e.type === BLOCK_EVENTS.SET_PRIORITY_1 ? '1' : e.type === BLOCK_EVENTS.SET_PRIORITY_2 ? '2' : '3'
       try {
         await setPriorityCmd(focusedBlockId, priority)
         if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
@@ -1680,13 +1680,13 @@ export function BlockTree({
         toast.error(t('blockTree.setPriorityFailed'))
       }
     }
-    document.addEventListener('set-priority-1', handleSetPriority)
-    document.addEventListener('set-priority-2', handleSetPriority)
-    document.addEventListener('set-priority-3', handleSetPriority)
+    const cleanup1 = onBlockEvent(document, 'SET_PRIORITY_1', handleSetPriority)
+    const cleanup2 = onBlockEvent(document, 'SET_PRIORITY_2', handleSetPriority)
+    const cleanup3 = onBlockEvent(document, 'SET_PRIORITY_3', handleSetPriority)
     return () => {
-      document.removeEventListener('set-priority-1', handleSetPriority)
-      document.removeEventListener('set-priority-2', handleSetPriority)
-      document.removeEventListener('set-priority-3', handleSetPriority)
+      cleanup1()
+      cleanup2()
+      cleanup3()
     }
   }, [focusedBlockId, rootParentId, t])
 
@@ -1698,8 +1698,7 @@ export function BlockTree({
       setDatePickerMode('date')
       setDatePickerOpen(true)
     }
-    document.addEventListener('open-date-picker', handleDateEvent)
-    return () => document.removeEventListener('open-date-picker', handleDateEvent)
+    return onBlockEvent(document, 'OPEN_DATE_PICKER', handleDateEvent)
   }, [focusedBlockId, rovingEditor.editor])
 
   // ── Listen for toolbar due-date picker event ─────────────────────────
@@ -1710,8 +1709,7 @@ export function BlockTree({
       setDatePickerMode('due')
       setDatePickerOpen(true)
     }
-    document.addEventListener('open-due-date-picker', handler)
-    return () => document.removeEventListener('open-due-date-picker', handler)
+    return onBlockEvent(document, 'OPEN_DUE_DATE_PICKER', handler)
   }, [focusedBlockId, rovingEditor])
 
   // ── Listen for toolbar scheduled-date picker event ──────────────────
@@ -1722,8 +1720,7 @@ export function BlockTree({
       setDatePickerMode('schedule')
       setDatePickerOpen(true)
     }
-    document.addEventListener('open-scheduled-date-picker', handler)
-    return () => document.removeEventListener('open-scheduled-date-picker', handler)
+    return onBlockEvent(document, 'OPEN_SCHEDULED_DATE_PICKER', handler)
   }, [focusedBlockId, rovingEditor])
 
   // ── Listen for toolbar toggle-todo-state event ──────────────────────
@@ -1731,8 +1728,7 @@ export function BlockTree({
     const handler = () => {
       if (focusedBlockId) handleToggleTodo(focusedBlockId)
     }
-    document.addEventListener('toggle-todo-state', handler)
-    return () => document.removeEventListener('toggle-todo-state', handler)
+    return onBlockEvent(document, 'TOGGLE_TODO_STATE', handler)
   }, [focusedBlockId, handleToggleTodo])
 
   // ── Listen for toolbar open-block-properties event ──────────────────
@@ -1740,8 +1736,7 @@ export function BlockTree({
     const handler = () => {
       if (focusedBlockId) handleShowProperties(focusedBlockId)
     }
-    document.addEventListener('open-block-properties', handler)
-    return () => document.removeEventListener('open-block-properties', handler)
+    return onBlockEvent(document, 'OPEN_BLOCK_PROPERTIES', handler)
   }, [focusedBlockId, handleShowProperties])
 
   // ── Keyboard shortcut: Ctrl+Shift+D → open date picker ─────────────

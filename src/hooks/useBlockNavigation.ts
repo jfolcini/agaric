@@ -10,11 +10,12 @@
 
 import type React from 'react'
 import { useCallback } from 'react'
+import type { NavigateToPageFn } from '../lib/block-events'
 import type { BlockRow } from '../lib/tauri'
 
 export interface UseBlockNavigationOptions {
   /** Navigation callback — receives (pageId, title, blockId). */
-  onNavigateToPage?: ((pageId: string, title: string, blockId?: string) => void) | undefined
+  onNavigateToPage?: NavigateToPageFn | undefined
   /** Map of page IDs to resolved titles for breadcrumbs. */
   pageTitles: Map<string, string>
   /** Fallback title when the page ID is not in pageTitles. Defaults to "Untitled". */

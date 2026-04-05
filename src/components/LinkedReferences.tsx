@@ -6,30 +6,32 @@
  * Uses cursor-based pagination with "Load more" button.
  */
 
-import { ChevronDown, ChevronRight } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import type { BacklinkFilter, BacklinkGroup, BacklinkSort, BlockRow } from '../lib/tauri'
+import type { BacklinkFilter, BacklinkGroup, BacklinkSort } from '../lib/tauri'
 import {
   batchResolve,
   listBacklinksGrouped,
   listPropertyKeys,
   listTagsByPrefix,
 } from '../lib/tauri'
+import { useBlockNavigation } from '../hooks/useBlockNavigation'
+import type { NavigateToPageFn } from '../lib/block-events'
 import { BacklinkFilterBuilder } from './BacklinkFilterBuilder'
 import { CollapsibleGroupList } from './CollapsibleGroupList'
+import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { LoadMoreButton } from './LoadMoreButton'
 import { SourcePageFilter } from './SourcePageFilter'
 import { renderRichContent } from './StaticBlock'
 
 export interface LinkedReferencesProps {
   pageId: string
-  onNavigateToPage?: ((pageId: string, title: string, blockId?: string) => void) | undefined
+  onNavigateToPage?: NavigateToPageFn | undefined
 }
 
 export function LinkedReferences({
@@ -281,27 +283,18 @@ export function LinkedReferences({
     }))
   }, [])
 
-  const handleBlockClick = useCallback(
-    (block: BlockRow, groupPageId: string, groupPageTitle: string | null) => {
-      onNavigateToPage?.(groupPageId, groupPageTitle ?? 'Untitled', block.id)
-    },
-    [onNavigateToPage],
-  )
+  const pageTitles = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const g of groups) {
+      if (g.page_title) map.set(g.page_id, g.page_title)
+    }
+    return map
+  }, [groups])
 
-  const handleBlockKeyDown = useCallback(
-    (
-      e: React.KeyboardEvent,
-      block: BlockRow,
-      groupPageId: string,
-      groupPageTitle: string | null,
-    ) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault()
-        handleBlockClick(block, groupPageId, groupPageTitle)
-      }
-    },
-    [handleBlockClick],
-  )
+  const { handleBlockClick, handleBlockKeyDown } = useBlockNavigation({
+    onNavigateToPage,
+    pageTitles,
+  })
 
   const loadMore = useCallback(() => {
     if (nextCursor) {
@@ -327,19 +320,13 @@ export function LinkedReferences({
   return (
     <section className="linked-references" aria-label="References">
       {/* Main header -- collapsible */}
-      <button
-        type="button"
-        onClick={toggleExpanded}
-        className="linked-references-header flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent/50 transition-colors"
-        aria-expanded={expanded}
+      <CollapsiblePanelHeader
+        collapsed={!expanded}
+        onToggle={toggleExpanded}
+        className="linked-references-header"
       >
-        {expanded ? (
-          <ChevronDown className="h-4 w-4 shrink-0" />
-        ) : (
-          <ChevronRight className="h-4 w-4 shrink-0" />
-        )}
         {headerLabel}
-      </button>
+      </CollapsiblePanelHeader>
 
       {expanded && (
         <div className="linked-references-content mt-1 space-y-2">
@@ -404,14 +391,14 @@ export function LinkedReferences({
             {...(onNavigateToPage && {
               onPageTitleClick: (pageId: string, title: string) => onNavigateToPage(pageId, title),
             })}
-            renderBlock={(block, group) => (
+            renderBlock={(block, _group) => (
               <li
                 key={block.id}
                 className="linked-reference-item flex flex-wrap items-center gap-3 border-b py-1.5 px-2 last:border-b-0 cursor-pointer hover:bg-muted/50"
                 // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
                 tabIndex={0}
-                onClick={() => handleBlockClick(block, group.page_id, group.page_title)}
-                onKeyDown={(e) => handleBlockKeyDown(e, block, group.page_id, group.page_title)}
+                onClick={() => handleBlockClick(block)}
+                onKeyDown={(e) => handleBlockKeyDown(e, block)}
               >
                 <Badge variant="secondary" className="linked-reference-item-type shrink-0">
                   {block.block_type}

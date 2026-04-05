@@ -67,6 +67,65 @@ The architecture is mature and robust. **Do not introduce significant architectu
 - **Sync hooks:** `useSyncTrigger` (exponential backoff periodic sync), `useSyncEvents` (Tauri event listener), `useOnlineStatus` (navigator.onLine)
 - **Code style:** 2-space indent, single quotes, no semicolons, 100-char line width (Biome)
 
+## Frontend Development Guidelines
+
+The app has a design system. **Use it. Extend it. Never bypass it.**
+
+Every frontend change — new component, bugfix, feature — must build on existing primitives and patterns rather than reinventing them inline. The goal is a coherent, consolidated visual language that is responsive, accessible, modern, and intuitive. If a pattern doesn't exist yet, create it as a reusable abstraction in the right layer so the next session benefits from it.
+
+### Component hierarchy — where things live
+
+| Layer | Location | Purpose | Examples |
+|-------|----------|---------|---------|
+| **Design tokens** | `src/index.css` | CSS custom properties (OKLch colors, spacing, semantic status/priority tokens), light/dark themes, `prefers-contrast` and `prefers-reduced-motion` support | `--status-done`, `--priority-urgent`, `--indent-width` |
+| **UI primitives** | `src/components/ui/` | Thin wrappers around Radix UI + CVA variants. Atomic building blocks. | Button, Select, Dialog, Popover, Badge, Input, ScrollArea, Tooltip |
+| **Shared components** | `src/components/` (non-page) | Reusable composed components used across multiple views | CollapsiblePanelHeader, EmptyState, LoadingSkeleton, ConfirmDialog, LoadMoreButton |
+| **Shared hooks** | `src/hooks/` | Reusable stateful logic | useBlockNavigation, usePaginatedQuery, useListKeyboardNavigation, useDebouncedCallback |
+| **Page components** | `src/components/` (top-level) | Full views composed from the layers above | JournalPage, PageBrowser, HistoryView, SearchPanel |
+
+### Before writing any frontend code
+
+1. **Check `src/components/ui/`** — does a primitive already exist? Button, Select, Dialog, Popover, Badge, ScrollArea, Tooltip, Calendar, Sheet, AlertDialog, Skeleton are all there.
+2. **Check `src/components/`** — is there a shared component for this pattern? CollapsiblePanelHeader, EmptyState, LoadingSkeleton, ConfirmDialog, LoadMoreButton.
+3. **Check `src/hooks/`** — is there a hook for this behavior? Pagination, keyboard navigation, debounce, block navigation, DnD, polling, viewport observation.
+4. **Check `src/index.css`** — are there semantic tokens for the colors/spacing you need? Status colors, priority colors, conflict colors, indent widths are all defined.
+5. **If nothing exists** — create the reusable abstraction first (in the right layer), then use it. Do not inline a one-off solution that the next session will duplicate.
+
+### Mandatory patterns
+
+- **CVA variants** for any component with visual variants. Follow the Button/Badge pattern: `cva()` base + variants + `cn()` for merging.
+- **Radix UI** for all interactive overlays (Select, Dialog, Popover, Tooltip, AlertDialog). Never build custom dropdowns, modals, or tooltips from scratch.
+- **`cn()` utility** (`src/lib/utils.ts`) for all className composition. Never concatenate class strings manually.
+- **Semantic color tokens** from `index.css` for status, priority, conflict colors. Never hardcode Tailwind color classes (e.g., `text-red-700`) when a semantic token exists (e.g., `text-status-overdue`).
+- **`ScrollArea`** from `ui/scroll-area.tsx` for any scrollable container. Never use bare `overflow-auto`.
+- **Touch targets**: all interactive elements must meet 44px minimum on touch via `[@media(pointer:coarse)]`. Button already handles this — use its `size` variants.
+- **Focus management**: use `focus-visible:ring-[3px] focus-visible:ring-ring/50` consistently. Button/Input already implement this — match their pattern.
+- **`aria-label`** on every icon-only button. Use `t()` i18n keys, not hardcoded English strings.
+- **`EmptyState`** component for all empty list/panel states. Never `return null` or show raw text for empty states.
+- **`LoadingSkeleton`** for initial load states. Inline spinners only for action feedback (submit buttons, pagination).
+
+### Anti-patterns — do not do these
+
+- **Inline `<Loader2 className="animate-spin">`** — use or create a shared Spinner component.
+- **Ad-hoc hover/focus classes** per component — reuse the established patterns from Button/Input or define a shared utility.
+- **Hardcoded color classes** (`bg-red-100`, `text-amber-600`) when semantic tokens exist.
+- **Custom dropdown/select implementations** — always use `ui/select.tsx` or `ui/popover.tsx`.
+- **Duplicating existing shared components** instead of importing them.
+- **Skipping responsive/touch considerations** — every interactive element must work on both desktop and mobile (pointer:coarse).
+- **Skipping accessibility** — `aria-label`, `role`, `aria-busy`, `aria-expanded` are not optional.
+
+### When extending the design system
+
+If you need a new primitive, shared component, or hook:
+
+1. Check REVIEW-LATER.md — the needed component may already be filed there with a design spec.
+2. Follow the CVA + Radix + `cn()` patterns established by existing `ui/` components.
+3. Place it in the correct layer (see table above).
+4. Add tests: render + interaction + `axe(container)` a11y.
+5. Update FEATURE-MAP.md if it adds a user-facing capability.
+
+The measure of good frontend work is not just "does it work" but "does it make the next feature easier to build."
+
 ## Backend Architecture
 
 - **Error handling:** `AppError` enum (11 variants) serializes to `{ kind, message }` for Tauri 2 IPC. Specta-derived TS bindings.
