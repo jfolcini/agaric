@@ -1,5 +1,28 @@
 # Session Log
 
+## Session 207 — 2026-04-05 — Batch 61: H-1, H-2, H-10
+
+### Summary
+Resolved 3 items (H-1, H-2, H-10). Fixed block auto-creation for all dates in daily mode, suppressed unwanted auto-creation in weekly/monthly modes, and added outside-click dismissal for all 5 suggestion menus. M-54 (AppImage icon) was explored but dropped — speculative config change wouldn't fix the root cause; needs a real AppImage build to diagnose. 8 files changed, +596/-17 lines. REVIEW-LATER.md reduced from 13 to 10 items.
+
+### Batch 61
+
+**Commit:** 88bc6a8
+
+| Area | Change |
+|------|--------|
+| JournalPage.tsx | H-1: Changed `autoCreatedRef` from `boolean` to `string\|null` for per-date tracking. Removed `todayStr !== formatDate(currentDate)` guard — auto-creates for whichever date is displayed. 7 new tests. |
+| BlockTree.tsx | H-1: Added `autoCreateFirstBlock` prop (default `true`). Guard `if (!autoCreateFirstBlock) return` suppresses auto-creation in weekly/monthly modes. 3 new tests. |
+| DaySection.tsx | H-1: Passes `autoCreateFirstBlock={mode === 'daily'}` to BlockTree. |
+| PageEditor.tsx | H-2: No code changes needed — BlockTree's default `autoCreateFirstBlock=true` handles pages view. 2 new tests confirm behavior. |
+| suggestion-renderer.ts | H-10: Added `pointerdown` listener in capture phase (matching BlockContextMenu pattern). Escape key handler now also cleans up listener to prevent memory leaks. ~25 lines added. |
+| suggestion-renderer.test.ts | H-10: 10 new tests for outside-click dismissal + Escape key cleanup + listener leak prevention across cycles. |
+| M-54 (dropped) | Explored AppImage icon config. Schema has no icon-specific Linux fields — icons come from global `bundle.icon` array. Adding `linux` section with defaults is a no-op. Needs real AppImage build to diagnose. |
+
+**Review:** 2 review subagents (H-1+H-2, H-10). H-10 review found Escape key cleanup missing — fixed by orchestrator before merge. H-1+H-2 review: PASS, no issues.
+
+**Stats:** 8 files changed (+596/-17). 3326/3326 frontend tests pass. All pre-commit hooks pass (biome, tsc, vitest, cargo).
+
 ## Session 206 — 2026-04-05 — Batch 60: H-6, UX-H5, UX-H6, F-15/F-16 closed
 
 ### Summary
