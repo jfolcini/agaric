@@ -1,0 +1,524 @@
+/**
+ * Tests for PropertyRowEditor component.
+ *
+ * Validates:
+ *  - Renders property label (formatted) and value
+ *  - Text input: renders with correct type, saves on blur
+ *  - Number input: renders with type="number"
+ *  - Date input: renders with type="date"
+ *  - Select input: renders dropdown with options, saves on change
+ *  - Select "none" option clears value
+ *  - Edit options popover: add, remove, save
+ *  - Delete button calls onDelete
+ *  - No-op blur when value unchanged
+ *  - Accessibility compliance
+ */
+
+import { invoke } from '@tauri-apps/api/core'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
+import type { PropertyDefinition, PropertyRow } from '../../lib/tauri'
+
+const mockedInvoke = vi.mocked(invoke)
+
+vi.mock('lucide-react', () => ({
+  CalendarCheck2: () => <svg data-testid="calendar-check2-icon" />,
+  CalendarClock: () => <svg data-testid="calendar-clock-icon" />,
+  CalendarPlus: () => <svg data-testid="calendar-plus-icon" />,
+  CheckCircle2: () => <svg data-testid="check-circle2-icon" />,
+  Clock: () => <svg data-testid="clock-icon" />,
+  MapPin: () => <svg data-testid="map-pin-icon" />,
+  Pencil: () => <svg data-testid="pencil-icon" />,
+  Plus: () => <svg data-testid="plus-icon" />,
+  Repeat: () => <svg data-testid="repeat-icon" />,
+  User: () => <svg data-testid="user-icon" />,
+  X: () => <svg data-testid="x-icon" />,
+}))
+
+vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
+
+vi.mock('@/components/ui/select', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const React = require('react')
+  const Ctx = React.createContext({})
+
+  function Select({ value, onValueChange, children }: any) {
+    const triggerPropsRef = React.useRef({})
+    return React.createElement(
+      Ctx.Provider,
+      { value: { value, onValueChange, triggerPropsRef } },
+      children,
+    )
+  }
+
+  function SelectTrigger({ size, className, ...props }: any) {
+    const ctx = React.useContext(Ctx)
+    Object.assign(ctx.triggerPropsRef.current, { size, className, ...props })
+    return null
+  }
+
+  function SelectValue() {
+    return null
+  }
+
+  function SelectContent({ children }: any) {
+    const ctx = React.useContext(Ctx)
+    const tp = ctx.triggerPropsRef.current
+    return React.createElement(
+      'select',
+      {
+        value: ctx.value ?? '',
+        onChange: (e: any) => ctx.onValueChange?.(e.target.value),
+        'aria-label': tp['aria-label'],
+      },
+      children,
+    )
+  }
+
+  function SelectItem({ value, children }: any) {
+    return React.createElement('option', { value }, children)
+  }
+
+  return { Select, SelectTrigger, SelectValue, SelectContent, SelectItem }
+})
+
+import { toast } from 'sonner'
+import { PropertyRowEditor } from '../PropertyRowEditor'
+
+const mockedToastError = vi.mocked(toast.error)
+
+function makeProp(key: string, overrides?: Partial<PropertyRow>): PropertyRow {
+  return {
+    key,
+    value_text: null,
+    value_num: null,
+    value_date: null,
+    value_ref: null,
+    ...overrides,
+  }
+}
+
+function makeDef(key: string, valueType: string, options?: string): PropertyDefinition {
+  return {
+    key,
+    value_type: valueType,
+    options: options ?? null,
+    created_at: '2026-01-01T00:00:00Z',
+  }
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+})
+
+describe('PropertyRowEditor rendering', () => {
+  it('renders formatted property label in badge', () => {
+    render(
+      <PropertyRowEditor
+        prop={makeProp('my_field', { value_text: 'hello' })}
+        def={makeDef('my_field', 'text')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('My Field')).toBeInTheDocument()
+  })
+
+  it('renders text input with correct value', () => {
+    render(
+      <PropertyRowEditor
+        prop={makeProp('author', { value_text: 'Alice' })}
+        def={makeDef('author', 'text')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByLabelText('author value') as HTMLInputElement
+    expect(input.type).toBe('text')
+    expect(input.value).toBe('Alice')
+  })
+
+  it('renders number input with type="number"', () => {
+    render(
+      <PropertyRowEditor
+        prop={makeProp('priority', { value_num: 42 })}
+        def={makeDef('priority', 'number')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByLabelText('priority value') as HTMLInputElement
+    expect(input.type).toBe('number')
+    expect(input.value).toBe('42')
+  })
+
+  it('renders date input with type="date"', () => {
+    render(
+      <PropertyRowEditor
+        prop={makeProp('due', { value_date: '2026-06-15' })}
+        def={makeDef('due', 'date')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByLabelText('due value') as HTMLInputElement
+    expect(input.type).toBe('date')
+    expect(input.value).toBe('2026-06-15')
+  })
+
+  it('renders select dropdown with options', () => {
+    render(
+      <PropertyRowEditor
+        prop={makeProp('stage', { value_text: 'DOING' })}
+        def={makeDef('stage', 'select', '["TODO","DOING","DONE"]')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const select = screen.getByLabelText('stage value') as HTMLSelectElement
+    expect(select.tagName).toBe('SELECT')
+    expect(select.value).toBe('DOING')
+    const opts = Array.from(select.options).map((o) => o.value)
+    expect(opts).toContain('TODO')
+    expect(opts).toContain('DOING')
+    expect(opts).toContain('DONE')
+  })
+
+  it('defaults to text when no definition is provided', () => {
+    render(
+      <PropertyRowEditor
+        prop={makeProp('unknown', { value_text: 'val' })}
+        def={undefined}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByLabelText('unknown value') as HTMLInputElement
+    expect(input.type).toBe('text')
+    expect(input.value).toBe('val')
+  })
+
+  it('renders empty string when prop has no value fields', () => {
+    render(
+      <PropertyRowEditor
+        prop={makeProp('empty')}
+        def={makeDef('empty', 'text')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByLabelText('empty value') as HTMLInputElement
+    expect(input.value).toBe('')
+  })
+})
+
+describe('PropertyRowEditor editing', () => {
+  it('calls onSave when text input is blurred with changed value', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    render(
+      <PropertyRowEditor
+        prop={makeProp('author', { value_text: '' })}
+        def={makeDef('author', 'text')}
+        onSave={onSave}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByLabelText('author value')
+    await user.click(input)
+    await user.type(input, 'Bob')
+    await user.tab()
+
+    expect(onSave).toHaveBeenCalledWith('Bob')
+  })
+
+  it('does not call onSave on blur when value is unchanged', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    render(
+      <PropertyRowEditor
+        prop={makeProp('author', { value_text: 'Alice' })}
+        def={makeDef('author', 'text')}
+        onSave={onSave}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByLabelText('author value')
+    await user.click(input)
+    await user.tab()
+
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it('calls onSave when select value changes', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    render(
+      <PropertyRowEditor
+        prop={makeProp('stage', { value_text: 'TODO' })}
+        def={makeDef('stage', 'select', '["TODO","DOING","DONE"]')}
+        onSave={onSave}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const select = screen.getByLabelText('stage value') as HTMLSelectElement
+    await user.selectOptions(select, 'DONE')
+
+    expect(onSave).toHaveBeenCalledWith('DONE')
+  })
+
+  it('clears value when select __none__ option is chosen', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    render(
+      <PropertyRowEditor
+        prop={makeProp('stage', { value_text: 'TODO' })}
+        def={makeDef('stage', 'select', '["TODO","DOING"]')}
+        onSave={onSave}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const select = screen.getByLabelText('stage value') as HTMLSelectElement
+    await user.selectOptions(select, '__none__')
+
+    expect(onSave).toHaveBeenCalledWith('')
+  })
+
+  it('calls onDelete when delete button is clicked', async () => {
+    const user = userEvent.setup()
+    const onDelete = vi.fn()
+    render(
+      <PropertyRowEditor
+        prop={makeProp('author', { value_text: 'Alice' })}
+        def={makeDef('author', 'text')}
+        onSave={vi.fn()}
+        onDelete={onDelete}
+      />,
+    )
+
+    const deleteBtn = screen.getByLabelText('Delete property author')
+    await user.click(deleteBtn)
+
+    expect(onDelete).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('PropertyRowEditor select options editing', () => {
+  it('shows edit options button for select properties', () => {
+    render(
+      <PropertyRowEditor
+        prop={makeProp('stage', { value_text: 'TODO' })}
+        def={makeDef('stage', 'select', '["TODO","DOING"]')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByLabelText('Edit options for stage')).toBeInTheDocument()
+  })
+
+  it('does not show edit options button for non-select properties', () => {
+    render(
+      <PropertyRowEditor
+        prop={makeProp('author', { value_text: 'Alice' })}
+        def={makeDef('author', 'text')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByLabelText(/Edit options for/)).not.toBeInTheDocument()
+  })
+
+  it('opens popover with current options listed', async () => {
+    const user = userEvent.setup()
+    render(
+      <PropertyRowEditor
+        prop={makeProp('stage', { value_text: 'TODO' })}
+        def={makeDef('stage', 'select', '["TODO","DOING","DONE"]')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByLabelText('Edit options for stage'))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('New option value')).toBeInTheDocument()
+      expect(screen.getByLabelText('Remove option TODO')).toBeInTheDocument()
+      expect(screen.getByLabelText('Remove option DOING')).toBeInTheDocument()
+      expect(screen.getByLabelText('Remove option DONE')).toBeInTheDocument()
+    })
+  })
+
+  it('can add a new option and save', async () => {
+    const user = userEvent.setup()
+    const onDefUpdated = vi.fn()
+    mockedInvoke.mockResolvedValue({
+      key: 'stage',
+      value_type: 'select',
+      options: '["TODO","DOING","DONE"]',
+      created_at: '2026-01-01T00:00:00Z',
+    })
+
+    render(
+      <PropertyRowEditor
+        prop={makeProp('stage', { value_text: 'TODO' })}
+        def={makeDef('stage', 'select', '["TODO","DOING"]')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+        onDefUpdated={onDefUpdated}
+      />,
+    )
+
+    await user.click(screen.getByLabelText('Edit options for stage'))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('New option value')).toBeInTheDocument()
+    })
+
+    await user.type(screen.getByLabelText('New option value'), 'DONE')
+    await user.click(screen.getByLabelText('Add option'))
+
+    await user.click(screen.getByRole('button', { name: /save options/i }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('update_property_def_options', {
+        key: 'stage',
+        options: '["TODO","DOING","DONE"]',
+      })
+    })
+  })
+
+  it('can remove an option and save', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValue({
+      key: 'stage',
+      value_type: 'select',
+      options: '["TODO","DONE"]',
+      created_at: '2026-01-01T00:00:00Z',
+    })
+
+    render(
+      <PropertyRowEditor
+        prop={makeProp('stage', { value_text: 'TODO' })}
+        def={makeDef('stage', 'select', '["TODO","DOING","DONE"]')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+        onDefUpdated={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByLabelText('Edit options for stage'))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Remove option DOING')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByLabelText('Remove option DOING'))
+
+    await user.click(screen.getByRole('button', { name: /save options/i }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('update_property_def_options', {
+        key: 'stage',
+        options: '["TODO","DONE"]',
+      })
+    })
+  })
+
+  it('shows error toast when saving options fails', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockRejectedValue(new Error('backend error'))
+
+    render(
+      <PropertyRowEditor
+        prop={makeProp('stage', { value_text: 'TODO' })}
+        def={makeDef('stage', 'select', '["TODO","DOING"]')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByLabelText('Edit options for stage'))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /save options/i })).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /save options/i }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to update options')
+    })
+  })
+
+  it('adds option via Enter key', async () => {
+    const user = userEvent.setup()
+    render(
+      <PropertyRowEditor
+        prop={makeProp('stage', { value_text: 'TODO' })}
+        def={makeDef('stage', 'select', '["TODO"]')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByLabelText('Edit options for stage'))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('New option value')).toBeInTheDocument()
+    })
+
+    await user.type(screen.getByLabelText('New option value'), 'DOING')
+    await user.keyboard('{Enter}')
+
+    // The new option should appear in the list
+    await waitFor(() => {
+      expect(screen.getByLabelText('Remove option DOING')).toBeInTheDocument()
+    })
+  })
+})
+
+describe('PropertyRowEditor accessibility', () => {
+  it('text property has no a11y violations', async () => {
+    const { container } = render(
+      <PropertyRowEditor
+        prop={makeProp('author', { value_text: 'Alice' })}
+        def={makeDef('author', 'text')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
+  it('select property has no a11y violations', async () => {
+    const { container } = render(
+      <PropertyRowEditor
+        prop={makeProp('stage', { value_text: 'TODO' })}
+        def={makeDef('stage', 'select', '["TODO","DOING","DONE"]')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})

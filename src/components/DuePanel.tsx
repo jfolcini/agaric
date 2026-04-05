@@ -22,12 +22,12 @@ import { useDuePanelData } from '../hooks/useDuePanelData'
 import type { NavigateToPageFn } from '../lib/block-events'
 import { priorityColor } from '../lib/priority-color'
 import { truncateContent } from '../lib/text-utils'
+import { BlockListItem } from './BlockListItem'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { DuePanelFilters } from './DuePanelFilters'
 import { EmptyState } from './EmptyState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { OverdueSection } from './OverdueSection'
-import { PageLink } from './PageLink'
 import { UpcomingSection } from './UpcomingSection'
 
 export interface DuePanelProps {
@@ -219,40 +219,34 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
 
               <ul className="due-panel-blocks ml-2 space-y-1" aria-label={`${group.label} items`}>
                 {group.items.map((block) => (
-                  <li
+                  <BlockListItem
                     key={block.id}
-                    className="due-panel-item flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer hover:bg-muted/50 active:bg-muted/70 transition-colors"
-                    data-testid="due-panel-item"
-                    // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
-                    tabIndex={0}
+                    content={block.content}
+                    contentMaxLength={120}
+                    emptyContentFallback={t('duePanel.emptyContent')}
+                    metadata={
+                      block.priority ? (
+                        <span
+                          className={`due-panel-priority inline-flex items-center justify-center rounded px-1.5 py-0.5 text-xs font-bold [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1 ${priorityColor(block.priority)}`}
+                        >
+                          P{block.priority}
+                        </span>
+                      ) : undefined
+                    }
+                    pageId={block.parent_id}
+                    pageTitle={
+                      block.parent_id
+                        ? (pageTitles.get(block.parent_id) ?? t('duePanel.untitled'))
+                        : ''
+                    }
+                    breadcrumbArrow={t('duePanel.breadcrumbArrow')}
+                    className="due-panel-item hover:bg-muted/50 active:bg-muted/70"
+                    contentClassName="due-panel-item-text"
+                    breadcrumbClassName="due-panel-breadcrumb"
+                    testId="due-panel-item"
                     onClick={() => handleBlockClick(block)}
                     onKeyDown={(e) => handleBlockKeyDown(e, block)}
-                  >
-                    {/* Priority badge */}
-                    {block.priority && (
-                      <span
-                        className={`due-panel-priority inline-flex items-center justify-center rounded px-1.5 py-0.5 text-xs font-bold [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1 ${priorityColor(block.priority)}`}
-                      >
-                        P{block.priority}
-                      </span>
-                    )}
-
-                    {/* Block content */}
-                    <span className="due-panel-item-text text-sm min-w-0 flex-1 truncate">
-                      {truncateContent(block.content, 120, t('duePanel.emptyContent'))}
-                    </span>
-
-                    {/* Source page breadcrumb */}
-                    {block.parent_id && (
-                      <span className="due-panel-breadcrumb text-xs text-muted-foreground truncate max-w-[40%]">
-                        {t('duePanel.breadcrumbArrow')}{' '}
-                        <PageLink
-                          pageId={block.parent_id}
-                          title={pageTitles.get(block.parent_id) ?? t('duePanel.untitled')}
-                        />
-                      </span>
-                    )}
-                  </li>
+                  />
                 ))}
               </ul>
             </div>

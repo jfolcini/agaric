@@ -21,6 +21,7 @@ import type { BlockRow } from '../lib/tauri'
 import { listBlocks, purgeBlock, restoreBlock } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
+import { ListViewState } from './ListViewState'
 
 export function TrashView(): React.ReactElement {
   const { t } = useTranslation()
@@ -72,71 +73,74 @@ export function TrashView(): React.ReactElement {
 
   return (
     <div className="trash-view space-y-4">
-      {loading && blocks.length === 0 && (
-        <div className="trash-view-loading space-y-2">
-          <Skeleton className="h-14 w-full rounded-lg" />
-          <Skeleton className="h-14 w-full rounded-lg" />
-        </div>
-      )}
-
-      {!loading && blocks.length === 0 && (
-        <EmptyState icon={Trash2} message={t('trash.emptyMessage')} />
-      )}
-
-      {/* biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn */}
-      <div className="trash-view-list space-y-2" role="list">
-        {blocks.map((block) => (
-          // biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn
-          <div
-            key={block.id}
-            role="listitem"
-            className="trash-item flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
-            data-testid="trash-item"
-          >
-            <div className="trash-item-content flex min-w-0 items-center gap-3 flex-wrap">
-              <Badge variant="secondary" className="trash-item-type shrink-0">
-                {block.block_type}
-              </Badge>
-              <span className="trash-item-text text-sm truncate">
-                {block.content ?? t('trash.emptyContent')}
-              </span>
-              <span className="trash-item-date text-xs text-muted-foreground">
-                Deleted: {block.deleted_at ? formatTimestamp(block.deleted_at, 'relative') : ''}
-              </span>
-            </div>
-            <div className="trash-item-actions flex items-center gap-2">
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="trash-restore-btn [@media(pointer:coarse)]:h-10"
-                      data-testid="trash-restore-btn"
-                      onClick={() => handleRestore(block)}
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                      {t('trash.restoreButton')}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>{t('trash.restoreTooltip')}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-              <Button
-                variant="destructive"
-                size="sm"
-                className="trash-purge-btn [@media(pointer:coarse)]:h-10"
-                data-testid="trash-purge-btn"
-                onClick={() => setConfirmPurgeId(block.id)}
-              >
-                {t('trash.purgeButton')}
-              </Button>
-            </div>
+      <ListViewState
+        loading={loading}
+        items={blocks}
+        skeleton={
+          <div className="trash-view-loading space-y-2">
+            <Skeleton className="h-14 w-full rounded-lg" />
+            <Skeleton className="h-14 w-full rounded-lg" />
           </div>
-        ))}
-      </div>
+        }
+        empty={<EmptyState icon={Trash2} message={t('trash.emptyMessage')} />}
+      >
+        {(items) => (
+          // biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn
+          <div className="trash-view-list space-y-2" role="list">
+            {items.map((block) => (
+              // biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn
+              <div
+                key={block.id}
+                role="listitem"
+                className="trash-item flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
+                data-testid="trash-item"
+              >
+                <div className="trash-item-content flex min-w-0 items-center gap-3 flex-wrap">
+                  <Badge variant="secondary" className="trash-item-type shrink-0">
+                    {block.block_type}
+                  </Badge>
+                  <span className="trash-item-text text-sm truncate">
+                    {block.content ?? t('trash.emptyContent')}
+                  </span>
+                  <span className="trash-item-date text-xs text-muted-foreground">
+                    Deleted: {block.deleted_at ? formatTimestamp(block.deleted_at, 'relative') : ''}
+                  </span>
+                </div>
+                <div className="trash-item-actions flex items-center gap-2">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="trash-restore-btn [@media(pointer:coarse)]:h-10"
+                          data-testid="trash-restore-btn"
+                          onClick={() => handleRestore(block)}
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                          {t('trash.restoreButton')}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>{t('trash.restoreTooltip')}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="trash-purge-btn [@media(pointer:coarse)]:h-10"
+                    data-testid="trash-purge-btn"
+                    onClick={() => setConfirmPurgeId(block.id)}
+                  >
+                    {t('trash.purgeButton')}
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </ListViewState>
 
       {hasMore && (
         <Button

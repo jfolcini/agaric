@@ -27,9 +27,8 @@ import {
 import type { NavigateToPageFn } from '../lib/block-events'
 import { priorityColor } from '../lib/priority-color'
 import type { BlockRow } from '../lib/tauri'
-import { truncateContent } from '../lib/text-utils'
+import { BlockListItem } from './BlockListItem'
 import { LoadMoreButton } from './LoadMoreButton'
-import { PageLink } from './PageLink'
 
 export interface AgendaResultsProps {
   /** Pre-filtered blocks to display. If empty, shows empty state. */
@@ -158,57 +157,48 @@ export function AgendaResults({
   /** Render a single agenda item (shared between flat and grouped modes). */
   function renderItem(block: BlockRow) {
     return (
-      <li
+      <BlockListItem
         key={block.id}
-        className="agenda-results-item flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer hover:bg-accent/50 active:bg-accent/70 transition-colors"
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
-        tabIndex={0}
+        content={block.content}
+        metadata={
+          <>
+            {/* Status icon */}
+            <StatusIcon state={block.todo_state} />
+
+            {/* Priority badge */}
+            {block.priority && (
+              <span
+                className={cn(
+                  'agenda-results-priority inline-flex items-center justify-center rounded px-1.5 py-0.5 text-xs font-bold [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1',
+                  priorityColor(block.priority),
+                )}
+              >
+                P{block.priority}
+              </span>
+            )}
+
+            {/* Due date chip */}
+            {block.due_date && (
+              <span
+                className={cn(
+                  'agenda-results-due inline-flex items-center rounded-full px-2 py-0.5 text-xs [@media(pointer:coarse)]:text-sm font-medium',
+                  dueDateColor(block.due_date),
+                )}
+              >
+                {formatCompactDate(block.due_date)}
+              </span>
+            )}
+          </>
+        }
+        pageId={block.parent_id}
+        pageTitle={pageTitles.get(block.parent_id ?? '') ?? t('agenda.untitled')}
+        breadcrumbArrow={t('agenda.breadcrumbArrow')}
+        className="agenda-results-item hover:bg-accent/50 active:bg-accent/70"
+        contentClassName="agenda-results-text"
+        breadcrumbClassName="agenda-results-breadcrumb"
         onClick={() => handleItemClick(block)}
         onKeyDown={(e) => handleItemKeyDown(e, block)}
-      >
-        {/* Status icon */}
-        <StatusIcon state={block.todo_state} />
-
-        {/* Priority badge */}
-        {block.priority && (
-          <span
-            className={cn(
-              'agenda-results-priority inline-flex items-center justify-center rounded px-1.5 py-0.5 text-xs font-bold [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1',
-              priorityColor(block.priority),
-            )}
-          >
-            P{block.priority}
-          </span>
-        )}
-
-        {/* Due date chip */}
-        {block.due_date && (
-          <span
-            className={cn(
-              'agenda-results-due inline-flex items-center rounded-full px-2 py-0.5 text-xs [@media(pointer:coarse)]:text-sm font-medium',
-              dueDateColor(block.due_date),
-            )}
-          >
-            {formatCompactDate(block.due_date)}
-          </span>
-        )}
-
-        {/* Block content */}
-        <span className="agenda-results-text min-w-0 flex-1 truncate text-sm">
-          {truncateContent(block.content)}
-        </span>
-
-        {/* Source page breadcrumb */}
-        {block.parent_id && (
-          <span className="agenda-results-breadcrumb text-xs text-muted-foreground truncate max-w-[40%]">
-            {t('agenda.breadcrumbArrow')}{' '}
-            <PageLink
-              pageId={block.parent_id}
-              title={pageTitles.get(block.parent_id) ?? t('agenda.untitled')}
-            />
-          </span>
-        )}
-      </li>
+      />
     )
   }
 

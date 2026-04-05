@@ -20,6 +20,7 @@ import type { BlockRow } from '../lib/tauri'
 import { createBlock, deleteBlock, listBlocks } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
+import { ListViewState } from './ListViewState'
 import { LoadingSkeleton } from './LoadingSkeleton'
 
 interface TagListProps {
@@ -122,46 +123,49 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         </Button>
       </form>
 
-      {loading && (
-        <div aria-busy="true">
-          <LoadingSkeleton count={3} height="h-10" />
-        </div>
-      )}
-
-      {!loading && tags.length === 0 && <EmptyState icon={Tag} message={t('tagList.empty')} />}
-
-      {tags.length > 0 && (
-        <ul className="space-y-2">
-          {tags.map((tag) => (
-            <ListItem key={tag.id}>
-              <Tag className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <button
-                type="button"
-                className="cursor-pointer border-none bg-transparent p-0"
-                onClick={() => onTagClick?.(tag.id, tag.content || 'Unnamed')}
-              >
-                <Badge
-                  variant="secondary"
-                  className="truncate max-w-[150px]"
-                  title={tag.content || 'Unnamed'}
+      <ListViewState
+        loading={loading}
+        items={tags}
+        skeleton={
+          <div aria-busy="true">
+            <LoadingSkeleton count={3} height="h-10" />
+          </div>
+        }
+        empty={<EmptyState icon={Tag} message={t('tagList.empty')} />}
+      >
+        {(items) => (
+          <ul className="space-y-2">
+            {items.map((tag) => (
+              <ListItem key={tag.id}>
+                <Tag className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <button
+                  type="button"
+                  className="cursor-pointer border-none bg-transparent p-0"
+                  onClick={() => onTagClick?.(tag.id, tag.content || 'Unnamed')}
                 >
-                  {tag.content || 'Unnamed'}
-                </Badge>
-              </button>
-              <div className="flex-1" />
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={t('tagList.deleteTagLabel')}
-                className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                onClick={() => setDeleteTarget({ id: tag.id, name: tag.content || 'Unnamed' })}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
-            </ListItem>
-          ))}
-        </ul>
-      )}
+                  <Badge
+                    variant="secondary"
+                    className="truncate max-w-[150px]"
+                    title={tag.content || 'Unnamed'}
+                  >
+                    {tag.content || 'Unnamed'}
+                  </Badge>
+                </button>
+                <div className="flex-1" />
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={t('tagList.deleteTagLabel')}
+                  className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                  onClick={() => setDeleteTarget({ id: tag.id, name: tag.content || 'Unnamed' })}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </ListItem>
+            ))}
+          </ul>
+        )}
+      </ListViewState>
 
       {/* Delete confirmation dialog */}
       <ConfirmDialog

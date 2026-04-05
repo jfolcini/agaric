@@ -23,6 +23,7 @@ import { truncateId } from '@/lib/format'
 import { useSyncWithTimeout } from '../hooks/useSyncWithTimeout'
 import type { PeerRefRow } from '../lib/tauri'
 import { deletePeerRef, getDeviceId, listPeerRefs, startSync, updatePeerName } from '../lib/tauri'
+import { ListViewState } from './ListViewState'
 import { LoadingSkeleton } from './LoadingSkeleton'
 import { PairingDialog } from './PairingDialog'
 import { PeerListItem } from './PeerListItem'
@@ -259,27 +260,34 @@ export function DeviceManagement(): React.ReactElement {
                   </Button>
                 )}
 
-                {peers.length === 0 ? (
-                  <p className="device-no-peers text-sm text-muted-foreground">
-                    {t('device.noPairedDevices')}
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {peers.map((peer) => (
-                      <PeerListItem
-                        key={peer.peer_id}
-                        peer={peer}
-                        syncingPeerId={syncingPeerId}
-                        syncingAll={syncingAll}
-                        renamingPeerId={renamingPeerId}
-                        onSyncNow={handleSyncNow}
-                        onUnpair={(peerId) => setUnpairPeerId(peerId)}
-                        onRename={(peerId) => setRenamePeerId(peerId)}
-                        onAddressUpdated={loadData}
-                      />
-                    ))}
-                  </div>
-                )}
+                <ListViewState
+                  loading={loading}
+                  items={peers}
+                  skeleton={null}
+                  empty={
+                    <p className="device-no-peers text-sm text-muted-foreground">
+                      {t('device.noPairedDevices')}
+                    </p>
+                  }
+                >
+                  {(items) => (
+                    <div className="space-y-2">
+                      {items.map((peer) => (
+                        <PeerListItem
+                          key={peer.peer_id}
+                          peer={peer}
+                          syncingPeerId={syncingPeerId}
+                          syncingAll={syncingAll}
+                          renamingPeerId={renamingPeerId}
+                          onSyncNow={handleSyncNow}
+                          onUnpair={(peerId) => setUnpairPeerId(peerId)}
+                          onRename={(peerId) => setRenamePeerId(peerId)}
+                          onAddressUpdated={loadData}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </ListViewState>
               </div>
             </>
           )}

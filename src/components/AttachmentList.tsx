@@ -15,6 +15,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useBlockAttachments } from '../hooks/useBlockAttachments'
 import type { AttachmentRow } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
+import { ListViewState } from './ListViewState'
 
 interface AttachmentListProps {
   blockId: string
@@ -82,50 +83,51 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
     [pendingDeleteId, handleDeleteAttachment, t],
   )
 
-  if (loading) {
-    return (
-      <div className="space-y-2" role="status" aria-label={t('attachments.loading')}>
-        <Skeleton className="h-8 w-full rounded-md" />
-        <Skeleton className="h-8 w-full rounded-md" />
-      </div>
-    )
-  }
-
-  if (attachments.length === 0) {
-    return <EmptyState compact icon={Paperclip} message={t('attachments.empty')} />
-  }
-
   return (
-    <ul className="space-y-1" aria-label={t('attachments.list')}>
-      {attachments.map((attachment) => (
-        <li
-          key={attachment.id}
-          className="group flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md px-2 py-1.5 transition-colors hover:bg-accent/50"
-        >
-          <MimeIcon mimeType={attachment.mime_type} />
-          <span className="truncate flex-1 text-sm font-medium" title={attachment.filename}>
-            {attachment.filename}
-          </span>
-          <span className="shrink-0 text-xs text-muted-foreground">
-            {formatSize(attachment.size_bytes)}
-          </span>
-          <span className="shrink-0 text-xs text-muted-foreground">
-            {relativeTime(attachment.created_at)}
-          </span>
-          <button
-            type="button"
-            aria-label={t('attachments.delete', { name: attachment.filename })}
-            className={`shrink-0 rounded-sm p-1 transition-opacity focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center ${
-              pendingDeleteId === attachment.id
-                ? 'text-destructive opacity-100 bg-destructive/10'
-                : 'text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100'
-            }`}
-            onClick={() => onDelete(attachment)}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        </li>
-      ))}
-    </ul>
+    <ListViewState
+      loading={loading}
+      items={attachments}
+      skeleton={
+        <div className="space-y-2" role="status" aria-label={t('attachments.loading')}>
+          <Skeleton className="h-8 w-full rounded-md" />
+          <Skeleton className="h-8 w-full rounded-md" />
+        </div>
+      }
+      empty={<EmptyState compact icon={Paperclip} message={t('attachments.empty')} />}
+    >
+      {(items) => (
+        <ul className="space-y-1" aria-label={t('attachments.list')}>
+          {items.map((attachment) => (
+            <li
+              key={attachment.id}
+              className="group flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md px-2 py-1.5 transition-colors hover:bg-accent/50"
+            >
+              <MimeIcon mimeType={attachment.mime_type} />
+              <span className="truncate flex-1 text-sm font-medium" title={attachment.filename}>
+                {attachment.filename}
+              </span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {formatSize(attachment.size_bytes)}
+              </span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {relativeTime(attachment.created_at)}
+              </span>
+              <button
+                type="button"
+                aria-label={t('attachments.delete', { name: attachment.filename })}
+                className={`shrink-0 rounded-sm p-1 transition-opacity focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center ${
+                  pendingDeleteId === attachment.id
+                    ? 'text-destructive opacity-100 bg-destructive/10'
+                    : 'text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100'
+                }`}
+                onClick={() => onDelete(attachment)}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </ListViewState>
   )
 }

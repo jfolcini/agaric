@@ -33,6 +33,7 @@ import {
   updatePropertyDefOptions,
 } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
+import { ListViewState } from './ListViewState'
 
 const VALUE_TYPES = ['text', 'number', 'date', 'select'] as const
 
@@ -185,73 +186,73 @@ export function PropertyDefinitionsList(): React.ReactElement {
         </p>
       )}
 
-      {/* Loading skeleton */}
-      {loading && (
-        <div className="space-y-2" data-testid="properties-loading">
-          <Skeleton className="h-10 w-full rounded-lg" />
-          <Skeleton className="h-10 w-full rounded-lg" />
-          <Skeleton className="h-10 w-full rounded-lg" />
-        </div>
-      )}
-
-      {/* Empty state */}
-      {!loading && definitions.length === 0 && (
-        <EmptyState icon={Settings2} message={t('propertiesView.empty')} />
-      )}
-
-      {/* Definitions list */}
-      {!loading && filteredDefs.length > 0 && (
-        <ul className="space-y-2">
-          {filteredDefs.map((def) => (
-            <ListItem key={def.key}>
-              <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
-              <Badge variant="secondary">{def.value_type}</Badge>
-              {def.value_type === 'select' && (
-                <Popover
-                  open={editingOptionsKey === def.key}
-                  onOpenChange={(open) => {
-                    if (open) {
-                      setEditingOptionsKey(def.key)
-                      setEditOptionsValue(def.options ?? '')
-                    } else {
-                      setEditingOptionsKey(null)
-                    }
-                  }}
-                >
-                  <PopoverTrigger asChild>
-                    <Button variant="ghost" size="sm">
-                      {t('propertiesView.editOptions')}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent>
-                    <div className="space-y-2">
-                      <Input
-                        value={editOptionsValue}
-                        onChange={(e) => setEditOptionsValue(e.target.value)}
-                        placeholder="Options JSON"
-                        aria-label={t('propertiesView.optionsJsonLabel')}
-                      />
-                      <Button size="sm" onClick={() => handleSaveOptions(def.key)}>
-                        {t('action.save')}
-                      </Button>
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              )}
-              <div className="flex-1" />
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={`Delete property ${def.key}`}
-                className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                onClick={() => setDeleteTarget(def.key)}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
-            </ListItem>
-          ))}
-        </ul>
-      )}
+      <ListViewState
+        loading={loading}
+        items={definitions}
+        skeleton={
+          <div className="space-y-2" data-testid="properties-loading">
+            <Skeleton className="h-10 w-full rounded-lg" />
+            <Skeleton className="h-10 w-full rounded-lg" />
+            <Skeleton className="h-10 w-full rounded-lg" />
+          </div>
+        }
+        empty={<EmptyState icon={Settings2} message={t('propertiesView.empty')} />}
+      >
+        {() =>
+          filteredDefs.length > 0 ? (
+            <ul className="space-y-2">
+              {filteredDefs.map((def) => (
+                <ListItem key={def.key}>
+                  <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
+                  <Badge variant="secondary">{def.value_type}</Badge>
+                  {def.value_type === 'select' && (
+                    <Popover
+                      open={editingOptionsKey === def.key}
+                      onOpenChange={(open) => {
+                        if (open) {
+                          setEditingOptionsKey(def.key)
+                          setEditOptionsValue(def.options ?? '')
+                        } else {
+                          setEditingOptionsKey(null)
+                        }
+                      }}
+                    >
+                      <PopoverTrigger asChild>
+                        <Button variant="ghost" size="sm">
+                          {t('propertiesView.editOptions')}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent>
+                        <div className="space-y-2">
+                          <Input
+                            value={editOptionsValue}
+                            onChange={(e) => setEditOptionsValue(e.target.value)}
+                            placeholder="Options JSON"
+                            aria-label={t('propertiesView.optionsJsonLabel')}
+                          />
+                          <Button size="sm" onClick={() => handleSaveOptions(def.key)}>
+                            {t('action.save')}
+                          </Button>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  )}
+                  <div className="flex-1" />
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={`Delete property ${def.key}`}
+                    className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                    onClick={() => setDeleteTarget(def.key)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </ListItem>
+              ))}
+            </ul>
+          ) : null
+        }
+      </ListViewState>
 
       {/* Delete confirmation dialog */}
       <ConfirmDialog

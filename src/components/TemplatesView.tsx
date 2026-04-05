@@ -19,6 +19,7 @@ import { deleteProperty, queryByProperty } from '../lib/tauri'
 import { loadTemplatePagesWithPreview } from '../lib/template-utils'
 import { useNavigationStore } from '../stores/navigation'
 import { EmptyState } from './EmptyState'
+import { ListViewState } from './ListViewState'
 
 interface TemplateItem {
   id: string
@@ -84,92 +85,93 @@ export function TemplatesView(): React.ReactElement {
 
   return (
     <section className="space-y-4" aria-label={t('sidebar.templates')}>
-      {/* Loading skeleton */}
-      {loading && (
-        <div className="space-y-2" data-testid="templates-loading">
-          <Skeleton className="h-14 w-full rounded-lg" />
-          <Skeleton className="h-14 w-full rounded-lg" />
-          <Skeleton className="h-14 w-full rounded-lg" />
-        </div>
-      )}
+      <ListViewState
+        loading={loading}
+        items={templates}
+        skeleton={
+          <div className="space-y-2" data-testid="templates-loading">
+            <Skeleton className="h-14 w-full rounded-lg" />
+            <Skeleton className="h-14 w-full rounded-lg" />
+            <Skeleton className="h-14 w-full rounded-lg" />
+          </div>
+        }
+        empty={<EmptyState icon={LayoutTemplate} message={t('templates.empty')} />}
+      >
+        {() => (
+          <>
+            {/* Search input — only show when there are templates */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t('templates.search')}
+                aria-label={t('templates.search')}
+                className="pl-9"
+              />
+            </div>
 
-      {/* Empty state */}
-      {!loading && templates.length === 0 && (
-        <EmptyState icon={LayoutTemplate} message={t('templates.empty')} />
-      )}
-
-      {/* Search input — only show when there are templates */}
-      {!loading && templates.length > 0 && (
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={t('templates.search')}
-            aria-label={t('templates.search')}
-            className="pl-9"
-          />
-        </div>
-      )}
-
-      {/* Template list */}
-      {!loading && filtered.length > 0 && (
-        <ul className="space-y-1">
-          {filtered.map((tpl) => (
-            <li
-              key={tpl.id}
-              className="group flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-accent/50 cursor-pointer"
-            >
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      className="flex min-w-0 flex-1 flex-col text-left"
-                      aria-label={t('templates.navigateLabel', { name: tpl.content })}
-                      onClick={() => handleNavigate(tpl.id, tpl.content)}
+            {/* Template list */}
+            {filtered.length > 0 && (
+              <ul className="space-y-1">
+                {filtered.map((tpl) => (
+                  <li
+                    key={tpl.id}
+                    className="group flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-accent/50 cursor-pointer"
+                  >
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            className="flex min-w-0 flex-1 flex-col text-left"
+                            aria-label={t('templates.navigateLabel', { name: tpl.content })}
+                            onClick={() => handleNavigate(tpl.id, tpl.content)}
+                          >
+                            <span className="text-sm font-medium truncate">{tpl.content}</span>
+                            {tpl.preview && (
+                              <span className="text-xs text-muted-foreground truncate">
+                                {tpl.preview}
+                              </span>
+                            )}
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>{t('templates.navigateLabel', { name: tpl.content })}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    {tpl.isJournalTemplate && (
+                      <Badge variant="secondary" className="shrink-0 text-xs">
+                        {t('templates.journalIndicator')}
+                      </Badge>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={t('templates.removeTemplateLabel', { name: tpl.content })}
+                      className={[
+                        'shrink-0 opacity-0 group-hover:opacity-100 transition-opacity',
+                        'text-muted-foreground hover:text-destructive focus-visible:opacity-100',
+                        '[@media(pointer:coarse)]:opacity-100',
+                        'touch-target [@media(pointer:coarse)]:min-w-[44px]',
+                      ].join(' ')}
+                      onClick={() => handleRemoveTemplate(tpl.id, tpl.content)}
                     >
-                      <span className="text-sm font-medium truncate">{tpl.content}</span>
-                      {tpl.preview && (
-                        <span className="text-xs text-muted-foreground truncate">
-                          {tpl.preview}
-                        </span>
-                      )}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>{t('templates.navigateLabel', { name: tpl.content })}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-              {tpl.isJournalTemplate && (
-                <Badge variant="secondary" className="shrink-0 text-xs">
-                  {t('templates.journalIndicator')}
-                </Badge>
-              )}
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={t('templates.removeTemplateLabel', { name: tpl.content })}
-                className={[
-                  'shrink-0 opacity-0 group-hover:opacity-100 transition-opacity',
-                  'text-muted-foreground hover:text-destructive focus-visible:opacity-100',
-                  '[@media(pointer:coarse)]:opacity-100',
-                  'touch-target [@media(pointer:coarse)]:min-w-[44px]',
-                ].join(' ')}
-                onClick={() => handleRemoveTemplate(tpl.id, tpl.content)}
-              >
-                <X className="h-3.5 w-3.5" />
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
 
-      {/* No search results */}
-      {!loading && filtered.length === 0 && templates.length > 0 && (
-        <p className="text-sm text-muted-foreground">{t('templates.noResults')}</p>
-      )}
+            {/* No search results */}
+            {filtered.length === 0 && templates.length > 0 && (
+              <p className="text-sm text-muted-foreground">{t('templates.noResults')}</p>
+            )}
+          </>
+        )}
+      </ListViewState>
     </section>
   )
 }

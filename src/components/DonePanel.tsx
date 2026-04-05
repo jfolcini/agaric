@@ -16,7 +16,7 @@ import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, queryByProperty } from '../lib/tauri'
-import { truncateContent } from '../lib/text-utils'
+import { BlockListItem } from './BlockListItem'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { EmptyState } from './EmptyState'
 import { LoadMoreButton } from './LoadMoreButton'
@@ -215,30 +215,26 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
                 aria-label={t('donePanel.groupItemsLabel', { title: group.title })}
               >
                 {group.items.map((block) => (
-                  <li
+                  <BlockListItem
                     key={block.id}
-                    className="done-panel-item flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer hover:bg-muted/50 active:bg-muted/70 transition-colors"
-                    // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
-                    tabIndex={0}
+                    content={block.content}
+                    metadata={
+                      <CheckCircle2 className="done-panel-check h-4 w-4 shrink-0 text-status-done-foreground" />
+                    }
+                    pageId={block.parent_id}
+                    pageTitle={
+                      block.parent_id
+                        ? (pageTitles.get(block.parent_id) ?? t('donePanel.untitled'))
+                        : ''
+                    }
+                    breadcrumbArrow={t('donePanel.breadcrumbArrow')}
+                    breadcrumbAsLink={false}
+                    className="done-panel-item hover:bg-muted/50 active:bg-muted/70"
+                    contentClassName="done-panel-item-text"
+                    breadcrumbClassName="done-panel-breadcrumb [@media(pointer:coarse)]:text-sm"
                     onClick={() => handleBlockClick(block)}
                     onKeyDown={(e) => handleBlockKeyDown(e, block)}
-                  >
-                    {/* Check icon (green) */}
-                    <CheckCircle2 className="done-panel-check h-4 w-4 shrink-0 text-status-done-foreground" />
-
-                    {/* Block content */}
-                    <span className="done-panel-item-text text-sm min-w-0 flex-1 truncate">
-                      {truncateContent(block.content)}
-                    </span>
-
-                    {/* Source page breadcrumb */}
-                    {block.parent_id && (
-                      <span className="done-panel-breadcrumb text-xs [@media(pointer:coarse)]:text-sm text-muted-foreground truncate max-w-[40%]">
-                        {t('donePanel.breadcrumbArrow')}{' '}
-                        {pageTitles.get(block.parent_id) ?? t('donePanel.untitled')}
-                      </span>
-                    )}
-                  </li>
+                  />
                 ))}
               </ul>
             </div>

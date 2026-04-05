@@ -52,6 +52,7 @@ import {
 import { Toaster } from './components/ui/sonner'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
 import { usePollingQuery } from './hooks/usePollingQuery'
+import { useScrollRestore } from './hooks/useScrollRestore'
 import { useSyncEvents } from './hooks/useSyncEvents'
 import { useSyncTrigger } from './hooks/useSyncTrigger'
 import { useUndoShortcuts } from './hooks/useUndoShortcuts'
@@ -252,6 +253,34 @@ function App() {
 
   const activePage = pageStack.length > 0 ? pageStack[pageStack.length - 1] : null
 
+  // ── View key for scroll restore + transition ──────────────────────
+  const viewKey =
+    currentView === 'page-editor' && activePage ? `page-editor:${activePage.pageId}` : currentView
+
+  // ── Scroll position restoration ──────────────────────────────────
+  useScrollRestore(mainContentRef, viewKey)
+
+  // ── View transition fade ─────────────────────────────────────────
+  // Uses the "set state during render" pattern to synchronously hide
+  // content when the view key changes, then fades in via CSS transition.
+  const [prevViewKey, setPrevViewKey] = useState(viewKey)
+  const [fadeVisible, setFadeVisible] = useState(true)
+
+  if (prevViewKey !== viewKey) {
+    setPrevViewKey(viewKey)
+    setFadeVisible(false)
+  }
+
+  useEffect(() => {
+    if (!fadeVisible) {
+      const id = requestAnimationFrame(() => {
+        setFadeVisible(true)
+      })
+      return () => cancelAnimationFrame(id)
+    }
+    return undefined
+  }, [fadeVisible])
+
   return (
     <BootGate>
       <SidebarProvider>
@@ -363,36 +392,43 @@ function App() {
             tabIndex={-1}
             className="flex-1 overflow-y-auto p-4 md:p-6 outline-none"
           >
-            {currentView === 'journal' && <JournalPage onNavigateToPage={handlePageSelect} />}
-            {currentView === 'search' && <SearchPanel />}
-            {currentView === 'pages' && <PageBrowser onPageSelect={handlePageSelect} />}
-            {currentView === 'tags' && (
-              <div className="space-y-8">
-                <TagList onTagClick={(tagId, tagName) => navigateToPage(tagId, tagName)} />
-                <div className="flex items-center gap-4">
-                  <div className="flex-1 border-t border-border" />
-                  <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                    Filter
-                  </span>
-                  <div className="flex-1 border-t border-border" />
+            <div
+              className={
+                fadeVisible ? 'opacity-100 transition-opacity duration-150 ease-out' : 'opacity-0'
+              }
+              data-testid="view-transition-wrapper"
+            >
+              {currentView === 'journal' && <JournalPage onNavigateToPage={handlePageSelect} />}
+              {currentView === 'search' && <SearchPanel />}
+              {currentView === 'pages' && <PageBrowser onPageSelect={handlePageSelect} />}
+              {currentView === 'tags' && (
+                <div className="space-y-8">
+                  <TagList onTagClick={(tagId, tagName) => navigateToPage(tagId, tagName)} />
+                  <div className="flex items-center gap-4">
+                    <div className="flex-1 border-t border-border" />
+                    <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                      Filter
+                    </span>
+                    <div className="flex-1 border-t border-border" />
+                  </div>
+                  <TagFilterPanel />
                 </div>
-                <TagFilterPanel />
-              </div>
-            )}
-            {currentView === 'trash' && <TrashView />}
-            {currentView === 'properties' && <PropertiesView />}
-            {currentView === 'status' && <StatusPanel />}
-            {currentView === 'conflicts' && <ConflictList />}
-            {currentView === 'history' && <HistoryView />}
-            {currentView === 'templates' && <TemplatesView />}
-            {currentView === 'page-editor' && activePage && (
-              <PageEditor
-                pageId={activePage.pageId}
-                title={activePage.title}
-                onBack={goBack}
-                onNavigateToPage={handlePageSelect}
-              />
-            )}
+              )}
+              {currentView === 'trash' && <TrashView />}
+              {currentView === 'properties' && <PropertiesView />}
+              {currentView === 'status' && <StatusPanel />}
+              {currentView === 'conflicts' && <ConflictList />}
+              {currentView === 'history' && <HistoryView />}
+              {currentView === 'templates' && <TemplatesView />}
+              {currentView === 'page-editor' && activePage && (
+                <PageEditor
+                  pageId={activePage.pageId}
+                  title={activePage.title}
+                  onBack={goBack}
+                  onNavigateToPage={handlePageSelect}
+                />
+              )}
+            </div>
           </div>
         </SidebarInset>
       </SidebarProvider>
