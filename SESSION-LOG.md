@@ -1,5 +1,26 @@
 # Session Log
 
+## Session 216 — 2026-04-05 — Batch 68: H-12, H-15, H-16, H-17, H-18
+
+### Summary
+Resolved 5 HIGH-priority bugs. Fixed gutter button pointer-events conflict with Radix Tooltip, added post-creation navigation in PageBrowser, applied formatPropertyName to AddPropertySection dropdown, migrated property selector to Radix Select, and fixed ops counter to sum both queues. 9 files changed, +175/-32 lines. REVIEW-LATER.md reduced from 27 to 22 items.
+
+### Batch 68
+
+**Commit:** 9ba3bea
+
+| Area | Change |
+|------|--------|
+| SortableBlock.tsx | H-12: Added `pointer-events-none` to 3 gutter buttons (drag, history, delete) when `opacity-0`, with matching `pointer-events-auto` on all `opacity-100` variants (group-hover, coarse pointer, focus-within, block-active, focus-visible). |
+| SortableBlock.test.tsx | H-12: 3 new tests verifying pointer-events classes on all gutter buttons. |
+| PageBrowser.tsx | H-15: Added `onPageSelect?.(resp.id, resp.content ?? name)` after successful page creation. Added `onPageSelect` to useCallback deps. |
+| PageBrowser.test.tsx | H-15: New test verifying onPageSelect called with correct ID and title after creation. |
+| BlockPropertyDrawer.tsx | H-16: Applied `formatPropertyName()` to `def.key` in SelectItem and `selectedKey` in placeholder. H-17: Replaced custom button list + ScrollArea with Radix Select component (proper keyboard nav, scroll, disabled state). |
+| BlockPropertyDrawer.test.tsx | H-16+H-17: Added Radix Select mock following BacklinkFilterBuilder pattern. |
+| StatusPanel.tsx | H-18: Changed displayed value from `total_ops_dispatched` to `total_ops_dispatched + total_background_dispatched`. |
+| StatusPanel.test.tsx | H-18: Updated expected values (42+15=57, 100+50=150) and label assertions ("Ops Processed"). |
+| i18n.ts | H-17: Added `property.selectProperty` key. H-18: Changed `status.opsDispatchedLabel` to "Ops Processed", updated tooltip. |
+
 ## Session 215 — 2026-04-05 — Batch 67: UX-1, UX-4, UX-11, UX-12, UX-15, UX-16, UX-17
 
 ### Summary
