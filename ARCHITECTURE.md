@@ -47,6 +47,7 @@ Anytype, faster than Logseq.
 | State management | Zustand | Lightweight stores with explicit state enums for boot and editor lifecycle. |
 | Async runtime | Tokio | Powers the materializer queues and all async Tauri command handlers. |
 | DnD | @dnd-kit | Tree-aware drag-and-drop with depth projection for indent/reparent. |
+| Positioning | @floating-ui/dom | Popup/menu positioning with flip/shift. Replaced manual coordinate math. |
 
 **Rejected alternatives:**
 - **Electron:** Too heavy for a notes app.
@@ -183,19 +184,19 @@ limited to PRAGMAs, FTS5 operations, and dynamic SQL (~11 queries).
 
 ### Schema
 
-14 tables + 1 FTS5 virtual table, 19 indexes across 17 migrations.
+14 tables + 1 FTS5 virtual table, 19 indexes across 19 migrations.
 
 **Core tables:**
 
 ```
 blocks              — id (ULID PK), block_type, content, parent_id, position,
-                      deleted_at, archived_at, is_conflict, conflict_source,
+                      deleted_at, is_conflict, conflict_source,
                       todo_state, priority, due_date, scheduled_date
 block_tags          — (block_id, tag_id) composite PK
 block_properties    — (block_id, key) composite PK, value_text/value_num/value_date/value_ref
 block_links         — (source_id, target_id) composite PK — materializer-maintained cache
 attachments         — id (ULID PK), block_id, mime_type, filename, size_bytes, fs_path
-property_definitions — key PK, value_type (text/number/date/select), options (JSON)
+property_definitions — key PK, value_type (text/number/date/select/ref), options (JSON)
 page_aliases        — (page_id, alias) composite PK — case-insensitive alternative names
 ```
 
@@ -488,7 +489,8 @@ There is exactly **one TipTap editor instance** at any time. It is mounted into 
 on focus and unmounted on blur. All non-focused blocks render as plain static `<div>` elements.
 
 **Lifecycle:**
-1. User clicks/arrows into a block → mount TipTap, parse Markdown → `setContent`, focus editor.
+1. User clicks/arrows into a block → if another block was focused, flush its pending edits first
+   (auto-mount flush). Mount TipTap, parse Markdown → `setContent`, focus editor.
 2. User blurs → serialize ProseMirror → Markdown string. If changed, flush `edit_block` op.
    `clearHistory()`, unmount, render static div.
 
@@ -504,7 +506,7 @@ overhead elsewhere.
 | BlockLink | inline node (atom) | `[[ULID]]` rendered as chip with resolved page title |
 | ExternalLink | mark extension | `[text](url)` with autolink and paste detection |
 | AtTagPicker | suggestion | `@` triggers fuzzy search of `tags_cache` → inserts `tag_ref` node |
-| BlockLinkPicker | suggestion | `[[` triggers fuzzy search of `pages_cache` → inserts `block_link` node, "Create new" option |
+| BlockLinkPicker | suggestion | `[[` triggers fuzzy search of `pages_cache` → inserts `block_link` node, "Create new" option. Also `addInputRules()` with `/\[\[([^\]]+)\]\]$/` regex for inline `[[text]]` → page link conversion. |
 | SlashCommand | suggestion | `/` triggers 26 commands: TODO, DOING, DONE, DATE, DUE, SCHEDULED, LINK, TAG, CODE, EFFORT, ASSIGNEE, LOCATION, REPEAT, TEMPLATE, QUOTE, TABLE, QUERY + PRIORITY 1/2/3 + H1-H6 |
 | CheckboxInputRule | input rule | `- [ ]` / `- [x]` → TODO/DONE state |
 | CodeBlockLowlight | node | Fenced code blocks with syntax highlighting |
@@ -513,6 +515,11 @@ overhead elsewhere.
 
 Pickers intercept keystrokes and open autocomplete popups. On selection, they insert the
 appropriate inline node with ULID. The raw ULID is never visible to the user.
+
+**Chip re-expansion:** Both `BlockLink` and `TagRef` register `addKeyboardShortcuts()` with a
+Backspace handler. When the cursor is immediately after a chip node and the user presses
+Backspace, the chip is replaced with its raw text (`[[title]]` or `@tag`) so the user can edit
+the reference. This avoids the need to delete-and-retype when correcting a tag or link.
 
 ### Keyboard handling
 
@@ -651,32 +658,68 @@ App
 ├── BootGate                       — blocks UI during boot/recovery
 ├── Sidebar                        — Journal, Pages, Tags, Trash, History, Status, Conflicts nav
 ├── JournalPage                    — daily/weekly/monthly/agenda modes
-│   └── BlockTree (per day)        — recursive block renderer
-│       └── SortableBlock          — @dnd-kit wrapper
-│           └── EditableBlock      — static div ↔ TipTap toggle
-│               ├── StaticBlock    — rendered Markdown (links, tags, code blocks)
-│               │   └── QueryResult — renders inline {{query ...}} blocks with live results
-│               ├── TipTap editor  — mounted on focus only
-│               └── BlockContextMenu — right-click / long-press actions
+│   ├── DailyView / WeeklyView / MonthlyView / AgendaView
+│   ├── JournalCalendarDropdown    — floating calendar date picker
+│   └── DaySection                 — per-day container with PageBlockStoreProvider
+│       └── BlockTree              — recursive block renderer
+│           ├── SortableBlock      — @dnd-kit wrapper
+│           │   ├── BlockInlineControls — gutter buttons (expand, drag handle)
+│           │   └── EditableBlock  — static div ↔ TipTap toggle
+│           │       ├── StaticBlock    — rendered Markdown (links, tags, code blocks)
+│           │       │   └── QueryResult — inline {{query ...}} with QueryResultList/QueryResultTable
+│           │       ├── TipTap editor  — mounted on focus only
+│           │       ├── BlockPropertyEditor — inline property editing
+│           │       └── BlockContextMenu — right-click / long-press actions
+│           └── AddBlockButton     — ghost "+" button at tree bottom
 ├── PageEditor                     — page title + block tree + detail panels
-│   ├── PageHeader                 — title editing, undo/redo, kebab menu (template actions, export, delete)
+│   ├── PageHeader                 — title, undo/redo, kebab menu
+│   │   ├── PageTitleEditor        — contentEditable page title
+│   │   ├── PageAliasSection       — alias badges with add/remove
+│   │   ├── PageTagSection         — page-level tag management
+│   │   └── PageHeaderMenu         — kebab menu (template, export, delete)
 │   └── BlockTree                  — same recursive renderer
-├── PageBrowser                    — all pages list
+├── PageBrowser                    — all pages list (tree view)
+│   └── PageTreeItem               — recursive tree node
 ├── TagList                        — all tags list
+├── TemplatesView                  — template pages browser
 ├── TrashView                      — soft-deleted blocks
 ├── SearchPanel                    — FTS5 full-text search
+│   └── HighlightMatch             — memoized regex-safe text highlighting
 ├── HistoryView                    — global op log with multi-select batch revert
+│   ├── HistoryFilterBar           — op type filter dropdown
+│   ├── HistoryListItem            — individual op entry with badge
+│   └── HistorySelectionToolbar    — batch selection toolbar
 ├── StatusPanel                    — materializer queue metrics
 ├── ConflictList                   — pending conflict copies
+│   ├── ConflictBatchToolbar       — select/deselect all toolbar
+│   ├── ConflictListItem           — single conflict card
+│   └── ConflictTypeRenderer       — type-specific conflict renderer
+├── PropertiesView                 — system-wide property definitions
+│   ├── PropertyDefinitionsList    — CRUD with search
+│   ├── TaskStatesSection          — task state cycle editor
+│   └── DeadlineWarningSection     — deadline warning days setting
 ├── DeviceManagement               — device identity and peer management
+│   └── PeerListItem               — peer card with sync/rename/unpair
 ├── PairingDialog                  — passphrase/QR pairing flow
+│   ├── PairingQrDisplay           — QR code + passphrase + countdown
+│   ├── PairingEntryForm           — passphrase entry form
+│   ├── PairingPeersList           — paired peers list
 │   └── QrScanner                  — camera-based QR code scanning
 ├── EmptyState                     — placeholder for empty views
 └── Panels (contextual)
     ├── BacklinksPanel             — blocks linking to current block (filtered)
-    │   └── BacklinkFilterBuilder  — composable filter expression UI
+    │   ├── BacklinkFilterBuilder  — composable filter expression UI
+    │   │   ├── FilterPillRow      — active filter pills with remove
+    │   │   └── FilterSortControls — sort field/direction controls
+    │   └── BacklinkGroupRenderer  — collapsible backlink group
+    ├── LinkedReferences           — grouped backlinks panel
+    ├── UnlinkedReferences         — plain-text mentions panel
+    ├── DuePanel                   — overdue + upcoming deadline blocks
+    │   ├── OverdueSection         — overdue blocks with count badge
+    │   ├── UpcomingSection        — upcoming deadline blocks
+    │   └── DuePanelFilters        — source filter pills + toggle
     ├── HistoryPanel               — per-block edit chain from op log
-    ├── PropertiesPanel            — typed key-value properties
+    ├── BlockPropertyDrawer        — typed key-value properties
     ├── TagPanel                   — apply/remove tags
     ├── TagFilterPanel             — AND/OR tag query builder
     ├── FormattingToolbar          — bold/italic/code/link/undo/redo
@@ -730,12 +773,13 @@ names, `[[ULID]]` → page titles, and YAML frontmatter for page properties.
 
 ### Tauri command wrappers
 
-`src/lib/tauri.ts` provides 60 type-safe wrappers over auto-generated `bindings.ts`. Handles
+`src/lib/tauri.ts` provides 67 type-safe wrappers over auto-generated `bindings.ts`. Handles
 Tauri 2's requirement for explicit `null` (not `undefined`) on `Option<T>` parameters.
 
-### Extracted hooks
+### Extracted hooks (30 in src/hooks/)
 
-BlockTree's concerns are decomposed into focused hooks:
+BlockTree's concerns are decomposed into focused hooks. Additional hooks extracted from
+component decompositions provide reusable logic across multiple views.
 
 | Hook | Purpose |
 |------|---------|
@@ -743,13 +787,30 @@ BlockTree's concerns are decomposed into focused hooks:
 | `useBlockResolve` | ULID → title resolution, tag/page search, page creation |
 | `useBlockProperties` | Property state, TODO/priority cycling |
 | `useBlockTags` | Load/add/remove/create tags for a block |
-| `useBlockKeyboard` | Block-level keyboard handling (Enter, Backspace, Tab, arrow keys, shortcuts) |
+| `useBlockKeyboardHandlers` | Block-level keyboard handling (Enter, Backspace, Tab, arrow keys, shortcuts) |
+| `useBlockSlashCommands` | Slash command registration and execution |
+| `useBlockDatePicker` | Date picker state for due/scheduled dates |
+| `useBlockMultiSelect` | Multi-block selection gestures (Ctrl+Click, Shift+Click, Ctrl+A) |
+| `useBlockTouchLongPress` | Touch long-press for mobile block context menu |
+| `useBlockAttachments` | Attachment CRUD for a block |
+| `useBlockNavigation` | Block click + keyboard navigation (shared across panels) |
 | `useRovingEditor` | TipTap instance management (mount/unmount/serialize) |
 | `useUndoShortcuts` | Global Ctrl+Z / Ctrl+Y (outside editor contentEditable) |
 | `useViewportObserver` | IntersectionObserver for off-screen block placeholders |
 | `useIsMobile` | Responsive breakpoint detection for mobile layout (\<768px) |
 | `usePaginatedQuery` | Cursor-based pagination with stale response detection and auto-refetch |
 | `usePollingQuery` | Fixed-interval polling with optional refetch-on-focus |
+| `useDebouncedCallback` | Generic debounce hook replacing manual `useRef<timeout>` patterns |
+| `useListKeyboardNavigation` | Arrow/vim key navigation for lists (wrap/clamp modes, Home/End) |
+| `useJournalAutoCreate` | Auto-create today's journal page on mount |
+| `usePageDelete` | Page deletion with confirmation state |
+| `useAgendaPreferences` | localStorage-persisted sort/group preferences |
+| `useBacklinkResolution` | TTL cache for ULID/tag resolution, batch resolve |
+| `useSyncWithTimeout` | Promise.race timeout pattern with cancelSync |
+| `useBatchCounts` | Batch agenda count fetching (per-date, per-source) |
+| `useHistoryDiffToggle` | Expanded keys + diff cache + loading state for history views |
+| `useDuePanelData` | DuePanel data fetching (3 queries, 12 state variables, pagination) |
+| `useDraftAutosave` | Draft content autosave with debounce |
 
 Sync hooks (`useSyncTrigger`, `useSyncEvents`, `useOnlineStatus`) are documented in
 [§18 Frontend sync integration](#18-sync--networking).
@@ -759,44 +820,61 @@ PageBrowser, TrashView, ConflictList, BacklinksPanel, HistoryView, StatusPanel, 
 `useHasConflicts`. The caller stabilises `queryFn` with `useCallback`; when its identity
 changes the hook re-fetches page 1 (paginated) or restarts polling.
 
-### Component inventory (43 domain + 14 shadcn/ui + 1 editor = 58 total)
+### Component inventory (99 domain + 21 shadcn/ui + 1 editor = 121 total)
 
-**Page-level**: PageEditor, PageHeader, PageBrowser, JournalPage (with JournalControls), SearchPanel, TagList, TagFilterPanel, TrashView, ConflictList, HistoryView, StatusPanel, PropertiesView
+**Page-level**: PageEditor, PageHeader (with PageTitleEditor, PageAliasSection, PageTagSection, PageHeaderMenu), PageBrowser (with PageTreeItem), JournalPage, SearchPanel, TagList, TagFilterPanel, TrashView, ConflictList, HistoryView, StatusPanel, PropertiesView (with PropertyDefinitionsList, TaskStatesSection, DeadlineWarningSection), TemplatesView
 
-**Block rendering**: BlockTree, SortableBlock, EditableBlock, StaticBlock, FormattingToolbar, BlockContextMenu
+**Journal views**: journal/DailyView, journal/WeeklyView, journal/MonthlyView, journal/AgendaView, journal/DaySection, journal/JournalCalendarDropdown
 
-**References**: LinkedReferences, UnlinkedReferences, BacklinkFilterBuilder, SourcePageFilter, LinkEditPopover, QueryResult
+**Block rendering**: BlockTree, SortableBlock (with BlockInlineControls), EditableBlock (with BlockPropertyEditor), StaticBlock, FormattingToolbar, block-tree/BlockContextMenu, block-tree/BlockDatePicker, block-tree/BlockDndOverlay, BatchActionToolbar, AddBlockButton
 
-**Properties**: PagePropertyTable, DiffDisplay, PropertyChip, BlockPropertyDrawer
+**References**: LinkedReferences (with BacklinkGroupRenderer), UnlinkedReferences, BacklinkFilterBuilder (with FilterPillRow, FilterSortControls), SourcePageFilter, LinkEditPopover, QueryResult (with QueryResultList, QueryResultTable)
 
-**Agenda**: AgendaResults, AgendaFilterBuilder (with AgendaSortGroupControls), DonePanel, DuePanel
+**Properties**: PagePropertyTable, BlockPropertyDrawer, PropertyChip, PropertyValuePicker (with ChoiceValuePicker, TextValuePicker), AddPropertyPopover, BuiltinDateFields, DiffDisplay
 
-**History**: HistoryPanel, HistorySheet
+**Agenda**: AgendaResults, AgendaFilterBuilder (with AgendaSortGroupControls), DonePanel, DuePanel (with OverdueSection, UpcomingSection, DuePanelFilters)
 
-**Sync**: DeviceManagement, PairingDialog, QrScanner, UnpairConfirmDialog
+**History**: HistoryPanel, HistorySheet, HistoryView (with HistoryFilterBar, HistoryListItem, HistorySelectionToolbar)
 
-**Shell/UI**: BootGate, ErrorBoundary, KeyboardShortcuts, RenameDialog, EmptyState
+**Conflicts**: ConflictList (with ConflictBatchToolbar, ConflictListItem, ConflictTypeRenderer)
+
+**Sync**: DeviceManagement (with PeerListItem), PairingDialog (with PairingQrDisplay, PairingEntryForm, PairingPeersList), QrScanner, UnpairConfirmDialog
+
+**Shell/UI**: BootGate, ErrorBoundary, KeyboardShortcuts, RenameDialog, EmptyState, ConfirmDialog, LoadMoreButton, LoadingSkeleton, CollapsiblePanelHeader, CollapsibleGroupList, ResultCard, PageLink, HighlightMatch, PdfViewerDialog, AttachmentList
 
 **Editor**: SuggestionList
 
-**shadcn/ui**: alert-dialog, badge, button, calendar, card, input, popover, scroll-area, separator, sheet, sidebar, skeleton, sonner, tooltip
+**shadcn/ui (21)**: alert-dialog, badge, button, calendar, card, card-button, close-button, dialog, input, label, list-item, popover, scroll-area, select, separator, sheet, sidebar, skeleton, sonner, spinner, tooltip
 
-### Utility modules (src/lib/)
+### Utility modules (src/lib/ — 27 modules)
 
-- `tauri.ts` — Hand-written wrappers with object-style APIs for all 60 commands
+- `tauri.ts` — Hand-written wrappers with object-style APIs for all 67 commands
 - `bindings.ts` — Auto-generated from Rust types via specta
 - `tauri-mock.ts` — In-memory backend mock (activates when Tauri absent)
 - `tree-utils.ts` — Flat tree manipulation (depth, descendants, DnD projection)
 - `announcer.ts` — Screen reader announcements (aria-live)
 - `format.ts` — Formatting utilities
 - `parse-date.ts` — Date parsing helpers
+- `date-utils.ts` — Date formatting/range helpers (formatCompactDate, getDateRangeForFilter, getTodayString)
 - `open-url.ts` — URL opening utilities
-- `i18n.ts` — i18next setup (scaffolded, not fully implemented)
+- `i18n.ts` — i18next setup with ~150 translation keys
 - `utils.ts` — cn() classname utility (clsx + tailwind-merge)
 - `agenda-sort.ts` — Agenda sorting/grouping (sortAgendaBlocks, groupByDate/priority/state)
+- `agenda-filters.ts` — Pure `executeAgendaFilters()` function for client-side agenda filtering
 - `export-graph.ts` — Export all pages as ZIP of markdown files
 - `repeat-utils.ts` — Repeat/recurrence formatting (formatRepeatLabel)
 - `template-utils.ts` — Journal template loading (loadJournalTemplate, insertTemplateBlocks)
+- `block-events.ts` — BLOCK_EVENTS constant, dispatchBlockEvent(), onBlockEvent(), NavigateToPageFn type
+- `date-property-colors.ts` — getSourceColor()/getSourceLabel() for agenda source color coding
+- `page-tree.ts` — Pure buildPageTree() utility for page browser hierarchy
+- `query-utils.ts` — Query parsing and filter utilities for inline query blocks
+- `text-utils.ts` — truncateContent utility
+- `history-utils.ts` — getPayloadPreview utility for op log display
+- `property-utils.ts` — formatPropertyName(), BUILTIN_PROPERTY_ICONS map
+- `property-save-utils.ts` — Property persistence helpers
+- `priority-color.ts` — Shared priorityColor() utility for consistent priority styling
+- `filter-dimension-metadata.ts` — Metadata for agenda filter dimensions
+- `recent-pages.ts` — Recently visited pages tracking
 
 ---
 
@@ -1127,10 +1205,9 @@ SQLite WAL mode, same pool configuration, same migrations.
 ### Status
 
 All IPC commands (read + write) confirmed working. Block creation, editing, and persistence
-across restarts verified on emulator. Debug APK builds, installs, and runs correctly.
-
-**Known limitation:** ProGuard `isMinifyEnabled = true` for release builds, but keep rules are
-empty — release APK will crash. Debug builds work correctly.
+across restarts verified on emulator. Both debug and release APKs build, install, and run
+correctly. Release APK is 24 MB (vs 402 MB debug) — ProGuard/R8 minification with verified keep
+rules.
 
 ### Headless testing
 
@@ -1350,7 +1427,7 @@ architectural changes were required.
 
 ## 20. Tauri Command API
 
-55 core + 5 sync = 60 total commands. Each has an `inner_*` function taking `&SqlitePool` for
+62 core + 5 sync = 67 total commands. Each has an `inner_*` function taking `&SqlitePool` for
 testability. All use cursor-based pagination where applicable.
 
 ### Block Operations (9)
@@ -1439,11 +1516,12 @@ testability. All use cursor-based pagination where applicable.
 | `update_peer_name` | Set human-readable peer name. |
 | `set_peer_address` | Set manual sync address for a peer. |
 
-### Batch, Export & System (9)
+### Batch, Export & System (10)
 
 | Command | Purpose |
 |---------|---------|
 | `count_agenda_batch` | Count agenda items per date (batch). |
+| `count_agenda_batch_by_source` | Count agenda items per date grouped by source (page/due/scheduled/property). |
 | `count_backlinks_batch` | Count backlinks per page (batch). |
 | `set_page_aliases` | Replace page's aliases. |
 | `get_page_aliases` | List aliases for a page. |
