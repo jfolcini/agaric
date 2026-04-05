@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 export interface SourcePageFilterProps {
   /** All source pages from the grouped response, used to populate the list. */
@@ -131,29 +132,31 @@ export function SourcePageFilter({
             className="h-7 text-xs"
             aria-label={t('sourceFilter.searchLabel')}
           />
-          <div className="source-page-filter-list max-h-48 overflow-y-auto space-y-0.5">
-            {filteredPages.map((page) => (
-              <button
-                key={page.pageId}
-                type="button"
-                className="source-page-filter-item flex w-full items-center gap-2 rounded px-2 py-1 text-xs cursor-pointer hover:bg-accent/50"
-                onClick={(e) => handlePageClick(e, page.pageId)}
-                onKeyDown={(e) => handlePageKeyDown(e, page.pageId)}
-              >
-                <span
-                  className={`inline-block h-2 w-2 shrink-0 rounded-full ${getDotColor(page.pageId)}`}
-                  aria-hidden="true"
-                />
-                <span className="flex-1 truncate">{page.pageTitle ?? 'Untitled'}</span>
-                <span className="text-muted-foreground">({page.blockCount})</span>
-              </button>
-            ))}
-            {filteredPages.length === 0 && (
-              <div className="px-2 py-1 text-xs text-muted-foreground">
-                {t('sourceFilter.noPagesFound')}
-              </div>
-            )}
-          </div>
+          <ScrollArea className="max-h-48">
+            <div className="source-page-filter-list space-y-0.5">
+              {filteredPages.map((page) => (
+                <button
+                  key={page.pageId}
+                  type="button"
+                  className="source-page-filter-item flex w-full items-center gap-2 rounded px-2 py-1 text-xs cursor-pointer hover:bg-accent/50"
+                  onClick={(e) => handlePageClick(e, page.pageId)}
+                  onKeyDown={(e) => handlePageKeyDown(e, page.pageId)}
+                >
+                  <span
+                    className={`inline-block h-2 w-2 shrink-0 rounded-full ${getDotColor(page.pageId)}`}
+                    aria-hidden="true"
+                  />
+                  <span className="flex-1 truncate">{page.pageTitle ?? 'Untitled'}</span>
+                  <span className="text-muted-foreground">({page.blockCount})</span>
+                </button>
+              ))}
+              {filteredPages.length === 0 && (
+                <div className="px-2 py-1 text-xs text-muted-foreground">
+                  {t('sourceFilter.noPagesFound')}
+                </div>
+              )}
+            </div>
+          </ScrollArea>
           {hasFilters && (
             <Button
               variant="ghost"

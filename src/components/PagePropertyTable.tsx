@@ -25,6 +25,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { formatPropertyName } from '@/lib/property-utils'
 import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
 import {
@@ -253,7 +254,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
                   }}
                   aria-label={t('pageProperty.searchLabel')}
                 />
-                <div className="max-h-40 overflow-y-auto">
+                <ScrollArea className="max-h-40">
                   {filteredDefs.map((def) => (
                     <button
                       key={def.key}
@@ -267,7 +268,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
                       </Badge>
                     </button>
                   ))}
-                </div>
+                </ScrollArea>
                 {defSearch.trim() && !searchMatchesExistingDef && !creatingDef && (
                   <Button
                     variant="ghost"
@@ -467,24 +468,26 @@ function PropertyRowEditor({ prop, def, onSave, onDelete, onDefUpdated }: Proper
             className="w-56 space-y-2 p-3 max-w-[calc(100vw-2rem)]"
             aria-label={t('pageProperty.editOptionsLabel', { key: prop.key })}
           >
-            <div className="max-h-32 space-y-1 overflow-y-auto">
-              {editingOptions.map((opt) => (
-                <div
-                  key={opt}
-                  className="flex items-center justify-between gap-1 rounded px-1 py-0.5 text-sm hover:bg-accent"
-                >
-                  <span className="truncate">{opt}</span>
-                  <button
-                    type="button"
-                    className="shrink-0 text-muted-foreground hover:text-destructive"
-                    onClick={() => handleRemoveOption(opt)}
-                    aria-label={t('pageProperty.removeOptionLabel', { option: opt })}
+            <ScrollArea className="max-h-32">
+              <div className="space-y-1">
+                {editingOptions.map((opt) => (
+                  <div
+                    key={opt}
+                    className="flex items-center justify-between gap-1 rounded px-1 py-0.5 text-sm hover:bg-accent"
                   >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
+                    <span className="truncate">{opt}</span>
+                    <button
+                      type="button"
+                      className="shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => handleRemoveOption(opt)}
+                      aria-label={t('pageProperty.removeOptionLabel', { option: opt })}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
             <div className="flex gap-1">
               <Input
                 className="h-7 flex-1 text-xs"

@@ -24,6 +24,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { useBlockTags } from '../hooks/useBlockTags'
 import {
   deleteBlock,
@@ -570,7 +571,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
                 }}
                 aria-label={t('pageHeader.searchTagsLabel')}
               />
-              <div className="max-h-40 overflow-y-auto">
+              <ScrollArea className="max-h-40">
                 {availableTags.map((tag) => (
                   <button
                     key={tag.id}
@@ -595,7 +596,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
                     {t('pageHeader.noMoreTags')}
                   </p>
                 )}
-              </div>
+              </ScrollArea>
             </PopoverContent>
           </Popover>
         </div>

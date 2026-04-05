@@ -754,6 +754,112 @@ describe('PageBrowser', () => {
 
       expect(onPageSelect).toHaveBeenCalledWith('P1', 'work/project-a')
     })
+
+    it('renders hybrid node (page with children) as navigable folder', async () => {
+      const user = userEvent.setup()
+      const onPageSelect = vi.fn()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'work' }),
+          makePage({ id: 'P2', content: 'work/project-a' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser onPageSelect={onPageSelect} />)
+
+      // "work" should be visible as a clickable name
+      const workName = await screen.findByText('work')
+      expect(workName).toBeInTheDocument()
+
+      // "project-a" child should be visible (expanded by default)
+      expect(screen.getByText('project-a')).toBeInTheDocument()
+
+      // Clicking the "work" name should navigate to the work page
+      await user.click(workName)
+      expect(onPageSelect).toHaveBeenCalledWith('P1', 'work')
+    })
+
+    it('hybrid node can be collapsed to hide children', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'work' }),
+          makePage({ id: 'P2', content: 'work/project-a' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      // Children should be visible initially
+      expect(await screen.findByText('project-a')).toBeInTheDocument()
+
+      // Find the chevron toggle button (sibling of the name button)
+      const workName = screen.getByText('work')
+      const headerRow = workName.closest('.group') as HTMLElement
+      const buttons = within(headerRow).getAllByRole('button')
+      // First button is the chevron toggle
+      const chevronBtn = buttons[0] as HTMLElement
+      await user.click(chevronBtn)
+
+      // Children should be hidden
+      expect(screen.queryByText('project-a')).not.toBeInTheDocument()
+
+      // Folder label still visible
+      expect(screen.getByText('work')).toBeInTheDocument()
+
+      // Click again to expand
+      await user.click(chevronBtn)
+      expect(screen.getByText('project-a')).toBeInTheDocument()
+    })
+
+    it('tree leaf items have a delete button that triggers confirmation dialog', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'work/project-a' }),
+          makePage({ id: 'P2', content: 'work/project-b' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('project-a')
+
+      // Find the delete button for project-a via aria-label
+      const deleteBtn = screen.getByRole('button', { name: 'Delete work/project-a' })
+      expect(deleteBtn).toBeInTheDocument()
+
+      await user.click(deleteBtn)
+
+      // Confirmation dialog should appear
+      expect(await screen.findByText(/Delete page\?/i)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /^Delete$/i })).toBeInTheDocument()
+    })
+
+    it('tree leaf items render with a file icon', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'work/project-a' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('project-a')
+
+      // The leaf item should contain an SVG icon (FileText from lucide-react)
+      const leafButton = screen.getByText('project-a').closest('button') as HTMLElement
+      const svg = leafButton.querySelector('svg')
+      expect(svg).toBeTruthy()
+      expect(svg?.classList.contains('h-4')).toBe(true)
+      expect(svg?.classList.contains('w-4')).toBe(true)
+    })
   })
 
   describe('create page under namespace', () => {

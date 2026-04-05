@@ -9,6 +9,7 @@
  * Closes on: action selected, click outside, or Escape.
  */
 
+import { computePosition, flip, offset, shift } from '@floating-ui/dom'
 import {
   ArrowLeftToLine,
   ArrowRightToLine,
@@ -161,8 +162,24 @@ export function BlockContextMenu({
     itemRefs.current[focusedIndex]?.focus()
   }, [focusedIndex])
 
-  // ── Clamp position so the menu stays within the viewport ─────────
-  const clampedPosition = useClampedPosition(position, menuRef)
+  // ── Compute position with floating-ui ─────────────────────────────
+  const [computedPos, setComputedPos] = useState(position)
+
+  useEffect(() => {
+    const el = menuRef.current
+    if (!el) return
+
+    const virtualEl = {
+      getBoundingClientRect: () => new DOMRect(position.x, position.y, 0, 0),
+    }
+
+    computePosition(virtualEl, el, {
+      placement: 'bottom-start',
+      middleware: [offset(4), flip({ padding: 8 }), shift({ padding: 8 })],
+    }).then(({ x, y }) => {
+      setComputedPos({ x, y })
+    })
+  }, [position])
 
   const handleAction = useCallback(
     (action: ((blockId: string) => void) | undefined) => {
@@ -321,7 +338,7 @@ export function BlockContextMenu({
       role="menu"
       aria-label={t('contextMenu.blockActions')}
       className="fixed z-50 min-w-[160px] rounded-lg border bg-popover p-1 shadow-md animate-in fade-in-0 zoom-in-95"
-      style={{ left: clampedPosition.x, top: clampedPosition.y }}
+      style={{ left: computedPos.x, top: computedPos.y }}
       onKeyDown={handleKeyDown}
     >
       {groups.map((group, groupIdx) => (
@@ -365,36 +382,4 @@ export function BlockContextMenu({
   )
 
   return createPortal(menu, document.body)
-}
-
-// ── Viewport clamping helper ──────────────────────────────────────────
-
-/**
- * Returns a position clamped so the menu doesn't overflow the viewport.
- * On first render, uses the raw position; once the menu mounts and we know
- * its size, we re-clamp. The visual shift is imperceptible (single frame).
- */
-function useClampedPosition(
-  position: { x: number; y: number },
-  menuRef: React.RefObject<HTMLDivElement | null>,
-): { x: number; y: number } {
-  const PAD = 8 // px of breathing room from viewport edges
-
-  // After first paint, check if the menu overflows and adjust
-  const rect = menuRef.current?.getBoundingClientRect()
-  if (!rect) return position
-
-  let x = position.x
-  let y = position.y
-
-  if (x + rect.width > window.innerWidth - PAD) {
-    x = window.innerWidth - rect.width - PAD
-  }
-  if (y + rect.height > window.innerHeight - PAD) {
-    y = window.innerHeight - rect.height - PAD
-  }
-  if (x < PAD) x = PAD
-  if (y < PAD) y = PAD
-
-  return { x, y }
 }

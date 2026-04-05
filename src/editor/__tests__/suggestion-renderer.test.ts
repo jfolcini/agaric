@@ -16,6 +16,13 @@ vi.mock('@tiptap/react', () => ({
   ReactRenderer: mockReactRenderer,
 }))
 
+vi.mock('@floating-ui/dom', () => ({
+  computePosition: vi.fn().mockResolvedValue({ x: 0, y: 0 }),
+  flip: vi.fn(() => ({})),
+  shift: vi.fn(() => ({})),
+  offset: vi.fn(() => ({})),
+}))
+
 describe('createSuggestionRenderer', () => {
   it('returns an object with the four lifecycle methods', () => {
     const renderer = createSuggestionRenderer()
@@ -25,7 +32,7 @@ describe('createSuggestionRenderer', () => {
     expect(renderer.onExit).toBeTypeOf('function')
   })
 
-  it('passes label prop to ReactRenderer when label is provided', () => {
+  it('passes label prop to ReactRenderer when label is provided', async () => {
     const renderer = createSuggestionRenderer('Tags')
     const mockRect = { left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }
 
@@ -76,7 +83,17 @@ describe('positioning', () => {
     }
   })
 
-  it('positions popup at rect.left for multi-char triggers like [[', () => {
+  it('positions popup using computePosition result', async () => {
+    const { computePosition } = await import('@floating-ui/dom')
+    const mockedComputePosition = vi.mocked(computePosition)
+    mockedComputePosition.mockResolvedValueOnce({
+      x: 50,
+      y: 104,
+      placement: 'bottom-start',
+      strategy: 'absolute',
+      middlewareData: {},
+    })
+
     const renderer = createSuggestionRenderer()
     const mockRect = { left: 50, right: 70, top: 80, bottom: 100, width: 20, height: 20 }
 
@@ -95,11 +112,16 @@ describe('positioning', () => {
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
     expect(popup).toBeTruthy()
-    // Should use rect.left (50) - left-aligned with trigger start
-    expect(popup.style.left).toBe('50px')
+
+    await vi.waitFor(() => {
+      expect(popup.style.left).toBe('50px')
+      expect(popup.style.top).toBe('104px')
+    })
+
+    renderer.onExit()
   })
 
-  it('positions popup at rect.left for caret-width triggers', () => {
+  it('sets position fixed and zIndex 50', async () => {
     const renderer = createSuggestionRenderer()
     const mockRect = { left: 100, right: 101, top: 80, bottom: 100, width: 1, height: 20 }
 
@@ -118,11 +140,26 @@ describe('positioning', () => {
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
     expect(popup).toBeTruthy()
-    // Should use rect.left (100) since width <= 1
-    expect(popup.style.left).toBe('100px')
+
+    await vi.waitFor(() => {
+      expect(popup.style.position).toBe('fixed')
+      expect(popup.style.zIndex).toBe('50')
+    })
+
+    renderer.onExit()
   })
 
-  it('places popup below trigger by default', () => {
+  it('calls computePosition with bottom-start placement and middleware', async () => {
+    const { computePosition, offset, flip, shift } = await import('@floating-ui/dom')
+    const mockedComputePosition = vi.mocked(computePosition)
+    mockedComputePosition.mockResolvedValueOnce({
+      x: 100,
+      y: 104,
+      placement: 'bottom-start',
+      strategy: 'absolute',
+      middlewareData: {},
+    })
+
     const renderer = createSuggestionRenderer()
     const mockRect = { left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }
 
@@ -139,33 +176,18 @@ describe('positioning', () => {
       // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
     } as any)
 
-    const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeTruthy()
-    // top = rect.bottom + 4 = 104
-    expect(popup.style.top).toBe('104px')
-  })
+    await vi.waitFor(() => {
+      expect(mockedComputePosition).toHaveBeenCalled()
+    })
 
-  it('enforces minimum left of 8px', () => {
-    const renderer = createSuggestionRenderer()
-    const mockRect = { left: 2, right: 4, top: 80, bottom: 100, width: 2, height: 20 }
+    const calls = mockedComputePosition.mock.calls
+    const lastCall = calls[calls.length - 1]
+    expect(lastCall?.[2]).toEqual({
+      placement: 'bottom-start',
+      middleware: [offset(4), flip({ padding: 8 }), shift({ padding: 8 })],
+    })
 
-    renderer.onStart({
-      items: [],
-      command: vi.fn(),
-      clientRect: () => mockRect as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
-      editor: {} as any,
-      query: '',
-      range: { from: 0, to: 2 },
-      text: '[[',
-      decorationNode: null,
-      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
-    } as any)
-
-    const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeTruthy()
-    // left should be clamped to at least 8
-    expect(popup.style.left).toBe('8px')
+    renderer.onExit()
   })
 
   it('cleans up popup on onExit', () => {
@@ -190,7 +212,17 @@ describe('positioning', () => {
     expect(document.querySelector('.suggestion-popup')).toBeNull()
   })
 
-  it('updates position on onUpdate', () => {
+  it('updates position on onUpdate', async () => {
+    const { computePosition } = await import('@floating-ui/dom')
+    const mockedComputePosition = vi.mocked(computePosition)
+    mockedComputePosition.mockResolvedValueOnce({
+      x: 50,
+      y: 104,
+      placement: 'bottom-start',
+      strategy: 'absolute',
+      middlewareData: {},
+    })
+
     const renderer = createSuggestionRenderer()
     const mockRect1 = { left: 50, right: 70, top: 80, bottom: 100, width: 20, height: 20 }
 
@@ -208,9 +240,19 @@ describe('positioning', () => {
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup.style.left).toBe('50px')
+    await vi.waitFor(() => {
+      expect(popup.style.left).toBe('50px')
+    })
 
     // Update with new position
+    mockedComputePosition.mockResolvedValueOnce({
+      x: 200,
+      y: 104,
+      placement: 'bottom-start',
+      strategy: 'absolute',
+      middlewareData: {},
+    })
+
     const mockRect2 = { left: 200, right: 220, top: 80, bottom: 100, width: 20, height: 20 }
     renderer.onUpdate({
       items: [],
@@ -225,7 +267,11 @@ describe('positioning', () => {
       // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
     } as any)
 
-    expect(popup.style.left).toBe('200px')
+    await vi.waitFor(() => {
+      expect(popup.style.left).toBe('200px')
+    })
+
+    renderer.onExit()
   })
 
   it('does not throw when clientRect returns null', () => {
@@ -254,73 +300,17 @@ describe('positioning', () => {
     renderer.onExit()
   })
 
-  it('falls back to window.innerHeight when visualViewport is null', () => {
-    const original = window.visualViewport
-    Object.defineProperty(window, 'visualViewport', {
-      value: null,
-      writable: true,
-      configurable: true,
+  it('positions popup at cursor coordinates when editor view is available', async () => {
+    const { computePosition } = await import('@floating-ui/dom')
+    const mockedComputePosition = vi.mocked(computePosition)
+    mockedComputePosition.mockResolvedValueOnce({
+      x: 150,
+      y: 104,
+      placement: 'bottom-start',
+      strategy: 'absolute',
+      middlewareData: {},
     })
 
-    const renderer = createSuggestionRenderer()
-    const mockRect = { left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }
-
-    renderer.onStart({
-      items: [],
-      command: vi.fn(),
-      clientRect: () => mockRect as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
-      editor: {} as any,
-      query: '',
-      range: { from: 0, to: 2 },
-      text: '[[',
-      decorationNode: null,
-      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
-    } as any)
-
-    const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeTruthy()
-    // Should still position correctly using window.innerHeight fallback
-    expect(popup.style.top).toBe('104px')
-
-    renderer.onExit()
-
-    Object.defineProperty(window, 'visualViewport', {
-      value: original,
-      writable: true,
-      configurable: true,
-    })
-  })
-
-  it('clamps top to minimum 8px when popup is taller than available space', () => {
-    const renderer = createSuggestionRenderer()
-    // In jsdom, el.offsetHeight is 0 so popupHeight defaults to 200.
-    // Default window.innerHeight is 768 so viewportHeight = 768.
-    // Place below: top = 600 + 4 = 604, 604 + 200 = 804 > 760 → flip above.
-    // Place above: top = 100 - 200 - 4 = -104 → Math.max(8, -104) = 8.
-    const mockRect = { left: 100, right: 120, top: 100, bottom: 600, width: 20, height: 500 }
-
-    renderer.onStart({
-      items: [],
-      command: vi.fn(),
-      clientRect: () => mockRect as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
-      editor: {} as any,
-      query: '',
-      range: { from: 0, to: 2 },
-      text: '[[',
-      decorationNode: null,
-      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
-    } as any)
-
-    const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup).toBeTruthy()
-    expect(popup.style.top).toBe('8px')
-
-    renderer.onExit()
-  })
-
-  it('positions popup at cursor coordinates when editor view is available', () => {
     const renderer = createSuggestionRenderer()
     const coordsAtPos = vi.fn().mockReturnValue({ left: 150, right: 151, top: 80, bottom: 100 })
     const mockEditor = { view: { coordsAtPos } }
@@ -343,14 +333,26 @@ describe('positioning', () => {
     expect(popup).toBeTruthy()
     // Should use coordsAtPos result (150), NOT clientRect left/right (50/70)
     expect(coordsAtPos).toHaveBeenCalledWith(16)
-    expect(popup.style.left).toBe('150px')
-    // top = rect.bottom + 4 = 100 + 4 = 104
-    expect(popup.style.top).toBe('104px')
+
+    await vi.waitFor(() => {
+      expect(popup.style.left).toBe('150px')
+      expect(popup.style.top).toBe('104px')
+    })
 
     renderer.onExit()
   })
 
-  it('falls back to clientRect when coordsAtPos fails', () => {
+  it('falls back to clientRect when coordsAtPos fails', async () => {
+    const { computePosition } = await import('@floating-ui/dom')
+    const mockedComputePosition = vi.mocked(computePosition)
+    mockedComputePosition.mockResolvedValueOnce({
+      x: 50,
+      y: 104,
+      placement: 'bottom-start',
+      strategy: 'absolute',
+      middlewareData: {},
+    })
+
     const renderer = createSuggestionRenderer()
     const coordsAtPos = vi.fn().mockImplementation(() => {
       throw new Error('Position out of range')
@@ -373,13 +375,25 @@ describe('positioning', () => {
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
     expect(popup).toBeTruthy()
-    // Should fall back to clientRect: rect.left (50) - left-aligned with trigger
-    expect(popup.style.left).toBe('50px')
+
+    await vi.waitFor(() => {
+      expect(popup.style.left).toBe('50px')
+    })
 
     renderer.onExit()
   })
 
-  it('left-aligns popup for all trigger types regardless of width', () => {
+  it('passes virtual element to computePosition for all trigger types', async () => {
+    const { computePosition } = await import('@floating-ui/dom')
+    const mockedComputePosition = vi.mocked(computePosition)
+    mockedComputePosition.mockResolvedValueOnce({
+      x: 80,
+      y: 104,
+      placement: 'bottom-start',
+      strategy: 'absolute',
+      middlewareData: {},
+    })
+
     const renderer = createSuggestionRenderer()
     const mockRect = { left: 80, right: 100, top: 80, bottom: 100, width: 20, height: 20 }
 
@@ -396,8 +410,10 @@ describe('positioning', () => {
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
     expect(popup).toBeTruthy()
-    // Should always use rect.left regardless of trigger width
-    expect(popup.style.left).toBe('80px')
+
+    await vi.waitFor(() => {
+      expect(popup.style.left).toBe('80px')
+    })
 
     renderer.onExit()
   })

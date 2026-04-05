@@ -94,6 +94,7 @@ function PageTreeItem({
   onCreateUnder,
   filterText,
   forceExpand,
+  onDelete,
 }: {
   node: PageTreeNode
   depth: number
@@ -101,38 +102,110 @@ function PageTreeItem({
   onCreateUnder: (namespacePath: string) => void
   filterText: string
   forceExpand: boolean
+  onDelete?: (pageId: string, name: string) => void
 }) {
   const [expanded, setExpanded] = useState(true) // namespaces start expanded
 
-  if (node.pageId) {
-    // Leaf page — clickable
+  if (node.pageId && node.children.length === 0) {
+    // Pure leaf page — clickable
+    const leafId = node.pageId
     return (
-      <button
-        type="button"
-        style={{ paddingLeft: `${depth * 16}px` }}
-        onClick={() => {
-          if (node.pageId) onNavigate(node.pageId, node.fullPath)
-        }}
-        className="w-full text-left px-2 py-1 text-sm hover:bg-accent/50 rounded truncate"
-        title={node.fullPath}
+      <div
+        className="group flex w-full items-center gap-3 rounded-lg py-1 text-left text-sm transition-colors hover:bg-accent/50"
+        style={{ paddingLeft: `${depth * 16 + 12}px` }}
       >
-        <HighlightMatch text={node.name} filterText={filterText} />
-      </button>
+        <button
+          type="button"
+          className="flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer"
+          onClick={() => onNavigate(leafId, node.fullPath)}
+        >
+          <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="truncate" title={node.fullPath}>
+            <HighlightMatch text={node.name} filterText={filterText} />
+          </span>
+        </button>
+        {onDelete && (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+            aria-label={`Delete ${node.fullPath}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete(leafId, node.fullPath)
+            }}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        )}
+      </div>
     )
   }
 
   const isExpanded = forceExpand || expanded
 
-  // Namespace folder — collapsible
+  if (!node.pageId && node.children.length > 0) {
+    // Pure namespace folder — collapsible
+    return (
+      <div>
+        <div className="group flex items-center" style={{ paddingLeft: `${depth * 16}px` }}>
+          <button
+            type="button"
+            onClick={() => !forceExpand && setExpanded(!expanded)}
+            className="flex-1 text-left px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 rounded flex items-center gap-1"
+          >
+            <ChevronRight
+              className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-90')}
+            />
+            <HighlightMatch text={node.name} filterText={filterText} />
+          </button>
+          <button
+            type="button"
+            className="opacity-0 group-hover:opacity-100 h-5 w-5 flex items-center justify-center rounded hover:bg-accent transition-opacity"
+            aria-label={`Create page under ${node.fullPath}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              onCreateUnder(node.fullPath)
+            }}
+          >
+            <Plus size={12} />
+          </button>
+        </div>
+        {isExpanded &&
+          node.children.map((child) => (
+            <PageTreeItem
+              key={child.fullPath}
+              node={child}
+              depth={depth + 1}
+              onNavigate={onNavigate}
+              onCreateUnder={onCreateUnder}
+              filterText={filterText}
+              forceExpand={forceExpand}
+              {...(onDelete ? { onDelete } : {})}
+            />
+          ))}
+      </div>
+    )
+  }
+
+  // Hybrid: both a page AND a namespace folder
+  const hybridId = node.pageId ?? ''
   return (
     <div>
       <div className="group flex items-center" style={{ paddingLeft: `${depth * 16}px` }}>
         <button
           type="button"
           onClick={() => !forceExpand && setExpanded(!expanded)}
-          className="flex-1 text-left px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 rounded flex items-center gap-1"
+          className="px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 rounded flex items-center"
         >
           <ChevronRight className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-90')} />
+        </button>
+        <button
+          type="button"
+          className="flex-1 text-left px-1 py-1 text-sm hover:bg-accent/50 rounded truncate"
+          onClick={() => onNavigate(hybridId, node.fullPath)}
+          title={node.fullPath}
+        >
           <HighlightMatch text={node.name} filterText={filterText} />
         </button>
         <button
@@ -157,6 +230,7 @@ function PageTreeItem({
             onCreateUnder={onCreateUnder}
             filterText={filterText}
             forceExpand={forceExpand}
+            {...(onDelete ? { onDelete } : {})}
           />
         ))}
     </div>
@@ -363,6 +437,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
               onCreateUnder={handleCreateUnder}
               filterText={filterText.trim()}
               forceExpand={isFiltering}
+              onDelete={(id, name) => setDeleteTarget({ id, name })}
             />
           ))
         ) : (

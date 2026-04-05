@@ -6,19 +6,20 @@
  * ReactRenderer from @tiptap/react to render outside the main tree.
  */
 
+import { computePosition, flip, offset, shift } from '@floating-ui/dom'
 import type { Editor } from '@tiptap/core'
 import { ReactRenderer } from '@tiptap/react'
 import type { SuggestionKeyDownProps, SuggestionProps } from '@tiptap/suggestion'
 import { SuggestionList, type SuggestionListRef } from './SuggestionList'
 
-function updatePosition(
+async function updatePosition(
   el: HTMLElement,
   props: {
     editor: Editor
     range: { from: number; to: number }
     clientRect?: (() => DOMRect | null) | null
   },
-): void {
+): Promise<void> {
   if (!el) return
 
   // Try cursor position first (more accurate — follows the end of typed text)
@@ -39,29 +40,21 @@ function updatePosition(
 
   if (!rect) return
 
-  const popupHeight = el.offsetHeight || 200
-  const viewportHeight = window.visualViewport?.height ?? window.innerHeight
-  const viewportWidth = window.visualViewport?.width ?? window.innerWidth
-
-  // Place below by default; flip above if near viewport bottom
-  let top = rect.bottom + 4
-  if (top + popupHeight > viewportHeight - 8) {
-    top = rect.top - popupHeight - 4
+  const virtualEl = {
+    getBoundingClientRect: () => rect,
   }
 
-  // Position popup with left edge aligned to trigger start character,
-  // matching standard desktop autocomplete convention (VS Code, Notion, etc.).
-  // When using coordsAtPos the rect is already 1px wide at the cursor.
-  let left = rect.left
-  const popupWidth = el.offsetWidth || 240
-  if (left + popupWidth > viewportWidth - 8) {
-    left = viewportWidth - popupWidth - 8
-  }
+  const { x, y } = await computePosition(virtualEl, el, {
+    placement: 'bottom-start',
+    middleware: [offset(4), flip({ padding: 8 }), shift({ padding: 8 })],
+  })
 
-  el.style.position = 'fixed'
-  el.style.left = `${Math.max(8, left)}px`
-  el.style.top = `${Math.max(8, top)}px`
-  el.style.zIndex = '100'
+  Object.assign(el.style, {
+    position: 'fixed',
+    left: `${x}px`,
+    top: `${y}px`,
+    zIndex: '50',
+  })
 }
 
 export function createSuggestionRenderer(label?: string) {
@@ -96,7 +89,7 @@ export function createSuggestionRenderer(label?: string) {
       popup.dataset.testid = 'suggestion-popup'
       document.body.appendChild(popup)
       popup.appendChild(renderer.element)
-      updatePosition(popup, props)
+      void updatePosition(popup, props)
 
       // Dismiss popup on outside click (capture phase, like BlockContextMenu)
       outsideClickHandler = (e: PointerEvent) => {
@@ -113,7 +106,7 @@ export function createSuggestionRenderer(label?: string) {
 
     onUpdate(props: SuggestionProps) {
       renderer?.updateProps(props)
-      if (popup) updatePosition(popup, props)
+      if (popup) void updatePosition(popup, props)
     },
 
     onKeyDown({ event }: SuggestionKeyDownProps) {

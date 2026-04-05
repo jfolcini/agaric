@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 208 — 2026-04-05 — Batch 62: H-9, H-4, UX-H2
+
+### Summary
+Resolved 3 items (H-9, H-4, UX-H2). Migrated menu/popover positioning from manual coordinate math to `@floating-ui/dom` `computePosition()`, fixed namespace tree rendering so hybrid nodes (pages with children) show both navigation and expand/collapse, and replaced `overflow-y-auto` divs with Radix `ScrollArea` in 5 popover scroll containers. 12 files changed. REVIEW-LATER.md reduced from 11 to 8 items.
+
+### Batch 62
+
+| Area | Change |
+|------|--------|
+| suggestion-renderer.ts | H-9: Replaced ~65 lines of manual flip/shift/clamp coordinate math with `computePosition()` from `@floating-ui/dom` using virtual element + `offset(4)`, `flip({padding:8})`, `shift({padding:8})`. Z-index unified from 100 to 50. |
+| BlockContextMenu.tsx | H-9: Replaced `useClampedPosition` hook with `useState` + `useEffect` using `computePosition()` from `@floating-ui/dom` with virtual element from right-click coordinates. Removed the custom hook entirely. |
+| suggestion-renderer.test.ts | H-9: Added `@floating-ui/dom` mock, made positioning tests async with `vi.waitFor()`. |
+| BlockContextMenu.test.tsx | H-9: Added `@floating-ui/dom` mock, made positioning tests async with `waitFor`. |
+| PageBrowser.tsx | H-4: Changed `PageTreeItem` from 2-way branch (leaf vs folder) to 3-way (pure leaf, pure folder, hybrid). Hybrid nodes get separate chevron toggle + clickable name. Added `onDelete` prop threaded to all recursive calls. |
+| PageBrowser.test.tsx | H-4: 4 new tests for hybrid node rendering, collapse/expand, delete button, file icon. |
+| PagePropertyTable.tsx | UX-H2: 2 replacements — Add Property popover and Edit select options popover. `overflow-y-auto` → `ScrollArea`. |
+| PageHeader.tsx | UX-H2: 1 replacement — Tag picker popover. `overflow-y-auto` → `ScrollArea`. |
+| BlockPropertyDrawer.tsx | UX-H2: 1 replacement — Add Property popover. `overflow-y-auto` → `ScrollArea`. |
+| SourcePageFilter.tsx | UX-H2: 1 replacement — Source page filter list. `overflow-y-auto` → `ScrollArea`. |
+| package.json | H-9: Added `@floating-ui/dom` as direct dependency. |
+
+**Review:** 3 review subagents (one per build). H-9: PASS. H-4: PASS. UX-H2: FAIL (missed 1 of 2 replacements in PagePropertyTable) — fixed by orchestrator before merge.
+
+**Stats:** 12 files changed. 3326/3327 frontend tests pass (1 pre-existing order-dependent flake in LinkedReferences, passes in isolation).
+
 ## Session 207 — 2026-04-05 — Batch 61: H-1, H-2, H-10
 
 ### Summary

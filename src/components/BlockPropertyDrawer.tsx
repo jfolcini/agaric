@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
 import { announce } from '../lib/announcer'
@@ -404,19 +405,21 @@ function AddPropertySection({
       <PopoverContent align="start" className="w-64 p-3">
         <div className="space-y-2">
           {availableDefs.length > 0 ? (
-            <div className="space-y-1 max-h-32 overflow-y-auto">
-              {availableDefs.map((def) => (
-                <button
-                  key={def.key}
-                  type="button"
-                  className={`w-full text-left rounded px-2 py-1 text-sm hover:bg-accent transition-colors ${selectedKey === def.key ? 'bg-accent' : ''}`}
-                  onClick={() => setSelectedKey(def.key)}
-                >
-                  {def.key}{' '}
-                  <span className="text-xs text-muted-foreground">({def.value_type})</span>
-                </button>
-              ))}
-            </div>
+            <ScrollArea className="max-h-32">
+              <div className="space-y-1">
+                {availableDefs.map((def) => (
+                  <button
+                    key={def.key}
+                    type="button"
+                    className={`w-full text-left rounded px-2 py-1 text-sm hover:bg-accent transition-colors ${selectedKey === def.key ? 'bg-accent' : ''}`}
+                    onClick={() => setSelectedKey(def.key)}
+                  >
+                    {def.key}{' '}
+                    <span className="text-xs text-muted-foreground">({def.value_type})</span>
+                  </button>
+                ))}
+              </div>
+            </ScrollArea>
           ) : (
             <p className="text-xs text-muted-foreground">{t('property.noProperties')}</p>
           )}

@@ -23,11 +23,18 @@
  *  - a11y: axe audit passes
  */
 
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { BlockContextMenu, type BlockContextMenuProps } from '../BlockContextMenu'
+
+vi.mock('@floating-ui/dom', () => ({
+  computePosition: vi.fn().mockResolvedValue({ x: 0, y: 0 }),
+  flip: vi.fn(() => ({})),
+  shift: vi.fn(() => ({})),
+  offset: vi.fn(() => ({})),
+}))
 
 type MenuOverrides = { [K in keyof BlockContextMenuProps]?: BlockContextMenuProps[K] | undefined }
 
@@ -351,12 +358,24 @@ describe('BlockContextMenu', () => {
     expect(menu.parentElement).toBe(document.body)
   })
 
-  it('position is correctly applied as CSS style', () => {
+  it('position is correctly applied as CSS style', async () => {
+    const { computePosition } = await import('@floating-ui/dom')
+    const mockedComputePosition = vi.mocked(computePosition)
+    mockedComputePosition.mockResolvedValueOnce({
+      x: 150,
+      y: 300,
+      placement: 'bottom-start',
+      strategy: 'absolute',
+      middlewareData: {},
+    })
+
     renderMenu({ position: { x: 150, y: 300 } })
 
     const menu = screen.getByRole('menu')
-    expect(menu.style.left).toBe('150px')
-    expect(menu.style.top).toBe('300px')
+    await waitFor(() => {
+      expect(menu.style.left).toBe('150px')
+      expect(menu.style.top).toBe('300px')
+    })
   })
 
   it('hides items when their callbacks are not provided', () => {
