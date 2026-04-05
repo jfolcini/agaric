@@ -365,11 +365,13 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **Select** (`src/components/ui/select.tsx`): Radix UI Select wrapper with 10 exported parts and `size` prop on SelectTrigger (`'default'` | `'sm'`). Replaces all native `<select>` elements across 5 component files. Uses `__none__`/`__all__` sentinels for empty values (Radix doesn't support `value=""`).
 
 ### Shared Hooks
-- **useBlockNavigation** (`src/hooks/useBlockNavigation.ts`): Returns `{ handleBlockClick, handleBlockKeyDown }` for block click + keyboard (Enter/Space) navigation. Used by AgendaResults, DonePanel, DuePanel.
+- **useBlockNavigation** (`src/hooks/useBlockNavigation.ts`): Returns `{ handleBlockClick, handleBlockKeyDown }` for block click + keyboard (Enter/Space) navigation. Accepts `NavigateToPageFn` type. Used by AgendaResults, DonePanel, DuePanel, LinkedReferences, UnlinkedReferences.
+- **useListKeyboardNavigation** (`src/hooks/useListKeyboardNavigation.ts`): Arrow key / vim key (j/k) navigation for lists. Supports `wrap` vs `clamp` modes, `Home`/`End` keys, `onSelect` callback. Used by SuggestionList, BlockContextMenu, HistoryView.
 - **usePaginatedQuery** (`src/hooks/usePaginatedQuery.ts`): Cursor-based pagination hook with `items`, `hasMore`, `loading`, `loadMore`, `reset` state. Supports `enabled` option for conditional fetching (preserves items when disabled, refetches on re-enable). Used by LinkedReferences, UnlinkedReferences, SearchPanel, TagFilterPanel, and others.
 - **useBatchCounts** (`src/hooks/useBatchCounts.ts`): Fetches agenda + backlink counts for date ranges. Returns both total counts and per-source breakdown (due/scheduled/properties). Used by WeeklyView, MonthlyView.
 
 ### Shared Utilities
+- **block-events** (`src/lib/block-events.ts`): `BLOCK_EVENTS` constant object (10 event names), `dispatchBlockEvent()`/`onBlockEvent()` helpers for custom DOM event communication between FormattingToolbar and BlockTree. Exports `NavigateToPageFn` type alias for standardized navigation callbacks.
 - **date-property-colors** (`src/lib/date-property-colors.ts`): `getSourceColor(source)` returns light/dark mode Tailwind classes for agenda sources (due=orange, scheduled=blue, properties=purple). `getSourceLabel(source)` returns display labels. Used by DaySection colored pills.
 
 ### CSS Utilities

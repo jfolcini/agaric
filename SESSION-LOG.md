@@ -1,5 +1,60 @@
 # Session Log
 
+## Session 215 — 2026-04-05 — Batch 67: UX-1, UX-4, UX-11, UX-12, UX-15, UX-16, UX-17
+
+### Summary
+Resolved 7 UX items from the UX review batch. Created shared block-event constants and dispatch helpers, standardized navigation callback types, adopted existing shared components (CollapsiblePanelHeader, useBlockNavigation), extracted list keyboard navigation hook, added missing ARIA roles, documented dialog/panel decision tree, and fixed button/select touch targets. Also fixed biome lint (import order + line length) in BlockTree.tsx. 20+ files changed, 2 new modules. REVIEW-LATER.md reduced from 34 to 27 items.
+
+### Batch 67
+
+**Commits:** f6e576b, cdf908e
+
+| Area | Change |
+|------|--------|
+| block-events.ts (new) | UX-1: `BLOCK_EVENTS` constant object (10 event names), `dispatchBlockEvent()`, `onBlockEvent()` helpers, `NavigateToPageFn` type alias (UX-4). |
+| block-events.test.ts (new) | UX-1: 8 tests for constants, dispatch, and listener helpers. |
+| FormattingToolbar.tsx | UX-1: Replaced 7 hardcoded event name strings with `BLOCK_EVENTS` constants and `dispatchBlockEvent()`. |
+| BlockTree.tsx | UX-1: Replaced 10 hardcoded event name strings with `BLOCK_EVENTS`/`onBlockEvent()`. UX-4: Adopted `NavigateToPageFn` type. Fixed biome import order + line length. |
+| JournalPage.tsx, DuePanel.tsx, DonePanel.tsx | UX-4: Adopted `NavigateToPageFn` type for `onNavigateToPage` callbacks. |
+| AgendaResults.tsx, PageEditor.tsx | UX-4: Adopted `NavigateToPageFn` type. |
+| LinkedReferences.tsx | UX-4: Adopted `NavigateToPageFn`. UX-11: Refactored to use `CollapsiblePanelHeader` + `useBlockNavigation`. |
+| UnlinkedReferences.tsx | UX-4: Adopted `NavigateToPageFn`. UX-11: Refactored to use `CollapsiblePanelHeader` + `useBlockNavigation`. |
+| PagePropertyTable.tsx | UX-11: Adopted `CollapsiblePanelHeader` for property section headers. |
+| useBlockNavigation.ts | UX-4: Updated to accept `NavigateToPageFn` type. |
+| useListKeyboardNavigation.ts (new) | UX-12: Hook with wrap/clamp modes, vim keys (j/k), Home/End, onSelect callback. |
+| useListKeyboardNavigation.test.ts (new) | UX-12: 19 tests covering all navigation modes and edge cases. |
+| SuggestionList.tsx | UX-12: Replaced inline ArrowUp/Down cycling with `useListKeyboardNavigation`. |
+| BlockContextMenu.tsx | UX-12: Replaced inline keyboard handling with `useListKeyboardNavigation`. |
+| HistoryView.tsx | UX-12: Replaced inline keyboard handling with `useListKeyboardNavigation`. |
+| SortableBlock.tsx | UX-15: Added `role="dialog" aria-modal="true"` to property popover. |
+| ConflictList.tsx | UX-15: Added `role="list"` wrapper and `role="listitem"` to conflict items. |
+| i18n.ts | UX-15: Added `block.editProperty` translation key. |
+| ux.md | UX-16: Added section 1.9 with dialog/panel decision tree table. |
+| button.tsx | UX-17: Changed xs coarse pointer from h-11 to h-9 (reduces 20px layout shift to 12px). |
+| select.tsx | UX-17: Added `[@media(pointer:coarse)]:h-11` to default SelectTrigger size. |
+| Test files updated | SortableBlock.test.tsx, ConflictList.test.tsx, button.test.tsx, select.test.tsx, LinkedReferences.test.tsx, UnlinkedReferences.test.tsx, PagePropertyTable.test.tsx |
+
+## Session 214 — 2026-04-05 — User-reported HIGH bugs
+
+### Summary
+Added 8 HIGH-priority bugs to REVIEW-LATER.md (H-11 through H-18) based on user testing feedback. No code changes.
+
+**Commit:** 938fdd7
+
+| Area | Change |
+|------|--------|
+| REVIEW-LATER.md | Added H-11 (add block doesn't focus), H-12 (trash button unclickable), H-13 ([[page]] syntax not parsed), H-14 (cursor into [[...]] doesn't reopen suggestions), H-15 (page creation doesn't navigate), H-16 (property names show underscores), H-17 (property selector doesn't scroll), H-18 (ops counter always 0). |
+
+## Session 213 — 2026-04-05 — UX Review Validation & Migration
+
+### Summary
+Validated UX review findings from a comprehensive code audit. Dropped 4 false claims (A2, D2, D3, D5), corrected 5 claims. Migrated 26 validated items into REVIEW-LATER.md (1 FEAT, 5 UX-HIGH, 11 UX-MED, 9 REFACTOR). Deleted UX-REVIEW.md.
+
+| Area | Change |
+|------|--------|
+| REVIEW-LATER.md | Added 26 items: F-14, UX-1 through UX-18, R-1 through R-9. |
+| UX-REVIEW.md | Deleted after migration. |
+
 ## Session 212 — 2026-04-05 — Batch 66: H-5, M-54
 
 ### Summary
