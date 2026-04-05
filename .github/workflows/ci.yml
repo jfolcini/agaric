@@ -151,6 +151,10 @@ jobs:
       - name: Build Tauri app
         run: cargo tauri build
 
+      - name: Fix AppImage icon symlinks
+        if: matrix.label == 'linux'
+        run: bash scripts/fix-appimage-icons.sh
+
       - name: Upload Linux bundles
         if: matrix.label == 'linux'
         uses: actions/upload-artifact@v4

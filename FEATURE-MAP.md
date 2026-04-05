@@ -19,7 +19,7 @@ The default view — one page per day, created automatically.
 | **Monthly** | Calendar grid with per-source colored pills; click a day to switch to daily |
 | **Agenda** | Tasks grouped by date (Overdue / Today / Tomorrow / future) with configurable sort and group controls |
 
-- Floating calendar picker for jumping to any date
+- Floating calendar picker for jumping to any date, with per-source colored dots (blue=page, orange=due, green=scheduled, purple=property)
 - **Global date controls**: Today button and date picker available in all views (non-journal views navigate to journal first)
 - Days with content are highlighted
 - Template support: auto-populates structure on new journal pages
@@ -339,6 +339,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **Discovery**: automatic via mDNS on the local network
 - **Pairing**: scan a QR code or enter a 4-word passphrase
 - **Auto-sync**: background daemon with change-triggered (3s debounce) and periodic sync (60s), exponential backoff on failure
+- **Manual sync feedback**: sidebar sync button shows toast when no peers are paired ("No paired devices — use Device Management to pair.") and resets sync state to idle
 - **Manual address**: set a peer's IP:port when mDNS is unavailable (e.g., across subnets)
 - **Conflict handling**: non-overlapping edits merge automatically; overlapping edits create conflict copies for manual resolution
 - **Certificate pinning**: devices are identified by their TLS certificate hash
@@ -361,6 +362,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **ResultCard** (`src/components/ResultCard.tsx`): Block result card button with content display, Badge for page/tag types, optional spinner, optional children slot. Used by SearchPanel, TagFilterPanel.
 - **PageLink** (`src/components/PageLink.tsx`): Inline clickable page name (`<span role="link">`) that navigates via `navigateToPage`. Handles click/Enter/Space with stopPropagation. Uses `<span>` to allow nesting inside `<button>` containers. Used by CollapsibleGroupList, DonePanel, AgendaResults, DuePanel, SearchPanel, QueryResult.
 - **PropertyRow** (`src/components/BlockPropertyDrawer.tsx`): Extracted sub-component for property rows with badge+input+remove layout. Supports optional icon, date/text input types.
+- **Select** (`src/components/ui/select.tsx`): Radix UI Select wrapper with 10 exported parts and `size` prop on SelectTrigger (`'default'` | `'sm'`). Replaces all native `<select>` elements across 5 component files. Uses `__none__`/`__all__` sentinels for empty values (Radix doesn't support `value=""`).
 
 ### Shared Hooks
 - **useBlockNavigation** (`src/hooks/useBlockNavigation.ts`): Returns `{ handleBlockClick, handleBlockKeyDown }` for block click + keyboard (Enter/Space) navigation. Used by AgendaResults, DonePanel, DuePanel.

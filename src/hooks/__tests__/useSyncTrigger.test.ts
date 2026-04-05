@@ -2,12 +2,15 @@ import { act, renderHook } from '@testing-library/react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('sonner', () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-  },
-}))
+vi.mock('sonner', () => {
+  const fn = vi.fn() as ReturnType<typeof vi.fn> & {
+    error: ReturnType<typeof vi.fn>
+    success: ReturnType<typeof vi.fn>
+  }
+  fn.error = vi.fn()
+  fn.success = vi.fn()
+  return { toast: fn }
+})
 
 // Mock tauri.ts
 vi.mock('../../lib/tauri', () => ({
@@ -102,7 +105,7 @@ describe('useSyncTrigger', () => {
     expect(mockStartSync).toHaveBeenCalledWith('PEER1')
   })
 
-  it('handles empty peer list gracefully', async () => {
+  it('handles empty peer list with toast feedback and resets state', async () => {
     mockListPeerRefs.mockResolvedValue([])
 
     const { result } = renderHook(() => useSyncTrigger())
@@ -112,6 +115,8 @@ describe('useSyncTrigger', () => {
     })
 
     expect(mockStartSync).not.toHaveBeenCalled()
+    expect(toast).toHaveBeenCalledWith('No paired devices — use Device Management to pair.')
+    expect(useSyncStore.getState().state).toBe('idle')
   })
 
   it('handles sync errors gracefully', async () => {

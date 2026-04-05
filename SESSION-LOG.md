@@ -1,5 +1,41 @@
 # Session Log
 
+## Session 212 — 2026-04-05 — Batch 66: H-5, M-54
+
+### Summary
+Resolved 2 items (H-5, M-54). Fixed sync button silent failure when no peers are paired (toast feedback + state reset), and fixed AppImage icon symlinks with a post-build fixup script integrated into CI. 4 files changed, 1 new script. REVIEW-LATER.md reduced from 3 to 1 item.
+
+### Batch 66
+
+| Area | Change |
+|------|--------|
+| useSyncTrigger.ts | H-5: Added `setState('idle')` + `toast()` info message before early return when `peers.length === 0`. Prevents stuck syncing state and gives user feedback. |
+| useSyncTrigger.test.ts | H-5: Updated toast mock to support direct `toast()` calls (function with `.error`/`.success` properties). Renamed "handles empty peer list gracefully" → "handles empty peer list with toast feedback and resets state", added assertions for toast message and idle state. |
+| scripts/fix-appimage-icons.sh (new) | M-54: Post-build script that fixes two Tauri AppImage bundler symlink bugs: `.DirIcon` absolute→relative, `agaric.png` 16x16→256x256. Repacks AppImage using cached linuxdeploy-plugin-appimage. |
+| ci.yml | M-54: Added "Fix AppImage icon symlinks" step (Linux only) between build and upload. |
+
+## Session 210 — 2026-04-05 — Batch 64: F-19, UX-H9
+
+### Summary
+Resolved 2 items (F-19, UX-H9). Added colored dots to calendar date pickers showing per-source agenda item distribution, and replaced all 16 native `<select>` elements across 5 components with a unified Radix Select component. 14 files changed, +1056/-219 lines. REVIEW-LATER.md reduced from 5 to 3 items.
+
+### Batch 64
+
+**Commit:** a8dc952
+
+| Area | Change |
+|------|--------|
+| JournalPage.tsx | F-19: `getCalendarDateRange()` (42 dates), `computeSourceModifiers()`, useEffect with cancellation in `JournalCalendarDropdown` to fetch `countAgendaBatchBySource`. CSS box-shadow multi-dot system (4 dots at -6px/-2px/+2px/+6px). Colors: blue (page), orange (due), green (scheduled), purple (property). |
+| JournalPage.test.tsx | F-19: 5 new tests for colored dots (dot rendering, correct colors per source, cancellation). |
+| select.tsx (new) | UX-H9: Radix UI Select wrapper with 10 exported parts, `size` prop on SelectTrigger (`'default'` / `'sm'`). |
+| select.test.tsx (new) | UX-H9: 7 tests for Select component. |
+| BacklinkFilterBuilder.tsx | UX-H9: Replaced 11 native `<select>` with Radix Select (`size="sm"`). |
+| PagePropertyTable.tsx | UX-H9: Replaced 2 native `<select>` with Radix Select. |
+| HistoryView.tsx | UX-H9: Replaced 1 native `<select>` with Radix Select. `__all__` sentinel for "show all". |
+| PropertiesView.tsx | UX-H9: Replaced 1 native `<select>` with Radix Select. |
+| AgendaFilterBuilder.tsx | UX-H9: Replaced 1 native `<select>` with Radix Select (`size="sm"`, `__none__` sentinel). |
+| 5 test files | UX-H9: Updated mocks — `vi.mock('@/components/ui/select')` with `React.createElement()` pattern rendering native `<select>` for jsdom. |
+
 ## Session 209 — 2026-04-05 — Batch 63: F-17, F-18, F-20
 
 ### Summary
