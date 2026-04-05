@@ -42,6 +42,7 @@ import { createBlock, listBlocks } from '../lib/tauri'
 import { insertTemplateBlocks, loadJournalTemplate } from '../lib/template-utils'
 import { useBlockStore } from '../stores/blocks'
 import { useJournalStore } from '../stores/journal'
+import { useNavigationStore } from '../stores/navigation'
 import { useResolveStore } from '../stores/resolve'
 import { AgendaView } from './journal/AgendaView'
 import { DailyView } from './journal/DailyView'
@@ -355,6 +356,96 @@ function JournalCalendarDropdown({
         `}</style>
       </div>
     </>
+  )
+}
+
+// ── Global Date Controls (rendered in App header for non-journal views) ──
+
+/** Compact date controls — Today button + calendar dropdown. Shown in all views. */
+export function GlobalDateControls(): React.ReactElement {
+  const { t } = useTranslation()
+  const { currentDate, navigateToDate } = useJournalStore()
+  const { setView } = useNavigationStore()
+  const [calendarOpen, setCalendarOpen] = useState(false)
+  const [pageMap, setPageMap] = useState<Set<string>>(new Set())
+
+  // Fetch page map for calendar highlighting
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only run on mount
+  useEffect(() => {
+    listBlocks({ blockType: 'page', limit: 500 })
+      .then((resp) => {
+        const dates = new Set<string>()
+        for (const b of resp.items) {
+          if (b.content && /^\d{4}-\d{2}-\d{2}$/.test(b.content)) dates.add(b.content)
+        }
+        setPageMap(dates)
+      })
+      .catch(() => toast.error(t('journal.loadCalendarFailed')))
+  }, [])
+
+  const highlightedDays = useMemo(() => {
+    const days: Date[] = []
+    for (const dateStr of pageMap) {
+      const parts = dateStr.split('-')
+      if (parts.length === 3) {
+        days.push(new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])))
+      }
+    }
+    return days
+  }, [pageMap])
+
+  function handleToday() {
+    const today = new Date()
+    setView('journal')
+    navigateToDate(today, 'daily')
+  }
+
+  function handleSelectDate(day: Date) {
+    setView('journal')
+    navigateToDate(day, 'daily')
+    setCalendarOpen(false)
+  }
+
+  function handleSelectWeek(dates: Date[]) {
+    if (dates.length > 0) {
+      setView('journal')
+      navigateToDate(dates[0] as Date, 'weekly')
+      setCalendarOpen(false)
+    }
+  }
+
+  function handleSelectMonth(month: Date) {
+    setView('journal')
+    navigateToDate(month, 'monthly')
+    setCalendarOpen(false)
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <Button variant="outline" size="xs" onClick={handleToday} aria-label={t('journal.goToToday')}>
+        {t('journal.today')}
+      </Button>
+      <div className="relative">
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={t('journal.openCalendar')}
+          onClick={() => setCalendarOpen((o) => !o)}
+        >
+          <CalendarIcon className="h-4 w-4" />
+        </Button>
+        {calendarOpen && (
+          <JournalCalendarDropdown
+            currentDate={currentDate}
+            highlightedDays={highlightedDays}
+            onSelectDate={handleSelectDate}
+            onSelectWeek={handleSelectWeek}
+            onSelectMonth={handleSelectMonth}
+            onClose={() => setCalendarOpen(false)}
+          />
+        )}
+      </div>
+    </div>
   )
 }
 

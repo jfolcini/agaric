@@ -306,6 +306,13 @@ export function countAgendaBatch(params: { dates: string[] }): Promise<Record<st
   return invoke('count_agenda_batch', { dates: params.dates })
 }
 
+/** Batch-count agenda items per (date, source). Returns nested map: date -> source -> count. */
+export function countAgendaBatchBySource(params: {
+  dates: string[]
+}): Promise<Record<string, Record<string, number>>> {
+  return invoke('count_agenda_batch_by_source', { dates: params.dates })
+}
+
 /** Batch-count backlinks per target page. Returns a map of pageId -> count. */
 export function countBacklinksBatch(params: {
   pageIds: string[]

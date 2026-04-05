@@ -130,6 +130,7 @@ pub fn run() {
         commands::cancel_sync,
         // Batch count commands (#604)
         commands::count_agenda_batch,
+        commands::count_agenda_batch_by_source,
         commands::count_backlinks_batch,
         // Page aliases (#598)
         commands::set_page_aliases,
@@ -317,6 +318,7 @@ mod specta_tests {
             crate::commands::cancel_sync,
             // Batch count commands (#604)
             crate::commands::count_agenda_batch,
+            crate::commands::count_agenda_batch_by_source,
             crate::commands::count_backlinks_batch,
             // Page aliases (#598)
             crate::commands::set_page_aliases,

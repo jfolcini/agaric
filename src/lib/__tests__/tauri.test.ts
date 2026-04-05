@@ -19,6 +19,7 @@ import {
   computeEditDiff,
   confirmPairing,
   countAgendaBatch,
+  countAgendaBatchBySource,
   countBacklinksBatch,
   createBlock,
   createPropertyDef,
@@ -1474,6 +1475,28 @@ describe('countAgendaBatch', () => {
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('count_agenda_batch', {
+      dates: ['2025-01-15', '2025-01-16'],
+    })
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// countAgendaBatchBySource
+// ---------------------------------------------------------------------------
+
+describe('countAgendaBatchBySource', () => {
+  it('invokes count_agenda_batch_by_source with dates', async () => {
+    const expected = {
+      '2025-01-15': { 'column:due_date': 2, 'column:scheduled_date': 1 },
+      '2025-01-16': { 'property:deadline': 1 },
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await countAgendaBatchBySource({ dates: ['2025-01-15', '2025-01-16'] })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('count_agenda_batch_by_source', {
       dates: ['2025-01-15', '2025-01-16'],
     })
     expect(result).toEqual(expected)

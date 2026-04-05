@@ -1170,6 +1170,28 @@ export function setupMock(): void {
         return result
       }
 
+      case 'count_agenda_batch_by_source': {
+        const a = args as Record<string, unknown>
+        const dates = a.dates as string[]
+        const result: Record<string, Record<string, number>> = {}
+        for (const dateStr of dates) {
+          const sources: Record<string, number> = {}
+          for (const b of blocks.values()) {
+            if (b.deleted_at as string | null) continue
+            if (b.due_date === dateStr) {
+              sources['column:due_date'] = (sources['column:due_date'] ?? 0) + 1
+            }
+            if (b.scheduled_date === dateStr) {
+              sources['column:scheduled_date'] = (sources['column:scheduled_date'] ?? 0) + 1
+            }
+          }
+          if (Object.keys(sources).length > 0) {
+            result[dateStr] = sources
+          }
+        }
+        return result
+      }
+
       case 'count_backlinks_batch': {
         const a = args as Record<string, unknown>
         const pageIds = a.pageIds as string[]

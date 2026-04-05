@@ -661,6 +661,51 @@ describe('App', () => {
     })
   })
 
+  // ── GlobalDateControls in non-journal views ──────────────────────────
+
+  describe('GlobalDateControls in non-journal views', () => {
+    it('shows Today button in pages view', async () => {
+      useNavigationStore.setState({ currentView: 'pages', pageStack: [], selectedBlockId: null })
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /today/i })).toBeInTheDocument()
+      })
+    })
+
+    it('shows calendar button in pages view', async () => {
+      useNavigationStore.setState({ currentView: 'pages', pageStack: [], selectedBlockId: null })
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /calendar/i })).toBeInTheDocument()
+      })
+    })
+
+    it('clicking Today in non-journal view navigates to journal daily', async () => {
+      useNavigationStore.setState({ currentView: 'pages', pageStack: [], selectedBlockId: null })
+      const user = userEvent.setup()
+      render(<App />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /today/i })).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByRole('button', { name: /today/i }))
+
+      await waitFor(() => {
+        expect(useNavigationStore.getState().currentView).toBe('journal')
+        expect(useJournalStore.getState().mode).toBe('daily')
+      })
+    })
+
+    it('shows Today button in trash view', async () => {
+      useNavigationStore.setState({ currentView: 'trash', pageStack: [], selectedBlockId: null })
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /today/i })).toBeInTheDocument()
+      })
+    })
+  })
+
   // ── Keyboard shortcuts modal ─────────────────────────────────────────
 
   describe('keyboard shortcuts modal', () => {

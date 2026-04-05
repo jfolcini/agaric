@@ -22,7 +22,7 @@ import { toast } from 'sonner'
 import { BootGate } from './components/BootGate'
 import { ConflictList } from './components/ConflictList'
 import { HistoryView } from './components/HistoryView'
-import { JournalControls, JournalPage } from './components/JournalPage'
+import { GlobalDateControls, JournalControls, JournalPage } from './components/JournalPage'
 import { KeyboardShortcuts } from './components/KeyboardShortcuts'
 import { PageBrowser } from './components/PageBrowser'
 import { PageEditor } from './components/PageEditor'
@@ -349,9 +349,13 @@ function App() {
             {currentView === 'journal' ? (
               <JournalControls />
             ) : (
-              <span className="font-medium" data-testid="header-label">
-                {headerLabel}
-              </span>
+              <>
+                <span className="font-medium" data-testid="header-label">
+                  {headerLabel}
+                </span>
+                <div className="flex-1" />
+                <GlobalDateControls />
+              </>
             )}
           </header>
           <div

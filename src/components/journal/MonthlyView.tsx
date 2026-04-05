@@ -31,7 +31,7 @@ export function MonthlyView({
     return eachDayOfInterval({ start: monthStart, end: monthEnd }).map(makeDayEntry)
   }, [currentDate, makeDayEntry])
 
-  const { agendaCounts, backlinkCounts } = useBatchCounts(entries)
+  const { agendaCounts, agendaCountsBySource, backlinkCounts } = useBatchCounts(entries)
 
   return (
     <div className="space-y-1">
@@ -46,6 +46,7 @@ export function MonthlyView({
               compact
               mode="monthly"
               agendaCounts={agendaCounts}
+              agendaCountsBySource={agendaCountsBySource}
               backlinkCounts={backlinkCounts}
               onNavigateToPage={onNavigateToPage}
               onAddBlock={onAddBlock}

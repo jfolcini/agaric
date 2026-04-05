@@ -425,6 +425,7 @@ const resources = {
       'duePanel.filterAll': 'All',
       'duePanel.filterDue': 'Due',
       'duePanel.filterScheduled': 'Scheduled',
+      'duePanel.filterProperties': 'Properties',
 
       // Search
       'search.minCharsHint': 'Search requires at least 3 characters',

@@ -9,6 +9,7 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { getSourceColor, getSourceLabel } from '../../lib/date-property-colors'
 import type { DayEntry } from '../../lib/date-utils'
 import { formatDate } from '../../lib/date-utils'
 import type { JournalMode } from '../../stores/journal'
@@ -26,6 +27,7 @@ interface DaySectionProps {
   compact?: boolean | undefined
   mode: JournalMode
   agendaCounts?: Record<string, number> | undefined
+  agendaCountsBySource?: Record<string, Record<string, number>> | undefined
   backlinkCounts?: Record<string, number> | undefined
   onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
   onAddBlock: (dateStr: string) => void
@@ -37,7 +39,8 @@ export function DaySection({
   hideHeading = false,
   compact = false,
   mode,
-  agendaCounts = {},
+  agendaCounts: _agendaCounts = {},
+  agendaCountsBySource = {},
   backlinkCounts = {},
   onNavigateToPage,
   onAddBlock,
@@ -87,17 +90,27 @@ export function DaySection({
           {/* Count badges for weekly/monthly modes */}
           {mode !== 'daily' && mode !== 'agenda' && (
             <>
-              {(agendaCounts[entry.dateStr] ?? 0) > 0 && (
-                <button
-                  type="button"
-                  className="inline-flex items-center rounded-full bg-orange-100 px-1.5 py-0.5 text-xs font-medium text-orange-800 dark:bg-orange-900/30 dark:text-orange-300 hover:bg-orange-200 dark:hover:bg-orange-900/50"
-                  onClick={() => goToDateAndPanel(entry.date, 'due')}
-                  aria-label={`${agendaCounts[entry.dateStr]} due items, click to view`}
-                >
-                  {(agendaCounts[entry.dateStr] ?? 0) > 99 ? '99+' : agendaCounts[entry.dateStr]}{' '}
-                  {t('journal.dueBadge')}
-                </button>
-              )}
+              {Object.entries(agendaCountsBySource[entry.dateStr] ?? {}).map(([source, count]) => {
+                const color = getSourceColor(source)
+                const label = getSourceLabel(source)
+                const displayCount = count > 99 ? '99+' : count
+                return (
+                  <button
+                    key={source}
+                    type="button"
+                    className={cn(
+                      'inline-flex items-center rounded-full px-1.5 py-0.5 text-xs font-medium',
+                      color.light,
+                      color.dark,
+                      'hover:opacity-80',
+                    )}
+                    onClick={() => goToDateAndPanel(entry.date, 'due')}
+                    aria-label={`${count} ${label} items, click to view`}
+                  >
+                    {displayCount} {label}
+                  </button>
+                )
+              })}
               {entry.pageId && (backlinkCounts[entry.pageId] ?? 0) > 0 && (
                 <button
                   type="button"

@@ -2986,6 +2986,50 @@ pub(crate) async fn count_agenda_batch_inner(
         .collect())
 }
 
+/// Count agenda items per (date, source) for a batch of dates.
+///
+/// Returns a nested map: `date -> source -> count`. Only includes entries
+/// whose owning block is not soft-deleted.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — any date fails `YYYY-MM-DD` validation
+pub(crate) async fn count_agenda_batch_by_source_inner(
+    pool: &SqlitePool,
+    dates: Vec<String>,
+) -> Result<HashMap<String, HashMap<String, usize>>, AppError> {
+    if dates.is_empty() {
+        return Ok(HashMap::new());
+    }
+    for d in &dates {
+        validate_date_format(d)?;
+    }
+    let placeholders: String = dates
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 1))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT ac.date, ac.source, COUNT(*) as cnt \
+         FROM agenda_cache ac \
+         JOIN blocks b ON b.id = ac.block_id \
+         WHERE ac.date IN ({placeholders}) \
+           AND b.deleted_at IS NULL \
+         GROUP BY ac.date, ac.source"
+    );
+    let mut query = sqlx::query_as::<_, (String, String, i64)>(&sql);
+    for d in &dates {
+        query = query.bind(d);
+    }
+    let rows = query.fetch_all(pool).await?;
+    let mut result: HashMap<String, HashMap<String, usize>> = HashMap::new();
+    for (date, source, cnt) in rows {
+        result.entry(date).or_default().insert(source, cnt as usize);
+    }
+    Ok(result)
+}
+
 /// Compute projected future agenda entries for repeating tasks.
 ///
 /// Finds non-DONE blocks with a `repeat` property and at least one date
@@ -4652,6 +4696,19 @@ pub async fn count_agenda_batch(
     dates: Vec<String>,
 ) -> Result<HashMap<String, usize>, AppError> {
     count_agenda_batch_inner(&read_pool.0, dates)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: batch-count agenda items per (date, source). Delegates to [`count_agenda_batch_by_source_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn count_agenda_batch_by_source(
+    read_pool: State<'_, ReadPool>,
+    dates: Vec<String>,
+) -> Result<HashMap<String, HashMap<String, usize>>, AppError> {
+    count_agenda_batch_by_source_inner(&read_pool.0, dates)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -12893,6 +12950,94 @@ mod tests {
             Some(&1),
             "only the live block should be counted"
         );
+    }
+
+    // ======================================================================
+    // count_agenda_batch_by_source
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn count_agenda_batch_by_source_empty_dates_returns_empty() {
+        let (pool, _dir) = test_pool().await;
+        let result = count_agenda_batch_by_source_inner(&pool, vec![])
+            .await
+            .unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn count_agenda_batch_by_source_returns_correct_breakdown() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BS_BLK1", "content", "task 1", None, None).await;
+        insert_block(&pool, "BS_BLK2", "content", "task 2", None, None).await;
+        insert_block(&pool, "BS_BLK3", "content", "task 3", None, None).await;
+
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind("2025-09-01")
+            .bind("BS_BLK1")
+            .bind("column:due_date")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind("2025-09-01")
+            .bind("BS_BLK2")
+            .bind("column:scheduled_date")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind("2025-09-01")
+            .bind("BS_BLK3")
+            .bind("property:deadline")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let result = count_agenda_batch_by_source_inner(&pool, vec!["2025-09-01".into()])
+            .await
+            .unwrap();
+
+        let day = result.get("2025-09-01").expect("date should be present");
+        assert_eq!(day.get("column:due_date"), Some(&1));
+        assert_eq!(day.get("column:scheduled_date"), Some(&1));
+        assert_eq!(day.get("property:deadline"), Some(&1));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn count_agenda_batch_by_source_excludes_deleted() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BSD_LIVE", "content", "live", None, None).await;
+        insert_block(&pool, "BSD_DEL", "content", "deleted", None, None).await;
+
+        sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = 'BSD_DEL'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind("2025-09-02")
+            .bind("BSD_LIVE")
+            .bind("column:due_date")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind("2025-09-02")
+            .bind("BSD_DEL")
+            .bind("column:due_date")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let result = count_agenda_batch_by_source_inner(&pool, vec!["2025-09-02".into()])
+            .await
+            .unwrap();
+
+        let day = result.get("2025-09-02").expect("date should be present");
+        assert_eq!(day.get("column:due_date"), Some(&1));
     }
 
     // ======================================================================

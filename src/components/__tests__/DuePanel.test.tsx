@@ -446,10 +446,12 @@ describe('DuePanel', () => {
     const allBtn = screen.getByRole('button', { name: 'All' })
     const dueBtn = screen.getByRole('button', { name: 'Due' })
     const scheduledBtn = screen.getByRole('button', { name: 'Scheduled' })
+    const propsBtn = screen.getByRole('button', { name: 'Properties' })
 
     expect(allBtn).toHaveAttribute('aria-pressed', 'true')
     expect(dueBtn).toHaveAttribute('aria-pressed', 'false')
     expect(scheduledBtn).toHaveAttribute('aria-pressed', 'false')
+    expect(propsBtn).toHaveAttribute('aria-pressed', 'false')
   })
 
   // 14. Clicking "Due" filter refetches with agendaSource
@@ -525,6 +527,121 @@ describe('DuePanel', () => {
     })
 
     expect(allBtn).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  // 16. Clicking "Properties" filter fetches without agendaSource and filters client-side
+  it('clicking "Properties" filter fetches without agendaSource', async () => {
+    const user = userEvent.setup()
+    mockedListBlocks.mockResolvedValue({
+      items: [makeBlock({ id: 'B1', content: 'props filter block' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<DuePanel date="2025-06-15" />)
+
+    await screen.findByText('props filter block')
+
+    mockedListBlocks.mockClear()
+    mockedListBlocks.mockResolvedValue({
+      items: [
+        makeBlock({ id: 'B2', content: 'refetched block', due_date: null, scheduled_date: null }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const propsBtn = screen.getByRole('button', { name: 'Properties' })
+    await user.click(propsBtn)
+
+    await waitFor(() => {
+      expect(mockedListBlocks).toHaveBeenCalledWith(
+        expect.not.objectContaining({ agendaSource: expect.any(String) }),
+      )
+    })
+
+    expect(propsBtn).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  // 17. Properties filter shows only property-sourced blocks
+  it('Properties filter shows only property-sourced blocks', async () => {
+    const user = userEvent.setup()
+    mockedListBlocks.mockResolvedValue({
+      items: [
+        makeBlock({ id: 'B1', content: 'due block', due_date: '2025-06-15', scheduled_date: null }),
+        makeBlock({
+          id: 'B2',
+          content: 'scheduled block',
+          due_date: null,
+          scheduled_date: '2025-06-15',
+        }),
+        makeBlock({ id: 'B3', content: 'property block', due_date: null, scheduled_date: null }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<DuePanel date="2025-06-15" />)
+
+    // All 3 blocks visible initially
+    await screen.findByText('due block')
+    expect(screen.getByText('scheduled block')).toBeInTheDocument()
+    expect(screen.getByText('property block')).toBeInTheDocument()
+
+    // Click "Properties" filter
+    const propsBtn = screen.getByRole('button', { name: 'Properties' })
+    await user.click(propsBtn)
+
+    // Only property-sourced block remains
+    await waitFor(() => {
+      expect(screen.queryByText('due block')).not.toBeInTheDocument()
+      expect(screen.queryByText('scheduled block')).not.toBeInTheDocument()
+      expect(screen.getByText('property block')).toBeInTheDocument()
+    })
+  })
+
+  // 18. Header shows per-source breakdown when multiple sources exist
+  it('header shows per-source breakdown when multiple sources exist', async () => {
+    mockedListBlocks.mockResolvedValue({
+      items: [
+        makeBlock({ id: 'B1', content: 'due1', due_date: '2025-06-15', scheduled_date: null }),
+        makeBlock({ id: 'B2', content: 'due2', due_date: '2025-06-15', scheduled_date: null }),
+        makeBlock({
+          id: 'B3',
+          content: 'sched1',
+          due_date: null,
+          scheduled_date: '2025-06-15',
+        }),
+        makeBlock({ id: 'B4', content: 'prop1', due_date: null, scheduled_date: null }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<DuePanel date="2025-06-15" />)
+
+    // Wait for blocks to load
+    await screen.findByText('due1')
+
+    // Header should show breakdown with middle dot separator
+    expect(screen.getByText('2 Due \u00b7 1 Scheduled \u00b7 1 Properties')).toBeInTheDocument()
+  })
+
+  // 19. Header falls back to total count when only one source type
+  it('header shows simple count when only one source type', async () => {
+    mockedListBlocks.mockResolvedValue({
+      items: [
+        makeBlock({ id: 'B1', content: 'due1', due_date: '2025-06-15', scheduled_date: null }),
+        makeBlock({ id: 'B2', content: 'due2', due_date: '2025-06-15', scheduled_date: null }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<DuePanel date="2025-06-15" />)
+
+    // All blocks are from due_date — falls back to "N Due" format
+    expect(await screen.findByText('2 Due')).toBeInTheDocument()
   })
 
   // --- Projected agenda entries (repeating tasks) ---

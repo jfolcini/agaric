@@ -591,6 +591,17 @@ async countAgendaBatch(dates: string[]) : Promise<Result<Partial<{ [key in strin
 }
 },
 /**
+ * Tauri command: batch-count agenda items per (date, source). Delegates to [`count_agenda_batch_by_source_inner`].
+ */
+async countAgendaBatchBySource(dates: string[]) : Promise<Result<Partial<{ [key in string]: Partial<{ [key in string]: number }> }>, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("count_agenda_batch_by_source", { dates }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: batch-count backlinks per target page. Delegates to [`count_backlinks_batch_inner`].
  */
 async countBacklinksBatch(pageIds: string[]) : Promise<Result<Partial<{ [key in string]: number }>, { kind: string; message: string }>> {

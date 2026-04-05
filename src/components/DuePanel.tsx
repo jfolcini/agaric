@@ -199,20 +199,25 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     async (cursor?: string) => {
       setLoading(true)
       try {
+        const effectiveSource = sourceFilter === 'property:' ? null : sourceFilter
         const resp = await listBlocks({
           agendaDate: date,
-          ...(sourceFilter != null && { agendaSource: sourceFilter }),
+          ...(effectiveSource != null && { agendaSource: effectiveSource }),
           ...(cursor != null && { cursor }),
           limit: 50,
         })
-        const newBlocks = cursor ? [...blocks, ...resp.items] : resp.items
+        const filteredItems =
+          sourceFilter === 'property:'
+            ? resp.items.filter((b) => b.due_date !== date && b.scheduled_date !== date)
+            : resp.items
+        const newBlocks = cursor ? [...blocks, ...filteredItems] : filteredItems
         setBlocks(newBlocks)
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
-        setTotalCount(cursor ? totalCount + resp.items.length : resp.items.length)
+        setTotalCount(cursor ? totalCount + filteredItems.length : filteredItems.length)
 
         // Resolve parent page titles
-        const allBlocks = cursor ? [...blocks, ...resp.items] : resp.items
+        const allBlocks = cursor ? [...blocks, ...filteredItems] : filteredItems
         const uniqueParentIds = [
           ...new Set(allBlocks.map((b) => b.parent_id).filter((id): id is string => id != null)),
         ]
@@ -246,20 +251,25 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     const doFetch = async () => {
       setLoading(true)
       try {
+        const effectiveSource = sourceFilter === 'property:' ? null : sourceFilter
         const resp = await listBlocks({
           agendaDate: date,
-          ...(sourceFilter != null && { agendaSource: sourceFilter }),
+          ...(effectiveSource != null && { agendaSource: effectiveSource }),
           limit: 50,
         })
         if (cancelled) return
-        setBlocks(resp.items)
+        const items =
+          sourceFilter === 'property:'
+            ? resp.items.filter((b) => b.due_date !== date && b.scheduled_date !== date)
+            : resp.items
+        setBlocks(items)
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
-        setTotalCount(resp.items.length)
+        setTotalCount(items.length)
 
         // Resolve parent page titles
         const uniqueParentIds = [
-          ...new Set(resp.items.map((b) => b.parent_id).filter((id): id is string => id != null)),
+          ...new Set(items.map((b) => b.parent_id).filter((id): id is string => id != null)),
         ]
         if (uniqueParentIds.length > 0) {
           const resolved = await batchResolve(uniqueParentIds)
@@ -347,6 +357,17 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     })
   }, [blocks, hideBeforeScheduled, todayStr])
 
+  // Per-source breakdown counts (accurate when sourceFilter is null / 'property:')
+  const sourceCounts = useMemo(() => {
+    const counts = { due: 0, scheduled: 0, property: 0 }
+    for (const b of visibleBlocks) {
+      if (b.due_date === date) counts.due++
+      else if (b.scheduled_date === date) counts.scheduled++
+      else counts.property++
+    }
+    return counts
+  }, [visibleBlocks, date])
+
   // Group blocks by todo_state in the defined order, sorted by priority within
   const groupLabels: Record<string, string> = {
     DOING: t('duePanel.groupDoing'),
@@ -378,8 +399,19 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   }
 
   const visibleCount = visibleBlocks.length
-  const headerLabel =
-    visibleCount === 1 ? t('duePanel.headerOne') : t('duePanel.header', { count: visibleCount })
+  const headerLabel = (() => {
+    if (sourceFilter === null && visibleCount > 0) {
+      const { due, scheduled, property } = sourceCounts
+      const parts: string[] = []
+      if (due > 0) parts.push(`${due} ${t('duePanel.filterDue')}`)
+      if (scheduled > 0) parts.push(`${scheduled} ${t('duePanel.filterScheduled')}`)
+      if (property > 0) parts.push(`${property} ${t('duePanel.filterProperties')}`)
+      if (parts.length > 1) return parts.join(' \u00b7 ')
+    }
+    return visibleCount === 1
+      ? t('duePanel.headerOne')
+      : t('duePanel.header', { count: visibleCount })
+  })()
 
   return (
     <section className="due-panel" aria-label={t('duePanel.duePanelLabel')}>
@@ -398,6 +430,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
             { label: t('duePanel.filterAll'), value: null },
             { label: t('duePanel.filterDue'), value: 'column:due_date' },
             { label: t('duePanel.filterScheduled'), value: 'column:scheduled_date' },
+            { label: t('duePanel.filterProperties'), value: 'property:' },
           ].map((opt) => (
             <button
               key={opt.label}
