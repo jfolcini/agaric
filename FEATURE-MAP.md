@@ -358,7 +358,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 
 ### Shared UI Components
 - **EmptyState** (`src/components/EmptyState.tsx`): Consistent empty state display with icon, title, and optional description. Used by 16 components including DaySection, DuePanel, DonePanel, LinkedReferences, UnlinkedReferences, BlockTree, SearchPanel, and others.
-- **ConfirmDialog** (`src/components/ConfirmDialog.tsx`): Wraps AlertDialog primitives with title/description/cancel/action props, optional `children` slot, `actionVariant` (default/destructive), `loading` spinner. Used by 8 components.
+- **ConfirmDialog** (`src/components/ConfirmDialog.tsx`): Wraps AlertDialog primitives with title/description/cancel/action props, optional `children` slot, `actionVariant` (default/destructive), `loading` spinner, `autoFocus` on action button for keyboard confirmation (UX-19). Used by 8 components.
 - **LoadMoreButton** (`src/components/LoadMoreButton.tsx`): Cursor-paginated load-more button with `loading`/`hasMore`/`onLoadMore` props and Spinner. Used by 6 components.
 - **LoadingSkeleton** (`src/components/LoadingSkeleton.tsx`): Skeleton loading placeholder with `count`/`height` props. Used by 7 components.
 - **Spinner** (`src/components/ui/spinner.tsx`): Animated loading indicator wrapping Loader2 with CVA size variants (`sm`=h-3.5, `md`=h-4, `lg`=h-5, `xl`=h-6). Default `md`. Used by 14 components.
@@ -382,6 +382,12 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **HistoryListItem** (`src/components/HistoryListItem.tsx`): Individual history entry with op type badge, word-level diff, timestamp, selection checkbox. Extracted from HistoryView (R-8). Used by HistoryView.
 - **HistorySelectionToolbar** (`src/components/HistorySelectionToolbar.tsx`): Batch selection toolbar for history view with selection count, select/deselect all, revert button. Extracted from HistoryView (R-8). Used by HistoryView.
 - **PairingQrDisplay** (`src/components/PairingQrDisplay.tsx`): QR code and passphrase display for pairing dialog with countdown timer and expired-session retry. Extracted from PairingDialog (R-9). Used by PairingDialog.
+- **AddBlockButton** (`src/components/AddBlockButton.tsx`): Reusable ghost button with Plus icon for block creation. Takes `onClick`, optional `label` and `className`. Extracted from PageEditor and DaySection (UX-20). Used by PageEditor, DaySection.
+- **FilterPillRow** (`src/components/FilterPillRow.tsx`): Renders active backlink filter pills with remove buttons, showing filter dimension, operator, and value. Includes `filterSummary()` utility. Extracted from BacklinkFilterBuilder (R-4). Used by BacklinkFilterBuilder.
+- **FilterSortControls** (`src/components/FilterSortControls.tsx`): Sort field selector dropdown and ascending/descending toggle for backlink queries. Extracted from BacklinkFilterBuilder (R-4). Used by BacklinkFilterBuilder.
+- **OverdueSection** (`src/components/OverdueSection.tsx`): Renders overdue blocks (due before today, not DONE) with count badge and priority/status indicators. Clickable items navigate to parent page. Extracted from DuePanel (R-6). Used by DuePanel.
+- **UpcomingSection** (`src/components/UpcomingSection.tsx`): Renders upcoming blocks within the warning-days window. Clickable items navigate to parent page. Extracted from DuePanel (R-6). Used by DuePanel.
+- **DuePanelFilters** (`src/components/DuePanelFilters.tsx`): Filter bar for DuePanel with source type pills (All/Due/Scheduled/Properties) and hide-before-scheduled toggle. Extracted from DuePanel (R-6). Used by DuePanel.
 - **PairingEntryForm** (`src/components/PairingEntryForm.tsx`): Passphrase entry form for manual pairing. Extracted from PairingDialog (R-9). Used by PairingDialog.
 - **PairingPeersList** (`src/components/PairingPeersList.tsx`): Paired peers list with unpair action and reset count display. Extracted from PairingDialog (R-9). Used by PairingDialog.
 - **PageTreeItem** (`src/components/PageTreeItem.tsx`): Recursive tree node for page browser with namespace expand/collapse, highlight matching, create-under-namespace button. Extracted from PageBrowser (R-12). Used by PageBrowser.
@@ -398,6 +404,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **useBacklinkResolution** (`src/hooks/useBacklinkResolution.ts`): TTL-cached ULID/tag resolution hook. Batch resolves page IDs and tag IDs to display names with configurable TTL (default 30s). Deduplicates concurrent requests. Extracted from LinkedReferences (R-15). Used by LinkedReferences.
 - **useSyncWithTimeout** (`src/hooks/useSyncWithTimeout.ts`): Sync operation executor with Promise.race timeout pattern (default 60s). Supports cancellation via cancelSync. Returns `{ executeSyncWithTimeout, cancelSync }`. Extracted from DeviceManagement (R-16). Used by DeviceManagement.
 - **usePageDelete** (`src/hooks/usePageDelete.ts`): Page deletion hook with confirmation state management. Returns `{ pendingDeleteId, requestDelete, confirmDelete, cancelDelete }`. Extracted from PageBrowser (R-12). Used by PageBrowser.
+- **useDuePanelData** (`src/hooks/useDuePanelData.ts`): Data fetching hook for DuePanel encapsulating block/overdue/upcoming/projected queries and page title resolution. Returns fetched data, loading states, pageTitles map, and loadMore. Extracted from DuePanel (R-6). Used by DuePanel.
 - **useAgendaPreferences** (`src/hooks/useAgendaPreferences.ts`): LocalStorage-persisted agenda sort/group preferences hook. Returns `{ groupBy, sortBy, setGroupBy, setSortBy }`. Extracted from AgendaView (R-13). Used by AgendaView.
 
 ### Shared Utilities

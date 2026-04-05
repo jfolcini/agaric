@@ -1,5 +1,51 @@
 # Session Log
 
+## Session 222 — 2026-04-05 — Batch 74: UX-19, UX-20, UX-21, UX-22, R-4, R-6
+
+### Summary
+Resolved 4 UX-MED items and 2 REFACTOR items. UX-19: ConfirmDialog keyboard behavior — added autoFocus on action button so Enter confirms, verified Escape dismisses, Tab cycles between buttons. UX-20: Consistent add-block behavior — fixed critical bug where journal add-block didn't focus new blocks (autoFocus defaulted to false), extracted shared AddBlockButton component used by PageEditor and DaySection. UX-21: Backspace block deletion — added DeleteBlockOpts type with cursor placement hint, isLastBlock guard to prevent deleting sole remaining block, backward-compatible signature change. UX-22: Sticky journal header — CSS-only fix (sticky top-0 z-30 bg-background border-b). R-4: BacklinkFilterBuilder decomposition (784→669 lines) — extracted FilterPillRow and FilterSortControls with 33 new tests. R-6: DuePanel decomposition (701→~290 lines) — extracted useDuePanelData hook, OverdueSection, UpcomingSection, DuePanelFilters with 46 new tests. Also fixed pre-existing biome lint issue in useListKeyboardNavigation.ts. 26 files changed, 96 new tests (3910 total). REVIEW-LATER.md reduced from 18 to 12 items (UX-MED: 8→4, REFACTOR: 9→7).
+
+### Batch 74
+
+**Commit:** 3e0edc2
+
+| Area | Change |
+|------|--------|
+| ConfirmDialog.tsx | UX-19: Added autoFocus to AlertDialogAction button. |
+| ConfirmDialog.test.tsx | UX-19: 4 new tests — focus on open, Enter confirms, Escape dismisses, Tab cycles. |
+| AddBlockButton.tsx | UX-20: New shared component — ghost button with Plus icon, used by PageEditor and DaySection. |
+| AddBlockButton.test.tsx | UX-20: 8 tests — render, click, custom label/className, a11y. |
+| JournalPage.tsx | UX-20: Removed autoFocus param from handleAddBlock — always focuses new block. UX-22: Added sticky CSS classes to JournalControls. |
+| JournalPage.test.tsx | UX-20: New test verifying focus after add-block. UX-22: New test verifying sticky positioning classes. |
+| PageEditor.tsx | UX-20: Replaced inline button with AddBlockButton component. |
+| DaySection.tsx | UX-20: Replaced inline add-block button with AddBlockButton component. |
+| use-block-keyboard.ts | UX-21: New DeleteBlockOpts type, isLastBlock guard, onDeleteBlock signature change. |
+| use-block-keyboard.test.ts | UX-21: 3 new tests — last-block guard, isLastBlock=false, isLastBlock=undefined. |
+| editor/index.ts | UX-21: Added DeleteBlockOpts to type re-exports. |
+| FilterPillRow.tsx | R-4: New — active filter pills with remove buttons, exported filterSummary helper. |
+| FilterSortControls.tsx | R-4: New — sort field selector dropdown and direction toggle. |
+| FilterPillRow.test.tsx | R-4: 16 tests — rendering, removal, keyboard, tag resolution, a11y. |
+| FilterSortControls.test.tsx | R-4: 17 tests — dropdown, direction, disabled state, a11y. |
+| BacklinkFilterBuilder.tsx | R-4: Simplified — delegates to FilterPillRow and FilterSortControls (784→669 lines). |
+| useDuePanelData.ts | R-6: New hook — encapsulates 3 data fetches, 12 state variables, pagination. |
+| OverdueSection.tsx | R-6: New — renders overdue blocks with count badge, priority, navigation. |
+| UpcomingSection.tsx | R-6: New — renders upcoming deadline blocks. |
+| DuePanelFilters.tsx | R-6: New — source filter pills and hide-before-scheduled toggle. |
+| DuePanel.tsx | R-6: Simplified — thin orchestrator using extracted hook and components (701→~290 lines). |
+| useDuePanelData.test.ts | R-6: 11 tests — fetching, loading, pagination, error handling. |
+| OverdueSection.test.tsx | R-6: 12 tests — rendering, sorting, navigation, a11y. |
+| UpcomingSection.test.tsx | R-6: 11 tests — rendering, sorting, navigation, a11y. |
+| DuePanelFilters.test.tsx | R-6: 12 tests — filter pills, toggle, a11y. |
+| useListKeyboardNavigation.ts | Pre-existing fix: biome-ignore for intentional itemCount dependency. |
+
+### Stats
+- **Files changed:** 26
+- **New tests:** 96 (3910 total)
+- **New components:** 5 (AddBlockButton, FilterPillRow, FilterSortControls, OverdueSection, UpcomingSection, DuePanelFilters)
+- **New hooks:** 1 (useDuePanelData)
+- **New types:** 1 (DeleteBlockOpts)
+- **REVIEW-LATER:** 18→12 items
+
 ## Session 221 — 2026-04-05 — Batch 73: R-3, R-8, R-9, R-12, R-13, R-14
 
 ### Summary
