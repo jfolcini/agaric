@@ -15,6 +15,13 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import type { AgendaGroupBy, AgendaSortBy } from '../lib/agenda-sort'
 import i18n from '../lib/i18n'
@@ -245,21 +252,25 @@ function PropertyValuePicker({
 
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-xs font-medium">
+      <label htmlFor="prop-filter-key" className="text-xs font-medium">
         {t('agendaFilter.propertyKey')}
-        <select
-          className="h-7 text-xs border rounded px-2 mt-1 block w-full"
-          value={propertyKey}
-          onChange={(e) => setPropertyKey(e.target.value)}
-        >
-          <option value="">{t('agendaFilter.selectProperty')}</option>
-          {propertyKeys.map((k) => (
-            <option key={k} value={k}>
-              {k}
-            </option>
-          ))}
-        </select>
       </label>
+      <Select
+        value={propertyKey || '__none__'}
+        onValueChange={(val) => setPropertyKey(val === '__none__' ? '' : val)}
+      >
+        <SelectTrigger id="prop-filter-key" size="sm" className="block w-full">
+          <SelectValue placeholder={t('agendaFilter.selectProperty')} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__none__">{t('agendaFilter.selectProperty')}</SelectItem>
+          {propertyKeys.map((k) => (
+            <SelectItem key={k} value={k}>
+              {k}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       <label htmlFor="prop-filter-value" className="text-xs font-medium">
         {t('agendaFilter.propertyValue')}
       </label>

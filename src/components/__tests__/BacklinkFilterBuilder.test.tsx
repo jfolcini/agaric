@@ -33,6 +33,56 @@ vi.mock('sonner', () => ({
   },
 }))
 
+// Mock the Radix-based Select to render as native <select>/<option> for jsdom compatibility.
+// SelectTrigger stores its props (aria-label, size, className) in a ref via context,
+// then SelectContent reads them and renders a native <select>.
+vi.mock('@/components/ui/select', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const React = require('react')
+  const Ctx = React.createContext({})
+
+  function Select({ value, onValueChange, children }: any) {
+    const triggerPropsRef = React.useRef({})
+    return React.createElement(
+      Ctx.Provider,
+      { value: { value, onValueChange, triggerPropsRef } },
+      children,
+    )
+  }
+
+  function SelectTrigger({ size, className, ...props }: any) {
+    const ctx = React.useContext(Ctx)
+    Object.assign(ctx.triggerPropsRef.current, { size, className, ...props })
+    return null
+  }
+
+  function SelectValue() {
+    return null
+  }
+
+  function SelectContent({ children }: any) {
+    const ctx = React.useContext(Ctx)
+    const tp = ctx.triggerPropsRef.current
+    return React.createElement(
+      'select',
+      {
+        value: ctx.value ?? '',
+        onChange: (e: any) => ctx.onValueChange?.(e.target.value),
+        'aria-label': tp['aria-label'],
+        className: tp.className,
+        'data-size': tp.size,
+      },
+      children,
+    )
+  }
+
+  function SelectItem({ value, children }: any) {
+    return React.createElement('option', { value }, children)
+  }
+
+  return { Select, SelectTrigger, SelectValue, SelectContent, SelectItem }
+})
+
 const defaultProps: BacklinkFilterBuilderProps = {
   filters: [],
   sort: null,
@@ -448,7 +498,7 @@ describe('BacklinkFilterBuilder', () => {
         onSortChange,
       })
 
-      await user.selectOptions(screen.getByLabelText('Sort by'), '')
+      await user.selectOptions(screen.getByLabelText('Sort by'), '__none__')
 
       expect(onSortChange).toHaveBeenCalledWith(null)
     })
@@ -926,23 +976,23 @@ describe('BacklinkFilterBuilder', () => {
   // #405 — Touch target sizes h-11/44px (#323/#324 fix)
   // ====================================================================
 
-  describe('44px touch target class on select elements (#405)', () => {
-    it('applies 44px touch target class to select elements', async () => {
+  describe('SelectTrigger size="sm" on select elements (#405)', () => {
+    it('applies size="sm" to filter category select trigger', async () => {
       const user = userEvent.setup()
       renderBuilder()
 
       // Open the add-filter form
       await user.click(screen.getByRole('button', { name: /Add filter/i }))
 
-      // The filter category select should have the coarse pointer h-11 class
+      // The filter category select should have data-size="sm" (from SelectTrigger size prop)
       const categorySelect = screen.getByLabelText('Filter category')
-      expect(categorySelect.className).toContain('[@media(pointer:coarse)]:h-11')
+      expect(categorySelect).toHaveAttribute('data-size', 'sm')
     })
 
-    it('applies 44px touch target class to sort select', () => {
+    it('applies size="sm" to sort select trigger', () => {
       renderBuilder()
       const sortSelect = screen.getByLabelText('Sort by')
-      expect(sortSelect.className).toContain('[@media(pointer:coarse)]:h-11')
+      expect(sortSelect).toHaveAttribute('data-size', 'sm')
     })
   })
 })

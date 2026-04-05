@@ -15,6 +15,13 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatPropertyName } from '@/lib/property-utils'
@@ -265,18 +272,21 @@ export function PropertiesView(): React.ReactElement {
               : undefined
           }
         />
-        <select
-          value={newType}
-          onChange={(e) => setNewType(e.target.value)}
-          className="rounded-md border bg-background px-3 py-2 text-sm"
-          aria-label={t('propertiesView.createType')}
-        >
-          {VALUE_TYPES.map((vt) => (
-            <option key={vt} value={vt}>
-              {vt}
-            </option>
-          ))}
-        </select>
+        <Select value={newType} onValueChange={setNewType}>
+          <SelectTrigger
+            className="rounded-md border bg-background px-3 py-2 text-sm"
+            aria-label={t('propertiesView.createType')}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {VALUE_TYPES.map((vt) => (
+              <SelectItem key={vt} value={vt}>
+                {vt}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Button
           type="submit"
           variant="outline"

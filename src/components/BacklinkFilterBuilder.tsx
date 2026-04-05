@@ -13,6 +13,13 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import type { BacklinkFilter, BacklinkSort, CompareOp, SortDir } from '../lib/tauri'
 
 // ---------------------------------------------------------------------------
@@ -304,62 +311,65 @@ function AddFilterRow({
         if (e.key === 'Escape') onCancel()
       }}
     >
-      <select
-        className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
-        value={category}
-        onChange={(e) => setCategory(e.target.value as FilterCategory | '')}
-        aria-label={t('backlink.filterCategoryLabel')}
+      <Select
+        value={category || '__none__'}
+        onValueChange={(val) => setCategory(val === '__none__' ? '' : (val as FilterCategory))}
       >
-        <option value="">{t('backlink.selectFilter')}</option>
-        <option value="type">{t('backlink.typeOption')}</option>
-        <option value="status">{t('backlink.statusOption')}</option>
-        <option value="priority">{t('backlink.priorityOption')}</option>
-        <option value="contains">{t('backlink.containsOption')}</option>
-        <option value="property">{t('backlink.propertyOption')}</option>
-        <option value="date">{t('backlink.createdDateOption')}</option>
-        <option value="property-set">{t('backlink.propertyIsSetOption')}</option>
-        <option value="property-empty">{t('backlink.propertyIsEmptyOption')}</option>
-        <option value="has-tag">{t('backlink.hasTagOption')}</option>
-        <option value="tag-prefix">{t('backlink.tagPrefixOption')}</option>
-      </select>
+        <SelectTrigger size="sm" aria-label={t('backlink.filterCategoryLabel')}>
+          <SelectValue placeholder={t('backlink.selectFilter')} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__none__">{t('backlink.selectFilter')}</SelectItem>
+          <SelectItem value="type">{t('backlink.typeOption')}</SelectItem>
+          <SelectItem value="status">{t('backlink.statusOption')}</SelectItem>
+          <SelectItem value="priority">{t('backlink.priorityOption')}</SelectItem>
+          <SelectItem value="contains">{t('backlink.containsOption')}</SelectItem>
+          <SelectItem value="property">{t('backlink.propertyOption')}</SelectItem>
+          <SelectItem value="date">{t('backlink.createdDateOption')}</SelectItem>
+          <SelectItem value="property-set">{t('backlink.propertyIsSetOption')}</SelectItem>
+          <SelectItem value="property-empty">{t('backlink.propertyIsEmptyOption')}</SelectItem>
+          <SelectItem value="has-tag">{t('backlink.hasTagOption')}</SelectItem>
+          <SelectItem value="tag-prefix">{t('backlink.tagPrefixOption')}</SelectItem>
+        </SelectContent>
+      </Select>
 
       {category === 'type' && (
-        <select
-          className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
-          value={blockType}
-          onChange={(e) => setBlockType(e.target.value)}
-          aria-label={t('backlink.blockTypeValueLabel')}
-        >
-          <option value="content">{t('backlink.contentType')}</option>
-          <option value="page">{t('backlink.pageType')}</option>
-          <option value="tag">{t('backlink.tagType')}</option>
-        </select>
+        <Select value={blockType} onValueChange={(val) => setBlockType(val)}>
+          <SelectTrigger size="sm" aria-label={t('backlink.blockTypeValueLabel')}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="content">{t('backlink.contentType')}</SelectItem>
+            <SelectItem value="page">{t('backlink.pageType')}</SelectItem>
+            <SelectItem value="tag">{t('backlink.tagType')}</SelectItem>
+          </SelectContent>
+        </Select>
       )}
 
       {category === 'status' && (
-        <select
-          className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
-          value={statusValue}
-          onChange={(e) => setStatusValue(e.target.value)}
-          aria-label={t('backlink.statusValueLabel')}
-        >
-          <option value="TODO">{t('backlink.todoStatus')}</option>
-          <option value="DOING">{t('backlink.doingStatus')}</option>
-          <option value="DONE">{t('backlink.doneStatus')}</option>
-        </select>
+        <Select value={statusValue} onValueChange={(val) => setStatusValue(val)}>
+          <SelectTrigger size="sm" aria-label={t('backlink.statusValueLabel')}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="TODO">{t('backlink.todoStatus')}</SelectItem>
+            <SelectItem value="DOING">{t('backlink.doingStatus')}</SelectItem>
+            <SelectItem value="DONE">{t('backlink.doneStatus')}</SelectItem>
+          </SelectContent>
+        </Select>
       )}
 
       {category === 'priority' && (
-        <select
-          className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
-          value={priorityValue}
-          onChange={(e) => setPriorityValue(e.target.value)}
-          aria-label={t('backlink.priorityValueLabel')}
-        >
-          <option value="1">{t('backlink.highPriority')}</option>
-          <option value="2">{t('backlink.mediumPriority')}</option>
-          <option value="3">{t('backlink.lowPriority')}</option>
-        </select>
+        <Select value={priorityValue} onValueChange={(val) => setPriorityValue(val)}>
+          <SelectTrigger size="sm" aria-label={t('backlink.priorityValueLabel')}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="1">{t('backlink.highPriority')}</SelectItem>
+            <SelectItem value="2">{t('backlink.mediumPriority')}</SelectItem>
+            <SelectItem value="3">{t('backlink.lowPriority')}</SelectItem>
+          </SelectContent>
+        </Select>
       )}
 
       {category === 'contains' && (
@@ -375,18 +385,18 @@ function AddFilterRow({
       {category === 'property' && (
         <>
           {propertyKeys.length > 0 ? (
-            <select
-              className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
-              value={propKey}
-              onChange={(e) => setPropKey(e.target.value)}
-              aria-label={t('backlink.propertyKeyLabel')}
-            >
-              {propertyKeys.map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </select>
+            <Select value={propKey} onValueChange={(val) => setPropKey(val)}>
+              <SelectTrigger size="sm" aria-label={t('backlink.propertyKeyLabel')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {propertyKeys.map((k) => (
+                  <SelectItem key={k} value={k}>
+                    {k}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           ) : (
             <Input
               className="h-7 w-24 text-xs [@media(pointer:coarse)]:w-full"
@@ -396,29 +406,32 @@ function AddFilterRow({
               aria-label={t('backlink.propertyKeyLabel')}
             />
           )}
-          <select
-            className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
-            value={propOp}
-            onChange={(e) => setPropOp(e.target.value as CompareOp)}
-            aria-label={t('backlink.comparisonOpLabel')}
-          >
-            <option value="Eq">=</option>
-            <option value="Neq">!=</option>
-            <option value="Lt">&lt;</option>
-            <option value="Gt">&gt;</option>
-            <option value="Lte">&lt;=</option>
-            <option value="Gte">&gt;=</option>
-          </select>
-          <select
-            className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
+          <Select value={propOp} onValueChange={(val) => setPropOp(val as CompareOp)}>
+            <SelectTrigger size="sm" aria-label={t('backlink.comparisonOpLabel')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="Eq">=</SelectItem>
+              <SelectItem value="Neq">!=</SelectItem>
+              <SelectItem value="Lt">&lt;</SelectItem>
+              <SelectItem value="Gt">&gt;</SelectItem>
+              <SelectItem value="Lte">&lt;=</SelectItem>
+              <SelectItem value="Gte">&gt;=</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select
             value={propType}
-            onChange={(e) => setPropType(e.target.value as 'text' | 'num' | 'date')}
-            aria-label={t('backlink.propertyTypeLabel')}
+            onValueChange={(val) => setPropType(val as 'text' | 'num' | 'date')}
           >
-            <option value="text">{t('backlink.textType')}</option>
-            <option value="num">{t('backlink.numberType')}</option>
-            <option value="date">{t('backlink.dateType')}</option>
-          </select>
+            <SelectTrigger size="sm" aria-label={t('backlink.propertyTypeLabel')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="text">{t('backlink.textType')}</SelectItem>
+              <SelectItem value="num">{t('backlink.numberType')}</SelectItem>
+              <SelectItem value="date">{t('backlink.dateType')}</SelectItem>
+            </SelectContent>
+          </Select>
           <Input
             className="h-7 w-24 text-xs [@media(pointer:coarse)]:w-full"
             placeholder={t('backlink.valuePlaceholder')}
@@ -451,18 +464,18 @@ function AddFilterRow({
 
       {category === 'property-set' &&
         (propertyKeys.length > 0 ? (
-          <select
-            className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
-            value={propSetKey}
-            onChange={(e) => setPropSetKey(e.target.value)}
-            aria-label={t('backlink.propertyKeyLabel')}
-          >
-            {propertyKeys.map((k) => (
-              <option key={k} value={k}>
-                {k}
-              </option>
-            ))}
-          </select>
+          <Select value={propSetKey} onValueChange={(val) => setPropSetKey(val)}>
+            <SelectTrigger size="sm" aria-label={t('backlink.propertyKeyLabel')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {propertyKeys.map((k) => (
+                <SelectItem key={k} value={k}>
+                  {k}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         ) : (
           <Input
             className="h-7 w-24 text-xs [@media(pointer:coarse)]:w-full"
@@ -475,18 +488,18 @@ function AddFilterRow({
 
       {category === 'property-empty' &&
         (propertyKeys.length > 0 ? (
-          <select
-            className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
-            value={propEmptyKey}
-            onChange={(e) => setPropEmptyKey(e.target.value)}
-            aria-label={t('backlink.propertyKeyLabel')}
-          >
-            {propertyKeys.map((k) => (
-              <option key={k} value={k}>
-                {k}
-              </option>
-            ))}
-          </select>
+          <Select value={propEmptyKey} onValueChange={(val) => setPropEmptyKey(val)}>
+            <SelectTrigger size="sm" aria-label={t('backlink.propertyKeyLabel')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {propertyKeys.map((k) => (
+                <SelectItem key={k} value={k}>
+                  {k}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         ) : (
           <Input
             className="h-7 w-24 text-xs [@media(pointer:coarse)]:w-full"
@@ -499,18 +512,18 @@ function AddFilterRow({
 
       {category === 'has-tag' &&
         (tags.length > 0 ? (
-          <select
-            className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
-            value={tagValue}
-            onChange={(e) => setTagValue(e.target.value)}
-            aria-label={t('backlink.tagLabel')}
-          >
-            {tags.map((tag) => (
-              <option key={tag.id} value={tag.id}>
-                {tag.name}
-              </option>
-            ))}
-          </select>
+          <Select value={tagValue} onValueChange={(val) => setTagValue(val)}>
+            <SelectTrigger size="sm" aria-label={t('backlink.tagLabel')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {tags.map((tag) => (
+                <SelectItem key={tag.id} value={tag.id}>
+                  {tag.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         ) : (
           <Input
             className="h-7 w-40 text-xs [@media(pointer:coarse)]:w-full"
@@ -707,20 +720,23 @@ export function BacklinkFilterBuilder({
         {/* Sort control */}
         <span className="ml-auto flex items-center gap-1">
           <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
-          <select
-            className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-1.5 text-xs"
-            value={sort ? (sort.type === 'Created' ? 'Created' : sort.key) : ''}
-            onChange={(e) => handleSortTypeChange(e.target.value)}
-            aria-label={t('backlink.sortByLabel')}
+          <Select
+            value={sort ? (sort.type === 'Created' ? 'Created' : sort.key) : '__none__'}
+            onValueChange={(val) => handleSortTypeChange(val === '__none__' ? '' : val)}
           >
-            <option value="">{t('backlink.defaultOrderOption')}</option>
-            <option value="Created">{t('backlink.createdOption')}</option>
-            {propertyKeys.map((k) => (
-              <option key={k} value={k}>
-                {k}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger size="sm" aria-label={t('backlink.sortByLabel')} className="px-1.5">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">{t('backlink.defaultOrderOption')}</SelectItem>
+              <SelectItem value="Created">{t('backlink.createdOption')}</SelectItem>
+              {propertyKeys.map((k) => (
+                <SelectItem key={k} value={k}>
+                  {k}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button
             variant="ghost"
             size="xs"

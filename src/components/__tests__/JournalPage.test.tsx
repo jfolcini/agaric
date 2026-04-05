@@ -2588,4 +2588,153 @@ describe('JournalPage', () => {
       })
     })
   })
+
+  // ── Calendar per-source dots (F-19) ──────────────────────────────────
+
+  describe('calendar per-source dots', () => {
+    it('fetches agenda-by-source data when calendar opens', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const calButton = screen.getByRole('button', { name: /open calendar picker/i })
+      await user.click(calButton)
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'count_agenda_batch_by_source',
+          expect.objectContaining({ dates: expect.any(Array) }),
+        )
+      })
+
+      const call = mockedInvoke.mock.calls.find(([cmd]) => cmd === 'count_agenda_batch_by_source')
+      expect(call).toBeDefined()
+      const { dates } = call?.[1] as { dates: string[] }
+      expect(dates).toHaveLength(42)
+      expect(dates[0]).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    })
+
+    it('renders due-dot class for days with due date items', async () => {
+      const user = userEvent.setup()
+      const today = new Date()
+      const todayStr = formatDate(today)
+
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'count_agenda_batch_by_source') {
+          return { [todayStr]: { 'column:due_date': 2 } }
+        }
+        return emptyPage
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const calButton = screen.getByRole('button', { name: /open calendar picker/i })
+      await user.click(calButton)
+
+      await waitFor(() => {
+        const dueDots = document.querySelectorAll('.has-due-dot')
+        expect(dueDots.length).toBeGreaterThan(0)
+      })
+    })
+
+    it('renders scheduled-dot class for days with scheduled date items', async () => {
+      const user = userEvent.setup()
+      const today = new Date()
+      const todayStr = formatDate(today)
+
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'count_agenda_batch_by_source') {
+          return { [todayStr]: { 'column:scheduled_date': 1 } }
+        }
+        return emptyPage
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const calButton = screen.getByRole('button', { name: /open calendar picker/i })
+      await user.click(calButton)
+
+      await waitFor(() => {
+        const scheduledDots = document.querySelectorAll('.has-scheduled-dot')
+        expect(scheduledDots.length).toBeGreaterThan(0)
+      })
+    })
+
+    it('renders property-dot class for days with property date items', async () => {
+      const user = userEvent.setup()
+      const today = new Date()
+      const todayStr = formatDate(today)
+
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'count_agenda_batch_by_source') {
+          return { [todayStr]: { 'property:deadline': 3 } }
+        }
+        return emptyPage
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const calButton = screen.getByRole('button', { name: /open calendar picker/i })
+      await user.click(calButton)
+
+      await waitFor(() => {
+        const propDots = document.querySelectorAll('.has-property-dot')
+        expect(propDots.length).toBeGreaterThan(0)
+      })
+    })
+
+    it('renders multiple dot classes for days with multiple source types', async () => {
+      const user = userEvent.setup()
+      const today = new Date()
+      const todayStr = formatDate(today)
+
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'count_agenda_batch_by_source') {
+          return {
+            [todayStr]: {
+              'column:due_date': 1,
+              'column:scheduled_date': 2,
+              'property:deadline': 1,
+            },
+          }
+        }
+        return emptyPage
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const calButton = screen.getByRole('button', { name: /open calendar picker/i })
+      await user.click(calButton)
+
+      await waitFor(() => {
+        const dueDots = document.querySelectorAll('.has-due-dot')
+        const scheduledDots = document.querySelectorAll('.has-scheduled-dot')
+        const propDots = document.querySelectorAll('.has-property-dot')
+        expect(dueDots.length).toBeGreaterThan(0)
+        expect(scheduledDots.length).toBeGreaterThan(0)
+        expect(propDots.length).toBeGreaterThan(0)
+      })
+    })
+  })
 })

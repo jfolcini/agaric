@@ -26,6 +26,13 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { formatPropertyName } from '@/lib/property-utils'
 import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
 import {
@@ -284,19 +291,22 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
                     <label htmlFor="new-def-type" className="text-xs text-muted-foreground">
                       {t('pageProperty.valueTypeLabel')}
                     </label>
-                    <select
-                      id="new-def-type"
-                      className="w-full rounded border px-2 py-1 text-sm"
-                      value={newDefType}
-                      onChange={(e) => setNewDefType(e.target.value)}
-                      aria-label={t('pageProperty.valueTypeLabel')}
-                    >
-                      <option value="text">{t('pageProperty.textType')}</option>
-                      <option value="number">{t('pageProperty.numberType')}</option>
-                      <option value="date">{t('pageProperty.dateType')}</option>
-                      <option value="select">{t('pageProperty.selectType')}</option>
-                      <option value="ref">{t('pageProperty.refType')}</option>
-                    </select>
+                    <Select value={newDefType} onValueChange={setNewDefType}>
+                      <SelectTrigger
+                        id="new-def-type"
+                        className="w-full"
+                        aria-label={t('pageProperty.valueTypeLabel')}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="text">{t('pageProperty.textType')}</SelectItem>
+                        <SelectItem value="number">{t('pageProperty.numberType')}</SelectItem>
+                        <SelectItem value="date">{t('pageProperty.dateType')}</SelectItem>
+                        <SelectItem value="select">{t('pageProperty.selectType')}</SelectItem>
+                        <SelectItem value="ref">{t('pageProperty.refType')}</SelectItem>
+                      </SelectContent>
+                    </Select>
                     <Button size="sm" className="w-full" onClick={handleCreateDef}>
                       {t('pageProperty.createDefinitionButton')}
                     </Button>
@@ -369,10 +379,10 @@ function PropertyRowEditor({ prop, def, onSave, onDelete, onDefUpdated }: Proper
   }, [localValue, currentValue, onSave])
 
   const handleSelectChange = useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => {
-      const val = e.target.value
-      setLocalValue(val)
-      onSave(val)
+    (val: string) => {
+      const resolved = val === '__none__' ? '' : val
+      setLocalValue(resolved)
+      onSave(resolved)
     },
     [onSave],
   )
@@ -427,19 +437,22 @@ function PropertyRowEditor({ prop, def, onSave, onDelete, onDefUpdated }: Proper
       </Badge>
       <div className="flex-1">
         {valueType === 'select' ? (
-          <select
-            className="w-full rounded border px-2 py-1 text-sm"
-            value={localValue}
-            onChange={handleSelectChange}
-            aria-label={t('pageProperty.valueLabel', { key: prop.key })}
-          >
-            <option value="">{t('pageProperty.emptyOption')}</option>
-            {selectOptions.map((opt) => (
-              <option key={opt} value={opt}>
-                {opt}
-              </option>
-            ))}
-          </select>
+          <Select value={localValue || '__none__'} onValueChange={handleSelectChange}>
+            <SelectTrigger
+              className="w-full"
+              aria-label={t('pageProperty.valueLabel', { key: prop.key })}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">{t('pageProperty.emptyOption')}</SelectItem>
+              {selectOptions.map((opt) => (
+                <SelectItem key={opt} value={opt}>
+                  {opt}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         ) : (
           <Input
             className="h-7 text-xs"

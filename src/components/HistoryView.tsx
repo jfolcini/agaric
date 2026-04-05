@@ -14,6 +14,13 @@ import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
@@ -313,13 +320,6 @@ export function HistoryView(): React.ReactElement {
     [rangeSelect, toggleSelection],
   )
 
-  // ── Filter change ────────────────────────────────────────────────
-
-  const handleFilterChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
-    const value = e.target.value
-    setOpTypeFilter(value === '' ? null : value)
-  }, [])
-
   // ── Render ───────────────────────────────────────────────────────
 
   return (
@@ -329,20 +329,26 @@ export function HistoryView(): React.ReactElement {
         <label htmlFor="op-type-filter" className="text-sm font-medium text-muted-foreground">
           {t('history.filterLabel')}
         </label>
-        <select
-          id="op-type-filter"
-          value={opTypeFilter ?? ''}
-          onChange={handleFilterChange}
-          className="h-8 rounded-md border border-input bg-background px-2 text-sm"
-          aria-label="Filter by operation type"
+        <Select
+          value={opTypeFilter ?? '__all__'}
+          onValueChange={(val) => setOpTypeFilter(val === '__all__' ? null : val)}
         >
-          <option value="">{t('history.allTypesOption')}</option>
-          {OP_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger
+            id="op-type-filter"
+            className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+            aria-label="Filter by operation type"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">{t('history.allTypesOption')}</SelectItem>
+            {OP_TYPES.map((opType) => (
+              <SelectItem key={opType} value={opType}>
+                {opType}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Selection toolbar */}

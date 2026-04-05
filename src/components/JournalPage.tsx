@@ -38,7 +38,7 @@ import {
   MAX_JOURNAL_DATE,
   MIN_JOURNAL_DATE,
 } from '../lib/date-utils'
-import { createBlock, listBlocks } from '../lib/tauri'
+import { countAgendaBatchBySource, createBlock, listBlocks } from '../lib/tauri'
 import { insertTemplateBlocks, loadJournalTemplate } from '../lib/template-utils'
 import { useBlockStore } from '../stores/blocks'
 import { useJournalStore } from '../stores/journal'
@@ -53,6 +53,49 @@ import { LoadingSkeleton } from './LoadingSkeleton'
 export type { DayEntry } from '../lib/date-utils'
 // Re-export for backward compatibility
 export { MAX_JOURNAL_DATE, MIN_JOURNAL_DATE } from '../lib/date-utils'
+
+/** Compute ~42 date strings (6 weeks) for the calendar view centred on the given month. */
+function getCalendarDateRange(month: Date): string[] {
+  const firstOfMonth = new Date(month.getFullYear(), month.getMonth(), 1)
+  const dow = firstOfMonth.getDay()
+  const startOffset = dow === 0 ? 6 : dow - 1
+  const start = new Date(firstOfMonth)
+  start.setDate(start.getDate() - startOffset)
+  const dates: string[] = []
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start)
+    d.setDate(d.getDate() + i)
+    dates.push(formatDate(d))
+  }
+  return dates
+}
+
+/** Derive per-source Date arrays from the by-source agenda data. */
+function computeSourceModifiers(data: Record<string, Record<string, number>>): {
+  datesWithDue: Date[]
+  datesWithScheduled: Date[]
+  datesWithProperty: Date[]
+} {
+  const datesWithDue: Date[] = []
+  const datesWithScheduled: Date[] = []
+  const datesWithProperty: Date[] = []
+  if (!data || typeof data !== 'object') {
+    return { datesWithDue, datesWithScheduled, datesWithProperty }
+  }
+  for (const [dateStr, sources] of Object.entries(data)) {
+    if (!sources || typeof sources !== 'object') continue
+    const parts = dateStr.split('-')
+    if (parts.length !== 3) continue
+    const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
+    if ((sources['column:due_date'] ?? 0) > 0) datesWithDue.push(d)
+    if ((sources['column:scheduled_date'] ?? 0) > 0) datesWithScheduled.push(d)
+    const hasProp = Object.keys(sources).some(
+      (k) => k.startsWith('property:') && (sources[k] ?? 0) > 0,
+    )
+    if (hasProp) datesWithProperty.push(d)
+  }
+  return { datesWithDue, datesWithScheduled, datesWithProperty }
+}
 
 interface JournalPageProps {
   /** Called when a block is clicked — navigates to block editor. */
@@ -282,6 +325,28 @@ function JournalCalendarDropdown({
   const calRef = useRef<HTMLDivElement>(null)
   const [flipAbove, setFlipAbove] = useState(false)
   const [shiftLeft, setShiftLeft] = useState(0)
+  const [agendaBySource, setAgendaBySource] = useState<Record<string, Record<string, number>>>({})
+
+  const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: monthKey encodes the month
+  useEffect(() => {
+    let cancelled = false
+    const dates = getCalendarDateRange(currentDate)
+    countAgendaBatchBySource({ dates })
+      .then((data) => {
+        if (!cancelled) setAgendaBySource(data)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [monthKey])
+
+  const { datesWithDue, datesWithScheduled, datesWithProperty } = useMemo(
+    () => computeSourceModifiers(agendaBySource),
+    [agendaBySource],
+  )
 
   // Escape key closes the calendar
   useEffect(() => {
@@ -337,21 +402,42 @@ function JournalCalendarDropdown({
           showOutsideDays
           onWeekNumberClick={(_wn: number, dates: Date[]) => onSelectWeek(dates)}
           onMonthClick={(month: Date) => onSelectMonth(month)}
-          modifiers={{ hasContent: highlightedDays }}
-          modifiersClassNames={{ hasContent: 'has-content-dot' }}
+          modifiers={{
+            hasContent: highlightedDays,
+            hasDue: datesWithDue,
+            hasScheduled: datesWithScheduled,
+            hasProperty: datesWithProperty,
+          }}
+          modifiersClassNames={{
+            hasContent: 'has-content-dot',
+            hasDue: 'has-due-dot',
+            hasScheduled: 'has-scheduled-dot',
+            hasProperty: 'has-property-dot',
+          }}
         />
         <style>{`
-          .has-content-dot { position: relative; }
-          .has-content-dot::after {
+          .has-content-dot { position: relative; --dot-page: var(--primary); }
+          .has-due-dot { position: relative; --dot-due: #ea580c; }
+          .has-scheduled-dot { position: relative; --dot-sched: #16a34a; }
+          .has-property-dot { position: relative; --dot-prop: #9333ea; }
+          .has-content-dot::after,
+          .has-due-dot::after,
+          .has-scheduled-dot::after,
+          .has-property-dot::after {
             content: '';
             position: absolute;
-            bottom: 2px;
+            bottom: 1px;
             left: 50%;
-            transform: translateX(-50%);
-            width: 5px;
-            height: 5px;
+            width: 1px;
+            height: 1px;
             border-radius: 50%;
-            background: var(--primary);
+            transform: translateX(-50%);
+            pointer-events: none;
+            box-shadow:
+              -6px 0 0 1.5px var(--dot-page, transparent),
+              -2px 0 0 1.5px var(--dot-due, transparent),
+              2px 0 0 1.5px var(--dot-sched, transparent),
+              6px 0 0 1.5px var(--dot-prop, transparent);
           }
         `}</style>
       </div>
