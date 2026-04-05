@@ -1,5 +1,44 @@
 # Session Log
 
+## Session 218 — 2026-04-05 — Batch 70: UX-7, UX-10
+
+### Summary
+Resolved 2 UX items. Created 5 new shared UI primitive components (Spinner, CloseButton, CardButton, Label, ListItem) with 32 tests. Migrated 22 inline Loader2 spinner instances across 14 files to the new Spinner component. Migrated CloseButton in dialog/sheet, CardButton in ResultCard/SearchPanel, Label in 4 form components, ListItem in TagList/PropertiesView. 27 files changed (+551/-86). REVIEW-LATER.md reduced from 21 to 19 items.
+
+### Batch 70
+
+**Commit:** 204fbfd
+
+| Area | Change |
+|------|--------|
+| ui/spinner.tsx | UX-7: New Spinner component with sm/md/lg/xl size variants wrapping Loader2. Uses CVA for variant management. |
+| ui/close-button.tsx | UX-10: Shared closeButtonClassName constant + CloseButtonIcon component for dialog/sheet close buttons. |
+| ui/card-button.tsx | UX-10: New CardButton component — full-width card-style button with focus-visible ring. |
+| ui/label.tsx | UX-10: New Label component with size (sm/xs) and muted variants for form labels. |
+| ui/list-item.tsx | UX-10: New ListItem component with group hover styling for interactive lists. |
+| ui/__tests__/primitives.test.tsx | 32 tests covering all 5 primitives: render, variants, className merging, interaction, a11y. |
+| BootGate.tsx | UX-7: Replaced 3 inline Loader2 with Spinner (xl + default). |
+| LoadMoreButton.tsx | UX-7: Replaced inline Loader2 with Spinner. |
+| ConfirmDialog.tsx | UX-7: Replaced inline Loader2 with Spinner. |
+| DonePanel.tsx | UX-7: Replaced inline Loader2 with Spinner. |
+| UnlinkedReferences.tsx | UX-7: Replaced inline Loader2 with Spinner. |
+| AgendaResults.tsx | UX-7: Replaced inline Loader2 with Spinner size="lg". |
+| DuePanel.tsx | UX-7: Replaced inline Loader2 with Spinner. |
+| PairingDialog.tsx | UX-7: Replaced 3 inline Loader2 with Spinner. |
+| DeviceManagement.tsx | UX-7: Replaced 3 inline Loader2 with Spinner. |
+| HistoryView.tsx | UX-7: Replaced Loader2 with Spinner size="sm". UX-10: Replaced raw label with Label component. |
+| HistoryPanel.tsx | UX-7: Replaced 2 inline Loader2 with Spinner size="sm". |
+| SearchPanel.tsx | UX-7: Replaced Loader2 with Spinner. UX-10: Replaced raw button with CardButton. |
+| ResultCard.tsx | UX-7: Replaced Loader2 with Spinner. UX-10: Replaced raw button with CardButton. |
+| PageBrowser.tsx | UX-7: Replaced 2 inline Loader2 with Spinner. |
+| dialog.tsx | UX-10: Replaced inline close button with closeButtonClassName + CloseButtonIcon. |
+| sheet.tsx | UX-10: Replaced inline close button with closeButtonClassName + CloseButtonIcon. |
+| AgendaFilterBuilder.tsx | UX-10: Replaced 2 raw form labels with Label component. |
+| PagePropertyTable.tsx | UX-10: Replaced raw label with Label component. |
+| LinkEditPopover.tsx | UX-10: Replaced raw label with Label component. |
+| TagList.tsx | UX-10: Replaced raw li with ListItem component. |
+| PropertiesView.tsx | UX-10: Replaced raw li with ListItem component. |
+
 ## Session 217 — 2026-04-05 — Batch 69: UX-3, UX-5, UX-13
 
 ### Summary

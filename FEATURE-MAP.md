@@ -357,8 +357,13 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 ### Shared UI Components
 - **EmptyState** (`src/components/EmptyState.tsx`): Consistent empty state display with icon, title, and optional description. Used by 16 components including DaySection, DuePanel, DonePanel, LinkedReferences, UnlinkedReferences, BlockTree, SearchPanel, and others.
 - **ConfirmDialog** (`src/components/ConfirmDialog.tsx`): Wraps AlertDialog primitives with title/description/cancel/action props, optional `children` slot, `actionVariant` (default/destructive), `loading` spinner. Used by 8 components.
-- **LoadMoreButton** (`src/components/LoadMoreButton.tsx`): Cursor-paginated load-more button with `loading`/`hasMore`/`onLoadMore` props and Loader2 spinner. Used by 6 components.
+- **LoadMoreButton** (`src/components/LoadMoreButton.tsx`): Cursor-paginated load-more button with `loading`/`hasMore`/`onLoadMore` props and Spinner. Used by 6 components.
 - **LoadingSkeleton** (`src/components/LoadingSkeleton.tsx`): Skeleton loading placeholder with `count`/`height` props. Used by 7 components.
+- **Spinner** (`src/components/ui/spinner.tsx`): Animated loading indicator wrapping Loader2 with CVA size variants (`sm`=h-3.5, `md`=h-4, `lg`=h-5, `xl`=h-6). Default `md`. Used by 14 components.
+- **CloseButton** (`src/components/ui/close-button.tsx`): Shared `closeButtonClassName` constant + `CloseButtonIcon` component for overlay close buttons. Used by Dialog, Sheet.
+- **CardButton** (`src/components/ui/card-button.tsx`): Full-width card-style button with border, bg-card, hover:bg-accent/50, focus-visible ring. Used by ResultCard, SearchPanel.
+- **Label** (`src/components/ui/label.tsx`): Form label with CVA variants: `size` (sm/xs), `muted` (true/false). Used by HistoryView, AgendaFilterBuilder, PagePropertyTable, LinkEditPopover.
+- **ListItem** (`src/components/ui/list-item.tsx`): Interactive list item with group flex layout, gap-3, rounded-lg, hover:bg-accent/50. Used by TagList, PropertiesView.
 - **CollapsibleGroupList** (`src/components/CollapsibleGroupList.tsx`): Generic collapsible grouped list with expand/collapse state management. Accepts `expandedGroups` record, `defaultExpanded` prop, `onToggle` callback, and custom `renderBlock` slot. Supports split-header mode via `onPageTitleClick` prop (separate chevron toggle + PageLink title + passive count). Used by LinkedReferences, UnlinkedReferences.
 - **ResultCard** (`src/components/ResultCard.tsx`): Block result card button with content display, Badge for page/tag types, optional spinner, optional children slot. Used by SearchPanel, TagFilterPanel.
 - **PageLink** (`src/components/PageLink.tsx`): Inline clickable page name (`<span role="link">`) that navigates via `navigateToPage`. Handles click/Enter/Space with stopPropagation. Uses `<span>` to allow nesting inside `<button>` containers. Used by CollapsibleGroupList, DonePanel, AgendaResults, DuePanel, SearchPanel, QueryResult.
