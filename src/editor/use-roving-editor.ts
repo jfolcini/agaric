@@ -344,13 +344,24 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
 
       const doc = parse(markdown)
       replaceDocSilently(editor, doc as unknown as Record<string, unknown>)
-      // Cleared on blur/flush. Ctrl+Z does not cross the flush boundary.
-      // Reset undo history so previous block's edits don't leak into this one.
-      // Pass { plugins } explicitly to preserve all plugin configurations
-      // (including History keymaps) while resetting their internal state.
-      const { state } = editor
-      const newState = state.reconfigure({ plugins: state.plugins })
-      editor.view.updateState(newState)
+      // Clear undo history so previous block's edits don't leak into this one.
+      // We reset the History plugin's internal state directly via setMeta,
+      // which avoids state.reconfigure() — reconfigure creates a new plugins
+      // array reference that causes ProseMirror's updatePluginViews to destroy
+      // and recreate ALL plugin views (including Suggestion views), breaking
+      // suggestion popups (slash commands, tag picker, etc.) and adding
+      // unnecessary overhead on every block switch.
+      // Plugin.key is @internal in ProseMirror's types but always present at runtime
+      const histPlugin = editor.state.plugins.find((p) =>
+        (p as unknown as { key: string }).key.startsWith('history$'),
+      )
+      if (histPlugin?.spec.state?.init) {
+        const freshHistory = histPlugin.spec.state.init({}, editor.state)
+        const { tr } = editor.state
+        tr.setMeta(histPlugin, { historyState: freshHistory })
+        tr.setMeta('addToHistory', false)
+        editor.view.dispatch(tr)
+      }
       editor.commands.focus()
     },
     [editor],

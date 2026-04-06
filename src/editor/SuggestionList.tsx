@@ -81,7 +81,7 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
     return (
       <div
         ref={listRef}
-        className="suggestion-list flex flex-col gap-0.5 overflow-y-auto rounded-lg border bg-popover p-1 shadow-md"
+        className="suggestion-list flex flex-col gap-0.5 max-h-[min(300px,40vh)] overflow-y-auto rounded-lg border bg-popover p-1 shadow-md"
         data-testid="suggestion-list"
         role="listbox"
         aria-label={label ?? 'Suggestions'}

@@ -144,6 +144,11 @@ function EditableBlockInner({
     (e: React.FocusEvent) => {
       if (!rovingEditor.activeBlockId) return
 
+      // If the editor has already moved to a different block (e.g.
+      // handleFocus called mount on another block), this blur is stale —
+      // ignore it to prevent saving the wrong block's content to this one.
+      if (rovingEditor.activeBlockId !== blockId) return
+
       // For new blocks (created empty), persist any typed content before
       // checking transient UI. This prevents data loss when a popup is in
       // the DOM but the user clicked outside.

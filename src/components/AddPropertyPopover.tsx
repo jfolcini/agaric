@@ -120,7 +120,7 @@ export function AddPropertyPopover({
           }}
           aria-label={t('pageProperty.searchLabel')}
         />
-        <ScrollArea className="max-h-40">
+        <ScrollArea className="max-h-[min(240px,40vh)]">
           {filteredDefs.map((def) => (
             <button
               key={def.key}
