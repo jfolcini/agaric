@@ -349,32 +349,34 @@ export function ConflictList(): React.ReactElement {
       )}
 
       {blocks.length > 0 && (
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-xs text-muted-foreground">
-            <strong>Keep</strong> replaces the current content with the incoming version.{' '}
-            <strong>Discard</strong> removes the conflicting version.
-          </p>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="conflict-refresh-btn shrink-0 ml-2"
-            onClick={reload}
-            disabled={loading}
-            aria-label={t('conflict.refreshLabel')}
-          >
-            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-          </Button>
-        </div>
-      )}
+        <div className="sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">
+              <strong>Keep</strong> replaces the current content with the incoming version.{' '}
+              <strong>Discard</strong> removes the conflicting version.
+            </p>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="conflict-refresh-btn shrink-0 ml-2"
+              onClick={reload}
+              disabled={loading}
+              aria-label={t('conflict.refreshLabel')}
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+            </Button>
+          </div>
 
-      {selectedIds.size > 0 && (
-        <ConflictBatchToolbar
-          selectedCount={selectedIds.size}
-          totalCount={blocks.length}
-          onToggleSelectAll={handleToggleSelectAll}
-          onKeepAll={() => setBatchAction('keep')}
-          onDiscardAll={() => setBatchAction('discard')}
-        />
+          {selectedIds.size > 0 && (
+            <ConflictBatchToolbar
+              selectedCount={selectedIds.size}
+              totalCount={blocks.length}
+              onToggleSelectAll={handleToggleSelectAll}
+              onKeepAll={() => setBatchAction('keep')}
+              onDiscardAll={() => setBatchAction('discard')}
+            />
+          )}
+        </div>
       )}
 
       <ul className="conflict-items space-y-2 list-none p-0">

@@ -266,18 +266,20 @@ export function HistoryView(): React.ReactElement {
 
   return (
     <div className="history-view space-y-4">
-      {/* Filter bar */}
-      <HistoryFilterBar opTypeFilter={opTypeFilter} onFilterChange={setOpTypeFilter} />
+      <div className="sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-4 space-y-4">
+        {/* Filter bar */}
+        <HistoryFilterBar opTypeFilter={opTypeFilter} onFilterChange={setOpTypeFilter} />
 
-      {/* Selection toolbar */}
-      {selected.size > 0 && (
-        <HistorySelectionToolbar
-          selectedCount={selected.size}
-          reverting={reverting}
-          onRevertClick={() => setConfirmRevert(true)}
-          onClearSelection={clearSelection}
-        />
-      )}
+        {/* Selection toolbar */}
+        {selected.size > 0 && (
+          <HistorySelectionToolbar
+            selectedCount={selected.size}
+            reverting={reverting}
+            onRevertClick={() => setConfirmRevert(true)}
+            onClearSelection={clearSelection}
+          />
+        )}
+      </div>
 
       {/* Loading skeletons */}
       {loading && entries.length === 0 && (

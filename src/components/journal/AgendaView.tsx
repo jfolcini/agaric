@@ -92,13 +92,15 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
 
   return (
     <div className="agenda-view space-y-4" data-testid="agenda-view">
-      <AgendaFilterBuilder filters={agendaFilters} onFiltersChange={setAgendaFilters} />
-      <AgendaSortGroupControls
-        groupBy={agendaGroupBy}
-        onGroupByChange={setAgendaGroupBy}
-        sortBy={agendaSortBy}
-        onSortByChange={setAgendaSortBy}
-      />
+      <div className="sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-4 space-y-4">
+        <AgendaFilterBuilder filters={agendaFilters} onFiltersChange={setAgendaFilters} />
+        <AgendaSortGroupControls
+          groupBy={agendaGroupBy}
+          onGroupByChange={setAgendaGroupBy}
+          sortBy={agendaSortBy}
+          onSortByChange={setAgendaSortBy}
+        />
+      </div>
       <div className="border-t border-border/40" />
       <AgendaResults
         blocks={filteredBlocks}

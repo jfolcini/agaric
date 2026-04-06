@@ -128,43 +128,45 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
   return (
     <div className="page-browser space-y-4">
-      {/* Create page form */}
-      <form
-        ref={formRef}
-        onSubmit={(e) => {
-          e.preventDefault()
-          handleCreatePage()
-        }}
-        className="flex flex-col sm:flex-row sm:items-center gap-2"
-      >
-        <Input
-          value={newPageName}
-          onChange={(e) => setNewPageName(e.target.value)}
-          placeholder={t('pageBrowser.newPagePlaceholder')}
-          className="flex-1"
-        />
-        <Button type="submit" variant="outline" disabled={isCreating || !newPageName.trim()}>
-          {isCreating ? <Spinner /> : <Plus className="h-4 w-4" />}
-          {t('pageBrowser.newPage')}
-        </Button>
-      </form>
-
-      {/* Search/filter input */}
-      {pages.length > 0 && (
-        <div className="relative">
-          <Search
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
-            aria-hidden="true"
-          />
+      <div className="sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-4 space-y-4">
+        {/* Create page form */}
+        <form
+          ref={formRef}
+          onSubmit={(e) => {
+            e.preventDefault()
+            handleCreatePage()
+          }}
+          className="flex flex-col sm:flex-row sm:items-center gap-2"
+        >
           <Input
-            value={filterText}
-            onChange={(e) => setFilterText(e.target.value)}
-            placeholder={t('pageBrowser.searchPlaceholder')}
-            className="pl-8"
-            aria-label={t('pageBrowser.searchPlaceholder')}
+            value={newPageName}
+            onChange={(e) => setNewPageName(e.target.value)}
+            placeholder={t('pageBrowser.newPagePlaceholder')}
+            className="flex-1"
           />
-        </div>
-      )}
+          <Button type="submit" variant="outline" disabled={isCreating || !newPageName.trim()}>
+            {isCreating ? <Spinner /> : <Plus className="h-4 w-4" />}
+            {t('pageBrowser.newPage')}
+          </Button>
+        </form>
+
+        {/* Search/filter input */}
+        {pages.length > 0 && (
+          <div className="relative">
+            <Search
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <Input
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+              placeholder={t('pageBrowser.searchPlaceholder')}
+              className="pl-8"
+              aria-label={t('pageBrowser.searchPlaceholder')}
+            />
+          </div>
+        )}
+      </div>
 
       {loading && pages.length === 0 && (
         <div aria-busy="true">
