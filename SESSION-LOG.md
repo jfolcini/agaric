@@ -1,5 +1,25 @@
 # Session Log
 
+## Session 236 — 2026-04-06 — Fix B-1 DuePanel in PageEditor, B-2 auto-block race, REVIEW-LATER updates
+
+### Summary
+Fixed two bugs (B-1, B-2) and added 4 items to REVIEW-LATER.md (F-15, F-16, B-1, B-2). **B-1:** PageEditor now renders DuePanel/DonePanel on date-formatted pages — previously these only appeared in DaySection's daily mode and disappeared when opening a date page via "Open in editor" or page browser. Added `isDateFormattedPage()` utility. **B-2:** Fixed race condition where auto-block creation fired before `load()` completed, by initializing PageBlockStore with `loading: true`. Also updated F-16 scope (sticky headers for all views), added jsdom stubs for scrollIntoView/getClientRects/getBoundingClientRect. 8 files changed, 4441 tests pass (5 new).
+
+### Changes
+
+| Area | Change |
+|------|--------|
+| date-utils.ts | Added `isDateFormattedPage(title)` — regex check for YYYY-MM-DD format |
+| PageEditor.tsx | Conditionally renders DuePanel + DonePanel between BlockTree and LinkedReferences when title is date-formatted |
+| PageEditor.test.tsx | 3 new tests: date page shows panels, non-date page doesn't, partial date doesn't. Added DuePanel/DonePanel mocks |
+| date-utils.test.ts | 2 new tests for `isDateFormattedPage` (valid dates + rejection cases) |
+| page-blocks.ts | Changed `loading: false` → `loading: true` in store factory initial state (B-2 fix) |
+| BlockTree.test.tsx | Updated race condition comment to reference B-2 fix |
+| test-setup.ts | Added jsdom stubs: Element.scrollIntoView, Element/Range.getClientRects, Range.getBoundingClientRect |
+| REVIEW-LATER.md | Added F-15 (tag inheritance), F-16 (sticky headers — all views), B-1 (DuePanel missing), B-2 (auto-block race). Updated summary to 5 open items |
+
+**Commits:** 27b5c5a (docs), d72e4ed (fixes)
+
 ## Session 235 — 2026-04-06 — Tag filters accept names instead of ULIDs
 
 ### Summary
