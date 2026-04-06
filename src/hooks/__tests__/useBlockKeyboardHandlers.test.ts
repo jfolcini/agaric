@@ -52,6 +52,7 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockKeyboar
       editor: null as null,
       mount: vi.fn(),
       unmount: vi.fn(() => null as string | null),
+      getMarkdown: vi.fn(() => null as string | null),
     },
     setFocused: vi.fn(),
     handleFlush: vi.fn(() => null as string | null),

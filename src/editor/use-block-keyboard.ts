@@ -195,6 +195,30 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
       if (!editor) return
+
+      // When a suggestion popup is visible, let Enter, Tab, Escape, and
+      // Backspace pass through to ProseMirror so the Suggestion plugin can
+      // handle them: Enter/Tab → select item, Escape → dismiss popup,
+      // Backspace → delete query character (not merge blocks).
+      if (
+        (event.key === 'Enter' ||
+          event.key === 'Tab' ||
+          event.key === 'Escape' ||
+          event.key === 'Backspace') &&
+        !event.shiftKey &&
+        !event.ctrlKey &&
+        !event.metaKey
+      ) {
+        const popup = document.querySelector('.suggestion-popup') as HTMLElement | null
+        if (popup) {
+          const visible =
+            typeof popup.checkVisibility === 'function'
+              ? popup.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+              : popup.offsetParent !== null
+          if (visible) return // let ProseMirror / Suggestion plugin handle it
+        }
+      }
+
       handleBlockKeyDown(event, editor, {
         onFocusPrev,
         onFocusNext,

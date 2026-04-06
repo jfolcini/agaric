@@ -52,9 +52,11 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           const resolveAndInsert = async () => {
             try {
               const items = await extensionOptions.items(innerText)
-              // Look for an exact match (case-insensitive)
+              // Look for an exact match (case-insensitive) or an alias match
               const exactMatch = items.find(
-                (item) => !item.isCreate && item.label.toLowerCase() === innerText.toLowerCase(),
+                (item) =>
+                  !item.isCreate &&
+                  (item.label.toLowerCase() === innerText.toLowerCase() || item.isAlias),
               )
               if (exactMatch) {
                 editor.commands.insertBlockLink(exactMatch.id)
@@ -84,6 +86,7 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
         pluginKey: blockLinkPickerPluginKey,
         char: '[[',
         allowedPrefixes: null,
+        allowSpaces: true,
         items: ({ query }) => this.options.items(query),
         command: ({ editor, range, props }) => {
           const item = props as PickerItem

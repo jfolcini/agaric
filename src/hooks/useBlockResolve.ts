@@ -174,6 +174,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
               matches.unshift({
                 id: pageId,
                 label: `${title ?? 'Untitled'} (alias: ${q})`,
+                isAlias: true,
               })
             }
           }

@@ -1,5 +1,5 @@
 import type { MutableRefObject } from 'react'
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import { toast } from 'sonner'
 import { parse } from '../editor/markdown-serializer'
 import { pmEndOfFirstBlock } from '../editor/types'
@@ -10,7 +10,7 @@ import type { FlatBlock } from '../lib/tree-utils'
 export interface UseBlockKeyboardHandlersParams {
   focusedBlockId: string | null
   collapsedVisible: FlatBlock[]
-  rovingEditor: Pick<RovingEditorHandle, 'editor' | 'mount' | 'unmount'>
+  rovingEditor: Pick<RovingEditorHandle, 'editor' | 'mount' | 'unmount' | 'getMarkdown'>
   setFocused: (id: string | null) => void
   handleFlush: () => string | null
   remove: (id: string) => Promise<void>
@@ -209,15 +209,29 @@ export function useBlockKeyboardHandlers({
     [collapsedVisible, focusedBlockId, rovingEditor, edit, remove, setFocused, t],
   )
 
+  // Re-entrancy guard: prevents rapid Enter presses from creating duplicate blocks.
+  const enterSaveInProgress = useRef(false)
+
   const handleEnterSave = useCallback(async () => {
-    if (!focusedBlockId) return
-    handleFlush()
-    const newBlockId = await createBelow(focusedBlockId)
-    if (newBlockId) {
-      justCreatedBlockIds.current.add(newBlockId)
-      setFocused(newBlockId)
+    if (!focusedBlockId || enterSaveInProgress.current) return
+    enterSaveInProgress.current = true
+    try {
+      // Capture content before flush so we can re-mount on failure
+      const savedContent = rovingEditor.getMarkdown?.() ?? ''
+      handleFlush()
+      const newBlockId = await createBelow(focusedBlockId)
+      if (newBlockId) {
+        justCreatedBlockIds.current.add(newBlockId)
+        setFocused(newBlockId)
+      } else {
+        // createBelow returned null (e.g. backend error) — re-mount editor
+        // so the user isn't stuck with an unmounted block.
+        rovingEditor.mount(focusedBlockId, savedContent)
+      }
+    } finally {
+      enterSaveInProgress.current = false
     }
-  }, [focusedBlockId, handleFlush, createBelow, setFocused, justCreatedBlockIds])
+  }, [focusedBlockId, handleFlush, createBelow, setFocused, justCreatedBlockIds, rovingEditor])
 
   const handleEscapeCancel = useCallback(() => {
     if (!focusedBlockId) return

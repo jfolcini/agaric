@@ -16,6 +16,8 @@ export interface PickerItem {
   label: string
   /** When true, selecting this item creates a new page instead of linking to an existing one. */
   isCreate?: boolean
+  /** When true, this item was matched via page alias (not direct title). */
+  isAlias?: boolean
 }
 
 export interface SuggestionListProps {

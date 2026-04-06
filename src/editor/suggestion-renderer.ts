@@ -128,6 +128,11 @@ export function createSuggestionRenderer(label?: string) {
         popup = null
         return true
       }
+      // Tab: autocomplete with the currently highlighted item (same as Enter)
+      if (event.key === 'Tab') {
+        const syntheticEnter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+        return renderer?.ref?.onKeyDown?.({ event: syntheticEnter }) ?? false
+      }
       return renderer?.ref?.onKeyDown?.({ event }) ?? false
     },
 

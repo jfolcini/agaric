@@ -1409,6 +1409,7 @@ describe('searchPages — alias matching via resolvePageByAlias', () => {
     expect(nonCreate[0]).toEqual({
       id: 'ALIAS_PAGE_1',
       label: 'Daily Notes (alias: daily-note)',
+      isAlias: true,
     })
   })
 
@@ -1493,6 +1494,7 @@ describe('searchPages — alias matching via resolvePageByAlias', () => {
     expect(nonCreate[0]).toEqual({
       id: 'ALIAS_PAGE_3',
       label: 'Untitled (alias: mystery)',
+      isAlias: true,
     })
   })
 
