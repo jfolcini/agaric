@@ -268,14 +268,37 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
   useEffect(() => {
     if (!editor) return
 
-    const dom = editor.view.dom
-    // Attach on the parent element with capture:true so our handler fires
-    // BEFORE ProseMirror's keydown handler (which is on dom itself in the
-    // bubble phase). Without this, ProseMirror processes Enter first and
-    // inserts a paragraph before we can intercept it.
-    const container = dom.parentElement
-    if (!container) return
-    container.addEventListener('keydown', handleKeyDown, true)
-    return () => container.removeEventListener('keydown', handleKeyDown, true)
+    let listenerCleanup: (() => void) | undefined
+
+    const attach = () => {
+      listenerCleanup?.()
+      listenerCleanup = undefined
+
+      let dom: HTMLElement
+      try {
+        dom = editor.view.dom
+      } catch {
+        // EditorContent hasn't mounted yet — view.dom throws in TipTap v3
+        // when the underlying EditorView doesn't exist.  The 'mount' listener
+        // below will retry once the view is ready.
+        return
+      }
+      // Attach on the parent element with capture:true so our handler fires
+      // BEFORE ProseMirror's keydown handler (which is on dom itself in the
+      // bubble phase). Without this, ProseMirror processes Enter first and
+      // inserts a paragraph before we can intercept it.
+      const container = dom.parentElement
+      if (!container) return
+      container.addEventListener('keydown', handleKeyDown, true)
+      listenerCleanup = () => container.removeEventListener('keydown', handleKeyDown, true)
+    }
+
+    attach()
+    editor.on('mount', attach)
+
+    return () => {
+      editor.off('mount', attach)
+      listenerCleanup?.()
+    }
   }, [editor, handleKeyDown])
 }
