@@ -40,7 +40,6 @@ export function useSyncTrigger() {
       const peers = await listPeerRefs()
       if (peers.length === 0) {
         setState('idle')
-        toast('No paired devices — use Device Management to pair.')
         return
       }
       for (const peer of peers) {

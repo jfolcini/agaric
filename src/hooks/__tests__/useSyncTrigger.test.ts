@@ -105,7 +105,7 @@ describe('useSyncTrigger', () => {
     expect(mockStartSync).toHaveBeenCalledWith('PEER1')
   })
 
-  it('handles empty peer list with toast feedback and resets state', async () => {
+  it('silently skips sync when peer list is empty', async () => {
     mockListPeerRefs.mockResolvedValue([])
 
     const { result } = renderHook(() => useSyncTrigger())
@@ -115,7 +115,7 @@ describe('useSyncTrigger', () => {
     })
 
     expect(mockStartSync).not.toHaveBeenCalled()
-    expect(toast).toHaveBeenCalledWith('No paired devices — use Device Management to pair.')
+    expect(toast).not.toHaveBeenCalled()
     expect(useSyncStore.getState().state).toBe('idle')
   })
 

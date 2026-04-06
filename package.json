@@ -17,7 +17,8 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "android:dev": "cargo tauri android dev",
-    "android:build": "cargo tauri android build"
+    "android:build": "cargo tauri android build",
+    "tauri:build": "cargo tauri build && [ \"$(uname)\" = Linux ] && bash scripts/fix-appimage-icons.sh || true"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
