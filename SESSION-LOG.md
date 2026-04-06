@@ -1,24 +1,30 @@
 # Session Log
 
-## Session 236 — 2026-04-06 — Fix B-1 DuePanel in PageEditor, B-2 auto-block race, REVIEW-LATER updates
+## Session 236 — 2026-04-06 — Fix B-1/B-2, F-16 sticky headers, REVIEW-LATER updates
 
 ### Summary
-Fixed two bugs (B-1, B-2) and added 4 items to REVIEW-LATER.md (F-15, F-16, B-1, B-2). **B-1:** PageEditor now renders DuePanel/DonePanel on date-formatted pages — previously these only appeared in DaySection's daily mode and disappeared when opening a date page via "Open in editor" or page browser. Added `isDateFormattedPage()` utility. **B-2:** Fixed race condition where auto-block creation fired before `load()` completed, by initializing PageBlockStore with `loading: true`. Also updated F-16 scope (sticky headers for all views), added jsdom stubs for scrollIntoView/getClientRects/getBoundingClientRect. 8 files changed, 4441 tests pass (5 new).
+Fixed two bugs (B-1, B-2), implemented F-16 (sticky headers across all views), and updated REVIEW-LATER. **B-1:** PageEditor now renders DuePanel/DonePanel on date-formatted pages. **B-2:** Fixed race condition by initializing PageBlockStore with `loading: true`. **F-16:** Added `sticky top-0 z-10 bg-background` to 6 views (SearchPanel, PageBrowser, PageHeader, HistoryView, ConflictList, AgendaView). Resolved F-16/B-1/B-2 from REVIEW-LATER (2 items remain). All 4441 tests pass.
 
 ### Changes
 
 | Area | Change |
 |------|--------|
 | date-utils.ts | Added `isDateFormattedPage(title)` — regex check for YYYY-MM-DD format |
-| PageEditor.tsx | Conditionally renders DuePanel + DonePanel between BlockTree and LinkedReferences when title is date-formatted |
-| PageEditor.test.tsx | 3 new tests: date page shows panels, non-date page doesn't, partial date doesn't. Added DuePanel/DonePanel mocks |
-| date-utils.test.ts | 2 new tests for `isDateFormattedPage` (valid dates + rejection cases) |
-| page-blocks.ts | Changed `loading: false` → `loading: true` in store factory initial state (B-2 fix) |
-| BlockTree.test.tsx | Updated race condition comment to reference B-2 fix |
-| test-setup.ts | Added jsdom stubs: Element.scrollIntoView, Element/Range.getClientRects, Range.getBoundingClientRect |
-| REVIEW-LATER.md | Added F-15 (tag inheritance), F-16 (sticky headers — all views), B-1 (DuePanel missing), B-2 (auto-block race). Updated summary to 5 open items |
+| PageEditor.tsx | Conditionally renders DuePanel + DonePanel when title is date-formatted |
+| PageEditor.test.tsx | 3 new tests for date page panel rendering. Added DuePanel/DonePanel mocks |
+| date-utils.test.ts | 2 new tests for `isDateFormattedPage` |
+| page-blocks.ts | Changed `loading: false` → `loading: true` in store factory (B-2 fix) |
+| BlockTree.test.tsx | Updated race condition comment |
+| test-setup.ts | Added jsdom stubs: scrollIntoView, getClientRects, getBoundingClientRect |
+| SearchPanel.tsx | Sticky header on search form |
+| PageBrowser.tsx | Sticky header wrapping create-page form + filter input |
+| PageHeader.tsx | Sticky header on title/tags/properties bar |
+| HistoryView.tsx | Sticky header on filter bar + selection toolbar |
+| ConflictList.tsx | Sticky header on help text + refresh + batch toolbar |
+| AgendaView.tsx | Sticky header on filter builder + sort/group controls |
+| REVIEW-LATER.md | Added F-15/F-16/B-1/B-2. Resolved F-16/B-1/B-2. Now 2 open items (F-14, F-15) |
 
-**Commits:** 27b5c5a (docs), d72e4ed (fixes)
+**Commits:** 27b5c5a (docs), d72e4ed (B-1/B-2 fixes), 8e1149a (log), f4c685b (F-16 sticky headers)
 
 ## Session 235 — 2026-04-06 — Tag filters accept names instead of ULIDs
 
