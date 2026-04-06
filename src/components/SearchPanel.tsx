@@ -173,7 +173,7 @@ export function SearchPanel(): React.ReactElement {
       <form
         onSubmit={handleSubmit}
         role="search"
-        className="sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-4 flex flex-col sm:flex-row sm:items-center gap-2"
+        className="sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-4 border-b border-border/40 flex flex-col sm:flex-row sm:items-center gap-2"
       >
         <Input
           value={query}

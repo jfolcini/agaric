@@ -318,7 +318,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   )
 
   return (
-    <div className="page-header sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-4 space-y-2">
+    <div className="page-header sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-4 border-b border-border/40 space-y-2">
       {/* Title row */}
       <div className="flex items-center gap-2">
         {onBack && (
