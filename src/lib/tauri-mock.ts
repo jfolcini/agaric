@@ -1454,6 +1454,52 @@ export function setupMock(): void {
         }
       }
 
+      // -----------------------------------------------------------------------
+      // Attachment commands (F-7)
+      // -----------------------------------------------------------------------
+
+      case 'list_attachments':
+        return []
+
+      case 'add_attachment': {
+        const a = args as Record<string, unknown>
+        return {
+          id: fakeId(),
+          block_id: a.blockId as string,
+          filename: a.filename as string,
+          mime_type: a.mimeType as string,
+          size_bytes: a.sizeBytes as number,
+          fs_path: a.fsPath as string,
+          created_at: new Date().toISOString(),
+        }
+      }
+
+      case 'delete_attachment':
+        return null
+
+      // -----------------------------------------------------------------------
+      // Projected agenda (repeating tasks)
+      // -----------------------------------------------------------------------
+
+      case 'list_projected_agenda':
+        return []
+
+      // -----------------------------------------------------------------------
+      // Draft autosave (F-17)
+      // -----------------------------------------------------------------------
+
+      case 'save_draft':
+      case 'flush_draft':
+      case 'delete_draft':
+        return null
+
+      // -----------------------------------------------------------------------
+      // Peer address
+      // -----------------------------------------------------------------------
+
+      case 'set_peer_address':
+        return null
+
       default:
         return null
     }
