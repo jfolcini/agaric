@@ -1,5 +1,27 @@
 # Session Log
 
+## Session 235 — 2026-04-06 — Tag filters accept names instead of ULIDs
+
+### Summary
+Tag filters now accept tag **names** instead of raw ULIDs, with a new searchable autocomplete component. Created `TagValuePicker` (ARIA combobox with keyboard navigation, usage counts, ScrollArea dropdown). BacklinkFilterBuilder: removed Plus icon from "Add filter" button, removed ULID validation for has-tag. AgendaFilterBuilder: swapped TextValuePicker for TagValuePicker on tag dimension. `queryTag()` in agenda-filters.ts now resolves tag names to IDs via `listTagsByPrefix()` + exact case-insensitive match. 10 files changed, 4436 tests pass (19 new TagValuePicker tests + 1 new AgendaFilterBuilder tag flow test).
+
+### Changes
+
+| Area | Change |
+|------|--------|
+| TagValuePicker.tsx | NEW — searchable tag autocomplete: ARIA combobox, keyboard nav (ArrowUp/Down/Enter/Escape), usage counts, div-based listbox/options with tabIndex, ScrollArea, cn() |
+| TagValuePicker.test.tsx | NEW — 19 tests: render, search, selection, keyboard nav, escape, clear, error handling, usage counts, a11y (axe + aria-expanded + aria-controls) |
+| AgendaFilterBuilder.tsx | Replaced TextValuePicker with TagValuePicker for tag dimension |
+| AgendaFilterBuilder.test.tsx | Updated comment "text input" → "searchable tag autocomplete", added combobox assertion, added full tag search/select/apply flow test (38 tests total, was 37) |
+| BacklinkFilterBuilder.tsx | Removed Plus icon import, removed ULID validation in handleApply (now just checks empty), removed `tags` from useCallback deps |
+| BacklinkFilterBuilder.test.tsx | Removed ULID validation test block, updated structural duplicate test to use dropdown, added empty-tag-selection validation test |
+| agenda-filters.ts | `queryTag()` resolves tag names to IDs via `listTagsByPrefix()` + exact case-insensitive match, added import |
+| agenda-filters.test.ts | Updated 3 tag filter tests to mock `list_tags_by_prefix` command, tests verify name-to-ID resolution flow |
+| i18n.ts | Removed `backlink.invalidUlidFormat`, `backlink.tagIdPlaceholder`, `backlink.tagIdLabel`; renamed `backlink.tagIdRequired` → `backlink.tagRequired`; updated `agendaFilter.tagPlaceholder`; added `agendaFilter.tagSearchResults` |
+| SESSION-LOG.md | This entry |
+
+**Commit:** 7398777
+
 ## Session 234 — 2026-04-06 — Indent/dedent shortcut change (Tab → Ctrl+Shift+Arrow)
 
 ### Summary
