@@ -1,5 +1,44 @@
 # Session Log
 
+## Session 233 — 2026-04-06 — Ref-type property picker
+
+### Summary
+Enabled ref-type properties (page-to-page links via the property system). Previously ref properties were filtered out of add menus and had no UI for selection. Now: (1) ref definitions appear in add-property popovers in both PagePropertyTable and BlockPropertyDrawer, (2) PropertyRowEditor renders a page picker Popover with search/filter for ref-type properties, (3) BlockPropertyDrawer delegates to PropertyRowEditor for ref rows, (4) `buildInitParams` initializes ref with `valueRef: null` instead of returning null. Added error toast on page list load failure, 8 new ref picker tests in PropertyRowEditor, 2 ref display tests in BlockPropertyDrawer, 2 ref add/init tests in PagePropertyTable. Fixed missing `blockId` prop in all 21 existing PropertyRowEditor tests. 10 files changed, 128 tests in affected files pass (4414 total).
+
+### Changes
+
+| Area | Change |
+|------|--------|
+| PropertyRowEditor.tsx | Added ref picker: Popover with page search, ScrollArea page list, `handleSelectRefPage` calls `setProperty`, `handleOpenRefPicker` loads 500 pages via `listBlocks`, error toast on failure. Uses `resolveTitle` for display. |
+| BlockPropertyDrawer.tsx | For ref-type properties, delegates rendering to `PropertyRowEditor` instead of simple `PropertyRow`. Added `reloadProperties` callback for post-save refresh. Removed ref filter from `availableDefs`. |
+| PagePropertyTable.tsx | Removed `d.value_type !== 'ref'` filter from `availableDefs` so ref definitions appear in add menu. |
+| property-save-utils.ts | `buildInitParams` ref case now returns `{ blockId, key, valueRef: null }` instead of `null`. |
+| PropertyRowEditor.test.tsx | Added `blockId="BLOCK_1"` to all 21 existing renders. Added 8 new ref picker tests: button rendering, resolved title display, page loading, search filtering, page selection + save, no-matches empty state, error toast, a11y audit. |
+| BlockPropertyDrawer.test.tsx | 2 new tests: ref picker button rendering (verifies PropertyRowEditor delegation), resolved page title display. |
+| PagePropertyTable.test.tsx | Updated ref filter test (now expects ref in menu). Added ref init test (valueRef: null on add). |
+| property-save-utils.test.ts | Updated buildInitParams ref test: expects `{ valueRef: null }` params instead of `null`. |
+| i18n.ts | Added `pageProperty.loadPagesFailed` key. |
+
+## Session 232 — 2026-04-06 — Property add/delete bugfix
+
+### Summary
+Fixed three property management bugs: (1) adding non-text properties via "Add property" popover failed silently because initialization always sent `valueText: ''` regardless of type, (2) delete buttons appeared on system-managed builtin properties that the backend rejects, (3) builtin and ref-type properties appeared in add-property menus despite not being user-addable. Created shared `buildInitParams()` and `NON_DELETABLE_PROPERTIES` in `property-save-utils.ts` used by both PagePropertyTable and BlockPropertyDrawer. Removed `effort`/`assignee`/`location` from backend's `is_builtin_property_key()` — these are user-settable and must be deletable. 8 files changed, 14 new tests (4403 frontend, 1601 Rust).
+
+### Changes
+
+**Commit:** 6e4fe40
+
+| Area | Change |
+|------|--------|
+| property-save-utils.ts | Added `NON_DELETABLE_PROPERTIES` set (11 keys matching backend's `is_builtin_property_key()`) and `buildInitParams(blockId, def)` — returns type-appropriate init params (number→0, date→today, text/select→'', ref→null). |
+| property-save-utils.test.ts | 8 new tests — NON_DELETABLE_PROPERTIES membership (includes 11 builtin keys, excludes effort/assignee/location), buildInitParams for all 6 value types. |
+| PagePropertyTable.tsx | `handleAddFromDef` uses `buildInitParams()`. `availableDefs` filters out `NON_DELETABLE_PROPERTIES` and ref types. Delete button hidden for non-deletable properties. |
+| PagePropertyTable.test.tsx | 5 new/modified tests — delete button visibility for builtins, number init with valueNum:0, date init with today, task-only + non-deletable filtering, ref-type filtering. |
+| BlockPropertyDrawer.tsx | Same pattern as PagePropertyTable — uses shared `buildInitParams()`, `NON_DELETABLE_PROPERTIES` for filtering and delete visibility. Removed old `BUILTIN_PROPERTY_KEYS`. |
+| PropertyRowEditor.tsx | No functional change — receives conditional `onDelete` from parents. |
+| op.rs | Removed `effort`/`assignee`/`location` from `is_builtin_property_key()`. Added `user_settable_properties_are_not_builtin` test. Updated docstring. |
+| commands.rs | Fixed `delete_property_rejects_builtin_key` test to use `created_at` (date type) instead of `effort` (no longer builtin). Added second assertion: deleting `effort` succeeds. |
+
 ## Session 231 — 2026-04-06 — Batch 83: R-20/T-1/T-2
 
 ### Summary

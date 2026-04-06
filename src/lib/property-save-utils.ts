@@ -34,8 +34,9 @@ export const NON_DELETABLE_PROPERTIES = new Set([
 
 /**
  * Build the type-appropriate `setProperty` params for initializing a
- * newly-added property.  Returns `null` for types that cannot be
- * meaningfully initialized (e.g. `ref` needs a page picker).
+ * newly-added property.  Ref properties are initialized with a null
+ * ref — the UI shows the page picker immediately so the user can
+ * select a target.
  */
 export function buildInitParams(
   blockId: string,
@@ -49,8 +50,9 @@ export function buildInitParams(
     case 'text':
     case 'select':
       return { blockId, key: def.key, valueText: '' }
+    case 'ref':
+      return { blockId, key: def.key, valueRef: null }
     default:
-      // ref and unknown types — cannot create a meaningful initial value
       return null
   }
 }

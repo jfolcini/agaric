@@ -1,15 +1,16 @@
 /**
  * PropertyRowEditor — renders a single property row with typed input.
  *
- * Supports text, number, date, and select value types with inline editing.
+ * Supports text, number, date, select, and ref value types with inline editing.
  * For select properties, includes a popover to manage the set of allowed
- * options (add / remove / save).
+ * options (add / remove / save). For ref properties, includes a page picker
+ * popover to search and select a linked page.
  *
  * Extracted from PagePropertyTable for reuse.
  */
 
 import { Pencil, Plus, X } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -25,28 +26,36 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { formatPropertyName } from '@/lib/property-utils'
-import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
-import { updatePropertyDefOptions } from '../lib/tauri'
+import type { BlockRow, PropertyDefinition, PropertyRow } from '../lib/tauri'
+import { listBlocks, setProperty, updatePropertyDefOptions } from '../lib/tauri'
+import { useResolveStore } from '../stores/resolve'
 
 export interface PropertyRowEditorProps {
+  blockId: string
   prop: PropertyRow
   def: PropertyDefinition | undefined
   onSave: (rawValue: string) => void
   onDelete?: (() => void) | undefined
   onDefUpdated?: (updatedDef: PropertyDefinition) => void
+  /** Called after a ref property value is saved (page selected via picker). */
+  onRefSaved?: () => void
 }
 
 export function PropertyRowEditor({
+  blockId,
   prop,
   def,
   onSave,
   onDelete,
   onDefUpdated,
+  onRefSaved,
 }: PropertyRowEditorProps) {
   const { t } = useTranslation()
   const valueType = def?.value_type ?? 'text'
+  const resolveTitle = useResolveStore((s) => s.resolveTitle)
 
   const currentValue = (() => {
+    if (prop.value_ref != null) return prop.value_ref
     if (prop.value_text != null) return prop.value_text
     if (prop.value_num != null) return String(prop.value_num)
     if (prop.value_date != null) return prop.value_date
@@ -118,13 +127,100 @@ export function PropertyRowEditor({
     }
   }, [def, editingOptions, onDefUpdated, t])
 
+  // --- Ref picker popover state ---
+  const [refPickerOpen, setRefPickerOpen] = useState(false)
+  const [refPages, setRefPages] = useState<BlockRow[]>([])
+  const [refSearch, setRefSearch] = useState('')
+
+  const handleOpenRefPicker = useCallback(() => {
+    setRefSearch('')
+    setRefPickerOpen(true)
+    listBlocks({ blockType: 'page', limit: 500 })
+      .then((res) => setRefPages(res.items))
+      .catch(() => {
+        toast.error(t('pageProperty.loadPagesFailed'))
+        setRefPages([])
+      })
+  }, [t])
+
+  const filteredRefPages = useMemo(() => {
+    if (!refSearch) return refPages
+    const q = refSearch.toLowerCase()
+    return refPages.filter((p) => (p.content || '').toLowerCase().includes(q))
+  }, [refPages, refSearch])
+
+  const handleSelectRefPage = useCallback(
+    async (page: BlockRow) => {
+      try {
+        await setProperty({ blockId, key: prop.key, valueRef: page.id })
+        onRefSaved?.()
+      } catch {
+        toast.error(t('pageProperty.saveFailed'))
+      }
+      setRefPickerOpen(false)
+    },
+    [blockId, prop.key, onRefSaved, t],
+  )
+
+  const refDisplayTitle =
+    valueType === 'ref' && prop.value_ref ? resolveTitle(prop.value_ref) : null
+
   return (
     <div className="property-row flex items-center gap-2 text-sm">
       <Badge variant="outline" className="shrink-0 font-mono text-xs">
         {formatPropertyName(prop.key)}
       </Badge>
       <div className="flex-1">
-        {valueType === 'select' ? (
+        {valueType === 'ref' ? (
+          <Popover open={refPickerOpen} onOpenChange={setRefPickerOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 w-full justify-start text-xs font-normal"
+                onClick={handleOpenRefPicker}
+                aria-label={t('pageProperty.valueLabel', { key: prop.key })}
+              >
+                {refDisplayTitle || (
+                  <span className="text-muted-foreground">{t('block.searchPages')}</span>
+                )}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              className="w-56 space-y-1 p-2 max-w-[calc(100vw-2rem)]"
+              aria-label={t('block.refPickerLabel')}
+            >
+              <Input
+                className="h-7 text-xs"
+                placeholder={t('block.searchPages')}
+                value={refSearch}
+                onChange={(e) => setRefSearch(e.target.value)}
+                aria-label={t('block.searchPages')}
+                autoFocus
+              />
+              <ScrollArea className="max-h-48">
+                <div className="flex flex-col gap-0.5">
+                  {filteredRefPages.length === 0 ? (
+                    <div className="px-2 py-1 text-xs text-muted-foreground">
+                      {t('block.noPagesFound')}
+                    </div>
+                  ) : (
+                    filteredRefPages.map((page) => (
+                      <button
+                        key={page.id}
+                        type="button"
+                        className="rounded px-2 py-1 text-left text-xs transition-colors hover:bg-accent truncate"
+                        onClick={() => handleSelectRefPage(page)}
+                      >
+                        {page.content || t('block.untitled')}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </ScrollArea>
+            </PopoverContent>
+          </Popover>
+        ) : valueType === 'select' ? (
           <Select value={localValue || '__none__'} onValueChange={handleSelectChange}>
             <SelectTrigger
               className="w-full"

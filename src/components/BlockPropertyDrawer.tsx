@@ -39,6 +39,7 @@ import {
 import { usePageBlockStore, usePageBlockStoreApi } from '../stores/page-blocks'
 import { AddPropertyPopover } from './AddPropertyPopover'
 import { BuiltinDateFields } from './BuiltinDateFields'
+import { PropertyRowEditor } from './PropertyRowEditor'
 
 export interface BlockPropertyDrawerProps {
   blockId: string | null
@@ -122,6 +123,17 @@ export function BlockPropertyDrawer({
     [definitions],
   )
 
+  // Reload properties after ref picker saves a value
+  const reloadProperties = useCallback(async () => {
+    if (!blockId) return
+    try {
+      const props = await getProperties(blockId)
+      setProperties(Array.isArray(props) ? props : [])
+    } catch {
+      /* best-effort reload */
+    }
+  }, [blockId])
+
   // Clear a built-in date field (due_date or scheduled_date)
   const handleClearBuiltinDate = useCallback(
     async (field: 'due_date' | 'scheduled_date') => {
@@ -184,12 +196,10 @@ export function BlockPropertyDrawer({
   )
 
   // Definitions available for the add-property popover:
-  // exclude already-set keys, system-managed builtin keys, and ref type
-  // (needs a page picker, cannot be initialized with an empty value).
+  // exclude already-set keys and system-managed builtin keys.
   const existingKeys = new Set(properties.map((p) => p.key))
   const availableDefs = definitions.filter(
-    (d) =>
-      !existingKeys.has(d.key) && !NON_DELETABLE_PROPERTIES.has(d.key) && d.value_type !== 'ref',
+    (d) => !existingKeys.has(d.key) && !NON_DELETABLE_PROPERTIES.has(d.key),
   )
 
   return (
@@ -217,6 +227,26 @@ export function BlockPropertyDrawer({
               <p className="text-sm text-muted-foreground">{t('property.noProperties')}</p>
             ) : (
               properties.map((prop) => {
+                const propType = getType(prop.key)
+                // Use PropertyRowEditor for ref-type properties (includes page picker)
+                if (propType === 'ref' && blockId) {
+                  const def = definitions.find((d) => d.key === prop.key)
+                  return (
+                    <PropertyRowEditor
+                      key={prop.key}
+                      blockId={blockId}
+                      prop={prop}
+                      def={def}
+                      onSave={(v) => handleSave(prop.key, v, propType)}
+                      onDelete={
+                        !NON_DELETABLE_PROPERTIES.has(prop.key)
+                          ? () => handleDelete(prop.key)
+                          : undefined
+                      }
+                      onRefSaved={reloadProperties}
+                    />
+                  )
+                }
                 const Icon = BUILTIN_PROPERTY_ICONS[prop.key]
                 const label = Icon ? formatPropertyName(prop.key) : prop.key
                 return (

@@ -117,6 +117,7 @@ describe('PropertyRowEditor rendering', () => {
   it('renders formatted property label in badge', () => {
     render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('my_field', { value_text: 'hello' })}
         def={makeDef('my_field', 'text')}
         onSave={vi.fn()}
@@ -130,6 +131,7 @@ describe('PropertyRowEditor rendering', () => {
   it('renders text input with correct value', () => {
     render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('author', { value_text: 'Alice' })}
         def={makeDef('author', 'text')}
         onSave={vi.fn()}
@@ -145,6 +147,7 @@ describe('PropertyRowEditor rendering', () => {
   it('renders number input with type="number"', () => {
     render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('priority', { value_num: 42 })}
         def={makeDef('priority', 'number')}
         onSave={vi.fn()}
@@ -160,6 +163,7 @@ describe('PropertyRowEditor rendering', () => {
   it('renders date input with type="date"', () => {
     render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('due', { value_date: '2026-06-15' })}
         def={makeDef('due', 'date')}
         onSave={vi.fn()}
@@ -175,6 +179,7 @@ describe('PropertyRowEditor rendering', () => {
   it('renders select dropdown with options', () => {
     render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('stage', { value_text: 'DOING' })}
         def={makeDef('stage', 'select', '["TODO","DOING","DONE"]')}
         onSave={vi.fn()}
@@ -194,6 +199,7 @@ describe('PropertyRowEditor rendering', () => {
   it('defaults to text when no definition is provided', () => {
     render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('unknown', { value_text: 'val' })}
         def={undefined}
         onSave={vi.fn()}
@@ -209,6 +215,7 @@ describe('PropertyRowEditor rendering', () => {
   it('renders empty string when prop has no value fields', () => {
     render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('empty')}
         def={makeDef('empty', 'text')}
         onSave={vi.fn()}
@@ -227,6 +234,7 @@ describe('PropertyRowEditor editing', () => {
     const onSave = vi.fn()
     render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('author', { value_text: '' })}
         def={makeDef('author', 'text')}
         onSave={onSave}
@@ -247,6 +255,7 @@ describe('PropertyRowEditor editing', () => {
     const onSave = vi.fn()
     render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('author', { value_text: 'Alice' })}
         def={makeDef('author', 'text')}
         onSave={onSave}
@@ -266,6 +275,7 @@ describe('PropertyRowEditor editing', () => {
     const onSave = vi.fn()
     render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('stage', { value_text: 'TODO' })}
         def={makeDef('stage', 'select', '["TODO","DOING","DONE"]')}
         onSave={onSave}
@@ -284,6 +294,7 @@ describe('PropertyRowEditor editing', () => {
     const onSave = vi.fn()
     render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('stage', { value_text: 'TODO' })}
         def={makeDef('stage', 'select', '["TODO","DOING"]')}
         onSave={onSave}
@@ -302,6 +313,7 @@ describe('PropertyRowEditor editing', () => {
     const onDelete = vi.fn()
     render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('author', { value_text: 'Alice' })}
         def={makeDef('author', 'text')}
         onSave={vi.fn()}
@@ -320,6 +332,7 @@ describe('PropertyRowEditor select options editing', () => {
   it('shows edit options button for select properties', () => {
     render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('stage', { value_text: 'TODO' })}
         def={makeDef('stage', 'select', '["TODO","DOING"]')}
         onSave={vi.fn()}
@@ -333,6 +346,7 @@ describe('PropertyRowEditor select options editing', () => {
   it('does not show edit options button for non-select properties', () => {
     render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('author', { value_text: 'Alice' })}
         def={makeDef('author', 'text')}
         onSave={vi.fn()}
@@ -347,6 +361,7 @@ describe('PropertyRowEditor select options editing', () => {
     const user = userEvent.setup()
     render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('stage', { value_text: 'TODO' })}
         def={makeDef('stage', 'select', '["TODO","DOING","DONE"]')}
         onSave={vi.fn()}
@@ -376,6 +391,7 @@ describe('PropertyRowEditor select options editing', () => {
 
     render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('stage', { value_text: 'TODO' })}
         def={makeDef('stage', 'select', '["TODO","DOING"]')}
         onSave={vi.fn()}
@@ -414,6 +430,7 @@ describe('PropertyRowEditor select options editing', () => {
 
     render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('stage', { value_text: 'TODO' })}
         def={makeDef('stage', 'select', '["TODO","DOING","DONE"]')}
         onSave={vi.fn()}
@@ -446,6 +463,7 @@ describe('PropertyRowEditor select options editing', () => {
 
     render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('stage', { value_text: 'TODO' })}
         def={makeDef('stage', 'select', '["TODO","DOING"]')}
         onSave={vi.fn()}
@@ -470,6 +488,7 @@ describe('PropertyRowEditor select options editing', () => {
     const user = userEvent.setup()
     render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('stage', { value_text: 'TODO' })}
         def={makeDef('stage', 'select', '["TODO"]')}
         onSave={vi.fn()}
@@ -497,6 +516,7 @@ describe('PropertyRowEditor accessibility', () => {
   it('text property has no a11y violations', async () => {
     const { container } = render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('author', { value_text: 'Alice' })}
         def={makeDef('author', 'text')}
         onSave={vi.fn()}
@@ -511,10 +531,234 @@ describe('PropertyRowEditor accessibility', () => {
   it('select property has no a11y violations', async () => {
     const { container } = render(
       <PropertyRowEditor
+        blockId="BLOCK_1"
         prop={makeProp('stage', { value_text: 'TODO' })}
         def={makeDef('stage', 'select', '["TODO","DOING","DONE"]')}
         onSave={vi.fn()}
         onDelete={vi.fn()}
+      />,
+    )
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})
+
+describe('PropertyRowEditor ref picker', () => {
+  it('renders page picker button for ref-type properties', () => {
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('linked_page', { value_ref: null })}
+        def={makeDef('linked_page', 'ref')}
+        onSave={vi.fn()}
+      />,
+    )
+
+    // Should render a button (not an input) for ref properties
+    const btn = screen.getByLabelText('linked_page value')
+    expect(btn.tagName).toBe('BUTTON')
+    // Should show placeholder text
+    expect(btn).toHaveTextContent('Search pages...')
+  })
+
+  it('displays resolved page title when value_ref is set', async () => {
+    const { useResolveStore } = await import('../../stores/resolve')
+    useResolveStore.setState({
+      cache: new Map([['TARGET_PAGE', { title: 'My Target', deleted: false }]]),
+      version: 1,
+    })
+
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('linked_page', { value_ref: 'TARGET_PAGE' })}
+        def={makeDef('linked_page', 'ref')}
+        onSave={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('My Target')).toBeInTheDocument()
+  })
+
+  it('loads pages when picker is opened', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks')
+        return {
+          items: [
+            { id: 'P1', content: 'Page One', block_type: 'page' },
+            { id: 'P2', content: 'Page Two', block_type: 'page' },
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
+      return null
+    })
+
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('linked_page', { value_ref: null })}
+        def={makeDef('linked_page', 'ref')}
+        onSave={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByLabelText('linked_page value'))
+
+    await waitFor(() => {
+      expect(screen.getByText('Page One')).toBeInTheDocument()
+      expect(screen.getByText('Page Two')).toBeInTheDocument()
+    })
+  })
+
+  it('filters pages by search text', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks')
+        return {
+          items: [
+            { id: 'P1', content: 'Alpha Page', block_type: 'page' },
+            { id: 'P2', content: 'Beta Page', block_type: 'page' },
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
+      return null
+    })
+
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('linked_page', { value_ref: null })}
+        def={makeDef('linked_page', 'ref')}
+        onSave={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByLabelText('linked_page value'))
+
+    await waitFor(() => {
+      expect(screen.getByText('Alpha Page')).toBeInTheDocument()
+    })
+
+    const searchInput = screen.getByLabelText('Search pages...')
+    await user.type(searchInput, 'Beta')
+
+    await waitFor(() => {
+      expect(screen.queryByText('Alpha Page')).not.toBeInTheDocument()
+      expect(screen.getByText('Beta Page')).toBeInTheDocument()
+    })
+  })
+
+  it('saves selected page via setProperty', async () => {
+    const user = userEvent.setup()
+    const onRefSaved = vi.fn()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks')
+        return {
+          items: [{ id: 'P1', content: 'Target Page', block_type: 'page' }],
+          next_cursor: null,
+          has_more: false,
+        }
+      if (cmd === 'set_property') return undefined
+      return null
+    })
+
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('linked_page', { value_ref: null })}
+        def={makeDef('linked_page', 'ref')}
+        onSave={vi.fn()}
+        onRefSaved={onRefSaved}
+      />,
+    )
+
+    await user.click(screen.getByLabelText('linked_page value'))
+
+    await waitFor(() => {
+      expect(screen.getByText('Target Page')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByText('Target Page'))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'BLOCK_1',
+        key: 'linked_page',
+        valueRef: 'P1',
+        valueText: null,
+        valueNum: null,
+        valueDate: null,
+      })
+    })
+    expect(onRefSaved).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows "No pages found" when search has no matches', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks')
+        return {
+          items: [{ id: 'P1', content: 'Only Page', block_type: 'page' }],
+          next_cursor: null,
+          has_more: false,
+        }
+      return null
+    })
+
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('linked_page', { value_ref: null })}
+        def={makeDef('linked_page', 'ref')}
+        onSave={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByLabelText('linked_page value'))
+
+    await waitFor(() => {
+      expect(screen.getByText('Only Page')).toBeInTheDocument()
+    })
+
+    const searchInput = screen.getByLabelText('Search pages...')
+    await user.type(searchInput, 'zzz_nonexistent')
+
+    await waitFor(() => {
+      expect(screen.getByText('No pages found')).toBeInTheDocument()
+    })
+  })
+
+  it('shows error toast when page list fails to load', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockRejectedValue(new Error('backend error'))
+
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('linked_page', { value_ref: null })}
+        def={makeDef('linked_page', 'ref')}
+        onSave={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByLabelText('linked_page value'))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to load pages')
+    })
+  })
+
+  it('ref property has no a11y violations', async () => {
+    const { container } = render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('linked_page', { value_ref: null })}
+        def={makeDef('linked_page', 'ref')}
+        onSave={vi.fn()}
       />,
     )
 

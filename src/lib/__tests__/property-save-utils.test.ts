@@ -161,9 +161,9 @@ describe('buildInitParams', () => {
     expect(result).toEqual({ blockId: 'B1', key: 'due', valueDate: today })
   })
 
-  it('returns null for ref type', () => {
+  it('returns valueRef null for ref type', () => {
     const result = buildInitParams('B1', makeDef('parent', 'ref'))
-    expect(result).toBeNull()
+    expect(result).toEqual({ blockId: 'B1', key: 'parent', valueRef: null })
   })
 
   it('returns null for unknown types', () => {

@@ -772,6 +772,7 @@ const resources = {
       'pageProperty.addOptionLabel': 'Add option',
       'pageProperty.saveOptionsButton': 'Save options',
       'pageProperty.deletePropertyLabel': 'Delete property {{key}}',
+      'pageProperty.loadPagesFailed': 'Failed to load pages',
 
       // Source page filter
       'sourceFilter.filterLabel': 'Filter by source page',

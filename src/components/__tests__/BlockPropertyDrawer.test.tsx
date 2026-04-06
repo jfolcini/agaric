@@ -535,6 +535,44 @@ describe('BlockPropertyDrawer', () => {
     const svg = badge.querySelector('svg')
     expect(svg).not.toBeInTheDocument()
   })
+
+  // ── Ref-type property rendering ───────────────────────────────────────
+
+  it('renders ref-type property with page picker button instead of text input', async () => {
+    const props = [makeProp('linked_page', { value_ref: null })]
+    setupMock(props, [makeDef('linked_page', 'ref')])
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    // PropertyRowEditor formats the key: linked_page → "Linked Page"
+    await waitFor(() => {
+      expect(screen.getByText('Linked Page')).toBeInTheDocument()
+    })
+
+    // Should render a page picker button (from PropertyRowEditor) instead of a plain input
+    const pickerBtn = screen.getByLabelText('linked_page value')
+    expect(pickerBtn.tagName).toBe('BUTTON')
+    // Should not have a plain text input for this property
+    expect(screen.queryByRole('textbox', { name: 'linked_page value' })).not.toBeInTheDocument()
+  })
+
+  it('renders ref-type property with resolved page title', async () => {
+    // Pre-populate resolve cache so the title is available
+    const { useResolveStore } = await import('../../stores/resolve')
+    useResolveStore.setState({
+      cache: new Map([['TARGET_PAGE', { title: 'My Target Page', deleted: false }]]),
+      version: 1,
+    })
+
+    const props = [makeProp('linked_page', { value_ref: 'TARGET_PAGE' })]
+    setupMock(props, [makeDef('linked_page', 'ref')])
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('My Target Page')).toBeInTheDocument()
+    })
+  })
 })
 
 // ── PropertyRow unit tests ──────────────────────────────────────────────

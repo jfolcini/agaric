@@ -153,14 +153,12 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   )
 
   // Definitions available for the add-property popover:
-  // exclude already-set keys, task-only properties, ref type (needs page picker),
-  // and system-managed builtin keys.
+  // exclude already-set keys, task-only properties, and system-managed builtin keys.
   const availableDefs = definitions.filter(
     (d) =>
       !properties.some((p) => p.key === d.key) &&
       !TASK_ONLY_PROPERTIES.has(d.key) &&
-      !NON_DELETABLE_PROPERTIES.has(d.key) &&
-      d.value_type !== 'ref',
+      !NON_DELETABLE_PROPERTIES.has(d.key),
   )
 
   const propertyCount = properties.length
@@ -195,6 +193,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
               return (
                 <PropertyRowEditor
                   key={prop.key}
+                  blockId={pageId}
                   prop={prop}
                   def={def}
                   onSave={(rawValue) => doSaveProperty(prop.key, def, rawValue)}
@@ -203,6 +202,10 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
                     setDefinitions((prev) =>
                       prev.map((d) => (d.key === updatedDef.key ? updatedDef : d)),
                     )
+                  }}
+                  onRefSaved={async () => {
+                    const updated = await getProperties(pageId)
+                    setProperties(updated)
                   }}
                 />
               )

@@ -968,7 +968,7 @@ describe('PagePropertyTable task-only property filtering', () => {
     expect(screen.getByText('Custom Prop')).toBeInTheDocument()
   })
 
-  it('filters out ref-type properties from add-property options', async () => {
+  it('shows ref-type properties in add-property options', async () => {
     setupMock([], [makeDef('linked_page', 'ref'), makeDef('notes', 'text')])
 
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
@@ -977,8 +977,32 @@ describe('PagePropertyTable task-only property filtering', () => {
       expect(screen.getByLabelText('Property picker')).toBeInTheDocument()
     })
 
-    expect(screen.queryByText('Linked Page')).not.toBeInTheDocument()
+    expect(screen.getByText('Linked Page')).toBeInTheDocument()
     expect(screen.getByText('Notes')).toBeInTheDocument()
+  })
+
+  it('clicking a ref definition initializes with valueRef: null', async () => {
+    const user = userEvent.setup()
+    setupMock([], [makeDef('linked_page', 'ref')])
+
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Linked Page')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByText('Linked Page'))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'PAGE_1',
+        key: 'linked_page',
+        valueRef: null,
+        valueText: null,
+        valueNum: null,
+        valueDate: null,
+      })
+    })
   })
 })
 
