@@ -405,10 +405,7 @@ export function JournalControls(): React.ReactElement {
   }
 
   return (
-    <div
-      className="sticky top-0 z-30 bg-background border-b border-border flex flex-1 items-center gap-2 flex-wrap py-2"
-      data-testid="journal-header"
-    >
+    <div className="flex flex-1 items-center gap-2 flex-wrap" data-testid="journal-header">
       {/* Mode switcher */}
       <div
         className="flex items-center gap-0.5"

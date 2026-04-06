@@ -499,10 +499,10 @@ describe('JournalPage', () => {
     })
   })
 
-  // ── Sticky header ────────────────────────────────────────────────────
+  // ── Header bar layout ────────────────────────────────────────────────
 
-  describe('sticky header', () => {
-    it('journal header has sticky positioning', async () => {
+  describe('header bar layout', () => {
+    it('journal header renders as a flex container (positioned in the fixed header bar)', async () => {
       mockedInvoke.mockResolvedValue(emptyPage)
 
       renderJournal()
@@ -513,11 +513,13 @@ describe('JournalPage', () => {
 
       const header = screen.getByTestId('journal-header')
       expect(header).toBeInTheDocument()
-      expect(header.className).toContain('sticky')
-      expect(header.className).toContain('top-0')
-      expect(header.className).toContain('z-30')
-      expect(header.className).toContain('bg-background')
-      expect(header.className).toContain('border-b')
+      expect(header.className).toContain('flex')
+      expect(header.className).toContain('flex-1')
+      // JournalControls lives in the fixed header bar (outside the scroll
+      // container), so it does NOT need sticky/border-b — those are handled
+      // by the <header> element in App.tsx
+      expect(header.className).not.toContain('sticky')
+      expect(header.className).not.toContain('border-b')
     })
   })
 
