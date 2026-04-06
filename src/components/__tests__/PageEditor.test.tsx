@@ -71,6 +71,22 @@ vi.mock('../UnlinkedReferences', () => ({
   },
 }))
 
+let capturedDuePanelDate: string | undefined
+vi.mock('../DuePanel', () => ({
+  DuePanel: (props: { date: string; onNavigateToPage?: unknown }) => {
+    capturedDuePanelDate = props.date
+    return <div data-testid="due-panel" data-date={props.date} />
+  },
+}))
+
+let capturedDonePanelDate: string | undefined
+vi.mock('../DonePanel', () => ({
+  DonePanel: (props: { date: string; onNavigateToPage?: unknown }) => {
+    capturedDonePanelDate = props.date
+    return <div data-testid="done-panel" data-date={props.date} />
+  },
+}))
+
 // ── Mock lucide-react ───────────────────────────────────────────────
 vi.mock('lucide-react', () => ({
   ArrowLeft: () => <svg data-testid="arrow-left-icon" />,
@@ -116,6 +132,8 @@ beforeEach(() => {
   capturedLinkedRefsPageId = undefined
   capturedUnlinkedRefsProps = undefined
   capturedPageHeaderProps = null
+  capturedDuePanelDate = undefined
+  capturedDonePanelDate = undefined
   // Reset the Zustand stores to a clean state before each test
   useBlockStore.setState({
     focusedBlockId: null,
@@ -479,5 +497,32 @@ describe('PageEditor BlockTree auto-creation prop', () => {
     await waitFor(() => {
       expect(useBlockStore.getState().focusedBlockId).toBe('FIRST_BLOCK')
     })
+  })
+})
+
+describe('PageEditor date-page panels (B-1)', () => {
+  it('renders DuePanel and DonePanel for date-formatted page title', () => {
+    render(<PageEditor pageId="PAGE_DATE" title="2026-04-06" />)
+
+    expect(screen.getByTestId('due-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('due-panel')).toHaveAttribute('data-date', '2026-04-06')
+    expect(screen.getByTestId('done-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('done-panel')).toHaveAttribute('data-date', '2026-04-06')
+    expect(capturedDuePanelDate).toBe('2026-04-06')
+    expect(capturedDonePanelDate).toBe('2026-04-06')
+  })
+
+  it('does not render DuePanel/DonePanel for non-date page title', () => {
+    render(<PageEditor pageId="PAGE_1" title="My Notes" />)
+
+    expect(screen.queryByTestId('due-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('done-panel')).not.toBeInTheDocument()
+  })
+
+  it('does not render DuePanel/DonePanel for partial date title', () => {
+    render(<PageEditor pageId="PAGE_1" title="2026-04" />)
+
+    expect(screen.queryByTestId('due-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('done-panel')).not.toBeInTheDocument()
   })
 })

@@ -139,6 +139,11 @@ export function getTodayString(): string {
   return formatDate(new Date())
 }
 
+/** Check if a string is a YYYY-MM-DD date page title. */
+export function isDateFormattedPage(title: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(title)
+}
+
 export interface DayEntry {
   date: Date
   dateStr: string

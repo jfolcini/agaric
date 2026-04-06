@@ -5620,9 +5620,9 @@ describe('H-9: auto-create first block on empty page', () => {
       parent_id: 'PAGE_1',
     })
 
-    // load() and auto-create race: load() calls list_blocks before
-    // create_block fires. Return the newBlock from list_blocks so
-    // load() and auto-create converge on the same final state.
+    // B-2 fix: store now starts with loading: true, so the auto-create
+    // effect waits for load() to finish. Return the newBlock from
+    // list_blocks so both paths converge on the same final state.
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'create_block') return newBlock
       if (cmd === 'list_blocks') {

@@ -10,6 +10,7 @@ import { useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { NavigateToPageFn } from '../lib/block-events'
+import { isDateFormattedPage } from '../lib/date-utils'
 import { useBlockStore } from '../stores/blocks'
 import { useNavigationStore } from '../stores/navigation'
 import {
@@ -20,6 +21,8 @@ import {
 import { useUndoStore } from '../stores/undo'
 import { AddBlockButton } from './AddBlockButton'
 import { BlockTree } from './BlockTree'
+import { DonePanel } from './DonePanel'
+import { DuePanel } from './DuePanel'
 import { LinkedReferences } from './LinkedReferences'
 import { PageHeader } from './PageHeader'
 import { UnlinkedReferences } from './UnlinkedReferences'
@@ -143,6 +146,18 @@ function PageEditorInner({
 
       {/* Block tree — loads children of pageId */}
       <BlockTree parentId={pageId} onNavigateToPage={onNavigateToPage} />
+
+      {/* Due/Done panels — shown on date-formatted pages (mirrors DaySection daily view) */}
+      {isDateFormattedPage(title) && (
+        <>
+          <div id="journal-due-panel">
+            <DuePanel date={title} onNavigateToPage={onNavigateToPage} />
+          </div>
+          <div id="journal-done-panel">
+            <DonePanel date={title} onNavigateToPage={onNavigateToPage} />
+          </div>
+        </>
+      )}
 
       {/* Linked references — always visible at page bottom */}
       <LinkedReferences pageId={pageId} onNavigateToPage={onNavigateToPage} />

@@ -116,7 +116,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
   return createStore<PageBlockState>((set, get) => ({
     blocks: [],
     rootParentId: pageId,
-    loading: false,
+    loading: true,
 
     load: async () => {
       const rootParentId = get().rootParentId

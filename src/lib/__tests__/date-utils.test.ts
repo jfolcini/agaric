@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { formatCompactDate, getDateRangeForFilter, getTodayString } from '../date-utils'
+import {
+  formatCompactDate,
+  getDateRangeForFilter,
+  getTodayString,
+  isDateFormattedPage,
+} from '../date-utils'
 
 describe('formatCompactDate', () => {
   beforeEach(() => {
@@ -111,5 +116,19 @@ describe('getTodayString', () => {
     vi.setSystemTime(new Date(2026, 3, 10))
     expect(getTodayString()).toBe('2026-04-10')
     vi.useRealTimers()
+  })
+})
+
+describe('isDateFormattedPage', () => {
+  it('returns true for valid YYYY-MM-DD', () => {
+    expect(isDateFormattedPage('2026-04-06')).toBe(true)
+    expect(isDateFormattedPage('2020-01-01')).toBe(true)
+  })
+
+  it('returns false for non-date strings', () => {
+    expect(isDateFormattedPage('My Page')).toBe(false)
+    expect(isDateFormattedPage('2026-04')).toBe(false)
+    expect(isDateFormattedPage('2026-04-06 extra')).toBe(false)
+    expect(isDateFormattedPage('')).toBe(false)
   })
 })
