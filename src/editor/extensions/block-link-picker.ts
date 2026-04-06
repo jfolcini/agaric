@@ -45,10 +45,15 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           const innerText = (match[1] ?? '').trim()
           if (!innerText) return
 
+          // Capture the insertion position *before* deletion so the async
+          // callback inserts at the correct spot even if the cursor moves.
+          const insertPos = range.from
+
           // Delete the [[text]] range immediately so the raw text doesn't linger
           state.tr.delete(range.from, range.to)
 
-          // Async resolve: look up page, then insert block_link node
+          // Async resolve: look up page, then insert block_link node at the
+          // captured position to avoid a race with subsequent user edits.
           const resolveAndInsert = async () => {
             try {
               const items = await extensionOptions.items(innerText)
@@ -59,17 +64,31 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
                   (item.label.toLowerCase() === innerText.toLowerCase() || item.isAlias),
               )
               if (exactMatch) {
-                editor.commands.insertBlockLink(exactMatch.id)
+                editor
+                  .chain()
+                  .focus()
+                  .insertContentAt(insertPos, {
+                    type: 'block_link',
+                    attrs: { id: exactMatch.id },
+                  })
+                  .run()
               } else if (extensionOptions.onCreate) {
                 const newId = await extensionOptions.onCreate(innerText)
-                editor.commands.insertBlockLink(newId)
+                editor
+                  .chain()
+                  .focus()
+                  .insertContentAt(insertPos, {
+                    type: 'block_link',
+                    attrs: { id: newId },
+                  })
+                  .run()
               } else {
                 // No match and no onCreate — re-insert as plain text
-                editor.commands.insertContent(innerText)
+                editor.chain().focus().insertContentAt(insertPos, innerText).run()
               }
             } catch {
               // On error, re-insert as plain text so the user doesn't lose content
-              editor.commands.insertContent(innerText)
+              editor.chain().focus().insertContentAt(insertPos, innerText).run()
             }
           }
           void resolveAndInsert()

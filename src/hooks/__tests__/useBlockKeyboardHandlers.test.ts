@@ -218,6 +218,23 @@ describe('useBlockKeyboardHandlers handleDeleteBlock', () => {
 
     expect(params.setFocused).toHaveBeenCalledWith('A')
   })
+
+  it('does not delete when delete is already in progress', () => {
+    const params = makeDefaultParams()
+    // Make remove block so deleteInProgress stays true within the same synchronous act
+    let removeCallCount = 0
+    params.remove = vi.fn(async () => {
+      removeCallCount++
+    })
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    act(() => {
+      result.current.handleDeleteBlock()
+      result.current.handleDeleteBlock()
+    })
+
+    expect(removeCallCount).toBe(1)
+  })
 })
 
 describe('useBlockKeyboardHandlers handleIndent', () => {
@@ -506,5 +523,64 @@ describe('useBlockKeyboardHandlers handleEscapeCancel', () => {
 
     expect(params.rovingEditor.unmount).not.toHaveBeenCalled()
     expect(params.setFocused).not.toHaveBeenCalled()
+  })
+
+  it('removes just-created empty block on Escape', () => {
+    const params = makeDefaultParams({
+      focusedBlockId: 'B',
+      collapsedVisible: [
+        makeFlatBlock('A', 0, 'Alpha'),
+        makeFlatBlock('B', 0, ''),
+        makeFlatBlock('C', 0, 'Charlie'),
+      ],
+    })
+    params.justCreatedBlockIds.current.add('B')
+    params.rovingEditor.unmount = vi.fn(() => null)
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    act(() => {
+      result.current.handleEscapeCancel()
+    })
+
+    expect(params.remove).toHaveBeenCalledWith('B')
+    expect(params.justCreatedBlockIds.current.has('B')).toBe(false)
+    expect(params.setFocused).toHaveBeenCalledWith(null)
+  })
+
+  it('does not remove block that was not just created', () => {
+    const params = makeDefaultParams({
+      focusedBlockId: 'B',
+      collapsedVisible: [
+        makeFlatBlock('A', 0, 'Alpha'),
+        makeFlatBlock('B', 0, ''),
+        makeFlatBlock('C', 0, 'Charlie'),
+      ],
+    })
+    // B is NOT in justCreatedBlockIds
+    params.rovingEditor.unmount = vi.fn(() => null)
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    act(() => {
+      result.current.handleEscapeCancel()
+    })
+
+    expect(params.remove).not.toHaveBeenCalled()
+    expect(params.setFocused).toHaveBeenCalledWith(null)
+  })
+
+  it('does not remove just-created block when user has typed content', () => {
+    const params = makeDefaultParams({ focusedBlockId: 'B' })
+    params.justCreatedBlockIds.current.add('B')
+    // unmount returns non-null → user typed content that was discarded
+    params.rovingEditor.unmount = vi.fn(() => 'some content')
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    act(() => {
+      result.current.handleEscapeCancel()
+    })
+
+    // Block should NOT be removed because user had typed content
+    expect(params.remove).not.toHaveBeenCalled()
+    expect(params.setFocused).toHaveBeenCalledWith(null)
   })
 })

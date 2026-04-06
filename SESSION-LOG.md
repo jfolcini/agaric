@@ -1,5 +1,47 @@
 # Session Log
 
+## Session 229 — 2026-04-06 — Batch 81: B-6/UX-23/UX-24/UX-26/R-19
+
+### Summary
+Resolved 5 REVIEW-LATER items across frontend keyboard handling, linking workflow, a11y, and backend logging. B-6: Fixed race condition in `[[text]]` input rule — now captures insertion position before async gap and uses `insertContentAt(pos, ...)`. UX-23: Added `deleteInProgress` re-entrancy guard to `handleDeleteBlock`. UX-24: Escape on just-created empty blocks now deletes them (uses `unmount()` return value to check if user typed content). UX-26: Suggestion popup gets `role="region"` + `aria-label` for screen readers. R-19: Layered tracing subscriber writes to both stderr and daily-rolling log file in `~/.local/share/com.agaric.app/logs/`. 9 files changed, 11 new tests (4373 total). REVIEW-LATER.md: 13→8 items.
+
+### Batch 81
+
+**Commit:** d5ed6ef
+
+| Area | Change |
+|------|--------|
+| block-link-picker.ts | B-6: Captured `insertPos = range.from` before async `resolveAndInsert()`, replaced cursor-relative `insertBlockLink()` with `insertContentAt(insertPos, ...)` in all 3 paths (exact match, create, fallback). |
+| block-link-picker.test.ts | B-6: 4 new tests — exact match, create, no-match fallback, error fallback — all verify position capture. |
+| useBlockKeyboardHandlers.ts | UX-23: Added `deleteInProgress` ref guard with `.finally()` reset on `remove()` promise. UX-24: `handleEscapeCancel` checks `justCreatedBlockIds` + `changed === null` to delete empty just-created blocks. |
+| useBlockKeyboardHandlers.test.ts | UX-23: 1 test (sync re-entrancy guard). UX-24: 3 tests (empty cleanup, non-just-created, user-typed-content preservation). |
+| suggestion-renderer.ts | UX-26: Added `role="region"` + `aria-label` on popup wrapper div. |
+| suggestion-renderer.test.ts | UX-26: 3 tests (role attribute, custom label, default label). |
+| lib.rs | R-19: Layered `tracing_subscriber::registry()` with stderr + daily file appender. Non-blocking writer, `with_ansi(false)` for file layer. `$HOME` fallback for Android. |
+| Cargo.toml | R-19: Added `tracing-appender` dependency. |
+| REVIEW-LATER.md | Removed B-6/UX-23/UX-24/UX-26/R-19 (resolved). |
+
+## Session 228 — 2026-04-06 — Batch 80: suggestion popup keyboard, alias linking, Enter recovery
+
+### Summary
+Fixed 6 critical user-reported bugs plus comprehensive keyboard/linking workflow review. Enter/Tab/Escape/Backspace now pass through to the Suggestion plugin when the popup is visible (was being intercepted by the block keyboard handler's capture-phase listener). Tab in suggestion popup now selects the highlighted item. Alias-linked pages no longer create duplicates — `isAlias` flag on PickerItem + input rule check. `[[multi word]]` now works (added `allowSpaces:true` to BlockLinkPicker). handleEnterSave gets re-entrancy guard + error recovery. Added 12 new items to REVIEW-LATER from keyboard/linking workflow reviews. 9 files changed, 0 new tests (test updates only). REVIEW-LATER.md: 1→13 items.
+
+### Batch 80
+
+**Commit:** 99a3189
+
+| Area | Change |
+|------|--------|
+| use-block-keyboard.ts | Enter/Tab/Escape/Backspace passthrough when `.suggestion-popup` is visible. Uses `checkVisibility()` with `offsetParent` fallback. |
+| suggestion-renderer.ts | Tab key synthesises Enter event for autocomplete in suggestion popup. |
+| SuggestionList.tsx | Added `isAlias?: boolean` field to `PickerItem` interface. |
+| useBlockResolve.ts | Alias matches from `searchPages` now carry `isAlias: true`. |
+| block-link-picker.ts | Input rule checks `item.isAlias` in addition to exact title match. Added `allowSpaces: true` to Suggestion config. |
+| useBlockKeyboardHandlers.ts | `handleEnterSave`: re-entrancy guard (`enterSaveInProgress` ref) + error recovery (re-mounts editor on `createBelow` failure). Expanded `rovingEditor` Pick type to include `getMarkdown`. |
+| useBlockResolve.test.ts | Updated 2 alias match assertions to include `isAlias: true`. |
+| useBlockKeyboardHandlers.test.ts | Added `getMarkdown` mock to test fixture. |
+| REVIEW-LATER.md | Added 12 new items from keyboard/linking workflow reviews (B-6..B-9, UX-23..UX-26, R-19..R-20, T-1..T-2). |
+
 ## Session 227 — 2026-04-05 — Batch 79: B-2/B-3/B-4/B-5 bug fixes
 
 ### Summary

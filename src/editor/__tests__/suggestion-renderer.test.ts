@@ -80,6 +80,78 @@ describe('createSuggestionRenderer', () => {
     // Should not throw
     expect(() => renderer.onExit()).not.toThrow()
   })
+
+  it('popup has role=region attribute', () => {
+    const renderer = createSuggestionRenderer()
+    const mockRect = { left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }
+
+    renderer.onStart({
+      items: [],
+      command: vi.fn(),
+      clientRect: () => mockRect as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      editor: {} as any,
+      query: '',
+      range: { from: 0, to: 1 },
+      text: '@',
+      decorationNode: null,
+      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+    } as any)
+
+    const popup = document.querySelector('.suggestion-popup') as HTMLElement
+    expect(popup).toBeTruthy()
+    expect(popup.getAttribute('role')).toBe('region')
+
+    renderer.onExit()
+  })
+
+  it('popup has aria-label from label parameter', () => {
+    const renderer = createSuggestionRenderer('Tags')
+    const mockRect = { left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }
+
+    renderer.onStart({
+      items: [],
+      command: vi.fn(),
+      clientRect: () => mockRect as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      editor: {} as any,
+      query: '',
+      range: { from: 0, to: 1 },
+      text: '@',
+      decorationNode: null,
+      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+    } as any)
+
+    const popup = document.querySelector('.suggestion-popup') as HTMLElement
+    expect(popup).toBeTruthy()
+    expect(popup.getAttribute('aria-label')).toBe('Tags')
+
+    renderer.onExit()
+  })
+
+  it('popup has default aria-label when no label provided', () => {
+    const renderer = createSuggestionRenderer()
+    const mockRect = { left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }
+
+    renderer.onStart({
+      items: [],
+      command: vi.fn(),
+      clientRect: () => mockRect as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      editor: {} as any,
+      query: '',
+      range: { from: 0, to: 1 },
+      text: '@',
+      decorationNode: null,
+      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+    } as any)
+
+    const popup = document.querySelector('.suggestion-popup') as HTMLElement
+    expect(popup).toBeTruthy()
+    expect(popup.getAttribute('aria-label')).toBe('Suggestions')
+
+    renderer.onExit()
+  })
 })
 
 describe('positioning', () => {
@@ -437,11 +509,13 @@ describe('positioning', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 2 },
       text: '((',
       decorationNode: null,
+      // biome-ignore lint/suspicious/noExplicitAny: mock SuggestionProps
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
@@ -490,6 +564,7 @@ describe('outside-click dismissal', () => {
       command: vi.fn(),
       clientRect: () =>
         ({ left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }) as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 1 },

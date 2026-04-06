@@ -81,13 +81,17 @@ export function useBlockKeyboardHandlers({
 
   const handleDeleteBlock = useCallback(() => {
     if (!focusedBlockId) return
+    if (deleteInProgress.current) return
     if (collapsedVisible.length <= 1) {
       toast.error(t('blockTree.cannotDeleteLastBlock'))
       return
     }
+    deleteInProgress.current = true
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     rovingEditor.unmount()
-    remove(focusedBlockId)
+    remove(focusedBlockId).finally(() => {
+      deleteInProgress.current = false
+    })
     announce('Block deleted')
     if (idx > 0) {
       const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
@@ -209,6 +213,9 @@ export function useBlockKeyboardHandlers({
     [collapsedVisible, focusedBlockId, rovingEditor, edit, remove, setFocused, t],
   )
 
+  // Re-entrancy guard: prevents rapid Backspace presses from duplicating deletes.
+  const deleteInProgress = useRef(false)
+
   // Re-entrancy guard: prevents rapid Enter presses from creating duplicate blocks.
   const enterSaveInProgress = useRef(false)
 
@@ -239,8 +246,16 @@ export function useBlockKeyboardHandlers({
     if (changed !== null) {
       toast('Changes discarded', { duration: 2000 })
     }
+    // If the block was just created and the user made no edits (changed === null),
+    // delete the empty block instead of leaving it around.
+    if (justCreatedBlockIds.current.has(focusedBlockId) && changed === null) {
+      justCreatedBlockIds.current.delete(focusedBlockId)
+      remove(focusedBlockId).catch(() => {
+        // Best-effort cleanup — block reappears on next reload if this fails
+      })
+    }
     setFocused(null)
-  }, [focusedBlockId, rovingEditor, setFocused])
+  }, [focusedBlockId, rovingEditor, setFocused, justCreatedBlockIds, remove])
 
   return {
     handleFocusPrev,
