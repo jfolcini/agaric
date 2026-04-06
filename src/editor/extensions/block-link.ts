@@ -75,7 +75,7 @@ export const BlockLink = Node.create<BlockLinkOptions>({
 
   addNodeView() {
     const extension = this
-    return ({ node }) => {
+    return ({ node, editor: nodeEditor, getPos }) => {
       const dom = document.createElement('span')
       let currentId = node.attrs.id as string
 
@@ -96,6 +96,9 @@ export const BlockLink = Node.create<BlockLinkOptions>({
         dom.setAttribute('data-id', blockId)
         dom.setAttribute('data-testid', 'block-link-chip')
         dom.setAttribute('contenteditable', 'false')
+        if (status === 'deleted') {
+          dom.setAttribute('title', 'Broken link — click to remove')
+        }
       }
 
       render(currentId)
@@ -103,7 +106,18 @@ export const BlockLink = Node.create<BlockLinkOptions>({
       const clickHandler = (e: MouseEvent) => {
         e.preventDefault()
         e.stopPropagation()
-        if (dom.classList.contains('block-link-deleted')) return
+        if (dom.classList.contains('block-link-deleted')) {
+          // Delete the broken link chip on click (recoverable via undo)
+          const pos = typeof getPos === 'function' ? getPos() : null
+          if (pos != null) {
+            nodeEditor
+              .chain()
+              .focus()
+              .deleteRange({ from: pos, to: pos + node.nodeSize })
+              .run()
+          }
+          return
+        }
         extension.options.onNavigate?.(currentId)
       }
       dom.addEventListener('click', clickHandler)

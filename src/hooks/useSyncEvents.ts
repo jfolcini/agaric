@@ -109,7 +109,7 @@ export function useSyncEvents(): void {
         for (const store of pageBlockRegistry.values()) {
           store.getState().load()
         }
-        useResolveStore.getState().preload()
+        useResolveStore.getState().preload(true)
       }
 
       // Check for conflicts after sync (#438)

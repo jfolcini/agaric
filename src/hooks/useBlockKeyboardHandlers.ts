@@ -166,8 +166,16 @@ export function useBlockKeyboardHandlers({
 
     try {
       await edit(prevBlock.id, mergedContent)
+    } catch {
+      rovingEditor.mount(focusedBlockId, currentContent)
+      toast.error(t('blockTree.mergeBlocksFailed'))
+      return
+    }
+    try {
       await remove(focusedBlockId)
     } catch {
+      // Revert the edit to avoid partial state (merged content in prev + original in current)
+      await edit(prevBlock.id, prevContent).catch(() => {})
       rovingEditor.mount(focusedBlockId, currentContent)
       toast.error(t('blockTree.mergeBlocksFailed'))
       return
@@ -199,8 +207,18 @@ export function useBlockKeyboardHandlers({
 
       try {
         await edit(prevBlock.id, mergedContent)
+      } catch {
+        if (editorContent !== null) {
+          rovingEditor.mount(blockId, currentContent)
+        }
+        toast.error(t('blockTree.mergeBlocksFailed'))
+        return
+      }
+      try {
         await remove(blockId)
       } catch {
+        // Revert the edit to avoid partial state (merged content in prev + original in current)
+        await edit(prevBlock.id, prevContent).catch(() => {})
         if (editorContent !== null) {
           rovingEditor.mount(blockId, currentContent)
         }

@@ -106,10 +106,11 @@ export function useBlockResolve(): UseBlockResolveReturn {
         }
       }
       return result
-    } catch {
+    } catch (err) {
       // Never reject — the TipTap Suggestion plugin has no error handling
       // for async items callbacks.  A rejection silently prevents the popup
       // from opening (H-10 / H-11).
+      console.error('searchTags failed:', err)
       return []
     }
   }, [])
@@ -199,10 +200,11 @@ export function useBlockResolve(): UseBlockResolveReturn {
         }
       }
       return matches
-    } catch {
+    } catch (err) {
       // Never reject — the TipTap Suggestion plugin has no error handling
       // for async items callbacks.  A rejection silently prevents the popup
       // from opening (H-10 / H-11).
+      console.error('searchPages failed:', err)
       return []
     }
   }, [])
@@ -232,7 +234,8 @@ export function useBlockResolve(): UseBlockResolveReturn {
         )
       }
       return results
-    } catch {
+    } catch (err) {
+      console.error('searchBlockRefs failed:', err)
       return []
     }
   }, [])

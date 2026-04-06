@@ -395,6 +395,42 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
     expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'Beta')
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.mergeBlocksFailed')
   })
+
+  it('reverts edit when remove fails after successful edit', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.unmount = vi.fn(() => 'Beta')
+    params.edit = vi.fn(async () => {})
+    params.remove = vi.fn(async () => {
+      throw new Error('remove failed')
+    })
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleMergeWithPrev()
+    })
+
+    expect(params.edit).toHaveBeenCalledTimes(2)
+    expect(params.edit).toHaveBeenNthCalledWith(1, 'A', 'AlphaBeta')
+    expect(params.edit).toHaveBeenNthCalledWith(2, 'A', 'Alpha')
+    expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'Beta')
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.mergeBlocksFailed')
+  })
+
+  it('does not revert when edit itself fails', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.unmount = vi.fn(() => 'Beta')
+    params.edit = vi.fn(async () => {
+      throw new Error('edit failed')
+    })
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleMergeWithPrev()
+    })
+
+    expect(params.edit).toHaveBeenCalledTimes(1)
+    expect(params.remove).not.toHaveBeenCalled()
+  })
 })
 
 describe('useBlockKeyboardHandlers handleMergeById', () => {
@@ -433,6 +469,39 @@ describe('useBlockKeyboardHandlers handleMergeById', () => {
 
     expect(params.rovingEditor.unmount).toHaveBeenCalled()
     expect(params.edit).toHaveBeenCalledWith('B', 'BetaEdited Charlie')
+  })
+
+  it('reverts edit when remove fails after successful edit', async () => {
+    const params = makeDefaultParams()
+    params.edit = vi.fn(async () => {})
+    params.remove = vi.fn(async () => {
+      throw new Error('remove failed')
+    })
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleMergeById('C')
+    })
+
+    expect(params.edit).toHaveBeenCalledTimes(2)
+    expect(params.edit).toHaveBeenNthCalledWith(1, 'B', 'BetaCharlie')
+    expect(params.edit).toHaveBeenNthCalledWith(2, 'B', 'Beta')
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.mergeBlocksFailed')
+  })
+
+  it('does not revert when edit itself fails', async () => {
+    const params = makeDefaultParams()
+    params.edit = vi.fn(async () => {
+      throw new Error('edit failed')
+    })
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleMergeById('C')
+    })
+
+    expect(params.edit).toHaveBeenCalledTimes(1)
+    expect(params.remove).not.toHaveBeenCalled()
   })
 })
 

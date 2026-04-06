@@ -477,7 +477,7 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
-    it('preloads resolve cache when ops_received > 0', async () => {
+    it('preloads resolve cache with forceRefresh=true when ops_received > 0 (B-7)', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
@@ -494,7 +494,7 @@ describe('useSyncEvents', () => {
         },
       })
 
-      expect(mockPreload).toHaveBeenCalled()
+      expect(mockPreload).toHaveBeenCalledWith(true)
 
       unmount()
     })

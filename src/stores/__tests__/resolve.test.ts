@@ -156,6 +156,53 @@ describe('preload', () => {
     expect(state.pagesList.find((p) => p.id === 'PAGE_1')).toBeTruthy()
     expect(state.pagesList.find((p) => p.id === 'CREATED_DURING')).toBeTruthy()
   })
+
+  it('preload with forceRefresh=true overwrites stale cache entries (B-7)', async () => {
+    // Pre-populate cache with an old/stale title (simulates data from a previous preload)
+    useResolveStore.getState().set('PAGE_RENAMED', 'Old Title', false)
+
+    // Backend now returns the renamed page
+    const mockPages = [{ id: 'PAGE_RENAMED', content: 'New Title After Rename', deleted_at: null }]
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: mockPages, next_cursor: null, has_more: false }
+      if (cmd === 'list_tags_by_prefix') return []
+      return null
+    })
+
+    await useResolveStore.getState().preload(true)
+
+    const state = useResolveStore.getState()
+    // Freshly fetched data must overwrite the stale cache entry
+    expect(state.cache.get('PAGE_RENAMED')).toEqual({
+      title: 'New Title After Rename',
+      deleted: false,
+    })
+  })
+
+  it('preload without forceRefresh preserves concurrent set() calls (B-7)', async () => {
+    // Simulate a set() call that represents a local edit happening concurrently
+    useResolveStore.getState().set('PAGE_EDITED', 'Local Edit Title', false)
+
+    // Backend returns an older version of the same page
+    const mockPages = [{ id: 'PAGE_EDITED', content: 'Stale Backend Title', deleted_at: null }]
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: mockPages, next_cursor: null, has_more: false }
+      if (cmd === 'list_tags_by_prefix') return []
+      return null
+    })
+
+    // Default preload (forceRefresh=false) — cache wins
+    await useResolveStore.getState().preload()
+
+    const state = useResolveStore.getState()
+    // The concurrent set() entry must win over fetched data
+    expect(state.cache.get('PAGE_EDITED')).toEqual({
+      title: 'Local Edit Title',
+      deleted: false,
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------

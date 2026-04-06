@@ -1,5 +1,27 @@
 # Session Log
 
+## Session 230 — 2026-04-06 — Batch 82: B-7/B-8/B-9/UX-25
+
+### Summary
+Resolved 4 REVIEW-LATER items. B-7: Resolve cache force-refresh after sync — `preload(true)` swaps Map spread order so freshly fetched page/tag data overrides stale cache entries (root cause: `state.cache` was spread last in Map constructor, overriding fetched data). B-8: Merge failure client-side rollback — split try/catch in `handleMergeWithPrev`/`handleMergeById` so if `remove()` fails after `edit()` succeeds, the edit is reverted to the original content. B-9: Added `console.error` logging to all 3 silent catch blocks in useBlockResolve. UX-25: Clicking a broken (deleted) block_link chip now deletes it from the editor (recoverable via undo) with "Broken link — click to remove" tooltip. 9 files changed, 9 new tests (4382 total). REVIEW-LATER.md: 8→4 items.
+
+### Batch 82
+
+**Commit:** 8f943e4
+
+| Area | Change |
+|------|--------|
+| resolve.ts | B-7: Added `forceRefresh` parameter to `preload()`. When true, fetched data overrides cache (Map spread order swapped). |
+| resolve.test.ts | B-7: 2 new tests — forceRefresh=true overwrites stale entries, forceRefresh=false preserves concurrent set() calls. |
+| useSyncEvents.ts | B-7: Changed `preload()` → `preload(true)` in sync:complete handler. |
+| useSyncEvents.test.ts | B-7: Updated test assertion to verify `preload(true)` call. |
+| useBlockKeyboardHandlers.ts | B-8: Split single try/catch in `handleMergeWithPrev` and `handleMergeById` into separate blocks. Remove failure reverts the edit via `edit(prevBlock.id, prevContent).catch(() => {})`. |
+| useBlockKeyboardHandlers.test.ts | B-8: 4 new tests — revert on remove failure + edit-only failure for both merge variants. |
+| useBlockResolve.ts | B-9: Added `console.error` with descriptive messages to `searchTags`, `searchPages`, and `searchBlockRefs` catch blocks. |
+| block-link.ts | UX-25: NodeView factory now destructures `editor`/`getPos`. Clicking deleted chip calls `deleteRange` to remove it. Broken chips get `title` tooltip. |
+| block-link.test.ts | UX-25: 3 new tests — tooltip on broken links, no tooltip on active links, deleteRange on click. |
+| REVIEW-LATER.md | Removed B-7/B-8/B-9/UX-25 (resolved). |
+
 ## Session 229 — 2026-04-06 — Batch 81: B-6/UX-23/UX-24/UX-26/R-19
 
 ### Summary

@@ -27,8 +27,9 @@ interface ResolveStore {
   /** Whether preload has been called at least once */
   _preloaded: boolean
 
-  /** Fetch all pages + tags into cache. Call once on boot. */
-  preload: () => Promise<void>
+  /** Fetch all pages + tags into cache. Call once on boot.
+   *  Pass forceRefresh=true after sync so fetched data overwrites stale cache. */
+  preload: (forceRefresh?: boolean) => Promise<void>
   /** Add/update a single entry */
   set: (id: string, title: string, deleted: boolean) => void
   /** Batch-add from resolved blocks */
@@ -45,7 +46,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => ({
   version: 0,
   _preloaded: false,
 
-  preload: async () => {
+  preload: async (forceRefresh = false) => {
     try {
       // Fetch all pages
       const pagesResp = await listBlocks({ blockType: 'page', limit: 1000 })
@@ -64,10 +65,12 @@ export const useResolveStore = create<ResolveStore>((set, get) => ({
         fetchedTags.set(t.tag_id, { title: t.name, deleted: false })
       }
 
-      // Merge: fetched data fills gaps, but concurrent set() calls win
-      // (state.cache is current at commit time thanks to the updater pattern)
+      // Merge: when force-refreshing (e.g. after sync), fetched data wins over cached data.
+      // Normal preload preserves concurrent set() calls by letting cache win.
       set((state) => {
-        const cache = new Map([...fetchedPages, ...fetchedTags, ...state.cache])
+        const cache = forceRefresh
+          ? new Map([...state.cache, ...fetchedPages, ...fetchedTags])
+          : new Map([...fetchedPages, ...fetchedTags, ...state.cache])
         const fetchedIds = new Set(pagesList.map((p) => p.id))
         const mergedPagesList = [
           ...pagesList,
