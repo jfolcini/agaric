@@ -384,12 +384,35 @@ impl Materializer {
         }
     }
 
-    /// Process a single foreground task with panic isolation and metrics.
+    /// Process a single foreground task with panic isolation, single retry,
+    /// and metrics.
+    ///
+    /// Retry policy (foreground only):
+    /// - `Ok(Err(_))` (DB/IO error): retry **once** after 100 ms backoff.
+    ///   If the retry succeeds the error counter is *not* incremented.
+    /// - `Err(_)` (panic / JoinError): **no** retry — panics indicate code
+    ///   bugs, not transient failures.
+    /// - `Barrier` tasks are never retried (they are ordering signals, not
+    ///   DB operations).
     async fn process_single_foreground_task(
         pool: &SqlitePool,
         task: MaterializeTask,
         metrics: &Arc<QueueMetrics>,
     ) {
+        // Don't retry barriers — they're just ordering signals
+        if matches!(&task, MaterializeTask::Barrier(_)) {
+            let pool_clone = pool.clone();
+            let metrics_clone = Arc::clone(metrics);
+            let result = tokio::task::spawn(async move {
+                handle_foreground_task(&pool_clone, &task, &metrics_clone).await
+            })
+            .await;
+            Self::log_consumer_result("fg", &result);
+            metrics.fg_processed.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+
+        let retry_task = task.clone();
         let pool_clone = pool.clone();
         let metrics_clone = Arc::clone(metrics);
         let result = tokio::task::spawn(async move {
@@ -397,18 +420,32 @@ impl Materializer {
         })
         .await;
 
-        Self::log_consumer_result("fg", &result);
-
         match &result {
+            Ok(Ok(())) => {
+                // Success — no retry needed
+            }
             Ok(Err(_)) => {
-                metrics.fg_errors.fetch_add(1, Ordering::Relaxed);
+                // Transient error — retry once after backoff
+                Self::log_consumer_result("fg", &result);
+                tracing::info!("retrying failed foreground task after 100ms backoff");
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                let pool_clone2 = pool.clone();
+                let metrics_clone2 = Arc::clone(metrics);
+                let retry_result = tokio::task::spawn(async move {
+                    handle_foreground_task(&pool_clone2, &retry_task, &metrics_clone2).await
+                })
+                .await;
+                Self::log_consumer_result("fg-retry", &retry_result);
+                if matches!(&retry_result, Ok(Err(_)) | Err(_)) {
+                    metrics.fg_errors.fetch_add(1, Ordering::Relaxed);
+                }
             }
             Err(_) => {
+                // Panic — don't retry, just log
+                Self::log_consumer_result("fg", &result);
                 metrics.fg_panics.fetch_add(1, Ordering::Relaxed);
             }
-            _ => {}
         }
-
         metrics.fg_processed.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -4190,5 +4227,152 @@ mod tests {
             .unwrap();
         mat.flush_background().await.unwrap();
         // No error = success (no-op for now)
+    }
+
+    // ======================================================================
+    // Foreground retry mechanism tests (#R-20)
+    // ======================================================================
+
+    /// Verify that `process_single_foreground_task` handles a successful
+    /// foreground task without retry and increments fg_processed.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn fg_retry_success_on_first_attempt_no_error_counted() {
+        let (pool, _dir) = test_pool().await;
+        let metrics = Arc::new(QueueMetrics::default());
+
+        // Create a valid block so the ApplyOp succeeds
+        let record = make_op_record(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id("blk-retry-ok"),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(0),
+                content: "retry test".into(),
+            }),
+        )
+        .await;
+
+        let task = MaterializeTask::ApplyOp(record);
+        Materializer::process_single_foreground_task(&pool, task, &metrics).await;
+
+        assert_eq!(
+            metrics.fg_processed.load(AtomicOrdering::Relaxed),
+            1,
+            "fg_processed should be 1 after successful task"
+        );
+        assert_eq!(
+            metrics.fg_errors.load(AtomicOrdering::Relaxed),
+            0,
+            "fg_errors should be 0 when task succeeds on first attempt"
+        );
+        assert_eq!(
+            metrics.fg_panics.load(AtomicOrdering::Relaxed),
+            0,
+            "fg_panics should be 0 for non-panicking task"
+        );
+    }
+
+    /// Verify that barrier tasks take the early-return path in
+    /// `process_single_foreground_task` (no retry logic, still increments
+    /// fg_processed).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn fg_retry_barrier_not_retried() {
+        let (pool, _dir) = test_pool().await;
+        let metrics = Arc::new(QueueMetrics::default());
+
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let task = MaterializeTask::Barrier(Arc::clone(&notify));
+
+        Materializer::process_single_foreground_task(&pool, task, &metrics).await;
+
+        assert_eq!(
+            metrics.fg_processed.load(AtomicOrdering::Relaxed),
+            1,
+            "fg_processed should be 1 after barrier task"
+        );
+        assert_eq!(
+            metrics.fg_errors.load(AtomicOrdering::Relaxed),
+            0,
+            "fg_errors should remain 0 for barrier"
+        );
+    }
+
+    /// Verify that a foreground task that fails (DB error path inside
+    /// `handle_foreground_task`) doesn't double-count — the handler
+    /// swallows individual apply_op errors and returns Ok(()), so the
+    /// retry path is not triggered. The task's internal error counter
+    /// is incremented once inside the handler itself.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn fg_retry_task_with_bad_payload_handled_internally() {
+        let (pool, _dir) = test_pool().await;
+        let metrics = Arc::new(QueueMetrics::default());
+
+        // ApplyOp with an unknown op_type — apply_op returns Err,
+        // handle_foreground_task catches it and increments fg_errors
+        // internally, then returns Ok(()). The retry path in
+        // process_single_foreground_task sees Ok(Ok(())) and does NOT retry.
+        let record = fake_op_record("bogus_op_type", "{}");
+        let task = MaterializeTask::ApplyOp(record);
+        Materializer::process_single_foreground_task(&pool, task, &metrics).await;
+
+        assert_eq!(
+            metrics.fg_processed.load(AtomicOrdering::Relaxed),
+            1,
+            "fg_processed should be 1"
+        );
+        // The handler internally counted the error
+        assert_eq!(
+            metrics.fg_errors.load(AtomicOrdering::Relaxed),
+            1,
+            "fg_errors should be 1 from internal handler error counting"
+        );
+        assert_eq!(
+            metrics.fg_panics.load(AtomicOrdering::Relaxed),
+            0,
+            "fg_panics should be 0"
+        );
+    }
+
+    /// End-to-end: foreground retry doesn't interfere with normal
+    /// materializer flush/shutdown lifecycle.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn fg_retry_full_lifecycle_no_regression() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Enqueue a valid op, flush, then verify metrics
+        let record = make_op_record(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id("blk-lifecycle"),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(0),
+                content: "lifecycle test".into(),
+            }),
+        )
+        .await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        let m = mat.metrics();
+        assert!(
+            m.fg_processed.load(AtomicOrdering::Relaxed) >= 1,
+            "at least one fg task should be processed"
+        );
+        assert_eq!(
+            m.fg_errors.load(AtomicOrdering::Relaxed),
+            0,
+            "no errors expected for valid op"
+        );
+        assert_eq!(
+            m.fg_panics.load(AtomicOrdering::Relaxed),
+            0,
+            "no panics expected"
+        );
+
+        mat.shutdown();
     }
 }

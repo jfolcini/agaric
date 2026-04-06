@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 231 — 2026-04-06 — Batch 83: R-20/T-1/T-2
+
+### Summary
+Resolved final 3 REVIEW-LATER items (excluding F-14 which needs architectural approval). R-20: Foreground materializer tasks now retry once with 100ms backoff on transient errors — panics and barriers skip retry. T-1: 10 E2E tests for suggestion popup keyboard interactions (Enter/Tab/Escape/Backspace/ArrowDown) in `e2e/suggestion-keyboard.spec.ts`. T-2: Tag input rule — typing `#[tagname]` auto-resolves or creates a tag (mirrors `[[text]]` for page links); added `allowSpaces:true` to `@` picker. 4 files changed, 15 new frontend tests + 4 Rust tests (4391 frontend, 1599 Rust). REVIEW-LATER.md: 4→1 item (only F-14 attachment sync remains).
+
+### Batch 83
+
+**Commit:** 5463375
+
+| Area | Change |
+|------|--------|
+| materializer.rs | R-20: `process_single_foreground_task` clones task, retries once on `Ok(Err(_))` with 100ms `tokio::time::sleep`. Barriers early-return without retry. Panics not retried. `fg_errors` only incremented if both attempts fail. |
+| materializer.rs (tests) | R-20: 4 new tests — success no-error, barrier skip, bad-payload handling, full lifecycle regression. |
+| suggestion-keyboard.spec.ts | T-1: **New** E2E spec — 10 tests covering Enter selects item, Tab autocompletes, Escape dismisses popup (keeps editor), second Escape closes editor, Backspace edits query, ArrowDown navigates. Requires `npx playwright install`. |
+| at-tag-picker.ts | T-2: Added `addInputRules()` matching `#[tagname]` — resolves exact match → `tag_ref` node, fallback → `onCreate`, error → plain text. Added `allowSpaces: true` to Suggestion config. |
+| at-tag-picker.test.ts | T-2: 9 new tests — regex match/reject, input rule registration, handler exact match, handler create, no-onCreate fallback, error fallback. |
+| REVIEW-LATER.md | Removed R-20/T-1/T-2 (resolved). |
+
 ## Session 230 — 2026-04-06 — Batch 82: B-7/B-8/B-9/UX-25
 
 ### Summary

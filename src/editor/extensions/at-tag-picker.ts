@@ -8,7 +8,7 @@
  * Identical behavior to the # tag picker but triggered by @.
  */
 
-import { Extension } from '@tiptap/core'
+import { Extension, InputRule } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 import { Suggestion } from '@tiptap/suggestion'
 import type { PickerItem } from '../SuggestionList'
@@ -33,6 +33,57 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
     }
   },
 
+  addInputRules() {
+    const extensionOptions = this.options
+    const editor = this.editor
+    return [
+      new InputRule({
+        find: /#\[([^\]]+)\]$/,
+        handler: ({ state, range, match }) => {
+          const innerText = (match[1] ?? '').trim()
+          if (!innerText) return
+
+          const insertPos = range.from
+          state.tr.delete(range.from, range.to)
+
+          const resolveAndInsert = async () => {
+            try {
+              const items = await extensionOptions.items(innerText)
+              const exactMatch = items.find(
+                (item) => !item.isCreate && item.label.toLowerCase() === innerText.toLowerCase(),
+              )
+              if (exactMatch) {
+                editor
+                  .chain()
+                  .focus()
+                  .insertContentAt(insertPos, {
+                    type: 'tag_ref',
+                    attrs: { id: exactMatch.id },
+                  })
+                  .run()
+              } else if (extensionOptions.onCreate) {
+                const newId = await extensionOptions.onCreate(innerText)
+                editor
+                  .chain()
+                  .focus()
+                  .insertContentAt(insertPos, {
+                    type: 'tag_ref',
+                    attrs: { id: newId },
+                  })
+                  .run()
+              } else {
+                editor.chain().focus().insertContentAt(insertPos, innerText).run()
+              }
+            } catch {
+              editor.chain().focus().insertContentAt(insertPos, innerText).run()
+            }
+          }
+          void resolveAndInsert()
+        },
+      }),
+    ]
+  },
+
   addProseMirrorPlugins() {
     const extensionOptions = this.options
     return [
@@ -41,6 +92,7 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
         pluginKey: atTagPickerPluginKey,
         char: '@',
         allowedPrefixes: null,
+        allowSpaces: true,
         items: ({ query }) => this.options.items(query),
         command: ({ editor, range, props }) => {
           const item = props as PickerItem
