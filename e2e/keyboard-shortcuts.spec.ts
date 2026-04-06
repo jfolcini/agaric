@@ -149,7 +149,7 @@ test.describe('Block organization', () => {
     await waitForBoot(page)
   })
 
-  test('Tab indents block', async ({ page }) => {
+  test('Ctrl+Shift+ArrowRight indents block', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
     // Use the third block (index 2, GS_3 — plain text, avoids link chips in GS_2)
@@ -161,8 +161,8 @@ test.describe('Block organization', () => {
     // Focus the third block
     await focusBlock(page, 2)
 
-    // Press Tab to indent
-    await page.keyboard.press('Tab')
+    // Press Ctrl+Shift+ArrowRight to indent
+    await page.keyboard.press('Control+Shift+ArrowRight')
 
     // Wait for indent to apply and verify the block now has increased paddingLeft
     await expect
@@ -173,7 +173,7 @@ test.describe('Block organization', () => {
       .toBeGreaterThan(Number.parseInt(initialPadding, 10))
   })
 
-  test('Shift+Tab dedents block', async ({ page }) => {
+  test('Ctrl+Shift+ArrowLeft dedents block', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
     // Capture pre-indent padding for the third block
@@ -182,7 +182,7 @@ test.describe('Block organization', () => {
 
     // Focus the third block (index 2, GS_3) and indent it first
     await focusBlock(page, 2)
-    await page.keyboard.press('Tab')
+    await page.keyboard.press('Control+Shift+ArrowRight')
 
     // Wait for indent to apply (padding increases from base)
     await expect
@@ -197,8 +197,8 @@ test.describe('Block organization', () => {
       (el) => window.getComputedStyle(el).paddingLeft,
     )
 
-    // Now press Shift+Tab to dedent (editor should still be open)
-    await page.keyboard.press('Shift+Tab')
+    // Now press Ctrl+Shift+ArrowLeft to dedent (editor should still be open)
+    await page.keyboard.press('Control+Shift+ArrowLeft')
 
     // Wait for dedent to apply and verify paddingLeft decreased
     await expect
@@ -300,7 +300,7 @@ test.describe('Task and priority shortcuts', () => {
 
     // Indent the fourth block (index 3, GS_4) under the third (index 2, GS_3 plain text)
     await focusBlock(page, 3)
-    await page.keyboard.press('Tab')
+    await page.keyboard.press('Control+Shift+ArrowRight')
 
     // Close the editor so only the document-level Ctrl+. handler fires
     // (Avoids double-toggle: both editor-level and document-level handlers

@@ -3606,7 +3606,7 @@ describe('BlockTree handleMergeWithPrev', () => {
 })
 
 // =========================================================================
-// handleIndent / handleDedent (Tab / Shift+Tab in block tree context)
+// handleIndent / handleDedent (Ctrl+Shift+ArrowRight / ArrowLeft in block tree context)
 // =========================================================================
 
 describe('BlockTree handleIndent / handleDedent', () => {

@@ -63,7 +63,7 @@ describe('KeyboardShortcuts', () => {
 
     // Verify key labels (keys are now split into individual <kbd> elements)
     expect(screen.getAllByText('Enter').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getAllByText('Tab').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('Arrow Right').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('Shift').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('@')).toBeInTheDocument()
     expect(screen.getByText('[[')).toBeInTheDocument()
@@ -194,7 +194,7 @@ describe('KeyboardShortcuts', () => {
 
     const kbdTexts = Array.from(kbds).map((el) => el.textContent)
     expect(kbdTexts).toContain('Shift')
-    expect(kbdTexts).toContain('Tab')
+    expect(kbdTexts).toContain('Arrow Right')
     expect(kbdTexts).toContain('Ctrl')
     expect(kbdTexts).toContain('Enter')
   })

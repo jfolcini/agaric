@@ -202,13 +202,13 @@ export function BlockContextMenu({
       label: t('contextMenu.indent'),
       icon: <ArrowRightToLine size={14} />,
       action: onIndent ? () => handleAction(onIndent) : undefined,
-      shortcut: 'Tab',
+      shortcut: 'Ctrl+Shift+→',
     },
     {
       label: t('contextMenu.dedent'),
       icon: <ArrowLeftToLine size={14} />,
       action: onDedent ? () => handleAction(onDedent) : undefined,
-      shortcut: 'Shift+Tab',
+      shortcut: 'Ctrl+Shift+←',
     },
     {
       label: t('contextMenu.moveUp'),

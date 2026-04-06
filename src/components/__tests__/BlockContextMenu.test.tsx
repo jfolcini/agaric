@@ -297,8 +297,8 @@ describe('BlockContextMenu', () => {
     renderMenu()
 
     const menu = screen.getByRole('menu')
-    expect(within(menu).getByText('Tab')).toBeInTheDocument()
-    expect(within(menu).getByText('Shift+Tab')).toBeInTheDocument()
+    expect(within(menu).getByText('Ctrl+Shift+→')).toBeInTheDocument()
+    expect(within(menu).getByText('Ctrl+Shift+←')).toBeInTheDocument()
     expect(within(menu).getByText('Ctrl+Shift+↑')).toBeInTheDocument()
     expect(within(menu).getByText('Ctrl+Shift+↓')).toBeInTheDocument()
     expect(within(menu).getByText('Ctrl+.')).toBeInTheDocument()

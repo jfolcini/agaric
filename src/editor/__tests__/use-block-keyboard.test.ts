@@ -187,11 +187,11 @@ describe('handleBlockKeyDown', () => {
     })
   })
 
-  describe('Tab / Shift+Tab', () => {
-    it('Tab calls onFlush + onIndent', () => {
+  describe('Ctrl+Shift+ArrowRight / ArrowLeft (indent / dedent)', () => {
+    it('Ctrl+Shift+ArrowRight calls onFlush + onIndent', () => {
       const editor = makeEditor({})
       const cbs = makeCallbacks()
-      const event = makeEvent('Tab')
+      const event = makeEvent('ArrowRight', { ctrlKey: true, shiftKey: true })
 
       handleBlockKeyDown(event, editor, cbs)
 
@@ -201,10 +201,10 @@ describe('handleBlockKeyDown', () => {
       expect(cbs._calls.onDedent).toBeUndefined()
     })
 
-    it('Shift+Tab calls onFlush + onDedent', () => {
+    it('Ctrl+Shift+ArrowLeft calls onFlush + onDedent', () => {
       const editor = makeEditor({})
       const cbs = makeCallbacks()
-      const event = makeEvent('Tab', { shiftKey: true })
+      const event = makeEvent('ArrowLeft', { ctrlKey: true, shiftKey: true })
 
       handleBlockKeyDown(event, editor, cbs)
 
@@ -214,15 +214,48 @@ describe('handleBlockKeyDown', () => {
       expect(cbs._calls.onIndent).toBeUndefined()
     })
 
-    it('Tab at position 0 still indents (Tab takes priority)', () => {
-      const editor = makeEditor({ from: 0, to: 0, selectionEmpty: true })
+    it('Meta+Shift+ArrowRight calls onIndent (macOS)', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowRight', { metaKey: true, shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls.onIndent).toBe(1)
+    })
+
+    it('Meta+Shift+ArrowLeft calls onDedent (macOS)', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowLeft', { metaKey: true, shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls.onDedent).toBe(1)
+    })
+
+    it('Tab does NOT call onIndent (Tab freed for focus navigation)', () => {
+      const editor = makeEditor({})
       const cbs = makeCallbacks()
       const event = makeEvent('Tab')
 
       handleBlockKeyDown(event, editor, cbs)
 
-      expect(cbs._calls.onIndent).toBe(1)
-      expect(cbs._calls.onFocusPrev).toBeUndefined()
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(cbs._calls.onIndent).toBeUndefined()
+      expect(cbs._calls.onDedent).toBeUndefined()
+    })
+
+    it('Ctrl+ArrowRight without Shift does NOT call onIndent', () => {
+      const editor = makeEditor({ from: 5, to: 5 })
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowRight', { ctrlKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(cbs._calls.onIndent).toBeUndefined()
     })
   })
 

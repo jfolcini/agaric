@@ -3,7 +3,7 @@
  *
  * ArrowUp/Left at pos 0 → prev block. ArrowDown/Right at end → next block.
  * Backspace on empty → delete block + focus prev. Enter → create new sibling.
- * Tab → indent. Shift+Tab → dedent.
+ * Ctrl/Cmd+Shift+ArrowRight → indent. Ctrl/Cmd+Shift+ArrowLeft → dedent.
  */
 
 import type { Editor } from '@tiptap/core'
@@ -21,9 +21,9 @@ export interface BlockKeyboardCallbacks {
   onFocusNext: () => void
   /** Delete the current block (empty + backspace). Receives cursor placement hint. */
   onDeleteBlock: (opts: DeleteBlockOpts) => void
-  /** Indent the current block (Tab). */
+  /** Indent the current block (Ctrl/Cmd+Shift+ArrowRight). */
   onIndent: () => void
-  /** Dedent the current block (Shift+Tab). */
+  /** Dedent the current block (Ctrl/Cmd+Shift+ArrowLeft). */
   onDedent: () => void
   /** Flush current content before navigation. Returns new markdown or null. */
   onFlush: () => string | null
@@ -93,6 +93,22 @@ export function handleBlockKeyDown(
     return
   }
 
+  // Ctrl/Cmd+Shift+ArrowRight: indent block
+  if ((ctrlKey || metaKey) && shiftKey && key === 'ArrowRight') {
+    event.preventDefault()
+    callbacks.onFlush()
+    callbacks.onIndent()
+    return
+  }
+
+  // Ctrl/Cmd+Shift+ArrowLeft: dedent block
+  if ((ctrlKey || metaKey) && shiftKey && key === 'ArrowLeft') {
+    event.preventDefault()
+    callbacks.onFlush()
+    callbacks.onDedent()
+    return
+  }
+
   // Ctrl/Cmd+Enter: toggle task state
   if ((ctrlKey || metaKey) && key === 'Enter') {
     event.preventDefault()
@@ -111,18 +127,6 @@ export function handleBlockKeyDown(
   if ((ctrlKey || metaKey) && shiftKey && (key === 'P' || key === 'p')) {
     event.preventDefault()
     callbacks.onShowProperties?.()
-    return
-  }
-
-  // Tab / Shift+Tab: indent / dedent
-  if (key === 'Tab') {
-    event.preventDefault()
-    callbacks.onFlush()
-    if (shiftKey) {
-      callbacks.onDedent()
-    } else {
-      callbacks.onIndent()
-    }
     return
   }
 
@@ -196,15 +200,13 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
     (event: KeyboardEvent) => {
       if (!editor) return
 
-      // When a suggestion popup is visible, let Enter, Tab, Escape, and
+      // When a suggestion popup is visible, let Enter, Escape, and
       // Backspace pass through to ProseMirror so the Suggestion plugin can
-      // handle them: Enter/Tab → select item, Escape → dismiss popup,
+      // handle them: Enter → select item, Escape → dismiss popup,
       // Backspace → delete query character (not merge blocks).
+      // (Tab also passes through naturally since it's no longer intercepted.)
       if (
-        (event.key === 'Enter' ||
-          event.key === 'Tab' ||
-          event.key === 'Escape' ||
-          event.key === 'Backspace') &&
+        (event.key === 'Enter' || event.key === 'Escape' || event.key === 'Backspace') &&
         !event.shiftKey &&
         !event.ctrlKey &&
         !event.metaKey

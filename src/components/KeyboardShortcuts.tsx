@@ -36,8 +36,8 @@ const SHORTCUT_GROUPS: { category: string; shortcuts: ShortcutDef[] }[] = [
       { keys: 'Enter', description: 'Save block and close editor' },
       { keys: 'Backspace', condition: 'on empty block', description: 'Delete block' },
       { keys: 'Backspace', condition: 'at start of block', description: 'Merge with previous' },
-      { keys: 'Tab', description: 'Indent block' },
-      { keys: 'Shift + Tab', description: 'Dedent block' },
+      { keys: 'Ctrl + Shift + Arrow Right', description: 'Indent block' },
+      { keys: 'Ctrl + Shift + Arrow Left', description: 'Dedent block' },
       {
         keys: 'Ctrl + Enter',
         description: 'Cycle task state (TODO → DOING → DONE → none)',
