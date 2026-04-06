@@ -20,7 +20,12 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
-import { handleDeleteProperty, handleSaveProperty } from '@/lib/property-save-utils'
+import {
+  buildInitParams,
+  handleDeleteProperty,
+  handleSaveProperty,
+  NON_DELETABLE_PROPERTIES,
+} from '@/lib/property-save-utils'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
 import { announce } from '../lib/announcer'
 import type { PropertyDefinition, PropertyRow as PropertyRowData } from '../lib/tauri'
@@ -34,23 +39,6 @@ import {
 import { usePageBlockStore, usePageBlockStoreApi } from '../stores/page-blocks'
 import { AddPropertyPopover } from './AddPropertyPopover'
 import { BuiltinDateFields } from './BuiltinDateFields'
-
-const BUILTIN_PROPERTY_KEYS = new Set([
-  'todo_state',
-  'priority',
-  'due_date',
-  'scheduled_date',
-  'created_at',
-  'completed_at',
-  'effort',
-  'assignee',
-  'location',
-  'repeat',
-  'repeat-until',
-  'repeat-count',
-  'repeat-seq',
-  'repeat-origin',
-])
 
 export interface BlockPropertyDrawerProps {
   blockId: string | null
@@ -183,7 +171,9 @@ export function BlockPropertyDrawer({
     async (def: PropertyDefinition) => {
       if (!blockId) return
       try {
-        await setProperty({ blockId, key: def.key, valueText: '' })
+        const params = buildInitParams(blockId, def)
+        if (!params) return
+        await setProperty(params)
         const updated = await getProperties(blockId)
         setProperties(Array.isArray(updated) ? updated : [])
       } catch {
@@ -193,9 +183,14 @@ export function BlockPropertyDrawer({
     [blockId, t],
   )
 
-  // Definitions available for the add-property popover
+  // Definitions available for the add-property popover:
+  // exclude already-set keys, system-managed builtin keys, and ref type
+  // (needs a page picker, cannot be initialized with an empty value).
   const existingKeys = new Set(properties.map((p) => p.key))
-  const availableDefs = definitions.filter((d) => !existingKeys.has(d.key))
+  const availableDefs = definitions.filter(
+    (d) =>
+      !existingKeys.has(d.key) && !NON_DELETABLE_PROPERTIES.has(d.key) && d.value_type !== 'ref',
+  )
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -237,7 +232,7 @@ export function BlockPropertyDrawer({
                     ariaLabel={t('property.valueLabel', { key: prop.key })}
                     onSave={(v) => handleSave(prop.key, v, getType(prop.key))}
                     onRemove={
-                      !BUILTIN_PROPERTY_KEYS.has(prop.key)
+                      !NON_DELETABLE_PROPERTIES.has(prop.key)
                         ? () => handleDelete(prop.key)
                         : undefined
                     }

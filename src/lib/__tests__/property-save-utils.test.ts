@@ -15,10 +15,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mockedInvoke = vi.mocked(invoke)
 
 import {
+  buildInitParams,
   buildPropertyParams,
   handleDeleteProperty,
   handleSaveProperty,
+  NON_DELETABLE_PROPERTIES,
 } from '../property-save-utils'
+import type { PropertyDefinition } from '../tauri'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -100,6 +103,72 @@ describe('buildPropertyParams', () => {
       ok: true,
       params: { blockId: 'B1', key: 'custom', valueText: 'val' },
     })
+  })
+})
+
+describe('NON_DELETABLE_PROPERTIES', () => {
+  it('contains all expected builtin keys', () => {
+    for (const key of [
+      'todo_state',
+      'priority',
+      'due_date',
+      'scheduled_date',
+      'created_at',
+      'completed_at',
+      'repeat',
+      'repeat-until',
+      'repeat-count',
+      'repeat-seq',
+      'repeat-origin',
+    ]) {
+      expect(NON_DELETABLE_PROPERTIES.has(key)).toBe(true)
+    }
+  })
+
+  it('does not include user-deletable properties', () => {
+    for (const key of ['effort', 'assignee', 'location']) {
+      expect(NON_DELETABLE_PROPERTIES.has(key)).toBe(false)
+    }
+  })
+})
+
+describe('buildInitParams', () => {
+  const makeDef = (key: string, valueType: string): PropertyDefinition => ({
+    key,
+    value_type: valueType,
+    options: null,
+    created_at: '2026-01-01T00:00:00Z',
+  })
+
+  it('returns valueText empty string for text type', () => {
+    const result = buildInitParams('B1', makeDef('author', 'text'))
+    expect(result).toEqual({ blockId: 'B1', key: 'author', valueText: '' })
+  })
+
+  it('returns valueText empty string for select type', () => {
+    const result = buildInitParams('B1', makeDef('status', 'select'))
+    expect(result).toEqual({ blockId: 'B1', key: 'status', valueText: '' })
+  })
+
+  it('returns valueNum 0 for number type', () => {
+    const result = buildInitParams('B1', makeDef('weight', 'number'))
+    expect(result).toEqual({ blockId: 'B1', key: 'weight', valueNum: 0 })
+  })
+
+  it('returns today as valueDate for date type', () => {
+    const today = new Date().toISOString().slice(0, 10)
+    const result = buildInitParams('B1', makeDef('due', 'date'))
+    expect(result).toEqual({ blockId: 'B1', key: 'due', valueDate: today })
+  })
+
+  it('returns null for ref type', () => {
+    const result = buildInitParams('B1', makeDef('parent', 'ref'))
+    expect(result).toBeNull()
+  })
+
+  it('returns null for unknown types', () => {
+    const result = buildInitParams('B1', makeDef('mystery', 'blob'))
+    expect(result).toBeNull()
   })
 })
 

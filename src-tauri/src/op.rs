@@ -322,8 +322,15 @@ pub fn is_reserved_property_key(key: &str) -> bool {
     )
 }
 
-/// Property keys seeded by migrations 0014 and 0016 that are system-managed
-/// and must not be deleted by users.
+/// Property keys that are system-managed and must not be deleted by users.
+///
+/// Reserved column keys (`todo_state`, `priority`, `due_date`,
+/// `scheduled_date`) live on the `blocks` table and are managed via
+/// dedicated setters.  System-lifecycle keys (`created_at`, `completed_at`,
+/// `repeat-*`) are written by internal state-transition helpers.
+///
+/// User-settable properties like `effort`, `assignee`, and `location` are
+/// intentionally **not** included — users must be able to remove them.
 pub fn is_builtin_property_key(key: &str) -> bool {
     matches!(
         key,
@@ -333,9 +340,6 @@ pub fn is_builtin_property_key(key: &str) -> bool {
             | "scheduled_date"
             | "created_at"
             | "completed_at"
-            | "effort"
-            | "assignee"
-            | "location"
             | "repeat"
             | "repeat-until"
             | "repeat-count"
@@ -1311,9 +1315,6 @@ mod tests {
             "scheduled_date",
             "created_at",
             "completed_at",
-            "effort",
-            "assignee",
-            "location",
             "repeat",
             "repeat-until",
             "repeat-count",
@@ -1338,6 +1339,16 @@ mod tests {
             !is_builtin_property_key(""),
             "empty string must not be recognized as built-in"
         );
+    }
+
+    #[test]
+    fn user_settable_properties_are_not_builtin() {
+        for key in ["effort", "assignee", "location"] {
+            assert!(
+                !is_builtin_property_key(key),
+                "'{key}' is user-settable and must NOT be treated as built-in"
+            );
+        }
     }
 }
 

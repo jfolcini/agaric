@@ -7955,7 +7955,31 @@ mod tests {
         .unwrap();
         mat.flush_background().await.unwrap();
 
-        // Set a built-in property
+        // Set a system-managed built-in property
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "created_at".into(),
+            None,
+            None,
+            Some("2026-01-01".into()),
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Attempt to delete the built-in property — should fail
+        let result =
+            delete_property_inner(&pool, DEV, &mat, block.id.clone(), "created_at".into()).await;
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "deleting a built-in property should return Validation error, got: {result:?}"
+        );
+
+        // Deleting a user-settable property like "effort" should work
         set_property_inner(
             &pool,
             DEV,
@@ -7971,13 +7995,9 @@ mod tests {
         .unwrap();
         mat.flush_background().await.unwrap();
 
-        // Attempt to delete the built-in property — should fail
-        let result =
-            delete_property_inner(&pool, DEV, &mat, block.id.clone(), "effort".into()).await;
-        assert!(
-            matches!(result, Err(AppError::Validation(_))),
-            "deleting a built-in property should return Validation error, got: {result:?}"
-        );
+        delete_property_inner(&pool, DEV, &mat, block.id.clone(), "effort".into())
+            .await
+            .unwrap();
 
         // Deleting a custom property should still work
         set_property_inner(

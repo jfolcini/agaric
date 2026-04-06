@@ -383,18 +383,41 @@ describe('PagePropertyTable property editing', () => {
       })
     })
   })
+
+  it('hides delete button for non-deletable builtin properties', async () => {
+    const user = userEvent.setup()
+    setupMock(
+      [
+        makeProp('created_at', { value_text: '2026-01-01' }),
+        makeProp('author', { value_text: 'Alice' }),
+      ],
+      [makeDef('author', 'text')],
+    )
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('author value')).toBeInTheDocument()
+    })
+
+    // Delete should be visible for custom property
+    expect(screen.getByLabelText('Delete property author')).toBeInTheDocument()
+    // Delete should NOT be visible for non-deletable builtin property
+    expect(screen.queryByLabelText('Delete property created_at')).not.toBeInTheDocument()
+  })
 })
 
 describe('PagePropertyTable add property flow', () => {
   it('"Add property" opens popover with definition list', async () => {
-    setupMock([], [makeDef('status', 'text'), makeDef('priority', 'number')])
+    setupMock([], [makeDef('status', 'text'), makeDef('weight', 'number')])
 
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
       expect(screen.getByLabelText('Property picker')).toBeInTheDocument()
       expect(screen.getByText('Status')).toBeInTheDocument()
-      expect(screen.getByText('Priority')).toBeInTheDocument()
+      expect(screen.getByText('Weight')).toBeInTheDocument()
     })
   })
 
@@ -435,6 +458,55 @@ describe('PagePropertyTable add property flow', () => {
         valueText: '',
         valueNum: null,
         valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+
+  it('clicking a number definition initializes with valueNum: 0', async () => {
+    const user = userEvent.setup()
+    setupMock([], [makeDef('weight', 'number')])
+
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Weight')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByText('Weight'))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'PAGE_1',
+        key: 'weight',
+        valueNum: 0,
+        valueText: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+
+  it('clicking a date definition initializes with today as valueDate', async () => {
+    const user = userEvent.setup()
+    setupMock([], [makeDef('deadline', 'date')])
+
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Deadline')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByText('Deadline'))
+
+    const today = new Date().toISOString().slice(0, 10)
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'PAGE_1',
+        key: 'deadline',
+        valueDate: today,
+        valueText: null,
+        valueNum: null,
         valueRef: null,
       })
     })
@@ -537,15 +609,15 @@ describe('PagePropertyTable add property flow', () => {
   })
 
   it('displays formatted property names in the add-property popover', async () => {
-    setupMock([], [makeDef('created_at', 'date'), makeDef('my_custom_prop', 'text')])
+    setupMock([], [makeDef('reviewed_at', 'date'), makeDef('my_custom_prop', 'text')])
 
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
-      expect(screen.getByText('Created At')).toBeInTheDocument()
+      expect(screen.getByText('Reviewed At')).toBeInTheDocument()
       expect(screen.getByText('My Custom Prop')).toBeInTheDocument()
       // Raw keys should NOT appear
-      expect(screen.queryByText('created_at')).not.toBeInTheDocument()
+      expect(screen.queryByText('reviewed_at')).not.toBeInTheDocument()
       expect(screen.queryByText('my_custom_prop')).not.toBeInTheDocument()
     })
   })
@@ -866,7 +938,7 @@ describe('PagePropertyTable edit select options', () => {
 })
 
 describe('PagePropertyTable task-only property filtering', () => {
-  it('filters out task-only properties from add-property options', async () => {
+  it('filters out task-only and non-deletable properties from add-property options', async () => {
     setupMock(
       [],
       [
@@ -874,6 +946,7 @@ describe('PagePropertyTable task-only property filtering', () => {
         makeDef('assignee', 'text'),
         makeDef('location', 'text'),
         makeDef('due_date', 'date'),
+        makeDef('created_at', 'date'),
         makeDef('custom_prop', 'text'),
       ],
     )
@@ -884,11 +957,28 @@ describe('PagePropertyTable task-only property filtering', () => {
       expect(screen.getByLabelText('Property picker')).toBeInTheDocument()
     })
 
+    // Task-only properties should be filtered
     expect(screen.queryByText('Effort')).not.toBeInTheDocument()
     expect(screen.queryByText('Assignee')).not.toBeInTheDocument()
     expect(screen.queryByText('Location')).not.toBeInTheDocument()
-    expect(screen.getByText('Due Date')).toBeInTheDocument()
+    // Non-deletable builtin properties should be filtered
+    expect(screen.queryByText('Due Date')).not.toBeInTheDocument()
+    expect(screen.queryByText('Created At')).not.toBeInTheDocument()
+    // Custom properties should remain
     expect(screen.getByText('Custom Prop')).toBeInTheDocument()
+  })
+
+  it('filters out ref-type properties from add-property options', async () => {
+    setupMock([], [makeDef('linked_page', 'ref'), makeDef('notes', 'text')])
+
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Property picker')).toBeInTheDocument()
+    })
+
+    expect(screen.queryByText('Linked Page')).not.toBeInTheDocument()
+    expect(screen.getByText('Notes')).toBeInTheDocument()
   })
 })
 

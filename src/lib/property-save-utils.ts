@@ -5,7 +5,7 @@
  * duplicated type-based dispatch and validation when saving properties.
  */
 
-import type { PropertyRow } from './tauri'
+import type { PropertyDefinition, PropertyRow } from './tauri'
 import { deleteProperty, getProperties, setProperty } from './tauri'
 
 type SetPropertyParams = Parameters<typeof setProperty>[0]
@@ -13,6 +13,47 @@ type SetPropertyParams = Parameters<typeof setProperty>[0]
 export type BuildResult =
   | { ok: true; params: SetPropertyParams }
   | { ok: false; error: 'invalidNumber' }
+
+/**
+ * Properties that the backend considers non-deletable (system-managed).
+ * Mirrors `is_builtin_property_key` in `src-tauri/src/op.rs`.
+ */
+export const NON_DELETABLE_PROPERTIES = new Set([
+  'todo_state',
+  'priority',
+  'due_date',
+  'scheduled_date',
+  'created_at',
+  'completed_at',
+  'repeat',
+  'repeat-until',
+  'repeat-count',
+  'repeat-seq',
+  'repeat-origin',
+])
+
+/**
+ * Build the type-appropriate `setProperty` params for initializing a
+ * newly-added property.  Returns `null` for types that cannot be
+ * meaningfully initialized (e.g. `ref` needs a page picker).
+ */
+export function buildInitParams(
+  blockId: string,
+  def: PropertyDefinition,
+): SetPropertyParams | null {
+  switch (def.value_type) {
+    case 'number':
+      return { blockId, key: def.key, valueNum: 0 }
+    case 'date':
+      return { blockId, key: def.key, valueDate: new Date().toISOString().slice(0, 10) }
+    case 'text':
+    case 'select':
+      return { blockId, key: def.key, valueText: '' }
+    default:
+      // ref and unknown types — cannot create a meaningful initial value
+      return null
+  }
+}
 
 /**
  * Build setProperty params based on the property value type.

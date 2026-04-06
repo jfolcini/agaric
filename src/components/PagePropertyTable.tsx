@@ -20,7 +20,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { handleDeleteProperty, handleSaveProperty } from '@/lib/property-save-utils'
+import {
+  buildInitParams,
+  handleDeleteProperty,
+  handleSaveProperty,
+  NON_DELETABLE_PROPERTIES,
+} from '@/lib/property-save-utils'
 import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
 import { createPropertyDef, getProperties, listPropertyDefs, setProperty } from '../lib/tauri'
 import { AddPropertyPopover } from './AddPropertyPopover'
@@ -117,7 +122,9 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   const handleAddFromDef = useCallback(
     async (def: PropertyDefinition) => {
       try {
-        await setProperty({ blockId: pageId, key: def.key, valueText: '' })
+        const params = buildInitParams(pageId, def)
+        if (!params) return
+        await setProperty(params)
         const updated = await getProperties(pageId)
         setProperties(updated)
       } catch {
@@ -132,9 +139,12 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
       try {
         const newDef = await createPropertyDef({ key, valueType })
         setDefinitions((prev) => [...prev, newDef])
-        await setProperty({ blockId: pageId, key: newDef.key, valueText: '' })
-        const updated = await getProperties(pageId)
-        setProperties(updated)
+        const params = buildInitParams(pageId, newDef)
+        if (params) {
+          await setProperty(params)
+          const updated = await getProperties(pageId)
+          setProperties(updated)
+        }
       } catch (err: any) {
         toast.error(err.message ?? t('property.createDefFailed'))
       }
@@ -143,9 +153,14 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   )
 
   // Definitions available for the add-property popover:
-  // exclude already-set keys and task-only properties.
+  // exclude already-set keys, task-only properties, ref type (needs page picker),
+  // and system-managed builtin keys.
   const availableDefs = definitions.filter(
-    (d) => !properties.some((p) => p.key === d.key) && !TASK_ONLY_PROPERTIES.has(d.key),
+    (d) =>
+      !properties.some((p) => p.key === d.key) &&
+      !TASK_ONLY_PROPERTIES.has(d.key) &&
+      !NON_DELETABLE_PROPERTIES.has(d.key) &&
+      d.value_type !== 'ref',
   )
 
   const propertyCount = properties.length
@@ -176,13 +191,14 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
           {!loading &&
             properties.map((prop) => {
               const def = findDef(prop.key)
+              const canDelete = !NON_DELETABLE_PROPERTIES.has(prop.key)
               return (
                 <PropertyRowEditor
                   key={prop.key}
                   prop={prop}
                   def={def}
                   onSave={(rawValue) => doSaveProperty(prop.key, def, rawValue)}
-                  onDelete={() => setDeleteTarget(prop.key)}
+                  onDelete={canDelete ? () => setDeleteTarget(prop.key) : undefined}
                   onDefUpdated={(updatedDef) => {
                     setDefinitions((prev) =>
                       prev.map((d) => (d.key === updatedDef.key ? updatedDef : d)),

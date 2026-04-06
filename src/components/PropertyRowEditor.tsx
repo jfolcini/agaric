@@ -32,7 +32,7 @@ export interface PropertyRowEditorProps {
   prop: PropertyRow
   def: PropertyDefinition | undefined
   onSave: (rawValue: string) => void
-  onDelete: () => void
+  onDelete?: (() => void) | undefined
   onDefUpdated?: (updatedDef: PropertyDefinition) => void
 }
 
@@ -218,15 +218,17 @@ export function PropertyRowEditor({
           </PopoverContent>
         </Popover>
       )}
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        className="shrink-0 text-muted-foreground hover:text-destructive"
-        onClick={onDelete}
-        aria-label={t('pageProperty.deletePropertyLabel', { key: prop.key })}
-      >
-        <X className="h-3 w-3" />
-      </Button>
+      {onDelete && (
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className="shrink-0 text-muted-foreground hover:text-destructive"
+          onClick={onDelete}
+          aria-label={t('pageProperty.deletePropertyLabel', { key: prop.key })}
+        >
+          <X className="h-3 w-3" />
+        </Button>
+      )}
     </div>
   )
 }
