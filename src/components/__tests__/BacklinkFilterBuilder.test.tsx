@@ -580,14 +580,19 @@ describe('BacklinkFilterBuilder', () => {
       // Old string-based comparison would consider these duplicates
       const TAG_A = '01ABCDEFGHIJKLMNOPQRSTUVWX'
       const TAG_B = '01ABCDEFZZZZZZZZZZZZZZZZZZ'
+      const tags = [
+        { id: TAG_A, name: 'Alpha' },
+        { id: TAG_B, name: 'Beta' },
+      ]
       renderBuilder({
         filters: [{ type: 'HasTag', tag_id: TAG_A }],
+        tags,
         onFiltersChange,
       })
 
       await user.click(screen.getByRole('button', { name: /Add filter/i }))
       await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
-      await user.type(screen.getByLabelText('Tag ID'), TAG_B)
+      await user.selectOptions(screen.getByLabelText('Tag'), TAG_B)
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       // Should NOT be flagged as duplicate since full tag_ids differ
@@ -616,36 +621,18 @@ describe('BacklinkFilterBuilder', () => {
     })
   })
 
-  describe('ULID validation (#339)', () => {
-    it('rejects invalid ULID format in HasTag filter', async () => {
+  describe('has-tag with no tags available', () => {
+    it('shows toast error when no tag is selected', async () => {
       const user = userEvent.setup()
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
       await user.click(screen.getByRole('button', { name: /Add filter/i }))
       await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
-      await user.type(screen.getByLabelText('Tag ID'), 'not-a-ulid')
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
-      expect(toast.error).toHaveBeenCalledWith(
-        'Invalid ULID format (expected 26 uppercase characters)',
-      )
+      expect(toast.error).toHaveBeenCalledWith('Tag is required')
       expect(onFiltersChange).not.toHaveBeenCalled()
-    })
-
-    it('accepts valid ULID in HasTag filter', async () => {
-      const user = userEvent.setup()
-      const onFiltersChange = vi.fn()
-      renderBuilder({ onFiltersChange })
-
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
-      await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
-      await user.type(screen.getByLabelText('Tag ID'), '01ARZ3NDEKTSV4RRFFQ69G5FAV')
-      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
-
-      expect(onFiltersChange).toHaveBeenCalledWith([
-        { type: 'HasTag', tag_id: '01ARZ3NDEKTSV4RRFFQ69G5FAV' },
-      ])
     })
   })
 

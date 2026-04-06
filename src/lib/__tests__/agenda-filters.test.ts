@@ -431,12 +431,18 @@ describe('executeAgendaFilters', () => {
   })
 
   describe('tag filter', () => {
-    it('queries blocks by tagId via list_blocks', async () => {
+    it('resolves tag name to ID then queries blocks by tagId', async () => {
       const block = makeBlock({ id: 'tagged-1' })
 
-      mockedInvoke.mockImplementation(async (_cmd: string, args: unknown) => {
+      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
-        if (a.tagId === 'tag-abc') {
+        if (cmd === 'list_tags_by_prefix') {
+          if (a.prefix === 'tag-abc') {
+            return [{ tag_id: 'TAG_ID_ABC', name: 'tag-abc', usage_count: 1 }]
+          }
+          return []
+        }
+        if (cmd === 'list_blocks' && a.tagId === 'TAG_ID_ABC') {
           return { items: [block], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -447,10 +453,12 @@ describe('executeAgendaFilters', () => {
       expect(result.blocks).toHaveLength(1)
       expect(result.blocks[0]?.id).toBe('tagged-1')
       expect(mockedInvoke).toHaveBeenCalledWith(
+        'list_tags_by_prefix',
+        expect.objectContaining({ prefix: 'tag-abc' }),
+      )
+      expect(mockedInvoke).toHaveBeenCalledWith(
         'list_blocks',
-        expect.objectContaining({
-          tagId: 'tag-abc',
-        }),
+        expect.objectContaining({ tagId: 'TAG_ID_ABC' }),
       )
     })
 
@@ -458,12 +466,17 @@ describe('executeAgendaFilters', () => {
       const block1 = makeBlock({ id: 'tagged-1' })
       const block2 = makeBlock({ id: 'tagged-2' })
 
-      mockedInvoke.mockImplementation(async (_cmd: string, args: unknown) => {
+      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
-        if (a.tagId === 'tag-1') {
+        if (cmd === 'list_tags_by_prefix') {
+          if (a.prefix === 'tag-1') return [{ tag_id: 'TID_1', name: 'tag-1', usage_count: 1 }]
+          if (a.prefix === 'tag-2') return [{ tag_id: 'TID_2', name: 'tag-2', usage_count: 1 }]
+          return []
+        }
+        if (cmd === 'list_blocks' && a.tagId === 'TID_1') {
           return { items: [block1], next_cursor: null, has_more: false }
         }
-        if (a.tagId === 'tag-2') {
+        if (cmd === 'list_blocks' && a.tagId === 'TID_2') {
           return { items: [block2], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -583,6 +596,10 @@ describe('executeAgendaFilters', () => {
     })
 
     it('returns empty for tag filter when no blocks match', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_tags_by_prefix') return []
+        return emptyPage
+      })
       const result = await executeAgendaFilters([{ dimension: 'tag', values: ['nonexistent-tag'] }])
       expect(result.blocks).toHaveLength(0)
     })

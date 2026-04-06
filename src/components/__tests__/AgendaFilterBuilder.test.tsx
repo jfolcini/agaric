@@ -11,13 +11,13 @@
  *  7. Selecting Status dimension shows TODO/DOING/DONE checkboxes
  *  8. A11y audit passes
  *  9. Selecting Priority dimension shows 1/2/3 checkboxes
- * 10. Tag dimension shows text input
+ * 10. Tag dimension shows searchable tag autocomplete
  * 11. Already-used dimensions are disabled in the picker
  * 12. Apply button is disabled until values are selected
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -232,9 +232,9 @@ describe('AgendaFilterBuilder', () => {
   })
 
   // -----------------------------------------------------------------------
-  // 10. Tag dimension shows text input
+  // 10. Tag dimension shows searchable tag autocomplete
   // -----------------------------------------------------------------------
-  it('selecting Tag dimension shows a text input', async () => {
+  it('selecting Tag dimension shows a searchable tag autocomplete', async () => {
     const user = userEvent.setup()
     renderBuilder()
 
@@ -242,6 +242,43 @@ describe('AgendaFilterBuilder', () => {
     await user.click(screen.getByText('Tag'))
 
     expect(screen.getByLabelText('Tag name')).toBeInTheDocument()
+    expect(screen.getByRole('combobox')).toBeInTheDocument()
+  })
+
+  it('adds a tag filter via search and selection', async () => {
+    const mockedInvoke = vi.mocked(invoke)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_tags_by_prefix') {
+        const a = args as Record<string, unknown>
+        const prefix = ((a.prefix as string) ?? '').toLowerCase()
+        return [
+          { tag_id: 'TAG_1', name: 'work', usage_count: 5 },
+          { tag_id: 'TAG_2', name: 'workout', usage_count: 2 },
+        ].filter((t) => t.name.toLowerCase().startsWith(prefix))
+      }
+      return []
+    })
+
+    const user = userEvent.setup()
+    const onFiltersChange = vi.fn()
+    renderBuilder({ onFiltersChange })
+
+    await user.click(screen.getByRole('button', { name: /Add filter/i }))
+    await user.click(screen.getByText('Tag'))
+
+    await user.type(screen.getByRole('combobox'), 'wor')
+
+    await waitFor(() => {
+      expect(screen.getByRole('listbox')).toBeInTheDocument()
+    })
+
+    const options = screen.getAllByRole('option')
+    expect(options).toHaveLength(2)
+    await user.click(options[0] as HTMLElement)
+
+    await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+    expect(onFiltersChange).toHaveBeenCalledWith([{ dimension: 'tag', values: ['work'] }])
   })
 
   // -----------------------------------------------------------------------

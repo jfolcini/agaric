@@ -1,5 +1,25 @@
 # Session Log
 
+## Session 234 — 2026-04-06 — Indent/dedent shortcut change (Tab → Ctrl+Shift+Arrow)
+
+### Summary
+Changed indent/dedent keyboard shortcuts from Tab/Shift+Tab to Ctrl+Shift+ArrowRight/ArrowLeft. This frees Tab/Shift+Tab for standard browser focus navigation, improving keyboard accessibility. Tab still works in suggestion popups (autocomplete) via the suggestion renderer — that flow is unaffected. 8 files changed, 7 new unit tests (including macOS Meta variants and negative Tab test), all 4417 frontend tests pass.
+
+### Changes
+
+| Area | Change |
+|------|--------|
+| use-block-keyboard.ts | Replaced Tab/Shift+Tab handler with Ctrl/Cmd+Shift+ArrowRight (indent) and Ctrl/Cmd+Shift+ArrowLeft (dedent). Removed Tab from suggestion popup passthrough. Updated JSDoc and module comments. |
+| KeyboardShortcuts.tsx | Updated shortcut labels from Tab/Shift+Tab to Ctrl+Shift+Arrow Right/Left. |
+| BlockContextMenu.tsx | Updated shortcut hints from Tab/Shift+Tab to Ctrl+Shift+→/←. |
+| use-block-keyboard.test.ts | Replaced 3 Tab tests with 7 Ctrl+Shift+Arrow tests (Ctrl indent, Ctrl dedent, Meta indent, Meta dedent, Tab-no-op, Ctrl-without-Shift-no-op). |
+| KeyboardShortcuts.test.tsx | Updated Tab label assertions to Arrow Right. |
+| BlockContextMenu.test.tsx | Updated shortcut hint assertions to Ctrl+Shift+→/←. |
+| BlockTree.test.tsx | Updated comment (line 3609) to reference new shortcuts. |
+| e2e/keyboard-shortcuts.spec.ts | Updated 3 tests: indent, dedent, and collapse setup to use Control+Shift+ArrowRight/Left. |
+
+**Commit:** 6306477
+
 ## Session 233 — 2026-04-06 — Ref-type property picker
 
 ### Summary

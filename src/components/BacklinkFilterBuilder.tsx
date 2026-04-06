@@ -8,7 +8,7 @@
  * `FilterSortControls`. Both were extracted for testability (#651-R4).
  */
 
-import { Filter, Plus } from 'lucide-react'
+import { Filter } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -202,13 +202,7 @@ function AddFilterRow({
         break
       case 'has-tag':
         if (!tagValue.trim()) {
-          toast.error(t('backlink.tagIdRequired'))
-          return
-        }
-        // Basic ULID format check (26 uppercase alphanumeric). Accepts I/L/O/U
-        // which strict Crockford base32 excludes; backend handles gracefully.
-        if (tags.length === 0 && !/^[0-9A-Z]{26}$/.test(tagValue.trim())) {
-          toast.error(t('backlink.invalidUlidFormat'))
+          toast.error(t('backlink.tagRequired'))
           return
         }
         onApply({ type: 'HasTag', tag_id: tagValue.trim() })
@@ -237,7 +231,6 @@ function AddFilterRow({
     propEmptyKey,
     tagValue,
     prefixValue,
-    tags,
     propertyKeys,
     onApply,
     t,
@@ -454,29 +447,20 @@ function AddFilterRow({
           />
         ))}
 
-      {category === 'has-tag' &&
-        (tags.length > 0 ? (
-          <Select value={tagValue} onValueChange={(val) => setTagValue(val)}>
-            <SelectTrigger size="sm" aria-label={t('backlink.tagLabel')}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {tags.map((tag) => (
-                <SelectItem key={tag.id} value={tag.id}>
-                  {tag.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : (
-          <Input
-            className="h-7 w-40 text-xs [@media(pointer:coarse)]:w-full"
-            placeholder={t('backlink.tagIdPlaceholder')}
-            value={tagValue}
-            onChange={(e) => setTagValue(e.target.value)}
-            aria-label={t('backlink.tagIdLabel')}
-          />
-        ))}
+      {category === 'has-tag' && (
+        <Select value={tagValue} onValueChange={(val) => setTagValue(val)}>
+          <SelectTrigger size="sm" aria-label={t('backlink.tagLabel')}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {tags.map((tag) => (
+              <SelectItem key={tag.id} value={tag.id}>
+                {tag.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
 
       {category === 'tag-prefix' && (
         <Input
@@ -612,7 +596,6 @@ export function BacklinkFilterBuilder({
           onClick={() => setShowAddRow(true)}
           aria-label={t('backlink.addFilterLabel')}
         >
-          <Plus className="h-3 w-3" />
           {t('backlink.addFilterLabel')}
         </Button>
 

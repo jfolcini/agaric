@@ -22,7 +22,7 @@ import {
 } from '../lib/filter-dimension-metadata'
 import { ChoiceValuePicker } from './ChoiceValuePicker'
 import { PropertyValuePicker } from './PropertyValuePicker'
-import { TextValuePicker } from './TextValuePicker'
+import { TagValuePicker } from './TagValuePicker'
 
 // Re-export all previously public symbols for backward compat
 export type { AgendaFilterDimension } from '../lib/filter-dimension-metadata'
@@ -74,7 +74,7 @@ function ValuePicker({ dimension, selected, onChange }: ValuePickerProps): React
     )
   }
 
-  return <TextValuePicker selected={selected} onChange={onChange} />
+  return <TagValuePicker selected={selected} onChange={onChange} />
 }
 
 // ---------------------------------------------------------------------------

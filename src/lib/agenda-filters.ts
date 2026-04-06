@@ -8,7 +8,7 @@
 import type { AgendaFilter } from '../components/AgendaFilterBuilder'
 import { formatDate, getDateRangeForFilter } from './date-utils'
 import type { BlockRow } from './tauri'
-import { listBlocks, queryByProperty } from './tauri'
+import { listBlocks, listTagsByPrefix, queryByProperty } from './tauri'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -177,11 +177,15 @@ async function queryPropertyDateDimension(
   return result
 }
 
-/** Query blocks matching the given tag IDs. */
+/** Query blocks matching the given tag names (resolved to IDs via prefix search). */
 async function queryTag(values: string[]): Promise<Map<string, BlockRow>> {
   const result = new Map<string, BlockRow>()
   for (const value of values) {
-    const resp = await listBlocks({ tagId: value, limit: 500 })
+    // Resolve tag name to ID via prefix search + exact match
+    const candidates = await listTagsByPrefix({ prefix: value, limit: 50 })
+    const match = candidates.find((t) => t.name.toLowerCase() === value.toLowerCase())
+    if (!match) continue
+    const resp = await listBlocks({ tagId: match.tag_id, limit: 500 })
     for (const b of resp.items) {
       result.set(b.id, b)
     }
