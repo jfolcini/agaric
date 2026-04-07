@@ -1,5 +1,22 @@
 # Session Log
 
+## Session 251 — 2026-04-07 — Batch 105: T-6 fully resolved (final sweep)
+
+### Summary
+Final sweep of T-6: added 15 error/edge-case tests to the last 3 components with testable paths (BlockContextMenu: 3, StaticBlock: 8, BacklinkGroupRenderer: 4). 2 files (QueryResultList, QueryResultTable) confirmed as pure presentational with zero invoke calls — no tests needed. T-6 is now fully resolved: 25 components covered, 125 new error tests across 5 batches (sessions 247-251). REVIEW-LATER: 4→3 (T-6 removed). 5045 tests pass.
+
+### Batch 105
+
+**Commit:** b6b44dd
+
+| Test File | New Tests | Error Paths Covered |
+|-----------|-----------|-------------------|
+| BlockContextMenu.test.tsx | 3 | computePosition failure fallback, menu interaction, keyboard nav |
+| StaticBlock.test.tsx | 8 | Tag/property/backlink query rejections, batchResolve, non-Error, click after error, a11y |
+| BacklinkGroupRenderer.test.tsx | 4 | Empty groups, zero blocks, renderRichContent throw, null content |
+| QueryResultList.test.tsx | 0 | Pure presentational — no invoke calls |
+| QueryResultTable.test.tsx | 0 | Pure presentational — no invoke calls |
+
 ## Session 250 — 2026-04-07 — Batch 104: T-6 error path tests final batch (4 components)
 
 ### Summary
