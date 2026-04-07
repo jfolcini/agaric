@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 247 — 2026-04-07 — Batch 101: T-6 error path tests for 6 critical components
+
+### Summary
+Added 36 error path tests to 6 critical component test files: BlockPropertyDrawer (10), PagePropertyTable (7), App (5), AttachmentList (2), LinkedReferences (5), EditableBlock (7). This brings T-6 from 18/104 to 24/110 files with error path coverage, covering the most important invoke-based components. 6 parallel build subagents. 6 files changed, 1021 insertions. 4955 tests pass.
+
+### Batch 101 — T-6 error path tests
+
+**Commit:** 619afc7
+
+| Test File | New Tests | Error Paths Covered |
+|-----------|-----------|-------------------|
+| BlockPropertyDrawer.test.tsx | 10 | Load, save, delete, clear date, save date, add from def, reload after ref save |
+| PagePropertyTable.test.tsx | 7 | Delete property, add from def (×2), create def (with/without message), set after create, mount failure |
+| App.test.tsx | 5 | Boot status failure, Ctrl+N page creation, sidebar button creation, listDrafts failure, flushDraft failure |
+| AttachmentList.test.tsx | 2 | Load attachments failure, delete attachment failure |
+| LinkedReferences.test.tsx | 5 | Initial load, pagination, property keys load, tags load, simultaneous failures |
+| EditableBlock.test.tsx | 7 | Edit/split rejection on blur, focus transition failure, auto-mount failure, saveDraft/deleteDraft/flushDraft rejection |
+
 ## Session 246 — 2026-04-07 — Batch 100: F-19 + M-6 resolved (6→4 remaining)
 
 ### Summary
