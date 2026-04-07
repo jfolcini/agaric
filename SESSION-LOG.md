@@ -1,9 +1,9 @@
 # Session Log
 
-## Session 237 — 2026-04-07 — Batches 84-91: 39 REVIEW-LATER items resolved + M-1 subtasks 1-2
+## Session 237 — 2026-04-07 — Batches 84-92: 39 REVIEW-LATER items resolved + M-1 subtasks 1-4
 
 ### Summary
-Resolved 39 REVIEW-LATER items + started M-1 (2 of 8 subtasks) across 8 batches. **Batch 84 (Rust, 7):** B-3/B-4/S-1/S-2/P-1/M-3/T-5. **Batch 85 (a11y, 6):** UX-1/2/3/6/P-3/M-2. **Batch 86 (components, 12):** UX-8/9/10/11/12/13/14/17/18/19/20/P-2. **Batch 87 (touch/logging/tests, 5):** UX-15/16/21/M-4/T-4. **Batch 88 (bugs/design/i18n, 5):** B-5/B-6/UX-4/UX-5/UX-7. **Batch 89 (mobile/tests, 3):** UX-22/UX-23/T-3. **Batch 90 (feature, 1):** F-18. **Batch 91 (refactor, 2 subtasks):** M-1.1/M-1.2. ~150 files changed, ~125 new tests. 1613 Rust + 4555 frontend tests pass. REVIEW-LATER: 41→3 items (F-14/F-15 need user approval, M-1 has 6 remaining subtasks).
+Resolved 39 REVIEW-LATER items + M-1 subtasks 1-4 across 9 batches. **84:** B-3/B-4/S-1/S-2/P-1/M-3/T-5. **85:** UX-1/2/3/6/P-3/M-2. **86:** UX-8/9/10/11/12/13/14/17/18/19/20/P-2. **87:** UX-15/16/21/M-4/T-4. **88:** B-5/B-6/UX-4/UX-5/UX-7. **89:** UX-22/UX-23/T-3. **90:** F-18. **91:** M-1.1/M-1.2. **92:** M-1.3/M-1.4. ~160 files changed, ~160 new tests. REVIEW-LATER: 41→3 items (F-14/F-15 need user approval, M-1 has 4 remaining subtasks).
 
 ### Batch 84 — Rust backend fixes
 
@@ -151,6 +151,20 @@ Resolved 39 REVIEW-LATER items + started M-1 (2 of 8 subtasks) across 8 batches.
 | BlockTree.tsx | Replaced inline Sheet/Drawer JSX with new components (~20 lines reduced) |
 | BlockHistorySheet.test.tsx | 5 new tests (open/closed, null blockId, callback, axe) |
 | BlockPropertyDrawerSheet.test.tsx | 5 new tests (same pattern) |
+
+### Batch 92 — M-1 subtasks 3-4 (collapse + zoom extraction)
+
+**Commit:** a7bd34c
+
+| Area | Change |
+|------|--------|
+| useBlockCollapse.ts | M-1.3: NEW — hook with collapsedIds (localStorage), toggleCollapse, visibleBlocks, hasChildrenSet |
+| useBlockZoom.ts | M-1.4: NEW — hook with zoomedBlockId, zoomIn/Out/ToRoot, breadcrumbs, zoomedVisible |
+| BlockZoomBar.tsx | M-1.4: NEW — breadcrumb component with Home button, clickable crumbs, aria-label |
+| BlockTree.tsx | Replaced inline collapse/zoom state + 5 useMemo/useCallback + 30 lines breadcrumb JSX with hooks + component |
+| useBlockCollapse.test.ts | 14 new tests (toggle, visible blocks, localStorage, hasChildrenSet, onBeforeCollapse) |
+| useBlockZoom.test.ts | 12 new tests (zoomIn/Out/ToRoot, breadcrumbs, zoomedVisible, edge cases) |
+| BlockZoomBar.test.tsx | 9 new tests (render, clicks, empty state, untitled fallback, axe) |
 
 ## Session 236 — 2026-04-06 — Fix B-1/B-2, F-16 sticky headers, REVIEW-LATER updates
 
