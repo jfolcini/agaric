@@ -1,9 +1,9 @@
 # Session Log
 
-## Session 237 — 2026-04-07 — Batches 84-93: 39 items resolved + M-1 subtasks 1-6
+## Session 237 — 2026-04-07 — Batches 84-94: 40 items resolved (41→2 remaining)
 
 ### Summary
-Resolved 39 REVIEW-LATER items + M-1 subtasks 1-6 across 10 batches. **84:** B-3/B-4/S-1/S-2/P-1/M-3/T-5. **85:** UX-1/2/3/6/P-3/M-2. **86:** UX-8-14/17-20/P-2. **87:** UX-15/16/21/M-4/T-4. **88:** B-5/6/UX-4/5/7. **89:** UX-22/23/T-3. **90:** F-18. **91:** M-1.1/1.2. **92:** M-1.3/1.4. **93:** M-1.5/1.6. ~170 files changed, ~175 new tests. REVIEW-LATER: 41→3 items (F-14/F-15 need user approval, M-1 has 2 remaining subtasks).
+Resolved 40 REVIEW-LATER items across 11 batches. **84:** B-3/B-4/S-1/S-2/P-1/M-3/T-5. **85:** UX-1/2/3/6/P-3/M-2. **86:** UX-8-14/17-20/P-2. **87:** UX-15/16/21/M-4/T-4. **88:** B-5/6/UX-4/5/7. **89:** UX-22/23/T-3. **90:** F-18. **91-94:** M-1 (all 8 subtasks — BlockTree 1184→1028 lines). ~170 files changed, ~175 new tests. REVIEW-LATER: 41→2 items (F-14/F-15 both need user approval).
 
 ### Batch 84 — Rust backend fixes
 
@@ -176,6 +176,16 @@ Resolved 39 REVIEW-LATER items + M-1 subtasks 1-6 across 10 batches. **84:** B-3
 | BlockTree.tsx | Replaced inline render loop with `<BlockListRenderer />` |
 | BlockDndOverlay.test.tsx | M-1.6: NEW — 9 tests for existing BlockDndOverlay (overlay, SR, truncation, axe) |
 | BlockListRenderer.test.tsx | M-1.5: NEW — 6 tests (render, empty state, loading, axe) |
+
+### Batch 94 — M-1 subtasks 7-8 (orchestrator cleanup + test verification)
+
+**Commit:** 22d4764
+
+| Area | Change |
+|------|--------|
+| BlockTree.tsx | M-1.7: Added orchestrator JSDoc, removed unused destructuring. Final: 1028 lines (was 1184) |
+| All 8 test files | M-1.8: Verified 262 tests across all extracted components/hooks. No gaps found |
+| REVIEW-LATER.md | M-1 fully resolved. 3→2 items remaining |
 
 ## Session 236 — 2026-04-06 — Fix B-1/B-2, F-16 sticky headers, REVIEW-LATER updates
 
