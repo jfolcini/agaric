@@ -1,5 +1,32 @@
 # Session Log
 
+## Session 237 — 2026-04-07 — Batch 84: B-3/B-4/S-1/S-2/P-1/M-3/T-5
+
+### Summary
+Resolved 7 REVIEW-LATER items: 2 critical/high bugs, 2 security issues, 1 performance issue, 1 maintenance item, 1 testing gap. All Rust backend. **B-3:** Sync daemon now drains pending op batches via `orch.next_message()` after each `send_json()` — prevents deadlock and data loss for syncs with >1000 ops. **S-1:** Responder rejects unpaired devices by checking `peer_refs` before processing. **S-2:** `PinningCertVerifier` now verifies certificate CN starts with `agaric-` (defense-in-depth). Added `x509-parser` dependency. **B-4:** Materializer propagates remote op failures for retry instead of swallowing errors. **P-1:** New migration 0020 adds `idx_block_links_source` index. **T-5:** `PRAGMA optimize` runs after migrations in `init_pools()`. **M-3:** FTS index rebuilds at boot when `fts_blocks` is empty (fixes search after migration 0006). 10 files changed, 1611 Rust tests + 4441 frontend tests pass (12 new Rust tests).
+
+### Batch 84
+
+**Commit:** dbb16a7
+
+| Area | Change |
+|------|--------|
+| sync_daemon.rs | B-3: Added `while let Some(batch) = orch.next_message()` drain loop after `send_json` in 3 locations: `run_sync_session()`, `handle_incoming_sync()` first message, `handle_incoming_sync()` message loop |
+| sync_daemon.rs | S-1: Added `peer_refs::get_peer_ref()` validation before mutex lock in `handle_incoming_sync()`. Rejects unpaired devices with `SyncMessage::Error` |
+| sync_daemon.rs (tests) | 2 new tests: `drain_pending_batches_after_handle_message` (2500 ops, 3 batches), `unpaired_device_rejected_via_peer_ref_lookup` |
+| sync_net.rs | S-2: CN verification in `PinningCertVerifier::verify_server_cert()` — parses cert with x509-parser, validates CN starts with `agaric-` |
+| sync_net.rs (tests) | 3 new tests: valid cert passes, non-agaric CN rejected, unparseable cert rejected |
+| Cargo.toml | Added `x509-parser = "0.18.1"` dependency |
+| materializer.rs | B-4: `ApplyOp` returns `Err(e)` instead of swallowing. `BatchApplyOps` collects failures and returns last error. Removed double-count of `fg_errors` |
+| materializer.rs (tests) | 3 new tests + 1 updated: `apply_op_failure_propagated_for_retry`, `batch_apply_ops_partial_failure_propagated`, `apply_op_success_no_error` |
+| migrations/0020 | P-1: `CREATE INDEX IF NOT EXISTS idx_block_links_source ON block_links(source_id)` |
+| db.rs | T-5: `PRAGMA optimize` after migrations in `init_pools()` |
+| db.rs (tests) | 2 new tests: `block_links_source_index_exists`, `pragma_optimize_runs_without_error` |
+| lib.rs | M-3: Boot-time FTS rebuild — checks if `fts_blocks` is empty + blocks exist, enqueues `RebuildFtsIndex` via `try_enqueue_background` |
+| fts.rs (tests) | 1 new test: `rebuild_fts_index_populates_empty_table` |
+| .nsprc | Exempted 3 new vite dev-only security advisories (1116007, 1116009, 1116101) |
+| REVIEW-LATER.md | Removed B-3/B-4/S-1/S-2/P-1/M-3/T-5 (resolved). 39→32 items |
+
 ## Session 236 — 2026-04-06 — Fix B-1/B-2, F-16 sticky headers, REVIEW-LATER updates
 
 ### Summary
