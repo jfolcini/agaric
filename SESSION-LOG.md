@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 249 — 2026-04-07 — Batch 103: T-6 error path tests batch 3 (6 more components)
+
+### Summary
+Added 23 error path tests to 6 more component test files: PairingDialog (4), PropertyDefinitionsList (4), PropertyValuePicker (4), BootGate (5), JournalCalendarDropdown (4), GlobalDateControls (2). T-6 now has 18 components with error path coverage (96 new error tests across 3 batches). 6 parallel build subagents. 6 files changed, 484 insertions. 5016 tests pass.
+
+### Batch 103
+
+**Commit:** 8a82624
+
+| Test File | New Tests | Error Paths Covered |
+|-----------|-----------|-------------------|
+| PairingDialog.test.tsx | 4 | Init failure, unpair failure, post-pairing refresh, cancel cleanup |
+| PropertyDefinitionsList.test.tsx | 4 | Load, create, delete, update options |
+| PropertyValuePicker.test.tsx | 4 | listPropertyKeys fallback, labels, interaction, a11y |
+| BootGate.test.tsx | 5 | Error/non-Error rejection, retry fail, retry succeed, a11y |
+| JournalCalendarDropdown.test.tsx | 4 | Calendar render, logger.warn, zero dots, non-Error |
+| GlobalDateControls.test.tsx | 2 | Toast on mount failure, graceful degradation |
+
 ## Session 248 — 2026-04-07 — Batch 102: T-6 error path tests batch 2 (6 more components)
 
 ### Summary
