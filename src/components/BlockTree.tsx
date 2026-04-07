@@ -53,12 +53,12 @@ import { useBlockStore } from '../stores/blocks'
 import { usePageBlockStore, usePageBlockStoreApi } from '../stores/page-blocks'
 import { useResolveStore } from '../stores/resolve'
 import { useUndoStore } from '../stores/undo'
-import { BlockPropertyDrawer } from './BlockPropertyDrawer'
+import { BlockHistorySheet } from './BlockHistorySheet'
+import { BlockPropertyDrawerSheet } from './BlockPropertyDrawerSheet'
 import { BlockContextMenu } from './block-tree/BlockContextMenu'
 import { BlockDatePicker } from './block-tree/BlockDatePicker'
 import { BlockDndOverlay } from './block-tree/BlockDndOverlay'
 import { EmptyState } from './EmptyState'
-import { HistorySheet } from './HistorySheet'
 import { SortableBlock } from './SortableBlock'
 import { Skeleton } from './ui/skeleton'
 
@@ -1163,7 +1163,7 @@ export function BlockTree({
       )}
 
       {/* History side-sheet for per-block history */}
-      <HistorySheet
+      <BlockHistorySheet
         blockId={historyBlockId}
         open={!!historyBlockId}
         onOpenChange={(open) => {
@@ -1172,7 +1172,7 @@ export function BlockTree({
       />
 
       {/* Property drawer for per-block properties */}
-      <BlockPropertyDrawer
+      <BlockPropertyDrawerSheet
         blockId={propertyDrawerBlockId}
         open={!!propertyDrawerBlockId}
         onOpenChange={(open) => {
