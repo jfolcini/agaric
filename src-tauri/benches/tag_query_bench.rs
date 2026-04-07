@@ -2,6 +2,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 
 use agaric_lib::db::init_pool;
 use agaric_lib::pagination::PageRequest;
+use agaric_lib::tag_inheritance::rebuild_all;
 use agaric_lib::tag_query::{eval_tag_query, TagExpr};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
@@ -134,6 +135,7 @@ fn bench_resolve_tag_with_inheritance(c: &mut Criterion) {
         let pool = make_pool(&rt, &dir);
         let tag_id = "TAG_BENCH_0000000000000001";
         rt.block_on(seed_tagged_tree(&pool, tag_id, count, 3));
+        rt.block_on(rebuild_all(&pool)).unwrap();
 
         let expr = TagExpr::Tag(tag_id.to_string());
         let page = PageRequest::new(None, Some(50)).unwrap();
@@ -160,6 +162,7 @@ fn bench_inheritance_varying_depth(c: &mut Criterion) {
         let pool = make_pool(&rt, &dir);
         let tag_id = "TAG_BENCH_0000000000000001";
         rt.block_on(seed_tagged_tree(&pool, tag_id, 1_000, depth));
+        rt.block_on(rebuild_all(&pool)).unwrap();
 
         let expr = TagExpr::Tag(tag_id.to_string());
         let page = PageRequest::new(None, Some(50)).unwrap();
@@ -188,6 +191,7 @@ fn bench_inheritance_wide_tree(c: &mut Criterion) {
         let pool = make_pool(&rt, &dir);
         let tag_id = "TAG_BENCH_0000000000000001";
         rt.block_on(seed_tagged_tree(&pool, tag_id, total, 3));
+        rt.block_on(rebuild_all(&pool)).unwrap();
 
         let expr = TagExpr::Tag(tag_id.to_string());
         let page = PageRequest::new(None, Some(50)).unwrap();
@@ -213,6 +217,7 @@ fn bench_eval_tag_query_paginated(c: &mut Criterion) {
     let pool = make_pool(&rt, &dir);
     let tag_id = "TAG_BENCH_0000000000000001";
     rt.block_on(seed_tagged_tree(&pool, tag_id, 10_000, 5));
+    rt.block_on(rebuild_all(&pool)).unwrap();
 
     let expr = TagExpr::Tag(tag_id.to_string());
     let page = PageRequest::new(None, Some(50)).unwrap();

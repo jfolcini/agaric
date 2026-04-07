@@ -78,6 +78,8 @@ pub enum MaterializeTask {
     FtsOptimize,
     /// Background: clean up orphaned attachment files in the app data directory
     CleanupOrphanedAttachments,
+    /// Background: rebuild the block_tag_inherited cache (P-4)
+    RebuildTagInheritanceCache,
     /// Barrier: used by `flush_foreground()`/`flush_background()` to wait for
     /// queue drain. The consumer signals the `Notify` when it processes this
     /// task.  `Arc<Notify>` is `Clone`, so `MaterializeTask` keeps its
@@ -774,6 +776,7 @@ impl Materializer {
                         block_id: hint.block_id,
                     })?;
                 }
+                self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
             }
             "edit_block" => {
                 let hint: BlockIdHint = serde_json::from_str(&record.payload)?;
@@ -862,6 +865,7 @@ impl Materializer {
                 self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
+                self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
                 // FTS: remove the deleted block
                 if !hint.block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::RemoveFtsBlock {
@@ -874,6 +878,7 @@ impl Materializer {
                 self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
+                self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
                 // FTS: re-index the restored block
                 if !hint.block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::UpdateFtsBlock {
@@ -886,6 +891,7 @@ impl Materializer {
                 self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
+                self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
                 // FTS: remove the purged block
                 if !hint.block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::RemoveFtsBlock {
@@ -896,6 +902,7 @@ impl Materializer {
             "add_tag" | "remove_tag" => {
                 self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
+                self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
             }
             "set_property" | "delete_property" => {
                 // Always rebuild agenda cache — the property may contain a
@@ -903,7 +910,7 @@ impl Materializer {
                 self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
             }
             "move_block" => {
-                // No extra background tasks — foreground apply is sufficient.
+                self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
             }
             "add_attachment" | "delete_attachment" => {
                 // No extra background tasks.
@@ -1148,6 +1155,17 @@ async fn apply_op(pool: &SqlitePool, record: &OpRecord) -> Result<(), AppError> 
             .bind(p.position)
             .execute(pool)
             .await?;
+            // P-4: Inherit parent tags for the new block
+            let parent_str = parent_id_str.as_deref();
+            {
+                let mut conn = pool.acquire().await?;
+                crate::tag_inheritance::inherit_parent_tags(
+                    &mut conn,
+                    p.block_id.as_str(),
+                    parent_str,
+                )
+                .await?;
+            }
         }
         OpType::EditBlock => {
             let p: EditBlockPayload = serde_json::from_str(&record.payload)?;
@@ -1175,6 +1193,12 @@ async fn apply_op(pool: &SqlitePool, record: &OpRecord) -> Result<(), AppError> 
             .bind(now)
             .execute(pool)
             .await?;
+            // P-4: Remove inherited entries for soft-deleted subtree
+            {
+                let mut conn = pool.acquire().await?;
+                crate::tag_inheritance::remove_subtree_inherited(&mut conn, p.block_id.as_str())
+                    .await?;
+            }
         }
         OpType::RestoreBlock => {
             let p: RestoreBlockPayload = serde_json::from_str(&record.payload)?;
@@ -1192,6 +1216,15 @@ async fn apply_op(pool: &SqlitePool, record: &OpRecord) -> Result<(), AppError> 
             .bind(&p.deleted_at_ref)
             .execute(pool)
             .await?;
+            // P-4: Recompute inherited tags for restored subtree
+            {
+                let mut conn = pool.acquire().await?;
+                crate::tag_inheritance::recompute_subtree_inheritance(
+                    &mut conn,
+                    p.block_id.as_str(),
+                )
+                .await?;
+            }
         }
         OpType::PurgeBlock => {
             let p: PurgeBlockPayload = serde_json::from_str(&record.payload)?;
@@ -1219,6 +1252,16 @@ async fn apply_op(pool: &SqlitePool, record: &OpRecord) -> Result<(), AppError> 
                 "{DESC_CTE} DELETE FROM block_tags \
                  WHERE block_id IN (SELECT id FROM descendants) \
                     OR tag_id IN (SELECT id FROM descendants)"
+            ))
+            .bind(block_id)
+            .execute(&mut *tx)
+            .await?;
+
+            // block_tag_inherited (P-4)
+            sqlx::query(&format!(
+                "{DESC_CTE} DELETE FROM block_tag_inherited \
+                 WHERE block_id IN (SELECT id FROM descendants) \
+                    OR inherited_from IN (SELECT id FROM descendants)"
             ))
             .bind(block_id)
             .execute(&mut *tx)
@@ -1335,6 +1378,15 @@ async fn apply_op(pool: &SqlitePool, record: &OpRecord) -> Result<(), AppError> 
                 .bind(p.block_id.as_str())
                 .execute(pool)
                 .await?;
+            // P-4: Recompute inherited tags for the moved subtree
+            {
+                let mut conn = pool.acquire().await?;
+                crate::tag_inheritance::recompute_subtree_inheritance(
+                    &mut conn,
+                    p.block_id.as_str(),
+                )
+                .await?;
+            }
         }
         OpType::AddTag => {
             let p: AddTagPayload = serde_json::from_str(&record.payload)?;
@@ -1343,6 +1395,16 @@ async fn apply_op(pool: &SqlitePool, record: &OpRecord) -> Result<(), AppError> 
                 .bind(p.tag_id.as_str())
                 .execute(pool)
                 .await?;
+            // P-4: Propagate inherited tag to descendants
+            {
+                let mut conn = pool.acquire().await?;
+                crate::tag_inheritance::propagate_tag_to_descendants(
+                    &mut conn,
+                    p.block_id.as_str(),
+                    p.tag_id.as_str(),
+                )
+                .await?;
+            }
         }
         OpType::RemoveTag => {
             let p: RemoveTagPayload = serde_json::from_str(&record.payload)?;
@@ -1351,6 +1413,16 @@ async fn apply_op(pool: &SqlitePool, record: &OpRecord) -> Result<(), AppError> 
                 .bind(p.tag_id.as_str())
                 .execute(pool)
                 .await?;
+            // P-4: Clean up inherited tag entries
+            {
+                let mut conn = pool.acquire().await?;
+                crate::tag_inheritance::remove_inherited_tag(
+                    &mut conn,
+                    p.block_id.as_str(),
+                    p.tag_id.as_str(),
+                )
+                .await?;
+            }
         }
         OpType::SetProperty => {
             let p: SetPropertyPayload = serde_json::from_str(&record.payload)?;
@@ -1479,6 +1551,9 @@ async fn handle_background_task(pool: &SqlitePool, task: &MaterializeTask) -> Re
         MaterializeTask::RebuildFtsIndex => crate::fts::rebuild_fts_index(pool).await,
         MaterializeTask::FtsOptimize => crate::fts::fts_optimize(pool).await,
         MaterializeTask::CleanupOrphanedAttachments => cleanup_orphaned_attachments(pool).await,
+        MaterializeTask::RebuildTagInheritanceCache => {
+            crate::tag_inheritance::rebuild_all(pool).await
+        }
         MaterializeTask::ApplyOp(ref record) => {
             tracing::warn!(seq = record.seq, "unexpected ApplyOp in background queue");
             Ok(())

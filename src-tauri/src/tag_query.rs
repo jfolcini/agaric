@@ -100,19 +100,19 @@ fn resolve_expr<'a>(
         match expr {
             TagExpr::Tag(tag_id) => {
                 if include_inherited {
+                    // P-4: Use materialized block_tag_inherited table instead of
+                    // recursive CTE. Direct tags from block_tags UNION inherited
+                    // tags from block_tag_inherited.
                     let rows = sqlx::query_scalar::<_, String>(
-                        "WITH RECURSIVE tagged_tree AS ( \
-                             SELECT bt.block_id AS id \
-                             FROM block_tags bt \
-                             JOIN blocks b ON b.id = bt.block_id \
-                             WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
-                             UNION ALL \
-                             SELECT b.id \
-                             FROM blocks b \
-                             JOIN tagged_tree tt ON b.parent_id = tt.id \
-                             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
-                         ) \
-                         SELECT DISTINCT id FROM tagged_tree",
+                        "SELECT bt.block_id \
+                         FROM block_tags bt \
+                         JOIN blocks b ON b.id = bt.block_id \
+                         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+                         UNION \
+                         SELECT bti.block_id \
+                         FROM block_tag_inherited bti \
+                         JOIN blocks b ON b.id = bti.block_id \
+                         WHERE bti.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
                     )
                     .bind(tag_id)
                     .fetch_all(pool)
@@ -136,21 +136,23 @@ fn resolve_expr<'a>(
                 // queries).
                 let escaped = format!("{}%", escape_like(prefix));
                 if include_inherited {
+                    // P-4: Use materialized block_tag_inherited table instead of
+                    // recursive CTE. Direct tags UNION inherited tags, both filtered
+                    // by prefix via tags_cache.
                     let rows = sqlx::query_scalar::<_, String>(
-                        "WITH RECURSIVE tagged_tree AS ( \
-                             SELECT DISTINCT bt.block_id AS id \
-                             FROM tags_cache tc \
-                             JOIN block_tags bt ON bt.tag_id = tc.tag_id \
-                             JOIN blocks b ON b.id = bt.block_id \
-                             WHERE tc.name LIKE ?1 ESCAPE '\\' \
-                               AND b.deleted_at IS NULL AND b.is_conflict = 0 \
-                             UNION ALL \
-                             SELECT b.id \
-                             FROM blocks b \
-                             JOIN tagged_tree tt ON b.parent_id = tt.id \
-                             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
-                         ) \
-                         SELECT DISTINCT id FROM tagged_tree",
+                        "SELECT DISTINCT bt.block_id \
+                         FROM tags_cache tc \
+                         JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+                         JOIN blocks b ON b.id = bt.block_id \
+                         WHERE tc.name LIKE ?1 ESCAPE '\\' \
+                           AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+                         UNION \
+                         SELECT DISTINCT bti.block_id \
+                         FROM tags_cache tc \
+                         JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
+                         JOIN blocks b ON b.id = bti.block_id \
+                         WHERE tc.name LIKE ?1 ESCAPE '\\' \
+                           AND b.deleted_at IS NULL AND b.is_conflict = 0",
                     )
                     .bind(&escaped)
                     .fetch_all(pool)
@@ -1235,6 +1237,7 @@ mod tests {
         insert_child_block(&pool, "CHILD_2", "content", "child two", "PAGE_A").await;
 
         insert_tag_assoc(&pool, "PAGE_A", "TAG_T1").await;
+        crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
 
         // With inheritance=true, all children should appear in T1 query.
         let result_inherited = resolve_expr(&pool, &TagExpr::Tag("TAG_T1".into()), true)
@@ -1268,6 +1271,7 @@ mod tests {
         insert_child_block(&pool, "GRAND_B1", "content", "grandchild", "CHILD_B1").await;
 
         insert_tag_assoc(&pool, "PAGE_B", "TAG_T2").await;
+        crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
 
         // All three levels should match with inheritance.
         let result = resolve_expr(&pool, &TagExpr::Tag("TAG_T2".into()), true)
@@ -1292,6 +1296,7 @@ mod tests {
         insert_child_block(&pool, "CHILD_C2", "content", "untagged child", "PAGE_C2").await;
 
         insert_tag_assoc(&pool, "PAGE_C1", "TAG_T3").await;
+        crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
 
         let result = resolve_expr(&pool, &TagExpr::Tag("TAG_T3".into()), true)
             .await
@@ -1316,6 +1321,7 @@ mod tests {
         insert_child_block(&pool, "CHILD_D1", "content", "work child", "PAGE_D").await;
 
         insert_tag_assoc(&pool, "PAGE_D", "TAG_WI").await;
+        crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
 
         // With inheritance=true, descendants should be included.
         let result_inherited = resolve_expr(&pool, &TagExpr::Prefix("work/".into()), true)
@@ -1356,6 +1362,7 @@ mod tests {
             )
             .await;
         }
+        crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
 
         let expr = TagExpr::Tag("TAG_PG".into());
 

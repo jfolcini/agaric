@@ -305,6 +305,7 @@ Shows tasks with due/scheduled dates for the current day. Filter bar with 4 butt
 - First-class entities that can themselves be tagged
 - Hierarchy via naming convention (`work/meeting`) — prefix search finds all descendants
 - Boolean queries: AND, OR, NOT composition
+- Tag inheritance: blocks inherit tags from ancestors — materialized `block_tag_inherited` cache for O(1) lookups (maintained incrementally by materializer + command handlers)
 
 ### Block Links
 

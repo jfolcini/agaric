@@ -1,5 +1,22 @@
 # Session Log
 
+## Session 253 — 2026-04-07 — P-4 resolved: materialized tag inheritance cache
+
+### Summary
+Implemented P-4: precomputed `block_tag_inherited` table replacing recursive CTEs for `include_inherited=true` tag queries. New migration creates the table with backfill CTE. Shared `tag_inheritance.rs` module (6 helper functions) used by both command handlers (transactional) and materializer (`apply_op`). Query path in `tag_query.rs` now uses UNION of `block_tags` + `block_tag_inherited` instead of recursive CTE. Old CTE preserved as `resolve_expr_cte()` for verification. Materializer handles 7 op types (CreateBlock, MoveBlock, AddTag, RemoveTag, DeleteBlock, RestoreBlock, PurgeBlock) + background `RebuildTagInheritanceCache` task. 11 dedicated unit tests + benchmark setup updated. REVIEW-LATER: 2→1 (P-4 removed). 7 files changed (~960 lines added). 1631 Rust tests pass.
+
+**Commit:** 2d1b036
+
+| Area | Change |
+|------|--------|
+| migrations/0021_block_tag_inherited.sql | NEW — table + 3 indexes + backfill CTE |
+| tag_inheritance.rs | NEW — 6 helpers: `propagate_tag_to_descendants`, `remove_inherited_tag`, `recompute_subtree_inheritance`, `inherit_parent_tags`, `remove_subtree_inherited`, `rebuild_all` + 11 unit tests |
+| tag_query.rs | `resolve_expr` uses UNION `block_tags`+`block_tag_inherited` when `include_inherited=true`; old CTE preserved as `resolve_expr_cte`; F-15 tests updated |
+| materializer.rs | `RebuildTagInheritanceCache` variant; `apply_op` calls tag_inheritance for 7 op types; dedup + background dispatch |
+| commands.rs | `tag_inheritance::` calls in `add_tag_inner`, `remove_tag_inner`, `move_block_inner`, `create_block_in_tx`, `delete_block_inner`, `restore_block_inner`, `purge_block_inner` |
+| lib.rs | `pub mod tag_inheritance;` |
+| tag_query_bench.rs | `rebuild_all` setup in 4 benchmark groups |
+
 ## Session 252 — 2026-04-07 — B-22 resolved: popup-aware arrow key suppression
 
 ### Summary

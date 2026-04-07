@@ -369,6 +369,10 @@ pub(crate) async fn create_block_in_tx(
     .execute(&mut **tx)
     .await?;
 
+    // P-4: Inherit parent tags for the new block
+    crate::tag_inheritance::inherit_parent_tags(tx, block_id.as_str(), parent_id.as_deref())
+        .await?;
+
     // Return block + op record; caller is responsible for commit + dispatch.
     Ok((
         BlockRow {
@@ -570,6 +574,9 @@ pub async fn delete_block_inner(
     .execute(&mut *tx)
     .await?;
 
+    // P-4: Remove inherited entries for soft-deleted subtree
+    crate::tag_inheritance::remove_subtree_inherited(&mut tx, &block_id).await?;
+
     tx.commit().await?;
 
     // Fire-and-forget background cache dispatch
@@ -657,6 +664,9 @@ pub async fn restore_block_inner(
     .execute(&mut *tx)
     .await?;
 
+    // P-4: Recompute inherited tags for restored subtree
+    crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &block_id).await?;
+
     tx.commit().await?;
 
     // Fire-and-forget background cache dispatch
@@ -736,6 +746,16 @@ pub async fn purge_block_inner(
         "{DESC_CTE} DELETE FROM block_tags \
          WHERE block_id IN (SELECT id FROM descendants) \
             OR tag_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&block_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // block_tag_inherited (P-4)
+    sqlx::query(&format!(
+        "{DESC_CTE} DELETE FROM block_tag_inherited \
+         WHERE block_id IN (SELECT id FROM descendants) \
+            OR inherited_from IN (SELECT id FROM descendants)"
     ))
     .bind(&block_id)
     .execute(&mut *tx)
@@ -999,6 +1019,9 @@ pub async fn move_block_inner(
         .bind(&block_id)
         .execute(&mut *tx)
         .await?;
+
+    // P-4: Recompute inherited tags for moved subtree
+    crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &block_id).await?;
 
     tx.commit().await?;
 
@@ -1273,6 +1296,9 @@ pub async fn add_tag_inner(
         .execute(&mut *tx)
         .await?;
 
+    // P-4: Propagate inherited tag to descendants
+    crate::tag_inheritance::propagate_tag_to_descendants(&mut tx, &block_id, &tag_id).await?;
+
     tx.commit().await?;
 
     // 5. Dispatch background cache tasks (fire-and-forget)
@@ -1345,6 +1371,9 @@ pub async fn remove_tag_inner(
         .bind(&tag_id)
         .execute(&mut *tx)
         .await?;
+
+    // P-4: Clean up inherited tag entries
+    crate::tag_inheritance::remove_inherited_tag(&mut tx, &block_id, &tag_id).await?;
 
     tx.commit().await?;
 
