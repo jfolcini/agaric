@@ -509,6 +509,103 @@ const resources = {
       'shortcuts.title': 'Quick Reference',
       'shortcuts.syntaxSection': 'Syntax',
 
+      // Keyboard shortcuts — sheet UI
+      'keyboard.sheetDescription':
+        'Available keyboard shortcuts and syntax reference for the editor.',
+      'keyboard.shortcutHeader': 'Shortcut',
+      'keyboard.actionHeader': 'Action',
+      'keyboard.descriptionHeader': 'Description',
+
+      // Keyboard shortcuts — categories
+      'keyboard.category.navigation': 'Navigation',
+      'keyboard.category.editing': 'Editing',
+      'keyboard.category.pickers': 'Pickers',
+      'keyboard.category.journal': 'Journal',
+      'keyboard.category.blockSelection': 'Block Selection',
+      'keyboard.category.undoRedo': 'Undo / Redo',
+      'keyboard.category.historyView': 'History View',
+      'keyboard.category.global': 'Global',
+
+      // Keyboard shortcuts — conditions
+      'keyboard.condition.atStart': 'at start',
+      'keyboard.condition.atEnd': 'at end',
+      'keyboard.condition.onEmptyBlock': 'on empty block',
+      'keyboard.condition.atStartOfBlock': 'at start of block',
+      'keyboard.condition.inEditor': 'in editor',
+      'keyboard.condition.notEditing': 'not editing',
+      'keyboard.condition.withSelection': 'with selection',
+      'keyboard.condition.outsideEditor': 'outside editor',
+
+      // Keyboard shortcuts — navigation descriptions
+      'keyboard.moveToPreviousBlock': 'Move to previous block',
+      'keyboard.moveToNextBlock': 'Move to next block',
+
+      // Keyboard shortcuts — editing descriptions
+      'keyboard.saveBlockAndClose': 'Save block and close editor',
+      'keyboard.deleteBlock': 'Delete block',
+      'keyboard.mergeWithPrevious': 'Merge with previous',
+      'keyboard.indentBlock': 'Indent block',
+      'keyboard.dedentBlock': 'Dedent block',
+      'keyboard.cycleTaskState': 'Cycle task state (TODO → DOING → DONE → none)',
+      'keyboard.collapseExpandChildren': 'Collapse / expand children',
+      'keyboard.insertOrEditLink': 'Insert or edit external link',
+      'keyboard.toggleCodeBlock': 'Toggle code block',
+      'keyboard.toggleStrikethrough': 'Toggle strikethrough',
+      'keyboard.toggleHighlight': 'Toggle highlight',
+      'keyboard.moveBlockUp': 'Move block up',
+      'keyboard.moveBlockDown': 'Move block down',
+      'keyboard.insertLineBreak': 'Insert line break (soft return)',
+
+      // Keyboard shortcuts — pickers descriptions
+      'keyboard.tagPicker': 'Tag picker',
+      'keyboard.blockLinkPicker': 'Block link picker',
+      'keyboard.slashCommandMenu': 'Slash command menu',
+
+      // Keyboard shortcuts — journal descriptions
+      'keyboard.previousDayWeekMonth': 'Previous day / week / month',
+      'keyboard.nextDayWeekMonth': 'Next day / week / month',
+      'keyboard.goToToday': 'Go to today',
+
+      // Keyboard shortcuts — block selection descriptions
+      'keyboard.toggleBlockSelection': 'Toggle block selection',
+      'keyboard.rangeSelectBlocks': 'Range select blocks',
+      'keyboard.selectAllBlocks': 'Select all blocks',
+      'keyboard.clearSelection': 'Clear selection',
+
+      // Keyboard shortcuts — undo/redo descriptions
+      'keyboard.undoLastPageOp': 'Undo last page operation',
+      'keyboard.redoLastUndoneOp': 'Redo last undone operation',
+
+      // Keyboard shortcuts — history view descriptions
+      'keyboard.toggleSelection': 'Toggle selection',
+      'keyboard.rangeSelect': 'Range select',
+      'keyboard.selectAll': 'Select all',
+      'keyboard.revertSelected': 'Revert selected',
+      'keyboard.navigateItems': 'Navigate items',
+      'keyboard.navigateItemsVim': 'Navigate items (vim-style)',
+
+      // Keyboard shortcuts — global descriptions
+      'keyboard.focusSearch': 'Focus search',
+      'keyboard.toggleSidebar': 'Toggle sidebar',
+      'keyboard.createNewPage': 'Create new page',
+      'keyboard.showKeyboardShortcuts': 'Show keyboard shortcuts',
+      'keyboard.closeOverlays': 'Close overlays, cancel editing, clear selection',
+
+      // Keyboard shortcuts — syntax descriptions
+      'keyboard.syntax.bold': 'Bold',
+      'keyboard.syntax.italic': 'Italic',
+      'keyboard.syntax.inlineCode': 'Inline code',
+      'keyboard.syntax.strikethrough': 'Strikethrough',
+      'keyboard.syntax.highlight': 'Highlight',
+      'keyboard.syntax.heading': 'Heading (1-6 levels)',
+      'keyboard.syntax.blockquote': 'Blockquote',
+      'keyboard.syntax.codeBlock': 'Code block',
+      'keyboard.syntax.todoCheckbox': 'TODO checkbox',
+      'keyboard.syntax.doneCheckbox': 'DONE checkbox',
+      'keyboard.syntax.tagReference': 'Tag reference',
+      'keyboard.syntax.pageLink': 'Page link',
+      'keyboard.syntax.slashCommand': 'Slash command menu',
+
       // Conflict type tooltips
       'conflict.typeText': 'Text conflict — content edited on multiple devices',
       'conflict.typeProperty': 'Property conflict — property changed on multiple devices',

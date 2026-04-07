@@ -51,8 +51,8 @@ describe('StatusBadge', () => {
   it('applies overdue variant classes', () => {
     render(<StatusBadge state="overdue">TODO</StatusBadge>)
     const el = screen.getByText('TODO')
-    expect(el.className).toContain('bg-yellow-100')
-    expect(el.className).toContain('text-yellow-800')
+    expect(el.className).toContain('bg-alert-warning')
+    expect(el.className).toContain('text-alert-warning-foreground')
   })
 
   it('uses default variant when state is not provided', () => {

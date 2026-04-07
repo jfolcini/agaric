@@ -134,7 +134,7 @@ function AddFilterPopover({
           className="h-7 gap-1 text-xs"
           aria-label={t('agendaFilter.addFilter')}
         >
-          <Plus size={12} />
+          <Plus className="h-3 w-3" />
           {t('agendaFilter.addFilter')}
         </Button>
       </PopoverTrigger>
@@ -306,7 +306,7 @@ export function AgendaFilterBuilder({
                       label: dimensionLabel(filter.dimension),
                     })}
                   >
-                    <X size={12} />
+                    <X className="h-3 w-3" />
                   </button>
                 </div>
               </li>

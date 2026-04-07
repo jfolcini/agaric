@@ -75,7 +75,7 @@ export function ConflictTypeRenderer({
     if (diffs.length > 0) {
       return (
         <div className="conflict-property-diff text-sm">
-          <span className="font-medium text-blue-600 dark:text-blue-400">Property changes</span>
+          <span className="font-medium text-op-edit-foreground">Property changes</span>
           <div className="mt-1 space-y-0.5 text-xs">{diffs}</div>
         </div>
       )

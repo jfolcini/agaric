@@ -24,90 +24,142 @@ interface ShortcutDef {
 
 const SHORTCUT_GROUPS: { category: string; shortcuts: ShortcutDef[] }[] = [
   {
-    category: 'Navigation',
+    category: 'keyboard.category.navigation',
     shortcuts: [
-      { keys: 'Arrow Up / Left', condition: 'at start', description: 'Move to previous block' },
-      { keys: 'Arrow Down / Right', condition: 'at end', description: 'Move to next block' },
+      {
+        keys: 'Arrow Up / Left',
+        condition: 'keyboard.condition.atStart',
+        description: 'keyboard.moveToPreviousBlock',
+      },
+      {
+        keys: 'Arrow Down / Right',
+        condition: 'keyboard.condition.atEnd',
+        description: 'keyboard.moveToNextBlock',
+      },
     ],
   },
   {
-    category: 'Editing',
+    category: 'keyboard.category.editing',
     shortcuts: [
-      { keys: 'Enter', description: 'Save block and close editor' },
-      { keys: 'Backspace', condition: 'on empty block', description: 'Delete block' },
-      { keys: 'Backspace', condition: 'at start of block', description: 'Merge with previous' },
-      { keys: 'Ctrl + Shift + Arrow Right', description: 'Indent block' },
-      { keys: 'Ctrl + Shift + Arrow Left', description: 'Dedent block' },
+      { keys: 'Enter', description: 'keyboard.saveBlockAndClose' },
+      {
+        keys: 'Backspace',
+        condition: 'keyboard.condition.onEmptyBlock',
+        description: 'keyboard.deleteBlock',
+      },
+      {
+        keys: 'Backspace',
+        condition: 'keyboard.condition.atStartOfBlock',
+        description: 'keyboard.mergeWithPrevious',
+      },
+      { keys: 'Ctrl + Shift + Arrow Right', description: 'keyboard.indentBlock' },
+      { keys: 'Ctrl + Shift + Arrow Left', description: 'keyboard.dedentBlock' },
       {
         keys: 'Ctrl + Enter',
-        description: 'Cycle task state (TODO → DOING → DONE → none)',
+        description: 'keyboard.cycleTaskState',
       },
-      { keys: 'Ctrl + .', description: 'Collapse / expand children' },
-      { keys: 'Ctrl + K', description: 'Insert or edit external link' },
-      { keys: 'Ctrl + Shift + C', condition: 'in editor', description: 'Toggle code block' },
-      { keys: 'Ctrl + Shift + S', condition: 'in editor', description: 'Toggle strikethrough' },
-      { keys: 'Ctrl + Shift + H', condition: 'in editor', description: 'Toggle highlight' },
-      { keys: 'Ctrl + Shift + Arrow Up', description: 'Move block up' },
-      { keys: 'Ctrl + Shift + Arrow Down', description: 'Move block down' },
+      { keys: 'Ctrl + .', description: 'keyboard.collapseExpandChildren' },
+      { keys: 'Ctrl + K', description: 'keyboard.insertOrEditLink' },
+      {
+        keys: 'Ctrl + Shift + C',
+        condition: 'keyboard.condition.inEditor',
+        description: 'keyboard.toggleCodeBlock',
+      },
+      {
+        keys: 'Ctrl + Shift + S',
+        condition: 'keyboard.condition.inEditor',
+        description: 'keyboard.toggleStrikethrough',
+      },
+      {
+        keys: 'Ctrl + Shift + H',
+        condition: 'keyboard.condition.inEditor',
+        description: 'keyboard.toggleHighlight',
+      },
+      { keys: 'Ctrl + Shift + Arrow Up', description: 'keyboard.moveBlockUp' },
+      { keys: 'Ctrl + Shift + Arrow Down', description: 'keyboard.moveBlockDown' },
       {
         keys: 'Shift + Enter',
-        condition: 'in editor',
-        description: 'Insert line break (soft return)',
+        condition: 'keyboard.condition.inEditor',
+        description: 'keyboard.insertLineBreak',
       },
     ],
   },
   {
-    category: 'Pickers',
+    category: 'keyboard.category.pickers',
     shortcuts: [
-      { keys: '@', condition: 'in editor', description: 'Tag picker' },
-      { keys: '[[', condition: 'in editor', description: 'Block link picker' },
-      { keys: '/', condition: 'in editor', description: 'Slash command menu' },
+      { keys: '@', condition: 'keyboard.condition.inEditor', description: 'keyboard.tagPicker' },
+      {
+        keys: '[[',
+        condition: 'keyboard.condition.inEditor',
+        description: 'keyboard.blockLinkPicker',
+      },
+      {
+        keys: '/',
+        condition: 'keyboard.condition.inEditor',
+        description: 'keyboard.slashCommandMenu',
+      },
     ],
   },
   {
-    category: 'Journal',
+    category: 'keyboard.category.journal',
     shortcuts: [
-      { keys: 'Alt + ←', description: 'Previous day / week / month' },
-      { keys: 'Alt + →', description: 'Next day / week / month' },
-      { keys: 'Alt + T', description: 'Go to today' },
+      { keys: 'Alt + ←', description: 'keyboard.previousDayWeekMonth' },
+      { keys: 'Alt + →', description: 'keyboard.nextDayWeekMonth' },
+      { keys: 'Alt + T', description: 'keyboard.goToToday' },
     ],
   },
   {
-    category: 'Block Selection',
+    category: 'keyboard.category.blockSelection',
     shortcuts: [
-      { keys: 'Ctrl + Click', description: 'Toggle block selection' },
-      { keys: 'Shift + Click', description: 'Range select blocks' },
-      { keys: 'Ctrl + A', condition: 'not editing', description: 'Select all blocks' },
-      { keys: 'Escape', condition: 'with selection', description: 'Clear selection' },
+      { keys: 'Ctrl + Click', description: 'keyboard.toggleBlockSelection' },
+      { keys: 'Shift + Click', description: 'keyboard.rangeSelectBlocks' },
+      {
+        keys: 'Ctrl + A',
+        condition: 'keyboard.condition.notEditing',
+        description: 'keyboard.selectAllBlocks',
+      },
+      {
+        keys: 'Escape',
+        condition: 'keyboard.condition.withSelection',
+        description: 'keyboard.clearSelection',
+      },
     ],
   },
   {
-    category: 'Undo / Redo',
+    category: 'keyboard.category.undoRedo',
     shortcuts: [
-      { keys: 'Ctrl + Z', condition: 'outside editor', description: 'Undo last page operation' },
-      { keys: 'Ctrl + Y', condition: 'outside editor', description: 'Redo last undone operation' },
+      {
+        keys: 'Ctrl + Z',
+        condition: 'keyboard.condition.outsideEditor',
+        description: 'keyboard.undoLastPageOp',
+      },
+      {
+        keys: 'Ctrl + Y',
+        condition: 'keyboard.condition.outsideEditor',
+        description: 'keyboard.redoLastUndoneOp',
+      },
     ],
   },
   {
-    category: 'History View',
+    category: 'keyboard.category.historyView',
     shortcuts: [
-      { keys: 'Space', description: 'Toggle selection' },
-      { keys: 'Shift + Click', description: 'Range select' },
-      { keys: 'Ctrl + A', description: 'Select all' },
-      { keys: 'Enter', description: 'Revert selected' },
-      { keys: 'Escape', description: 'Clear selection' },
-      { keys: 'Arrow Up / Arrow Down', description: 'Navigate items' },
-      { keys: 'j / k', description: 'Navigate items (vim-style)' },
+      { keys: 'Space', description: 'keyboard.toggleSelection' },
+      { keys: 'Shift + Click', description: 'keyboard.rangeSelect' },
+      { keys: 'Ctrl + A', description: 'keyboard.selectAll' },
+      { keys: 'Enter', description: 'keyboard.revertSelected' },
+      { keys: 'Escape', description: 'keyboard.clearSelection' },
+      { keys: 'Arrow Up / Arrow Down', description: 'keyboard.navigateItems' },
+      { keys: 'j / k', description: 'keyboard.navigateItemsVim' },
     ],
   },
   {
-    category: 'Global',
+    category: 'keyboard.category.global',
     shortcuts: [
-      { keys: 'Ctrl + F', description: 'Focus search' },
-      { keys: 'Ctrl + B', description: 'Toggle sidebar' },
-      { keys: 'Ctrl + N', description: 'Create new page' },
-      { keys: '?', description: 'Show keyboard shortcuts' },
-      { keys: 'Escape', description: 'Close overlays, cancel editing, clear selection' },
+      { keys: 'Ctrl + F', description: 'keyboard.focusSearch' },
+      { keys: 'Ctrl + B', description: 'keyboard.toggleSidebar' },
+      { keys: 'Ctrl + N', description: 'keyboard.createNewPage' },
+      { keys: '?', description: 'keyboard.showKeyboardShortcuts' },
+      { keys: 'Escape', description: 'keyboard.closeOverlays' },
     ],
   },
 ]
@@ -118,19 +170,19 @@ interface SyntaxEntry {
 }
 
 const SYNTAX_ENTRIES: SyntaxEntry[] = [
-  { syntax: '**text**', description: 'Bold' },
-  { syntax: '*text*', description: 'Italic' },
-  { syntax: '`text`', description: 'Inline code' },
-  { syntax: '~~text~~', description: 'Strikethrough' },
-  { syntax: '==text==', description: 'Highlight' },
-  { syntax: '# Heading', description: 'Heading (1-6 levels)' },
-  { syntax: '> quote', description: 'Blockquote' },
-  { syntax: '```lang', description: 'Code block' },
-  { syntax: '- [ ] task', description: 'TODO checkbox' },
-  { syntax: '- [x] task', description: 'DONE checkbox' },
-  { syntax: '@tag', description: 'Tag reference' },
-  { syntax: '[[page]]', description: 'Page link' },
-  { syntax: '/command', description: 'Slash command menu' },
+  { syntax: '**text**', description: 'keyboard.syntax.bold' },
+  { syntax: '*text*', description: 'keyboard.syntax.italic' },
+  { syntax: '`text`', description: 'keyboard.syntax.inlineCode' },
+  { syntax: '~~text~~', description: 'keyboard.syntax.strikethrough' },
+  { syntax: '==text==', description: 'keyboard.syntax.highlight' },
+  { syntax: '# Heading', description: 'keyboard.syntax.heading' },
+  { syntax: '> quote', description: 'keyboard.syntax.blockquote' },
+  { syntax: '```lang', description: 'keyboard.syntax.codeBlock' },
+  { syntax: '- [ ] task', description: 'keyboard.syntax.todoCheckbox' },
+  { syntax: '- [x] task', description: 'keyboard.syntax.doneCheckbox' },
+  { syntax: '@tag', description: 'keyboard.syntax.tagReference' },
+  { syntax: '[[page]]', description: 'keyboard.syntax.pageLink' },
+  { syntax: '/command', description: 'keyboard.syntax.slashCommand' },
 ]
 
 /** Render a keys string as styled <kbd> elements. Handles `+` combos and `/` alternatives. */
@@ -213,15 +265,19 @@ export function KeyboardShortcuts({
             {t('shortcuts.title')}
           </SheetTitle>
           <SheetDescription id="shortcuts-description">
-            Available keyboard shortcuts and syntax reference for the editor.
+            {t('keyboard.sheetDescription')}
           </SheetDescription>
         </SheetHeader>
         <div className="overflow-y-auto overflow-x-auto px-4 pb-4" data-testid="shortcuts-table">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b">
-                <th className="pb-2 text-left font-semibold text-foreground">Shortcut</th>
-                <th className="pb-2 text-left font-semibold text-foreground">Action</th>
+                <th className="pb-2 text-left font-semibold text-foreground">
+                  {t('keyboard.shortcutHeader')}
+                </th>
+                <th className="pb-2 text-left font-semibold text-foreground">
+                  {t('keyboard.actionHeader')}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -232,7 +288,7 @@ export function KeyboardShortcuts({
                       colSpan={2}
                       className="pt-4 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
                     >
-                      {group.category}
+                      {t(group.category)}
                     </td>
                   </tr>
                   {group.shortcuts.map((shortcut) => (
@@ -245,12 +301,12 @@ export function KeyboardShortcuts({
                           {renderKeys(shortcut.keys)}
                           {shortcut.condition && (
                             <small className="text-xs text-muted-foreground font-normal">
-                              {shortcut.condition}
+                              {t(shortcut.condition)}
                             </small>
                           )}
                         </span>
                       </td>
-                      <td className="py-3 text-muted-foreground">{shortcut.description}</td>
+                      <td className="py-3 text-muted-foreground">{t(shortcut.description)}</td>
                     </tr>
                   ))}
                 </React.Fragment>
@@ -263,7 +319,9 @@ export function KeyboardShortcuts({
                 <th className="pb-2 text-left font-semibold text-foreground">
                   {t('shortcuts.syntaxSection')}
                 </th>
-                <th className="pb-2 text-left font-semibold text-foreground">Description</th>
+                <th className="pb-2 text-left font-semibold text-foreground">
+                  {t('keyboard.descriptionHeader')}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -274,7 +332,7 @@ export function KeyboardShortcuts({
                       {entry.syntax}
                     </code>
                   </td>
-                  <td className="py-3 text-muted-foreground">{entry.description}</td>
+                  <td className="py-3 text-muted-foreground">{t(entry.description)}</td>
                 </tr>
               ))}
             </tbody>

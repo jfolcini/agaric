@@ -111,11 +111,11 @@ function syncDotClass(syncState: string, hasPeers: boolean): string {
   if (!hasPeers) return 'bg-muted-foreground'
   switch (syncState) {
     case 'idle':
-      return 'bg-emerald-500'
+      return 'bg-sync-idle'
     case 'syncing':
     case 'discovering':
     case 'pairing':
-      return 'bg-amber-500'
+      return 'bg-sync-active'
     case 'error':
       return 'bg-destructive'
     default:

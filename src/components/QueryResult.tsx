@@ -237,14 +237,13 @@ export function QueryResult({
           setCollapsed(!collapsed)
         }}
       >
-        <Search size={12} className="shrink-0" />
+        <Search className="h-3 w-3 shrink-0" />
         <code className="flex-1 font-mono text-[11px]">{expression}</code>
         <span className="shrink-0 tabular-nums">
           {loading ? '...' : `${results.length} result${results.length !== 1 ? 's' : ''}`}
         </span>
         <ChevronDown
-          size={12}
-          className={cn('shrink-0 transition-transform', collapsed && '-rotate-90')}
+          className={cn('h-3 w-3 shrink-0 transition-transform', collapsed && '-rotate-90')}
         />
       </button>
 

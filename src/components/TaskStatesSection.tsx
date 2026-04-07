@@ -63,7 +63,7 @@ export function TaskStatesSection(): React.ReactElement {
                 if (s) handleRemove(s)
               }}
             >
-              <X size={10} />
+              <X className="h-2.5 w-2.5" />
             </button>
           </Badge>
         ))}

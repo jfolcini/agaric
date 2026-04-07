@@ -109,7 +109,7 @@ function ToolbarButtonGroup({
               btn.action()
             }}
           >
-            <btn.icon size={14} />
+            <btn.icon className="h-3.5 w-3.5" />
           </Button>
         </Tip>
       ))}
@@ -335,7 +335,7 @@ export function FormattingToolbar({
                   setLinkPopoverOpen((prev) => !prev)
                 }}
               >
-                <Link2 size={14} />
+                <Link2 className="h-3.5 w-3.5" />
               </Button>
             </PopoverAnchor>
           </Tip>
@@ -369,7 +369,7 @@ export function FormattingToolbar({
                   setHeadingPopoverOpen((prev) => !prev)
                 }}
               >
-                <Heading size={14} />
+                <Heading className="h-3.5 w-3.5" />
                 {state.headingLevel > 0 && (
                   <span className="text-[10px] font-bold">{state.headingLevel}</span>
                 )}

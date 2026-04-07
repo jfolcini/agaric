@@ -52,7 +52,7 @@ function DropdownSelector<T extends string>({
           )}
           aria-label={t(label)}
         >
-          <Icon size={12} aria-hidden="true" />
+          <Icon className="h-3 w-3" aria-hidden="true" />
           <span className="font-medium">{t(label)}:</span>
           <span>{currentLabel ?? currentValue}</span>
         </button>

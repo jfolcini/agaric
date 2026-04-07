@@ -874,4 +874,100 @@ describe('EditableBlock', () => {
       document.body.removeChild(popup)
     })
   })
+
+  // ── B-5 / B-6: flushSync ensures store renders before unmount ─────
+
+  describe('flushSync on blur (B-5, B-6)', () => {
+    it('calls edit() before setFocused(null) on blur so StaticBlock sees updated content', () => {
+      const callOrder: string[] = []
+      mockEdit.mockImplementation(() => {
+        callOrder.push('edit')
+      })
+      mockSetFocused.mockImplementation(() => {
+        callOrder.push('setFocused')
+      })
+
+      const mockUnmount = vi.fn(() => 'updated text')
+      const roving = makeRovingEditor({
+        unmount: mockUnmount,
+        activeBlockId: 'B1',
+      })
+
+      const { container } = render(
+        <EditableBlock
+          blockId="B1"
+          content="original text"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      const wrapper = container.querySelector('.block-editor')
+      fireEvent.blur(wrapper as Element)
+
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'updated text')
+      expect(mockSetFocused).toHaveBeenCalledWith(null)
+      // edit must be called before setFocused so the store is updated
+      // before React transitions to the StaticBlock
+      expect(callOrder).toEqual(['edit', 'setFocused'])
+    })
+
+    it('calls splitBlock() before setFocused(null) when content has newlines', () => {
+      const callOrder: string[] = []
+      mockSplitBlock.mockImplementation(() => {
+        callOrder.push('splitBlock')
+      })
+      mockSetFocused.mockImplementation(() => {
+        callOrder.push('setFocused')
+      })
+
+      const mockUnmount = vi.fn(() => 'line1\nline2')
+      const roving = makeRovingEditor({
+        unmount: mockUnmount,
+        activeBlockId: 'B1',
+      })
+
+      const { container } = render(
+        <EditableBlock
+          blockId="B1"
+          content="original"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      const wrapper = container.querySelector('.block-editor')
+      fireEvent.blur(wrapper as Element)
+
+      expect(mockSplitBlock).toHaveBeenCalledWith('B1', 'line1\nline2')
+      expect(mockSetFocused).toHaveBeenCalledWith(null)
+      expect(callOrder).toEqual(['splitBlock', 'setFocused'])
+    })
+
+    it('content is preserved after blur (not stale/empty) — B-5 regression', () => {
+      // Simulate: block has content, user arrows away, blur fires.
+      // After blur, edit() must have been called so the store has the latest text.
+      const mockUnmount = vi.fn(() => 'ArrowRight content')
+      const roving = makeRovingEditor({
+        unmount: mockUnmount,
+        activeBlockId: 'B1',
+      })
+
+      const { container } = render(
+        <EditableBlock
+          blockId="B1"
+          content="ArrowRight content"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      const wrapper = container.querySelector('.block-editor')
+      fireEvent.blur(wrapper as Element)
+
+      // The store update must happen (not be skipped or deferred)
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'ArrowRight content')
+      expect(mockSetFocused).toHaveBeenCalledWith(null)
+    })
+  })
 })

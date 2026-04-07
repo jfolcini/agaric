@@ -2,26 +2,26 @@ import { describe, expect, it } from 'vitest'
 import { getSourceColor, getSourceLabel } from '../date-property-colors'
 
 describe('getSourceColor', () => {
-  it('returns orange for column:due_date', () => {
+  it('returns date-due token for column:due_date', () => {
     const color = getSourceColor('column:due_date')
-    expect(color.light).toContain('orange')
+    expect(color.light).toContain('date-due')
     expect(color.label).toBe('Due')
   })
 
-  it('returns green for column:scheduled_date', () => {
+  it('returns date-scheduled token for column:scheduled_date', () => {
     const color = getSourceColor('column:scheduled_date')
-    expect(color.light).toContain('green')
+    expect(color.light).toContain('date-scheduled')
     expect(color.label).toBe('Scheduled')
   })
 
-  it('returns purple for property:* sources', () => {
+  it('returns date-property token for property:* sources', () => {
     const color = getSourceColor('property:deadline')
-    expect(color.light).toContain('purple')
+    expect(color.light).toContain('date-property')
   })
 
-  it('returns gray for unknown sources', () => {
+  it('returns muted token for unknown sources', () => {
     const color = getSourceColor('something:unknown')
-    expect(color.light).toContain('gray')
+    expect(color.light).toContain('muted')
   })
 })
 

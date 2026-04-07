@@ -68,7 +68,7 @@ function StatusIcon({ state }: { state: string | null }): React.ReactElement {
   if (state === 'DOING')
     return (
       <Clock
-        className="h-4 w-4 shrink-0 text-blue-500"
+        className="h-4 w-4 shrink-0 text-task-doing"
         aria-hidden="true"
         data-testid="icon-doing"
       />
@@ -76,7 +76,7 @@ function StatusIcon({ state }: { state: string | null }): React.ReactElement {
   if (state === 'DONE')
     return (
       <CheckCircle2
-        className="h-4 w-4 shrink-0 text-green-600"
+        className="h-4 w-4 shrink-0 text-task-done"
         aria-hidden="true"
         data-testid="icon-done"
       />

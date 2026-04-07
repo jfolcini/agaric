@@ -35,14 +35,14 @@ export function PropertyChip({
       }}
       aria-label={t('property.editKeyLabel', { key: displayName })}
     >
-      {Icon && <Icon size={10} className="shrink-0" />}
+      {Icon && <Icon className="h-2.5 w-2.5 shrink-0" />}
       {displayName}:
     </button>
   ) : (
     <span
       className={cn('property-key-label opacity-60', Icon && 'inline-flex items-center gap-0.5')}
     >
-      {Icon && <Icon size={10} className="shrink-0" />}
+      {Icon && <Icon className="h-2.5 w-2.5 shrink-0" />}
       {displayName}:
     </span>
   )

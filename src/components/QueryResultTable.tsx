@@ -60,9 +60,9 @@ export function QueryResultTable({
                   {col.label}
                   {sortKey === col.key &&
                     (sortDir === 'asc' ? (
-                      <ArrowUp size={10} aria-hidden="true" />
+                      <ArrowUp className="h-2.5 w-2.5" aria-hidden="true" />
                     ) : (
-                      <ArrowDown size={10} aria-hidden="true" />
+                      <ArrowDown className="h-2.5 w-2.5" aria-hidden="true" />
                     ))}
                 </span>
               </th>

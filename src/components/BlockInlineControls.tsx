@@ -76,7 +76,7 @@ export function DateChip({
         document.dispatchEvent(new CustomEvent(eventName))
       }}
     >
-      <Icon size={14} className="flex-shrink-0" />
+      <Icon className="h-3.5 w-3.5 flex-shrink-0" />
       {formatCompactDate(date)}
     </button>
   )
@@ -95,15 +95,15 @@ const EMPTY_STYLE: CheckboxStyle = {
 
 const TASK_CHECKBOX_STYLES: Record<string, CheckboxStyle> = {
   DONE: {
-    className: 'task-checkbox-done border-green-600 bg-green-600 flex items-center justify-center',
+    className: 'task-checkbox-done border-task-done bg-task-done flex items-center justify-center',
     testId: 'task-checkbox-done',
-    icon: <Check size={12} className="text-white" />,
+    icon: <Check className="h-3 w-3 text-white" />,
   },
   DOING: {
     className:
-      'task-checkbox-doing border-blue-500 bg-blue-500/20 flex items-center justify-center',
+      'task-checkbox-doing border-task-doing bg-task-doing/20 flex items-center justify-center',
     testId: 'task-checkbox-doing',
-    icon: <div className="h-1.5 w-1.5 rounded-sm bg-blue-500" />,
+    icon: <div className="h-1.5 w-1.5 rounded-sm bg-task-doing" />,
   },
   TODO: {
     className: 'task-checkbox-todo border-muted-foreground',
@@ -111,8 +111,8 @@ const TASK_CHECKBOX_STYLES: Record<string, CheckboxStyle> = {
   },
   _custom: {
     className:
-      'task-checkbox-custom border-orange-500 bg-orange-500/20 flex items-center justify-center',
-    icon: <div className="h-1.5 w-1.5 rounded-full bg-orange-500" />,
+      'task-checkbox-custom border-task-custom bg-task-custom/20 flex items-center justify-center',
+    icon: <div className="h-1.5 w-1.5 rounded-full bg-task-custom" />,
   },
   _empty: EMPTY_STYLE,
 }
@@ -187,8 +187,7 @@ export function BlockInlineControls({
               aria-expanded={!isCollapsed}
             >
               <ChevronRight
-                size={16}
-                className={cn('transition-transform', !isCollapsed && 'rotate-90')}
+                className={cn('h-4 w-4 transition-transform', !isCollapsed && 'rotate-90')}
               />
             </button>
           </TooltipTrigger>
@@ -274,12 +273,12 @@ export function BlockInlineControls({
       {properties?.some((p) => p.key === 'repeat') && (
         <button
           type="button"
-          className="repeat-indicator flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400 [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1"
+          className="repeat-indicator flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none bg-indicator-repeat text-indicator-repeat-foreground [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1"
           aria-label={t('block.repeats', {
             value: properties.find((p) => p.key === 'repeat')?.value ?? '',
           })}
         >
-          <Repeat size={12} className="flex-shrink-0" />
+          <Repeat className="h-3 w-3 flex-shrink-0" />
           {formatRepeatLabel(properties.find((p) => p.key === 'repeat')?.value ?? '')}
         </button>
       )}
@@ -316,7 +315,7 @@ export function BlockInlineControls({
               aria-expanded={showAttachments}
               onClick={onToggleAttachments}
             >
-              <Paperclip size={12} className="flex-shrink-0" />
+              <Paperclip className="h-3 w-3 flex-shrink-0" />
               {attachmentCount}
             </button>
           </TooltipTrigger>

@@ -190,7 +190,7 @@ export function BlockContextMenu({
   const group1: MenuItem[] = [
     {
       label: t('contextMenu.delete'),
-      icon: <Trash2 size={14} />,
+      icon: <Trash2 className="h-3.5 w-3.5" />,
       action: onDelete ? () => handleAction(onDelete) : undefined,
       className: 'text-destructive hover:bg-destructive/10',
     },
@@ -200,25 +200,25 @@ export function BlockContextMenu({
   const group2: MenuItem[] = [
     {
       label: t('contextMenu.indent'),
-      icon: <ArrowRightToLine size={14} />,
+      icon: <ArrowRightToLine className="h-3.5 w-3.5" />,
       action: onIndent ? () => handleAction(onIndent) : undefined,
       shortcut: 'Ctrl+Shift+→',
     },
     {
       label: t('contextMenu.dedent'),
-      icon: <ArrowLeftToLine size={14} />,
+      icon: <ArrowLeftToLine className="h-3.5 w-3.5" />,
       action: onDedent ? () => handleAction(onDedent) : undefined,
       shortcut: 'Ctrl+Shift+←',
     },
     {
       label: t('contextMenu.moveUp'),
-      icon: <MoveUp size={14} />,
+      icon: <MoveUp className="h-3.5 w-3.5" />,
       action: onMoveUp ? () => handleAction(onMoveUp) : undefined,
       shortcut: 'Ctrl+Shift+↑',
     },
     {
       label: t('contextMenu.moveDown'),
-      icon: <MoveDown size={14} />,
+      icon: <MoveDown className="h-3.5 w-3.5" />,
       action: onMoveDown ? () => handleAction(onMoveDown) : undefined,
       shortcut: 'Ctrl+Shift+↓',
     },
@@ -226,7 +226,7 @@ export function BlockContextMenu({
       ? [
           {
             label: t('contextMenu.merge'),
-            icon: <Merge size={14} />,
+            icon: <Merge className="h-3.5 w-3.5" />,
             action: () => handleAction(onMerge),
           },
         ]
@@ -238,7 +238,11 @@ export function BlockContextMenu({
     ? [
         {
           label: isCollapsed ? t('contextMenu.expand') : t('contextMenu.collapse'),
-          icon: isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />,
+          icon: isCollapsed ? (
+            <ChevronRight className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5" />
+          ),
           action: onToggleCollapse ? () => handleAction(onToggleCollapse) : undefined,
           shortcut: 'Ctrl+.',
         },
@@ -246,7 +250,7 @@ export function BlockContextMenu({
           ? [
               {
                 label: t('contextMenu.zoomIn'),
-                icon: <ZoomIn size={14} />,
+                icon: <ZoomIn className="h-3.5 w-3.5" />,
                 action: () => handleAction(onZoomIn),
               },
             ]
@@ -258,13 +262,13 @@ export function BlockContextMenu({
   const group4: MenuItem[] = [
     {
       label: getTodoLabel(todoState, t),
-      icon: <CheckSquare size={14} />,
+      icon: <CheckSquare className="h-3.5 w-3.5" />,
       action: onToggleTodo ? () => handleAction(onToggleTodo) : undefined,
       shortcut: 'Ctrl+Enter',
     },
     {
       label: getPriorityLabel(priority, t),
-      icon: <Signal size={14} />,
+      icon: <Signal className="h-3.5 w-3.5" />,
       action: onTogglePriority ? () => handleAction(onTogglePriority) : undefined,
       shortcut: 'Ctrl+Shift+1-3',
     },
@@ -276,7 +280,7 @@ export function BlockContextMenu({
       ? [
           {
             label: t('contextMenu.history'),
-            icon: <Clock size={14} />,
+            icon: <Clock className="h-3.5 w-3.5" />,
             action: () => handleAction(onShowHistory),
           },
         ]
@@ -285,7 +289,7 @@ export function BlockContextMenu({
       ? [
           {
             label: t('contextMenu.properties'),
-            icon: <Settings2 size={14} />,
+            icon: <Settings2 className="h-3.5 w-3.5" />,
             action: () => handleAction(onShowProperties),
             shortcut: 'Ctrl+Shift+P',
           },

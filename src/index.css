@@ -51,6 +51,43 @@
   --color-priority-high: var(--priority-high);
   --color-priority-normal: var(--priority-normal);
   --color-priority-foreground: var(--priority-foreground);
+  /* Operation type colors */
+  --color-op-create: var(--op-create);
+  --color-op-create-foreground: var(--op-create-foreground);
+  --color-op-edit: var(--op-edit);
+  --color-op-edit-foreground: var(--op-edit-foreground);
+  --color-op-move: var(--op-move);
+  --color-op-move-foreground: var(--op-move-foreground);
+  --color-op-tag: var(--op-tag);
+  --color-op-tag-foreground: var(--op-tag-foreground);
+  /* Date source colors */
+  --color-date-due: var(--date-due);
+  --color-date-due-foreground: var(--date-due-foreground);
+  --color-date-scheduled: var(--date-scheduled);
+  --color-date-scheduled-foreground: var(--date-scheduled-foreground);
+  --color-date-property: var(--date-property);
+  --color-date-property-foreground: var(--date-property-foreground);
+  /* Notification/alert colors */
+  --color-alert-info: var(--alert-info);
+  --color-alert-info-foreground: var(--alert-info-foreground);
+  --color-alert-info-border: var(--alert-info-border);
+  --color-alert-warning: var(--alert-warning);
+  --color-alert-warning-foreground: var(--alert-warning-foreground);
+  --color-alert-warning-border: var(--alert-warning-border);
+  /* Task checkbox state colors */
+  --color-task-done: var(--task-done);
+  --color-task-doing: var(--task-doing);
+  --color-task-custom: var(--task-custom);
+  /* Highlight/search */
+  --color-highlight: var(--highlight);
+  /* Scheduled/repeat indicator */
+  --color-indicator-scheduled: var(--indicator-scheduled);
+  --color-indicator-scheduled-foreground: var(--indicator-scheduled-foreground);
+  --color-indicator-repeat: var(--indicator-repeat);
+  --color-indicator-repeat-foreground: var(--indicator-repeat-foreground);
+  /* Sync status */
+  --color-sync-idle: var(--sync-idle);
+  --color-sync-active: var(--sync-active);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -112,6 +149,43 @@
   --priority-high: oklch(0.8 0.16 90);
   --priority-normal: oklch(0.62 0.22 265);
   --priority-foreground: oklch(1 0 0);
+  /* Operation type colors */
+  --op-create: oklch(0.97 0.02 163);
+  --op-create-foreground: oklch(0.53 0.15 163);
+  --op-edit: oklch(0.97 0.02 260);
+  --op-edit-foreground: oklch(0.49 0.17 264);
+  --op-move: oklch(0.97 0.03 304);
+  --op-move-foreground: oklch(0.5 0.17 303);
+  --op-tag: oklch(0.97 0.02 85);
+  --op-tag-foreground: oklch(0.62 0.16 55);
+  /* Date source colors */
+  --date-due: oklch(0.95 0.04 75);
+  --date-due-foreground: oklch(0.48 0.14 46);
+  --date-scheduled: oklch(0.96 0.04 157);
+  --date-scheduled-foreground: oklch(0.39 0.12 153);
+  --date-property: oklch(0.95 0.03 307);
+  --date-property-foreground: oklch(0.44 0.15 304);
+  /* Notification/alert colors */
+  --alert-info: oklch(0.97 0.01 255);
+  --alert-info-foreground: oklch(0.42 0.2 266);
+  --alert-info-border: oklch(0.88 0.06 254);
+  --alert-warning: oklch(0.99 0.03 102);
+  --alert-warning-foreground: oklch(0.55 0.14 66);
+  --alert-warning-border: oklch(0.95 0.13 102);
+  /* Task checkbox state colors */
+  --task-done: oklch(0.55 0.18 149);
+  --task-doing: oklch(0.62 0.21 260);
+  --task-custom: oklch(0.7 0.18 53);
+  /* Highlight/search */
+  --highlight: oklch(0.95 0.13 102);
+  /* Scheduled/repeat indicator */
+  --indicator-scheduled: oklch(0.95 0.03 307);
+  --indicator-scheduled-foreground: oklch(0.5 0.17 303);
+  --indicator-repeat: oklch(0.94 0.03 272);
+  --indicator-repeat-foreground: oklch(0.46 0.24 277);
+  /* Sync status */
+  --sync-idle: oklch(0.7 0.17 162);
+  --sync-active: oklch(0.77 0.19 70);
 }
 
 /* ── Agaric dark theme ─────────────────────────────────────────────── */
@@ -163,6 +237,43 @@
   --priority-high: oklch(0.8 0.16 90);
   --priority-normal: oklch(0.62 0.22 265);
   --priority-foreground: oklch(1 0 0);
+  /* Operation type colors */
+  --op-create: oklch(0.19 0.02 163);
+  --op-create-foreground: oklch(0.77 0.18 163);
+  --op-edit: oklch(0.19 0.02 260);
+  --op-edit-foreground: oklch(0.71 0.17 255);
+  --op-move: oklch(0.19 0.03 304);
+  --op-move-foreground: oklch(0.71 0.17 302);
+  --op-tag: oklch(0.19 0.02 85);
+  --op-tag-foreground: oklch(0.83 0.19 84);
+  /* Date source colors */
+  --date-due: oklch(0.22 0.04 55);
+  --date-due-foreground: oklch(0.84 0.13 66);
+  --date-scheduled: oklch(0.22 0.03 157);
+  --date-scheduled-foreground: oklch(0.82 0.15 156);
+  --date-property: oklch(0.22 0.04 305);
+  --date-property-foreground: oklch(0.8 0.11 304);
+  /* Notification/alert colors */
+  --alert-info: oklch(0.28 0.09 268);
+  --alert-info-foreground: oklch(0.88 0.06 254);
+  --alert-info-border: oklch(0.42 0.2 266);
+  --alert-warning: oklch(0.32 0.06 58);
+  --alert-warning-foreground: oklch(0.95 0.13 102);
+  --alert-warning-border: oklch(0.55 0.14 66);
+  /* Task checkbox state colors */
+  --task-done: oklch(0.55 0.18 149);
+  --task-doing: oklch(0.62 0.21 260);
+  --task-custom: oklch(0.7 0.18 53);
+  /* Highlight/search */
+  --highlight: oklch(0.55 0.14 66);
+  /* Scheduled/repeat indicator */
+  --indicator-scheduled: oklch(0.22 0.04 305);
+  --indicator-scheduled-foreground: oklch(0.71 0.17 302);
+  --indicator-repeat: oklch(0.22 0.03 279);
+  --indicator-repeat-foreground: oklch(0.67 0.18 274);
+  /* Sync status */
+  --sync-idle: oklch(0.7 0.17 162);
+  --sync-active: oklch(0.77 0.19 70);
 }
 
 /* ── Indent width (responsive) ─────────────────────────────────────── */

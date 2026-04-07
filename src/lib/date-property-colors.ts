@@ -16,21 +16,21 @@ export interface SourceColor {
 
 const SOURCE_COLORS: Record<string, SourceColor> = {
   'column:due_date': {
-    light: 'bg-orange-100 text-orange-800',
-    dark: 'dark:bg-orange-900/30 dark:text-orange-300',
+    light: 'bg-date-due text-date-due-foreground',
+    dark: '',
     label: 'Due',
   },
   'column:scheduled_date': {
-    light: 'bg-green-100 text-green-800',
-    dark: 'dark:bg-green-900/30 dark:text-green-300',
+    light: 'bg-date-scheduled text-date-scheduled-foreground',
+    dark: '',
     label: 'Scheduled',
   },
 }
 
 /** Default color for custom date properties (property:*) */
 const PROPERTY_DEFAULT: SourceColor = {
-  light: 'bg-purple-100 text-purple-800',
-  dark: 'dark:bg-purple-900/30 dark:text-purple-300',
+  light: 'bg-date-property text-date-property-foreground',
+  dark: '',
   label: 'Property',
 }
 
@@ -40,8 +40,8 @@ export function getSourceColor(source: string): SourceColor {
   if (source.startsWith('property:')) return PROPERTY_DEFAULT
   // Fallback for unknown sources
   return {
-    light: 'bg-gray-100 text-gray-800',
-    dark: 'dark:bg-gray-900/30 dark:text-gray-300',
+    light: 'bg-muted text-muted-foreground',
+    dark: '',
     label: source,
   }
 }

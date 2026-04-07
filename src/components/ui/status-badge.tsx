@@ -10,7 +10,7 @@ const statusBadgeVariants = cva('shrink-0 rounded px-1 py-0.5 text-xs font-bold 
       DOING: 'bg-status-active text-status-active-foreground',
       TODO: 'bg-status-pending text-status-pending-foreground',
       default: 'bg-status-pending text-status-pending-foreground',
-      overdue: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300',
+      overdue: 'bg-alert-warning text-alert-warning-foreground',
     },
   },
   defaultVariants: { state: 'default' },

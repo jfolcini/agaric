@@ -197,7 +197,7 @@ export function SearchPanel(): React.ReactElement {
       )}
 
       {query.trim().length > 0 && query.trim().length < 3 && (
-        <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800 dark:border-yellow-800 dark:bg-yellow-950 dark:text-yellow-200">
+        <div className="rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground">
           {t('search.minCharsHint')}
         </div>
       )}

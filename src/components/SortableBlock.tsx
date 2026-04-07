@@ -286,7 +286,7 @@ function SortableBlockInner({
                 {...attributes}
                 {...listeners}
               >
-                <GripVertical size={16} />
+                <GripVertical className="h-4 w-4" />
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom" sideOffset={4}>
@@ -302,7 +302,7 @@ function SortableBlockInner({
               className="flex-shrink-0 p-0.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-sm opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto [@media(pointer:coarse)]:hidden group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring active:scale-95 touch-target [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
               onClick={() => onShowHistory(blockId)}
             >
-              <Clock size={16} />
+              <Clock className="h-4 w-4" />
             </button>
           )}
 
@@ -325,7 +325,7 @@ function SortableBlockInner({
                     onDelete(blockId)
                   }}
                 >
-                  <Trash2 size={16} />
+                  <Trash2 className="h-4 w-4" />
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" sideOffset={4}>

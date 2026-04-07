@@ -20,9 +20,7 @@ export function HighlightMatch({
   return (
     <>
       {text.slice(0, idx)}
-      <mark className="bg-yellow-200 dark:bg-yellow-800 rounded-sm">
-        {text.slice(idx, idx + filterText.length)}
-      </mark>
+      <mark className="bg-highlight rounded-sm">{text.slice(idx, idx + filterText.length)}</mark>
       {text.slice(idx + filterText.length)}
     </>
   )

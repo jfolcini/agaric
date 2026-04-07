@@ -1017,11 +1017,11 @@ export function BlockTree({
             className="flex-shrink-0 hover:text-foreground transition-colors"
             onClick={() => setZoomedBlockId(null)}
           >
-            <Home size={14} />
+            <Home className="h-3.5 w-3.5" />
           </button>
           {zoomBreadcrumb.map((item, i) => (
             <Fragment key={item.id}>
-              <ChevronRight size={12} className="flex-shrink-0 text-muted-foreground/50" />
+              <ChevronRight className="h-3 w-3 flex-shrink-0 text-muted-foreground/50" />
               <button
                 type="button"
                 className={cn(

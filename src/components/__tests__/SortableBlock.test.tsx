@@ -982,7 +982,7 @@ describe('SortableBlock task marker', () => {
     expect(checkbox?.getAttribute('class')).toContain('border-muted-foreground')
   })
 
-  it('applies border-blue-500 class to DOING checkbox', () => {
+  it('applies border-task-doing class to DOING checkbox', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -994,10 +994,10 @@ describe('SortableBlock task marker', () => {
     )
 
     const checkbox = container.querySelector('.task-checkbox-doing')
-    expect(checkbox?.getAttribute('class')).toContain('border-blue-500')
+    expect(checkbox?.getAttribute('class')).toContain('border-task-doing')
   })
 
-  it('applies border-green-600 and bg-green-600 class to DONE checkbox', () => {
+  it('applies border-task-done and bg-task-done class to DONE checkbox', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1009,8 +1009,8 @@ describe('SortableBlock task marker', () => {
     )
 
     const checkbox = container.querySelector('.task-checkbox-done')
-    expect(checkbox?.getAttribute('class')).toContain('border-green-600')
-    expect(checkbox?.getAttribute('class')).toContain('bg-green-600')
+    expect(checkbox?.getAttribute('class')).toContain('border-task-done')
+    expect(checkbox?.getAttribute('class')).toContain('bg-task-done')
   })
 
   it('applies line-through and opacity-50 to content when DONE', () => {
@@ -3164,8 +3164,8 @@ describe('SortableBlock vertical alignment', () => {
     )
 
     const chevron = screen.getByTestId('chevron-right-icon')
-    expect(chevron).toHaveAttribute('width', '16')
-    expect(chevron).toHaveAttribute('height', '16')
+    expect(chevron.classList.contains('h-4')).toBe(true)
+    expect(chevron.classList.contains('w-4')).toBe(true)
   })
 
   it('gutter and inline-controls use same gap value', () => {

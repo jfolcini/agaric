@@ -97,7 +97,7 @@ export function PageTreeItem({
               onCreateUnder(node.fullPath)
             }}
           >
-            <Plus size={12} />
+            <Plus className="h-3 w-3" />
           </button>
         </div>
         {isExpanded &&
@@ -146,7 +146,7 @@ export function PageTreeItem({
             onCreateUnder(node.fullPath)
           }}
         >
-          <Plus size={12} />
+          <Plus className="h-3 w-3" />
         </button>
       </div>
       {isExpanded &&

@@ -324,7 +324,7 @@ export function PropertyRow({
         }
         title={label}
       >
-        {Icon && <Icon size={12} />}
+        {Icon && <Icon className="h-3 w-3" />}
         {label}
       </Badge>
       <Input

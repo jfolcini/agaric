@@ -25,16 +25,16 @@ import { DiffDisplay } from './DiffDisplay'
 
 function opBadgeClasses(opType: string): string {
   if (opType.startsWith('create') || opType.startsWith('restore')) {
-    return 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+    return 'bg-op-create text-op-create-foreground'
   }
   if (opType.startsWith('edit')) {
-    return 'bg-blue-500/10 text-blue-700 dark:text-blue-400'
+    return 'bg-op-edit text-op-edit-foreground'
   }
   if (opType.startsWith('delete') || opType.startsWith('purge')) {
     return 'bg-destructive/10 text-destructive'
   }
   if (opType.startsWith('move')) {
-    return 'bg-purple-500/10 text-purple-700 dark:text-purple-400'
+    return 'bg-op-move text-op-move-foreground'
   }
   if (
     opType.startsWith('tag') ||
@@ -42,7 +42,7 @@ function opBadgeClasses(opType: string): string {
     opType === 'set_property' ||
     opType === 'delete_property'
   ) {
-    return 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
+    return 'bg-op-tag text-op-tag-foreground'
   }
   if (opType.startsWith('attachment') || opType === 'add_attachment') {
     return 'bg-muted text-muted-foreground'

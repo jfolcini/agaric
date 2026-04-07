@@ -8,6 +8,7 @@
 
 import { EditorContent } from '@tiptap/react'
 import React, { useCallback, useEffect, useRef } from 'react'
+import { flushSync } from 'react-dom'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { useBlockStore } from '../stores/blocks'
 import { usePageBlockStore } from '../stores/page-blocks'
@@ -190,9 +191,13 @@ function EditableBlockInner({
       const changed = rovingEditor.unmount()
       if (changed !== null) {
         if (changed.includes('\n')) {
-          splitBlock(blockId, changed)
+          flushSync(() => {
+            splitBlock(blockId, changed)
+          })
         } else {
-          edit(blockId, changed)
+          flushSync(() => {
+            edit(blockId, changed)
+          })
         }
       }
       setFocused(null)
