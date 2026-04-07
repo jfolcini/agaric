@@ -332,7 +332,7 @@ export function BlockContextMenu({
       ref={menuRef}
       role="menu"
       aria-label={t('contextMenu.blockActions')}
-      className="fixed z-50 min-w-[160px] rounded-lg border bg-popover p-1 shadow-md animate-in fade-in-0 zoom-in-95"
+      className="block-context-menu fixed z-50 min-w-[160px] rounded-lg border bg-popover p-1 shadow-md animate-in fade-in-0 zoom-in-95"
       style={{ left: computedPos.x, top: computedPos.y }}
       onKeyDown={handleKeyDown}
     >

@@ -232,6 +232,7 @@ export function BlockTree({
 
   // ── Zoom hook (state + breadcrumb + zoomed view) ───────────────────
   const {
+    zoomedBlockId,
     zoomIn: handleZoomIn,
     zoomToRoot,
     breadcrumbs: zoomBreadcrumb,
@@ -522,6 +523,18 @@ export function BlockTree({
     }
   }
 
+  // ── B-14: Clear focus when zoom changes and focused block is outside view ──
+  useEffect(() => {
+    if (zoomedBlockId === null) return // root view — all blocks visible
+    const { focusedBlockId: fid } = useBlockStore.getState()
+    if (!fid) return
+    const descendants = getDragDescendants(blocks, zoomedBlockId)
+    if (!descendants.has(fid)) {
+      handleFlush()
+      setFocused(null)
+    }
+  }, [zoomedBlockId, blocks, handleFlush, setFocused])
+
   // ── Navigate to a block link target ────────────────────────────────
   const handleNavigate = useCallback(
     async (targetId: string) => {
@@ -728,12 +741,13 @@ export function BlockTree({
       const proseMirror = document.querySelector('.ProseMirror')
       if (proseMirror?.contains(document.activeElement)) return
       e.preventDefault()
-      rovingEditor.unmount()
+      // Save any pending edits before closing (unfocused Escape should persist content)
+      handleFlush()
       setFocused(null)
     }
     document.addEventListener('keydown', handleUnfocusedEscape)
     return () => document.removeEventListener('keydown', handleUnfocusedEscape)
-  }, [rovingEditor, setFocused])
+  }, [handleFlush, setFocused])
 
   // ── Keyboard shortcut for task cycling (Ctrl+Enter / Cmd+Enter) ────
   useEffect(() => {
@@ -889,12 +903,12 @@ export function BlockTree({
       if (proseMirror?.contains(document.activeElement)) {
         ;(document.activeElement as HTMLElement)?.blur()
       } else {
-        // Editor is mounted but already unfocused — force close
-        rovingEditor.unmount()
+        // Editor is mounted but already unfocused — flush (save + split) before closing
+        handleFlush()
         setFocused(null)
       }
     },
-    [rovingEditor, setFocused],
+    [handleFlush, setFocused],
   )
 
   // ── Active item for DragOverlay ────────────────────────────────────

@@ -20,6 +20,12 @@ import { EDITOR_PORTAL_SELECTORS, EditableBlock } from '../EditableBlock'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
+// Mock shouldSplitOnBlur from use-roving-editor — controls split detection
+const mockShouldSplitOnBlur = vi.fn((md: string) => md.includes('\n'))
+vi.mock('../../editor/use-roving-editor', () => ({
+  shouldSplitOnBlur: (...args: unknown[]) => mockShouldSplitOnBlur(...(args as [string])),
+}))
+
 // Mock EditorContent — TipTap doesn't render in jsdom so we stub it
 vi.mock('@tiptap/react', () => ({
   EditorContent: ({ editor }: { editor: unknown }) =>
@@ -113,6 +119,8 @@ function makeRovingEditor(
 describe('EditableBlock', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Reset shouldSplitOnBlur to default behavior (split on newlines)
+    mockShouldSplitOnBlur.mockImplementation((md: string) => md.includes('\n'))
     // jsdom does not implement scrollIntoView — stub it globally
     if (!HTMLElement.prototype.scrollIntoView) {
       HTMLElement.prototype.scrollIntoView = vi.fn()
@@ -407,6 +415,63 @@ describe('EditableBlock', () => {
       expect(mockEdit).not.toHaveBeenCalled()
       expect(mockSetFocused).not.toHaveBeenCalled()
     })
+
+    it('does not split a code block with internal newlines (B-9)', () => {
+      // A fenced code block has newlines but is a single top-level node —
+      // shouldSplitOnBlur returns false, so edit() should be called, not splitBlock().
+      const codeBlock = '```js\nconst a = 1\nconst b = 2\n```'
+      mockShouldSplitOnBlur.mockReturnValue(false)
+
+      const mockUnmount = vi.fn(() => codeBlock)
+      const roving = makeRovingEditor({
+        unmount: mockUnmount,
+        activeBlockId: 'B1',
+      })
+
+      const { container } = render(
+        <EditableBlock
+          blockId="B1"
+          content="original"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      const wrapper = container.querySelector('.block-editor')
+      fireEvent.blur(wrapper as Element)
+
+      expect(mockShouldSplitOnBlur).toHaveBeenCalledWith(codeBlock)
+      expect(mockEdit).toHaveBeenCalledWith('B1', codeBlock)
+      expect(mockSplitBlock).not.toHaveBeenCalled()
+    })
+
+    it('splits multi-paragraph content on blur (B-9)', () => {
+      // Two paragraphs separated by a blank line — shouldSplitOnBlur returns true.
+      const multiParagraph = 'paragraph one\n\nparagraph two'
+      mockShouldSplitOnBlur.mockReturnValue(true)
+
+      const mockUnmount = vi.fn(() => multiParagraph)
+      const roving = makeRovingEditor({
+        unmount: mockUnmount,
+        activeBlockId: 'B1',
+      })
+
+      const { container } = render(
+        <EditableBlock
+          blockId="B1"
+          content="original"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      const wrapper = container.querySelector('.block-editor')
+      fireEvent.blur(wrapper as Element)
+
+      expect(mockShouldSplitOnBlur).toHaveBeenCalledWith(multiParagraph)
+      expect(mockSplitBlock).toHaveBeenCalledWith('B1', multiParagraph)
+      expect(mockEdit).not.toHaveBeenCalled()
+    })
   })
 
   // ── Accessibility ────────────────────────────────────────────────────
@@ -620,6 +685,10 @@ describe('EditableBlock', () => {
       expect(EDITOR_PORTAL_SELECTORS).toContain('[data-radix-popper-content-wrapper]')
     })
 
+    it('includes .block-context-menu selector (B-15)', () => {
+      expect(EDITOR_PORTAL_SELECTORS).toContain('.block-context-menu')
+    })
+
     it('handleBlur does not unmount when relatedTarget is inside a suggestion popup', () => {
       const mockUnmount = vi.fn(() => 'changed')
       const roving = makeRovingEditor({ activeBlockId: 'B1', unmount: mockUnmount })
@@ -759,6 +828,33 @@ describe('EditableBlock', () => {
       expect(mockEdit).not.toHaveBeenCalled()
       expect(mockSplitBlock).not.toHaveBeenCalled()
       expect(mockMount).toHaveBeenCalledWith('B1', '')
+    })
+
+    it('auto-mount uses shouldSplitOnBlur, not naive newline check (M-5)', () => {
+      // A code block has internal newlines but shouldSplitOnBlur returns false —
+      // the auto-mount persist should call edit(), not splitBlock().
+      const codeBlock = '```\nline1\nline2\n```'
+      mockShouldSplitOnBlur.mockReturnValue(false)
+
+      const mockMount = vi.fn()
+      const mockUnmount = vi.fn(() => codeBlock)
+      const roving = makeRovingEditor({
+        mount: mockMount,
+        unmount: mockUnmount,
+        activeBlockId: 'OLD_BLOCK',
+      })
+
+      const { rerender } = render(
+        <EditableBlock blockId="B1" content="" isFocused={false} rovingEditor={roving as never} />,
+      )
+
+      rerender(
+        <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
+      )
+
+      expect(mockShouldSplitOnBlur).toHaveBeenCalledWith(codeBlock)
+      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', codeBlock)
+      expect(mockSplitBlock).not.toHaveBeenCalled()
     })
   })
 

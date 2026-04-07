@@ -358,6 +358,13 @@ describe('BlockContextMenu', () => {
     expect(menu.parentElement).toBe(document.body)
   })
 
+  it('menu container has .block-context-menu class (B-15)', () => {
+    renderMenu()
+
+    const menu = screen.getByRole('menu')
+    expect(menu.classList.contains('block-context-menu')).toBe(true)
+  })
+
   it('position is correctly applied as CSS style', async () => {
     const { computePosition } = await import('@floating-ui/dom')
     const mockedComputePosition = vi.mocked(computePosition)

@@ -27,6 +27,7 @@ import Text from '@tiptap/extension-text'
 import { type Editor, Extension, useEditor } from '@tiptap/react'
 import { common, createLowlight } from 'lowlight'
 import { useCallback, useRef } from 'react'
+import { logger } from '@/lib/logger'
 import { AtTagPicker } from './extensions/at-tag-picker'
 import { BlockLink } from './extensions/block-link'
 import { BlockLinkPicker } from './extensions/block-link-picker'
@@ -370,15 +371,22 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   const unmount = useCallback((): string | null => {
     if (!editor) return null
 
-    const json = editor.getJSON() as DocNode
-    const delta = computeContentDelta(originalMarkdownRef.current, json)
+    let delta: ContentDelta | null = null
+    try {
+      const json = editor.getJSON() as DocNode
+      delta = computeContentDelta(originalMarkdownRef.current, json)
+    } catch (err) {
+      logger.warn('editor', 'serialize failed during unmount', {
+        error: err instanceof Error ? err.message : String(err),
+      })
+    } finally {
+      // Always reset editor state
+      replaceDocSilently(editor, { type: 'doc', content: [{ type: 'paragraph' }] })
+      activeBlockIdRef.current = null
+      originalMarkdownRef.current = ''
+    }
 
-    // Reset to empty doc without polluting undo history
-    replaceDocSilently(editor, { type: 'doc', content: [{ type: 'paragraph' }] })
-    activeBlockIdRef.current = null
-    originalMarkdownRef.current = ''
-
-    return delta.changed ? delta.newMarkdown : null
+    return delta?.changed ? delta.newMarkdown : null
   }, [editor])
 
   const getMarkdown = useCallback((): string | null => {

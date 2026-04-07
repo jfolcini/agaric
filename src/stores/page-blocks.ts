@@ -183,7 +183,8 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     },
 
     edit: async (blockId: string, content: string) => {
-      const { rootParentId } = get()
+      const { rootParentId, blocks } = get()
+      const previousContent = blocks.find((b) => b.id === blockId)?.content
       set((state) => ({
         blocks: state.blocks.map((b) => (b.id === blockId ? { ...b, content } : b)),
       }))
@@ -191,6 +192,14 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         await editBlock(blockId, content)
         notifyUndoNewAction(rootParentId)
       } catch {
+        // Rollback optimistic update
+        if (previousContent !== undefined) {
+          set((state) => ({
+            blocks: state.blocks.map((b) =>
+              b.id === blockId ? { ...b, content: previousContent } : b,
+            ),
+          }))
+        }
         toast.error(i18n.t('error.saveFailed'))
       }
     },

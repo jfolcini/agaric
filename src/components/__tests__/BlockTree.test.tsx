@@ -61,6 +61,12 @@ const mockEditor = {
   chain: vi.fn(() => mockChain),
   state: { selection: { $anchor: { pos: 0 } } },
 }
+/** Mutable activeBlockId exposed by the mock useRovingEditor. */
+let mockActiveBlockId: string | null = null
+/** Value that mock unmount() returns (simulates editor content). */
+let mockUnmountReturn: string | null = null
+const mockMount = vi.fn()
+const mockUnmount = vi.fn(() => mockUnmountReturn)
 
 vi.mock('../../editor/use-roving-editor', () => ({
   useRovingEditor: (opts: {
@@ -79,9 +85,9 @@ vi.mock('../../editor/use-roving-editor', () => ({
     capturedOnSlashCommand = opts.onSlashCommand
     return {
       editor: useMockEditor ? mockEditor : null,
-      mount: vi.fn(),
-      unmount: vi.fn(() => null),
-      activeBlockId: null,
+      mount: mockMount,
+      unmount: mockUnmount,
+      activeBlockId: mockActiveBlockId,
     }
   },
 }))
@@ -258,6 +264,8 @@ beforeEach(() => {
   capturedBlockKeyboardOpts = undefined
   mockCalendarOnSelect = undefined
   useMockEditor = false
+  mockActiveBlockId = null
+  mockUnmountReturn = null
   pageStore = createPageBlockStore('PAGE_1')
   pageStore.setState({ blocks: [], loading: false })
   useBlockStore.setState({
@@ -5799,5 +5807,156 @@ describe('H-9: auto-create first block on empty page', () => {
     // Count how many create_block calls were made
     const createCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
     expect(createCalls).toHaveLength(1)
+  })
+})
+
+// =========================================================================
+// B-7: Whitespace click saves edits when editor is DOM-unfocused
+// =========================================================================
+
+describe('B-7: whitespace click saves edits when DOM-unfocused', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
+  })
+
+  it('calls handleFlush (edit) instead of discarding when editor is mounted but DOM-unfocused', async () => {
+    const tree = [makeBlock({ id: 'A', content: 'original' })]
+    pageStore.setState({ blocks: tree, loading: false })
+    // Editor mounted on block A with pending edits
+    mockActiveBlockId = 'A'
+    mockUnmountReturn = 'edited content'
+    useBlockStore.setState({ focusedBlockId: 'A', selectedBlockIds: [] })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-A')
+
+    // The .block-tree div is the container with the onMouseDown handler.
+    // ProseMirror is NOT in document.activeElement (DOM-unfocused).
+    const container = document.querySelector('.block-tree') as HTMLElement
+    fireEvent.mouseDown(container)
+
+    // unmount should have been called (by handleFlush internally)
+    expect(mockUnmount).toHaveBeenCalled()
+
+    // edit_block should be called with the content from unmount, proving content was saved
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'A',
+        toText: 'edited content',
+      })
+    })
+
+    // Focus should be cleared
+    expect(useBlockStore.getState().focusedBlockId).toBeNull()
+  })
+})
+
+// =========================================================================
+// B-8: Unfocused-Escape saves edits instead of discarding
+// =========================================================================
+
+describe('B-8: unfocused Escape saves edits', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
+  })
+
+  it('saves content via handleFlush when Escape is pressed with editor DOM-unfocused', async () => {
+    const tree = [makeBlock({ id: 'A', content: 'original' })]
+    pageStore.setState({ blocks: tree, loading: false })
+    // Editor mounted on block A with pending edits
+    mockActiveBlockId = 'A'
+    mockUnmountReturn = 'unsaved edits'
+    useBlockStore.setState({ focusedBlockId: 'A', selectedBlockIds: [] })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-A')
+
+    // Press Escape at the document level (ProseMirror is NOT focused)
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    // unmount should have been called (by handleFlush internally)
+    expect(mockUnmount).toHaveBeenCalled()
+
+    // edit_block should be called, proving content was persisted
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'A',
+        toText: 'unsaved edits',
+      })
+    })
+
+    // Focus should be cleared
+    expect(useBlockStore.getState().focusedBlockId).toBeNull()
+  })
+})
+
+// =========================================================================
+// B-14: Zoom clears focus on block outside visible subtree
+// =========================================================================
+
+describe('B-14: zoom clears focus on invisible block', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
+  })
+
+  it('clears focus when zoomed block does not contain the focused block', async () => {
+    const user = userEvent.setup()
+    // Tree: A (with child B) and C (sibling at depth 0)
+    const tree = [
+      makeBlock({ id: 'A', content: 'Parent A' }),
+      makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child B' }),
+      makeBlock({ id: 'C', content: 'Sibling C' }),
+    ]
+    pageStore.setState({ blocks: tree, loading: false })
+    // Focus on C (which is NOT a descendant of A)
+    mockActiveBlockId = 'C'
+    mockUnmountReturn = 'pending C edits'
+    useBlockStore.setState({ focusedBlockId: 'C', selectedBlockIds: [] })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-A')
+
+    // Zoom into A — C is outside A's subtree
+    await user.click(screen.getByTestId('zoom-in-A'))
+
+    // Focus should be cleared because C is not a descendant of A
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBeNull()
+    })
+
+    // Content should have been saved (handleFlush called)
+    expect(mockUnmount).toHaveBeenCalled()
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'C',
+        toText: 'pending C edits',
+      })
+    })
+  })
+
+  it('does NOT clear focus when focused block is inside the zoomed subtree', async () => {
+    const user = userEvent.setup()
+    // Tree: A (with child B)
+    const tree = [
+      makeBlock({ id: 'A', content: 'Parent A' }),
+      makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child B' }),
+    ]
+    pageStore.setState({ blocks: tree, loading: false })
+    // Focus on B (which IS a descendant of A)
+    useBlockStore.setState({ focusedBlockId: 'B', selectedBlockIds: [] })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-A')
+
+    // Zoom into A — B is inside A's subtree
+    await user.click(screen.getByTestId('zoom-in-A'))
+
+    // Focus should remain on B
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBe('B')
+    })
   })
 })

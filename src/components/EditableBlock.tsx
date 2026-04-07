@@ -11,6 +11,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
+import { shouldSplitOnBlur } from '../editor/use-roving-editor'
 import { useBlockStore } from '../stores/blocks'
 import { usePageBlockStore } from '../stores/page-blocks'
 import { FormattingToolbar } from './FormattingToolbar'
@@ -29,7 +30,30 @@ export const EDITOR_PORTAL_SELECTORS = [
   '.rdp',
   '.date-picker-popup',
   '.property-key-editor',
+  '.block-context-menu',
 ]
+
+/**
+ * Unmount the roving editor from the given block and persist its content.
+ * Uses `shouldSplitOnBlur` to decide between split and edit.
+ * Returns the changed markdown, or null if unchanged.
+ */
+function persistUnmount(
+  re: RovingEditorHandle,
+  prevId: string,
+  editFn: (id: string, content: string) => void,
+  splitBlockFn: (id: string, content: string) => void,
+): string | null {
+  const changed = re.unmount()
+  if (changed !== null) {
+    if (shouldSplitOnBlur(changed)) {
+      splitBlockFn(prevId, changed)
+    } else {
+      editFn(prevId, changed)
+    }
+  }
+  return changed
+}
 
 interface EditableBlockProps {
   blockId: string
@@ -123,15 +147,7 @@ function EditableBlockInner({
     if (isFocused && re.activeBlockId !== blockId) {
       // Unmount from previous block if any (mirrors handleFocus logic)
       if (re.activeBlockId) {
-        const prevId = re.activeBlockId
-        const changed = re.unmount()
-        if (changed !== null) {
-          if (changed.includes('\n')) {
-            splitBlockRef.current(prevId, changed)
-          } else {
-            editRef.current(prevId, changed)
-          }
-        }
+        persistUnmount(re, re.activeBlockId, editRef.current, splitBlockRef.current)
       }
       re.mount(blockId, contentRef.current)
     }
@@ -141,16 +157,7 @@ function EditableBlockInner({
     (id: string) => {
       // Unmount from previous block if any
       if (rovingEditor.activeBlockId && rovingEditor.activeBlockId !== id) {
-        const prevId = rovingEditor.activeBlockId // capture BEFORE unmount nullifies it
-        const changed = rovingEditor.unmount()
-        if (changed !== null) {
-          // Auto-split if content contains newlines
-          if (changed.includes('\n')) {
-            splitBlock(prevId, changed)
-          } else {
-            edit(prevId, changed)
-          }
-        }
+        persistUnmount(rovingEditor, rovingEditor.activeBlockId, edit, splitBlock)
       }
       // Mount into the new block
       setFocused(id)
@@ -208,7 +215,7 @@ function EditableBlockInner({
 
       const changed = rovingEditor.unmount()
       if (changed !== null) {
-        if (changed.includes('\n')) {
+        if (shouldSplitOnBlur(changed)) {
           flushSync(() => {
             splitBlock(blockId, changed)
           })

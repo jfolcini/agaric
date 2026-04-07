@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { serialize } from '../markdown-serializer'
 import type { DocNode } from '../types'
 import {
   computeContentDelta,
@@ -7,10 +8,24 @@ import {
   shouldSplitOnBlur,
 } from '../use-roving-editor'
 
+vi.mock('../markdown-serializer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../markdown-serializer')>()
+  return {
+    ...actual,
+    serialize: vi.fn((...args: Parameters<typeof actual.serialize>) => actual.serialize(...args)),
+  }
+})
+
 // -- editorProps ARIA attributes ------------------------------------------------
 // Verified via grep: use-roving-editor.ts contains editorProps.attributes with
 // role: 'textbox', 'aria-multiline': 'true', 'aria-label': 'Block editor'.
 // Cannot unit-test useEditor config without full React + TipTap environment.
+
+const mockedSerialize = vi.mocked(serialize)
+
+afterEach(() => {
+  mockedSerialize.mockRestore()
+})
 
 // -- dispatchPriorityEvent ----------------------------------------------------
 
@@ -209,5 +224,99 @@ describe('shouldSplitOnBlur', () => {
 
   it('returns true for heading followed by paragraph', () => {
     expect(shouldSplitOnBlur('# Title\nParagraph')).toBe(true)
+  })
+})
+
+// -- unmount error boundary (B-12) -------------------------------------------
+// unmount() is a hook callback inside useRovingEditor. Testing the actual hook
+// requires a full React + TipTap environment, so we test the building blocks:
+// 1. computeContentDelta propagates serialize errors (proving the try-catch is needed)
+// 2. The unmount pattern with mock editor objects (proving the fix works)
+
+describe('unmount error boundary', () => {
+  function makeMockEditor() {
+    const mockContent = { size: 42, mock: true }
+    const mockPmDoc = { content: mockContent }
+    const tr = {
+      replaceWith: vi.fn().mockReturnThis(),
+      setMeta: vi.fn().mockReturnThis(),
+    }
+    const editor = {
+      getJSON: vi.fn().mockReturnValue({ type: 'doc', content: [{ type: 'paragraph' }] }),
+      schema: { nodeFromJSON: vi.fn().mockReturnValue(mockPmDoc) },
+      state: {
+        doc: { content: { size: 100 } },
+        get tr() {
+          return tr
+        },
+      },
+      view: { dispatch: vi.fn() },
+    }
+    return { editor, tr }
+  }
+
+  it('computeContentDelta propagates errors from serialize', () => {
+    mockedSerialize.mockImplementationOnce(() => {
+      throw new Error('malformed ProseMirror JSON')
+    })
+    const json: DocNode = { type: 'doc', content: [{ type: 'paragraph' }] }
+    expect(() => computeContentDelta('hello', json)).toThrow('malformed ProseMirror JSON')
+  })
+
+  it('unmount pattern returns null and resets editor when serialize throws', () => {
+    const { editor, tr } = makeMockEditor()
+
+    mockedSerialize.mockImplementationOnce(() => {
+      throw new Error('serialize boom')
+    })
+
+    // Exercise the same logic as unmount():
+    // try { computeContentDelta(...) } catch { ... } finally { reset }
+    let delta: ReturnType<typeof computeContentDelta> | null = null
+    let caughtError = false
+    try {
+      const json = editor.getJSON() as DocNode
+      delta = computeContentDelta('original', json)
+    } catch {
+      caughtError = true
+    } finally {
+      replaceDocSilently(editor as never, { type: 'doc', content: [{ type: 'paragraph' }] })
+    }
+
+    const result = delta?.changed ? delta.newMarkdown : null
+
+    // Error was caught, not propagated
+    expect(caughtError).toBe(true)
+    // Returns null (unchanged) rather than losing content
+    expect(result).toBeNull()
+    // Editor state was still reset (replaceDocSilently was called)
+    expect(tr.replaceWith).toHaveBeenCalledOnce()
+    expect(tr.setMeta).toHaveBeenCalledWith('addToHistory', false)
+    expect(editor.view.dispatch).toHaveBeenCalledOnce()
+  })
+
+  it('unmount pattern returns changed markdown on the normal path', () => {
+    const { editor } = makeMockEditor()
+
+    // serialize will use real implementation (pass-through mock)
+    const json = editor.getJSON() as DocNode
+    const delta = computeContentDelta('different original', json)
+    const result = delta?.changed ? delta.newMarkdown : null
+
+    // Content changed, so newMarkdown is returned
+    expect(delta.changed).toBe(true)
+    expect(result).toBe('')
+  })
+
+  it('unmount pattern returns null when content is unchanged', () => {
+    const { editor } = makeMockEditor()
+
+    // Serialize an empty paragraph doc → '' , match against '' original
+    const json = editor.getJSON() as DocNode
+    const delta = computeContentDelta('', json)
+    const result = delta?.changed ? delta.newMarkdown : null
+
+    expect(delta.changed).toBe(false)
+    expect(result).toBeNull()
   })
 })

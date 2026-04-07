@@ -36,6 +36,7 @@ export const BlockRefPicker = Extension.create<BlockRefPickerOptions>({
         editor: this.editor,
         pluginKey: blockRefPickerPluginKey,
         char: '((',
+        allowSpaces: true,
         allowedPrefixes: null,
         items: ({ query }) => this.options.items(query),
         command: ({ editor, range, props }) => {

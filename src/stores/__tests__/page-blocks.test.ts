@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 import { makeBlock } from '../../__tests__/fixtures'
@@ -231,9 +232,10 @@ describe('PageBlockStore', () => {
       await store.getState().edit('A', 'new')
 
       expect(store.getState().blocks[0]?.content).toBe('new')
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'A', toText: 'new' })
     })
 
-    it('preserves optimistic content on backend error', async () => {
+    it('rolls back optimistic content on backend error', async () => {
       store.setState({
         blocks: [makeBlock({ id: 'A', content: 'old' })],
       })
@@ -241,7 +243,29 @@ describe('PageBlockStore', () => {
 
       await store.getState().edit('A', 'new')
 
-      expect(store.getState().blocks[0]?.content).toBe('new')
+      expect(store.getState().blocks[0]?.content).toBe('old')
+    })
+
+    it('shows toast.error on backend failure', async () => {
+      store.setState({
+        blocks: [makeBlock({ id: 'A', content: 'old' })],
+      })
+      mockedInvoke.mockRejectedValueOnce(new Error('edit failed'))
+
+      await store.getState().edit('A', 'new')
+
+      expect(toast.error).toHaveBeenCalled()
+    })
+
+    it('does not crash when editing a block that does not exist in the store', async () => {
+      store.setState({ blocks: [makeBlock({ id: 'A', content: 'aaa' })] })
+      mockedInvoke.mockRejectedValueOnce(new Error('not found'))
+
+      await store.getState().edit('NONEXISTENT', 'whatever')
+
+      // Store is unchanged — no crash
+      expect(store.getState().blocks).toHaveLength(1)
+      expect(store.getState().blocks[0]?.content).toBe('aaa')
     })
 
     it('only updates the target block, leaving others unchanged', async () => {
