@@ -179,6 +179,7 @@ const resources = {
       'block.scheduledDate': 'Scheduled {{date}}',
       'block.repeats': 'Repeats {{value}}',
       'block.breadcrumb': 'Block breadcrumb',
+      'block.zoomToRoot': 'Go to root',
       'block.untitled': 'Untitled',
       'block.searchPages': 'Search pages...',
       'block.noPagesFound': 'No pages found',

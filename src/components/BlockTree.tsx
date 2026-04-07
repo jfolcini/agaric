@@ -14,9 +14,8 @@
 
 import { closestCenter, DndContext, MeasuringStrategy } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { ChevronRight, Home } from 'lucide-react'
 import type React from 'react'
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useShallow } from 'zustand/react/shallow'
@@ -24,6 +23,7 @@ import { parse } from '../editor/markdown-serializer'
 import type { PickerItem } from '../editor/SuggestionList'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { useRovingEditor } from '../editor/use-roving-editor'
+import { useBlockCollapse } from '../hooks/useBlockCollapse'
 import { useBlockDatePicker } from '../hooks/useBlockDatePicker'
 import { useBlockDnD } from '../hooks/useBlockDnD'
 import { useBlockKeyboardHandlers } from '../hooks/useBlockKeyboardHandlers'
@@ -35,6 +35,7 @@ import {
   searchSlashCommands,
   useBlockSlashCommands,
 } from '../hooks/useBlockSlashCommands'
+import { useBlockZoom } from '../hooks/useBlockZoom'
 import { useViewportObserver } from '../hooks/useViewportObserver'
 import type { NavigateToPageFn } from '../lib/block-events'
 import { BLOCK_EVENTS, onBlockEvent } from '../lib/block-events'
@@ -48,13 +49,13 @@ import {
   setTodoState as setTodoStateCmd,
 } from '../lib/tauri'
 import { getDragDescendants } from '../lib/tree-utils'
-import { cn } from '../lib/utils'
 import { useBlockStore } from '../stores/blocks'
 import { usePageBlockStore, usePageBlockStoreApi } from '../stores/page-blocks'
 import { useResolveStore } from '../stores/resolve'
 import { useUndoStore } from '../stores/undo'
 import { BlockHistorySheet } from './BlockHistorySheet'
 import { BlockPropertyDrawerSheet } from './BlockPropertyDrawerSheet'
+import { BlockZoomBar } from './BlockZoomBar'
 import { BlockContextMenu } from './block-tree/BlockContextMenu'
 import { BlockDatePicker } from './block-tree/BlockDatePicker'
 import { BlockDndOverlay } from './block-tree/BlockDndOverlay'
@@ -220,30 +221,26 @@ export function BlockTree({
   const { setFocused, toggleSelected, clearSelected } = useBlockStore.getState()
   const { rangeSelect: rawRangeSelect, selectAll: rawSelectAll } = useBlockStore.getState()
 
-  // ── Collapse state (persisted in localStorage) ────────────────────
-  const [collapsedIds, setCollapsedIdsRaw] = useState<Set<string>>(() => {
-    try {
-      const stored = localStorage.getItem('collapsed_ids')
-      if (stored) return new Set(JSON.parse(stored) as string[])
-    } catch {
-      // localStorage unavailable
-    }
-    return new Set()
+  // ── Collapse hook (state + visible block filtering) ────────────────
+  // onBeforeCollapse needs handleFlush (defined later), so use a ref indirection.
+  const handleBeforeCollapseRef = useRef<((blockId: string) => void) | undefined>(undefined)
+  const {
+    collapsedIds,
+    toggleCollapse,
+    visibleBlocks: collapsedVisible,
+    hasChildrenSet,
+  } = useBlockCollapse(blocks, {
+    onBeforeCollapse: (blockId) => handleBeforeCollapseRef.current?.(blockId),
   })
-  const setCollapsedIds = useCallback((updater: (prev: Set<string>) => Set<string>) => {
-    setCollapsedIdsRaw((prev) => {
-      const next = updater(prev)
-      try {
-        localStorage.setItem('collapsed_ids', JSON.stringify([...next]))
-      } catch {
-        // localStorage unavailable
-      }
-      return next
-    })
-  }, [])
 
-  // ── Zoom state ─────────────────────────────────────────────────────
-  const [zoomedBlockId, setZoomedBlockId] = useState<string | null>(null)
+  // ── Zoom hook (state + breadcrumb + zoomed view) ───────────────────
+  const {
+    zoomedBlockId: _zoomedBlockId,
+    zoomIn: handleZoomIn,
+    zoomToRoot,
+    breadcrumbs: zoomBreadcrumb,
+    zoomedVisible,
+  } = useBlockZoom(blocks, collapsedVisible)
 
   // ── Enter-creates-block refs ───────────────────────────────────────
   const justCreatedBlockIds = useRef(new Set<string>())
@@ -267,76 +264,10 @@ export function BlockTree({
     setPropertyDrawerBlockId(blockId)
   }, [])
 
-  const handleZoomIn = useCallback((blockId: string) => {
-    setZoomedBlockId(blockId)
-  }, [])
-
   // ── Extracted hooks ────────────────────────────────────────────────
   const resolve = useBlockResolve()
   const properties = useBlockProperties()
   const { handleToggleTodo, handleTogglePriority } = properties
-
-  /** Set of block IDs that have children (next block in flat tree has greater depth). */
-  const hasChildrenSet = useMemo(() => {
-    const set = new Set<string>()
-    for (let i = 0; i < blocks.length - 1; i++) {
-      const curr = blocks[i] as (typeof blocks)[number]
-      const next = blocks[i + 1] as (typeof blocks)[number]
-      if (next.depth > curr.depth) {
-        set.add(curr.id)
-      }
-    }
-    return set
-  }, [blocks])
-
-  /** Blocks visible after collapse filtering (before DnD filtering). */
-  const collapsedVisible = useMemo(() => {
-    if (collapsedIds.size === 0) return blocks
-    const result: typeof blocks = []
-    const skipUntilDepth: number[] = []
-
-    for (const block of blocks) {
-      while (
-        skipUntilDepth.length > 0 &&
-        block.depth <= (skipUntilDepth[skipUntilDepth.length - 1] as number)
-      ) {
-        skipUntilDepth.pop()
-      }
-
-      if (skipUntilDepth.length > 0) continue
-
-      result.push(block)
-
-      if (collapsedIds.has(block.id)) {
-        skipUntilDepth.push(block.depth)
-      }
-    }
-    return result
-  }, [blocks, collapsedIds])
-
-  const zoomedVisible = useMemo(() => {
-    if (!zoomedBlockId) return collapsedVisible
-    const zoomedBlock = blocks.find((b) => b.id === zoomedBlockId)
-    if (!zoomedBlock) return collapsedVisible
-    const depthOffset = zoomedBlock.depth + 1
-    const descendants = getDragDescendants(blocks, zoomedBlockId)
-    return collapsedVisible
-      .filter((b) => descendants.has(b.id))
-      .map((b) => ({ ...b, depth: b.depth - depthOffset }))
-  }, [zoomedBlockId, blocks, collapsedVisible])
-
-  const zoomBreadcrumb = useMemo(() => {
-    if (!zoomedBlockId) return []
-    const trail: Array<{ id: string; content: string }> = []
-    let currentId: string | null = zoomedBlockId
-    while (currentId) {
-      const block = blocks.find((b) => b.id === currentId)
-      if (!block) break
-      trail.unshift({ id: block.id, content: block.content ?? '' })
-      currentId = block.parent_id
-    }
-    return trail
-  }, [zoomedBlockId, blocks])
 
   // ── Roving editor ──────────────────────────────────────────────────
   // handleNavigate and handleSlashCommand are defined below but referenced
@@ -435,7 +366,7 @@ export function BlockTree({
   // biome-ignore lint/correctness/useExhaustiveDependencies: parentId triggers reload when page changes
   useEffect(() => {
     load()
-    setZoomedBlockId(null)
+    zoomToRoot()
   }, [load, parentId])
 
   // ── H-9: Auto-create first block on empty pages ─────────────────────
@@ -584,27 +515,16 @@ export function BlockTree({
     moveToParent,
   })
 
-  const toggleCollapse = useCallback(
-    (blockId: string) => {
-      // If collapsing and the focused block is a descendant, rescue focus
-      const wasCollapsed = collapsedIds.has(blockId)
-      if (!wasCollapsed && focusedBlockId) {
-        const descendants = getDragDescendants(blocks, blockId)
-        if (descendants.has(focusedBlockId)) {
-          handleFlush()
-          setFocused(null)
-        }
+  // ── Wire up the onBeforeCollapse ref now that handleFlush is available ──
+  handleBeforeCollapseRef.current = (blockId: string) => {
+    if (focusedBlockId) {
+      const descendants = getDragDescendants(blocks, blockId)
+      if (descendants.has(focusedBlockId)) {
+        handleFlush()
+        setFocused(null)
       }
-
-      setCollapsedIds((prev) => {
-        const next = new Set(prev)
-        if (next.has(blockId)) next.delete(blockId)
-        else next.add(blockId)
-        return next
-      })
-    },
-    [collapsedIds, blocks, focusedBlockId, handleFlush, setFocused, setCollapsedIds],
-  )
+    }
+  }
 
   // ── Navigate to a block link target ────────────────────────────────
   const handleNavigate = useCallback(
@@ -1007,37 +927,11 @@ export function BlockTree({
 
   return (
     <>
-      {zoomBreadcrumb.length > 0 && (
-        <nav
-          aria-label={t('block.breadcrumb')}
-          className="flex items-center gap-1 px-2 py-1.5 text-sm text-muted-foreground border-b border-border/40 overflow-x-auto"
-        >
-          <button
-            type="button"
-            className="flex-shrink-0 hover:text-foreground transition-colors"
-            onClick={() => setZoomedBlockId(null)}
-          >
-            <Home className="h-3.5 w-3.5" />
-          </button>
-          {zoomBreadcrumb.map((item, i) => (
-            <Fragment key={item.id}>
-              <ChevronRight className="h-3 w-3 flex-shrink-0 text-muted-foreground/50" />
-              <button
-                type="button"
-                className={cn(
-                  'truncate max-w-[200px] hover:text-foreground transition-colors',
-                  i === zoomBreadcrumb.length - 1 && 'text-foreground font-medium',
-                )}
-                onClick={() =>
-                  i === zoomBreadcrumb.length - 1 ? undefined : setZoomedBlockId(item.id)
-                }
-              >
-                {item.content || t('block.untitled')}
-              </button>
-            </Fragment>
-          ))}
-        </nav>
-      )}
+      <BlockZoomBar
+        breadcrumbs={zoomBreadcrumb}
+        onNavigate={handleZoomIn}
+        onZoomToRoot={zoomToRoot}
+      />
       <BlockContextMenu
         selectedBlockIds={selectedBlockIds}
         batchInProgress={batchInProgress}

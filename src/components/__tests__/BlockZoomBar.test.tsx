@@ -1,0 +1,114 @@
+/**
+ * Tests for BlockZoomBar component.
+ *
+ * Validates:
+ * - Returns null when breadcrumbs are empty
+ * - Renders Home button and breadcrumb items
+ * - Home button calls onZoomToRoot
+ * - Clicking a non-last breadcrumb calls onNavigate
+ * - Last breadcrumb does not navigate
+ * - Untitled blocks show fallback text
+ * - a11y compliance (axe)
+ */
+
+import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
+import type { BreadcrumbItem } from '../../hooks/useBlockZoom'
+import { BlockZoomBar } from '../BlockZoomBar'
+
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string) => {
+      const map: Record<string, string> = {
+        'block.breadcrumb': 'Breadcrumb',
+        'block.untitled': 'Untitled',
+        'block.zoomToRoot': 'Go to root',
+      }
+      return map[key] ?? key
+    },
+  }),
+}))
+
+describe('BlockZoomBar', () => {
+  const breadcrumbs: BreadcrumbItem[] = [
+    { id: 'A', content: 'Page' },
+    { id: 'B', content: 'Section' },
+    { id: 'C', content: 'Detail' },
+  ]
+
+  it('returns null when breadcrumbs are empty', () => {
+    const { container } = render(
+      <BlockZoomBar breadcrumbs={[]} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />,
+    )
+    expect(container.innerHTML).toBe('')
+  })
+
+  it('renders the breadcrumb nav with aria-label', () => {
+    render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
+    const nav = screen.getByRole('navigation', { name: 'Breadcrumb' })
+    expect(nav).toBeInTheDocument()
+  })
+
+  it('renders all breadcrumb items', () => {
+    render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
+    expect(screen.getByText('Page')).toBeInTheDocument()
+    expect(screen.getByText('Section')).toBeInTheDocument()
+    expect(screen.getByText('Detail')).toBeInTheDocument()
+  })
+
+  it('calls onZoomToRoot when Home button is clicked', () => {
+    const onZoomToRoot = vi.fn()
+    render(
+      <BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={onZoomToRoot} />,
+    )
+    // Home button is the first button in the nav
+    const buttons = screen.getAllByRole('button')
+    fireEvent.click(buttons[0] as HTMLElement)
+    expect(onZoomToRoot).toHaveBeenCalledTimes(1)
+  })
+
+  it('calls onNavigate when a non-last breadcrumb is clicked', () => {
+    const onNavigate = vi.fn()
+    render(
+      <BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={onNavigate} onZoomToRoot={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByText('Page'))
+    expect(onNavigate).toHaveBeenCalledWith('A')
+  })
+
+  it('does not call onNavigate when the last breadcrumb is clicked', () => {
+    const onNavigate = vi.fn()
+    render(
+      <BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={onNavigate} onZoomToRoot={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByText('Detail'))
+    expect(onNavigate).not.toHaveBeenCalled()
+  })
+
+  it('shows "Untitled" for breadcrumbs with empty content', () => {
+    const items: BreadcrumbItem[] = [{ id: 'X', content: '' }]
+    render(<BlockZoomBar breadcrumbs={items} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
+    expect(screen.getByText('Untitled')).toBeInTheDocument()
+  })
+
+  it('applies font-medium class to the last breadcrumb', () => {
+    render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
+    const lastButton = screen.getByText('Detail')
+    expect(lastButton.className).toContain('font-medium')
+  })
+
+  it('does not apply font-medium to non-last breadcrumbs', () => {
+    render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
+    const firstButton = screen.getByText('Page')
+    expect(firstButton.className).not.toContain('font-medium')
+  })
+
+  it('passes axe a11y audit', async () => {
+    const { container } = render(
+      <BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />,
+    )
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})
