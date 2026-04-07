@@ -267,7 +267,7 @@ export function BlockInlineControls({
         <DateChip
           date={scheduledDate}
           icon={Calendar}
-          colorClass="bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400"
+          colorClass="bg-date-scheduled text-date-scheduled-foreground"
           eventName="open-scheduled-date-picker"
           i18nKey="block.scheduledDate"
           chipClass="scheduled-chip"

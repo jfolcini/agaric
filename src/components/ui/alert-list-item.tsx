@@ -4,7 +4,7 @@ import type * as React from 'react'
 import { cn } from '@/lib/utils'
 
 const alertListItemVariants = cva(
-  'flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm cursor-pointer transition-colors',
+  'flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm cursor-pointer transition-colors [@media(pointer:coarse)]:min-h-11 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
   {
     variants: {
       variant: {

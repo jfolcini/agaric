@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { CardButton } from '../card-button'
 import { CloseButtonIcon, closeButtonClassName } from '../close-button'
+import { Input } from '../input'
 import { Label } from '../label'
 import { ListItem } from '../list-item'
 import { Spinner } from '../spinner'
@@ -191,6 +192,20 @@ describe('CardButton', () => {
     expect(screen.getByText('Child content')).toBeInTheDocument()
   })
 
+  it('includes coarse pointer touch-target class', () => {
+    render(<CardButton>Touch</CardButton>)
+    const btn = screen.getByRole('button', { name: 'Touch' })
+    expect(btn.className).toContain('[@media(pointer:coarse)]:min-h-11')
+  })
+
+  it('includes focus-visible ring classes', () => {
+    render(<CardButton>Focus</CardButton>)
+    const btn = screen.getByRole('button', { name: 'Focus' })
+    expect(btn.className).toContain('focus-visible:outline-none')
+    expect(btn.className).toContain('focus-visible:ring-[3px]')
+    expect(btn.className).toContain('focus-visible:ring-ring/50')
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(<CardButton>Accessible card</CardButton>)
     const results = await axe(container)
@@ -313,6 +328,64 @@ describe('ListItem', () => {
       <ul>
         <ListItem>Accessible item</ListItem>
       </ul>,
+    )
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
+  it('includes coarse pointer touch-target class', () => {
+    const { container } = render(
+      <ul>
+        <ListItem>Touch item</ListItem>
+      </ul>,
+    )
+    const li = q(container, 'li')
+    expect(li.className).toContain('[@media(pointer:coarse)]:min-h-11')
+  })
+
+  it('includes focus-visible ring classes', () => {
+    const { container } = render(
+      <ul>
+        <ListItem>Focus item</ListItem>
+      </ul>,
+    )
+    const li = q(container, 'li')
+    expect(li.className).toContain('focus-visible:outline-none')
+    expect(li.className).toContain('focus-visible:ring-[3px]')
+    expect(li.className).toContain('focus-visible:ring-ring/50')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Input
+// ---------------------------------------------------------------------------
+
+describe('Input', () => {
+  it('renders an input element', () => {
+    render(<Input data-testid="test-input" />)
+    expect(screen.getByTestId('test-input')).toBeInTheDocument()
+    expect(screen.getByTestId('test-input').tagName).toBe('INPUT')
+  })
+
+  it('includes coarse pointer touch-target class', () => {
+    render(<Input data-testid="test-input" />)
+    const el = screen.getByTestId('test-input')
+    expect(el.className).toContain('[@media(pointer:coarse)]:h-11')
+  })
+
+  it('includes focus-visible ring classes', () => {
+    render(<Input data-testid="test-input" />)
+    const el = screen.getByTestId('test-input')
+    expect(el.className).toContain('focus-visible:ring-[3px]')
+    expect(el.className).toContain('focus-visible:ring-ring/50')
+  })
+
+  it('has no a11y violations', async () => {
+    const { container } = render(
+      <div>
+        <label htmlFor="a11y-input">Field</label>
+        <Input id="a11y-input" />
+      </div>,
     )
     const results = await axe(container)
     expect(results).toHaveNoViolations()

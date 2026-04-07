@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 import { formatTimestamp } from '../lib/format'
 import { getPayloadPreview } from '../lib/history-utils'
 import type { DiffSpan, HistoryEntry } from '../lib/tauri'
@@ -94,9 +95,12 @@ export function HistoryListItem({
       data-testid={`history-item-${index}`}
       role="option"
       aria-selected={isSelected}
-      className={`history-item flex flex-col gap-2 rounded-lg border p-4 cursor-pointer transition-colors ${
-        isSelected ? 'bg-accent/50 border-accent' : 'bg-card hover:bg-accent/30'
-      } ${isFocused ? 'ring-2 ring-ring' : ''} ${isNonReversible ? 'opacity-50' : ''}`}
+      className={cn(
+        'history-item flex flex-col gap-2 rounded-lg border p-4 cursor-pointer transition-colors',
+        isSelected ? 'bg-accent/50 border-accent' : 'bg-card hover:bg-accent/30',
+        isFocused && 'ring-2 ring-ring',
+        isNonReversible && 'opacity-50',
+      )}
       onClick={(e) => onRowClick(index, e)}
       onKeyDown={(e) => {
         if (e.key === ' ') {
@@ -125,7 +129,10 @@ export function HistoryListItem({
         {/* Op type badge */}
         <Badge
           variant="outline"
-          className={`history-item-type shrink-0 border-transparent ${opBadgeClasses(entry.op_type)}`}
+          className={cn(
+            'history-item-type shrink-0 border-transparent',
+            opBadgeClasses(entry.op_type),
+          )}
           data-testid="history-type-badge"
         >
           {entry.op_type}

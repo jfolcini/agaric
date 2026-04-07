@@ -58,6 +58,7 @@ import { ConflictBatchToolbar } from './ConflictBatchToolbar'
 import { ConflictListItem } from './ConflictListItem'
 import { EmptyState } from './EmptyState'
 import { LoadingSkeleton } from './LoadingSkeleton'
+import { LoadMoreButton } from './LoadMoreButton'
 
 /** Truncate long content for dialog previews. */
 function truncatePreview(text: string, max = 120): string {
@@ -400,17 +401,12 @@ export function ConflictList(): React.ReactElement {
         })}
       </ul>
 
-      {hasMore && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="conflict-load-more w-full"
-          onClick={loadMore}
-          disabled={loading}
-        >
-          {loading ? 'Loading...' : 'Load more'}
-        </Button>
-      )}
+      <LoadMoreButton
+        hasMore={hasMore}
+        loading={loading}
+        onLoadMore={loadMore}
+        className="conflict-load-more"
+      />
 
       {/* Keep confirmation dialog */}
       <AlertDialog

@@ -49,4 +49,18 @@ describe('PopoverMenuItem', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  it('includes coarse pointer touch-target class', () => {
+    render(<PopoverMenuItem>Touch item</PopoverMenuItem>)
+    const btn = screen.getByRole('button', { name: 'Touch item' })
+    expect(btn.className).toContain('[@media(pointer:coarse)]:min-h-11')
+  })
+
+  it('includes focus-visible ring classes', () => {
+    render(<PopoverMenuItem>Focus item</PopoverMenuItem>)
+    const btn = screen.getByRole('button', { name: 'Focus item' })
+    expect(btn.className).toContain('focus-visible:outline-none')
+    expect(btn.className).toContain('focus-visible:ring-[3px]')
+    expect(btn.className).toContain('focus-visible:ring-ring/50')
+  })
 })

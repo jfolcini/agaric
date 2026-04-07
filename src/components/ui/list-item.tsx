@@ -15,7 +15,7 @@ function ListItem({ className, ...props }: React.ComponentProps<'li'>) {
     <li
       data-slot="list-item"
       className={cn(
-        'group flex items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-accent/50',
+        'group flex items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-accent/50 [@media(pointer:coarse)]:min-h-11 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
         className,
       )}
       {...props}

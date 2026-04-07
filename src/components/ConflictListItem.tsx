@@ -111,7 +111,7 @@ export function ConflictListItem({
           </Badge>
           <Badge
             variant="outline"
-            className={`conflict-type-badge shrink-0 ${conflictTypeBadgeClass(conflictType)}`}
+            className={cn('conflict-type-badge shrink-0', conflictTypeBadgeClass(conflictType))}
             aria-label={t(`conflict.type${conflictType}`)}
           >
             {conflictType}

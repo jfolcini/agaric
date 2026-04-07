@@ -23,6 +23,7 @@ import { EmptyState } from './EmptyState'
 import { HistoryFilterBar } from './HistoryFilterBar'
 import { HistoryListItem } from './HistoryListItem'
 import { HistorySelectionToolbar } from './HistorySelectionToolbar'
+import { LoadMoreButton } from './LoadMoreButton'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -340,17 +341,12 @@ export function HistoryView(): React.ReactElement {
       )}
 
       {/* Load more */}
-      {hasMore && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="history-load-more w-full"
-          onClick={loadMore}
-          disabled={loading}
-        >
-          {loading ? 'Loading...' : 'Load more'}
-        </Button>
-      )}
+      <LoadMoreButton
+        hasMore={hasMore}
+        loading={loading}
+        onLoadMore={loadMore}
+        className="history-load-more"
+      />
 
       <output className="sr-only" aria-live="polite">
         {loadMoreAnnouncement}

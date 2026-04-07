@@ -2,6 +2,7 @@ import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Calendar } from '@/components/ui/calendar'
+import { cn } from '@/lib/utils'
 import { formatDate } from '../../lib/date-utils'
 import { countAgendaBatchBySource } from '../../lib/tauri'
 
@@ -131,9 +132,10 @@ export function JournalCalendarDropdown({
         ref={calRef}
         role="dialog"
         aria-label={t('journal.datePickerLabel')}
-        className={`absolute right-0 z-50 rounded-md border bg-popover p-2 shadow-md ${
-          flipAbove ? 'bottom-full mb-1' : 'top-full mt-1'
-        }`}
+        className={cn(
+          'absolute right-0 z-50 rounded-md border bg-popover p-2 shadow-md',
+          flipAbove ? 'bottom-full mb-1' : 'top-full mt-1',
+        )}
         style={shiftLeft > 0 ? { transform: `translateX(${shiftLeft}px)` } : undefined}
       >
         <Calendar

@@ -146,6 +146,16 @@ describe('Select', () => {
     expect(trigger.className).toContain('[@media(pointer:coarse)]:h-11')
   })
 
+  // -- Focus-visible ring classes ---------------------------------------------
+
+  it('includes focus-visible ring classes', () => {
+    renderSelect()
+    const trigger = screen.getByRole('combobox')
+    expect(trigger.className).toContain('focus-visible:outline-none')
+    expect(trigger.className).toContain('focus-visible:ring-[3px]')
+    expect(trigger.className).toContain('focus-visible:ring-ring/50')
+  })
+
   // -- a11y -------------------------------------------------------------------
 
   it('has no a11y violations', async () => {

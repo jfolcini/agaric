@@ -86,7 +86,7 @@ export function ConflictTypeRenderer({
   if (conflictType === 'Move' && original) {
     return (
       <div className="conflict-move-diff text-sm">
-        <span className="font-medium text-purple-600 dark:text-purple-400">Move conflict</span>
+        <span className="font-medium text-conflict-move-foreground">Move conflict</span>
         <div className="mt-1 space-y-0.5 text-xs">
           {block.parent_id !== original.parent_id && (
             <div>

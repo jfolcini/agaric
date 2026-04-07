@@ -1,11 +1,14 @@
 import { AlertCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useBootStore } from '../stores/boot'
 
 export function BootGate({ children }: { children: React.ReactNode }) {
-  const { state, error, boot } = useBootStore()
+  const { state, error, boot } = useBootStore(
+    useShallow((s) => ({ state: s.state, error: s.error, boot: s.boot })),
+  )
   const [retrying, setRetrying] = useState(false)
 
   useEffect(() => {

@@ -435,6 +435,9 @@ const resources = {
       'duePanel.filterScheduled': 'Scheduled',
       'duePanel.filterProperties': 'Properties',
 
+      // Query
+      'query.noResults': 'No results',
+
       // Search
       'search.minCharsHint': 'Search requires at least 3 characters',
       'search.parentPage': 'in: {{title}}',
@@ -1022,6 +1025,7 @@ const resources = {
       // Property toasts + aria-labels
       'property.renameFailed': 'Failed to rename property',
       'property.editKeyLabel': 'Edit property {{key}}',
+      'property.selectValue': '{{key}}: {{value}}',
 
       // Templates toasts
       'templates.removeTemplateFailed': 'Failed to remove template status',

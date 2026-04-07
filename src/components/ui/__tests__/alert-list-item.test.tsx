@@ -130,4 +130,26 @@ describe('AlertListItem', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  it('includes coarse pointer touch-target class', () => {
+    render(
+      <ul>
+        <AlertListItem data-testid="item">Touch item</AlertListItem>
+      </ul>,
+    )
+    const el = screen.getByTestId('item')
+    expect(el.className).toContain('[@media(pointer:coarse)]:min-h-11')
+  })
+
+  it('includes focus-visible ring classes', () => {
+    render(
+      <ul>
+        <AlertListItem data-testid="item">Focus item</AlertListItem>
+      </ul>,
+    )
+    const el = screen.getByTestId('item')
+    expect(el.className).toContain('focus-visible:outline-none')
+    expect(el.className).toContain('focus-visible:ring-[3px]')
+    expect(el.className).toContain('focus-visible:ring-ring/50')
+  })
 })

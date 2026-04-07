@@ -175,4 +175,18 @@ describe('PropertyChip', () => {
     expect(keyLabel?.tagName.toLowerCase()).toBe('button')
     expect(keyLabel?.querySelector('svg')).toBeNull()
   })
+
+  it('outer button has aria-label when onClick is provided (B-19)', () => {
+    const { container } = render(<PropertyChip propKey="effort" value="2h" onClick={() => {}} />)
+
+    const chip = container.querySelector('.property-chip')
+    expect(chip).toHaveAttribute('aria-label', 'Effort: 2h')
+  })
+
+  it('outer button has no aria-label when onClick is not provided (B-19)', () => {
+    const { container } = render(<PropertyChip propKey="effort" value="2h" />)
+
+    const chip = container.querySelector('.property-chip')
+    expect(chip).not.toHaveAttribute('aria-label')
+  })
 })

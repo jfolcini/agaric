@@ -2641,8 +2641,8 @@ describe('SortableBlock scheduled date chip', () => {
     )
 
     const chip = container.querySelector('.scheduled-chip')
-    expect(chip?.className).toContain('bg-purple-100')
-    expect(chip?.className).toContain('text-purple-700')
+    expect(chip?.className).toContain('bg-date-scheduled')
+    expect(chip?.className).toContain('text-date-scheduled-foreground')
   })
 
   it('renders both due date and scheduled date chips when both are set', () => {

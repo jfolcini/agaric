@@ -22,6 +22,7 @@ import type { HistoryEntry } from '../lib/tauri'
 import { editBlock, getBlockHistory } from '../lib/tauri'
 import { DiffDisplay } from './DiffDisplay'
 import { EmptyState } from './EmptyState'
+import { LoadMoreButton } from './LoadMoreButton'
 
 interface HistoryPanelProps {
   /** The block to show history for. */
@@ -185,17 +186,12 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         })}
       </ul>
 
-      {hasMore && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="history-load-more w-full"
-          onClick={loadMore}
-          disabled={loading}
-        >
-          {loading ? 'Loading...' : 'Load more'}
-        </Button>
-      )}
+      <LoadMoreButton
+        hasMore={hasMore}
+        loading={loading}
+        onLoadMore={loadMore}
+        className="history-load-more"
+      />
 
       <ConfirmDialog
         open={confirmEntry !== null}

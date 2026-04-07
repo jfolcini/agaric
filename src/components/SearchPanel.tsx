@@ -190,7 +190,7 @@ export function SearchPanel(): React.ReactElement {
       </form>
 
       {hasCJK(query) && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
+        <div className="rounded-lg border border-alert-info-border bg-alert-info p-3 text-sm text-alert-info-foreground">
           <span className="font-medium">{t('search.cjkNoteLabel')}</span>{' '}
           {t('search.cjkLimitationNote')}
         </div>

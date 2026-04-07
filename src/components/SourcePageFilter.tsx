@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { cn } from '@/lib/utils'
 
 export interface SourcePageFilterProps {
   /** All source pages from the grouped response, used to populate the list. */
@@ -117,7 +118,7 @@ export function SourcePageFilter({
         <Button
           variant="ghost"
           size="sm"
-          className={`source-page-filter-trigger h-7 w-7 p-0 ${buttonColor}`}
+          className={cn('source-page-filter-trigger h-7 w-7 p-0', buttonColor)}
           aria-label={t('sourceFilter.filterLabel')}
         >
           <Filter className="h-4 w-4" />
@@ -143,7 +144,10 @@ export function SourcePageFilter({
                   onKeyDown={(e) => handlePageKeyDown(e, page.pageId)}
                 >
                   <span
-                    className={`inline-block h-2 w-2 shrink-0 rounded-full ${getDotColor(page.pageId)}`}
+                    className={cn(
+                      'inline-block h-2 w-2 shrink-0 rounded-full',
+                      getDotColor(page.pageId),
+                    )}
                     aria-hidden="true"
                   />
                   <span className="flex-1 truncate">{page.pageTitle ?? 'Untitled'}</span>

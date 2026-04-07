@@ -1,10 +1,13 @@
 import { ChevronDown, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { Spinner } from '@/components/ui/spinner'
 import { parseQueryExpression } from '../lib/query-utils'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, listBlocks, queryByProperty, queryByTags } from '../lib/tauri'
 import { cn } from '../lib/utils'
+import { EmptyState } from './EmptyState'
 import { QueryResultList } from './QueryResultList'
 import { QueryResultTable } from './QueryResultTable'
 
@@ -62,6 +65,7 @@ export function QueryResult({
   onNavigate,
   resolveBlockTitle,
 }: QueryResultProps): React.ReactElement {
+  const { t } = useTranslation()
   const [results, setResults] = useState<BlockRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -250,10 +254,14 @@ export function QueryResult({
       {/* Results */}
       {!collapsed && (
         <div className="border-t border-dashed border-muted-foreground/20">
-          {loading && <div className="px-3 py-2 text-xs text-muted-foreground">Loading...</div>}
+          {loading && (
+            <div className="flex justify-center px-3 py-2">
+              <Spinner size="sm" />
+            </div>
+          )}
           {error && <div className="px-3 py-2 text-xs text-destructive">{error}</div>}
           {!loading && !error && results.length === 0 && (
-            <div className="px-3 py-2 text-xs text-muted-foreground italic">No results</div>
+            <EmptyState message={t('query.noResults')} compact />
           )}
           {!loading && !error && results.length > 0 && !tableMode && (
             <QueryResultList

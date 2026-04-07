@@ -58,6 +58,7 @@ export function PropertyChip({
       )}
       data-testid="property-chip"
       onClick={onClick}
+      aria-label={onClick ? t('property.selectValue', { key: displayName, value }) : undefined}
     >
       {keyLabel}
       <span>{value}</span>

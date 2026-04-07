@@ -28,6 +28,7 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
 import { useJournalAutoCreate } from '../hooks/useJournalAutoCreate'
 import type { NavigateToPageFn } from '../lib/block-events'
@@ -71,7 +72,15 @@ export function JournalPage({
   onNavigateToPage,
 }: JournalPageProps): React.ReactElement {
   const { t } = useTranslation()
-  const { mode, currentDate, scrollToDate, scrollToPanel, clearScrollTarget } = useJournalStore()
+  const { mode, currentDate, scrollToDate, scrollToPanel, clearScrollTarget } = useJournalStore(
+    useShallow((s) => ({
+      mode: s.mode,
+      currentDate: s.currentDate,
+      scrollToDate: s.scrollToDate,
+      scrollToPanel: s.scrollToPanel,
+      clearScrollTarget: s.clearScrollTarget,
+    })),
+  )
   const [pageMap, setPageMap] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
   // Track per-day pageIds that were created by handleAddBlock so we can
@@ -247,8 +256,10 @@ export function JournalPage({
 /** Compact date controls — Today button + calendar dropdown. Shown in all views. */
 export function GlobalDateControls(): React.ReactElement {
   const { t } = useTranslation()
-  const { currentDate, navigateToDate } = useJournalStore()
-  const { setView } = useNavigationStore()
+  const { currentDate, navigateToDate } = useJournalStore(
+    useShallow((s) => ({ currentDate: s.currentDate, navigateToDate: s.navigateToDate })),
+  )
+  const { setView } = useNavigationStore(useShallow((s) => ({ setView: s.setView })))
   const [calendarOpen, setCalendarOpen] = useState(false)
   const [pageMap, setPageMap] = useState<Set<string>>(new Set())
 
@@ -338,7 +349,16 @@ export function GlobalDateControls(): React.ReactElement {
 export function JournalControls(): React.ReactElement {
   const { t } = useTranslation()
   const { mode, currentDate, setMode, setCurrentDate, navigateToDate, goToDateAndScroll } =
-    useJournalStore()
+    useJournalStore(
+      useShallow((s) => ({
+        mode: s.mode,
+        currentDate: s.currentDate,
+        setMode: s.setMode,
+        setCurrentDate: s.setCurrentDate,
+        navigateToDate: s.navigateToDate,
+        goToDateAndScroll: s.goToDateAndScroll,
+      })),
+    )
   const [calendarOpen, setCalendarOpen] = useState(false)
   const [pageMap, setPageMap] = useState<Set<string>>(new Set())
 

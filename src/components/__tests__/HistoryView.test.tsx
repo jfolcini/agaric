@@ -365,6 +365,8 @@ describe('HistoryView', () => {
 
     const loadMoreBtn = await screen.findByRole('button', { name: /Load more/i })
     expect(loadMoreBtn).toBeInTheDocument()
+    // Verify shared LoadMoreButton is used (aria-busy attribute)
+    expect(loadMoreBtn).toHaveAttribute('aria-busy', 'false')
   })
 
   it('loads next page with cursor when Load More is clicked', async () => {

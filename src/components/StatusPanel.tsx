@@ -202,7 +202,10 @@ export function StatusPanel(): React.ReactElement {
                   </div>
 
                   <div
-                    className={`status-metric rounded-lg border bg-muted/30 p-4 text-center ${queueHealthClasses(status.background_queue_depth)}`}
+                    className={cn(
+                      'status-metric rounded-lg border bg-muted/30 p-4 text-center',
+                      queueHealthClasses(status.background_queue_depth),
+                    )}
                   >
                     <dd className="status-metric-value text-2xl font-bold">
                       {status.background_queue_depth}

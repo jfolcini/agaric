@@ -116,7 +116,7 @@ export function DaySection({
               {entry.pageId && (backlinkCounts[entry.pageId] ?? 0) > 0 && (
                 <button
                   type="button"
-                  className="inline-flex items-center rounded-full bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50 active:bg-blue-300 dark:active:bg-blue-900/70"
+                  className="inline-flex items-center rounded-full bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/20 active:bg-primary/30"
                   onClick={() => goToDateAndPanel(entry.date, 'references')}
                   aria-label={`${backlinkCounts[entry.pageId]} references, click to view`}
                 >

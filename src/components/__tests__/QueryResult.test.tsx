@@ -101,8 +101,10 @@ describe('parseQueryExpression', () => {
 describe('QueryResult', () => {
   it('renders loading state', () => {
     mockedInvoke.mockReturnValue(new Promise(() => {})) // never resolves
-    render(<QueryResult expression="type:tag expr:project" />)
+    const { container } = render(<QueryResult expression="type:tag expr:project" />)
     expect(screen.getByText('...')).toBeInTheDocument()
+    // Spinner component should render via shared Spinner
+    expect(container.querySelector('[data-slot="spinner"]')).toBeInTheDocument()
   })
 
   it('renders tag query results', async () => {
@@ -151,8 +153,11 @@ describe('QueryResult', () => {
 
     render(<QueryResult expression="type:tag expr:nonexistent" />)
 
+    // EmptyState component renders with i18n key query.noResults
     expect(await screen.findByText('No results')).toBeInTheDocument()
     expect(screen.getByText('0 results')).toBeInTheDocument()
+    // Verify EmptyState is used (renders an h2 heading)
+    expect(screen.getByRole('heading', { level: 2, name: 'No results' })).toBeInTheDocument()
   })
 
   it('renders error for unknown query type', async () => {
