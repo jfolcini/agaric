@@ -4,6 +4,7 @@ import type React from 'react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 import { cn } from '@/lib/utils'
 import type { AgendaGroupBy, AgendaSortBy } from '../lib/agenda-sort'
 
@@ -60,12 +61,8 @@ function DropdownSelector<T extends string>({
         <ul className="flex flex-col gap-0.5 list-none m-0 p-0" aria-label={t(label)}>
           {options.map((opt) => (
             <li key={opt.value}>
-              <button
-                type="button"
-                className={cn(
-                  'w-full rounded px-2 py-1.5 text-left text-xs hover:bg-accent cursor-pointer',
-                  opt.value === currentValue && 'bg-accent font-medium',
-                )}
+              <PopoverMenuItem
+                active={opt.value === currentValue}
                 onClick={() => {
                   onChange(opt.value)
                   setOpen(false)
@@ -73,7 +70,7 @@ function DropdownSelector<T extends string>({
                 aria-current={opt.value === currentValue ? 'true' : undefined}
               >
                 {t(opt.labelKey)}
-              </button>
+              </PopoverMenuItem>
             </li>
           ))}
         </ul>

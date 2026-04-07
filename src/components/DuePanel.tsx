@@ -16,11 +16,9 @@ import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { getTodayString } from '@/lib/date-utils'
-import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useDuePanelData } from '../hooks/useDuePanelData'
 import type { NavigateToPageFn } from '../lib/block-events'
-import { priorityColor } from '../lib/priority-color'
 import { truncateContent } from '../lib/text-utils'
 import { BlockListItem } from './BlockListItem'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
@@ -29,6 +27,7 @@ import { EmptyState } from './EmptyState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { OverdueSection } from './OverdueSection'
 import { UpcomingSection } from './UpcomingSection'
+import { PriorityBadge } from './ui/priority-badge'
 
 export interface DuePanelProps {
   date: string // YYYY-MM-DD
@@ -213,7 +212,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
           {grouped.map((group) => (
             <div key={group.label} className="due-panel-group">
               {/* Group sub-header (not collapsible) */}
-              <div className="due-panel-group-header px-3 py-1 text-xs font-semibold uppercase text-muted-foreground tracking-wide">
+              <div className="due-panel-group-header px-3 py-1 text-xs font-semibold uppercase text-muted-foreground tracking-wide bg-muted/50 rounded [@media(pointer:coarse)]:text-sm">
                 {group.label}
               </div>
 
@@ -226,14 +225,10 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                     emptyContentFallback={t('duePanel.emptyContent')}
                     metadata={
                       block.priority ? (
-                        <span
-                          className={cn(
-                            'due-panel-priority inline-flex items-center justify-center rounded px-1.5 py-0.5 text-xs font-bold [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1',
-                            priorityColor(block.priority),
-                          )}
-                        >
-                          P{block.priority}
-                        </span>
+                        <PriorityBadge
+                          priority={block.priority}
+                          className="due-panel-priority [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1"
+                        />
                       ) : undefined
                     }
                     pageId={block.parent_id}
@@ -289,16 +284,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                       <span className="min-w-0 flex-1 truncate">
                         {truncateContent(entry.block.content, 80, t('duePanel.emptyContent'))}
                       </span>
-                      {entry.block.priority && (
-                        <span
-                          className={cn(
-                            'inline-flex h-4 min-w-4 items-center justify-center rounded px-1 text-xs font-bold leading-none',
-                            priorityColor(entry.block.priority),
-                          )}
-                        >
-                          P{entry.block.priority}
-                        </span>
-                      )}
+                      {entry.block.priority && <PriorityBadge priority={entry.block.priority} />}
                     </li>
                   ))}
                 </ul>

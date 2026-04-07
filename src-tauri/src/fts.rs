@@ -14,7 +14,7 @@
 //! - `fts_optimize` — run FTS5 segment merge
 //! - `search_fts` — FTS5 MATCH query with cursor-based pagination
 use regex::Regex;
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -309,9 +309,11 @@ pub async fn remove_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(
 ///
 /// ## Performance
 ///
-/// Pre-loads tag/page name maps once (2 queries) and processes all affected
-/// blocks in a single transaction, reducing from O(N × 3) queries to
-/// O(2 + N) — 2 map loads + N DELETE/INSERT pairs in one tx.
+/// Pre-loads tag/page name maps once (2 queries), then uses `json_each()` to
+/// batch the SELECT and DELETE into single queries. Only the INSERT remains
+/// per-row (because `strip_for_fts_with_maps` processes each block
+/// differently). This reduces from N×3 queries to N+2 (1 batch SELECT +
+/// 1 batch DELETE + N INSERTs) inside a single transaction.
 pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
     // Find blocks referencing this ID via block_tags (for tags)
     let tag_refs: Vec<String> =
@@ -342,36 +344,41 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
     // Pre-load tag/page name maps (2 queries instead of 2*N)
     let (tag_names, page_titles) = load_ref_maps(pool).await?;
 
+    let ids_json = serde_json::to_string(&unique_ids)?;
+
     // Single transaction for all updates
     let mut tx = pool.begin().await?;
 
-    for bid in &unique_ids {
-        // Fetch block metadata + content
-        let row = sqlx::query!(
-            r#"SELECT content, deleted_at, is_conflict as "is_conflict: bool"
-               FROM blocks WHERE id = ?"#,
-            bid
-        )
-        .fetch_optional(&mut *tx)
+    // Batch fetch all block metadata (1 query instead of N)
+    let rows = sqlx::query(
+        r#"SELECT id, content, deleted_at, is_conflict FROM blocks
+           WHERE id IN (SELECT value FROM json_each(?))"#,
+    )
+    .bind(&ids_json)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    // Batch delete all old FTS entries (1 query instead of N)
+    sqlx::query("DELETE FROM fts_blocks WHERE block_id IN (SELECT value FROM json_each(?))")
+        .bind(&ids_json)
+        .execute(&mut *tx)
         .await?;
 
-        // Always delete the old FTS entry
-        sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
-            .bind(bid)
-            .execute(&mut *tx)
-            .await?;
+    // Per-row INSERT (strip_for_fts_with_maps is sync, can't batch)
+    for row in &rows {
+        let id: &str = row.get("id");
+        let deleted_at: Option<&str> = row.get("deleted_at");
+        let is_conflict: bool = row.get("is_conflict");
+        let content: Option<&str> = row.get("content");
 
-        // Re-insert only if block is active with content
-        if let Some(r) = row {
-            if r.deleted_at.is_none() && !r.is_conflict {
-                if let Some(ref content) = r.content {
-                    let stripped = strip_for_fts_with_maps(content, &tag_names, &page_titles);
-                    sqlx::query("INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)")
-                        .bind(bid)
-                        .bind(&stripped)
-                        .execute(&mut *tx)
-                        .await?;
-                }
+        if deleted_at.is_none() && !is_conflict {
+            if let Some(content) = content {
+                let stripped = strip_for_fts_with_maps(content, &tag_names, &page_titles);
+                sqlx::query("INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)")
+                    .bind(id)
+                    .bind(&stripped)
+                    .execute(&mut *tx)
+                    .await?;
             }
         }
     }
@@ -2118,6 +2125,96 @@ mod tests {
         assert!(
             result.is_ok(),
             "reindex with no refs should be ok: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn reindex_fts_references_batch_50_blocks() {
+        let (pool, _dir) = test_pool().await;
+
+        let tag_id = "01CCCCCCCCCCCCCCCCCCCTAG50";
+        insert_block(&pool, tag_id, "tag", "project", None, Some(0)).await;
+
+        // Create 50 content blocks, each referencing the tag
+        let mut block_ids: Vec<String> = Vec::with_capacity(50);
+        for i in 0..50u64 {
+            let blk = format!("01CCCCCCCCCCCCCCCCCBLK{i:04}");
+            insert_block(
+                &pool,
+                &blk,
+                "content",
+                &format!("task {i} for #[{tag_id}]"),
+                None,
+                Some(i as i64 + 1),
+            )
+            .await;
+            sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+                .bind(&blk)
+                .bind(tag_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            block_ids.push(blk);
+        }
+
+        // Initial index
+        rebuild_fts_index(&pool).await.unwrap();
+
+        let page = PageRequest::new(None, Some(100)).unwrap();
+        let before = search_fts(&pool, "project", &page).await.unwrap();
+        assert!(
+            before
+                .items
+                .iter()
+                .filter(|r| r.block_type == "content")
+                .count()
+                >= 50,
+            "expected at least 50 content matches for 'project' before rename"
+        );
+
+        // Rename the tag
+        sqlx::query("UPDATE blocks SET content = 'initiative' WHERE id = ?")
+            .bind(tag_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Batched reindex
+        reindex_fts_references(&pool, tag_id).await.unwrap();
+
+        // All 50 blocks should now resolve to "initiative"
+        let after = search_fts(&pool, "initiative", &page).await.unwrap();
+        let content_after: Vec<&str> = after
+            .items
+            .iter()
+            .filter(|r| r.block_type == "content")
+            .map(|r| r.id.as_str())
+            .collect();
+        assert_eq!(
+            content_after.len(),
+            50,
+            "all 50 content blocks should match 'initiative', got {}",
+            content_after.len()
+        );
+        for blk in &block_ids {
+            assert!(
+                content_after.contains(&blk.as_str()),
+                "block {blk} missing from results"
+            );
+        }
+
+        // Old name should no longer match any content blocks
+        let old = search_fts(&pool, "project", &page).await.unwrap();
+        let old_content: Vec<&str> = old
+            .items
+            .iter()
+            .filter(|r| r.block_type == "content")
+            .map(|r| r.id.as_str())
+            .collect();
+        assert_eq!(
+            old_content.len(),
+            0,
+            "no content blocks should match old name 'project', got: {old_content:?}"
         );
     }
 

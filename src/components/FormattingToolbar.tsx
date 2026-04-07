@@ -47,6 +47,9 @@ import { Popover, PopoverAnchor, PopoverContent } from './ui/popover'
 import { Separator } from './ui/separator'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 
+/** Shared active-state class applied to toolbar buttons when their feature is on. */
+const toolbarActiveClass = 'bg-accent text-accent-foreground'
+
 interface FormattingToolbarProps {
   editor: Editor
   /** Block ID used to associate toolbar with its editor via aria-controls. */
@@ -100,9 +103,7 @@ function ToolbarButtonGroup({
             aria-label={t(btn.label)}
             aria-pressed={btn.activeKey ? (state[btn.activeKey] as boolean) : undefined}
             disabled={btn.disabledWhenFalse ? !state[btn.disabledWhenFalse] : undefined}
-            className={
-              btn.activeKey && state[btn.activeKey] ? 'bg-accent text-accent-foreground' : ''
-            }
+            className={cn(btn.activeKey && (state[btn.activeKey] as boolean) && toolbarActiveClass)}
             onPointerDown={(e) => {
               e.preventDefault()
               btn.action()
@@ -328,7 +329,7 @@ export function FormattingToolbar({
                 size="icon-xs"
                 aria-label={t('toolbar.link')}
                 aria-pressed={state.link}
-                className={state.link ? 'bg-accent text-accent-foreground' : ''}
+                className={cn(state.link && toolbarActiveClass)}
                 onPointerDown={(e) => {
                   e.preventDefault()
                   setLinkPopoverOpen((prev) => !prev)
@@ -362,7 +363,7 @@ export function FormattingToolbar({
                 size="icon-xs"
                 aria-label={t('toolbar.headingLevel')}
                 aria-pressed={state.headingLevel > 0}
-                className={state.headingLevel > 0 ? 'bg-accent text-accent-foreground' : ''}
+                className={cn(state.headingLevel > 0 && toolbarActiveClass)}
                 onPointerDown={(e) => {
                   e.preventDefault()
                   setHeadingPopoverOpen((prev) => !prev)
@@ -425,7 +426,7 @@ export function FormattingToolbar({
             size="icon-xs"
             aria-label={t('toolbar.cyclePriority')}
             aria-pressed={currentPriority != null}
-            className={currentPriority != null ? 'bg-accent text-accent-foreground' : ''}
+            className={cn(currentPriority != null && toolbarActiveClass)}
             onPointerDown={(e) => {
               e.preventDefault()
               dispatchBlockEvent('CYCLE_PRIORITY')

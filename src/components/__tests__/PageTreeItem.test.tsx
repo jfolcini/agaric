@@ -215,4 +215,39 @@ describe('PageTreeItem', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  describe('touch-target classes on Plus buttons', () => {
+    const touchClasses = [
+      'focus-visible:ring-2',
+      'focus-visible:ring-ring',
+      'focus-visible:ring-offset-1',
+      '[@media(pointer:coarse)]:opacity-100',
+      '[@media(pointer:coarse)]:h-[44px]',
+      '[@media(pointer:coarse)]:w-[44px]',
+      'active:bg-accent',
+      'active:scale-95',
+    ]
+
+    it('namespace Plus button has touch-target classes', () => {
+      const child = makeLeaf('child', 'ns/child', 'P1')
+      const node = makeNamespace('ns', 'ns', [child])
+      render(<PageTreeItem node={node} {...defaultProps} />)
+
+      const btn = screen.getByRole('button', { name: /Create page under ns/ })
+      for (const cls of touchClasses) {
+        expect(btn.className).toContain(cls)
+      }
+    })
+
+    it('hybrid Plus button has touch-target classes', () => {
+      const child = makeLeaf('sub', 'work/sub', 'P2')
+      const node = makeHybrid('work', 'work', 'P1', [child])
+      render(<PageTreeItem node={node} {...defaultProps} />)
+
+      const btn = screen.getByRole('button', { name: /Create page under work/ })
+      for (const cls of touchClasses) {
+        expect(btn.className).toContain(cls)
+      }
+    })
+  })
 })

@@ -9,11 +9,13 @@
 
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { cn } from '@/lib/utils'
 import type { NavigateToPageFn } from '../lib/block-events'
-import { priorityColor } from '../lib/priority-color'
 import type { BlockRow } from '../lib/tauri'
 import { truncateContent } from '../lib/text-utils'
+import { AlertListItem } from './ui/alert-list-item'
+import { PriorityBadge } from './ui/priority-badge'
+import { SectionTitle } from './ui/section-title'
+import { StatusBadge } from './ui/status-badge'
 
 export interface OverdueSectionProps {
   blocks: BlockRow[]
@@ -32,19 +34,20 @@ export function OverdueSection({
 
   return (
     <div className="overdue-section mb-3">
-      <h4 className="text-xs font-semibold text-destructive mb-1.5 flex items-center gap-1">
-        <span>{t('duePanel.overdueTitle')}</span>
-        <span className="text-muted-foreground font-normal">({blocks.length})</span>
-      </h4>
+      <SectionTitle
+        color="text-destructive"
+        label={t('duePanel.overdueTitle')}
+        count={blocks.length}
+      />
       <ul className="space-y-1">
         {blocks
           .sort((a, b) => (a.due_date ?? '').localeCompare(b.due_date ?? ''))
           .map((block) => {
             const pageTitle = block.parent_id ? pageTitles.get(block.parent_id) : undefined
             return (
-              <li
+              <AlertListItem
                 key={`overdue-${block.id}`}
-                className="flex items-center gap-2 rounded-md border border-destructive/20 bg-destructive/5 px-2 py-1.5 text-sm cursor-pointer hover:bg-destructive/10 transition-colors"
+                variant="destructive"
                 // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
                 tabIndex={0}
                 onClick={() => {
@@ -60,26 +63,13 @@ export function OverdueSection({
                   }
                 }}
               >
-                {block.todo_state && (
-                  <span className="shrink-0 rounded px-1 py-0.5 text-xs font-bold leading-none bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
-                    {block.todo_state}
-                  </span>
-                )}
-                {block.priority && (
-                  <span
-                    className={cn(
-                      'inline-flex h-4 min-w-4 items-center justify-center rounded px-1 text-xs font-bold leading-none',
-                      priorityColor(block.priority),
-                    )}
-                  >
-                    P{block.priority}
-                  </span>
-                )}
+                {block.todo_state && <StatusBadge state="overdue">{block.todo_state}</StatusBadge>}
+                {block.priority && <PriorityBadge priority={block.priority} />}
                 <span className="min-w-0 flex-1 truncate">
                   {truncateContent(block.content, 120, t('duePanel.emptyContent'))}
                 </span>
                 <span className="shrink-0 text-xs text-destructive/60">{block.due_date}</span>
-              </li>
+              </AlertListItem>
             )
           })}
       </ul>

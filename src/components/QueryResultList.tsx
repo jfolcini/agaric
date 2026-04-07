@@ -1,8 +1,8 @@
 import type React from 'react'
 import type { BlockRow } from '../lib/tauri'
 import { truncateContent } from '../lib/text-utils'
-import { cn } from '../lib/utils'
 import { PageLink } from './PageLink'
+import { StatusBadge } from './ui/status-badge'
 
 export interface QueryResultListProps {
   /** The block results to render as a list. */
@@ -38,18 +38,17 @@ export function QueryResultList({
               }}
             >
               {block.todo_state && (
-                <span
-                  className={cn(
-                    'shrink-0 rounded px-1 py-0.5 text-xs font-bold leading-none',
+                <StatusBadge
+                  state={
                     block.todo_state === 'DONE'
-                      ? 'bg-status-done text-status-done-foreground'
+                      ? 'DONE'
                       : block.todo_state === 'DOING'
-                        ? 'bg-status-active text-status-active-foreground'
-                        : 'bg-status-pending text-status-pending-foreground',
-                  )}
+                        ? 'DOING'
+                        : 'default'
+                  }
                 >
                   {block.todo_state}
-                </span>
+                </StatusBadge>
               )}
               <span className="flex-1 truncate">
                 {resolveBlockTitle

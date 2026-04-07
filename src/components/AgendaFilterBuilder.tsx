@@ -13,7 +13,7 @@ import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { cn } from '@/lib/utils'
+import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 import {
   type AgendaFilterDimension,
   ALL_DIMENSIONS,
@@ -148,17 +148,12 @@ function AddFilterPopover({
               const alreadyUsed = dim !== 'property' && existingDimensions.has(dim)
               return (
                 <li key={dim}>
-                  <button
-                    type="button"
+                  <PopoverMenuItem
                     disabled={alreadyUsed}
-                    className={cn(
-                      'w-full rounded px-2 py-1.5 text-left text-xs hover:bg-accent',
-                      alreadyUsed && 'opacity-50 cursor-not-allowed',
-                    )}
                     onClick={() => handleSelectDimension(dim)}
                   >
                     {dimensionLabel(dim)}
-                  </button>
+                  </PopoverMenuItem>
                 </li>
               )
             })}
