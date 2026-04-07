@@ -46,6 +46,9 @@ vi.mock('@/components/ui/button', () => ({
   ),
 }))
 
+vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
+
+import { toast } from 'sonner'
 import type { BlockRow } from '../../lib/tauri'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../../lib/tauri'
 import { useNavigationStore } from '../../stores/navigation'
@@ -55,6 +58,7 @@ const mockedListBlocks = vi.mocked(listBlocks)
 const mockedBatchResolve = vi.mocked(batchResolve)
 const mockedListProjectedAgenda = vi.mocked(listProjectedAgenda)
 const mockedQueryByProperty = vi.mocked(queryByProperty)
+const mockedToastError = vi.mocked(toast.error)
 
 function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
   return {
@@ -1004,5 +1008,174 @@ describe('DuePanel', () => {
     expect(navState.pageStack).toHaveLength(1)
     expect(navState.pageStack[0]?.pageId).toBe('PAGE1')
     expect(navState.pageStack[0]?.title).toBe('Linked Page')
+  })
+
+  // --- Error paths ---
+  describe('error paths', () => {
+    it('listBlocks rejection on initial load shows empty state and finishes loading', async () => {
+      mockedListBlocks.mockRejectedValueOnce(new Error('network failure'))
+
+      const { container } = render(<DuePanel date="2025-06-15" />)
+
+      // Should finish loading and show the empty state
+      expect(await screen.findByText(/Nothing due/)).toBeInTheDocument()
+
+      // Loading skeleton should be gone
+      expect(container.querySelector('[aria-busy="true"]')).not.toBeInTheDocument()
+
+      // Section still renders without crashing
+      expect(screen.getByLabelText('Due items')).toBeInTheDocument()
+    })
+
+    it('batchResolve rejection after listBlocks still renders blocks without page titles', async () => {
+      mockedListBlocks.mockResolvedValueOnce({
+        items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', content: 'resilient block' })],
+        next_cursor: null,
+        has_more: false,
+      })
+      mockedBatchResolve.mockRejectedValueOnce(new Error('resolve failure'))
+
+      render(<DuePanel date="2025-06-15" />)
+
+      // Block content should still appear even though title resolution failed
+      expect(await screen.findByText('resilient block')).toBeInTheDocument()
+
+      // Page title falls back to 'Untitled' since batchResolve failed
+      expect(screen.getByText('Untitled')).toBeInTheDocument()
+    })
+
+    it('listProjectedAgenda rejection shows toast error and no projected section', async () => {
+      mockedListBlocks.mockResolvedValueOnce({
+        items: [makeBlock({ id: 'B1', content: 'normal block' })],
+        next_cursor: null,
+        has_more: false,
+      })
+      mockedListProjectedAgenda.mockRejectedValueOnce(new Error('projected fetch failed'))
+
+      render(<DuePanel date="2025-06-15" />)
+
+      // Normal blocks still render
+      expect(await screen.findByText('normal block')).toBeInTheDocument()
+
+      // Toast error was shown
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith('duePanel.loadAgendaFailed')
+      })
+
+      // No projected section
+      expect(screen.queryByText('Projected')).not.toBeInTheDocument()
+    })
+
+    it('batchResolve rejection after listProjectedAgenda shows toast error', async () => {
+      mockedListBlocks.mockResolvedValueOnce(emptyResponse)
+      mockedListProjectedAgenda.mockResolvedValueOnce([
+        {
+          block: makeBlock({
+            id: 'PROJ1',
+            content: 'Projected task',
+            parent_id: 'PAGE2',
+            todo_state: 'TODO',
+            due_date: '2025-06-15',
+          }),
+          projected_date: '2025-06-15',
+          source: 'due_date',
+        },
+      ])
+      // listBlocks returns empty so no batchResolve is triggered from that path.
+      // The only batchResolve call comes from the projected entries path.
+      mockedBatchResolve.mockRejectedValueOnce(new Error('resolve projected failure'))
+
+      render(<DuePanel date="2025-06-15" />)
+
+      // Projected entry still renders (batchResolve only fails for title resolution)
+      expect(await screen.findByText(/Projected task/)).toBeInTheDocument()
+
+      // Toast error was shown for the failed title resolution
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith('duePanel.loadAgendaFailed')
+      })
+    })
+
+    it('queryByProperty rejection for overdue fetch does not show overdue section', async () => {
+      const today = new Date()
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+
+      mockedListBlocks.mockResolvedValueOnce(emptyResponse)
+      mockedQueryByProperty.mockRejectedValueOnce(new Error('overdue query failed'))
+
+      render(<DuePanel date={todayStr} />)
+
+      // Wait for loading to finish
+      await waitFor(() => {
+        expect(mockedListBlocks).toHaveBeenCalled()
+      })
+
+      // Overdue section should not appear
+      await waitFor(() => {
+        expect(screen.queryByText('Overdue')).not.toBeInTheDocument()
+      })
+
+      // Component still renders without crashing
+      expect(screen.getByLabelText('Due items')).toBeInTheDocument()
+    })
+
+    it('queryByProperty rejection for upcoming fetch does not show upcoming section', async () => {
+      localStorage.setItem('agaric:deadlineWarningDays', '7')
+      const today = new Date()
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+
+      mockedListBlocks.mockResolvedValueOnce(emptyResponse)
+      // queryByProperty is called twice when isToday && warningDays > 0: once for overdue, once for upcoming.
+      // Let overdue succeed, upcoming fail.
+      mockedQueryByProperty
+        .mockResolvedValueOnce(emptyResponse)
+        .mockRejectedValueOnce(new Error('upcoming query failed'))
+
+      render(<DuePanel date={todayStr} />)
+
+      // Wait for loading to finish
+      await waitFor(() => {
+        expect(mockedQueryByProperty).toHaveBeenCalledTimes(2)
+      })
+
+      // Upcoming section should not appear
+      expect(screen.queryByText('Upcoming')).not.toBeInTheDocument()
+
+      // Component still renders without crashing
+      expect(screen.getByLabelText('Due items')).toBeInTheDocument()
+
+      localStorage.removeItem('agaric:deadlineWarningDays')
+    })
+
+    it('listBlocks rejection on loadMore preserves existing blocks', async () => {
+      const user = userEvent.setup()
+      mockedListBlocks.mockResolvedValueOnce({
+        items: [makeBlock({ id: 'B1', content: 'first block' })],
+        next_cursor: 'cursor_page2',
+        has_more: true,
+      })
+
+      render(<DuePanel date="2025-06-15" />)
+
+      // First page loads fine
+      expect(await screen.findByText('first block')).toBeInTheDocument()
+
+      // Now make loadMore fail
+      mockedListBlocks.mockRejectedValueOnce(new Error('loadMore network failure'))
+
+      const loadMoreBtn = screen.getByRole('button', { name: /load more due items/i })
+      await user.click(loadMoreBtn)
+
+      // Wait for the failed request to complete
+      await waitFor(() => {
+        expect(mockedListBlocks).toHaveBeenCalledTimes(2)
+      })
+
+      // Original block is still displayed — state not corrupted
+      expect(screen.getByText('first block')).toBeInTheDocument()
+
+      // Component still renders without crashing
+      expect(screen.getByLabelText('Due items')).toBeInTheDocument()
+    })
   })
 })

@@ -865,3 +865,145 @@ describe('QueryResult – multi-filter (filtered)', () => {
     expect(screen.getByText('0 results')).toBeInTheDocument()
   })
 })
+
+/* ------------------------------------------------------------------ */
+/*  Error path tests (mockRejectedValueOnce)                          */
+/* ------------------------------------------------------------------ */
+
+describe('QueryResult – error paths', () => {
+  it('shows error when tag query rejects', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('Tag service unavailable'))
+
+    render(<QueryResult expression="type:tag expr:project" />)
+
+    expect(await screen.findByText('Tag service unavailable')).toBeInTheDocument()
+    // Loading indicator should be gone
+    expect(screen.queryByText('...')).not.toBeInTheDocument()
+    // Results list should not render
+    expect(screen.queryByRole('list')).not.toBeInTheDocument()
+  })
+
+  it('shows error when property query rejects', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('Property lookup failed'))
+
+    render(<QueryResult expression="type:property key:priority value:1" />)
+
+    expect(await screen.findByText('Property lookup failed')).toBeInTheDocument()
+    expect(screen.queryByRole('list')).not.toBeInTheDocument()
+  })
+
+  it('shows error when backlinks query rejects', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('Backlinks fetch failed'))
+
+    render(<QueryResult expression="type:backlinks target:TARGET1" />)
+
+    expect(await screen.findByText('Backlinks fetch failed')).toBeInTheDocument()
+    expect(screen.queryByRole('list')).not.toBeInTheDocument()
+  })
+
+  it('shows error when filtered property query rejects', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('Filter query broken'))
+
+    render(<QueryResult expression="property:todo_state=TODO" />)
+
+    expect(await screen.findByText('Filter query broken')).toBeInTheDocument()
+    expect(screen.queryByRole('list')).not.toBeInTheDocument()
+  })
+
+  it('shows error when one sub-query in multi-filter rejects', async () => {
+    // property filter succeeds, tag filter rejects — Promise.all propagates
+    mockedInvoke
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: 'B1',
+            block_type: 'content',
+            content: 'Should not appear',
+            parent_id: null,
+            position: 1,
+            deleted_at: null,
+            is_conflict: false,
+            conflict_type: null,
+            todo_state: 'TODO',
+            priority: null,
+            due_date: null,
+            scheduled_date: null,
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+      .mockRejectedValueOnce(new Error('Tag index corrupted'))
+
+    render(<QueryResult expression="tag:project-x property:todo_state=TODO" />)
+
+    expect(await screen.findByText('Tag index corrupted')).toBeInTheDocument()
+    expect(screen.queryByText(/Should not appear/)).not.toBeInTheDocument()
+  })
+
+  it('shows error when batchResolve rejects after successful tag query', async () => {
+    mockedInvoke
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: 'B1',
+            block_type: 'content',
+            content: 'Result block',
+            parent_id: 'P1',
+            position: 1,
+            deleted_at: null,
+            is_conflict: false,
+            conflict_type: null,
+            todo_state: null,
+            priority: null,
+            due_date: null,
+            scheduled_date: null,
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+      .mockRejectedValueOnce(new Error('Batch resolve failed'))
+
+    render(<QueryResult expression="type:tag expr:project" />)
+
+    expect(await screen.findByText('Batch resolve failed')).toBeInTheDocument()
+  })
+
+  it('shows error when batchResolve rejects after successful property query', async () => {
+    mockedInvoke
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: 'B1',
+            block_type: 'content',
+            content: 'Priority task',
+            parent_id: 'P2',
+            position: 1,
+            deleted_at: null,
+            is_conflict: false,
+            conflict_type: null,
+            todo_state: 'TODO',
+            priority: '1',
+            due_date: null,
+            scheduled_date: null,
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+      .mockRejectedValueOnce(new Error('Resolution service down'))
+
+    render(<QueryResult expression="type:property key:priority value:1" />)
+
+    expect(await screen.findByText('Resolution service down')).toBeInTheDocument()
+  })
+
+  it('shows generic fallback for non-Error rejection', async () => {
+    mockedInvoke.mockRejectedValueOnce('string error without Error wrapper')
+
+    render(<QueryResult expression="type:tag expr:project" />)
+
+    expect(await screen.findByText('Query failed')).toBeInTheDocument()
+  })
+})

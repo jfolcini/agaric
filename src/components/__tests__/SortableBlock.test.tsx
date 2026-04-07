@@ -3894,3 +3894,202 @@ describe('SortableBlock mobile gutter hidden (UX-21)', () => {
     expect(contentDiv.className).toContain('min-w-0')
   })
 })
+
+// =========================================================================
+// Error path tests — invoke rejections
+// =========================================================================
+
+describe('SortableBlock error paths', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+  })
+
+  it('listAttachments rejection keeps attachmentCount at 0 and renders without crashing', async () => {
+    mockListAttachments.mockRejectedValueOnce(new Error('disk read failed'))
+
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_ERR_1"
+        content="attachment error"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    // Wait for the rejected promise to settle
+    await waitFor(() => {
+      expect(mockListAttachments).toHaveBeenCalledWith('BLOCK_ERR_1')
+    })
+
+    // Component still renders normally
+    expect(screen.getByTestId('editable-block-BLOCK_ERR_1')).toBeInTheDocument()
+
+    // No paperclip icon — attachment count stayed at 0
+    expect(screen.queryByTestId('paperclip-icon')).not.toBeInTheDocument()
+
+    // No attachment list rendered
+    expect(container.querySelector('[data-testid^="attachment-list-"]')).not.toBeInTheDocument()
+  })
+
+  it('listPropertyDefs rejection falls back to text input for property editing', async () => {
+    const user = userEvent.setup()
+
+    mockListPropertyDefs.mockRejectedValueOnce(new Error('network timeout'))
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_ERR_2"
+        content="prop defs error"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[{ key: 'status', value: 'open' }]}
+      />,
+    )
+
+    // Click the property chip to trigger listPropertyDefs
+    const chip = screen.getByTestId('property-chip-status')
+    await user.click(chip)
+
+    // Wait for the rejection to settle and the fallback to appear
+    await waitFor(() => {
+      expect(mockListPropertyDefs).toHaveBeenCalled()
+    })
+
+    // Should fall back to plain text input (no select dropdown, no ref picker)
+    const input = screen.getByRole('textbox')
+    expect(input).toBeInTheDocument()
+    expect(input).toHaveValue('open')
+    expect(screen.queryByTestId('select-options-dropdown')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ref-picker')).not.toBeInTheDocument()
+  })
+
+  it('listBlocks rejection for ref property shows empty ref picker with "No pages found"', async () => {
+    const user = userEvent.setup()
+
+    // listPropertyDefs succeeds, returning a ref-type definition
+    mockListPropertyDefs.mockResolvedValueOnce([
+      {
+        key: 'related',
+        value_type: 'ref',
+        options: null,
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ])
+    // listBlocks rejects
+    mockListBlocks.mockRejectedValueOnce(new Error('backend unavailable'))
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_ERR_3"
+        content="ref error"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[{ key: 'related', value: '' }]}
+      />,
+    )
+
+    // Click the property chip to trigger the effect chain
+    const chip = screen.getByTestId('property-chip-related')
+    await user.click(chip)
+
+    // Wait for the ref picker to appear (listPropertyDefs succeeded, isRefProp is set)
+    await waitFor(() => {
+      expect(screen.getByTestId('ref-picker')).toBeInTheDocument()
+    })
+
+    // listBlocks was called and rejected — refPages falls back to []
+    expect(mockListBlocks).toHaveBeenCalledWith({ blockType: 'page' })
+
+    // Ref picker shows "No pages found" because refPages is empty
+    expect(screen.getByTestId('ref-no-results')).toBeInTheDocument()
+    expect(screen.getByText('No pages found')).toBeInTheDocument()
+  })
+
+  it('listAttachments rejection does not affect other component functionality', async () => {
+    const user = userEvent.setup()
+    mockListAttachments.mockRejectedValueOnce(new Error('ENOENT'))
+    const onToggleTodo = vi.fn()
+
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_ERR_4"
+        content="still works"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        todoState="TODO"
+        onToggleTodo={onToggleTodo}
+        priority="1"
+        dueDate="2026-12-25"
+      />,
+    )
+
+    await waitFor(() => {
+      expect(mockListAttachments).toHaveBeenCalled()
+    })
+
+    // Task marker still works
+    const marker = screen.getByRole('button', { name: /task: todo/i })
+    await user.click(marker)
+    expect(onToggleTodo).toHaveBeenCalledWith('BLOCK_ERR_4')
+
+    // Priority badge still renders
+    expect(screen.getByRole('button', { name: /priority P1/i })).toBeInTheDocument()
+
+    // Due date chip still renders
+    expect(container.querySelector('.due-date-chip')).toBeInTheDocument()
+  })
+
+  it('listPropertyDefs rejection after selecting a select-type prop resets to text input', async () => {
+    const user = userEvent.setup()
+
+    // First click: listPropertyDefs succeeds with select type
+    mockListPropertyDefs.mockResolvedValueOnce([
+      {
+        key: 'severity',
+        value_type: 'select',
+        options: JSON.stringify(['Low', 'Medium', 'High']),
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ])
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_ERR_5"
+        content="flip flop"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[
+          { key: 'severity', value: 'Low' },
+          { key: 'effort', value: '3h' },
+        ]}
+      />,
+    )
+
+    // First: click severity chip — should get select dropdown
+    const severityChip = screen.getByTestId('property-chip-severity')
+    await user.click(severityChip)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('select-options-dropdown')).toBeInTheDocument()
+    })
+
+    // Select 'High' to close the dropdown
+    await user.click(screen.getByRole('button', { name: 'High' }))
+    expect(screen.queryByTestId('select-options-dropdown')).not.toBeInTheDocument()
+
+    // Second: click effort chip but listPropertyDefs now rejects
+    mockListPropertyDefs.mockRejectedValueOnce(new Error('transient failure'))
+
+    const effortChip = screen.getByTestId('property-chip-effort')
+    await user.click(effortChip)
+
+    // Should fall back to text input
+    await waitFor(() => {
+      expect(screen.getByRole('textbox')).toBeInTheDocument()
+    })
+    expect(screen.getByRole('textbox')).toHaveValue('3h')
+    expect(screen.queryByTestId('select-options-dropdown')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ref-picker')).not.toBeInTheDocument()
+  })
+})

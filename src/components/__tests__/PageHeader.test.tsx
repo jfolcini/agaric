@@ -1051,3 +1051,288 @@ describe('PageHeader kebab menu reorganization (UX-H10/H12)', () => {
     })
   })
 })
+
+// ── Error path tests ──────────────────────────────────────────────────────
+
+describe('PageHeader error paths', () => {
+  it('undo_page_op rejection is handled gracefully (no crash, depth rolled back)', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') return []
+      if (cmd === 'undo_page_op') throw new Error('backend undo failed')
+      return null
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+    const undoBtn = screen.getByRole('button', { name: /undo last page action/i })
+    await user.click(undoBtn)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('undo_page_op', {
+        pageId: 'PAGE_1',
+        undoDepth: 0,
+      })
+    })
+
+    // Store catches the error and rolls back — undo depth should be 0
+    expect(useUndoStore.getState().pages.get('PAGE_1')?.undoDepth ?? 0).toBe(0)
+  })
+
+  it('redo_page_op rejection is handled gracefully (redo stack restored)', async () => {
+    const user = userEvent.setup()
+
+    // Set up redo stack so redo is available
+    useUndoStore.setState({
+      pages: new Map([
+        [
+          'PAGE_1',
+          {
+            redoStack: [{ device_id: 'dev1', seq: 1 }],
+            undoDepth: 1,
+            redoGroupSizes: [1],
+          },
+        ],
+      ]),
+    })
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') return []
+      if (cmd === 'redo_page_op') throw new Error('backend redo failed')
+      return null
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+    const redoBtn = screen.getByRole('button', { name: /redo last page action/i })
+    await user.click(redoBtn)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('redo_page_op', {
+        undoDeviceId: 'dev1',
+        undoSeq: 1,
+      })
+    })
+
+    // Store catches error and rolls back — redo stack should be restored
+    const pageState = useUndoStore.getState().pages.get('PAGE_1')
+    expect(pageState?.redoStack).toHaveLength(1)
+    expect(pageState?.undoDepth).toBe(1)
+  })
+
+  it('toggle template on rejection shows error toast', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') return []
+      if (cmd === 'set_property') throw new Error('backend error')
+      return null
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText(/Save as template/i))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to update template status')
+    })
+  })
+
+  it('toggle template off rejection shows error toast', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties')
+        return [
+          {
+            key: 'template',
+            value_text: 'true',
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+          },
+        ]
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') return []
+      if (cmd === 'delete_property') throw new Error('backend error')
+      return null
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText(/Remove template status/i))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to update template status')
+    })
+  })
+
+  it('toggle journal template rejection shows error toast', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') return []
+      if (cmd === 'set_property') throw new Error('backend error')
+      return null
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText(/Set as journal template/i))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to update journal template')
+    })
+  })
+
+  it('export_page_markdown rejection shows error toast', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') return []
+      if (cmd === 'export_page_markdown') throw new Error('backend error')
+      return null
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText(/Export as Markdown/i))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Export failed')
+    })
+  })
+
+  it('delete_block rejection shows error toast and does not navigate back', async () => {
+    const user = userEvent.setup()
+    const onBack = vi.fn()
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') return []
+      if (cmd === 'delete_block') throw new Error('backend error')
+      return null
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" onBack={onBack} />)
+
+    // Open kebab, click "Delete page" to open confirmation dialog
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText(/Delete page/i))
+
+    // Confirm in the alert dialog
+    const confirmBtn = await screen.findByRole('button', { name: /^Delete page$/i })
+    await user.click(confirmBtn)
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to delete page')
+    })
+    expect(onBack).not.toHaveBeenCalled()
+  })
+
+  it('get_page_aliases rejection on mount shows error toast', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') throw new Error('backend error')
+      return null
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('pageHeader.loadAliasesFailed')
+    })
+  })
+
+  it('set_page_aliases rejection when adding alias shows error toast', async () => {
+    const user = userEvent.setup()
+    setupTagMock([], ['existing-alias'])
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    // Wait for aliases to render, then enter edit mode
+    await waitFor(() => {
+      expect(screen.getByText('existing-alias')).toBeInTheDocument()
+    })
+    await user.click(screen.getByRole('button', { name: /edit/i }))
+
+    // Override mock to reject set_page_aliases while keeping others working
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'set_page_aliases') throw new Error('backend error')
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') return ['existing-alias']
+      return null
+    })
+
+    // Type a new alias and submit
+    const aliasInput = screen.getByLabelText('New alias input')
+    await user.type(aliasInput, 'new-alias')
+    await user.click(screen.getByRole('button', { name: /^add$/i }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to update aliases')
+    })
+  })
+
+  it('set_page_aliases rejection when removing alias shows error toast', async () => {
+    const user = userEvent.setup()
+    setupTagMock([], ['alias-a', 'alias-b'])
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    // Wait for aliases to render
+    await waitFor(() => {
+      expect(screen.getByText('alias-a')).toBeInTheDocument()
+    })
+
+    // Enter edit mode
+    await user.click(screen.getByRole('button', { name: /edit/i }))
+
+    // Override mock to reject set_page_aliases
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'set_page_aliases') throw new Error('backend error')
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') return ['alias-a', 'alias-b']
+      return null
+    })
+
+    // Remove alias-a
+    await user.click(screen.getByRole('button', { name: /remove alias alias-a/i }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to update aliases')
+    })
+  })
+})

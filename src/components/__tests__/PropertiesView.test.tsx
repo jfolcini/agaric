@@ -364,4 +364,127 @@ describe('PropertiesView', () => {
     expect(screen.queryByText('created_at')).not.toBeInTheDocument()
     expect(screen.queryByText('my_custom_prop')).not.toBeInTheDocument()
   })
+
+  // -----------------------------------------------------------------------
+  // Error-path tests (mockRejectedValueOnce)
+  // -----------------------------------------------------------------------
+
+  it('shows error toast when loading definitions fails', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('DB read error'))
+
+    render(<PropertiesView />)
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to load property definitions'),
+      )
+    })
+
+    // Loading should finish (no lingering skeletons)
+    expect(screen.queryByTestId('properties-loading')).not.toBeInTheDocument()
+
+    // Empty state shown because definitions stayed empty
+    expect(screen.getByText('No property definitions yet')).toBeInTheDocument()
+  })
+
+  it('shows error toast when creating a definition fails', async () => {
+    const user = userEvent.setup()
+    // Initial load — empty
+    mockedInvoke.mockResolvedValueOnce([])
+
+    render(<PropertiesView />)
+
+    await waitFor(() => {
+      expect(screen.getByText('No property definitions yet')).toBeInTheDocument()
+    })
+
+    // Mock create to reject
+    mockedInvoke.mockRejectedValueOnce(new Error('Duplicate key'))
+
+    const keyInput = screen.getByPlaceholderText('Property key')
+    await user.type(keyInput, 'my-prop')
+
+    const createBtn = screen.getByRole('button', { name: /Create/i })
+    await user.click(createBtn)
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to create property definition'),
+      )
+    })
+
+    // Definition should NOT appear in the list
+    expect(screen.queryByText('My Prop')).not.toBeInTheDocument()
+
+    // Input should NOT be cleared (still contains the failed key)
+    expect(keyInput).toHaveValue('my-prop')
+
+    // No success toast
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+  })
+
+  it('shows error toast when deleting a definition fails', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce([makePropDef('keep-me', 'text')])
+
+    render(<PropertiesView />)
+
+    expect(await screen.findByText('Keep Me')).toBeInTheDocument()
+
+    // Mock delete to reject
+    mockedInvoke.mockRejectedValueOnce(new Error('Backend error'))
+
+    // Open delete dialog
+    const deleteBtn = screen.getByRole('button', { name: /Delete property keep-me/i })
+    await user.click(deleteBtn)
+
+    // Confirm deletion
+    const confirmBtn = await screen.findByRole('button', { name: /^Delete$/i })
+    await user.click(confirmBtn)
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to delete property definition'),
+      )
+    })
+
+    // Definition should still be visible (not removed)
+    expect(screen.getByText('Keep Me')).toBeInTheDocument()
+
+    // No success toast
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+  })
+
+  it('shows error toast when updating select options fails', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce([makePropDef('status', 'select', '["open","closed"]')])
+
+    render(<PropertiesView />)
+
+    expect(await screen.findByText('Status')).toBeInTheDocument()
+
+    // Open the edit options popover
+    const editBtn = screen.getByRole('button', { name: /Edit options/i })
+    await user.click(editBtn)
+
+    // Modify the options input (avoid brackets — userEvent treats [ as key descriptor)
+    const optionsInput = screen.getByLabelText('Options JSON')
+    await user.clear(optionsInput)
+    await user.type(optionsInput, 'open,closed,pending')
+
+    // Mock update to reject
+    mockedInvoke.mockRejectedValueOnce(new Error('Invalid JSON'))
+
+    const saveBtn = screen.getByRole('button', { name: /Save/i })
+    await user.click(saveBtn)
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to update options'),
+      )
+    })
+
+    // No success toast
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+  })
 })

@@ -436,4 +436,121 @@ describe('DonePanel', () => {
 
     expect(mockNavigateToPage).toHaveBeenCalledWith('PAGE1', 'My Project')
   })
+
+  // ---------------------------------------------------------------------------
+  // Error-path tests
+  // ---------------------------------------------------------------------------
+
+  // 14. queryByProperty rejects on initial load → shows empty state
+  it('shows empty state when queryByProperty rejects on initial load', async () => {
+    mockedQueryByProperty.mockRejectedValueOnce(new Error('backend error'))
+
+    render(<DonePanel date="2025-06-15" />)
+
+    await waitFor(() => {
+      expect(mockedQueryByProperty).toHaveBeenCalled()
+    })
+
+    // Should show the empty state since no blocks were loaded
+    expect(screen.getByText('No completed items yet.')).toBeInTheDocument()
+    // batchResolve should not have been called since queryByProperty failed first
+    expect(mockedBatchResolve).not.toHaveBeenCalled()
+  })
+
+  // 15. batchResolve rejects on initial load → blocks shown with Untitled group header
+  it('shows blocks with Untitled group when batchResolve rejects on initial load', async () => {
+    mockedQueryByProperty.mockResolvedValueOnce({
+      items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', content: 'done task' })],
+      next_cursor: null,
+      has_more: false,
+    })
+    mockedBatchResolve.mockRejectedValueOnce(new Error('resolve error'))
+
+    render(<DonePanel date="2025-06-15" />)
+
+    // Block should be visible (setBlocks was called before batchResolve)
+    expect(await screen.findByText('done task')).toBeInTheDocument()
+
+    // Group header should show "Untitled" because batchResolve failed
+    await waitFor(() => {
+      const groupHeaders = document.querySelectorAll('.done-panel-group-header')
+      expect(groupHeaders).toHaveLength(1)
+      expect(groupHeaders[0]).toHaveTextContent('Untitled (1)')
+    })
+  })
+
+  // 16. queryByProperty rejects on load more → existing blocks preserved
+  it('preserves existing blocks when queryByProperty rejects on load more', async () => {
+    const user = userEvent.setup()
+
+    mockedQueryByProperty
+      .mockResolvedValueOnce({
+        items: [makeBlock({ id: 'B1', content: 'existing block' })],
+        next_cursor: 'cursor_2',
+        has_more: true,
+      })
+      .mockRejectedValueOnce(new Error('network error'))
+
+    render(<DonePanel date="2025-06-15" />)
+
+    const loadMoreBtn = await screen.findByRole('button', {
+      name: /load more completed items/i,
+    })
+
+    await user.click(loadMoreBtn)
+
+    await waitFor(() => {
+      expect(mockedQueryByProperty).toHaveBeenCalledTimes(2)
+    })
+
+    // Existing block should still be visible
+    expect(screen.getByText('existing block')).toBeInTheDocument()
+    // Header still shows correct count from initial load
+    expect(screen.getByText('1 Completed')).toBeInTheDocument()
+  })
+
+  // 17. batchResolve rejects on load more → new blocks added, old titles preserved
+  it('shows new blocks with Untitled when batchResolve rejects on load more', async () => {
+    const user = userEvent.setup()
+
+    mockedQueryByProperty
+      .mockResolvedValueOnce({
+        items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', content: 'first block' })],
+        next_cursor: 'cursor_2',
+        has_more: true,
+      })
+      .mockResolvedValueOnce({
+        items: [makeBlock({ id: 'B2', parent_id: 'PAGE2', content: 'second block' })],
+        next_cursor: null,
+        has_more: false,
+      })
+    mockedBatchResolve
+      .mockResolvedValueOnce([
+        { id: 'PAGE1', title: 'Resolved Page', block_type: 'page', deleted: false },
+      ])
+      .mockRejectedValueOnce(new Error('resolve error'))
+
+    render(<DonePanel date="2025-06-15" />)
+
+    await screen.findByText('first block')
+
+    const loadMoreBtn = screen.getByRole('button', {
+      name: /load more completed items/i,
+    })
+    await user.click(loadMoreBtn)
+
+    // Both blocks should be visible
+    await waitFor(() => {
+      expect(screen.getByText('first block')).toBeInTheDocument()
+      expect(screen.getByText('second block')).toBeInTheDocument()
+    })
+
+    // PAGE1 group still has its resolved title from initial load
+    const section = screen.getByLabelText('Completed items')
+    const groupHeaders = section.querySelectorAll('.done-panel-group-header')
+    expect(groupHeaders).toHaveLength(2)
+    // Groups sorted alphabetically: "Resolved Page" < "Untitled"
+    expect(groupHeaders[0]).toHaveTextContent('Resolved Page (1)')
+    expect(groupHeaders[1]).toHaveTextContent('Untitled (1)')
+  })
 })
