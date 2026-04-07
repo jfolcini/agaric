@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 255 — 2026-04-08 — B-23/P-6/P-7 resolved (5→2 remaining)
+
+### Summary
+Resolved 3 REVIEW-LATER items: B-23 (history filter bug), P-6 (background materializer retry), P-7 (write pool size). Log analysis identified recurring `pool timed out` errors in background materializer. Root cause: single write connection held by long-running cache rebuilds starving foreground tasks. B-23 was a frontend bug — HistoryFilterBar sent category names (`'edit'`) instead of actual op_type values (`'edit_block'`), so SQL exact match always returned empty. 3 parallel build subagents + 3 review subagents. P-8 (read/write split) deferred — 100+ call site churn for cache function signature changes. Pre-existing template-utils.test.ts timezone flake (2 tests) unrelated to changes. 8 files changed, 182 insertions. 1638 Rust tests pass, 5046 frontend tests pass.
+
+**Commit:** 91baab8
+
+| Area | Change |
+|------|--------|
+| HistoryFilterBar.tsx | B-23: `OP_TYPES` changed from string array to `{ value, label }` objects with actual op_type values |
+| HistoryFilterBar.test.tsx | B-23: Updated option count (12→13), display text, and filter value assertions |
+| HistoryView.test.tsx | B-23: Updated filter option selections and expectations |
+| tauri.test.ts | B-23: Updated `opTypeFilter: 'edit'` → `'edit_block'` (review finding) |
+| materializer.rs | P-6: Background consumer retry loop — 2 retries with exponential backoff (50ms, 100ms); barrier tasks bypass retry; bg_errors only after all retries fail |
+| db.rs | P-7: Write pool `max_connections(1)` → `max_connections(2)`; updated doc comments; new `init_pools_write_pool_allows_two_connections` test |
+| snapshot.rs | P-7: Updated `compact_op_log` doc comment to reflect 2-connection pool (review finding) |
+| REVIEW-LATER.md | B-23/P-6/P-7 removed, summary updated (5→2 open items) |
+
 ## Session 254 — 2026-04-07 — P-4 review fixes: CTE oracle, benchmarks, ancestor ordering
 
 ### Summary
