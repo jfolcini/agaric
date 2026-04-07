@@ -1092,7 +1092,7 @@ describe('gutter alignment', () => {
         hasChildren
       />,
     )
-    const gutter = container.querySelector('.w-\\[44px\\]')
+    const gutter = container.querySelector('.w-\\[68px\\]')
     expect(gutter).toBeInTheDocument()
     expect(gutter?.className).toContain('items-center')
   })
@@ -1667,7 +1667,7 @@ describe('SortableBlock inline controls', () => {
     expect(badge).toBeInTheDocument()
   })
 
-  it('gutter width is w-[44px]', () => {
+  it('gutter width is w-[68px]', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1677,7 +1677,7 @@ describe('SortableBlock inline controls', () => {
       />,
     )
 
-    const gutter = container.querySelector('.w-\\[44px\\]')
+    const gutter = container.querySelector('.w-\\[68px\\]')
     expect(gutter).toBeInTheDocument()
   })
 
@@ -1706,7 +1706,7 @@ describe('SortableBlock inline controls', () => {
       />,
     )
 
-    const gutter = container.querySelector('.w-\\[44px\\]')
+    const gutter = container.querySelector('.w-\\[68px\\]')
     expect(gutter?.className).toContain('gap-1')
   })
 
@@ -1721,7 +1721,7 @@ describe('SortableBlock inline controls', () => {
       />,
     )
 
-    const gutter = container.querySelector('.w-\\[44px\\]')
+    const gutter = container.querySelector('.w-\\[68px\\]')
     // Gutter should have exactly 2 children (grip + delete), no spacer div
     const children = gutter?.children
     expect(children?.length).toBe(2)
@@ -3101,8 +3101,8 @@ describe('SortableBlock vertical alignment', () => {
       />,
     )
 
-    // Find gutter via w-[44px] class selector
-    const gutter = container.querySelector('.w-\\[44px\\]')
+    // Find gutter via w-[68px] class selector
+    const gutter = container.querySelector('.w-\\[68px\\]')
     expect(gutter?.className).toContain('items-center')
 
     // inline-controls has items-center
@@ -3179,7 +3179,7 @@ describe('SortableBlock vertical alignment', () => {
       />,
     )
 
-    const gutter = container.querySelector('.w-\\[44px\\]')
+    const gutter = container.querySelector('.w-\\[68px\\]')
     const inlineControls = container.querySelector('.inline-controls')
 
     // Both containers use the same gap-1 value
@@ -3687,7 +3687,7 @@ describe('SortableBlock heading alignment', () => {
         rovingEditor={makeRovingEditor()}
       />,
     )
-    const gutter = container.querySelector(`.w-\\[44px\\]`)
+    const gutter = container.querySelector(`.w-\\[68px\\]`)
     expect(gutter?.className).toContain('items-center')
 
     const inlineControls = container.querySelector('.inline-controls')
@@ -3703,7 +3703,7 @@ describe('SortableBlock heading alignment', () => {
         rovingEditor={makeRovingEditor()}
       />,
     )
-    const gutter = container.querySelector(`.w-\\[44px\\]`)
+    const gutter = container.querySelector(`.w-\\[68px\\]`)
     expect(gutter?.className).toContain('items-center')
 
     const inlineControls = container.querySelector('.inline-controls')
@@ -3719,7 +3719,7 @@ describe('SortableBlock heading alignment', () => {
         rovingEditor={makeRovingEditor()}
       />,
     )
-    const gutter = container.querySelector(`.w-\\[44px\\]`)
+    const gutter = container.querySelector(`.w-\\[68px\\]`)
     expect(gutter?.className).toContain('items-center')
 
     const inlineControls = container.querySelector('.inline-controls')
@@ -3735,7 +3735,7 @@ describe('SortableBlock heading alignment', () => {
         rovingEditor={makeRovingEditor()}
       />,
     )
-    const gutter = container.querySelector(`.w-\\[44px\\]`)
+    const gutter = container.querySelector(`.w-\\[68px\\]`)
     expect(gutter?.className).toContain('items-center')
   })
 })

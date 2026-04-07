@@ -2,11 +2,11 @@
  * SortableBlock — drag-and-drop wrapper for blocks using @dnd-kit (p2-t9).
  *
  * Wraps EditableBlock with sortable behavior. Two-zone layout:
- * - Narrow gutter (48px): grip handle + delete button (hover-gated)
+ * - Narrow gutter (68px): grip handle + history + delete button (hover-gated, right-justified)
  * - Inline controls: chevron (when hasChildren), checkbox, priority badge (when set)
  *
  * Left-to-right order:
- *   Gutter: [grip] [delete]  |  Inline: [chevron?] [checkbox] [priority?] [content]
+ *   Gutter: [grip] [history] [delete]  |  Inline: [chevron?] [checkbox] [priority?] [content]
  *
  * Mobile / right-click context menu (long-press or right-click) provides
  * touch-friendly access to block actions: delete, indent, dedent, TODO, priority.
@@ -33,7 +33,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/t
 export const INDENT_WIDTH = 24
 
 /** Fixed width for the gutter so positions never shift. */
-const GUTTER_WIDTH = 'w-[44px]'
+const GUTTER_WIDTH = 'w-[68px]'
 
 interface SortableBlockProps {
   blockId: string
@@ -269,7 +269,12 @@ function SortableBlockInner({
         )}
 
         {/* ── Narrow gutter — grip + delete only ─────────────────── */}
-        <div className={cn(GUTTER_WIDTH, 'relative z-10 flex-shrink-0 flex items-center gap-1')}>
+        <div
+          className={cn(
+            GUTTER_WIDTH,
+            'relative z-10 flex-shrink-0 flex items-center gap-1 justify-end',
+          )}
+        >
           {/* Drag handle — far left */}
           <Tooltip>
             <TooltipTrigger asChild>
