@@ -206,6 +206,16 @@ Tests every `*_inner` function's contract: inputs, outputs, error variants. Orga
 | Scope | End-to-end state flows | Command boundary behavior |
 | When to add | New multi-module interaction | New/changed Tauri command |
 
+### Undo/reverse testing
+
+`reverse.rs` tests verify inverse op computation. Key patterns:
+- Test the reverse of each op type (see ARCHITECTURE.md § Undo/Redo for the full table)
+- **Batch grouping:** consecutive ops within 200ms by the same device are grouped — backend's `revert_ops` sorts newest-first (`created_at DESC, seq DESC`) before applying. Tests must verify this ordering.
+- Non-reversible ops (`purge_block`, `delete_attachment`) must return `AppError::NonReversible`, not panic
+- Prior-state lookups use the op log exclusively (not the materialized `blocks` table), so tests must verify correct op-log walking even when the materializer lags
+- Reverse ops are **appended** to the op log (log remains append-only) — never assert that existing ops were mutated
+- Test helpers: `append_op()` with `append_local_op_at` for deterministic timestamps, `FIXED_TS` / `TEST_DEVICE` fixture constants
+
 ## Snapshot Testing (insta)
 
 ### Where snapshots live
@@ -357,3 +367,13 @@ criterion_main!(benches);
 8. **Test helper duplication is intentional** — Each module defines its own `test_pool()`, `insert_block()`, etc. This is by design: tests are self-contained, no shared test utility crate.
 
 9. **Timestamp assertions need a sleep guard** — `now_rfc3339()` has millisecond precision. If a test needs two distinct timestamps from consecutive operations, add `tokio::time::sleep(Duration::from_millis(2)).await` between them. Never write `assert_ne!(t1, t2)` on consecutive wall-clock timestamps without a sleep guard.
+
+10. **CTE queries must filter `is_conflict = 0`** — Recursive CTEs for descendant walks (list children, cascade operations, tree queries) must include `AND is_conflict = 0` in the recursive member. Without it, conflict copies leak into results as phantom extra blocks. This was caught during review before shipping — symptoms are subtle (extra items in list responses, wrong counts).
+
+11. **Multi-op sequences need transaction wrapping** — When a feature requires multiple ops atomically (e.g., create block + set property for recurrence), use `_in_tx` function variants or wrap in a `BEGIN IMMEDIATE` transaction. Without this, a crash between ops leaves inconsistent state. Tests should verify all-or-nothing: if the second op fails, the first must be rolled back.
+
+12. **Avoid silent error swallowing in new code** — `.ok()`, `.unwrap_or_default()` are acceptable for non-critical enrichment (e.g., tag name resolution in FTS), but not on core data paths. When adding error handling, prefer `tracing::warn!` + explicit fallback over silent discard. Tests should verify that error paths on core operations actually propagate errors. The `.expect("…poisoned")` pattern on mutexes should be `.unwrap_or_else(|e| e.into_inner())` instead.
+
+13. **Position values are 1-based** — Block positions among siblings start at 1, not 0. Passing `position: 0` to `move_block` hits a validation error. All position fixtures must use values `>= 1`.
+
+14. **ULID normalization in hash tests** — ULIDs are uppercase Crockford base32 before blake3 hashing (for cross-device determinism). Hardcoded test ULIDs must be uppercase (`"01HZ..."` not `"01hz..."`). Lowercase ULIDs produce different hashes and will break hash-chain assertions.

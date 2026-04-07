@@ -136,15 +136,15 @@ expect(skeletons.length).toBe(3)
 
 ### Helper factories
 
-Tests define `make*` helper functions at the top for creating test data:
+Shared fixture factories live in `src/__tests__/fixtures/index.ts` — use these instead of per-file definitions:
 ```ts
-function makePage(id: string, content: string) {
-  return {
-    id, block_type: 'page', content, parent_id: null,
-    position: null, deleted_at: null, archived_at: null, is_conflict: false,
-  }
-}
+import { makeBlock, makePage, makeConflict, makeDailyPage, emptyPage } from '../fixtures'
+
+makeBlock({ id: 'BLK_1', content: 'hello' })  // Partial<T> override — everything else gets defaults
+makePage({ id: 'PAGE_1' })
 ```
+
+Per-file `make*` helpers are acceptable only for component-specific structures not in the shared module. When the shared factory doesn't exist yet, add it to `fixtures/index.ts` rather than defining it locally — the next test file will need it too.
 
 ## Accessibility Testing
 
@@ -263,6 +263,33 @@ function renderWithStore(ui: React.ReactElement) {
 
 The navigation store (`navigation.test.ts`) tests are pure state machines — no mocks needed, just `setState` and `getState`.
 
+### Undo/redo store (useUndoStore)
+
+Per-page undo state lives in a `Map<string, PageUndoState>` keyed by page ID. Each page tracks `undoDepth`, `redoStack`, and `redoGroupSizes` independently. Tests:
+
+```ts
+// Reset per-page state, not global
+useUndoStore.setState({ pages: new Map() })
+```
+
+**Batch grouping (200ms window):** Consecutive ops within 200ms by the same device are grouped — a single Ctrl+Z undoes the entire group. Tests use `makeHistoryEntry()` with specific timestamps:
+```ts
+// Ops 50ms apart → grouped (1 undo undoes both)
+// Ops 201ms apart → separate groups
+// Device change → breaks group even within window
+```
+
+**Optimistic update + rollback:** `undo()` increments `undoDepth` immediately. If the backend `undoPageOp` call fails, the depth is rolled back. Tests must verify both the optimistic state and the rollback:
+```ts
+mockedInvoke.mockRejectedValueOnce(new Error('backend'))
+await store.getState().undo('PAGE_1')
+expect(store.getState().pages.get('PAGE_1')?.undoDepth).toBe(0) // rolled back
+```
+
+**Integration with page-blocks store:** Every mutation (`createBelow`, `edit`, `remove`) calls `onNewAction(pageId)` on success, which clears the redo stack. Tests verify this notification happens on success but **not** on backend error.
+
+**Key helpers:** `makeUndoResult()` (mock UndoResult), `makeHistoryEntry()` (mock HistoryEntry for batch tests). Mocked commands: `undoPageOp`, `redoPageOp`, `listPageHistory`.
+
 ## E2E Testing (Playwright)
 
 ### Configuration
@@ -296,6 +323,14 @@ test('creates a block via the input form', async ({ page }) => {
 ```
 
 E2E tests verify full user flows: create, delete, navigate, persist across view switches, handle special characters. No page objects — tests are flat and direct.
+
+### Undo/redo E2E helpers
+
+Undo/redo E2E tests need two helpers because Ctrl+Z behaves differently depending on focus:
+
+- **`blurEditors(page)`** — press Escape to leave `contentEditable` focus. Without this, Ctrl+Z triggers ProseMirror's in-editor undo instead of the page-level `useUndoShortcuts` handler.
+- **`reopenPage(page)`** — navigate away and back to force a `BlockTree` re-fetch from the mock backend, confirming the undo actually persisted (not just visual).
+- Wait for `"Undone"` / `"Redone"` toast text to confirm the action fired before asserting on block count.
 
 ### Console error check
 
@@ -375,10 +410,12 @@ Exports `SEED_IDS` for deterministic test data references and `resetMock()` for 
 
 ## jsdom Stubs
 
-`src/test-setup.ts` polyfills APIs missing from jsdom that Radix UI / shadcn/ui need:
+`src/test-setup.ts` polyfills APIs missing from jsdom that Radix UI / shadcn/ui / TipTap need:
 - `ResizeObserver` — no-op stub
 - `IntersectionObserver` — no-op stub (hooks that need real IO behavior provide their own mock, e.g., `useViewportObserver.test.ts`)
 - `window.matchMedia` — returns `{ matches: false }` for all queries
+- `Element.scrollIntoView` — no-op stub (jsdom doesn't implement scrolling)
+- `Range.getClientRects` / `Range.getBoundingClientRect` — return empty/zero-rect stubs (required by TipTap/ProseMirror positioning)
 
 RTL `cleanup()` is registered manually in `afterEach` since vitest globals are disabled.
 
@@ -415,3 +452,27 @@ RTL `cleanup()` is registered manually in `afterEach` since vitest globals are d
 8. **Property-based test filtering** — Some `arbDoc` values contain text with delimiter characters that create structural ambiguity on round-trip. The `hasStructuralAmbiguity()` filter skips these for structural equality checks, but content preservation is still verified.
 
 9. **`afterEach` for fake timers** — Any test using `vi.useFakeTimers()` must restore with `vi.useRealTimers()` in `afterEach`, or subsequent tests will break.
+
+10. **Capture state before async gaps** — If a handler reads editor state or store state, read it *before* any `await`. After the await, the user may have typed more, another handler may have fired, or the selection may have moved. Pattern: `const pos = editor.state.selection.from; const blockId = store.getState().focusedBlockId; await createBlock(...); insertContentAt(pos, ...)`. This caused real bugs in input rules and block keyboard handlers.
+
+11. **Re-entrancy in async handlers** — Fast double-click or double-Enter can invoke an async handler twice before the first completes, creating duplicate blocks or duplicate operations. Guard with a ref: `if (inProgress.current) return; inProgress.current = true; try { ... } finally { inProgress.current = false }`. Tests should verify that rapid double-invocation doesn't produce duplicates.
+
+12. **Store initial state should be `loading: true`** — Stores/slices that fetch data on mount must initialize with `loading: true`, not `false`. Starting with `loading: false` causes a brief render of the "empty/ready" state before the fetch begins, which can trigger child components to act on empty data (e.g., BlockTree rendering zero blocks, then flickering when data arrives).
+
+13. **Map/object merge order for cache updates** — When merging fresh data into a cache, spread fresh data *last*: `new Map([...staleCache, ...freshData])`. Spreading the stale cache last (`new Map([...freshData, ...staleCache])`) silently overwrites fresh entries with stale ones. Tests for cache-updating store actions should verify that fetched data actually overwrites existing entries.
+
+14. **Keyboard handlers must yield to popups** — Capture-phase keyboard listeners (Enter, Tab, Escape, Backspace) in block handlers must check whether a suggestion popup (tag picker, block link picker, slash command) is visible before intercepting. Without this, the handler steals keystrokes from the popup — e.g., Enter confirms the popup selection but also splits the block.
+
+15. **Prefer individual Zustand selectors over destructuring** — Use `useBlockStore(s => s.focusedBlockId)` instead of `const { focusedBlockId } = useBlockStore()`. Destructuring subscribes to the entire store, causing re-renders on any state change. Individual selectors only re-render when the selected slice changes. This matters for components rendered per-block (N instances).
+
+16. **`flushSync()` ordering in editor blur** — When `handleBlur` calls `edit()` then `splitBlock()`, the store update must complete before React unmounts the editor. Wrap both calls in `flushSync()` to force synchronous rendering. Without it, the store renders after the editor unmounts, and the edit is lost. Tests should verify call ordering (edit before split, both before unmount).
+
+17. **Component extraction requires regression verification** — When extracting hooks/components from a large file (e.g., BlockTree → useBlockCollapse, useBlockZoom, BlockListRenderer), each extracted piece needs its own test file. After extraction, run the full test suite to verify no regressions. The M-1 BlockTree refactor (1184→1028 lines) verified 262 tests across 8 extracted modules.
+
+## Known Test Coverage Gaps
+
+Open items in `REVIEW-LATER.md` that represent known untested areas. Reference these when working on related features:
+
+- **T-6:** 5 journal view components have zero test coverage (`DailyView`, `AgendaView`, `DaySection`, `WeeklyView`, `MonthlyView`); 3 test files missing axe audits; 86/104 component test files lack error path tests with `mockRejectedValue`
+- **B-7..B-13:** Editor lifecycle bugs with test implications — whitespace-click discards edits, Escape discards edits when editor DOM-unfocused, `handleBlur` naive newline check for split detection (false splits on code blocks), no rollback on optimistic edit failure, sync reload overwrites store during active editing, `unmount()` has no error boundary around `serialize()`, draft autosave race between save and discard
+- **B-15:** `BlockContextMenu` missing from `EDITOR_PORTAL_SELECTORS` — blur fires when clicking context menu
