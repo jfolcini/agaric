@@ -1,9 +1,9 @@
 # Session Log
 
-## Session 237 — 2026-04-07 — Batches 84-94: 40 items resolved (41→2 remaining)
+## Session 237 — 2026-04-07 — Batches 84-95: 41 items resolved (41→1 remaining)
 
 ### Summary
-Resolved 40 REVIEW-LATER items across 11 batches. **84:** B-3/B-4/S-1/S-2/P-1/M-3/T-5. **85:** UX-1/2/3/6/P-3/M-2. **86:** UX-8-14/17-20/P-2. **87:** UX-15/16/21/M-4/T-4. **88:** B-5/6/UX-4/5/7. **89:** UX-22/23/T-3. **90:** F-18. **91-94:** M-1 (all 8 subtasks — BlockTree 1184→1028 lines). ~170 files changed, ~175 new tests. REVIEW-LATER: 41→2 items (F-14/F-15 both need user approval).
+Resolved 41 REVIEW-LATER items across 12 batches. **84:** B-3/B-4/S-1/S-2/P-1/M-3/T-5. **85:** UX-1/2/3/6/P-3/M-2. **86:** UX-8-14/17-20/P-2. **87:** UX-15/16/21/M-4/T-4. **88:** B-5/6/UX-4/5/7. **89:** UX-22/23/T-3. **90:** F-18. **91-94:** M-1 (all 8 subtasks). **95:** F-15. ~180 files changed, ~180 new tests. REVIEW-LATER: 41→1 (only F-14 remains — needs user approval for new sync message types).
 
 ### Batch 84 — Rust backend fixes
 
