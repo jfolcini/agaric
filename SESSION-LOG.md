@@ -1,9 +1,9 @@
 # Session Log
 
-## Session 237 — 2026-04-07 — Batches 84-88: 35 REVIEW-LATER items resolved
+## Session 237 — 2026-04-07 — Batches 84-89: 38 REVIEW-LATER items resolved
 
 ### Summary
-Resolved 35 REVIEW-LATER items across 5 batches. **Batch 84 (Rust, 7):** B-3/B-4/S-1/S-2/P-1/M-3/T-5. **Batch 85 (a11y, 6):** UX-1/2/3/6/P-3/M-2. **Batch 86 (components, 12):** UX-8/9/10/11/12/13/14/17/18/19/20/P-2. **Batch 87 (touch/logging/tests, 5):** UX-15/16/21/M-4/T-4. **Batch 88 (bugs/design/i18n, 5):** B-5/B-6/UX-4/UX-5/UX-7. 120 files changed, 95 new tests. 1611 Rust + 4527 frontend tests pass. REVIEW-LATER: 41→7 items.
+Resolved 38 REVIEW-LATER items across 6 batches. **Batch 84 (Rust, 7):** B-3/B-4/S-1/S-2/P-1/M-3/T-5. **Batch 85 (a11y, 6):** UX-1/2/3/6/P-3/M-2. **Batch 86 (components, 12):** UX-8/9/10/11/12/13/14/17/18/19/20/P-2. **Batch 87 (touch/logging/tests, 5):** UX-15/16/21/M-4/T-4. **Batch 88 (bugs/design/i18n, 5):** B-5/B-6/UX-4/UX-5/UX-7. **Batch 89 (mobile/tests, 3):** UX-22/UX-23/T-3. ~130 files changed, ~110 new tests. 1611 Rust + 4542 frontend tests pass. REVIEW-LATER: 41→4 items.
 
 ### Batch 84 — Rust backend fixes
 
@@ -109,6 +109,20 @@ Resolved 35 REVIEW-LATER items across 5 batches. **Batch 84 (Rust, 7):** B-3/B-4
 | 14 component files | UX-7: All lucide-react size={N} props → Tailwind h-/w- classes |
 | BlockTree.tsx | UX-7: Fixed trailing parse error (duplicate content removed) |
 | 3 test files | Updated assertions for semantic color class names |
+
+### Batch 89 — Mobile layout, swipe gesture, test coverage verification
+
+**Commit:** 6b32865
+
+| Area | Change |
+|------|--------|
+| BlockInlineControls.tsx | UX-22: flex-col w-10 items-center on pointer:coarse. Removed min-w-[44px] from 3 indicator buttons |
+| SortableBlock.tsx | UX-22: items-start on pointer:coarse for top alignment. UX-23: Integrated swipe hook with sliding transform + absolute delete button |
+| useBlockSwipeActions.ts | UX-23: NEW — swipe gesture hook (80px reveal, 200px auto-delete, 10px vertical cancel). Composes with long-press |
+| useBlockSwipeActions.test.ts | UX-23: 11 new tests (thresholds, reveal, auto-delete, cancel, reset, fine-pointer no-op) |
+| BlockInlineControls.test.tsx | UX-22: 2 new tests (vertical stacking classes, min-w removal) |
+| SortableBlock.test.tsx | UX-22: 2 new tests (items-start, content flex-1) |
+| REVIEW-LATER.md | T-3 verified resolved (178 existing tests). Removed T-3/UX-22/UX-23. 6→4 items |
 
 ## Session 236 — 2026-04-06 — Fix B-1/B-2, F-16 sticky headers, REVIEW-LATER updates
 
