@@ -1,15 +1,14 @@
 /**
- * BlockTree — renders the block list with the roving editor.
+ * BlockTree — thin orchestrator composing extracted feature components.
  *
- * Each block is either a StaticBlock (div) or the active TipTap editor.
- * Enter creates a new block below. Backspace on empty deletes.
- * Off-screen blocks are replaced by height-preserving placeholders
- * via IntersectionObserver (p15-t13).
- *
- * Tree-aware drag-and-drop: blocks render with depth-based indentation.
- * Horizontal drag offset during DnD determines the projected indent level,
- * enabling drag-to-reparent. A drop indicator shows the target position
- * and depth.
+ * Delegates to:
+ * - useBlockCollapse — collapse/expand state
+ * - useBlockZoom — zoom navigation + breadcrumbs
+ * - BlockZoomBar — zoom breadcrumb UI
+ * - BlockListRenderer — SortableContext + block map
+ * - BlockHistorySheet — block history overlay
+ * - BlockPropertyDrawerSheet — property drawer overlay
+ * - BlockDnDOverlay — drag preview
  */
 
 import { closestCenter, DndContext, MeasuringStrategy } from '@dnd-kit/core'
@@ -233,7 +232,6 @@ export function BlockTree({
 
   // ── Zoom hook (state + breadcrumb + zoomed view) ───────────────────
   const {
-    zoomedBlockId: _zoomedBlockId,
     zoomIn: handleZoomIn,
     zoomToRoot,
     breadcrumbs: zoomBreadcrumb,
