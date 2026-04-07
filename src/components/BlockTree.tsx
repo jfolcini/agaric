@@ -13,7 +13,6 @@
  */
 
 import { closestCenter, DndContext, MeasuringStrategy } from '@dnd-kit/core'
-import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -54,13 +53,12 @@ import { usePageBlockStore, usePageBlockStoreApi } from '../stores/page-blocks'
 import { useResolveStore } from '../stores/resolve'
 import { useUndoStore } from '../stores/undo'
 import { BlockHistorySheet } from './BlockHistorySheet'
+import { BlockListRenderer } from './BlockListRenderer'
 import { BlockPropertyDrawerSheet } from './BlockPropertyDrawerSheet'
 import { BlockZoomBar } from './BlockZoomBar'
 import { BlockContextMenu } from './block-tree/BlockContextMenu'
 import { BlockDatePicker } from './block-tree/BlockDatePicker'
 import { BlockDndOverlay } from './block-tree/BlockDndOverlay'
-import { EmptyState } from './EmptyState'
-import { SortableBlock } from './SortableBlock'
 import { Skeleton } from './ui/skeleton'
 
 function TemplatePicker({
@@ -951,87 +949,41 @@ export function BlockTree({
         onDragEnd={dnd.handleDragEnd}
         onDragCancel={dnd.handleDragCancel}
       >
-        <SortableContext
-          items={dnd.visibleItems.map((b) => b.id)}
-          strategy={verticalListSortingStrategy}
-        >
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: whitespace click to dismiss editor */}
-          <div
-            className="block-tree space-y-0.5 [@media(pointer:coarse)]:space-y-1.5"
-            onMouseDown={handleContainerMouseDown}
-          >
-            {dnd.visibleItems.map((block) => {
-              const isFocused = focusedBlockId === block.id
-              // Show projected depth during drag for the active item's over target
-              const projectedDepth =
-                dnd.projected && dnd.activeId && dnd.overId === block.id
-                  ? dnd.projected.depth
-                  : block.depth
-
-              // Focused block is never virtualized — always render fully
-              if (!isFocused && viewport.isOffscreen(block.id)) {
-                return (
-                  <div
-                    key={block.id}
-                    ref={viewport.observeRef}
-                    data-block-id={block.id}
-                    className="block-placeholder"
-                    style={{ minHeight: viewport.getHeight(block.id) }}
-                  />
-                )
-              }
-              return (
-                <div key={block.id} ref={viewport.observeRef} data-block-id={block.id}>
-                  {/* Drop indicator: shows where the dragged block will land */}
-                  {dnd.projected && dnd.overId === block.id && dnd.activeId !== block.id && (
-                    <div
-                      className="drop-indicator h-[3px] bg-primary rounded-full ring-2 ring-primary/20"
-                      style={{ marginLeft: `calc(var(--indent-width) * ${dnd.projected.depth})` }}
-                    />
-                  )}
-                  <SortableBlock
-                    blockId={block.id}
-                    content={block.content ?? ''}
-                    isFocused={isFocused}
-                    depth={block.id === dnd.activeId ? projectedDepth : block.depth}
-                    rovingEditor={rovingEditor}
-                    onNavigate={handleNavigate}
-                    onDelete={remove}
-                    resolveBlockTitle={resolve.resolveBlockTitle}
-                    resolveTagName={resolve.resolveTagName}
-                    resolveBlockStatus={resolve.resolveBlockStatus}
-                    resolveTagStatus={resolve.resolveTagStatus}
-                    hasChildren={hasChildrenSet.has(block.id)}
-                    isCollapsed={collapsedIds.has(block.id)}
-                    onToggleCollapse={toggleCollapse}
-                    todoState={block.todo_state ?? null}
-                    onToggleTodo={handleToggleTodo}
-                    priority={block.priority ?? null}
-                    onTogglePriority={handleTogglePriority}
-                    dueDate={block.due_date ?? null}
-                    scheduledDate={block.scheduled_date ?? null}
-                    properties={blockProperties[block.id]}
-                    onIndent={indent}
-                    onDedent={dedent}
-                    onMoveUp={handleMoveUpById}
-                    onMoveDown={handleMoveDownById}
-                    onMerge={handleMergeById}
-                    onShowHistory={handleShowHistory}
-                    onShowProperties={handleShowProperties}
-                    onZoomIn={hasChildrenSet.has(block.id) ? handleZoomIn : undefined}
-                    isSelected={selectedBlockIds.includes(block.id)}
-                    onSelect={handleSelect}
-                  />
-                </div>
-              )
-            })}
-            {blocks.length === 0 && !loading && (
-              <EmptyState
-                message={rootParentId ? t('blockTree.emptyPage') : t('blockTree.noBlocks')}
-              />
-            )}
-          </div>
-        </SortableContext>
+        <BlockListRenderer
+          visibleItems={dnd.visibleItems}
+          blocks={blocks}
+          loading={loading}
+          rootParentId={rootParentId}
+          focusedBlockId={focusedBlockId}
+          selectedBlockIds={selectedBlockIds}
+          projected={dnd.projected}
+          activeId={dnd.activeId}
+          overId={dnd.overId}
+          viewport={viewport}
+          rovingEditor={rovingEditor}
+          onNavigate={handleNavigate}
+          onDelete={remove}
+          onIndent={indent}
+          onDedent={dedent}
+          onMoveUp={handleMoveUpById}
+          onMoveDown={handleMoveDownById}
+          onMerge={handleMergeById}
+          onToggleTodo={handleToggleTodo}
+          onTogglePriority={handleTogglePriority}
+          onToggleCollapse={toggleCollapse}
+          onShowHistory={handleShowHistory}
+          onShowProperties={handleShowProperties}
+          onZoomIn={handleZoomIn}
+          onSelect={handleSelect}
+          onContainerMouseDown={handleContainerMouseDown}
+          resolveBlockTitle={resolve.resolveBlockTitle}
+          resolveTagName={resolve.resolveTagName}
+          resolveBlockStatus={resolve.resolveBlockStatus}
+          resolveTagStatus={resolve.resolveTagStatus}
+          hasChildrenSet={hasChildrenSet}
+          collapsedIds={collapsedIds}
+          blockProperties={blockProperties}
+        />
         <BlockDndOverlay
           activeBlock={activeBlock}
           projected={dnd.projected}
