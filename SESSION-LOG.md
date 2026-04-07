@@ -1,5 +1,17 @@
 # Session Log
 
+## Session 252 — 2026-04-07 — B-22 resolved: popup-aware arrow key suppression
+
+### Summary
+Fixed B-22 with the narrower approach (per user direction): arrow keys at block boundaries are suppressed only when a suggestion popup is visible. Extracted `isSuggestionPopupVisible()` helper shared by arrow-key handlers and the existing Enter/Escape/Backspace popup check. REVIEW-LATER: 3→2 (B-22 removed). 2 files changed, 76 insertions, 11 deletions. 3 new tests.
+
+**Commit:** df9d516
+
+| Area | Change |
+|------|--------|
+| use-block-keyboard.ts | Extracted `isSuggestionPopupVisible()` helper; added popup check to ArrowUp/ArrowDown boundary handlers; refactored existing Enter/Escape/Backspace check to use same helper |
+| use-block-keyboard.test.ts | 3 new tests: ArrowUp suppressed with popup, ArrowDown suppressed with popup, normal behavior without popup |
+
 ## Session 251 — 2026-04-07 — Batch 105: T-6 fully resolved (final sweep)
 
 ### Summary
