@@ -271,6 +271,7 @@ describe('TagFilterPanel', () => {
       tagIds: ['T1'],
       prefixes: [],
       mode: 'and',
+      includeInherited: null,
       cursor: null,
       limit: 50,
     })
@@ -321,6 +322,7 @@ describe('TagFilterPanel', () => {
       tagIds: ['T1'],
       prefixes: [],
       mode: 'and',
+      includeInherited: null,
       cursor: 'cursor_abc',
       limit: 50,
     })

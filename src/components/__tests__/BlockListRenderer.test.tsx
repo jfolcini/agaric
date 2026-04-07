@@ -35,7 +35,6 @@ vi.mock('@dnd-kit/sortable', () => ({
 import { BlockListRenderer } from '../BlockListRenderer'
 
 const noop = () => {}
-const noopAsync = async () => {}
 const resolveActive = () => 'active' as const
 
 /** Minimal props to render BlockListRenderer. */

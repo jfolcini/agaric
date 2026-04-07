@@ -185,9 +185,9 @@ async searchBlocks(query: string, cursor: string | null, limit: number | null) :
 /**
  * Tauri command: query blocks by boolean tag expression. Delegates to [`query_by_tags_inner`].
  */
-async queryByTags(tagIds: string[], prefixes: string[], mode: string, cursor: string | null, limit: number | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
+async queryByTags(tagIds: string[], prefixes: string[], mode: string, includeInherited: boolean | null, cursor: string | null, limit: number | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("query_by_tags", { tagIds, prefixes, mode, cursor, limit }) };
+    return { status: "ok", data: await TAURI_INVOKE("query_by_tags", { tagIds, prefixes, mode, includeInherited, cursor, limit }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

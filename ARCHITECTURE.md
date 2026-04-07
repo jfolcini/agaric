@@ -121,9 +121,14 @@ Tag blocks may be tagged with other tag blocks (natural consequence of the unifi
 structural only: tagging `#work/meeting` with `#important` does not cause blocks tagged
 `#work/meeting` to appear in an `#important` query.
 
-**Tag inheritance will not be implemented.** Prefix-aware LIKE search covers the use case (the
-Obsidian model). True query-time inheritance would require graph traversal in the materializer hot
-path and fan-out on rename. The explicit prefix model is simpler and predictable.
+**Tag-to-tag inheritance will not be implemented.** Prefix-aware LIKE search covers the tag
+hierarchy use case (the Obsidian model). True tag hierarchy inheritance would require graph
+traversal in the materializer hot path and fan-out on rename.
+
+**Block-level tag inheritance** is supported via `include_inherited` flag on tag queries (F-15).
+When enabled, a block matches a tag filter if any ancestor block has that tag. This uses a
+recursive CTE on `blocks.parent_id` at read time — no materializer changes, no schema migration,
+gated behind a flag that defaults to false.
 
 ### Pages
 

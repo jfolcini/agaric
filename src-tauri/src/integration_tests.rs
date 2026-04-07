@@ -1569,7 +1569,7 @@ async fn tag_prefix_query_returns_hierarchy_matches_only() {
     // Query with prefix "work/" — should match "work/meeting" and
     // "work/email" but NOT "work" (exact match without slash suffix)
     let prefix_results =
-        query_by_tags_inner(&pool, vec![], vec!["work/".into()], "or".into(), None, None)
+        query_by_tags_inner(&pool, vec![], vec!["work/".into()], "or".into(), None, None, None)
             .await
             .unwrap();
 
@@ -1595,7 +1595,7 @@ async fn tag_prefix_query_returns_hierarchy_matches_only() {
     // Query with prefix "work" (no slash) — should match all three
     // because "work", "work/meeting", "work/email" all start with "work"
     let broad_results =
-        query_by_tags_inner(&pool, vec![], vec!["work".into()], "or".into(), None, None)
+        query_by_tags_inner(&pool, vec![], vec!["work".into()], "or".into(), None, None, None)
             .await
             .unwrap();
 

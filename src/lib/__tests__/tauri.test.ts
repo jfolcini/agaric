@@ -499,6 +499,7 @@ describe('queryByTags', () => {
       tagIds: ['TAG01', 'TAG02'],
       prefixes: ['work'],
       mode: 'and',
+      includeInherited: null,
       cursor: null,
       limit: null,
     })
@@ -535,6 +536,7 @@ describe('queryByTags', () => {
       tagIds: ['TAG01'],
       prefixes: [],
       mode: 'or',
+      includeInherited: null,
       cursor: 'cursor123',
       limit: 25,
     })

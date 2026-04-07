@@ -1423,6 +1423,7 @@ pub async fn query_by_tags_inner(
     tag_ids: Vec<String>,
     prefixes: Vec<String>,
     mode: String,
+    include_inherited: Option<bool>,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
@@ -1448,7 +1449,7 @@ pub async fn query_by_tags_inner(
     };
 
     let page = pagination::PageRequest::new(cursor, limit)?;
-    tag_query::eval_tag_query(pool, &expr, &page).await
+    tag_query::eval_tag_query(pool, &expr, &page, include_inherited.unwrap_or(false)).await
 }
 
 /// Query blocks by property key and optional value filter.
@@ -4125,10 +4126,11 @@ pub async fn query_by_tags(
     tag_ids: Vec<String>,
     prefixes: Vec<String>,
     mode: String,
+    include_inherited: Option<bool>,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    query_by_tags_inner(&pool.0, tag_ids, prefixes, mode, cursor, limit)
+    query_by_tags_inner(&pool.0, tag_ids, prefixes, mode, include_inherited, cursor, limit)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -7157,7 +7159,7 @@ mod tests {
     async fn query_by_tags_inner_empty_inputs_returns_empty() {
         let (pool, _dir) = test_pool().await;
 
-        let result = query_by_tags_inner(&pool, vec![], vec![], "or".into(), None, None)
+        let result = query_by_tags_inner(&pool, vec![], vec![], "or".into(), None, None, None)
             .await
             .unwrap();
 
@@ -7182,6 +7184,7 @@ mod tests {
             vec!["TAG_A".into(), "TAG_B".into()],
             vec![],
             "or".into(),
+            None,
             None,
             None,
         )
@@ -7211,6 +7214,7 @@ mod tests {
             "and".into(),
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -7236,7 +7240,7 @@ mod tests {
         insert_tag_assoc(&pool, "BLK_2", "TAG_WE").await;
 
         let result =
-            query_by_tags_inner(&pool, vec![], vec!["work/".into()], "or".into(), None, None)
+            query_by_tags_inner(&pool, vec![], vec!["work/".into()], "or".into(), None, None, None)
                 .await
                 .unwrap();
 

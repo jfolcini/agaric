@@ -85,43 +85,92 @@ pub struct TagCacheRow {
 /// Resolve a `TagExpr` into the set of matching `block_id`s.
 ///
 /// Deleted and conflict blocks are excluded at the leaf level.
+///
+/// When `include_inherited` is true, leaf resolution (Tag and Prefix) expands
+/// to include all descendants of directly-tagged blocks via a recursive CTE
+/// on `blocks.parent_id`.  This implements block-level tag inheritance (F-15).
 fn resolve_expr<'a>(
     pool: &'a SqlitePool,
     expr: &'a TagExpr,
+    include_inherited: bool,
 ) -> std::pin::Pin<
     Box<dyn std::future::Future<Output = Result<FxHashSet<String>, AppError>> + Send + 'a>,
 > {
     Box::pin(async move {
         match expr {
             TagExpr::Tag(tag_id) => {
-                let rows = sqlx::query_scalar!(
-                    "SELECT bt.block_id FROM block_tags bt \
-                     JOIN blocks b ON b.id = bt.block_id \
-                     WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
-                    tag_id
-                )
-                .fetch_all(pool)
-                .await?;
-                Ok(rows.into_iter().collect())
+                if include_inherited {
+                    let rows = sqlx::query_scalar::<_, String>(
+                        "WITH RECURSIVE tagged_tree AS ( \
+                             SELECT bt.block_id AS id \
+                             FROM block_tags bt \
+                             JOIN blocks b ON b.id = bt.block_id \
+                             WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+                             UNION ALL \
+                             SELECT b.id \
+                             FROM blocks b \
+                             JOIN tagged_tree tt ON b.parent_id = tt.id \
+                             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                         ) \
+                         SELECT DISTINCT id FROM tagged_tree",
+                    )
+                    .bind(tag_id)
+                    .fetch_all(pool)
+                    .await?;
+                    Ok(rows.into_iter().collect())
+                } else {
+                    let rows = sqlx::query_scalar!(
+                        "SELECT bt.block_id FROM block_tags bt \
+                         JOIN blocks b ON b.id = bt.block_id \
+                         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
+                        tag_id
+                    )
+                    .fetch_all(pool)
+                    .await?;
+                    Ok(rows.into_iter().collect())
+                }
             }
             TagExpr::Prefix(prefix) => {
                 // Single JOIN query: resolve all matching tags and collect
                 // their block_ids in one round-trip (avoids N+1 per-tag
                 // queries).
                 let escaped = format!("{}%", escape_like(prefix));
-                let rows = sqlx::query_scalar!(
-                    "SELECT DISTINCT bt.block_id \
-                     FROM tags_cache tc \
-                     JOIN block_tags bt ON bt.tag_id = tc.tag_id \
-                     JOIN blocks b ON b.id = bt.block_id \
-                     WHERE tc.name LIKE ?1 ESCAPE '\\' \
-                       AND b.deleted_at IS NULL AND b.is_conflict = 0",
-                    escaped
-                )
-                .fetch_all(pool)
-                .await?;
+                if include_inherited {
+                    let rows = sqlx::query_scalar::<_, String>(
+                        "WITH RECURSIVE tagged_tree AS ( \
+                             SELECT DISTINCT bt.block_id AS id \
+                             FROM tags_cache tc \
+                             JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+                             JOIN blocks b ON b.id = bt.block_id \
+                             WHERE tc.name LIKE ?1 ESCAPE '\\' \
+                               AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+                             UNION ALL \
+                             SELECT b.id \
+                             FROM blocks b \
+                             JOIN tagged_tree tt ON b.parent_id = tt.id \
+                             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                         ) \
+                         SELECT DISTINCT id FROM tagged_tree",
+                    )
+                    .bind(&escaped)
+                    .fetch_all(pool)
+                    .await?;
+                    Ok(rows.into_iter().collect())
+                } else {
+                    let rows = sqlx::query_scalar!(
+                        "SELECT DISTINCT bt.block_id \
+                         FROM tags_cache tc \
+                         JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+                         JOIN blocks b ON b.id = bt.block_id \
+                         WHERE tc.name LIKE ?1 ESCAPE '\\' \
+                           AND b.deleted_at IS NULL AND b.is_conflict = 0",
+                        escaped
+                    )
+                    .fetch_all(pool)
+                    .await?;
 
-                Ok(rows.into_iter().collect())
+                    Ok(rows.into_iter().collect())
+                }
             }
             TagExpr::And(exprs) => {
                 if exprs.is_empty() {
@@ -130,9 +179,10 @@ fn resolve_expr<'a>(
                 let mut iter = exprs.iter();
                 // Safe: is_empty() check above ensures at least one element
                 let mut result: FxHashSet<String> =
-                    resolve_expr(pool, iter.next().unwrap()).await?;
+                    resolve_expr(pool, iter.next().unwrap(), include_inherited).await?;
                 for e in iter {
-                    let set: FxHashSet<String> = resolve_expr(pool, e).await?;
+                    let set: FxHashSet<String> =
+                        resolve_expr(pool, e, include_inherited).await?;
                     result.retain(|id| set.contains(id));
                 }
                 Ok(result)
@@ -140,13 +190,15 @@ fn resolve_expr<'a>(
             TagExpr::Or(exprs) => {
                 let mut result: FxHashSet<String> = FxHashSet::default();
                 for e in exprs {
-                    let set: FxHashSet<String> = resolve_expr(pool, e).await?;
+                    let set: FxHashSet<String> =
+                        resolve_expr(pool, e, include_inherited).await?;
                     result.extend(set);
                 }
                 Ok(result)
             }
             TagExpr::Not(inner) => {
-                let inner_set: FxHashSet<String> = resolve_expr(pool, inner).await?;
+                let inner_set: FxHashSet<String> =
+                    resolve_expr(pool, inner, include_inherited).await?;
                 if inner_set.is_empty() {
                     // Not of empty set = all non-deleted blocks
                     let rows = sqlx::query_scalar::<_, String>(
@@ -184,6 +236,9 @@ fn resolve_expr<'a>(
 /// The result set is ordered by `id ASC` (ULID ~ chronological) with keyset
 /// cursor pagination.
 ///
+/// When `include_inherited` is true, leaf tag/prefix resolution includes
+/// descendants of directly-tagged blocks (block-level tag inheritance, F-15).
+///
 /// ## Implementation note: in-memory set operations
 ///
 /// The evaluation strategy collects all matching `block_id`s into in-memory
@@ -197,8 +252,9 @@ pub async fn eval_tag_query(
     pool: &SqlitePool,
     expr: &TagExpr,
     page: &PageRequest,
+    include_inherited: bool,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    let block_ids: FxHashSet<String> = resolve_expr(pool, expr).await?;
+    let block_ids: FxHashSet<String> = resolve_expr(pool, expr, include_inherited).await?;
     if block_ids.is_empty() {
         return Ok(PageResponse {
             items: vec![],
@@ -423,9 +479,10 @@ mod tests {
         insert_tag_assoc(&pool, "BLK_2", "TAG_A").await;
         // BLK_3 is NOT tagged
 
-        let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::Tag("TAG_A".into()))
-            .await
-            .unwrap();
+        let result: FxHashSet<String> =
+            resolve_expr(&pool, &TagExpr::Tag("TAG_A".into()), false)
+                .await
+                .unwrap();
 
         assert_eq!(result.len(), 2);
         assert!(result.contains("BLK_1"));
@@ -446,9 +503,10 @@ mod tests {
 
         soft_delete(&pool, "BLK_2").await;
 
-        let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::Tag("TAG_A".into()))
-            .await
-            .unwrap();
+        let result: FxHashSet<String> =
+            resolve_expr(&pool, &TagExpr::Tag("TAG_A".into()), false)
+                .await
+                .unwrap();
 
         assert_eq!(result.len(), 1);
         assert!(result.contains("BLK_1"));
@@ -467,9 +525,10 @@ mod tests {
 
         mark_conflict(&pool, "BLK_2").await;
 
-        let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::Tag("TAG_A".into()))
-            .await
-            .unwrap();
+        let result: FxHashSet<String> =
+            resolve_expr(&pool, &TagExpr::Tag("TAG_A".into()), false)
+                .await
+                .unwrap();
 
         assert_eq!(result.len(), 1);
         assert!(result.contains("BLK_1"));
@@ -479,9 +538,10 @@ mod tests {
     async fn resolve_tag_unknown_tag_returns_empty() {
         let (pool, _dir) = test_pool().await;
 
-        let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::Tag("NONEXISTENT".into()))
-            .await
-            .unwrap();
+        let result: FxHashSet<String> =
+            resolve_expr(&pool, &TagExpr::Tag("NONEXISTENT".into()), false)
+                .await
+                .unwrap();
 
         assert!(result.is_empty());
     }
@@ -513,9 +573,10 @@ mod tests {
         insert_tag_assoc(&pool, "BLK_3", "TAG_P").await;
 
         // Prefix "work/" should match both work/ sub-tags
-        let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::Prefix("work/".into()))
-            .await
-            .unwrap();
+        let result: FxHashSet<String> =
+            resolve_expr(&pool, &TagExpr::Prefix("work/".into()), false)
+                .await
+                .unwrap();
 
         assert_eq!(result.len(), 2);
         assert!(result.contains("BLK_1"));
@@ -530,9 +591,10 @@ mod tests {
         insert_block(&pool, "TAG_A", "tag", "alpha").await;
         insert_tag_cache(&pool, "TAG_A", "alpha", 1).await;
 
-        let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::Prefix("zzz_".into()))
-            .await
-            .unwrap();
+        let result: FxHashSet<String> =
+            resolve_expr(&pool, &TagExpr::Prefix("zzz_".into()), false)
+                .await
+                .unwrap();
 
         assert!(result.is_empty());
     }
@@ -552,9 +614,10 @@ mod tests {
         insert_tag_assoc(&pool, "BLK_1", "TAG_WM").await;
         insert_tag_assoc(&pool, "BLK_1", "TAG_WE").await;
 
-        let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::Prefix("work/".into()))
-            .await
-            .unwrap();
+        let result: FxHashSet<String> =
+            resolve_expr(&pool, &TagExpr::Prefix("work/".into()), false)
+                .await
+                .unwrap();
 
         // Should be deduplicated (union, not multi-set)
         assert_eq!(result.len(), 1);
@@ -585,7 +648,7 @@ mod tests {
             TagExpr::Tag("TAG_A".into()),
             TagExpr::Tag("TAG_B".into()),
         ]);
-        let result: FxHashSet<String> = resolve_expr(&pool, &expr).await.unwrap();
+        let result: FxHashSet<String> = resolve_expr(&pool, &expr, false).await.unwrap();
 
         assert_eq!(result.len(), 1);
         assert!(result.contains("BLK_1"));
@@ -595,7 +658,10 @@ mod tests {
     async fn resolve_and_empty_returns_empty() {
         let (pool, _dir) = test_pool().await;
 
-        let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::And(vec![])).await.unwrap();
+        let result: FxHashSet<String> =
+            resolve_expr(&pool, &TagExpr::And(vec![]), false)
+                .await
+                .unwrap();
         assert!(result.is_empty());
     }
 
@@ -616,7 +682,7 @@ mod tests {
             TagExpr::Tag("TAG_A".into()),
             TagExpr::Tag("TAG_B".into()),
         ]);
-        let result: FxHashSet<String> = resolve_expr(&pool, &expr).await.unwrap();
+        let result: FxHashSet<String> = resolve_expr(&pool, &expr, false).await.unwrap();
 
         assert!(result.is_empty());
     }
@@ -642,7 +708,7 @@ mod tests {
             TagExpr::Tag("TAG_A".into()),
             TagExpr::Tag("TAG_B".into()),
         ]);
-        let result: FxHashSet<String> = resolve_expr(&pool, &expr).await.unwrap();
+        let result: FxHashSet<String> = resolve_expr(&pool, &expr, false).await.unwrap();
 
         assert_eq!(result.len(), 2);
         assert!(result.contains("BLK_1"));
@@ -653,7 +719,10 @@ mod tests {
     async fn resolve_or_empty_returns_empty() {
         let (pool, _dir) = test_pool().await;
 
-        let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::Or(vec![])).await.unwrap();
+        let result: FxHashSet<String> =
+            resolve_expr(&pool, &TagExpr::Or(vec![]), false)
+                .await
+                .unwrap();
         assert!(result.is_empty());
     }
 
@@ -673,7 +742,7 @@ mod tests {
             TagExpr::Tag("TAG_A".into()),
             TagExpr::Tag("TAG_B".into()),
         ]);
-        let result: FxHashSet<String> = resolve_expr(&pool, &expr).await.unwrap();
+        let result: FxHashSet<String> = resolve_expr(&pool, &expr, false).await.unwrap();
 
         assert_eq!(result.len(), 1);
         assert!(result.contains("BLK_1"));
@@ -694,7 +763,7 @@ mod tests {
         insert_tag_assoc(&pool, "BLK_1", "TAG_A").await;
 
         let expr = TagExpr::Not(Box::new(TagExpr::Tag("TAG_A".into())));
-        let result: FxHashSet<String> = resolve_expr(&pool, &expr).await.unwrap();
+        let result: FxHashSet<String> = resolve_expr(&pool, &expr, false).await.unwrap();
 
         // BLK_2 and TAG_A itself should be in the complement (everything not tagged A)
         assert!(result.contains("BLK_2"));
@@ -714,7 +783,7 @@ mod tests {
         soft_delete(&pool, "BLK_2").await;
 
         let expr = TagExpr::Not(Box::new(TagExpr::Tag("TAG_A".into())));
-        let result: FxHashSet<String> = resolve_expr(&pool, &expr).await.unwrap();
+        let result: FxHashSet<String> = resolve_expr(&pool, &expr, false).await.unwrap();
 
         // BLK_2 is deleted, should not appear in universal set
         assert!(!result.contains("BLK_2"));
@@ -754,7 +823,7 @@ mod tests {
                 TagExpr::Tag("TAG_C".into()),
             ]),
         ]);
-        let result: FxHashSet<String> = resolve_expr(&pool, &expr).await.unwrap();
+        let result: FxHashSet<String> = resolve_expr(&pool, &expr, false).await.unwrap();
 
         assert_eq!(result.len(), 2);
         assert!(result.contains("BLK_1"));
@@ -783,7 +852,7 @@ mod tests {
 
         // Page 1: limit 2
         let page1 = PageRequest::new(None, Some(2)).unwrap();
-        let resp1 = eval_tag_query(&pool, &expr, &page1).await.unwrap();
+        let resp1 = eval_tag_query(&pool, &expr, &page1, false).await.unwrap();
 
         assert_eq!(resp1.items.len(), 2);
         assert_eq!(resp1.items[0].id, "BLK_A");
@@ -793,7 +862,7 @@ mod tests {
 
         // Page 2: continue from cursor
         let page2 = PageRequest::new(resp1.next_cursor, Some(2)).unwrap();
-        let resp2 = eval_tag_query(&pool, &expr, &page2).await.unwrap();
+        let resp2 = eval_tag_query(&pool, &expr, &page2, false).await.unwrap();
 
         assert_eq!(resp2.items.len(), 2);
         assert_eq!(resp2.items[0].id, "BLK_C");
@@ -802,7 +871,7 @@ mod tests {
 
         // Page 3: last page
         let page3 = PageRequest::new(resp2.next_cursor, Some(2)).unwrap();
-        let resp3 = eval_tag_query(&pool, &expr, &page3).await.unwrap();
+        let resp3 = eval_tag_query(&pool, &expr, &page3, false).await.unwrap();
 
         assert_eq!(resp3.items.len(), 1);
         assert_eq!(resp3.items[0].id, "BLK_E");
@@ -816,7 +885,7 @@ mod tests {
 
         let expr = TagExpr::Tag("NONEXISTENT".into());
         let page = PageRequest::new(None, Some(10)).unwrap();
-        let resp = eval_tag_query(&pool, &expr, &page).await.unwrap();
+        let resp = eval_tag_query(&pool, &expr, &page, false).await.unwrap();
 
         assert!(resp.items.is_empty());
         assert!(!resp.has_more);
@@ -833,7 +902,7 @@ mod tests {
 
         let expr = TagExpr::Tag("TAG_A".into());
         let page = PageRequest::new(None, Some(10)).unwrap();
-        let resp = eval_tag_query(&pool, &expr, &page).await.unwrap();
+        let resp = eval_tag_query(&pool, &expr, &page, false).await.unwrap();
 
         assert_eq!(resp.items.len(), 1);
         let row = &resp.items[0];
@@ -865,7 +934,7 @@ mod tests {
         .encode()
         .unwrap();
         let page = PageRequest::new(Some(cursor), Some(10)).unwrap();
-        let resp = eval_tag_query(&pool, &expr, &page).await.unwrap();
+        let resp = eval_tag_query(&pool, &expr, &page, false).await.unwrap();
 
         assert!(resp.items.is_empty());
         assert!(!resp.has_more);
@@ -1038,9 +1107,10 @@ mod tests {
 
         // Without escaping, "100%" would match both tags via LIKE '100%%'.
         // With escaping, "100%" matches only "100%_special" (literal %).
-        let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::Prefix("100%".into()))
-            .await
-            .unwrap();
+        let result: FxHashSet<String> =
+            resolve_expr(&pool, &TagExpr::Prefix("100%".into()), false)
+                .await
+                .unwrap();
 
         assert_eq!(
             result.len(),
@@ -1063,7 +1133,7 @@ mod tests {
         insert_block(&pool, "BLK_SOLO", "content", "only one").await;
         insert_tag_assoc(&pool, "BLK_SOLO", "TAG_SINGLE").await;
 
-        let result = resolve_expr(&pool, &TagExpr::Tag("TAG_SINGLE".into()))
+        let result = resolve_expr(&pool, &TagExpr::Tag("TAG_SINGLE".into()), false)
             .await
             .unwrap();
         assert_eq!(
@@ -1087,7 +1157,7 @@ mod tests {
         insert_block(&pool, "BLK_PD1", "content", "alpha work").await;
         insert_tag_assoc(&pool, "BLK_PD1", "TAG_PD1").await;
 
-        let result = resolve_expr(&pool, &TagExpr::Prefix("proj/".into()))
+        let result = resolve_expr(&pool, &TagExpr::Prefix("proj/".into()), false)
             .await
             .unwrap();
         assert_eq!(
@@ -1105,7 +1175,9 @@ mod tests {
     async fn resolve_expr_and_empty_direct() {
         let (pool, _dir) = test_pool().await;
 
-        let result = resolve_expr(&pool, &TagExpr::And(vec![])).await.unwrap();
+        let result = resolve_expr(&pool, &TagExpr::And(vec![]), false)
+            .await
+            .unwrap();
         assert!(result.is_empty(), "empty And must return empty set");
     }
 
@@ -1120,7 +1192,7 @@ mod tests {
         insert_tag_assoc(&pool, "BLK_ND1", "TAG_ND").await;
 
         let expr = TagExpr::Not(Box::new(TagExpr::Tag("TAG_ND".into())));
-        let result = resolve_expr(&pool, &expr).await.unwrap();
+        let result = resolve_expr(&pool, &expr, false).await.unwrap();
 
         assert!(
             !result.contains("BLK_ND1"),
@@ -1134,5 +1206,190 @@ mod tests {
             result.contains("TAG_ND"),
             "tag block itself should be in complement"
         );
+    }
+
+    // ======================================================================
+    // Tag inheritance (F-15)
+    // ======================================================================
+
+    /// Insert a block with an explicit parent_id.
+    async fn insert_child_block(
+        pool: &SqlitePool,
+        id: &str,
+        block_type: &str,
+        content: &str,
+        parent_id: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, ?, ?, ?, 1)",
+        )
+        .bind(id)
+        .bind(block_type)
+        .bind(content)
+        .bind(parent_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn resolve_tag_with_inheritance_includes_descendants() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create a page tagged with T1, and child blocks under it.
+        insert_block(&pool, "TAG_T1", "tag", "t1").await;
+        insert_block(&pool, "PAGE_A", "page", "tagged page").await;
+        insert_child_block(&pool, "CHILD_1", "content", "child one", "PAGE_A").await;
+        insert_child_block(&pool, "CHILD_2", "content", "child two", "PAGE_A").await;
+
+        insert_tag_assoc(&pool, "PAGE_A", "TAG_T1").await;
+
+        // With inheritance=true, all children should appear in T1 query.
+        let result_inherited =
+            resolve_expr(&pool, &TagExpr::Tag("TAG_T1".into()), true)
+                .await
+                .unwrap();
+
+        assert!(result_inherited.contains("PAGE_A"));
+        assert!(result_inherited.contains("CHILD_1"));
+        assert!(result_inherited.contains("CHILD_2"));
+        assert_eq!(result_inherited.len(), 3);
+
+        // With inheritance=false, only the page appears.
+        let result_direct =
+            resolve_expr(&pool, &TagExpr::Tag("TAG_T1".into()), false)
+                .await
+                .unwrap();
+
+        assert!(result_direct.contains("PAGE_A"));
+        assert!(!result_direct.contains("CHILD_1"));
+        assert!(!result_direct.contains("CHILD_2"));
+        assert_eq!(result_direct.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn resolve_tag_with_inheritance_multi_level() {
+        let (pool, _dir) = test_pool().await;
+
+        // Page → child → grandchild. Tag the page.
+        insert_block(&pool, "TAG_T2", "tag", "t2").await;
+        insert_block(&pool, "PAGE_B", "page", "root page").await;
+        insert_child_block(&pool, "CHILD_B1", "content", "child", "PAGE_B").await;
+        insert_child_block(&pool, "GRAND_B1", "content", "grandchild", "CHILD_B1").await;
+
+        insert_tag_assoc(&pool, "PAGE_B", "TAG_T2").await;
+
+        // All three levels should match with inheritance.
+        let result =
+            resolve_expr(&pool, &TagExpr::Tag("TAG_T2".into()), true)
+                .await
+                .unwrap();
+
+        assert!(result.contains("PAGE_B"));
+        assert!(result.contains("CHILD_B1"));
+        assert!(result.contains("GRAND_B1"));
+        assert_eq!(result.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn resolve_tag_with_inheritance_does_not_include_siblings() {
+        let (pool, _dir) = test_pool().await;
+
+        // Two pages, only one tagged. Children of the untagged page should NOT appear.
+        insert_block(&pool, "TAG_T3", "tag", "t3").await;
+        insert_block(&pool, "PAGE_C1", "page", "tagged page").await;
+        insert_block(&pool, "PAGE_C2", "page", "untagged page").await;
+        insert_child_block(&pool, "CHILD_C1", "content", "tagged child", "PAGE_C1").await;
+        insert_child_block(&pool, "CHILD_C2", "content", "untagged child", "PAGE_C2").await;
+
+        insert_tag_assoc(&pool, "PAGE_C1", "TAG_T3").await;
+
+        let result =
+            resolve_expr(&pool, &TagExpr::Tag("TAG_T3".into()), true)
+                .await
+                .unwrap();
+
+        assert!(result.contains("PAGE_C1"));
+        assert!(result.contains("CHILD_C1"));
+        assert!(!result.contains("PAGE_C2"));
+        assert!(!result.contains("CHILD_C2"));
+        assert_eq!(result.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn resolve_prefix_with_inheritance() {
+        let (pool, _dir) = test_pool().await;
+
+        // Same as resolve_tag_with_inheritance_includes_descendants but using Prefix.
+        insert_block(&pool, "TAG_WI", "tag", "work/inherit").await;
+        insert_tag_cache(&pool, "TAG_WI", "work/inherit", 1).await;
+
+        insert_block(&pool, "PAGE_D", "page", "work page").await;
+        insert_child_block(&pool, "CHILD_D1", "content", "work child", "PAGE_D").await;
+
+        insert_tag_assoc(&pool, "PAGE_D", "TAG_WI").await;
+
+        // With inheritance=true, descendants should be included.
+        let result_inherited =
+            resolve_expr(&pool, &TagExpr::Prefix("work/".into()), true)
+                .await
+                .unwrap();
+
+        assert!(result_inherited.contains("PAGE_D"));
+        assert!(result_inherited.contains("CHILD_D1"));
+        assert_eq!(result_inherited.len(), 2);
+
+        // Without inheritance, only the directly tagged block.
+        let result_direct =
+            resolve_expr(&pool, &TagExpr::Prefix("work/".into()), false)
+                .await
+                .unwrap();
+
+        assert!(result_direct.contains("PAGE_D"));
+        assert!(!result_direct.contains("CHILD_D1"));
+        assert_eq!(result_direct.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn eval_tag_query_with_inheritance_paginates() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create a tagged page with 4 children.
+        insert_block(&pool, "TAG_PG", "tag", "pg").await;
+        insert_block(&pool, "PAGE_PG", "page", "paginated page").await;
+        insert_tag_assoc(&pool, "PAGE_PG", "TAG_PG").await;
+
+        // Children with IDs that sort after PAGE_PG
+        for suffix in &["PG_C1", "PG_C2", "PG_C3", "PG_C4"] {
+            insert_child_block(&pool, suffix, "content", &format!("child {suffix}"), "PAGE_PG")
+                .await;
+        }
+
+        let expr = TagExpr::Tag("TAG_PG".into());
+
+        // Page 1: limit 2 (with inheritance)
+        let page1 = PageRequest::new(None, Some(2)).unwrap();
+        let resp1 = eval_tag_query(&pool, &expr, &page1, true).await.unwrap();
+        assert_eq!(resp1.items.len(), 2);
+        assert!(resp1.has_more);
+        assert!(resp1.next_cursor.is_some());
+
+        // Page 2: continue from cursor
+        let page2 = PageRequest::new(resp1.next_cursor, Some(2)).unwrap();
+        let resp2 = eval_tag_query(&pool, &expr, &page2, true).await.unwrap();
+        assert_eq!(resp2.items.len(), 2);
+        assert!(resp2.has_more);
+
+        // Page 3: last page (1 remaining)
+        let page3 = PageRequest::new(resp2.next_cursor, Some(2)).unwrap();
+        let resp3 = eval_tag_query(&pool, &expr, &page3, true).await.unwrap();
+        assert_eq!(resp3.items.len(), 1);
+        assert!(!resp3.has_more);
+        assert!(resp3.next_cursor.is_none());
+
+        // Total items across all pages = 5 (PAGE_PG + 4 children)
+        let total = resp1.items.len() + resp2.items.len() + resp3.items.len();
+        assert_eq!(total, 5);
     }
 }

@@ -226,6 +226,7 @@ export function queryByTags(params: {
   tagIds: string[]
   prefixes: string[]
   mode: string // 'and' | 'or'
+  includeInherited?: boolean | undefined
   cursor?: string | undefined
   limit?: number | undefined
 }): Promise<PageResponse<BlockRow>> {
@@ -233,6 +234,7 @@ export function queryByTags(params: {
     tagIds: params.tagIds,
     prefixes: params.prefixes,
     mode: params.mode,
+    includeInherited: params.includeInherited ?? null,
     cursor: params.cursor ?? null,
     limit: params.limit ?? null,
   })
