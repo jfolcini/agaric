@@ -1,3 +1,4 @@
+import { logger } from './logger'
 import type { BlockRow } from './tauri'
 import { createBlock, listBlocks, queryByProperty } from './tauri'
 
@@ -107,7 +108,7 @@ export async function insertTemplateBlocks(
       } catch {
         // Log warning but continue with remaining siblings.
         // Partial template is better than no template.
-        console.warn(`Template block copy failed for source ${child.id}, skipping`)
+        logger.warn('template-utils', `Template block copy failed for source ${child.id}, skipping`)
       }
     }
   }

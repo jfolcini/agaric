@@ -275,7 +275,7 @@ export function PropertyRowEditor({
                     <span className="truncate">{opt}</span>
                     <button
                       type="button"
-                      className="shrink-0 text-muted-foreground hover:text-destructive"
+                      className="shrink-0 text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
                       onClick={() => handleRemoveOption(opt)}
                       aria-label={t('pageProperty.removeOptionLabel', { option: opt })}
                     >

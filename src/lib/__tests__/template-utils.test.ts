@@ -225,8 +225,10 @@ describe('insertTemplateBlocks', () => {
     const createCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
     expect(createCalls).toHaveLength(3)
 
-    // Warning was logged for the failed block
-    expect(warnSpy).toHaveBeenCalledWith('Template block copy failed for source B, skipping')
+    // Warning was logged for the failed block (via structured logger)
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Template block copy failed for source B, skipping'),
+    )
 
     warnSpy.mockRestore()
   })

@@ -138,7 +138,7 @@ export function SourcePageFilter({
                 <button
                   key={page.pageId}
                   type="button"
-                  className="source-page-filter-item flex w-full items-center gap-2 rounded px-2 py-1 text-xs cursor-pointer hover:bg-accent/50"
+                  className="source-page-filter-item flex w-full items-center gap-2 rounded px-2 py-1 text-xs cursor-pointer hover:bg-accent/50 active:bg-accent/70"
                   onClick={(e) => handlePageClick(e, page.pageId)}
                   onKeyDown={(e) => handlePageKeyDown(e, page.pageId)}
                 >

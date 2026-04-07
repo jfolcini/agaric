@@ -1525,7 +1525,7 @@ describe('SortableBlock visibility controls', () => {
     expect(collapseBtn.className).not.toContain('opacity-0')
   })
 
-  it('drag handle has [@media(pointer:coarse)]:opacity-100 for touch devices', () => {
+  it('drag handle has [@media(pointer:coarse)]:hidden for touch devices', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1536,10 +1536,10 @@ describe('SortableBlock visibility controls', () => {
     )
 
     const handle = screen.getByRole('button', { name: /reorder block/i })
-    expect(handle.className).toContain('[@media(pointer:coarse)]:opacity-100')
+    expect(handle.className).toContain('[@media(pointer:coarse)]:hidden')
   })
 
-  it('history button has [@media(pointer:coarse)]:opacity-100 for touch devices', () => {
+  it('history button has [@media(pointer:coarse)]:hidden for touch devices', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1551,10 +1551,10 @@ describe('SortableBlock visibility controls', () => {
     )
 
     const historyBtn = screen.getByRole('button', { name: /block history/i })
-    expect(historyBtn.className).toContain('[@media(pointer:coarse)]:opacity-100')
+    expect(historyBtn.className).toContain('[@media(pointer:coarse)]:hidden')
   })
 
-  it('delete handle has [@media(pointer:coarse)]:opacity-100 for touch devices', () => {
+  it('delete handle has [@media(pointer:coarse)]:hidden for touch devices', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1566,7 +1566,7 @@ describe('SortableBlock visibility controls', () => {
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    expect(deleteBtn.className).toContain('[@media(pointer:coarse)]:opacity-100')
+    expect(deleteBtn.className).toContain('[@media(pointer:coarse)]:hidden')
   })
 
   it('priority badge is not rendered when no priority is set', () => {
@@ -3784,5 +3784,83 @@ describe('SortableBlock date pill tooltips', () => {
     expect(chip).toBeInTheDocument()
     expect(chip).toHaveAttribute('title', 'Scheduled Aug 15')
     expect(chip).toHaveAttribute('aria-label', 'Scheduled Aug 15')
+  })
+})
+
+describe('SortableBlock mobile gutter hidden (UX-21)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+  })
+
+  it('drag handle has [@media(pointer:coarse)]:hidden class', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_MOBILE"
+        content="mobile test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    const dragHandle = screen.getByTestId('drag-handle')
+    expect(dragHandle.className).toContain('[@media(pointer:coarse)]:hidden')
+    expect(dragHandle.className).not.toContain('[@media(pointer:coarse)]:opacity-100')
+    expect(dragHandle.className).not.toContain('[@media(pointer:coarse)]:pointer-events-auto')
+    expect(dragHandle.className).not.toContain('[@media(pointer:coarse)]:min-w-[44px]')
+  })
+
+  it('history button has [@media(pointer:coarse)]:hidden class', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_MOBILE"
+        content="mobile test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onShowHistory={vi.fn()}
+      />,
+    )
+
+    const historyBtn = screen.getByRole('button', { name: /block history/i })
+    expect(historyBtn.className).toContain('[@media(pointer:coarse)]:hidden')
+    expect(historyBtn.className).not.toContain('[@media(pointer:coarse)]:opacity-100')
+    expect(historyBtn.className).not.toContain('[@media(pointer:coarse)]:pointer-events-auto')
+    expect(historyBtn.className).not.toContain('[@media(pointer:coarse)]:min-w-[44px]')
+  })
+
+  it('delete button has [@media(pointer:coarse)]:hidden class', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_MOBILE"
+        content="mobile test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
+    expect(deleteBtn.className).toContain('[@media(pointer:coarse)]:hidden')
+    expect(deleteBtn.className).not.toContain('[@media(pointer:coarse)]:opacity-100')
+    expect(deleteBtn.className).not.toContain('[@media(pointer:coarse)]:pointer-events-auto')
+    expect(deleteBtn.className).not.toContain('[@media(pointer:coarse)]:min-w-[44px]')
+  })
+
+  it('gutter container has touch-collapse classes', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_MOBILE"
+        content="mobile test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+        onShowHistory={vi.fn()}
+      />,
+    )
+
+    const dragHandle = screen.getByTestId('drag-handle')
+    const gutterDiv = dragHandle.parentElement as HTMLElement
+    expect(gutterDiv.className).toContain('[@media(pointer:coarse)]:w-0')
+    expect(gutterDiv.className).toContain('[@media(pointer:coarse)]:overflow-hidden')
   })
 })

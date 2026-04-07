@@ -60,7 +60,7 @@ export function DuePanelFilters({
           'text-xs px-1.5 py-0.5 rounded border transition-colors',
           hideBeforeScheduled
             ? 'bg-primary/10 border-primary/30 text-primary'
-            : 'border-muted-foreground/20 text-muted-foreground hover:bg-accent/50',
+            : 'border-muted-foreground/20 text-muted-foreground hover:bg-accent/50 active:bg-accent/70',
         )}
         onClick={onToggleHideBeforeScheduled}
         title={

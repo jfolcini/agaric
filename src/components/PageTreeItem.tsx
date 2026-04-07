@@ -40,7 +40,7 @@ export function PageTreeItem({
     const leafId = node.pageId
     return (
       <div
-        className="group flex w-full items-center gap-3 rounded-lg py-1 text-left text-sm transition-colors hover:bg-accent/50"
+        className="group flex w-full items-center gap-3 rounded-lg py-1 text-left text-sm transition-colors hover:bg-accent/50 active:bg-accent/70"
         style={{ paddingLeft: `${depth * 16 + 12}px` }}
       >
         <button
@@ -81,7 +81,7 @@ export function PageTreeItem({
           <button
             type="button"
             onClick={() => !forceExpand && setExpanded(!expanded)}
-            className="flex-1 text-left px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 rounded flex items-center gap-1"
+            className="flex-1 text-left px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 active:bg-accent/70 rounded flex items-center gap-1"
           >
             <ChevronRight
               className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-90')}
@@ -125,13 +125,13 @@ export function PageTreeItem({
         <button
           type="button"
           onClick={() => !forceExpand && setExpanded(!expanded)}
-          className="px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 rounded flex items-center"
+          className="px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 active:bg-accent/70 rounded flex items-center"
         >
           <ChevronRight className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-90')} />
         </button>
         <button
           type="button"
-          className="flex-1 text-left px-1 py-1 text-sm hover:bg-accent/50 rounded truncate"
+          className="flex-1 text-left px-1 py-1 text-sm hover:bg-accent/50 active:bg-accent/70 rounded truncate"
           onClick={() => onNavigate(hybridId, node.fullPath)}
           title={node.fullPath}
         >

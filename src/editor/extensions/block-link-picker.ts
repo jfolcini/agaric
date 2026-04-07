@@ -12,6 +12,7 @@
 import { Extension, InputRule } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 import { Suggestion } from '@tiptap/suggestion'
+import { logger } from '../../lib/logger'
 import type { PickerItem } from '../SuggestionList'
 import { createSuggestionRenderer } from '../suggestion-renderer'
 
@@ -116,7 +117,9 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
                 editor.chain().focus().deleteRange(range).insertBlockLink(newId).run()
               })
               .catch((err) => {
-                console.error('Failed to create page for block link:', err)
+                logger.error('BlockLinkPicker', 'Failed to create page for block link', {
+                  error: String(err),
+                })
               })
           } else {
             editor.chain().focus().deleteRange(range).insertBlockLink(item.id).run()

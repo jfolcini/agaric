@@ -201,7 +201,7 @@ export function UnlinkedReferences({
             untitledLabel={t('unlinkedRefs.untitled')}
             defaultExpanded
             groupClassName="unlinked-references-group"
-            headerClassName="unlinked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1 text-sm font-medium hover:bg-accent/50 transition-colors"
+            headerClassName="unlinked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1 text-sm font-medium hover:bg-accent/50 active:bg-accent/70 transition-colors"
             listClassName="unlinked-references-blocks ml-4 mt-1 space-y-1"
             listAriaLabel={(title) => t('unlinkedRefs.mentionsFrom', { title })}
             {...(onNavigateToPage && {

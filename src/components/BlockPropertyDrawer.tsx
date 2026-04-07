@@ -341,7 +341,7 @@ export function PropertyRow({
         <Button
           variant="ghost"
           size="icon-xs"
-          className="shrink-0 text-muted-foreground hover:text-destructive"
+          className="shrink-0 text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
           aria-label={removeAriaLabel}
           onClick={onRemove}
         >

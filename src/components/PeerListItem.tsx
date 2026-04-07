@@ -43,7 +43,7 @@ export function PeerListItem({
   return (
     <div
       className="device-peer-item flex items-center justify-between rounded-lg
-        border bg-card p-4 transition-colors hover:bg-accent/50"
+        border bg-card p-4 transition-colors hover:bg-accent/50 active:bg-accent/70"
     >
       <div className="flex items-center gap-2 min-w-0">
         <Smartphone className="h-4 w-4 shrink-0 text-muted-foreground" />

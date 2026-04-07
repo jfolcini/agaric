@@ -117,7 +117,7 @@ export function TemplatesView(): React.ReactElement {
                 {filtered.map((tpl) => (
                   <li
                     key={tpl.id}
-                    className="group flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-accent/50 cursor-pointer"
+                    className="group flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-accent/50 active:bg-accent/70 cursor-pointer"
                   >
                     <TooltipProvider>
                       <Tooltip>

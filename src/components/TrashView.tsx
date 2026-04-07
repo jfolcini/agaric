@@ -92,7 +92,7 @@ export function TrashView(): React.ReactElement {
               <div
                 key={block.id}
                 role="listitem"
-                className="trash-item flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
+                className="trash-item flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50 active:bg-accent/70"
                 data-testid="trash-item"
               >
                 <div className="trash-item-content flex min-w-0 items-center gap-3 flex-wrap">

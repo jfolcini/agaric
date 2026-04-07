@@ -24,7 +24,7 @@ export function CollapsiblePanelHeader({
         className,
         'flex w-full items-center gap-2 rounded-md px-3 py-2',
         'text-sm font-semibold text-muted-foreground',
-        'hover:bg-accent/50 transition-colors',
+        'hover:bg-accent/50 active:bg-accent/70 transition-colors',
         'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
       )}
       aria-expanded={!collapsed}

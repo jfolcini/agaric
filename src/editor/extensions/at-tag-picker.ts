@@ -11,6 +11,7 @@
 import { Extension, InputRule } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 import { Suggestion } from '@tiptap/suggestion'
+import { logger } from '../../lib/logger'
 import type { PickerItem } from '../SuggestionList'
 import { createSuggestionRenderer } from '../suggestion-renderer'
 
@@ -103,7 +104,7 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
                 editor.chain().focus().deleteRange(range).insertTagRef(newId).run()
               })
               .catch((err) => {
-                console.error('Failed to create tag:', err)
+                logger.error('AtTagPicker', 'Failed to create tag', { error: String(err) })
               })
           } else {
             editor.chain().focus().deleteRange(range).insertTagRef(item.id).run()

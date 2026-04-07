@@ -53,7 +53,7 @@ export function PropertyChip({
       className={cn(
         'property-chip inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1',
         'bg-muted text-muted-foreground',
-        onClick && 'cursor-pointer hover:bg-accent/50 transition-colors',
+        onClick && 'cursor-pointer hover:bg-accent/50 active:bg-accent/70 transition-colors',
         className,
       )}
       data-testid="property-chip"

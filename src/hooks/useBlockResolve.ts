@@ -12,6 +12,7 @@
 
 import { useCallback, useRef } from 'react'
 import type { PickerItem } from '../editor/SuggestionList'
+import { logger } from '../lib/logger'
 import {
   createBlock,
   listBlocks,
@@ -110,7 +111,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // Never reject — the TipTap Suggestion plugin has no error handling
       // for async items callbacks.  A rejection silently prevents the popup
       // from opening (H-10 / H-11).
-      console.error('searchTags failed:', err)
+      logger.error('useBlockResolve', 'searchTags failed', { error: String(err) })
       return []
     }
   }, [])
@@ -204,7 +205,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // Never reject — the TipTap Suggestion plugin has no error handling
       // for async items callbacks.  A rejection silently prevents the popup
       // from opening (H-10 / H-11).
-      console.error('searchPages failed:', err)
+      logger.error('useBlockResolve', 'searchPages failed', { error: String(err) })
       return []
     }
   }, [])
@@ -235,7 +236,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
       }
       return results
     } catch (err) {
-      console.error('searchBlockRefs failed:', err)
+      logger.error('useBlockResolve', 'searchBlockRefs failed', { error: String(err) })
       return []
     }
   }, [])

@@ -77,7 +77,7 @@ export function ConflictListItem({
 
   return (
     <li
-      className="conflict-item flex items-start justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
+      className="conflict-item flex items-start justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50 active:bg-accent/70"
       data-testid="conflict-item"
     >
       <label

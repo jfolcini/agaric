@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
+import { logger } from '@/lib/logger'
 import { useBacklinkResolution } from '../hooks/useBacklinkResolution'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import type { NavigateToPageFn } from '../lib/block-events'
@@ -126,7 +127,7 @@ export function LinkedReferences({
     listPropertyKeys()
       .then(setPropertyKeys)
       .catch((e) => {
-        console.error(e)
+        logger.error('LinkedReferences', 'Failed to load property keys', { error: String(e) })
         toast.error(t('references.loadPropertiesFailed'))
       })
   }, [t])
@@ -136,7 +137,7 @@ export function LinkedReferences({
     listTagsByPrefix({ prefix: '' })
       .then((result) => setTags((result ?? []).map((t) => ({ id: t.tag_id, name: t.name }))))
       .catch((e) => {
-        console.error(e)
+        logger.error('LinkedReferences', 'Failed to load tags', { error: String(e) })
         toast.error(t('references.loadTagsFailed'))
       })
   }, [t])

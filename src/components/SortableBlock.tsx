@@ -272,7 +272,7 @@ function SortableBlockInner({
         <div
           className={cn(
             GUTTER_WIDTH,
-            'relative z-10 flex-shrink-0 flex items-center gap-1 justify-end',
+            'relative z-10 flex-shrink-0 flex items-center gap-1 justify-end [@media(pointer:coarse)]:w-0 [@media(pointer:coarse)]:overflow-hidden',
           )}
         >
           {/* Drag handle — far left */}
@@ -280,7 +280,7 @@ function SortableBlockInner({
             <TooltipTrigger asChild>
               <button
                 type="button"
-                className="drag-handle flex-shrink-0 cursor-grab p-0.5 text-muted-foreground hover:text-foreground opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto [@media(pointer:coarse)]:opacity-100 [@media(pointer:coarse)]:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+                className="drag-handle flex-shrink-0 cursor-grab p-0.5 text-muted-foreground hover:text-foreground opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto [@media(pointer:coarse)]:hidden group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring active:scale-95 touch-target [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
                 data-testid="drag-handle"
                 aria-label={t('block.reorder')}
                 {...attributes}
@@ -299,7 +299,7 @@ function SortableBlockInner({
             <button
               type="button"
               aria-label={t('block.history')}
-              className="flex-shrink-0 p-0.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-sm opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto [@media(pointer:coarse)]:opacity-100 [@media(pointer:coarse)]:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+              className="flex-shrink-0 p-0.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-sm opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto [@media(pointer:coarse)]:hidden group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring active:scale-95 touch-target [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
               onClick={() => onShowHistory(blockId)}
             >
               <Clock size={16} />
@@ -312,7 +312,7 @@ function SortableBlockInner({
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  className="delete-handle flex-shrink-0 p-0.5 text-muted-foreground hover:text-destructive rounded-sm hover:bg-destructive/10 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto [@media(pointer:coarse)]:opacity-100 [@media(pointer:coarse)]:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+                  className="delete-handle flex-shrink-0 p-0.5 text-muted-foreground hover:text-destructive rounded-sm hover:bg-destructive/10 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto [@media(pointer:coarse)]:hidden group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring active:scale-95 touch-target [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
                   aria-label={t('block.delete')}
                   onPointerDown={(e) => {
                     e.stopPropagation()

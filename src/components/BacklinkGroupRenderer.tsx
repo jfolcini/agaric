@@ -45,7 +45,7 @@ export function BacklinkGroupRenderer({
       onToggleGroup={onToggleGroup}
       untitledLabel={t('references.untitled')}
       groupClassName="linked-references-group"
-      headerClassName="linked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 transition-colors"
+      headerClassName="linked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 active:bg-accent/70 transition-colors"
       listClassName="linked-references-blocks ml-4 mt-1 space-y-1"
       listAriaLabel={(title) => t('references.backlinksFrom', { title })}
       {...(onNavigateToPage && {

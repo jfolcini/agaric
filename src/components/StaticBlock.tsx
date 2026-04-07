@@ -511,7 +511,7 @@ function StaticBlockInner({
               <button
                 key={att.id}
                 type="button"
-                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent/50 active:bg-accent/70 hover:text-foreground"
                 aria-label={`Open file ${att.filename}`}
                 onClick={(e) => {
                   e.stopPropagation()

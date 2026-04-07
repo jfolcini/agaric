@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
 import { truncateId } from '@/lib/format'
+import { logger } from '@/lib/logger'
 import { useSyncWithTimeout } from '../hooks/useSyncWithTimeout'
 import type { PeerRefRow } from '../lib/tauri'
 import { deletePeerRef, getDeviceId, listPeerRefs, startSync, updatePeerName } from '../lib/tauri'
@@ -72,7 +73,7 @@ export function DeviceManagement(): React.ReactElement {
       })
       setPeers(peerList)
     } catch (err) {
-      console.error('Failed to load device info:', err)
+      logger.error('DeviceManagement', 'Failed to load device info', { error: String(err) })
       setError('Failed to load device info')
     }
     setLoading(false)
@@ -88,7 +89,7 @@ export function DeviceManagement(): React.ReactElement {
       setPeers((prev) => prev.filter((p) => p.peer_id !== peerId))
       setUnpairPeerId(null)
     } catch (err) {
-      console.error('Failed to unpair device:', err)
+      logger.error('DeviceManagement', 'Failed to unpair device', { error: String(err) })
       setError('Failed to unpair device')
     }
   }, [])
@@ -107,7 +108,7 @@ export function DeviceManagement(): React.ReactElement {
           message === 'Sync timed out'
             ? 'Sync took too long — check your connection and try again'
             : message
-        console.error('Sync failed:', err)
+        logger.error('DeviceManagement', 'Sync failed', { error: String(err) })
         setError(displayMessage)
       }
       setSyncingPeerId(null)
@@ -126,7 +127,7 @@ export function DeviceManagement(): React.ReactElement {
           await startSync(peer.peer_id)
         })
       } catch (err) {
-        console.error(`Sync failed for ${peer.peer_id}:`, err)
+        logger.error('DeviceManagement', `Sync failed for ${peer.peer_id}`, { error: String(err) })
         failures.push(peer.device_name || truncateId(peer.peer_id))
       }
       setSyncingPeerId(null)

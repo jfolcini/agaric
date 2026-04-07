@@ -16,6 +16,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Spinner } from '@/components/ui/spinner'
+import { logger } from '@/lib/logger'
 import type { PeerRefRow } from '../lib/tauri'
 import {
   cancelPairing,
@@ -84,7 +85,7 @@ export function PairingDialog({
       setPeers(peerList)
       setCountdown(PAIRING_TIMEOUT_SECONDS)
     } catch (err) {
-      console.error('Failed to initialize pairing:', err)
+      logger.error('PairingDialog', 'Failed to initialize pairing', { error: String(err) })
       setError(`Failed to start pairing: ${String(err instanceof Error ? err.message : err)}`)
     }
     setLoading(false)
@@ -189,7 +190,7 @@ export function PairingDialog({
       toast.success(t('pairing.successMessage'))
       onOpenChange(false)
     } catch (err) {
-      console.error('Pairing failed:', err)
+      logger.error('PairingDialog', 'Pairing failed', { error: String(err) })
       setError(`Pairing failed: ${String(err instanceof Error ? err.message : err)}`)
     }
     setPairLoading(false)
@@ -242,7 +243,9 @@ export function PairingDialog({
 
   const handleCancel = useCallback(() => {
     // Cancel any in-progress pairing session
-    cancelPairing().catch((err) => console.error('Failed to cancel pairing:', err))
+    cancelPairing().catch((err) =>
+      logger.error('PairingDialog', 'Failed to cancel pairing', { error: String(err) }),
+    )
     setPairingInfo(null)
     setWords(['', '', '', ''])
     setError(null)
@@ -259,7 +262,7 @@ export function PairingDialog({
       setPeers((prev) => prev.filter((p) => p.peer_id !== peerId))
       setUnpairPeerId(null)
     } catch (err) {
-      console.error('Failed to unpair device:', err)
+      logger.error('PairingDialog', 'Failed to unpair device', { error: String(err) })
       setError(`Failed to unpair device: ${String(err instanceof Error ? err.message : err)}`)
     }
   }, [])

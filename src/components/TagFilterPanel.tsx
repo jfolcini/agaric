@@ -268,7 +268,7 @@ export function TagFilterPanel(): React.ReactElement {
             {filteredMatching.map((tag) => (
               <div
                 key={tag.tag_id}
-                className="flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-accent/50"
+                className="flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-accent/50 active:bg-accent/70"
               >
                 <span>
                   <HighlightPrefix text={tag.name} prefix={prefix} /> ({tag.usage_count})

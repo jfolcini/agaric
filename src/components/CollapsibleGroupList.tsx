@@ -65,7 +65,7 @@ export function CollapsibleGroupList<G extends GroupItem>({
               <div
                 className={
                   headerClassName ??
-                  'flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 transition-colors'
+                  'flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 active:bg-accent/70 transition-colors'
                 }
               >
                 <button
@@ -93,7 +93,7 @@ export function CollapsibleGroupList<G extends GroupItem>({
                 onClick={() => onToggleGroup(group.page_id)}
                 className={
                   headerClassName ??
-                  'flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 transition-colors'
+                  'flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 active:bg-accent/70 transition-colors'
                 }
                 aria-expanded={isExpanded}
               >

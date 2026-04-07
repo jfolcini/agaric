@@ -23,7 +23,7 @@ export function ChoiceValuePicker({
         return (
           <label
             key={choice}
-            className="flex items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-accent cursor-pointer"
+            className="flex items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-accent active:bg-accent/70 cursor-pointer"
           >
             <input
               type="checkbox"

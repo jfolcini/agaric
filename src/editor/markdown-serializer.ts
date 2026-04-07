@@ -9,6 +9,7 @@
  * Zero external dependencies. O(n) in both directions.
  */
 
+import { logger } from '../lib/logger'
 import type {
   BlockLevelNode,
   BlockLinkNode,
@@ -232,7 +233,7 @@ function serializeInlineNodes(nodes: readonly InlineNode[]): string {
       result += emitCloseAll(activeMarks)
       activeMarks.clear()
       const unknown = child as { type: string }
-      console.warn(`[serializer] unknown inline node type: "${unknown.type}" — stripped`)
+      logger.warn('serializer', `unknown inline node type: "${unknown.type}" — stripped`)
     }
   }
 
@@ -335,8 +336,9 @@ export function serialize(doc: DocNode): string {
       if (node.type === 'codeBlock') return serializeCodeBlock(node)
       if (node.type === 'blockquote') return serializeBlockquote(node)
       if (node.type === 'table') return serializeTable(node)
-      console.warn(
-        `[serializer] unknown top-level node type: "${(node as { type: string }).type}" — stripped`,
+      logger.warn(
+        'serializer',
+        `unknown top-level node type: "${(node as { type: string }).type}" — stripped`,
       )
       return ''
     })
