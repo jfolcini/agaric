@@ -1,9 +1,9 @@
 # Session Log
 
-## Session 237 — 2026-04-07 — Batches 84-89: 38 REVIEW-LATER items resolved
+## Session 237 — 2026-04-07 — Batches 84-90: 39 REVIEW-LATER items resolved
 
 ### Summary
-Resolved 38 REVIEW-LATER items across 6 batches. **Batch 84 (Rust, 7):** B-3/B-4/S-1/S-2/P-1/M-3/T-5. **Batch 85 (a11y, 6):** UX-1/2/3/6/P-3/M-2. **Batch 86 (components, 12):** UX-8/9/10/11/12/13/14/17/18/19/20/P-2. **Batch 87 (touch/logging/tests, 5):** UX-15/16/21/M-4/T-4. **Batch 88 (bugs/design/i18n, 5):** B-5/B-6/UX-4/UX-5/UX-7. **Batch 89 (mobile/tests, 3):** UX-22/UX-23/T-3. ~130 files changed, ~110 new tests. 1611 Rust + 4542 frontend tests pass. REVIEW-LATER: 41→4 items.
+Resolved 39 REVIEW-LATER items across 7 batches. **Batch 84 (Rust, 7):** B-3/B-4/S-1/S-2/P-1/M-3/T-5. **Batch 85 (a11y, 6):** UX-1/2/3/6/P-3/M-2. **Batch 86 (components, 12):** UX-8/9/10/11/12/13/14/17/18/19/20/P-2. **Batch 87 (touch/logging/tests, 5):** UX-15/16/21/M-4/T-4. **Batch 88 (bugs/design/i18n, 5):** B-5/B-6/UX-4/UX-5/UX-7. **Batch 89 (mobile/tests, 3):** UX-22/UX-23/T-3. **Batch 90 (feature, 1):** F-18. ~140 files changed, ~115 new tests. 1613 Rust + 4545 frontend tests pass. REVIEW-LATER: 41→3 items.
 
 ### Batch 84 — Rust backend fixes
 
@@ -123,6 +123,22 @@ Resolved 38 REVIEW-LATER items across 6 batches. **Batch 84 (Rust, 7):** B-3/B-4
 | BlockInlineControls.test.tsx | UX-22: 2 new tests (vertical stacking classes, min-w removal) |
 | SortableBlock.test.tsx | UX-22: 2 new tests (items-start, content flex-1) |
 | REVIEW-LATER.md | T-3 verified resolved (178 existing tests). Removed T-3/UX-22/UX-23. 6→4 items |
+
+### Batch 90 — F-18 draft autosave wiring
+
+**Commit:** ecc8389
+
+| Area | Change |
+|------|--------|
+| draft.rs | Added `specta::Type` derive to `Draft` struct |
+| commands.rs | Added `list_drafts` command (ReadPool) + `list_drafts_inner` + test |
+| lib.rs | Registered list_drafts in invoke_handler + specta builder |
+| bindings.ts | Auto-regenerated with Draft type + listDrafts binding |
+| tauri.ts | Added `listDrafts()` wrapper returning `Promise<Draft[]>` |
+| EditableBlock.tsx | Wired useDraftAutosave: 500ms content polling, discardDraft on blur |
+| App.tsx | Boot recovery: auto-flush orphaned drafts via listDrafts + flushDraft |
+| EditableBlock.test.tsx | 3 new tests: saveDraft timing, deleteDraft on blur, flushDraft on unmount |
+| REVIEW-LATER.md | Removed F-18. 4→3 items |
 
 ## Session 236 — 2026-04-06 — Fix B-1/B-2, F-16 sticky headers, REVIEW-LATER updates
 
