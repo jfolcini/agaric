@@ -1,5 +1,38 @@
 # Session Log
 
+## Session 244 — 2026-04-07 — Batch 98: 6 maintenance + bug fixes resolved (14→8 remaining)
+
+### Summary
+Resolved 6 REVIEW-LATER items: C-1, M-7, M-11, M-13, B-11, B-21. Mix of dead code cleanup, component extraction, pattern adoption, ScrollArea migration, and editor bug fixes. 5 parallel build subagents + orchestrator C-1 fix. 3 technical review subagents (all PASS). 36 files changed, 1525 insertions, 1007 deletions. 4663 tests pass. REVIEW-LATER: 14→8.
+
+### Batch 98 — Maintenance + bug fixes
+
+**Commit:** 3327fc0
+
+| Area | Change |
+|------|--------|
+| stores/blocks.ts | C-1: Removed unused `pendingFocusId`, `consumePendingFocus` from BlockStore |
+| blocks.test.ts | C-1: Removed 2 consumePendingFocus tests, cleaned beforeEach resets |
+| BlockTree.test.tsx | C-1: Removed `pendingFocusId: null` from store reset |
+| src/__tests__/AGENTS.md | C-1: Updated example to remove pendingFocusId reference |
+| AlertSection.tsx | M-11: NEW — shared component parameterized by variant/title/showPriorityBadge |
+| OverdueSection.tsx | M-11: Rewritten as thin wrapper (78→34 lines) |
+| UpcomingSection.tsx | M-11: Rewritten as thin wrapper (77→28 lines) |
+| AlertSection.test.tsx | M-11: NEW — 15 tests (both variants, empty, badges, sorting, a11y) |
+| 12 component files | M-7: Replaced raw `overflow-auto` with `<ScrollArea>` wrapper |
+| 4 test files | M-7: Updated assertions for `data-slot="scroll-area"` |
+| LinkedReferences.tsx | M-13: Adopted ListViewState pattern |
+| UnlinkedReferences.tsx | M-13: Adopted ListViewState pattern |
+| DuePanel.tsx | M-13: Adopted ListViewState pattern |
+| DonePanel.tsx | M-13: Adopted ListViewState pattern |
+| HistoryPanel.tsx | M-13: Adopted ListViewState pattern |
+| 3 test files | M-13: Updated/added loading state assertions |
+| page-blocks.ts | B-11: `load()` preserves focused block content during sync reload |
+| page-blocks.test.ts | B-11: 3 new tests (preserve focused, update non-focused, no-focus normal) |
+| useBlockKeyboardHandlers.ts | B-21: Added `discardDraft` param, calls before unmount on Escape |
+| BlockTree.tsx | B-21: Created `handleDiscardDraft` callback, passed to keyboard handlers |
+| useBlockKeyboardHandlers.test.ts | B-21: 3 new tests (call order, unconditional call, null guard) |
+
 ## Session 243 — 2026-04-07 — Batch 97: 8 frontend consistency items resolved (22→14 remaining)
 
 ### Summary
