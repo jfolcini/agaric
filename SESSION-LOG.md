@@ -1,5 +1,21 @@
 # Session Log
 
+## Session 250 — 2026-04-07 — Batch 104: T-6 error path tests final batch (4 components)
+
+### Summary
+Added 14 error path tests to the last 4 components with meaningful invoke calls: useBlockAttachments (3), useBlockTags (4), PeerListItem (5), AgendaFilterBuilder (2). T-6 critical paths are now complete: 22 components with error coverage, 110 new error tests across 4 batches (sessions 247-250). Remaining ~64 files are pure UI with 0-2 invoke calls. 4 parallel build subagents. 4 files changed, 328 insertions. 5030 tests pass.
+
+### Batch 104
+
+**Commit:** aa6b8ba
+
+| Test File | New Tests | Error Paths Covered |
+|-----------|-----------|-------------------|
+| useBlockAttachments.test.ts | 3 | List/add/delete rejection with state preservation |
+| useBlockTags.test.ts | 4 | addTag, removeTag, createBlock failure, addTag-after-create |
+| PeerListItem.test.tsx | 5 | setPeerAddress rejection, success, prompt cancel/empty, args |
+| AgendaFilterBuilder.test.tsx | 2 | Tag search failure, property picker failure |
+
 ## Session 249 — 2026-04-07 — Batch 103: T-6 error path tests batch 3 (6 more components)
 
 ### Summary
