@@ -1,5 +1,31 @@
 # Session Log
 
+## Session 245 — 2026-04-07 — Batch 99: M-14, T-6 partial, M-6 partial resolved (8→6 remaining)
+
+### Summary
+Resolved M-14 (collapse prop naming), partial T-6 (3 axe audits + 5 journal test files = 73 new tests), partial M-6 (15/25 UI primitives forwardRef). Also considered M-12 resolved via M-13 ListViewState adoption from session 244. 5 parallel build subagents + orchestrator axe fixes. 2 technical review subagents (all PASS). 40 files changed, 2544 insertions, 231 deletions. 4788 tests pass. REVIEW-LATER: 8→6.
+
+### Batch 99
+
+**Commit:** 772c7ba
+
+| Area | Change |
+|------|--------|
+| CollapsiblePanelHeader.tsx | M-14: `collapsed` prop renamed to `isCollapsed` |
+| 5 consumer files | M-14: Updated `collapsed=` to `isCollapsed=` on CollapsiblePanelHeader |
+| CollapsiblePanelHeader.test.tsx | M-14: All prop references updated |
+| ListViewState.test.tsx | T-6: Added 2 axe audit tests |
+| AddPropertyPopover.test.tsx | T-6: Added axe audit test |
+| BuiltinDateFields.test.tsx | T-6: Added axe audit test |
+| DailyView.test.tsx | T-6: NEW — 7 tests (render, props, callbacks, axe) |
+| WeeklyView.test.tsx | T-6: NEW — 9 tests (7 days, heading levels, dividers, reactivity, axe) |
+| MonthlyView.test.tsx | T-6: NEW — 10 tests (day counts, heading levels, dividers, reactivity, axe) |
+| DaySection.test.tsx | T-6: NEW — 30 tests (render, modes, navigation, badges, empty states, axe) |
+| AgendaView.test.tsx | T-6: NEW — 17 tests (filters, pagination, sort, loading, error, axe) |
+| 8 simple UI primitives | M-6: forwardRef + displayName (input, badge, card-button, card, label, list-item, separator, skeleton) |
+| 7 simple UI primitives | M-6: forwardRef + displayName (popover-menu-item, spinner, section-title, alert-list-item, priority-badge, status-badge, close-button) |
+| 10 test files | M-6: ref forwarding tests + new test files for badge, card, separator, skeleton, section-title |
+
 ## Session 244 — 2026-04-07 — Batch 98: 6 maintenance + bug fixes resolved (14→8 remaining)
 
 ### Summary
