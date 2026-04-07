@@ -1,9 +1,9 @@
 # Session Log
 
-## Session 237 — 2026-04-07 — Batches 84-87: 30 REVIEW-LATER items resolved
+## Session 237 — 2026-04-07 — Batches 84-88: 35 REVIEW-LATER items resolved
 
 ### Summary
-Resolved 30 REVIEW-LATER items across 4 batches. **Batch 84 (Rust, 7):** B-3/B-4/S-1/S-2/P-1/M-3/T-5. **Batch 85 (a11y, 6):** UX-1/2/3/6/P-3/M-2. **Batch 86 (components, 12):** UX-8/9/10/11/12/13/14/17/18/19/20/P-2. **Batch 87 (touch/logging/tests, 5):** UX-15/16/21/M-4/T-4. 89 files changed, 92 new tests. 1611 Rust + 4524 frontend tests pass. REVIEW-LATER: 41→12 items.
+Resolved 35 REVIEW-LATER items across 5 batches. **Batch 84 (Rust, 7):** B-3/B-4/S-1/S-2/P-1/M-3/T-5. **Batch 85 (a11y, 6):** UX-1/2/3/6/P-3/M-2. **Batch 86 (components, 12):** UX-8/9/10/11/12/13/14/17/18/19/20/P-2. **Batch 87 (touch/logging/tests, 5):** UX-15/16/21/M-4/T-4. **Batch 88 (bugs/design/i18n, 5):** B-5/B-6/UX-4/UX-5/UX-7. 120 files changed, 95 new tests. 1611 Rust + 4527 frontend tests pass. REVIEW-LATER: 41→7 items.
 
 ### Batch 84 — Rust backend fixes
 
@@ -92,6 +92,23 @@ Resolved 30 REVIEW-LATER items across 4 batches. **Batch 84 (Rust, 7):** B-3/B-4
 | logger.test.ts | M-4: 12 new tests (format, filtering, setLogLevel, console mapping) |
 | 8 source files | M-4: Replaced `console.error/warn` with `logger.error/warn` (DeviceManagement, PairingDialog, LinkedReferences, useBlockResolve, markdown-serializer, at-tag-picker, block-link-picker, template-utils) |
 | date-utils.property.test.ts | T-4: NEW — 13 property-based tests using fast-check (parseDate safety/round-trip, formatDate invariants, formatCompactDate, isDateFormattedPage) |
+
+### Batch 88 — Editor bugs, semantic colors, i18n, icon sizing
+
+**Commit:** d4e1ee0
+
+| Area | Change |
+|------|--------|
+| EditableBlock.tsx | B-5+B-6: Wrap edit()/splitBlock() in handleBlur with flushSync() — ensures store renders before editor unmounts |
+| EditableBlock.test.tsx | 3 new tests: call ordering, split ordering, content preservation regression |
+| KeyboardShortcuts.tsx | UX-4: All ~86 hardcoded English strings → t() i18n calls |
+| i18n.ts | UX-4: Added 86 keyboard.* translation keys (categories, conditions, descriptions, syntax) |
+| i18n.test.ts | Updated key convention regex to support 3-level namespaces |
+| index.css | UX-5: 38 new semantic CSS custom properties (OKLch, light+dark themes) for op types, dates, alerts, tasks, highlight, sync |
+| 10 consumer files | UX-5: Replaced hardcoded Tailwind colors with semantic tokens |
+| 14 component files | UX-7: All lucide-react size={N} props → Tailwind h-/w- classes |
+| BlockTree.tsx | UX-7: Fixed trailing parse error (duplicate content removed) |
+| 3 test files | Updated assertions for semantic color class names |
 
 ## Session 236 — 2026-04-06 — Fix B-1/B-2, F-16 sticky headers, REVIEW-LATER updates
 
