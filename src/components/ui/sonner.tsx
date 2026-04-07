@@ -1,8 +1,10 @@
+import * as React from 'react'
 import { Toaster as Sonner, type ToasterProps } from 'sonner'
 
-function Toaster({ ...props }: ToasterProps) {
+const Toaster = React.forwardRef<HTMLElement, ToasterProps>(({ ...props }, ref) => {
   return (
     <Sonner
+      ref={ref}
       className="toaster group"
       style={
         {
@@ -14,6 +16,7 @@ function Toaster({ ...props }: ToasterProps) {
       {...props}
     />
   )
-}
+})
+Toaster.displayName = 'Toaster'
 
 export { Toaster }

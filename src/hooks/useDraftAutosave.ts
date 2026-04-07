@@ -54,7 +54,12 @@ export function useDraftAutosave(blockId: string | null, content: string) {
     versionRef.current++ // invalidate any pending save
     if (timerRef.current) clearTimeout(timerRef.current)
     if (blockIdRef.current) {
-      deleteDraft(blockIdRef.current).catch(() => {})
+      deleteDraft(blockIdRef.current).catch((err: unknown) => {
+        logger.warn('useDraftAutosave', 'deleteDraft failed during discard', {
+          blockId: blockIdRef.current ?? '',
+          error: String(err),
+        })
+      })
     }
   }
 

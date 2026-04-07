@@ -25,6 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { logger } from '@/lib/logger'
 import { formatPropertyName } from '@/lib/property-utils'
 import type { BlockRow, PropertyDefinition, PropertyRow } from '../lib/tauri'
 import { listBlocks, setProperty, updatePropertyDefOptions } from '../lib/tauri'
@@ -122,7 +123,11 @@ export function PropertyRowEditor({
       const updatedDef = await updatePropertyDefOptions(def.key, JSON.stringify(editingOptions))
       onDefUpdated?.(updatedDef)
       setEditOptionsOpen(false)
-    } catch {
+    } catch (err) {
+      logger.error('PropertyRowEditor', 'Failed to update select options', {
+        key: def?.key ?? '',
+        error: String(err),
+      })
       toast.error(t('pageProperty.updateOptionsFailed'))
     }
   }, [def, editingOptions, onDefUpdated, t])
@@ -137,7 +142,10 @@ export function PropertyRowEditor({
     setRefPickerOpen(true)
     listBlocks({ blockType: 'page', limit: 500 })
       .then((res) => setRefPages(res.items))
-      .catch(() => {
+      .catch((err: unknown) => {
+        logger.error('PropertyRowEditor', 'Failed to load pages for ref picker', {
+          error: String(err),
+        })
         toast.error(t('pageProperty.loadPagesFailed'))
         setRefPages([])
       })
@@ -154,7 +162,12 @@ export function PropertyRowEditor({
       try {
         await setProperty({ blockId, key: prop.key, valueRef: page.id })
         onRefSaved?.()
-      } catch {
+      } catch (err) {
+        logger.error('PropertyRowEditor', 'Failed to save ref property', {
+          blockId,
+          key: prop.key,
+          error: String(err),
+        })
         toast.error(t('pageProperty.saveFailed'))
       }
       setRefPickerOpen(false)

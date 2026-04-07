@@ -2,6 +2,7 @@ import { AlertCircle } from 'lucide-react'
 import React from 'react'
 import { Button } from '@/components/ui/button'
 import i18n from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 
 interface FeatureErrorBoundaryProps {
@@ -29,7 +30,10 @@ export class FeatureErrorBoundary extends React.Component<
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
-    console.error(`[${this.props.name}]`, error, errorInfo)
+    logger.error(this.props.name, error.message, {
+      stack: error.stack ?? '',
+      componentStack: errorInfo.componentStack ?? '',
+    })
   }
 
   handleRetry = () => {

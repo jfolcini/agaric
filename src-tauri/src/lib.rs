@@ -169,6 +169,9 @@ pub fn run() {
         commands::flush_draft,
         commands::delete_draft,
         commands::list_drafts,
+        // Frontend logging (F-19)
+        commands::log_frontend,
+        commands::get_log_dir,
     ]);
 
     tauri::Builder::default()
@@ -381,6 +384,9 @@ mod specta_tests {
             crate::commands::flush_draft,
             crate::commands::delete_draft,
             crate::commands::list_drafts,
+            // Frontend logging (F-19)
+            crate::commands::log_frontend,
+            crate::commands::get_log_dir,
         ])
     }
 

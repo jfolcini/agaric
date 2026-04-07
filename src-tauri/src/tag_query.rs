@@ -181,8 +181,7 @@ fn resolve_expr<'a>(
                 let mut result: FxHashSet<String> =
                     resolve_expr(pool, iter.next().unwrap(), include_inherited).await?;
                 for e in iter {
-                    let set: FxHashSet<String> =
-                        resolve_expr(pool, e, include_inherited).await?;
+                    let set: FxHashSet<String> = resolve_expr(pool, e, include_inherited).await?;
                     result.retain(|id| set.contains(id));
                 }
                 Ok(result)
@@ -190,8 +189,7 @@ fn resolve_expr<'a>(
             TagExpr::Or(exprs) => {
                 let mut result: FxHashSet<String> = FxHashSet::default();
                 for e in exprs {
-                    let set: FxHashSet<String> =
-                        resolve_expr(pool, e, include_inherited).await?;
+                    let set: FxHashSet<String> = resolve_expr(pool, e, include_inherited).await?;
                     result.extend(set);
                 }
                 Ok(result)
@@ -479,10 +477,9 @@ mod tests {
         insert_tag_assoc(&pool, "BLK_2", "TAG_A").await;
         // BLK_3 is NOT tagged
 
-        let result: FxHashSet<String> =
-            resolve_expr(&pool, &TagExpr::Tag("TAG_A".into()), false)
-                .await
-                .unwrap();
+        let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::Tag("TAG_A".into()), false)
+            .await
+            .unwrap();
 
         assert_eq!(result.len(), 2);
         assert!(result.contains("BLK_1"));
@@ -503,10 +500,9 @@ mod tests {
 
         soft_delete(&pool, "BLK_2").await;
 
-        let result: FxHashSet<String> =
-            resolve_expr(&pool, &TagExpr::Tag("TAG_A".into()), false)
-                .await
-                .unwrap();
+        let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::Tag("TAG_A".into()), false)
+            .await
+            .unwrap();
 
         assert_eq!(result.len(), 1);
         assert!(result.contains("BLK_1"));
@@ -525,10 +521,9 @@ mod tests {
 
         mark_conflict(&pool, "BLK_2").await;
 
-        let result: FxHashSet<String> =
-            resolve_expr(&pool, &TagExpr::Tag("TAG_A".into()), false)
-                .await
-                .unwrap();
+        let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::Tag("TAG_A".into()), false)
+            .await
+            .unwrap();
 
         assert_eq!(result.len(), 1);
         assert!(result.contains("BLK_1"));
@@ -591,10 +586,9 @@ mod tests {
         insert_block(&pool, "TAG_A", "tag", "alpha").await;
         insert_tag_cache(&pool, "TAG_A", "alpha", 1).await;
 
-        let result: FxHashSet<String> =
-            resolve_expr(&pool, &TagExpr::Prefix("zzz_".into()), false)
-                .await
-                .unwrap();
+        let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::Prefix("zzz_".into()), false)
+            .await
+            .unwrap();
 
         assert!(result.is_empty());
     }
@@ -658,10 +652,9 @@ mod tests {
     async fn resolve_and_empty_returns_empty() {
         let (pool, _dir) = test_pool().await;
 
-        let result: FxHashSet<String> =
-            resolve_expr(&pool, &TagExpr::And(vec![]), false)
-                .await
-                .unwrap();
+        let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::And(vec![]), false)
+            .await
+            .unwrap();
         assert!(result.is_empty());
     }
 
@@ -719,10 +712,9 @@ mod tests {
     async fn resolve_or_empty_returns_empty() {
         let (pool, _dir) = test_pool().await;
 
-        let result: FxHashSet<String> =
-            resolve_expr(&pool, &TagExpr::Or(vec![]), false)
-                .await
-                .unwrap();
+        let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::Or(vec![]), false)
+            .await
+            .unwrap();
         assert!(result.is_empty());
     }
 
@@ -1107,10 +1099,9 @@ mod tests {
 
         // Without escaping, "100%" would match both tags via LIKE '100%%'.
         // With escaping, "100%" matches only "100%_special" (literal %).
-        let result: FxHashSet<String> =
-            resolve_expr(&pool, &TagExpr::Prefix("100%".into()), false)
-                .await
-                .unwrap();
+        let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::Prefix("100%".into()), false)
+            .await
+            .unwrap();
 
         assert_eq!(
             result.len(),
@@ -1246,10 +1237,9 @@ mod tests {
         insert_tag_assoc(&pool, "PAGE_A", "TAG_T1").await;
 
         // With inheritance=true, all children should appear in T1 query.
-        let result_inherited =
-            resolve_expr(&pool, &TagExpr::Tag("TAG_T1".into()), true)
-                .await
-                .unwrap();
+        let result_inherited = resolve_expr(&pool, &TagExpr::Tag("TAG_T1".into()), true)
+            .await
+            .unwrap();
 
         assert!(result_inherited.contains("PAGE_A"));
         assert!(result_inherited.contains("CHILD_1"));
@@ -1257,10 +1247,9 @@ mod tests {
         assert_eq!(result_inherited.len(), 3);
 
         // With inheritance=false, only the page appears.
-        let result_direct =
-            resolve_expr(&pool, &TagExpr::Tag("TAG_T1".into()), false)
-                .await
-                .unwrap();
+        let result_direct = resolve_expr(&pool, &TagExpr::Tag("TAG_T1".into()), false)
+            .await
+            .unwrap();
 
         assert!(result_direct.contains("PAGE_A"));
         assert!(!result_direct.contains("CHILD_1"));
@@ -1281,10 +1270,9 @@ mod tests {
         insert_tag_assoc(&pool, "PAGE_B", "TAG_T2").await;
 
         // All three levels should match with inheritance.
-        let result =
-            resolve_expr(&pool, &TagExpr::Tag("TAG_T2".into()), true)
-                .await
-                .unwrap();
+        let result = resolve_expr(&pool, &TagExpr::Tag("TAG_T2".into()), true)
+            .await
+            .unwrap();
 
         assert!(result.contains("PAGE_B"));
         assert!(result.contains("CHILD_B1"));
@@ -1305,10 +1293,9 @@ mod tests {
 
         insert_tag_assoc(&pool, "PAGE_C1", "TAG_T3").await;
 
-        let result =
-            resolve_expr(&pool, &TagExpr::Tag("TAG_T3".into()), true)
-                .await
-                .unwrap();
+        let result = resolve_expr(&pool, &TagExpr::Tag("TAG_T3".into()), true)
+            .await
+            .unwrap();
 
         assert!(result.contains("PAGE_C1"));
         assert!(result.contains("CHILD_C1"));
@@ -1331,20 +1318,18 @@ mod tests {
         insert_tag_assoc(&pool, "PAGE_D", "TAG_WI").await;
 
         // With inheritance=true, descendants should be included.
-        let result_inherited =
-            resolve_expr(&pool, &TagExpr::Prefix("work/".into()), true)
-                .await
-                .unwrap();
+        let result_inherited = resolve_expr(&pool, &TagExpr::Prefix("work/".into()), true)
+            .await
+            .unwrap();
 
         assert!(result_inherited.contains("PAGE_D"));
         assert!(result_inherited.contains("CHILD_D1"));
         assert_eq!(result_inherited.len(), 2);
 
         // Without inheritance, only the directly tagged block.
-        let result_direct =
-            resolve_expr(&pool, &TagExpr::Prefix("work/".into()), false)
-                .await
-                .unwrap();
+        let result_direct = resolve_expr(&pool, &TagExpr::Prefix("work/".into()), false)
+            .await
+            .unwrap();
 
         assert!(result_direct.contains("PAGE_D"));
         assert!(!result_direct.contains("CHILD_D1"));
@@ -1362,8 +1347,14 @@ mod tests {
 
         // Children with IDs that sort after PAGE_PG
         for suffix in &["PG_C1", "PG_C2", "PG_C3", "PG_C4"] {
-            insert_child_block(&pool, suffix, "content", &format!("child {suffix}"), "PAGE_PG")
-                .await;
+            insert_child_block(
+                &pool,
+                suffix,
+                "content",
+                &format!("child {suffix}"),
+                "PAGE_PG",
+            )
+            .await;
         }
 
         let expr = TagExpr::Tag("TAG_PG".into());

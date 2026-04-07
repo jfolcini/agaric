@@ -1,6 +1,7 @@
 import type { MutableRefObject } from 'react'
 import { useCallback, useRef } from 'react'
 import { toast } from 'sonner'
+import { logger } from '@/lib/logger'
 import { parse } from '../editor/markdown-serializer'
 import { pmEndOfFirstBlock } from '../editor/types'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
@@ -169,16 +170,29 @@ export function useBlockKeyboardHandlers({
 
     try {
       await edit(prevBlock.id, mergedContent)
-    } catch {
+    } catch (err) {
+      logger.error('useBlockKeyboardHandlers', 'Failed to merge blocks (edit step)', {
+        blockId: prevBlock.id,
+        error: String(err),
+      })
       rovingEditor.mount(focusedBlockId, currentContent)
       toast.error(t('blockTree.mergeBlocksFailed'))
       return
     }
     try {
       await remove(focusedBlockId)
-    } catch {
+    } catch (err) {
+      logger.error('useBlockKeyboardHandlers', 'Failed to merge blocks (remove step)', {
+        blockId: focusedBlockId,
+        error: String(err),
+      })
       // Revert the edit to avoid partial state (merged content in prev + original in current)
-      await edit(prevBlock.id, prevContent).catch(() => {})
+      await edit(prevBlock.id, prevContent).catch((revertErr: unknown) => {
+        logger.warn('useBlockKeyboardHandlers', 'Failed to revert edit after merge failure', {
+          blockId: prevBlock.id,
+          error: String(revertErr),
+        })
+      })
       rovingEditor.mount(focusedBlockId, currentContent)
       toast.error(t('blockTree.mergeBlocksFailed'))
       return
@@ -210,7 +224,11 @@ export function useBlockKeyboardHandlers({
 
       try {
         await edit(prevBlock.id, mergedContent)
-      } catch {
+      } catch (err) {
+        logger.error('useBlockKeyboardHandlers', 'Failed to merge blocks by ID (edit step)', {
+          blockId,
+          error: String(err),
+        })
         if (editorContent !== null) {
           rovingEditor.mount(blockId, currentContent)
         }
@@ -219,9 +237,18 @@ export function useBlockKeyboardHandlers({
       }
       try {
         await remove(blockId)
-      } catch {
+      } catch (err) {
+        logger.error('useBlockKeyboardHandlers', 'Failed to merge blocks by ID (remove step)', {
+          blockId,
+          error: String(err),
+        })
         // Revert the edit to avoid partial state (merged content in prev + original in current)
-        await edit(prevBlock.id, prevContent).catch(() => {})
+        await edit(prevBlock.id, prevContent).catch((revertErr: unknown) => {
+          logger.warn('useBlockKeyboardHandlers', 'Failed to revert edit after merge failure', {
+            blockId: prevBlock.id,
+            error: String(revertErr),
+          })
+        })
         if (editorContent !== null) {
           rovingEditor.mount(blockId, currentContent)
         }
@@ -274,8 +301,12 @@ export function useBlockKeyboardHandlers({
     // delete the empty block instead of leaving it around.
     if (justCreatedBlockIds.current.has(focusedBlockId) && changed === null) {
       justCreatedBlockIds.current.delete(focusedBlockId)
-      remove(focusedBlockId).catch(() => {
-        // Best-effort cleanup — block reappears on next reload if this fails
+      remove(focusedBlockId).catch((err: unknown) => {
+        logger.warn(
+          'useBlockKeyboardHandlers',
+          'Failed to remove empty just-created block on Escape',
+          { blockId: focusedBlockId, error: String(err) },
+        )
       })
     }
     setFocused(null)

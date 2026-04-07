@@ -21,6 +21,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
+import { logger } from '@/lib/logger'
 import { useBlockTags } from '../hooks/useBlockTags'
 import {
   deleteBlock,
@@ -106,12 +107,18 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
                 useNavigationStore.getState().replacePage(pageId, pageBlock.content)
                 useResolveStore.getState().set(pageId, pageBlock.content, false)
               }
-            } catch {
-              // Page title refresh is best-effort
+            } catch (err) {
+              logger.warn('PageHeader', 'Failed to refresh page title after undo/redo', {
+                pageId,
+                error: String(err),
+              })
             }
           }
         })
-        .catch(() => toast.error(t(errorKey)))
+        .catch((err: unknown) => {
+          logger.error('PageHeader', 'Undo/redo operation failed', { pageId, error: String(err) })
+          toast.error(t(errorKey))
+        })
     },
     [pageId, t, pageStore.getState],
   )
@@ -135,7 +142,12 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           props.some((p) => p.key === 'journal-template' && p.value_text === 'true'),
         )
       })
-      .catch(() => {})
+      .catch((err: unknown) => {
+        logger.warn('PageHeader', 'Failed to load template properties', {
+          pageId,
+          error: String(err),
+        })
+      })
   }, [pageId])
 
   const createTemplateToggle =
@@ -158,7 +170,12 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           setState(true)
           toast.success(t(savedKey))
         }
-      } catch {
+      } catch (err) {
+        logger.error('PageHeader', 'Failed to toggle template property', {
+          pageId,
+          key,
+          error: String(err),
+        })
         toast.error(t(failedKey))
       }
       setKebabOpen(false)
@@ -186,7 +203,8 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       const markdown = await exportPageMarkdown(pageId)
       await navigator.clipboard.writeText(markdown)
       toast.success(t('pageHeader.exportCopied'))
-    } catch {
+    } catch (err) {
+      logger.error('PageHeader', 'Failed to export page markdown', { pageId, error: String(err) })
       toast.error(t('pageHeader.exportFailed'))
     }
     setKebabOpen(false)
@@ -197,7 +215,8 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       await deleteBlock(pageId)
       toast.success(t('pageHeader.pageDeleted'))
       onBack?.()
-    } catch {
+    } catch (err) {
+      logger.error('PageHeader', 'Failed to delete page', { pageId, error: String(err) })
       toast.error(t('pageHeader.deleteFailed'))
     }
     setDeleteDialogOpen(false)
@@ -230,7 +249,10 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     if (!pageId) return
     getPageAliases(pageId)
       .then((result) => setAliases(Array.isArray(result) ? result : []))
-      .catch(() => toast.error(t('pageHeader.loadAliasesFailed')))
+      .catch((err: unknown) => {
+        logger.error('PageHeader', 'Failed to load page aliases', { pageId, error: String(err) })
+        toast.error(t('pageHeader.loadAliasesFailed'))
+      })
   }, [pageId, t])
 
   // Sync editableTitle when prop changes (e.g., navigating to a different page)
@@ -258,7 +280,8 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         useUndoStore.getState().onNewAction(pageId)
         useNavigationStore.getState().replacePage(pageId, newTitle)
         useResolveStore.getState().set(pageId, newTitle, false)
-      } catch {
+      } catch (err) {
+        logger.error('PageHeader', 'Failed to rename page', { pageId, error: String(err) })
         toast.error(t('pageHeader.renameFailed'))
         setEditableTitle(title)
         if (titleRef.current) titleRef.current.textContent = title
@@ -303,7 +326,10 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     if (aliasInput.trim()) {
       const next = [...aliases, aliasInput.trim()]
       setAliases(next)
-      setPageAliases(pageId, next).catch(() => toast.error(t('pageHeader.aliasUpdateFailed')))
+      setPageAliases(pageId, next).catch((err: unknown) => {
+        logger.error('PageHeader', 'Failed to update page aliases', { pageId, error: String(err) })
+        toast.error(t('pageHeader.aliasUpdateFailed'))
+      })
       setAliasInput('')
     }
   }, [aliasInput, aliases, pageId, t])
@@ -312,7 +338,10 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     (alias: string) => {
       const next = aliases.filter((a) => a !== alias)
       setAliases(next)
-      setPageAliases(pageId, next).catch(() => toast.error(t('pageHeader.aliasUpdateFailed')))
+      setPageAliases(pageId, next).catch((err: unknown) => {
+        logger.error('PageHeader', 'Failed to update page aliases', { pageId, error: String(err) })
+        toast.error(t('pageHeader.aliasUpdateFailed'))
+      })
     },
     [aliases, pageId, t],
   )

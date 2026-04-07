@@ -734,3 +734,29 @@ export async function deleteDraft(blockId: string): Promise<void> {
 export function listDrafts(): Promise<Draft[]> {
   return invoke('list_drafts')
 }
+
+// ---------------------------------------------------------------------------
+// Frontend logging (F-19)
+// ---------------------------------------------------------------------------
+
+/** Log a frontend message to the backend's daily-rolling log file. Fire-and-forget. */
+export async function logFrontend(
+  level: string,
+  module: string,
+  message: string,
+  stack?: string | null,
+  context?: string | null,
+): Promise<void> {
+  await invoke('log_frontend', {
+    level,
+    module,
+    message,
+    stack: stack ?? null,
+    context: context ?? null,
+  })
+}
+
+/** Return the path to the logs directory. */
+export function getLogDir(): Promise<string> {
+  return invoke('get_log_dir') as Promise<string>
+}

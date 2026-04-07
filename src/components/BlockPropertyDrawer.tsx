@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { logger } from '@/lib/logger'
 import {
   buildInitParams,
   handleDeleteProperty,
@@ -75,7 +76,13 @@ export function BlockPropertyDrawer({
         setProperties(Array.isArray(props) ? props : [])
         setDefinitions(Array.isArray(defs) ? defs : [])
       })
-      .catch(() => toast.error(t('property.loadFailed')))
+      .catch((err: unknown) => {
+        logger.error('BlockPropertyDrawer', 'Failed to load properties', {
+          blockId: blockId ?? '',
+          error: String(err),
+        })
+        toast.error(t('property.loadFailed'))
+      })
       .finally(() => setLoading(false))
   }, [blockId, open, t])
 
@@ -92,7 +99,12 @@ export function BlockPropertyDrawer({
           return
         }
         announce('Property saved')
-      } catch {
+      } catch (err) {
+        logger.error('BlockPropertyDrawer', 'Failed to save property', {
+          blockId: blockId ?? '',
+          key,
+          error: String(err),
+        })
         toast.error(t('property.saveFailed'))
       }
     },
@@ -108,7 +120,12 @@ export function BlockPropertyDrawer({
           setProperties((prev) => prev.filter((p) => p.key !== key))
         })
         announce('Property deleted')
-      } catch {
+      } catch (err) {
+        logger.error('BlockPropertyDrawer', 'Failed to delete property', {
+          blockId: blockId ?? '',
+          key,
+          error: String(err),
+        })
         toast.error(t('property.deleteFailed'))
       }
     },
@@ -129,8 +146,11 @@ export function BlockPropertyDrawer({
     try {
       const props = await getProperties(blockId)
       setProperties(Array.isArray(props) ? props : [])
-    } catch {
-      /* best-effort reload */
+    } catch (err) {
+      logger.warn('BlockPropertyDrawer', 'Failed to reload properties after ref save', {
+        blockId: blockId ?? '',
+        error: String(err),
+      })
     }
   }, [blockId])
 
@@ -148,7 +168,12 @@ export function BlockPropertyDrawer({
           blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, [field]: null } : b)),
         }))
         announce('Date cleared')
-      } catch {
+      } catch (err) {
+        logger.error('BlockPropertyDrawer', 'Failed to clear builtin date', {
+          blockId: blockId ?? '',
+          field,
+          error: String(err),
+        })
         toast.error(t('property.saveFailed'))
       }
     },
@@ -169,7 +194,13 @@ export function BlockPropertyDrawer({
           blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, [field]: value } : b)),
         }))
         announce('Date updated')
-      } catch {
+      } catch (err) {
+        logger.error('BlockPropertyDrawer', 'Failed to save builtin date', {
+          blockId: blockId ?? '',
+          field,
+          value,
+          error: String(err),
+        })
         toast.error(t('property.saveFailed'))
       }
     },
@@ -188,7 +219,12 @@ export function BlockPropertyDrawer({
         await setProperty(params)
         const updated = await getProperties(blockId)
         setProperties(Array.isArray(updated) ? updated : [])
-      } catch {
+      } catch (err) {
+        logger.error('BlockPropertyDrawer', 'Failed to add property from definition', {
+          blockId: blockId ?? '',
+          key: def.key,
+          error: String(err),
+        })
         toast.error(t('property.saveFailed'))
       }
     },

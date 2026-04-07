@@ -75,7 +75,12 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
               } else {
                 editor.chain().focus().insertContentAt(insertPos, innerText).run()
               }
-            } catch {
+            } catch (err) {
+              logger.warn(
+                'AtTagPicker',
+                'Failed to resolve tag via input rule, falling back to plain text',
+                { text: innerText, error: String(err) },
+              )
               editor.chain().focus().insertContentAt(insertPos, innerText).run()
             }
           }

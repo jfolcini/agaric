@@ -158,13 +158,20 @@ function App() {
     listDrafts()
       .then((drafts) => {
         for (const draft of drafts) {
-          flushDraft(draft.block_id).catch(() => {})
+          flushDraft(draft.block_id).catch((err: unknown) => {
+            logger.warn('App', 'Failed to flush orphaned draft during boot recovery', {
+              blockId: draft.block_id,
+              error: String(err),
+            })
+          })
         }
         if (drafts.length > 0) {
           logger.info('boot', `Recovered ${drafts.length} unsaved draft(s)`)
         }
       })
-      .catch(() => {})
+      .catch((err: unknown) => {
+        logger.warn('App', 'Failed to list drafts during boot recovery', { error: String(err) })
+      })
   }, [])
 
   // ── Focus main content when view changes ──────────────────────────
@@ -242,7 +249,10 @@ function App() {
             useNavigationStore.getState().navigateToPage(resp.id, 'Untitled')
             announce('New page created')
           })
-          .catch(() => toast.error(t('error.createPageFailed')))
+          .catch((err: unknown) => {
+            logger.error('App', 'Failed to create page via shortcut', { error: String(err) })
+            toast.error(t('error.createPageFailed'))
+          })
       }
     }
     window.addEventListener('keydown', handleGlobalShortcuts)
@@ -255,7 +265,8 @@ function App() {
       useResolveStore.getState().set(resp.id, 'Untitled', false)
       navigateToPage(resp.id, 'Untitled')
       announce('New page created')
-    } catch {
+    } catch (err) {
+      logger.error('App', 'Failed to create new page', { error: String(err) })
       toast.error(t('error.createPageFailed'))
     }
   }, [navigateToPage, t])

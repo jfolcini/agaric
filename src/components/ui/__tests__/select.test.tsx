@@ -15,7 +15,18 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../select'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectScrollDownButton,
+  SelectScrollUpButton,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from '../select'
 
 // jsdom does not implement pointer-capture APIs that Radix Select requires.
 // Stub them on Element.prototype so the trigger opens correctly.
@@ -162,5 +173,22 @@ describe('Select', () => {
     const { container } = renderSelect()
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // -- displayName ------------------------------------------------------------
+
+  it.each([
+    ['Select', Select],
+    ['SelectGroup', SelectGroup],
+    ['SelectValue', SelectValue],
+    ['SelectTrigger', SelectTrigger],
+    ['SelectScrollUpButton', SelectScrollUpButton],
+    ['SelectScrollDownButton', SelectScrollDownButton],
+    ['SelectContent', SelectContent],
+    ['SelectItem', SelectItem],
+    ['SelectLabel', SelectLabel],
+    ['SelectSeparator', SelectSeparator],
+  ])('%s has displayName', (name, Component) => {
+    expect(Component.displayName).toBe(name)
   })
 })

@@ -757,6 +757,29 @@ async listDrafts() : Promise<Result<Draft[], { kind: string; message: string }>>
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Log a frontend message to the backend's daily-rolling log file.
+ * Fire-and-forget — the frontend never awaits this.
+ */
+async logFrontend(level: string, module: string, message: string, stack: string | null, context: string | null) : Promise<Result<null, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("log_frontend", { level, module, message, stack, context }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Return the path to the logs directory.
+ */
+async getLogDir() : Promise<Result<string, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_log_dir") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 

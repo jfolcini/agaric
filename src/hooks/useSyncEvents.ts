@@ -15,6 +15,7 @@
 import { listen } from '@tauri-apps/api/event'
 import { useEffect } from 'react'
 import { toast } from 'sonner'
+import { logger } from '@/lib/logger'
 import { getConflicts } from '@/lib/tauri'
 import { pageBlockRegistry } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
@@ -87,7 +88,9 @@ export function useSyncEvents(): void {
         if (cancelled) unlisten()
         else cleanups.push(unlisten)
       })
-      .catch(() => {})
+      .catch((err: unknown) => {
+        logger.warn('useSyncEvents', 'Failed to listen to sync:progress', { error: String(err) })
+      })
 
     // sync:complete
     listen<SyncCompletePayload>('sync:complete', (event) => {
@@ -120,14 +123,20 @@ export function useSyncEvents(): void {
               toast.warning('Sync completed with conflicts — review in Conflicts view')
             }
           })
-          .catch(() => {})
+          .catch((err: unknown) => {
+            logger.warn('useSyncEvents', 'Failed to check conflicts after sync', {
+              error: String(err),
+            })
+          })
       }
     })
       .then((unlisten) => {
         if (cancelled) unlisten()
         else cleanups.push(unlisten)
       })
-      .catch(() => {})
+      .catch((err: unknown) => {
+        logger.warn('useSyncEvents', 'Failed to listen to sync:complete', { error: String(err) })
+      })
 
     // sync:error
     listen<SyncErrorPayload>('sync:error', (event) => {
@@ -139,7 +148,9 @@ export function useSyncEvents(): void {
         if (cancelled) unlisten()
         else cleanups.push(unlisten)
       })
-      .catch(() => {})
+      .catch((err: unknown) => {
+        logger.warn('useSyncEvents', 'Failed to listen to sync:error', { error: String(err) })
+      })
 
     return () => {
       cancelled = true

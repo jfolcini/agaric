@@ -2,6 +2,7 @@ import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Calendar } from '@/components/ui/calendar'
+import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 import { formatDate } from '../../lib/date-utils'
 import { countAgendaBatchBySource } from '../../lib/tauri'
@@ -82,7 +83,11 @@ export function JournalCalendarDropdown({
       .then((data) => {
         if (!cancelled) setAgendaBySource(data)
       })
-      .catch(() => {})
+      .catch((err: unknown) => {
+        logger.warn('JournalCalendarDropdown', 'Failed to load agenda counts for calendar', {
+          error: String(err),
+        })
+      })
     return () => {
       cancelled = true
     }

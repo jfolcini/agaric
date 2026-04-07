@@ -67,17 +67,15 @@ describe('ErrorBoundary', () => {
     expect(reloadMock).toHaveBeenCalledTimes(1)
   })
 
-  it('logs error to console', () => {
+  it('logs error via logger', () => {
     render(
       <ErrorBoundary>
         <ThrowingChild />
       </ErrorBoundary>,
     )
 
-    expect(console.error).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'test render error' }),
-      expect.objectContaining({ componentStack: expect.any(String) }),
-    )
+    // ErrorBoundary now uses logger.error which calls console.error with a formatted string
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining('test render error'))
   })
 
   it('axe accessibility audit on fallback', async () => {

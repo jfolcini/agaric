@@ -114,7 +114,11 @@ export function LinkedReferences({
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
         setTotalCount(resp.total_count)
-      } catch {
+      } catch (err) {
+        logger.error('LinkedReferences', 'Failed to load grouped backlinks', {
+          pageId,
+          error: String(err),
+        })
         toast.error(t('references.loadFailed'))
       } finally {
         setLoading(false)

@@ -7,6 +7,7 @@
  */
 
 import { useCallback, useState } from 'react'
+import { logger } from '@/lib/logger'
 import { cancelSync } from '../lib/tauri'
 
 export function useSyncWithTimeout(timeoutMs = 60_000) {
@@ -23,7 +24,13 @@ export function useSyncWithTimeout(timeoutMs = 60_000) {
         // Prevent unhandled-rejection warning when timeout fires after
         // syncFn settles (clearTimeout in finally normally prevents this,
         // but edge cases exist with fake timers).
-        timeout.catch(() => {})
+        timeout.catch((err: unknown) => {
+          logger.warn(
+            'useSyncWithTimeout',
+            'Sync timeout promise rejected (expected if sync completed first)',
+            { error: String(err) },
+          )
+        })
         await Promise.race([syncFn(), timeout])
       } catch (err) {
         if (err instanceof Error && err.message === 'Sync timed out') {

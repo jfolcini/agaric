@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { logger } from '@/lib/logger'
 
 // QR scanner component — production-ready implementation.
 // Uses html5-qrcode for camera access and QR code detection.
@@ -22,7 +23,9 @@ export function QrScanner({ onScan, onError }: QrScannerProps) {
   useEffect(() => {
     return () => {
       if (scannerInstanceRef.current) {
-        scannerInstanceRef.current.stop().catch(() => {})
+        scannerInstanceRef.current.stop().catch((err: unknown) => {
+          logger.warn('QrScanner', 'Failed to stop scanner on unmount', { error: String(err) })
+        })
         scannerInstanceRef.current = null
       }
     }
@@ -44,7 +47,11 @@ export function QrScanner({ onScan, onError }: QrScannerProps) {
         { facingMode: 'environment' },
         { fps: 10, qrbox: { width: 250, height: 250 } },
         (decodedText) => {
-          scanner.stop().catch(() => {})
+          scanner.stop().catch((err: unknown) => {
+            logger.warn('QrScanner', 'Failed to stop scanner after successful scan', {
+              error: String(err),
+            })
+          })
           scannerInstanceRef.current = null
           setScanning(false)
 

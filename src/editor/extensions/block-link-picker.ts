@@ -87,7 +87,12 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
                 // No match and no onCreate — re-insert as plain text
                 editor.chain().focus().insertContentAt(insertPos, innerText).run()
               }
-            } catch {
+            } catch (err) {
+              logger.warn(
+                'BlockLinkPicker',
+                'Failed to resolve block link via input rule, falling back to plain text',
+                { text: innerText, error: String(err) },
+              )
               // On error, re-insert as plain text so the user doesn't lose content
               editor.chain().focus().insertContentAt(insertPos, innerText).run()
             }
