@@ -75,6 +75,36 @@ describe('createSuggestionRenderer', () => {
     expect(result).toBe(false)
   })
 
+  it('onKeyDown returns false for Space so it passes through to editor as text', () => {
+    const renderer = createSuggestionRenderer()
+    const mockRect = { left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }
+
+    renderer.onStart({
+      items: [],
+      command: vi.fn(),
+      clientRect: () => mockRect as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      editor: {} as any,
+      query: 'multi',
+      range: { from: 0, to: 7 },
+      text: '[[multi',
+      decorationNode: null,
+      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+    } as any)
+
+    const result = renderer.onKeyDown({
+      event: new KeyboardEvent('keydown', { key: ' ' }),
+      view: {} as never,
+      range: { from: 0, to: 7 },
+    })
+
+    // Space must NOT be consumed — it should pass through so the user can
+    // type multi-word queries like [[multi word page]]
+    expect(result).toBe(false)
+
+    renderer.onExit()
+  })
+
   it('onExit is safe to call without prior onStart', () => {
     const renderer = createSuggestionRenderer()
     // Should not throw

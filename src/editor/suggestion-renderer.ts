@@ -130,6 +130,12 @@ export function createSuggestionRenderer(label?: string) {
         popup = null
         return true
       }
+      // Space: let it pass through to the editor so it's inserted as text
+      // in the query (e.g. [[multi word page]]). Without this, the shared
+      // useListKeyboardNavigation hook would treat Space as item selection.
+      if (event.key === ' ') {
+        return false
+      }
       // Tab: autocomplete with the currently highlighted item (same as Enter)
       if (event.key === 'Tab') {
         const syntheticEnter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
