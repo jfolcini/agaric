@@ -1,9 +1,9 @@
 # Session Log
 
-## Session 237 — 2026-04-07 — Batches 84-86: 25 REVIEW-LATER items resolved
+## Session 237 — 2026-04-07 — Batches 84-87: 30 REVIEW-LATER items resolved
 
 ### Summary
-Resolved 25 REVIEW-LATER items across 3 batches. **Batch 84 (Rust backend, 7 items):** B-3 sync batch streaming, B-4 materializer retry, S-1 unpaired device rejection, S-2 cert CN verification, P-1 source_id index, M-3 FTS rebuild at boot, T-5 PRAGMA optimize. **Batch 85 (Frontend a11y, 6 items):** UX-1 focus-visible rings, UX-2 aria-label, UX-3 i18n, UX-6 cn(), P-3 lazy loading, M-2 error boundaries. **Batch 86 (Components + perf, 12 items):** UX-9/10/11/12 shared component extractions, UX-13 PopoverMenuItem, UX-14 touch targets, UX-8 toolbar active class, UX-17/18/19/20 CSS alignment, P-2 FTS N+1 batching. 53 files changed, 67 new tests. 1611 Rust + 4495 frontend tests pass. REVIEW-LATER: 41→17 items.
+Resolved 30 REVIEW-LATER items across 4 batches. **Batch 84 (Rust, 7):** B-3/B-4/S-1/S-2/P-1/M-3/T-5. **Batch 85 (a11y, 6):** UX-1/2/3/6/P-3/M-2. **Batch 86 (components, 12):** UX-8/9/10/11/12/13/14/17/18/19/20/P-2. **Batch 87 (touch/logging/tests, 5):** UX-15/16/21/M-4/T-4. 89 files changed, 92 new tests. 1611 Rust + 4524 frontend tests pass. REVIEW-LATER: 41→12 items.
 
 ### Batch 84 — Rust backend fixes
 
@@ -77,6 +77,21 @@ Resolved 25 REVIEW-LATER items across 3 batches. **Batch 84 (Rust backend, 7 ite
 | CollapsiblePanelHeader.tsx | UX-20: Padding/weight increased to px-3 py-2 font-semibold |
 | fts.rs | P-2: Batch SELECT+DELETE via json_each(), reduces N×3 to N+2 queries |
 | 7 new test files | 38 new component tests (StatusBadge 12, PriorityBadge 11, AlertListItem 10, PopoverMenuItem 5) + 2 PageTreeItem touch tests + 1 FTS batch test |
+
+### Batch 87 — Touch states, mobile gutter, frontend logging, property tests
+
+**Commit:** f89eb03
+
+| Area | Change |
+|------|--------|
+| 16 components | UX-15: Added `active:bg-accent/70` alongside `hover:bg-accent/50` (19 occurrences) |
+| 6 components | UX-16: Added `active:text-destructive active:scale-95` on delete buttons (7 occurrences) |
+| SortableBlock.tsx | UX-21: Gutter buttons hidden on mobile via `[@media(pointer:coarse)]:hidden`, container collapsed to w-0 |
+| SortableBlock.test.tsx | UX-21: 4 new tests + 3 updated for mobile gutter hidden |
+| logger.ts | M-4: NEW — structured frontend logging with level filtering, `[timestamp][LEVEL][module] message` format |
+| logger.test.ts | M-4: 12 new tests (format, filtering, setLogLevel, console mapping) |
+| 8 source files | M-4: Replaced `console.error/warn` with `logger.error/warn` (DeviceManagement, PairingDialog, LinkedReferences, useBlockResolve, markdown-serializer, at-tag-picker, block-link-picker, template-utils) |
+| date-utils.property.test.ts | T-4: NEW — 13 property-based tests using fast-check (parseDate safety/round-trip, formatDate invariants, formatCompactDate, isDateFormattedPage) |
 
 ## Session 236 — 2026-04-06 — Fix B-1/B-2, F-16 sticky headers, REVIEW-LATER updates
 
