@@ -6,7 +6,6 @@
  * This store holds only the cross-page focus/selection state:
  * - Which block is focused (only one at a time across all pages)
  * - Which blocks are selected (multi-select)
- * - Pending focus ID (set before a BlockTree mounts to auto-focus)
  *
  * Selection actions that need block lists (selectAll, rangeSelect)
  * take visibleIds as a parameter since blocks live in per-page stores.
@@ -22,8 +21,6 @@ interface BlockStore {
   focusedBlockId: string | null
   /** IDs of currently selected blocks (multi-select). */
   selectedBlockIds: string[]
-  /** Block ID to auto-focus when a BlockTree mounts (set before provider). */
-  pendingFocusId: string | null
 
   /** Set which block is focused (clears selection). */
   setFocused: (blockId: string | null) => void
@@ -44,14 +41,11 @@ interface BlockStore {
   clearSelected: () => void
   /** Replace the selection with the given IDs. */
   setSelected: (ids: string[]) => void
-  /** Consume the pending focus ID (returns it and clears). */
-  consumePendingFocus: () => string | null
 }
 
-export const useBlockStore = create<BlockStore>((set, get) => ({
+export const useBlockStore = create<BlockStore>((set) => ({
   focusedBlockId: null,
   selectedBlockIds: [],
-  pendingFocusId: null,
 
   setFocused: (blockId: string | null) => {
     set({ focusedBlockId: blockId, selectedBlockIds: [] })
@@ -98,11 +92,5 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
 
   setSelected: (ids) => {
     set({ selectedBlockIds: ids })
-  },
-
-  consumePendingFocus: () => {
-    const id = get().pendingFocusId
-    if (id) set({ pendingFocusId: null })
-    return id
   },
 }))

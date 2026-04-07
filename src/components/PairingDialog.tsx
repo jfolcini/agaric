@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { logger } from '@/lib/logger'
 import type { PeerRefRow } from '../lib/tauri'
@@ -292,7 +293,7 @@ export function PairingDialog({
         }}
       >
         <DialogContent
-          className="pairing-dialog gap-0 max-h-[calc(100dvh-4rem)] overflow-y-auto"
+          className="pairing-dialog gap-0"
           aria-describedby={undefined}
           onCloseAutoFocus={(e) => {
             if (triggerRef?.current) {
@@ -301,80 +302,82 @@ export function PairingDialog({
             }
           }}
         >
-          <div ref={dialogRef}>
-            {/* Header */}
-            <DialogHeader className="text-left mb-4">
-              <DialogTitle>{t('pairing.dialogTitle')}</DialogTitle>
-            </DialogHeader>
+          <ScrollArea className="max-h-[calc(100dvh-4rem)]">
+            <div ref={dialogRef}>
+              {/* Header */}
+              <DialogHeader className="text-left mb-4">
+                <DialogTitle>{t('pairing.dialogTitle')}</DialogTitle>
+              </DialogHeader>
 
-            {/* Error message with Retry button (#282) */}
-            {error && (
-              <div className="pairing-error flex items-center gap-2 mb-4" aria-live="polite">
-                <p className="text-sm text-destructive flex-1">{error}</p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  ref={retryBtnRef}
-                  onClick={() => init()}
-                  className="pairing-retry-btn shrink-0"
-                >
-                  Retry
-                </Button>
+              {/* Error message with Retry button (#282) */}
+              {error && (
+                <div className="pairing-error flex items-center gap-2 mb-4" aria-live="polite">
+                  <p className="text-sm text-destructive flex-1">{error}</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    ref={retryBtnRef}
+                    onClick={() => init()}
+                    className="pairing-retry-btn shrink-0"
+                  >
+                    Retry
+                  </Button>
+                </div>
+              )}
+
+              {/* Loading state */}
+              {loading && (
+                <div className="pairing-loading flex items-center justify-center py-8">
+                  <Spinner className="text-muted-foreground" />
+                  <span className="ml-2 text-sm text-muted-foreground">
+                    {t('pairing.startingMessage')}
+                  </span>
+                </div>
+              )}
+
+              {/* QR + Passphrase display and Entry form */}
+              {!loading && pairingInfo && (
+                <>
+                  <PairingQrDisplay
+                    qrSvg={pairingInfo.qr_svg}
+                    passphrase={pairingInfo.passphrase}
+                    countdownDisplay={countdownDisplay}
+                    countdown={countdown}
+                    isExpired={isExpired}
+                    error={error}
+                    onRetry={() => init()}
+                    retryBtnRef={retryBtnRef}
+                  />
+
+                  <PairingEntryForm
+                    words={words}
+                    entryMode={entryMode}
+                    onEntryModeChange={setEntryMode}
+                    onWordChange={handleWordChange}
+                    onWordKeyDown={handleWordKeyDown}
+                    onQrScan={handleQrScan}
+                    onQrError={(err) => setError(`Camera error: ${err}`)}
+                    onCancel={handleCancel}
+                    onPair={handlePair}
+                    pairLoading={pairLoading}
+                    isExpired={isExpired}
+                  />
+                </>
+              )}
+
+              {/* Paired Devices */}
+              {!loading && (
+                <PairingPeersList peers={peers} onUnpair={(peerId) => setUnpairPeerId(peerId)} />
+              )}
+
+              {/* Status message for screen readers */}
+              <div aria-live="polite" className="sr-only">
+                {loading && t('pairing.startingMessage')}
+                {pairLoading && 'Pairing in progress...'}
+                {error}
               </div>
-            )}
-
-            {/* Loading state */}
-            {loading && (
-              <div className="pairing-loading flex items-center justify-center py-8">
-                <Spinner className="text-muted-foreground" />
-                <span className="ml-2 text-sm text-muted-foreground">
-                  {t('pairing.startingMessage')}
-                </span>
-              </div>
-            )}
-
-            {/* QR + Passphrase display and Entry form */}
-            {!loading && pairingInfo && (
-              <>
-                <PairingQrDisplay
-                  qrSvg={pairingInfo.qr_svg}
-                  passphrase={pairingInfo.passphrase}
-                  countdownDisplay={countdownDisplay}
-                  countdown={countdown}
-                  isExpired={isExpired}
-                  error={error}
-                  onRetry={() => init()}
-                  retryBtnRef={retryBtnRef}
-                />
-
-                <PairingEntryForm
-                  words={words}
-                  entryMode={entryMode}
-                  onEntryModeChange={setEntryMode}
-                  onWordChange={handleWordChange}
-                  onWordKeyDown={handleWordKeyDown}
-                  onQrScan={handleQrScan}
-                  onQrError={(err) => setError(`Camera error: ${err}`)}
-                  onCancel={handleCancel}
-                  onPair={handlePair}
-                  pairLoading={pairLoading}
-                  isExpired={isExpired}
-                />
-              </>
-            )}
-
-            {/* Paired Devices */}
-            {!loading && (
-              <PairingPeersList peers={peers} onUnpair={(peerId) => setUnpairPeerId(peerId)} />
-            )}
-
-            {/* Status message for screen readers */}
-            <div aria-live="polite" className="sr-only">
-              {loading && t('pairing.startingMessage')}
-              {pairLoading && 'Pairing in progress...'}
-              {error}
             </div>
-          </div>
+          </ScrollArea>
         </DialogContent>
       </Dialog>
 

@@ -23,6 +23,7 @@ import { BacklinkFilterBuilder } from './BacklinkFilterBuilder'
 import { BacklinkGroupRenderer } from './BacklinkGroupRenderer'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { EmptyState } from './EmptyState'
+import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { SourcePageFilter } from './SourcePageFilter'
 
@@ -194,15 +195,6 @@ export function LinkedReferences({
     }
   }, [nextCursor, fetchGroups])
 
-  // Empty state: show EmptyState component
-  if (!loading && totalCount === 0 && groups.length === 0) {
-    return (
-      <section className="linked-references" aria-label={t('references.panelLabel')}>
-        <EmptyState icon={Link2} message={t('references.noReferences')} compact />
-      </section>
-    )
-  }
-
   // Derive sourcePages from groups for SourcePageFilter
   const sourcePages = groups.map((g) => ({
     pageId: g.page_id,
@@ -215,90 +207,100 @@ export function LinkedReferences({
 
   return (
     <section className="linked-references" aria-label={t('references.panelLabel')}>
-      {/* Main header -- collapsible */}
-      <CollapsiblePanelHeader
-        collapsed={!expanded}
-        onToggle={toggleExpanded}
-        className="linked-references-header"
+      <ListViewState
+        loading={loading}
+        items={groups}
+        skeleton={
+          <LoadingSkeleton
+            count={3}
+            height="h-12"
+            className="linked-references-loading"
+            aria-busy="true"
+            role="status"
+          />
+        }
+        empty={<EmptyState icon={Link2} message={t('references.noReferences')} compact />}
       >
-        {headerLabel}
-      </CollapsiblePanelHeader>
-
-      {expanded && (
-        <div className="linked-references-content mt-1 space-y-2">
-          {/* Loading skeletons */}
-          {loading && groups.length === 0 && (
-            <LoadingSkeleton
-              count={3}
-              height="h-12"
-              className="linked-references-loading"
-              aria-busy="true"
-              role="status"
-            />
-          )}
-
-          {/* Filter controls */}
-          <div className="linked-references-filters flex flex-col sm:flex-row sm:items-center gap-2 px-2">
-            <SourcePageFilter
-              sourcePages={sourcePages}
-              included={sourcePageIncluded}
-              excluded={sourcePageExcluded}
-              onChange={(inc, exc) => {
-                setSourcePageIncluded(inc)
-                setSourcePageExcluded(exc)
-              }}
-            />
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs text-muted-foreground"
-              onClick={() => setShowAdvancedFilters((prev) => !prev)}
-              aria-expanded={showAdvancedFilters}
+        {() => (
+          <>
+            {/* Main header -- collapsible */}
+            <CollapsiblePanelHeader
+              collapsed={!expanded}
+              onToggle={toggleExpanded}
+              className="linked-references-header"
             >
-              {showAdvancedFilters ? t('references.hideFilters') : t('references.moreFilters')}
-            </Button>
-          </div>
+              {headerLabel}
+            </CollapsiblePanelHeader>
 
-          {showAdvancedFilters && (
-            <div className="linked-references-advanced-filters px-2">
-              <BacklinkFilterBuilder
-                filters={filters}
-                sort={sort}
-                onFiltersChange={setFilters}
-                onSortChange={setSort}
-                totalCount={totalCount}
-                filteredCount={totalCount}
-                propertyKeys={propertyKeys}
-                tags={tags}
-                tagResolver={resolveTagName}
-              />
-            </div>
-          )}
+            {expanded && (
+              <div className="linked-references-content mt-1 space-y-2">
+                {/* Filter controls */}
+                <div className="linked-references-filters flex flex-col sm:flex-row sm:items-center gap-2 px-2">
+                  <SourcePageFilter
+                    sourcePages={sourcePages}
+                    included={sourcePageIncluded}
+                    excluded={sourcePageExcluded}
+                    onChange={(inc, exc) => {
+                      setSourcePageIncluded(inc)
+                      setSourcePageExcluded(exc)
+                    }}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs text-muted-foreground"
+                    onClick={() => setShowAdvancedFilters((prev) => !prev)}
+                    aria-expanded={showAdvancedFilters}
+                  >
+                    {showAdvancedFilters
+                      ? t('references.hideFilters')
+                      : t('references.moreFilters')}
+                  </Button>
+                </div>
 
-          <BacklinkGroupRenderer
-            groups={groups}
-            expandedGroups={groupExpanded}
-            onToggleGroup={toggleGroup}
-            onNavigateToPage={onNavigateToPage}
-            handleBlockClick={handleBlockClick}
-            handleBlockKeyDown={handleBlockKeyDown}
-            resolveBlockTitle={resolveBlockTitle}
-            resolveBlockStatus={resolveBlockStatus}
-            resolveTagName={resolveTagName}
-          />
+                {showAdvancedFilters && (
+                  <div className="linked-references-advanced-filters px-2">
+                    <BacklinkFilterBuilder
+                      filters={filters}
+                      sort={sort}
+                      onFiltersChange={setFilters}
+                      onSortChange={setSort}
+                      totalCount={totalCount}
+                      filteredCount={totalCount}
+                      propertyKeys={propertyKeys}
+                      tags={tags}
+                      tagResolver={resolveTagName}
+                    />
+                  </div>
+                )}
 
-          <LoadMoreButton
-            hasMore={hasMore}
-            loading={loading}
-            onLoadMore={loadMore}
-            className="linked-references-load-more"
-            label={t('references.loadMore')}
-            loadingLabel={t('references.loading')}
-            ariaLabel={t('references.loadMoreLabel')}
-            ariaLoadingLabel={t('references.loadingMore')}
-          />
-        </div>
-      )}
+                <BacklinkGroupRenderer
+                  groups={groups}
+                  expandedGroups={groupExpanded}
+                  onToggleGroup={toggleGroup}
+                  onNavigateToPage={onNavigateToPage}
+                  handleBlockClick={handleBlockClick}
+                  handleBlockKeyDown={handleBlockKeyDown}
+                  resolveBlockTitle={resolveBlockTitle}
+                  resolveBlockStatus={resolveBlockStatus}
+                  resolveTagName={resolveTagName}
+                />
+
+                <LoadMoreButton
+                  hasMore={hasMore}
+                  loading={loading}
+                  onLoadMore={loadMore}
+                  className="linked-references-load-more"
+                  label={t('references.loadMore')}
+                  loadingLabel={t('references.loading')}
+                  ariaLabel={t('references.loadMoreLabel')}
+                  ariaLoadingLabel={t('references.loadingMore')}
+                />
+              </div>
+            )}
+          </>
+        )}
+      </ListViewState>
     </section>
   )
 }

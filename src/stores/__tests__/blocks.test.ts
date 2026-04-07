@@ -6,7 +6,6 @@ describe('useBlockStore', () => {
     useBlockStore.setState({
       focusedBlockId: null,
       selectedBlockIds: [],
-      pendingFocusId: null,
     })
     vi.clearAllMocks()
   })
@@ -24,23 +23,6 @@ describe('useBlockStore', () => {
       useBlockStore.setState({ focusedBlockId: 'BLOCK_A' })
       useBlockStore.getState().setFocused(null)
       expect(useBlockStore.getState().focusedBlockId).toBeNull()
-    })
-  })
-
-  // ---------------------------------------------------------------------------
-  // consumePendingFocus
-  // ---------------------------------------------------------------------------
-  describe('consumePendingFocus', () => {
-    it('returns and clears pendingFocusId', () => {
-      useBlockStore.setState({ pendingFocusId: 'BLOCK_X' })
-      const id = useBlockStore.getState().consumePendingFocus()
-      expect(id).toBe('BLOCK_X')
-      expect(useBlockStore.getState().pendingFocusId).toBeNull()
-    })
-
-    it('returns null when no pending focus', () => {
-      const id = useBlockStore.getState().consumePendingFocus()
-      expect(id).toBeNull()
     })
   })
 

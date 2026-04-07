@@ -20,6 +20,7 @@ import { editBlock, listUnlinkedReferences } from '../lib/tauri'
 import { CollapsibleGroupList } from './CollapsibleGroupList'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { EmptyState } from './EmptyState'
+import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 
 export interface UnlinkedReferencesProps {
@@ -177,73 +178,77 @@ export function UnlinkedReferences({
 
       {!collapsed && (
         <div className="unlinked-references-content mt-1 space-y-2">
-          {/* Loading state */}
-          {loading && groups.length === 0 && (
-            <div
-              className="unlinked-references-loading flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground"
-              aria-busy="true"
-              role="status"
-            >
-              <Spinner /> {t('unlinkedRefs.loading')}
-            </div>
-          )}
-
-          {/* Empty state */}
-          {!loading && totalCount === 0 && groups.length === 0 && (
-            <EmptyState compact message={t('unlinkedRefs.noResults')} />
-          )}
-
-          {/* Group list */}
-          <CollapsibleGroupList
-            groups={groups}
-            expandedGroups={expandedGroups}
-            onToggleGroup={toggleGroup}
-            untitledLabel={t('unlinkedRefs.untitled')}
-            defaultExpanded
-            groupClassName="unlinked-references-group"
-            headerClassName="unlinked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1 text-sm font-medium hover:bg-accent/50 active:bg-accent/70 transition-colors"
-            listClassName="unlinked-references-blocks ml-4 mt-1 space-y-1"
-            listAriaLabel={(title) => t('unlinkedRefs.mentionsFrom', { title })}
-            {...(onNavigateToPage && {
-              onPageTitleClick: (pageId: string, title: string) => onNavigateToPage(pageId, title),
-            })}
-            renderBlock={(block, _group) => (
-              <li
-                key={block.id}
-                className="unlinked-reference-item flex items-center gap-3 border-b py-1.5 px-2 last:border-b-0"
-              >
-                <button
-                  type="button"
-                  className="unlinked-reference-item-text text-sm flex-1 truncate cursor-pointer hover:bg-muted/50 text-left"
-                  onClick={() => handleBlockClick(block)}
-                >
-                  {block.content || t('unlinkedRefs.empty')}
-                </button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="link-it-button shrink-0 text-xs text-muted-foreground hover:text-primary"
-                  onClick={() => handleLinkIt(block.id, block.content ?? '')}
-                  aria-label={`Link it: replace mention in block ${block.id.slice(0, 8)}`}
-                >
-                  <Link2 className="h-3.5 w-3.5 mr-1" />
-                  {t('unlinkedRefs.linkIt')}
-                </Button>
-              </li>
-            )}
-          />
-
-          {/* Load more pagination */}
-          <LoadMoreButton
-            hasMore={hasMore}
+          <ListViewState
             loading={loading}
-            onLoadMore={loadMore}
-            className="unlinked-references-load-more"
-            label={t('unlinkedRefs.loadMore')}
-            loadingLabel={t('unlinkedRefs.loadingDots')}
-            ariaLabel={t('unlinkedRefs.loadMoreLabel')}
-            ariaLoadingLabel={t('unlinkedRefs.loadingMore')}
-          />
+            items={groups}
+            skeleton={
+              <div
+                className="unlinked-references-loading flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground"
+                aria-busy="true"
+                role="status"
+              >
+                <Spinner /> {t('unlinkedRefs.loading')}
+              </div>
+            }
+            empty={<EmptyState compact message={t('unlinkedRefs.noResults')} />}
+          >
+            {() => (
+              <>
+                {/* Group list */}
+                <CollapsibleGroupList
+                  groups={groups}
+                  expandedGroups={expandedGroups}
+                  onToggleGroup={toggleGroup}
+                  untitledLabel={t('unlinkedRefs.untitled')}
+                  defaultExpanded
+                  groupClassName="unlinked-references-group"
+                  headerClassName="unlinked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1 text-sm font-medium hover:bg-accent/50 active:bg-accent/70 transition-colors"
+                  listClassName="unlinked-references-blocks ml-4 mt-1 space-y-1"
+                  listAriaLabel={(title) => t('unlinkedRefs.mentionsFrom', { title })}
+                  {...(onNavigateToPage && {
+                    onPageTitleClick: (pageId: string, title: string) =>
+                      onNavigateToPage(pageId, title),
+                  })}
+                  renderBlock={(block, _group) => (
+                    <li
+                      key={block.id}
+                      className="unlinked-reference-item flex items-center gap-3 border-b py-1.5 px-2 last:border-b-0"
+                    >
+                      <button
+                        type="button"
+                        className="unlinked-reference-item-text text-sm flex-1 truncate cursor-pointer hover:bg-muted/50 text-left"
+                        onClick={() => handleBlockClick(block)}
+                      >
+                        {block.content || t('unlinkedRefs.empty')}
+                      </button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="link-it-button shrink-0 text-xs text-muted-foreground hover:text-primary"
+                        onClick={() => handleLinkIt(block.id, block.content ?? '')}
+                        aria-label={`Link it: replace mention in block ${block.id.slice(0, 8)}`}
+                      >
+                        <Link2 className="h-3.5 w-3.5 mr-1" />
+                        {t('unlinkedRefs.linkIt')}
+                      </Button>
+                    </li>
+                  )}
+                />
+
+                {/* Load more pagination */}
+                <LoadMoreButton
+                  hasMore={hasMore}
+                  loading={loading}
+                  onLoadMore={loadMore}
+                  className="unlinked-references-load-more"
+                  label={t('unlinkedRefs.loadMore')}
+                  loadingLabel={t('unlinkedRefs.loadingDots')}
+                  ariaLabel={t('unlinkedRefs.loadMoreLabel')}
+                  ariaLoadingLabel={t('unlinkedRefs.loadingMore')}
+                />
+              </>
+            )}
+          </ListViewState>
         </div>
       )}
     </section>

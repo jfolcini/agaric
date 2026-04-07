@@ -724,8 +724,9 @@ describe('PairingDialog', () => {
     await waitFor(() => {
       const dialog = document.querySelector('.pairing-dialog')
       expect(dialog).toBeInTheDocument()
-      expect(dialog?.className).toContain('overflow-y-auto')
-      expect(dialog?.className).toContain('max-h-[calc(100dvh-4rem)]')
+      const scrollArea = dialog?.querySelector('[data-slot="scroll-area"]')
+      expect(scrollArea).toBeInTheDocument()
+      expect(scrollArea?.className).toContain('max-h-[calc(100dvh-4rem)]')
     })
   })
 

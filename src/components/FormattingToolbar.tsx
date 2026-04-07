@@ -44,6 +44,7 @@ import { cn } from '@/lib/utils'
 import { LinkEditPopover } from './LinkEditPopover'
 import { Button } from './ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover'
+import { ScrollArea } from './ui/scroll-area'
 import { Separator } from './ui/separator'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 
@@ -310,157 +311,163 @@ export function FormattingToolbar({
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div
-        role="toolbar"
-        aria-label={t('toolbar.formatting')}
-        aria-controls={blockId ? `editor-${blockId}` : undefined}
-        className="formatting-toolbar flex items-center gap-0.5 border-b border-border/40 bg-muted/30 px-2 py-px overflow-x-auto"
-        data-testid="formatting-toolbar"
-      >
-        <ToolbarButtonGroup buttons={markToggles} state={state as Record<string, unknown>} t={t} />
+      <ScrollArea className="formatting-toolbar border-b border-border/40 bg-muted/30">
+        <div
+          role="toolbar"
+          aria-label={t('toolbar.formatting')}
+          aria-controls={blockId ? `editor-${blockId}` : undefined}
+          className="flex items-center gap-0.5 px-2 py-px"
+          data-testid="formatting-toolbar"
+        >
+          <ToolbarButtonGroup
+            buttons={markToggles}
+            state={state as Record<string, unknown>}
+            t={t}
+          />
 
-        <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
+          <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
-        <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>
-          <Tip label={t('toolbar.linkTip')}>
-            <PopoverAnchor asChild>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={t('toolbar.link')}
-                aria-pressed={state.link}
-                className={cn(state.link && toolbarActiveClass)}
-                onPointerDown={(e) => {
-                  e.preventDefault()
-                  setLinkPopoverOpen((prev) => !prev)
-                }}
-              >
-                <Link2 className="h-3.5 w-3.5" />
-              </Button>
-            </PopoverAnchor>
-          </Tip>
-          <PopoverContent align="start" className="w-72 p-3">
-            <LinkEditPopover
-              editor={editor}
-              isEditing={state.link}
-              initialUrl={currentUrl}
-              onClose={handleLinkPopoverClose}
-            />
-          </PopoverContent>
-        </Popover>
-
-        <ToolbarButtonGroup
-          buttons={refsAndBlocks}
-          state={state as Record<string, unknown>}
-          t={t}
-        />
-
-        <Popover open={headingPopoverOpen} onOpenChange={setHeadingPopoverOpen}>
-          <Tip label={t('toolbar.headingTip')}>
-            <PopoverAnchor asChild>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={t('toolbar.headingLevel')}
-                aria-pressed={state.headingLevel > 0}
-                className={cn(state.headingLevel > 0 && toolbarActiveClass)}
-                onPointerDown={(e) => {
-                  e.preventDefault()
-                  setHeadingPopoverOpen((prev) => !prev)
-                }}
-              >
-                <Heading className="h-3.5 w-3.5" />
-                {state.headingLevel > 0 && (
-                  <span className="text-[10px] font-bold">{state.headingLevel}</span>
-                )}
-              </Button>
-            </PopoverAnchor>
-          </Tip>
-          <PopoverContent align="start" className="w-auto p-1">
-            <div className="flex flex-col gap-0.5">
-              {([1, 2, 3, 4, 5, 6] as const).map((level) => (
+          <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>
+            <Tip label={t('toolbar.linkTip')}>
+              <PopoverAnchor asChild>
                 <Button
-                  key={level}
                   variant="ghost"
-                  size="sm"
-                  className={cn(
-                    'justify-start text-sm',
-                    state.headingLevel === level && 'bg-accent',
-                  )}
+                  size="icon-xs"
+                  aria-label={t('toolbar.link')}
+                  aria-pressed={state.link}
+                  className={cn(state.link && toolbarActiveClass)}
                   onPointerDown={(e) => {
                     e.preventDefault()
-                    editor.chain().focus().toggleHeading({ level }).run()
+                    setLinkPopoverOpen((prev) => !prev)
+                  }}
+                >
+                  <Link2 className="h-3.5 w-3.5" />
+                </Button>
+              </PopoverAnchor>
+            </Tip>
+            <PopoverContent align="start" className="w-72 p-3">
+              <LinkEditPopover
+                editor={editor}
+                isEditing={state.link}
+                initialUrl={currentUrl}
+                onClose={handleLinkPopoverClose}
+              />
+            </PopoverContent>
+          </Popover>
+
+          <ToolbarButtonGroup
+            buttons={refsAndBlocks}
+            state={state as Record<string, unknown>}
+            t={t}
+          />
+
+          <Popover open={headingPopoverOpen} onOpenChange={setHeadingPopoverOpen}>
+            <Tip label={t('toolbar.headingTip')}>
+              <PopoverAnchor asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={t('toolbar.headingLevel')}
+                  aria-pressed={state.headingLevel > 0}
+                  className={cn(state.headingLevel > 0 && toolbarActiveClass)}
+                  onPointerDown={(e) => {
+                    e.preventDefault()
+                    setHeadingPopoverOpen((prev) => !prev)
+                  }}
+                >
+                  <Heading className="h-3.5 w-3.5" />
+                  {state.headingLevel > 0 && (
+                    <span className="text-[10px] font-bold">{state.headingLevel}</span>
+                  )}
+                </Button>
+              </PopoverAnchor>
+            </Tip>
+            <PopoverContent align="start" className="w-auto p-1">
+              <div className="flex flex-col gap-0.5">
+                {([1, 2, 3, 4, 5, 6] as const).map((level) => (
+                  <Button
+                    key={level}
+                    variant="ghost"
+                    size="sm"
+                    className={cn(
+                      'justify-start text-sm',
+                      state.headingLevel === level && 'bg-accent',
+                    )}
+                    onPointerDown={(e) => {
+                      e.preventDefault()
+                      editor.chain().focus().toggleHeading({ level }).run()
+                      setHeadingPopoverOpen(false)
+                    }}
+                  >
+                    H{level}
+                  </Button>
+                ))}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={cn('justify-start text-sm', state.headingLevel === 0 && 'bg-accent')}
+                  onPointerDown={(e) => {
+                    e.preventDefault()
+                    if (state.headingLevel > 0) {
+                      editor
+                        .chain()
+                        .focus()
+                        .toggleHeading({ level: state.headingLevel as 1 | 2 | 3 | 4 | 5 | 6 })
+                        .run()
+                    }
                     setHeadingPopoverOpen(false)
                   }}
                 >
-                  H{level}
+                  {t('toolbar.paragraph')}
                 </Button>
-              ))}
-              <Button
-                variant="ghost"
-                size="sm"
-                className={cn('justify-start text-sm', state.headingLevel === 0 && 'bg-accent')}
-                onPointerDown={(e) => {
-                  e.preventDefault()
-                  if (state.headingLevel > 0) {
-                    editor
-                      .chain()
-                      .focus()
-                      .toggleHeading({ level: state.headingLevel as 1 | 2 | 3 | 4 | 5 | 6 })
-                      .run()
-                  }
-                  setHeadingPopoverOpen(false)
-                }}
-              >
-                {t('toolbar.paragraph')}
-              </Button>
-            </div>
-          </PopoverContent>
-        </Popover>
+              </div>
+            </PopoverContent>
+          </Popover>
 
-        <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
+          <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
-        <Tip label={t('toolbar.cyclePriorityTip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.cyclePriority')}
-            aria-pressed={currentPriority != null}
-            className={cn(currentPriority != null && toolbarActiveClass)}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              dispatchBlockEvent('CYCLE_PRIORITY')
-            }}
-          >
-            <span className="inline-flex items-center gap-1 text-xs font-semibold leading-none text-muted-foreground">
-              {currentPriority === '1' && (
-                <span className="h-2 w-2 rounded-full bg-priority-urgent" />
-              )}
-              {currentPriority === '2' && (
-                <span className="h-2 w-2 rounded-full bg-priority-high" />
-              )}
-              {currentPriority === '3' && (
-                <span className="h-2 w-2 rounded-full bg-priority-normal" />
-              )}
-              {currentPriority ? `P${currentPriority}` : 'P'}
-            </span>
-          </Button>
-        </Tip>
+          <Tip label={t('toolbar.cyclePriorityTip')}>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label={t('toolbar.cyclePriority')}
+              aria-pressed={currentPriority != null}
+              className={cn(currentPriority != null && toolbarActiveClass)}
+              onPointerDown={(e) => {
+                e.preventDefault()
+                dispatchBlockEvent('CYCLE_PRIORITY')
+              }}
+            >
+              <span className="inline-flex items-center gap-1 text-xs font-semibold leading-none text-muted-foreground">
+                {currentPriority === '1' && (
+                  <span className="h-2 w-2 rounded-full bg-priority-urgent" />
+                )}
+                {currentPriority === '2' && (
+                  <span className="h-2 w-2 rounded-full bg-priority-high" />
+                )}
+                {currentPriority === '3' && (
+                  <span className="h-2 w-2 rounded-full bg-priority-normal" />
+                )}
+                {currentPriority ? `P${currentPriority}` : 'P'}
+              </span>
+            </Button>
+          </Tip>
 
-        <ToolbarButtonGroup
-          buttons={metadataButtons}
-          state={state as Record<string, unknown>}
-          t={t}
-        />
+          <ToolbarButtonGroup
+            buttons={metadataButtons}
+            state={state as Record<string, unknown>}
+            t={t}
+          />
 
-        <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
+          <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
-        <ToolbarButtonGroup
-          buttons={historyButtons}
-          state={state as Record<string, unknown>}
-          t={t}
-        />
-      </div>
+          <ToolbarButtonGroup
+            buttons={historyButtons}
+            state={state as Record<string, unknown>}
+            t={t}
+          />
+        </div>
+      </ScrollArea>
     </TooltipProvider>
   )
 }

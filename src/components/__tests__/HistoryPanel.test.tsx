@@ -63,6 +63,18 @@ describe('HistoryPanel', () => {
     expect(await screen.findByText('No history for this block')).toBeInTheDocument()
   })
 
+  it('shows loading skeleton while fetching history', async () => {
+    // Never-resolving promise to keep loading state
+    mockedInvoke.mockImplementation(() => new Promise(() => {}))
+
+    const { container } = render(<HistoryPanel blockId="BLOCK001" />)
+
+    // ListViewState shows skeleton when loading with empty items
+    await waitFor(() => {
+      expect(container.querySelector('.history-panel-loading')).toBeInTheDocument()
+    })
+  })
+
   it('calls get_block_history with correct params on mount', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 

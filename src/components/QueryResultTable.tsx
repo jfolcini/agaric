@@ -1,5 +1,6 @@
 import { ArrowDown, ArrowUp } from 'lucide-react'
 import type React from 'react'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import type { BlockRow } from '../lib/tauri'
 import { truncateContent } from '../lib/text-utils'
 import { PageLink } from './PageLink'
@@ -42,7 +43,7 @@ export function QueryResultTable({
   resolveBlockTitle,
 }: QueryResultTableProps): React.ReactElement {
   return (
-    <div className="overflow-x-auto">
+    <ScrollArea className="w-full">
       {/* biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: table uses grid role for sortable column headers */}
       <table className="w-full text-xs" role="grid">
         <thead>
@@ -109,6 +110,6 @@ export function QueryResultTable({
           })}
         </tbody>
       </table>
-    </div>
+    </ScrollArea>
   )
 }

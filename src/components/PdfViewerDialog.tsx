@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from './ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog'
+import { ScrollArea } from './ui/scroll-area'
 
 // Set worker path — served from public/
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
@@ -192,25 +193,26 @@ export function PdfViewerDialog({
           <DialogDescription className="sr-only">PDF viewer for {filename}</DialogDescription>
         </DialogHeader>
 
-        <div
-          ref={containerRef}
-          className="flex-1 min-h-0 overflow-auto flex items-start justify-center bg-muted/30 rounded-md"
-        >
-          {loading && (
-            <div className="flex items-center justify-center p-8" data-testid="pdf-loading">
-              <span className="text-muted-foreground text-sm">Loading PDF...</span>
-            </div>
-          )}
+        <div ref={containerRef} className="flex-1 min-h-0">
+          <ScrollArea className="h-full bg-muted/30 rounded-md">
+            <div className="flex items-start justify-center">
+              {loading && (
+                <div className="flex items-center justify-center p-8" data-testid="pdf-loading">
+                  <span className="text-muted-foreground text-sm">Loading PDF...</span>
+                </div>
+              )}
 
-          {error && (
-            <div className="flex items-center justify-center p-8" data-testid="pdf-error">
-              <span className="text-destructive text-sm">Error: {error}</span>
-            </div>
-          )}
+              {error && (
+                <div className="flex items-center justify-center p-8" data-testid="pdf-error">
+                  <span className="text-destructive text-sm">Error: {error}</span>
+                </div>
+              )}
 
-          {!loading && !error && numPages > 0 && (
-            <canvas ref={canvasRef} className="max-w-full" data-testid="pdf-canvas" />
-          )}
+              {!loading && !error && numPages > 0 && (
+                <canvas ref={canvasRef} className="max-w-full" data-testid="pdf-canvas" />
+              )}
+            </div>
+          </ScrollArea>
         </div>
 
         {!loading && !error && numPages > 0 && (

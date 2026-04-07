@@ -19,6 +19,7 @@ import { batchResolve, queryByProperty } from '../lib/tauri'
 import { BlockListItem } from './BlockListItem'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { EmptyState } from './EmptyState'
+import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { PageLink } from './PageLink'
 
@@ -165,94 +166,97 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
     return groups
   })()
 
-  // Empty state: show EmptyState component
-  if (!loading && totalCount === 0 && blocks.length === 0) {
-    return (
-      <section className="done-panel" aria-label={t('donePanel.completedItems')}>
-        <EmptyState icon={CheckCircle2} message={t('donePanel.empty')} compact />
-      </section>
-    )
-  }
-
   const headerLabel =
     totalCount === 1 ? t('donePanel.headerOne') : t('donePanel.header', { count: totalCount })
 
   return (
     <section className="done-panel" aria-label={t('donePanel.completedItems')}>
-      {/* Main header -- collapsible */}
-      <CollapsiblePanelHeader
-        collapsed={collapsed}
-        onToggle={toggleCollapsed}
-        className="done-panel-header"
+      <ListViewState
+        loading={loading}
+        items={blocks}
+        skeleton={
+          <div
+            className="done-panel-loading flex items-center gap-2 px-2 py-2"
+            aria-busy="true"
+            role="status"
+          >
+            <LoadingSkeleton count={3} height="h-10" />
+          </div>
+        }
+        empty={<EmptyState icon={CheckCircle2} message={t('donePanel.empty')} compact />}
       >
-        {headerLabel}
-      </CollapsiblePanelHeader>
-
-      {!collapsed && (
-        <div className="done-panel-content mt-1 space-y-2">
-          {/* Loading spinner */}
-          {loading && blocks.length === 0 && (
-            <div
-              className="done-panel-loading flex items-center gap-2 px-2 py-2"
-              aria-busy="true"
-              role="status"
+        {() => (
+          <>
+            {/* Main header -- collapsible */}
+            <CollapsiblePanelHeader
+              collapsed={collapsed}
+              onToggle={toggleCollapsed}
+              className="done-panel-header"
             >
-              <LoadingSkeleton count={3} height="h-10" />
-            </div>
-          )}
+              {headerLabel}
+            </CollapsiblePanelHeader>
 
-          {/* Grouped blocks */}
-          {grouped.map((group) => (
-            <div key={group.pageId} className="done-panel-group">
-              {/* Group sub-header: page title + block count (not individually collapsible) */}
-              <div className="done-panel-group-header px-3 py-1 text-xs [@media(pointer:coarse)]:text-sm font-semibold text-muted-foreground tracking-wide uppercase bg-muted rounded">
-                <PageLink pageId={group.pageId} title={group.title} className="hover:underline" /> (
-                {group.items.length})
-              </div>
+            {!collapsed && (
+              <div className="done-panel-content mt-1 space-y-2">
+                {/* Grouped blocks */}
+                {grouped.map((group) => (
+                  <div key={group.pageId} className="done-panel-group">
+                    {/* Group sub-header: page title + block count (not individually collapsible) */}
+                    <div className="done-panel-group-header px-3 py-1 text-xs [@media(pointer:coarse)]:text-sm font-semibold text-muted-foreground tracking-wide uppercase bg-muted rounded">
+                      <PageLink
+                        pageId={group.pageId}
+                        title={group.title}
+                        className="hover:underline"
+                      />{' '}
+                      ({group.items.length})
+                    </div>
 
-              <ul
-                className="done-panel-blocks ml-2 space-y-1"
-                aria-label={t('donePanel.groupItemsLabel', { title: group.title })}
-              >
-                {group.items.map((block) => (
-                  <BlockListItem
-                    key={block.id}
-                    content={block.content}
-                    metadata={
-                      <CheckCircle2 className="done-panel-check h-4 w-4 shrink-0 text-status-done-foreground" />
-                    }
-                    pageId={block.parent_id}
-                    pageTitle={
-                      block.parent_id
-                        ? (pageTitles.get(block.parent_id) ?? t('donePanel.untitled'))
-                        : ''
-                    }
-                    breadcrumbArrow={t('donePanel.breadcrumbArrow')}
-                    breadcrumbAsLink={false}
-                    className="done-panel-item hover:bg-muted/50 active:bg-muted/70"
-                    contentClassName="done-panel-item-text"
-                    breadcrumbClassName="done-panel-breadcrumb [@media(pointer:coarse)]:text-sm"
-                    onClick={() => handleBlockClick(block)}
-                    onKeyDown={(e) => handleBlockKeyDown(e, block)}
-                  />
+                    <ul
+                      className="done-panel-blocks ml-2 space-y-1"
+                      aria-label={t('donePanel.groupItemsLabel', { title: group.title })}
+                    >
+                      {group.items.map((block) => (
+                        <BlockListItem
+                          key={block.id}
+                          content={block.content}
+                          metadata={
+                            <CheckCircle2 className="done-panel-check h-4 w-4 shrink-0 text-status-done-foreground" />
+                          }
+                          pageId={block.parent_id}
+                          pageTitle={
+                            block.parent_id
+                              ? (pageTitles.get(block.parent_id) ?? t('donePanel.untitled'))
+                              : ''
+                          }
+                          breadcrumbArrow={t('donePanel.breadcrumbArrow')}
+                          breadcrumbAsLink={false}
+                          className="done-panel-item hover:bg-muted/50 active:bg-muted/70"
+                          contentClassName="done-panel-item-text"
+                          breadcrumbClassName="done-panel-breadcrumb [@media(pointer:coarse)]:text-sm"
+                          onClick={() => handleBlockClick(block)}
+                          onKeyDown={(e) => handleBlockKeyDown(e, block)}
+                        />
+                      ))}
+                    </ul>
+                  </div>
                 ))}
-              </ul>
-            </div>
-          ))}
 
-          {/* Load more */}
-          <LoadMoreButton
-            hasMore={hasMore}
-            loading={loading}
-            onLoadMore={loadMore}
-            className="done-panel-load-more"
-            label={t('donePanel.loadMore')}
-            loadingLabel={t('donePanel.loading')}
-            ariaLabel={t('donePanel.loadMoreLabel')}
-            ariaLoadingLabel={t('donePanel.loadingMore')}
-          />
-        </div>
-      )}
+                {/* Load more */}
+                <LoadMoreButton
+                  hasMore={hasMore}
+                  loading={loading}
+                  onLoadMore={loadMore}
+                  className="done-panel-load-more"
+                  label={t('donePanel.loadMore')}
+                  loadingLabel={t('donePanel.loading')}
+                  ariaLabel={t('donePanel.loadMoreLabel')}
+                  ariaLoadingLabel={t('donePanel.loadingMore')}
+                />
+              </div>
+            )}
+          </>
+        )}
+      </ListViewState>
     </section>
   )
 }

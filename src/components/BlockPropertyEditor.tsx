@@ -1,6 +1,7 @@
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import type { BlockRow } from '../lib/tauri'
 import { setProperty } from '../lib/tauri'
 import { cn } from '../lib/utils'
@@ -84,7 +85,7 @@ export function BlockPropertyEditor({
                   if (e.key === 'Escape') setEditingProp(null)
                 }}
               />
-              <div className="max-h-48 overflow-y-auto flex flex-col gap-0.5">
+              <ScrollArea className="max-h-48 flex flex-col gap-0.5">
                 {(() => {
                   const filtered = refPages.filter((page) => {
                     if (!refSearch) return true
@@ -126,7 +127,7 @@ export function BlockPropertyEditor({
                     </button>
                   ))
                 })()}
-              </div>
+              </ScrollArea>
             </fieldset>
           ) : (
             <input

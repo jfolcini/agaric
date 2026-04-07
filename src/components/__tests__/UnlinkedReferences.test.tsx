@@ -474,6 +474,24 @@ describe('UnlinkedReferences', () => {
     expect(screen.getByText('No unlinked references found.')).toBeInTheDocument()
   })
 
+  // 11b. Shows loading indicator when expanding and fetching
+  it('shows loading indicator when fetching after expand', async () => {
+    const user = userEvent.setup()
+    // Never-resolving promise to keep loading state
+    mockedListUnlinked.mockImplementation(() => new Promise(() => {}))
+
+    render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
+
+    // Expand to trigger fetch
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+
+    // ListViewState shows skeleton (spinner) when loading with empty items
+    await waitFor(() => {
+      expect(document.querySelector('[aria-busy="true"]')).toBeInTheDocument()
+      expect(document.querySelector('[role="status"]')).toBeInTheDocument()
+    })
+  })
+
   // 12. A11y audit passes
   it('a11y: no violations', async () => {
     const user = userEvent.setup()

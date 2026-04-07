@@ -64,6 +64,7 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockKeyboar
     moveDown: vi.fn(async () => {}),
     createBelow: vi.fn(async () => 'NEW_1' as string | null),
     justCreatedBlockIds: { current: new Set<string>() },
+    discardDraft: vi.fn(),
     t: vi.fn((key: string) => key),
     ...overrides,
   }
@@ -651,5 +652,49 @@ describe('useBlockKeyboardHandlers handleEscapeCancel', () => {
     // Block should NOT be removed because user had typed content
     expect(params.remove).not.toHaveBeenCalled()
     expect(params.setFocused).toHaveBeenCalledWith(null)
+  })
+
+  it('calls discardDraft with the focused block ID before unmount', () => {
+    const params = makeDefaultParams()
+    const callOrder: string[] = []
+    params.discardDraft = vi.fn(() => {
+      callOrder.push('discardDraft')
+    })
+    params.rovingEditor.unmount = vi.fn(() => {
+      callOrder.push('unmount')
+      return 'changed content'
+    })
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    act(() => {
+      result.current.handleEscapeCancel()
+    })
+
+    expect(params.discardDraft).toHaveBeenCalledWith('B')
+    expect(callOrder).toEqual(['discardDraft', 'unmount'])
+  })
+
+  it('calls discardDraft even when no changes on Escape', () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.unmount = vi.fn(() => null)
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    act(() => {
+      result.current.handleEscapeCancel()
+    })
+
+    expect(params.discardDraft).toHaveBeenCalledWith('B')
+    expect(params.setFocused).toHaveBeenCalledWith(null)
+  })
+
+  it('does not call discardDraft when focusedBlockId is null', () => {
+    const params = makeDefaultParams({ focusedBlockId: null })
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    act(() => {
+      result.current.handleEscapeCancel()
+    })
+
+    expect(params.discardDraft).not.toHaveBeenCalled()
   })
 })

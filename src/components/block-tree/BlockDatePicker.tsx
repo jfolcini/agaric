@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { parseDate } from '../../lib/parse-date'
 import { Calendar } from '../ui/calendar'
+import { ScrollArea } from '../ui/scroll-area'
 
 export function BlockDatePicker({
   onSelect,
@@ -84,45 +85,47 @@ export function BlockDatePicker({
         role="dialog"
         aria-modal="true"
         aria-label={t('journal.datePickerLabel')}
-        className="date-picker-popup fixed z-50 rounded-md border bg-popover p-2 shadow-lg left-1/2 top-1/3 -translate-x-1/2 max-w-[calc(100vw-2rem)] max-sm:left-2 max-sm:right-2 max-sm:translate-x-0 max-sm:max-h-[70vh] max-sm:overflow-y-auto"
+        className="date-picker-popup fixed z-50 rounded-md border bg-popover p-2 shadow-lg left-1/2 top-1/3 -translate-x-1/2 max-w-[calc(100vw-2rem)] max-sm:left-2 max-sm:right-2 max-sm:translate-x-0"
         data-testid="date-picker-popup"
       >
-        <div className="px-3 pb-2">
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              className="flex-1 rounded border px-2 py-1 text-sm"
-              placeholder="Type a date... (today, +3d, Apr 15)"
-              value={dateTextInput}
-              onChange={(e) => {
-                setDateTextInput(e.target.value)
-                const parsed = parseDate(e.target.value)
-                setDateTextPreview(parsed)
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && dateTextPreview) {
-                  e.preventDefault()
-                  handleDateSelected(dateTextPreview)
-                  setDateTextInput('')
-                  setDateTextPreview(null)
-                }
-              }}
-              aria-label={t('journal.typeDateLabel')}
-            />
+        <ScrollArea className="max-sm:max-h-[70vh]">
+          <div className="px-3 pb-2">
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                className="flex-1 rounded border px-2 py-1 text-sm"
+                placeholder="Type a date... (today, +3d, Apr 15)"
+                value={dateTextInput}
+                onChange={(e) => {
+                  setDateTextInput(e.target.value)
+                  const parsed = parseDate(e.target.value)
+                  setDateTextPreview(parsed)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && dateTextPreview) {
+                    e.preventDefault()
+                    handleDateSelected(dateTextPreview)
+                    setDateTextInput('')
+                    setDateTextPreview(null)
+                  }
+                }}
+                aria-label={t('journal.typeDateLabel')}
+              />
+            </div>
+            {dateTextInput && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {dateTextPreview ? (
+                  <>
+                    Parsed: <strong>{dateTextPreview}</strong> (press Enter to apply)
+                  </>
+                ) : (
+                  <span className="text-destructive">Could not parse date</span>
+                )}
+              </p>
+            )}
           </div>
-          {dateTextInput && (
-            <p className="mt-1 text-xs text-muted-foreground">
-              {dateTextPreview ? (
-                <>
-                  Parsed: <strong>{dateTextPreview}</strong> (press Enter to apply)
-                </>
-              ) : (
-                <span className="text-destructive">Could not parse date</span>
-              )}
-            </p>
-          )}
-        </div>
-        <Calendar mode="single" weekStartsOn={1} showOutsideDays onSelect={onSelect} />
+          <Calendar mode="single" weekStartsOn={1} showOutsideDays onSelect={onSelect} />
+        </ScrollArea>
       </div>
     </>
   )

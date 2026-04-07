@@ -116,6 +116,100 @@ describe('PageBlockStore', () => {
         expect.objectContaining({ parentId: 'PARENT_42' }),
       )
     })
+
+    it('preserves focused block content during sync reload', async () => {
+      // Pre-populate store with blocks (simulating user editing block A)
+      const blockA = makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'user is typing here' })
+      const blockB = makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'original B' })
+      store.setState({ blocks: [blockA, blockB] })
+
+      // Simulate block A being focused (user is editing it)
+      mockGlobalBlockState = { focusedBlockId: 'A', selectedBlockIds: [] }
+
+      // Backend returns different (stale) content for block A
+      const backendBlocks = [
+        makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'old backend content' }),
+        makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'updated B from backend' }),
+      ]
+      mockedInvoke.mockResolvedValueOnce({
+        items: backendBlocks,
+        next_cursor: null,
+        has_more: false,
+      })
+      // Children of A — empty
+      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+      // Children of B — empty
+      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+
+      await store.getState().load()
+
+      const result = store.getState().blocks
+      // Focused block A should preserve its pre-load content
+      expect(result.find((b) => b.id === 'A')?.content).toBe('user is typing here')
+      // Non-focused block B should be updated from backend
+      expect(result.find((b) => b.id === 'B')?.content).toBe('updated B from backend')
+    })
+
+    it('updates non-focused blocks from backend during sync reload', async () => {
+      const blockA = makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'old A' })
+      const blockB = makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'old B' })
+      const blockC = makeBlock({ id: 'C', parent_id: 'PAGE_1', content: 'old C' })
+      store.setState({ blocks: [blockA, blockB, blockC] })
+
+      // Only block B is focused
+      mockGlobalBlockState = { focusedBlockId: 'B', selectedBlockIds: [] }
+
+      const backendBlocks = [
+        makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'new A from backend' }),
+        makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'new B from backend' }),
+        makeBlock({ id: 'C', parent_id: 'PAGE_1', content: 'new C from backend' }),
+      ]
+      mockedInvoke.mockResolvedValueOnce({
+        items: backendBlocks,
+        next_cursor: null,
+        has_more: false,
+      })
+      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+
+      await store.getState().load()
+
+      const result = store.getState().blocks
+      // Non-focused blocks A and C should be updated
+      expect(result.find((b) => b.id === 'A')?.content).toBe('new A from backend')
+      expect(result.find((b) => b.id === 'C')?.content).toBe('new C from backend')
+      // Focused block B should preserve its pre-load content
+      expect(result.find((b) => b.id === 'B')?.content).toBe('old B')
+    })
+
+    it('updates all blocks when no block is focused (normal reload)', async () => {
+      const blockA = makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'old A' })
+      const blockB = makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'old B' })
+      store.setState({ blocks: [blockA, blockB] })
+
+      // No block is focused
+      mockGlobalBlockState = { focusedBlockId: null, selectedBlockIds: [] }
+
+      const backendBlocks = [
+        makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'new A from backend' }),
+        makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'new B from backend' }),
+      ]
+      mockedInvoke.mockResolvedValueOnce({
+        items: backendBlocks,
+        next_cursor: null,
+        has_more: false,
+      })
+      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+
+      await store.getState().load()
+
+      const result = store.getState().blocks
+      // All blocks should be updated from backend
+      expect(result.find((b) => b.id === 'A')?.content).toBe('new A from backend')
+      expect(result.find((b) => b.id === 'B')?.content).toBe('new B from backend')
+    })
   })
 
   // ---------------------------------------------------------------------------

@@ -271,7 +271,6 @@ beforeEach(() => {
   useBlockStore.setState({
     focusedBlockId: null,
     selectedBlockIds: [],
-    pendingFocusId: null,
   })
 })
 

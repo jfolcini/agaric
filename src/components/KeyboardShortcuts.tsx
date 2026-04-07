@@ -8,6 +8,7 @@
 import { Keyboard } from 'lucide-react'
 import React, { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Sheet,
   SheetContent,
@@ -268,7 +269,7 @@ export function KeyboardShortcuts({
             {t('keyboard.sheetDescription')}
           </SheetDescription>
         </SheetHeader>
-        <div className="overflow-y-auto overflow-x-auto px-4 pb-4" data-testid="shortcuts-table">
+        <ScrollArea className="px-4 pb-4" data-testid="shortcuts-table">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b">
@@ -337,7 +338,7 @@ export function KeyboardShortcuts({
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollArea>
       </SheetContent>
     </Sheet>
   )

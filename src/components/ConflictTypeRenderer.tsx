@@ -11,8 +11,8 @@
 
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { truncateId } from '@/lib/format'
-import { cn } from '@/lib/utils'
 import type { BlockRow } from '../lib/tauri'
 import { renderRichContent } from './StaticBlock'
 
@@ -109,38 +109,44 @@ export function ConflictTypeRenderer({
   }
 
   // Default: Text conflict (or fallback)
+  const originalContent = (
+    <>
+      <span className="font-medium text-muted-foreground">Current:</span>{' '}
+      {original ? (
+        original.content ? (
+          <span>{renderRichContent(original.content, { interactive: false })}</span>
+        ) : (
+          t('conflict.emptyContent')
+        )
+      ) : (
+        t('conflict.originalNotAvailable')
+      )}
+    </>
+  )
+
+  const incomingContent = (
+    <>
+      <span className="font-medium">Incoming:</span>{' '}
+      <span className="conflict-item-text">
+        {block.content
+          ? renderRichContent(block.content, { interactive: false })
+          : t('conflict.emptyContent')}
+      </span>
+    </>
+  )
+
   return (
     <>
-      <div
-        className={cn(
-          'conflict-original text-sm',
-          isExpanded ? 'max-h-40 overflow-y-auto' : 'truncate',
-        )}
-      >
-        <span className="font-medium text-muted-foreground">Current:</span>{' '}
-        {original ? (
-          original.content ? (
-            <span>{renderRichContent(original.content, { interactive: false })}</span>
-          ) : (
-            t('conflict.emptyContent')
-          )
-        ) : (
-          t('conflict.originalNotAvailable')
-        )}
-      </div>
-      <div
-        className={cn(
-          'conflict-incoming text-sm',
-          isExpanded ? 'max-h-40 overflow-y-auto' : 'truncate',
-        )}
-      >
-        <span className="font-medium">Incoming:</span>{' '}
-        <span className="conflict-item-text">
-          {block.content
-            ? renderRichContent(block.content, { interactive: false })
-            : t('conflict.emptyContent')}
-        </span>
-      </div>
+      {isExpanded ? (
+        <ScrollArea className="conflict-original text-sm max-h-40">{originalContent}</ScrollArea>
+      ) : (
+        <div className="conflict-original text-sm truncate">{originalContent}</div>
+      )}
+      {isExpanded ? (
+        <ScrollArea className="conflict-incoming text-sm max-h-40">{incomingContent}</ScrollArea>
+      ) : (
+        <div className="conflict-incoming text-sm truncate">{incomingContent}</div>
+      )}
     </>
   )
 }

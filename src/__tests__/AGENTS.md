@@ -203,7 +203,7 @@ Global singleton stores are tested by directly calling `getState()` and `setStat
 
 ```ts
 beforeEach(() => {
-  useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: [], pendingFocusId: null })
+  useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: [] })
   vi.clearAllMocks()
 })
 

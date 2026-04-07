@@ -40,6 +40,7 @@ import { BLOCK_EVENTS, onBlockEvent } from '../lib/block-events'
 import {
   batchResolve,
   createBlock,
+  deleteDraft,
   getBatchProperties,
   getBlock,
   setPriority as setPriorityCmd,
@@ -58,6 +59,7 @@ import { BlockZoomBar } from './BlockZoomBar'
 import { BlockContextMenu } from './block-tree/BlockContextMenu'
 import { BlockDatePicker } from './block-tree/BlockDatePicker'
 import { BlockDndOverlay } from './block-tree/BlockDndOverlay'
+import { ScrollArea } from './ui/scroll-area'
 import { Skeleton } from './ui/skeleton'
 
 function TemplatePicker({
@@ -112,24 +114,26 @@ function TemplatePicker({
         role="dialog"
         aria-modal="true"
         aria-label={t('slash.templatePicker')}
-        className="fixed z-50 rounded-md border bg-popover p-2 shadow-lg left-1/2 top-1/3 -translate-x-1/2 min-w-[200px] max-w-[calc(100vw-2rem)] sm:max-w-[300px] max-h-[60vh] overflow-y-auto max-sm:left-2 max-sm:right-2 max-sm:translate-x-0"
+        className="fixed z-50 rounded-md border bg-popover p-2 shadow-lg left-1/2 top-1/3 -translate-x-1/2 min-w-[200px] max-w-[calc(100vw-2rem)] sm:max-w-[300px] max-sm:left-2 max-sm:right-2 max-sm:translate-x-0"
       >
-        <p className="px-2 py-1 text-xs font-medium text-muted-foreground">
-          {t('slash.selectTemplate')}
-        </p>
-        {templatePages.map((tp) => (
-          <button
-            key={tp.id}
-            type="button"
-            className="w-full text-left rounded px-2 py-1.5 text-sm hover:bg-accent transition-colors"
-            onClick={() => onSelect(tp.id)}
-          >
-            <span className="font-medium">{tp.content || t('block.untitled')}</span>
-            {tp.preview && (
-              <span className="block text-xs text-muted-foreground truncate">{tp.preview}</span>
-            )}
-          </button>
-        ))}
+        <ScrollArea className="max-h-[60vh]">
+          <p className="px-2 py-1 text-xs font-medium text-muted-foreground">
+            {t('slash.selectTemplate')}
+          </p>
+          {templatePages.map((tp) => (
+            <button
+              key={tp.id}
+              type="button"
+              className="w-full text-left rounded px-2 py-1.5 text-sm hover:bg-accent transition-colors"
+              onClick={() => onSelect(tp.id)}
+            >
+              <span className="font-medium">{tp.content || t('block.untitled')}</span>
+              {tp.preview && (
+                <span className="block text-xs text-muted-foreground truncate">{tp.preview}</span>
+              )}
+            </button>
+          ))}
+        </ScrollArea>
       </div>
     </>
   )
@@ -600,6 +604,11 @@ export function BlockTree({
 
   handlePropertySelectRef.current = handlePropertySelect
 
+  // ── Draft discard callback for Escape ────────────────────────────────
+  const handleDiscardDraft = useCallback((blockId: string) => {
+    deleteDraft(blockId).catch(() => {})
+  }, [])
+
   // ── Keyboard handlers hook ─────────────────────────────────────────
   const {
     handleFocusPrev,
@@ -629,6 +638,7 @@ export function BlockTree({
     moveDown,
     createBelow,
     justCreatedBlockIds,
+    discardDraft: handleDiscardDraft,
     t,
   })
 

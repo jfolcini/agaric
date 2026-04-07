@@ -1100,25 +1100,27 @@ describe('ConflictList', () => {
     await screen.findByText(/A very long incoming content string/)
 
     // Initially content divs should have truncate class
-    const currentDiv = container.querySelector('.conflict-original')
-    const incomingDiv = container.querySelector('.conflict-incoming')
-    expect(currentDiv?.className).toContain('truncate')
-    expect(incomingDiv?.className).toContain('truncate')
+    expect(container.querySelector('.conflict-original')?.className).toContain('truncate')
+    expect(container.querySelector('.conflict-incoming')?.className).toContain('truncate')
 
     // Click the expandable content area
     const expandBtn = container.querySelector('.conflict-item-content') as HTMLElement
     await user.click(expandBtn)
 
-    // After click, truncate class should be removed
-    expect(currentDiv?.className).not.toContain('truncate')
-    expect(incomingDiv?.className).not.toContain('truncate')
+    // After click, truncate class should be removed (now wrapped in ScrollArea)
+    const expandedOriginal = container.querySelector('.conflict-original')
+    const expandedIncoming = container.querySelector('.conflict-incoming')
+    expect(expandedOriginal?.className).not.toContain('truncate')
+    expect(expandedIncoming?.className).not.toContain('truncate')
+    expect((expandedOriginal as HTMLElement)?.dataset.slot).toBe('scroll-area')
+    expect((expandedIncoming as HTMLElement)?.dataset.slot).toBe('scroll-area')
 
     // Click again to collapse
     await user.click(expandBtn)
 
     // Truncate class should be restored
-    expect(currentDiv?.className).toContain('truncate')
-    expect(incomingDiv?.className).toContain('truncate')
+    expect(container.querySelector('.conflict-original')?.className).toContain('truncate')
+    expect(container.querySelector('.conflict-incoming')?.className).toContain('truncate')
   })
 
   // --- #296 View original button / navigation ---

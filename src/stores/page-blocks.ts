@@ -125,7 +125,21 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         const allBlocks = await loadSubtree(rootParentId ?? undefined)
         // Defensive: discard if rootParentId changed (shouldn't happen with per-page stores)
         if (get().rootParentId !== rootParentId) return
-        set({ blocks: buildFlatTree(allBlocks, rootParentId), loading: false })
+        let newBlocks = buildFlatTree(allBlocks, rootParentId)
+
+        // Preserve focused block's content during sync reload to prevent
+        // visual flash and store/editor divergence
+        const focusedBlockId = useBlockStore.getState().focusedBlockId
+        if (focusedBlockId) {
+          const currentBlock = get().blocks.find((b) => b.id === focusedBlockId)
+          if (currentBlock) {
+            newBlocks = newBlocks.map((b) =>
+              b.id === focusedBlockId ? { ...b, content: currentBlock.content } : b,
+            )
+          }
+        }
+
+        set({ blocks: newBlocks, loading: false })
       } catch {
         if (get().rootParentId !== rootParentId) return
         set({ loading: false })

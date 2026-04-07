@@ -21,6 +21,8 @@ export interface UseBlockKeyboardHandlersParams {
   moveDown: (id: string) => Promise<void>
   createBelow: (afterBlockId: string) => Promise<string | null>
   justCreatedBlockIds: MutableRefObject<Set<string>>
+  /** Discard any persisted draft for the given block (called on Escape). */
+  discardDraft: (blockId: string) => void
   // biome-ignore lint/suspicious/noExplicitAny: TFunction overload set is too complex
   t: (...args: any[]) => any
 }
@@ -55,6 +57,7 @@ export function useBlockKeyboardHandlers({
   moveDown,
   createBelow,
   justCreatedBlockIds,
+  discardDraft,
   t,
 }: UseBlockKeyboardHandlersParams): UseBlockKeyboardHandlersReturn {
   const handleFocusPrev = useCallback(() => {
@@ -260,6 +263,9 @@ export function useBlockKeyboardHandlers({
 
   const handleEscapeCancel = useCallback(() => {
     if (!focusedBlockId) return
+    // Discard any persisted draft BEFORE unmounting so the autosave
+    // cleanup cannot flush stale content to the database.
+    discardDraft(focusedBlockId)
     const changed = rovingEditor.unmount()
     if (changed !== null) {
       toast('Changes discarded', { duration: 2000 })
@@ -273,7 +279,7 @@ export function useBlockKeyboardHandlers({
       })
     }
     setFocused(null)
-  }, [focusedBlockId, rovingEditor, setFocused, justCreatedBlockIds, remove])
+  }, [focusedBlockId, rovingEditor, setFocused, justCreatedBlockIds, remove, discardDraft])
 
   return {
     handleFocusPrev,

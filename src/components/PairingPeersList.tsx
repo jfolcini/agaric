@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { formatLastSynced } from '@/lib/format'
 import type { PeerRefRow } from '../lib/tauri'
@@ -33,36 +34,38 @@ export function PairingPeersList({ peers, onUnpair }: PairingPeersListProps): Re
         {peers.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t('pairing.noPairedDevices')}</p>
         ) : (
-          <div className="space-y-2 max-h-48 overflow-y-auto">
-            {peers.map((peer) => (
-              <Card key={peer.peer_id} className="pairing-peer-item p-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Smartphone className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <div className="min-w-0">
-                      <p className="text-sm font-mono truncate">{peer.peer_id}</p>
-                      <p className="text-xs text-muted-foreground">
-                        Last: {formatLastSynced(peer.synced_at)}
-                      </p>
-                      {peer.reset_count > 0 && (
-                        <Badge variant="outline" className="mt-0.5 text-xs">
-                          {peer.reset_count} reset{peer.reset_count !== 1 ? 's' : ''}
-                        </Badge>
-                      )}
+          <ScrollArea className="max-h-48">
+            <div className="space-y-2">
+              {peers.map((peer) => (
+                <Card key={peer.peer_id} className="pairing-peer-item p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Smartphone className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-mono truncate">{peer.peer_id}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Last: {formatLastSynced(peer.synced_at)}
+                        </p>
+                        {peer.reset_count > 0 && (
+                          <Badge variant="outline" className="mt-0.5 text-xs">
+                            {peer.reset_count} reset{peer.reset_count !== 1 ? 's' : ''}
+                          </Badge>
+                        )}
+                      </div>
                     </div>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => onUnpair(peer.peer_id)}
+                      className="pairing-unpair-btn shrink-0 touch-target"
+                    >
+                      Unpair
+                    </Button>
                   </div>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={() => onUnpair(peer.peer_id)}
-                    className="pairing-unpair-btn shrink-0 touch-target"
-                  >
-                    Unpair
-                  </Button>
-                </div>
-              </Card>
-            ))}
-          </div>
+                </Card>
+              ))}
+            </div>
+          </ScrollArea>
         )}
       </div>
     </>

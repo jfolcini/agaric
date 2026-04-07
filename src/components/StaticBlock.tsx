@@ -21,6 +21,7 @@ import { useBlockAttachments } from '../hooks/useBlockAttachments'
 import { openUrl } from '../lib/open-url'
 import { cn } from '../lib/utils'
 import { QueryResult } from './QueryResult'
+import { ScrollArea } from './ui/scroll-area'
 import { Spinner } from './ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
@@ -330,16 +331,15 @@ export function renderRichContent(
         highlighted = code
       }
       elements.push(
-        <pre
-          key={`code-${keyIdx++}`}
-          className="bg-muted rounded-md px-3 py-2 text-sm font-mono overflow-x-auto"
-        >
-          <code
-            className={language ? `language-${language} hljs` : 'hljs'}
-            // biome-ignore lint/security/noDangerouslySetInnerHtml: lowlight output is safe
-            dangerouslySetInnerHTML={{ __html: highlighted }}
-          />
-        </pre>,
+        <ScrollArea key={`code-${keyIdx++}`} className="bg-muted rounded-md text-sm font-mono">
+          <pre className="px-3 py-2">
+            <code
+              className={language ? `language-${language} hljs` : 'hljs'}
+              // biome-ignore lint/security/noDangerouslySetInnerHtml: lowlight output is safe
+              dangerouslySetInnerHTML={{ __html: highlighted }}
+            />
+          </pre>
+        </ScrollArea>,
       )
     } else if (block.type === 'blockquote') {
       const bqKey = `bq-${keyIdx++}`

@@ -550,15 +550,12 @@ describe('LinkedReferences', () => {
     // Never-resolving promise to keep loading state
     mockedInvoke.mockImplementation(() => new Promise(() => {}))
 
-    render(<LinkedReferences pageId="PAGE1" />)
+    const { container } = render(<LinkedReferences pageId="PAGE1" />)
 
-    // The component starts in loading state but with totalCount = 0 initially,
-    // which means it returns null. We need to verify skeletons are shown.
-    // Actually the loading state is set before the fetch resolves, but
-    // totalCount starts at 0 so the component returns null.
-    // Let's test with a delayed response instead.
+    // ListViewState shows skeleton when loading with empty items
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('list_backlinks_grouped', expect.anything())
+      expect(container.querySelector('[data-slot="skeleton"]')).toBeInTheDocument()
+      expect(container.querySelector('[aria-busy="true"]')).toBeInTheDocument()
     })
   })
 

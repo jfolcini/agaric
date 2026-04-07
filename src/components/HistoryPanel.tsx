@@ -22,6 +22,7 @@ import type { HistoryEntry } from '../lib/tauri'
 import { editBlock, getBlockHistory } from '../lib/tauri'
 import { DiffDisplay } from './DiffDisplay'
 import { EmptyState } from './EmptyState'
+import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 
 interface HistoryPanelProps {
@@ -102,89 +103,92 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
 
   return (
     <div className="history-panel space-y-4">
-      {loading && entries.length === 0 && (
-        <div className="history-panel-loading space-y-2">
-          <Skeleton className="h-14 w-full rounded-lg" />
-          <Skeleton className="h-14 w-full rounded-lg" />
-        </div>
-      )}
-
-      {!loading && entries.length === 0 && (
-        <EmptyState icon={Clock} message="No history for this block" />
-      )}
-
-      <ul className="history-list space-y-2 list-none p-0 m-0">
-        {entries.map((entry) => {
-          const preview = getPayloadPreview(entry)
-          const isEditBlock = entry.op_type === 'edit_block'
-          return (
-            <li
-              key={entry.seq}
-              className="history-item flex flex-col gap-2 rounded-lg border bg-card p-4"
-            >
-              <div className="history-item-row flex flex-col [@media(pointer:fine)]:flex-row [@media(pointer:fine)]:items-start [@media(pointer:fine)]:justify-between gap-3 w-full">
-                <div className="history-item-content flex flex-col gap-1 min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="history-item-type shrink-0">
-                      {entry.op_type}
-                    </Badge>
-                    <span className="history-item-time text-xs [@media(pointer:coarse)]:text-sm text-muted-foreground">
-                      {formatTimestamp(entry.created_at)}
-                    </span>
-                    <span className="text-xs text-muted-foreground/60">&middot;</span>
-                    <span className="text-xs text-muted-foreground/60">
-                      dev:{entry.device_id.slice(0, 8)}
-                    </span>
+      <ListViewState
+        loading={loading}
+        items={entries}
+        skeleton={
+          <div className="history-panel-loading space-y-2">
+            <Skeleton className="h-14 w-full rounded-lg" />
+            <Skeleton className="h-14 w-full rounded-lg" />
+          </div>
+        }
+        empty={<EmptyState icon={Clock} message="No history for this block" />}
+      >
+        {(items) => (
+          <ul className="history-list space-y-2 list-none p-0 m-0">
+            {items.map((entry) => {
+              const preview = getPayloadPreview(entry)
+              const isEditBlock = entry.op_type === 'edit_block'
+              return (
+                <li
+                  key={entry.seq}
+                  className="history-item flex flex-col gap-2 rounded-lg border bg-card p-4"
+                >
+                  <div className="history-item-row flex flex-col [@media(pointer:fine)]:flex-row [@media(pointer:fine)]:items-start [@media(pointer:fine)]:justify-between gap-3 w-full">
+                    <div className="history-item-content flex flex-col gap-1 min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary" className="history-item-type shrink-0">
+                          {entry.op_type}
+                        </Badge>
+                        <span className="history-item-time text-xs [@media(pointer:coarse)]:text-sm text-muted-foreground">
+                          {formatTimestamp(entry.created_at)}
+                        </span>
+                        <span className="text-xs text-muted-foreground/60">&middot;</span>
+                        <span className="text-xs text-muted-foreground/60">
+                          dev:{entry.device_id.slice(0, 8)}
+                        </span>
+                      </div>
+                      {preview && (
+                        <span className="history-item-preview text-sm text-muted-foreground truncate">
+                          {preview}
+                        </span>
+                      )}
+                    </div>
+                    {entry.op_type === 'edit_block' && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="diff-toggle-btn shrink-0 h-7 px-2"
+                        onClick={() => handleToggleDiff(entry)}
+                      >
+                        {loadingDiffs.has(entry.seq) ? (
+                          <Spinner size="sm" />
+                        ) : expandedKeys.has(entry.seq) ? (
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        ) : (
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        )}
+                        Diff
+                      </Button>
+                    )}
+                    {isEditBlock && preview && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="history-restore-btn shrink-0 touch-target"
+                        onClick={() => setConfirmEntry(entry)}
+                        disabled={restoringSeq === entry.seq}
+                      >
+                        {restoringSeq === entry.seq ? (
+                          <Spinner size="sm" />
+                        ) : (
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        )}
+                        Restore
+                      </Button>
+                    )}
                   </div>
-                  {preview && (
-                    <span className="history-item-preview text-sm text-muted-foreground truncate">
-                      {preview}
-                    </span>
+                  {expandedKeys.has(entry.seq) && diffCache.has(entry.seq) && (
+                    <div className="diff-container mt-2 w-full">
+                      <DiffDisplay spans={diffCache.get(entry.seq) ?? []} />
+                    </div>
                   )}
-                </div>
-                {entry.op_type === 'edit_block' && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="diff-toggle-btn shrink-0 h-7 px-2"
-                    onClick={() => handleToggleDiff(entry)}
-                  >
-                    {loadingDiffs.has(entry.seq) ? (
-                      <Spinner size="sm" />
-                    ) : expandedKeys.has(entry.seq) ? (
-                      <ChevronDown className="h-3.5 w-3.5" />
-                    ) : (
-                      <ChevronRight className="h-3.5 w-3.5" />
-                    )}
-                    Diff
-                  </Button>
-                )}
-                {isEditBlock && preview && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="history-restore-btn shrink-0 touch-target"
-                    onClick={() => setConfirmEntry(entry)}
-                    disabled={restoringSeq === entry.seq}
-                  >
-                    {restoringSeq === entry.seq ? (
-                      <Spinner size="sm" />
-                    ) : (
-                      <RotateCcw className="h-3.5 w-3.5" />
-                    )}
-                    Restore
-                  </Button>
-                )}
-              </div>
-              {expandedKeys.has(entry.seq) && diffCache.has(entry.seq) && (
-                <div className="diff-container mt-2 w-full">
-                  <DiffDisplay spans={diffCache.get(entry.seq) ?? []} />
-                </div>
-              )}
-            </li>
-          )
-        })}
-      </ul>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </ListViewState>
 
       <LoadMoreButton
         hasMore={hasMore}

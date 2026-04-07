@@ -725,10 +725,11 @@ describe('FormattingToolbar', () => {
   // ── #590-B7: Toolbar overflow handling ────────────────────────────────
 
   describe('toolbar overflow', () => {
-    it('has overflow-x-auto class for narrow screens', () => {
+    it('wraps toolbar in ScrollArea for narrow screens', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const toolbar = screen.getByRole('toolbar', { name: 'Formatting' })
-      expect(toolbar.className).toContain('overflow-x-auto')
+      const scrollArea = toolbar.closest('[data-slot="scroll-area"]')
+      expect(scrollArea).toBeInTheDocument()
     })
   })
 })
