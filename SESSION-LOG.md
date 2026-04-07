@@ -1,5 +1,43 @@
 # Session Log
 
+## Session 243 — 2026-04-07 — Batch 97: 8 frontend consistency items resolved (22→14 remaining)
+
+### Summary
+Resolved 8 REVIEW-LATER items: B-17, B-18, B-19, B-20, M-8, M-9, M-10, P-5. All are frontend UI consistency, accessibility, and design system compliance fixes. 5 parallel build subagents + orchestrator B-19 fix. 3 technical review subagents (all PASS, 1 minor select.tsx fix applied). 34 files changed, 253 insertions, 67 deletions. 4642 tests pass. REVIEW-LATER: 22→14 (B-21/B-22 added by another agent during session).
+
+### Batch 97 — Frontend consistency
+
+**Commit:** 1ade94a
+
+| Area | Change |
+|------|--------|
+| ui/input.tsx | B-17: Added `[@media(pointer:coarse)]:h-11` touch target |
+| ui/list-item.tsx | B-17+B-18: Added touch target + focus-visible ring |
+| ui/popover-menu-item.tsx | B-17+B-18: Added touch target + focus-visible ring |
+| ui/card-button.tsx | B-17+B-18: Added touch target, replaced ring-2 with ring-[3px] |
+| ui/alert-list-item.tsx | B-17+B-18: Added touch target + focus-visible ring to CVA base |
+| ui/select.tsx | B-18: SelectTrigger focus ring updated to ring-[3px], removed ring-offset-background |
+| PropertyChip.tsx | B-19: Added conditional aria-label on interactive outer button |
+| i18n.ts | B-19+B-20: Added `property.selectValue` and `query.noResults` keys |
+| QueryResult.tsx | B-20: Replaced inline Loading/No results with Spinner + EmptyState |
+| ConflictList.tsx | M-10: Replaced manual LoadMore with shared LoadMoreButton |
+| HistoryView.tsx | M-10: Replaced manual LoadMore with shared LoadMoreButton |
+| HistoryPanel.tsx | M-10: Replaced manual LoadMore with shared LoadMoreButton |
+| SearchPanel.tsx | M-8: blue → `alert-info` semantic tokens |
+| journal/DaySection.tsx | M-8: blue → `primary/10` semantic tokens |
+| BlockInlineControls.tsx | M-8: purple → `date-scheduled` semantic tokens |
+| ConflictTypeRenderer.tsx | M-8: purple → `conflict-move-foreground` semantic token |
+| HistoryListItem.tsx | M-9: 2 template literals → cn() |
+| SourcePageFilter.tsx | M-9: 2 template literals → cn(), added cn import |
+| AttachmentList.tsx | M-9: 1 template literal → cn(), added cn import |
+| ConflictListItem.tsx | M-9: 2 template literals → cn() |
+| StatusPanel.tsx | M-9: 3 template literals → cn() |
+| JournalCalendarDropdown.tsx | M-9: 1 template literal → cn(), added cn import |
+| JournalPage.tsx | P-5: 3 useJournalStore + 1 useNavigationStore wrapped with useShallow |
+| BootGate.tsx | P-5: 1 useBootStore wrapped with useShallow |
+| 7 test files | 15 new tests (UI primitives touch/ring, PropertyChip aria-label, QueryResult, LoadMore) |
+| SortableBlock.test.tsx | Updated color class assertions for M-8 |
+
 ## Session 242 — 2026-04-07 — Batch 96: 10 editor lifecycle bugs resolved (31→20 remaining)
 
 ### Summary
