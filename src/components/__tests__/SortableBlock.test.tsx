@@ -3863,4 +3863,34 @@ describe('SortableBlock mobile gutter hidden (UX-21)', () => {
     expect(gutterDiv.className).toContain('[@media(pointer:coarse)]:w-0')
     expect(gutterDiv.className).toContain('[@media(pointer:coarse)]:overflow-hidden')
   })
+
+  it('outer wrapper has [@media(pointer:coarse)]:items-start for vertical alignment', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_MOBILE"
+        content="mobile test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    const wrapper = screen.getByTestId('sortable-block')
+    expect(wrapper.className).toContain('[@media(pointer:coarse)]:items-start')
+  })
+
+  it('content div retains flex-1 min-w-0', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_MOBILE"
+        content="mobile test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    const editableBlock = screen.getByTestId('editable-block-BLOCK_MOBILE')
+    const contentDiv = editableBlock.parentElement as HTMLElement
+    expect(contentDiv.className).toContain('flex-1')
+    expect(contentDiv.className).toContain('min-w-0')
+  })
 })

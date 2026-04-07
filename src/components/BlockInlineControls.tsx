@@ -174,13 +174,17 @@ export function BlockInlineControls({
   const { t } = useTranslation()
 
   return (
-    <div className={cn('inline-controls flex items-center flex-shrink-0 gap-1')}>
+    <div
+      className={cn(
+        'inline-controls flex items-center flex-shrink-0 gap-1 [@media(pointer:coarse)]:flex-col [@media(pointer:coarse)]:w-10 [@media(pointer:coarse)]:items-center',
+      )}
+    >
       {hasChildren ? (
         <Tooltip>
           <TooltipTrigger asChild>
             <button
               type="button"
-              className="collapse-toggle flex-shrink-0 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+              className="collapse-toggle flex-shrink-0 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
               data-testid="collapse-toggle"
               onClick={() => onToggleCollapse?.(blockId)}
               aria-label={isCollapsed ? t('block.expandChildren') : t('block.collapseChildren')}
@@ -203,7 +207,7 @@ export function BlockInlineControls({
         <TooltipTrigger asChild>
           <button
             type="button"
-            className="task-marker flex-shrink-0 p-0.5 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+            className="task-marker flex-shrink-0 p-0.5 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
             data-testid="task-marker"
             onClick={(e) => {
               e.stopPropagation()
@@ -224,7 +228,7 @@ export function BlockInlineControls({
           <TooltipTrigger asChild>
             <button
               type="button"
-              className="priority-badge flex-shrink-0 p-0.5 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+              className="priority-badge flex-shrink-0 p-0.5 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
               data-testid="priority-badge"
               aria-label={t('block.priorityCycle', { level: PRIORITY_DISPLAY[priority] })}
               onClick={(e) => {

@@ -18,6 +18,7 @@ import { Clock, GripVertical, Trash2 } from 'lucide-react'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
+import { useBlockSwipeActions } from '../hooks/useBlockSwipeActions'
 import { useBlockTouchLongPress } from '../hooks/useBlockTouchLongPress'
 import type { BlockRow } from '../lib/tauri'
 import { listAttachments, listBlocks, listPropertyDefs } from '../lib/tauri'
@@ -180,6 +181,21 @@ function SortableBlockInner({
   const { handleTouchStart, handleTouchEnd, handleTouchMove, handleContextMenu, clearLongPress } =
     useBlockTouchLongPress({ openContextMenu, isDraggingRef })
 
+  // ── Swipe-to-delete (mobile only) ─────────────────────────────
+  const handleSwipeDelete = useCallback(() => {
+    onDelete?.(blockId)
+  }, [onDelete, blockId])
+
+  const {
+    translateX: swipeTranslateX,
+    isRevealed: swipeRevealed,
+    handlers: swipeHandlers,
+    reset: swipeReset,
+  } = useBlockSwipeActions(handleSwipeDelete)
+
+  const isTouchDevice =
+    typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
+
   useEffect(() => {
     isDraggingRef.current = isDragging
     if (isDragging) {
@@ -252,153 +268,196 @@ function SortableBlockInner({
         data-block-id={blockId}
         data-testid="sortable-block"
         className={cn(
-          'sortable-block group relative flex items-center gap-1',
+          'sortable-block group relative flex items-center gap-1 [@media(pointer:coarse)]:items-start [@media(pointer:coarse)]:overflow-hidden',
           isFocused && 'block-active',
         )}
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-        onTouchMove={handleTouchMove}
+        onTouchStart={(e) => {
+          handleTouchStart(e)
+          swipeHandlers.onTouchStart(e)
+        }}
+        onTouchEnd={() => {
+          handleTouchEnd()
+          swipeHandlers.onTouchEnd()
+        }}
+        onTouchMove={(e) => {
+          handleTouchMove(e)
+          swipeHandlers.onTouchMove(e)
+        }}
         onContextMenu={handleContextMenu}
       >
-        {/* Indent guide line for nested blocks */}
-        {depth > 0 && (
+        {/* ── Swipe-to-delete backdrop (mobile only) ──────────────── */}
+        {isTouchDevice && onDelete && (swipeRevealed || swipeTranslateX < 0) && (
           <div
-            className="absolute left-0 top-0 bottom-0 border-l border-border/20"
-            style={{ left: `calc(var(--indent-width) * ${depth - 1} + var(--indent-width) / 2)` }}
-          />
-        )}
-
-        {/* ── Narrow gutter — grip + delete only ─────────────────── */}
-        <div
-          className={cn(
-            GUTTER_WIDTH,
-            'relative z-10 flex-shrink-0 flex items-center gap-1 justify-end [@media(pointer:coarse)]:w-0 [@media(pointer:coarse)]:overflow-hidden',
-          )}
-        >
-          {/* Drag handle — far left */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className="drag-handle flex-shrink-0 cursor-grab p-0.5 text-muted-foreground hover:text-foreground opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto [@media(pointer:coarse)]:hidden group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring active:scale-95 touch-target [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
-                data-testid="drag-handle"
-                aria-label={t('block.reorder')}
-                {...attributes}
-                {...listeners}
-              >
-                <GripVertical className="h-4 w-4" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" sideOffset={4}>
-              {t('block.reorderTip')}
-            </TooltipContent>
-          </Tooltip>
-
-          {/* History — between grip and delete */}
-          {onShowHistory && (
+            className="absolute right-0 top-0 bottom-0 flex items-center justify-center bg-destructive text-destructive-foreground"
+            style={{ width: 80 }}
+            data-testid="swipe-delete-action"
+          >
             <button
               type="button"
-              aria-label={t('block.history')}
-              className="flex-shrink-0 p-0.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-sm opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto [@media(pointer:coarse)]:hidden group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring active:scale-95 touch-target [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
-              onClick={() => onShowHistory(blockId)}
+              aria-label={t('block.delete')}
+              className="flex items-center justify-center w-full h-full"
+              onClick={() => {
+                onDelete(blockId)
+                swipeReset()
+              }}
             >
-              <Clock className="h-4 w-4" />
+              <Trash2 className="h-5 w-5" />
             </button>
+          </div>
+        )}
+
+        {/* ── Sliding content wrapper (swipe-to-delete) ───────────── */}
+        <div
+          className="flex items-center gap-1 w-full [@media(pointer:coarse)]:items-start"
+          data-testid="swipe-content"
+          style={{
+            transform:
+              isTouchDevice && swipeTranslateX !== 0
+                ? `translateX(${swipeTranslateX}px)`
+                : undefined,
+            transition: isTouchDevice && swipeTranslateX !== 0 ? 'transform 0.2s ease' : undefined,
+          }}
+        >
+          {/* Indent guide line for nested blocks */}
+          {depth > 0 && (
+            <div
+              className="absolute left-0 top-0 bottom-0 border-l border-border/20"
+              style={{ left: `calc(var(--indent-width) * ${depth - 1} + var(--indent-width) / 2)` }}
+            />
           )}
 
-          {/* Delete — next to grip */}
-          {onDelete && (
+          {/* ── Narrow gutter — grip + delete only ─────────────────── */}
+          <div
+            className={cn(
+              GUTTER_WIDTH,
+              'relative z-10 flex-shrink-0 flex items-center gap-1 justify-end [@media(pointer:coarse)]:w-0 [@media(pointer:coarse)]:overflow-hidden',
+            )}
+          >
+            {/* Drag handle — far left */}
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  className="delete-handle flex-shrink-0 p-0.5 text-muted-foreground hover:text-destructive rounded-sm hover:bg-destructive/10 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto [@media(pointer:coarse)]:hidden group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring active:scale-95 touch-target [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
-                  aria-label={t('block.delete')}
-                  onPointerDown={(e) => {
-                    e.stopPropagation()
-                    e.preventDefault()
-                    onDelete(blockId)
-                  }}
-                  onClick={(e) => {
-                    // Fallback for keyboard activation (Enter/Space fires click, not pointerDown)
-                    e.stopPropagation()
-                    onDelete(blockId)
-                  }}
+                  className="drag-handle flex-shrink-0 cursor-grab p-0.5 text-muted-foreground hover:text-foreground opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto [@media(pointer:coarse)]:hidden group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring active:scale-95 touch-target [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+                  data-testid="drag-handle"
+                  aria-label={t('block.reorder')}
+                  {...attributes}
+                  {...listeners}
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <GripVertical className="h-4 w-4" />
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" sideOffset={4}>
-                {t('block.delete')}
+                {t('block.reorderTip')}
               </TooltipContent>
             </Tooltip>
-          )}
-        </div>
 
-        {/* ── Inline controls — chevron, checkbox, priority ─────── */}
-        <BlockInlineControls
-          blockId={blockId}
-          hasChildren={hasChildren}
-          isCollapsed={isCollapsed}
-          onToggleCollapse={onToggleCollapse}
-          todoState={todoState}
-          onToggleTodo={onToggleTodo}
-          priority={priority}
-          onTogglePriority={onTogglePriority}
-          dueDate={dueDate}
-          scheduledDate={scheduledDate}
-          properties={properties}
-          filteredProperties={filteredProperties}
-          resolveBlockTitle={resolveBlockTitle}
-          attachmentCount={attachmentCount}
-          showAttachments={showAttachments}
-          onToggleAttachments={() => setShowAttachments((prev) => !prev)}
-          onEditProp={setEditingProp}
-          onEditKey={(keyInfo) => setEditingKey(keyInfo)}
-        />
+            {/* History — between grip and delete */}
+            {onShowHistory && (
+              <button
+                type="button"
+                aria-label={t('block.history')}
+                className="flex-shrink-0 p-0.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-sm opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto [@media(pointer:coarse)]:hidden group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring active:scale-95 touch-target [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+                onClick={() => onShowHistory(blockId)}
+              >
+                <Clock className="h-4 w-4" />
+              </button>
+            )}
 
-        {/* ── Property edit popover / key rename ────────────────── */}
-        <BlockPropertyEditor
-          blockId={blockId}
-          editingProp={editingProp}
-          setEditingProp={setEditingProp}
-          editingKey={editingKey}
-          setEditingKey={setEditingKey}
-          selectOptions={selectOptions}
-          isRefProp={isRefProp}
-          refPages={refPages}
-          refSearch={refSearch}
-          setRefSearch={setRefSearch}
-        />
-
-        {/* ── Block content ─────────────────────────────────────────── */}
-        <div
-          className={cn(
-            'flex-1 min-w-0',
-            todoState === 'DONE' && !isFocused && 'line-through opacity-50',
-          )}
-        >
-          <EditableBlock
-            blockId={blockId}
-            content={content}
-            isFocused={isFocused}
-            rovingEditor={rovingEditor}
-            onNavigate={onNavigate}
-            resolveBlockTitle={resolveBlockTitle}
-            resolveTagName={resolveTagName}
-            resolveBlockStatus={resolveBlockStatus}
-            resolveTagStatus={resolveTagStatus}
-            isSelected={isSelected}
-            onSelect={onSelect}
-          />
-        </div>
-
-        {/* ── Collapsible attachment list ────────────────────────────── */}
-        {showAttachments && attachmentCount > 0 && (
-          <div className="mt-1 ml-5 border-l-2 border-border/30 pl-3">
-            <AttachmentList blockId={blockId} />
+            {/* Delete — next to grip */}
+            {onDelete && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="delete-handle flex-shrink-0 p-0.5 text-muted-foreground hover:text-destructive rounded-sm hover:bg-destructive/10 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto [@media(pointer:coarse)]:hidden group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring active:scale-95 touch-target [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+                    aria-label={t('block.delete')}
+                    onPointerDown={(e) => {
+                      e.stopPropagation()
+                      e.preventDefault()
+                      onDelete(blockId)
+                    }}
+                    onClick={(e) => {
+                      // Fallback for keyboard activation (Enter/Space fires click, not pointerDown)
+                      e.stopPropagation()
+                      onDelete(blockId)
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" sideOffset={4}>
+                  {t('block.delete')}
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
-        )}
+
+          {/* ── Inline controls — chevron, checkbox, priority ─────── */}
+          <BlockInlineControls
+            blockId={blockId}
+            hasChildren={hasChildren}
+            isCollapsed={isCollapsed}
+            onToggleCollapse={onToggleCollapse}
+            todoState={todoState}
+            onToggleTodo={onToggleTodo}
+            priority={priority}
+            onTogglePriority={onTogglePriority}
+            dueDate={dueDate}
+            scheduledDate={scheduledDate}
+            properties={properties}
+            filteredProperties={filteredProperties}
+            resolveBlockTitle={resolveBlockTitle}
+            attachmentCount={attachmentCount}
+            showAttachments={showAttachments}
+            onToggleAttachments={() => setShowAttachments((prev) => !prev)}
+            onEditProp={setEditingProp}
+            onEditKey={(keyInfo) => setEditingKey(keyInfo)}
+          />
+
+          {/* ── Property edit popover / key rename ────────────────── */}
+          <BlockPropertyEditor
+            blockId={blockId}
+            editingProp={editingProp}
+            setEditingProp={setEditingProp}
+            editingKey={editingKey}
+            setEditingKey={setEditingKey}
+            selectOptions={selectOptions}
+            isRefProp={isRefProp}
+            refPages={refPages}
+            refSearch={refSearch}
+            setRefSearch={setRefSearch}
+          />
+
+          {/* ── Block content ─────────────────────────────────────────── */}
+          <div
+            className={cn(
+              'flex-1 min-w-0',
+              todoState === 'DONE' && !isFocused && 'line-through opacity-50',
+            )}
+          >
+            <EditableBlock
+              blockId={blockId}
+              content={content}
+              isFocused={isFocused}
+              rovingEditor={rovingEditor}
+              onNavigate={onNavigate}
+              resolveBlockTitle={resolveBlockTitle}
+              resolveTagName={resolveTagName}
+              resolveBlockStatus={resolveBlockStatus}
+              resolveTagStatus={resolveTagStatus}
+              isSelected={isSelected}
+              onSelect={onSelect}
+            />
+          </div>
+
+          {/* ── Collapsible attachment list ────────────────────────────── */}
+          {showAttachments && attachmentCount > 0 && (
+            <div className="mt-1 ml-5 border-l-2 border-border/30 pl-3">
+              <AttachmentList blockId={blockId} />
+            </div>
+          )}
+        </div>
 
         {/* ── Context menu (long-press / right-click) ───────────────── */}
         {contextMenu && (

@@ -424,4 +424,22 @@ describe('BlockInlineControls', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  it('main container has coarse-pointer vertical stacking classes', () => {
+    const { container } = renderControls(makeProps())
+    const inlineControls = container.querySelector('.inline-controls') as HTMLElement
+    expect(inlineControls.className).toContain('[@media(pointer:coarse)]:flex-col')
+    expect(inlineControls.className).toContain('[@media(pointer:coarse)]:w-10')
+    expect(inlineControls.className).toContain('[@media(pointer:coarse)]:items-center')
+  })
+
+  it('indicator buttons do not have [@media(pointer:coarse)]:min-w-[44px]', () => {
+    renderControls(makeProps({ hasChildren: true, priority: '1' }))
+    const collapseToggle = screen.getByTestId('collapse-toggle')
+    const taskMarker = screen.getByTestId('task-marker')
+    const priorityBadge = screen.getByTestId('priority-badge')
+    expect(collapseToggle.className).not.toContain('[@media(pointer:coarse)]:min-w-[44px]')
+    expect(taskMarker.className).not.toContain('[@media(pointer:coarse)]:min-w-[44px]')
+    expect(priorityBadge.className).not.toContain('[@media(pointer:coarse)]:min-w-[44px]')
+  })
 })
