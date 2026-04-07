@@ -357,6 +357,311 @@ pub async fn rebuild_all_caches(pool: &SqlitePool) -> Result<(), AppError> {
 }
 
 // ---------------------------------------------------------------------------
+// Read/write split variants (Phase 1A)
+// ---------------------------------------------------------------------------
+
+/// Read/write split variant of [`rebuild_tags_cache`].
+///
+/// Reads tag data from `read_pool`, writes to `write_pool`.
+/// Used by the materializer when a separate read pool is available.
+pub async fn rebuild_tags_cache_split(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+) -> Result<(), AppError> {
+    let now = crate::now_rfc3339();
+
+    // Read phase: fetch tag data from read pool
+    let rows = sqlx::query_as::<_, (String, Option<String>, i64)>(
+        "SELECT b.id, b.content, COALESCE(t.cnt, 0) \
+         FROM blocks b \
+         LEFT JOIN ( \
+             SELECT bt.tag_id, COUNT(*) AS cnt \
+             FROM block_tags bt \
+             JOIN blocks blk ON blk.id = bt.block_id \
+             WHERE blk.deleted_at IS NULL \
+             GROUP BY bt.tag_id \
+         ) t ON t.tag_id = b.id \
+         WHERE b.block_type = 'tag' AND b.deleted_at IS NULL AND b.content IS NOT NULL \
+           AND b.is_conflict = 0 \
+         ORDER BY b.id",
+    )
+    .fetch_all(read_pool)
+    .await?;
+
+    // Write phase: DELETE + INSERT on write pool
+    let mut tx = write_pool.begin().await?;
+    sqlx::query("DELETE FROM tags_cache")
+        .execute(&mut *tx)
+        .await?;
+    for (tag_id, name, usage_count) in &rows {
+        sqlx::query(
+            "INSERT OR IGNORE INTO tags_cache (tag_id, name, usage_count, updated_at) \
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(tag_id)
+        .bind(name.as_deref().unwrap_or(""))
+        .bind(usage_count)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Read/write split variant of [`rebuild_pages_cache`].
+///
+/// Reads page data from `read_pool`, writes to `write_pool`.
+/// Used by the materializer when a separate read pool is available.
+pub async fn rebuild_pages_cache_split(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+) -> Result<(), AppError> {
+    let now = crate::now_rfc3339();
+
+    // Read phase
+    let rows = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT id, content FROM blocks \
+         WHERE block_type = 'page' AND deleted_at IS NULL AND content IS NOT NULL \
+           AND is_conflict = 0",
+    )
+    .fetch_all(read_pool)
+    .await?;
+
+    // Write phase
+    let mut tx = write_pool.begin().await?;
+    sqlx::query("DELETE FROM pages_cache")
+        .execute(&mut *tx)
+        .await?;
+    for (page_id, title) in &rows {
+        sqlx::query("INSERT INTO pages_cache (page_id, title, updated_at) VALUES (?, ?, ?)")
+            .bind(page_id)
+            .bind(title.as_deref().unwrap_or(""))
+            .bind(&now)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Read/write split variant of [`rebuild_agenda_cache`].
+///
+/// Reads desired and current agenda state from `read_pool`, computes a diff,
+/// and applies inserts/deletes/updates on `write_pool`.
+/// Used by the materializer when a separate read pool is available.
+pub async fn rebuild_agenda_cache_split(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+) -> Result<(), AppError> {
+    // Read phase: snapshot-isolated transaction on the read pool so both
+    // queries (desired state + current cache) see a consistent view.
+    let mut read_tx = read_pool.begin().await?;
+
+    // Step 1: Compute desired state from the same 4 UNION ALL sources.
+    let desired_rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT date, block_id, source FROM (
+            SELECT bp.value_date AS date, bp.block_id, 'property:' || bp.key AS source
+            FROM block_properties bp
+            JOIN blocks b ON b.id = bp.block_id
+            WHERE bp.value_date IS NOT NULL AND b.deleted_at IS NULL
+              AND b.is_conflict = 0
+            UNION ALL
+            SELECT SUBSTR(t.content, 6) AS date, bt.block_id, 'tag:' || bt.tag_id AS source
+            FROM block_tags bt
+            JOIN blocks t ON t.id = bt.tag_id
+            JOIN blocks b ON b.id = bt.block_id
+            WHERE t.block_type = 'tag'
+              AND t.content LIKE 'date/%'
+              AND LENGTH(t.content) = 15
+              AND SUBSTR(t.content, 6, 4) GLOB '[0-9][0-9][0-9][0-9]'
+              AND SUBSTR(t.content, 10, 1) = '-'
+              AND SUBSTR(t.content, 11, 2) GLOB '[0-9][0-9]'
+              AND SUBSTR(t.content, 13, 1) = '-'
+              AND SUBSTR(t.content, 14, 2) GLOB '[0-9][0-9]'
+              AND b.deleted_at IS NULL
+              AND t.deleted_at IS NULL
+              AND b.is_conflict = 0
+            UNION ALL
+            SELECT b.due_date AS date, b.id AS block_id, 'column:due_date' AS source
+            FROM blocks b
+            WHERE b.due_date IS NOT NULL
+              AND b.deleted_at IS NULL
+              AND b.is_conflict = 0
+            UNION ALL
+            SELECT b.scheduled_date AS date, b.id AS block_id, 'column:scheduled_date' AS source
+            FROM blocks b
+            WHERE b.scheduled_date IS NOT NULL
+              AND b.deleted_at IS NULL
+              AND b.is_conflict = 0
+        )",
+    )
+    .fetch_all(&mut *read_tx)
+    .await?;
+
+    // Deduplicate by PK (date, block_id), keeping first occurrence.
+    let mut desired: HashMap<(&str, &str), &str> = HashMap::with_capacity(desired_rows.len());
+    for (date, block_id, source) in &desired_rows {
+        desired
+            .entry((date.as_str(), block_id.as_str()))
+            .or_insert(source.as_str());
+    }
+
+    // Step 2: Read current cache state (same snapshot).
+    let current_rows: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT date, block_id, source FROM agenda_cache")
+            .fetch_all(&mut *read_tx)
+            .await?;
+
+    // Release the read snapshot before computing diff + writing.
+    drop(read_tx);
+
+    let current: HashMap<(&str, &str), &str> = current_rows
+        .iter()
+        .map(|(d, b, s)| ((d.as_str(), b.as_str()), s.as_str()))
+        .collect();
+
+    // Step 3: Compute diff.
+    let to_delete: Vec<(&str, &str)> = current
+        .keys()
+        .filter(|k| !desired.contains_key(k))
+        .copied()
+        .collect();
+
+    let to_insert: Vec<((&str, &str), &str)> = desired
+        .iter()
+        .filter(|(k, _)| !current.contains_key(k))
+        .map(|(&k, &v)| (k, v))
+        .collect();
+
+    let to_update: Vec<((&str, &str), &str)> = desired
+        .iter()
+        .filter(|(k, v)| current.get(k).is_some_and(|cv| cv != *v))
+        .map(|(&k, &v)| (k, v))
+        .collect();
+
+    if to_delete.is_empty() && to_insert.is_empty() && to_update.is_empty() {
+        // No changes — nothing to write.
+        return Ok(());
+    }
+
+    // Step 4: Apply diff on write pool.
+    let mut tx = write_pool.begin().await?;
+
+    for (date, block_id) in &to_delete {
+        sqlx::query("DELETE FROM agenda_cache WHERE date = ?1 AND block_id = ?2")
+            .bind(date)
+            .bind(block_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    for ((date, block_id), source) in &to_update {
+        sqlx::query("UPDATE agenda_cache SET source = ?1 WHERE date = ?2 AND block_id = ?3")
+            .bind(source)
+            .bind(date)
+            .bind(block_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    for ((date, block_id), source) in &to_insert {
+        sqlx::query(
+            "INSERT OR IGNORE INTO agenda_cache (date, block_id, source) VALUES (?1, ?2, ?3)",
+        )
+        .bind(date)
+        .bind(block_id)
+        .bind(source)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Read/write split variant of [`reindex_block_links`].
+///
+/// Reads block content and existing links from `read_pool`, computes a diff,
+/// and applies inserts/deletes on `write_pool`.
+/// Used by the materializer when a separate read pool is available.
+pub async fn reindex_block_links_split(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+    block_id: &str,
+) -> Result<(), AppError> {
+    // Read phase from read_pool
+
+    // 1. Get current content
+    let row = sqlx::query!(
+        "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
+        block_id,
+    )
+    .fetch_optional(read_pool)
+    .await?;
+
+    let content = match row {
+        Some(r) => r.content.unwrap_or_default(),
+        // Block not found or deleted — remove all links
+        None => String::new(),
+    };
+
+    // 2. Parse [[ULID]] and ((ULID)) tokens
+    let new_targets: HashSet<String> = ulid_link_re()
+        .captures_iter(&content)
+        .map(|cap| cap[1].to_string())
+        .collect();
+
+    // 3. Get existing outbound links from read pool
+    let existing_rows = sqlx::query!(
+        "SELECT target_id FROM block_links WHERE source_id = ?",
+        block_id,
+    )
+    .fetch_all(read_pool)
+    .await?;
+
+    let old_targets: HashSet<String> = existing_rows.into_iter().map(|r| r.target_id).collect();
+
+    // 4. Diff
+    let to_delete: Vec<&String> = old_targets.difference(&new_targets).collect();
+    let to_insert: Vec<&String> = new_targets.difference(&old_targets).collect();
+
+    if to_delete.is_empty() && to_insert.is_empty() {
+        // No changes — nothing to write.
+        return Ok(());
+    }
+
+    // Write phase on write pool
+    let mut tx = write_pool.begin().await?;
+
+    for target in &to_delete {
+        sqlx::query!(
+            "DELETE FROM block_links WHERE source_id = ? AND target_id = ?",
+            block_id,
+            *target,
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    for target in &to_insert {
+        let t = *target;
+        sqlx::query!(
+            "INSERT OR IGNORE INTO block_links (source_id, target_id)
+             SELECT ?, ? WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
+            block_id,
+            t,
+            t,
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1772,5 +2077,415 @@ mod tests {
         );
         assert_eq!(rows[0].target_id, "01HZ00000000000000000000AB");
         assert_eq!(rows[1].target_id, "01HZ00000000000000000000CD");
+    }
+
+    // ====================================================================
+    // _split variants — read/write pool separation
+    // ====================================================================
+
+    #[tokio::test]
+    async fn tags_cache_split_basic_rebuild() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG01", "tag", "urgent").await;
+        insert_block(&pool, "TAG02", "tag", "low-priority").await;
+        insert_block(&pool, "BLK01", "content", "some note").await;
+        add_tag(&pool, "BLK01", "TAG01").await;
+
+        rebuild_tags_cache_split(&pool, &pool).await.unwrap();
+
+        let rows = sqlx::query!("SELECT tag_id, name, usage_count FROM tags_cache ORDER BY name")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(rows.len(), 2, "both tags must appear in cache");
+        assert_eq!(
+            (&rows[0].tag_id, rows[0].name.as_str(), rows[0].usage_count),
+            (&"TAG02".to_string(), "low-priority", 0),
+            "unused tag must have count 0"
+        );
+        assert_eq!(
+            (&rows[1].tag_id, rows[1].name.as_str(), rows[1].usage_count),
+            (&"TAG01".to_string(), "urgent", 1),
+            "tagged-once tag must have count 1"
+        );
+    }
+
+    #[tokio::test]
+    async fn tags_cache_split_excludes_deleted_and_conflict() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG01", "tag", "active").await;
+        insert_block(&pool, "TAG02", "tag", "deleted-tag").await;
+        insert_block(&pool, "TAG03", "tag", "conflict-tag").await;
+        soft_delete_block(&pool, "TAG02").await;
+        mark_conflict(&pool, "TAG03").await;
+
+        rebuild_tags_cache_split(&pool, &pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "tags_cache").await,
+            1,
+            "soft-deleted and conflict tags must be excluded"
+        );
+    }
+
+    #[tokio::test]
+    async fn tags_cache_split_idempotent() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG01", "tag", "alpha").await;
+        insert_block(&pool, "BLK01", "content", "note").await;
+        add_tag(&pool, "BLK01", "TAG01").await;
+
+        rebuild_tags_cache_split(&pool, &pool).await.unwrap();
+        let first = count_rows(&pool, "tags_cache").await;
+
+        rebuild_tags_cache_split(&pool, &pool).await.unwrap();
+        let second = count_rows(&pool, "tags_cache").await;
+
+        assert_eq!(first, second, "consecutive rebuilds must be idempotent");
+    }
+
+    #[tokio::test]
+    async fn tags_cache_split_clears_stale_entries() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG01", "tag", "first").await;
+        rebuild_tags_cache_split(&pool, &pool).await.unwrap();
+        assert_eq!(count_rows(&pool, "tags_cache").await, 1);
+
+        soft_delete_block(&pool, "TAG01").await;
+        rebuild_tags_cache_split(&pool, &pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "tags_cache").await,
+            0,
+            "stale entry must be cleared after rebuild"
+        );
+    }
+
+    #[tokio::test]
+    async fn pages_cache_split_basic_rebuild() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "PAGE01", "page", "My First Page").await;
+        insert_block(&pool, "PAGE02", "page", "My Second Page").await;
+        insert_block(&pool, "BLK01", "content", "just content").await;
+
+        rebuild_pages_cache_split(&pool, &pool).await.unwrap();
+
+        let rows = sqlx::query!("SELECT page_id, title FROM pages_cache ORDER BY title")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(rows.len(), 2, "only page-type blocks must appear");
+        assert_eq!(
+            (rows[0].page_id.as_str(), rows[0].title.as_str()),
+            ("PAGE01", "My First Page"),
+        );
+        assert_eq!(
+            (rows[1].page_id.as_str(), rows[1].title.as_str()),
+            ("PAGE02", "My Second Page"),
+        );
+    }
+
+    #[tokio::test]
+    async fn pages_cache_split_excludes_deleted_and_conflict() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "PAGE01", "page", "Active Page").await;
+        insert_block(&pool, "PAGE02", "page", "Deleted Page").await;
+        insert_block(&pool, "PAGE03", "page", "Conflict Page").await;
+        soft_delete_block(&pool, "PAGE02").await;
+        mark_conflict(&pool, "PAGE03").await;
+
+        rebuild_pages_cache_split(&pool, &pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "pages_cache").await,
+            1,
+            "soft-deleted and conflict pages must be excluded"
+        );
+    }
+
+    #[tokio::test]
+    async fn pages_cache_split_idempotent() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "PAGE01", "page", "Stable Page").await;
+
+        rebuild_pages_cache_split(&pool, &pool).await.unwrap();
+        let first = count_rows(&pool, "pages_cache").await;
+
+        rebuild_pages_cache_split(&pool, &pool).await.unwrap();
+        let second = count_rows(&pool, "pages_cache").await;
+
+        assert_eq!(first, second, "consecutive rebuilds must be idempotent");
+    }
+
+    #[tokio::test]
+    async fn pages_cache_split_clears_stale_entries() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "PAGE01", "page", "Will be deleted").await;
+        rebuild_pages_cache_split(&pool, &pool).await.unwrap();
+        assert_eq!(count_rows(&pool, "pages_cache").await, 1);
+
+        soft_delete_block(&pool, "PAGE01").await;
+        rebuild_pages_cache_split(&pool, &pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "pages_cache").await,
+            0,
+            "stale entry must be cleared after rebuild"
+        );
+    }
+
+    #[tokio::test]
+    async fn agenda_cache_split_populates_from_date_properties() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BLK01", "content", "task with due date").await;
+        set_property(&pool, "BLK01", "due", Some("2025-01-15")).await;
+
+        rebuild_agenda_cache_split(&pool, &pool).await.unwrap();
+
+        let rows = sqlx::query!("SELECT date, block_id, source FROM agenda_cache")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].date.as_str(), "2025-01-15");
+        assert_eq!(rows[0].block_id, "BLK01");
+        assert_eq!(rows[0].source.as_str(), "property:due");
+    }
+
+    #[tokio::test]
+    async fn agenda_cache_split_populates_from_date_tags() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "DTAG1", "tag", "date/2025-03-20").await;
+        insert_block(&pool, "BLK01", "content", "meeting notes").await;
+        add_tag(&pool, "BLK01", "DTAG1").await;
+
+        rebuild_agenda_cache_split(&pool, &pool).await.unwrap();
+
+        let rows = sqlx::query!("SELECT date, block_id, source FROM agenda_cache")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].date.as_str(), "2025-03-20");
+        assert_eq!(rows[0].block_id, "BLK01");
+        assert_eq!(rows[0].source.as_str(), "tag:DTAG1");
+    }
+
+    #[tokio::test]
+    async fn agenda_cache_split_excludes_deleted_blocks() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BLK01", "content", "deleted task").await;
+        set_property(&pool, "BLK01", "due", Some("2025-01-15")).await;
+        soft_delete_block(&pool, "BLK01").await;
+
+        rebuild_agenda_cache_split(&pool, &pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            0,
+            "soft-deleted block must be excluded"
+        );
+    }
+
+    #[tokio::test]
+    async fn agenda_cache_split_incremental_inserts_and_deletes() {
+        let (pool, _dir) = test_pool().await;
+
+        // Establish baseline with one entry.
+        insert_block(&pool, "BLK01", "content", "first task").await;
+        sqlx::query("UPDATE blocks SET due_date = '2025-08-01' WHERE id = 'BLK01'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        rebuild_agenda_cache_split(&pool, &pool).await.unwrap();
+        assert_eq!(count_rows(&pool, "agenda_cache").await, 1, "baseline");
+
+        // Add a second block with a due_date.
+        insert_block(&pool, "BLK02", "content", "second task").await;
+        sqlx::query("UPDATE blocks SET due_date = '2025-09-15' WHERE id = 'BLK02'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        rebuild_agenda_cache_split(&pool, &pool).await.unwrap();
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            2,
+            "incremental rebuild must insert the new entry"
+        );
+
+        // Soft-delete the first block — its cache entry becomes stale.
+        soft_delete_block(&pool, "BLK01").await;
+        rebuild_agenda_cache_split(&pool, &pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            1,
+            "incremental rebuild must delete the stale entry"
+        );
+    }
+
+    #[tokio::test]
+    async fn block_links_split_basic_reindex() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "01HZ00000000000000000000AB", "content", "target A").await;
+        insert_block(&pool, "01HZ00000000000000000000CD", "content", "target B").await;
+        insert_block(
+            &pool,
+            "01HZ0000000000000000000SRC",
+            "content",
+            "See [[01HZ00000000000000000000AB]] and [[01HZ00000000000000000000CD]]",
+        )
+        .await;
+
+        reindex_block_links_split(&pool, &pool, "01HZ0000000000000000000SRC")
+            .await
+            .unwrap();
+
+        let rows = sqlx::query!(
+            "SELECT target_id FROM block_links WHERE source_id = ? ORDER BY target_id",
+            "01HZ0000000000000000000SRC",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(rows.len(), 2, "both link targets must be indexed");
+        assert_eq!(rows[0].target_id, "01HZ00000000000000000000AB");
+        assert_eq!(rows[1].target_id, "01HZ00000000000000000000CD");
+    }
+
+    #[tokio::test]
+    async fn block_links_split_incremental_diff() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "01HZ00000000000000000000AB", "content", "target A").await;
+        insert_block(&pool, "01HZ00000000000000000000CD", "content", "target B").await;
+        insert_block(&pool, "01HZ00000000000000000000EF", "content", "target C").await;
+
+        insert_block(
+            &pool,
+            "01HZ0000000000000000000SRC",
+            "content",
+            "[[01HZ00000000000000000000AB]] [[01HZ00000000000000000000CD]]",
+        )
+        .await;
+
+        reindex_block_links_split(&pool, &pool, "01HZ0000000000000000000SRC")
+            .await
+            .unwrap();
+        assert_eq!(count_rows(&pool, "block_links").await, 2, "initial: A + B");
+
+        // Update content: remove B, add C
+        sqlx::query!(
+            "UPDATE blocks SET content = ? WHERE id = ?",
+            "[[01HZ00000000000000000000AB]] [[01HZ00000000000000000000EF]]",
+            "01HZ0000000000000000000SRC",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        reindex_block_links_split(&pool, &pool, "01HZ0000000000000000000SRC")
+            .await
+            .unwrap();
+
+        let rows = sqlx::query!(
+            "SELECT target_id FROM block_links WHERE source_id = ? ORDER BY target_id",
+            "01HZ0000000000000000000SRC",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(rows.len(), 2, "diff: A kept, B removed, C added");
+        assert_eq!(rows[0].target_id, "01HZ00000000000000000000AB");
+        assert_eq!(rows[1].target_id, "01HZ00000000000000000000EF");
+    }
+
+    #[tokio::test]
+    async fn block_links_split_deleted_source_clears_all() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "01HZ00000000000000000000AB", "content", "target").await;
+        insert_block(
+            &pool,
+            "01HZ0000000000000000000SRC",
+            "content",
+            "[[01HZ00000000000000000000AB]]",
+        )
+        .await;
+
+        reindex_block_links_split(&pool, &pool, "01HZ0000000000000000000SRC")
+            .await
+            .unwrap();
+        assert_eq!(count_rows(&pool, "block_links").await, 1);
+
+        soft_delete_block(&pool, "01HZ0000000000000000000SRC").await;
+        reindex_block_links_split(&pool, &pool, "01HZ0000000000000000000SRC")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "block_links").await,
+            0,
+            "all links must be removed when source is soft-deleted"
+        );
+    }
+
+    #[tokio::test]
+    async fn block_links_split_nonexistent_source_is_noop() {
+        let (pool, _dir) = test_pool().await;
+
+        reindex_block_links_split(&pool, &pool, "NONEXISTENT0000000000000000")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "block_links").await,
+            0,
+            "reindexing nonexistent block must not create links"
+        );
+    }
+
+    #[tokio::test]
+    async fn block_links_split_dangling_target_skipped() {
+        let (pool, _dir) = test_pool().await;
+
+        let nonexistent_ulid = "01HZ00000000000000NONEXIST";
+        insert_block(
+            &pool,
+            "01HZ0000000000000000000SRC",
+            "content",
+            &format!("see [[{nonexistent_ulid}]] for details"),
+        )
+        .await;
+
+        reindex_block_links_split(&pool, &pool, "01HZ0000000000000000000SRC")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "block_links").await,
+            0,
+            "dangling [[ULID]] must not produce a block_links row"
+        );
     }
 }

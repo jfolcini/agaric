@@ -209,8 +209,8 @@ pub fn run() {
                 );
             }
 
-            // Create materializer (spawns consumer tasks) — uses write pool for cache rebuilds
-            let materializer = Materializer::new(pools.write.clone());
+            // Create materializer — bg cache rebuilds read from read pool, write to write pool (P-8)
+            let materializer = Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
 
             // M-3: Rebuild FTS index at boot if the table is empty (post-migration 0006).
             let fts_count: i64 = tauri::async_runtime::block_on(

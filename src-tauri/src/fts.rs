@@ -434,6 +434,42 @@ pub async fn rebuild_fts_index(pool: &SqlitePool) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Read/write split variant of [`rebuild_fts_index`].
+///
+/// Reads block content and reference maps from `read_pool`, writes the
+/// FTS index to `write_pool`. Used by the materializer when a separate
+/// read pool is available.
+pub async fn rebuild_fts_index_split(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+) -> Result<(), AppError> {
+    // Read phase: load ref maps and block content from read_pool
+    let (tag_names, page_titles) = load_ref_maps(read_pool).await?;
+    let blocks = sqlx::query!(
+        "SELECT id, content FROM blocks \
+         WHERE deleted_at IS NULL AND is_conflict = 0 AND content IS NOT NULL"
+    )
+    .fetch_all(read_pool)
+    .await?;
+
+    // Write phase: DELETE + INSERT on write_pool
+    let mut tx = write_pool.begin().await?;
+    sqlx::query("DELETE FROM fts_blocks")
+        .execute(&mut *tx)
+        .await?;
+    for row in &blocks {
+        let content = row.content.as_deref().unwrap_or("");
+        let stripped = strip_for_fts_with_maps(content, &tag_names, &page_titles);
+        sqlx::query("INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)")
+            .bind(&row.id)
+            .bind(&stripped)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // FTS5 optimize
 // ---------------------------------------------------------------------------
@@ -2241,5 +2277,91 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 1, "FTS should have 1 entry after rebuild");
+    }
+
+    // ======================================================================
+    // rebuild_fts_index_split tests
+    // ======================================================================
+
+    #[tokio::test]
+    async fn rebuild_fts_index_split_indexes_all_active_blocks() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, BLOCK_A, "content", "alpha content", None, Some(0)).await;
+        insert_block(&pool, BLOCK_B, "content", "beta content", None, Some(1)).await;
+        insert_block(&pool, BLOCK_C, "content", "gamma content", None, Some(2)).await;
+
+        rebuild_fts_index_split(&pool, &pool).await.unwrap();
+
+        let page = PageRequest::new(None, Some(50)).unwrap();
+
+        let a = search_fts(&pool, "alpha", &page).await.unwrap();
+        assert_eq!(a.items.len(), 1);
+        assert_eq!(a.items[0].id, BLOCK_A);
+
+        let b = search_fts(&pool, "beta", &page).await.unwrap();
+        assert_eq!(b.items.len(), 1);
+        assert_eq!(b.items[0].id, BLOCK_B);
+
+        let g = search_fts(&pool, "gamma", &page).await.unwrap();
+        assert_eq!(g.items.len(), 1);
+        assert_eq!(g.items[0].id, BLOCK_C);
+    }
+
+    #[tokio::test]
+    async fn rebuild_fts_index_split_excludes_deleted() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, BLOCK_A, "content", "visible", None, Some(0)).await;
+        insert_block(&pool, BLOCK_B, "content", "deleted content", None, Some(1)).await;
+        soft_delete_block(&pool, BLOCK_B).await;
+
+        rebuild_fts_index_split(&pool, &pool).await.unwrap();
+
+        let page = PageRequest::new(None, Some(50)).unwrap();
+        let deleted_results = search_fts(&pool, "deleted", &page).await.unwrap();
+        assert_eq!(deleted_results.items.len(), 0);
+
+        let visible_results = search_fts(&pool, "visible", &page).await.unwrap();
+        assert_eq!(visible_results.items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn rebuild_fts_index_split_resolves_refs() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, TAG_ULID, "tag", "urgent", None, None).await;
+        insert_block(&pool, PAGE_ULID, "page", "My Page", None, None).await;
+
+        let content = format!("task #[{TAG_ULID}] see [[{PAGE_ULID}]]");
+        insert_block(&pool, BLOCK_A, "content", &content, None, Some(0)).await;
+
+        rebuild_fts_index_split(&pool, &pool).await.unwrap();
+
+        let page = PageRequest::new(None, Some(50)).unwrap();
+
+        // Should find by resolved tag name
+        let tag_results = search_fts(&pool, "urgent", &page).await.unwrap();
+        assert!(
+            !tag_results.items.is_empty(),
+            "at least the tag block should match 'urgent'"
+        );
+
+        // Should find the content block by "task"
+        let task_results = search_fts(&pool, "task", &page).await.unwrap();
+        assert_eq!(task_results.items.len(), 1);
+        assert_eq!(task_results.items[0].id, BLOCK_A);
+    }
+
+    #[tokio::test]
+    async fn rebuild_fts_index_split_clears_stale_entries() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, BLOCK_A, "content", "first pass", None, Some(0)).await;
+        rebuild_fts_index_split(&pool, &pool).await.unwrap();
+
+        // Delete block and rebuild — stale FTS entry should be cleared
+        soft_delete_block(&pool, BLOCK_A).await;
+        rebuild_fts_index_split(&pool, &pool).await.unwrap();
+
+        let page = PageRequest::new(None, Some(50)).unwrap();
+        let results = search_fts(&pool, "first", &page).await.unwrap();
+        assert_eq!(results.items.len(), 0);
     }
 }

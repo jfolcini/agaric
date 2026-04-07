@@ -377,6 +377,55 @@ pub async fn rebuild_all(pool: &SqlitePool) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Read/write split variant of [`rebuild_all`].
+///
+/// Reads the recursive tag inheritance tree from `read_pool`, writes the
+/// materialized cache to `write_pool`. Used by the materializer when a
+/// separate read pool is available.
+pub async fn rebuild_all_split(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+) -> Result<(), AppError> {
+    // Read phase: compute inherited tags from read_pool
+    let rows = sqlx::query_as::<_, (String, String, String)>(
+        "WITH RECURSIVE descendant_tags AS ( \
+             SELECT b.id AS block_id, bt.tag_id, bt.block_id AS inherited_from \
+             FROM block_tags bt \
+             JOIN blocks tagged ON tagged.id = bt.block_id \
+             JOIN blocks b ON b.parent_id = bt.block_id \
+             WHERE tagged.deleted_at IS NULL AND tagged.is_conflict = 0 \
+               AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+             UNION ALL \
+             SELECT b.id AS block_id, dt.tag_id, dt.inherited_from \
+             FROM descendant_tags dt \
+             JOIN blocks b ON b.parent_id = dt.block_id \
+             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+         ) \
+         SELECT block_id, tag_id, inherited_from FROM descendant_tags",
+    )
+    .fetch_all(read_pool)
+    .await?;
+
+    // Write phase: DELETE + INSERT on write_pool
+    let mut tx = write_pool.begin().await?;
+    sqlx::query("DELETE FROM block_tag_inherited")
+        .execute(&mut *tx)
+        .await?;
+    for (block_id, tag_id, inherited_from) in &rows {
+        sqlx::query(
+            "INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
+             VALUES (?, ?, ?)",
+        )
+        .bind(block_id)
+        .bind(tag_id)
+        .bind(inherited_from)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -977,5 +1026,88 @@ mod tests {
             rows.is_empty(),
             "Empty database should produce no inherited entries, got: {rows:?}"
         );
+    }
+
+    // ======================================================================
+    // rebuild_all_split
+    // ======================================================================
+
+    #[tokio::test]
+    async fn rebuild_all_split_matches_rebuild_all() {
+        let (pool, _dir) = test_pool().await;
+
+        // Tree: PAGE -> CHILD -> GRANDCHILD
+        insert_block(&pool, "TAG", "tag", "tag-name", None).await;
+        insert_block(&pool, "PAGE", "page", "page", None).await;
+        insert_block(&pool, "CHILD", "content", "child", Some("PAGE")).await;
+        insert_block(&pool, "GRANDCHILD", "content", "grandchild", Some("CHILD")).await;
+
+        insert_tag_assoc(&pool, "PAGE", "TAG").await;
+
+        // Use the same pool for both read and write (single-pool test)
+        rebuild_all_split(&pool, &pool).await.unwrap();
+
+        let rows = get_inherited(&pool).await;
+        assert_eq!(rows.len(), 2, "CHILD and GRANDCHILD should inherit TAG");
+        assert!(rows.contains(&("CHILD".into(), "TAG".into(), "PAGE".into())));
+        assert!(rows.contains(&("GRANDCHILD".into(), "TAG".into(), "PAGE".into())));
+    }
+
+    #[tokio::test]
+    async fn rebuild_all_split_idempotent() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG", "tag", "tag-name", None).await;
+        insert_block(&pool, "PAGE", "page", "page", None).await;
+        insert_block(&pool, "CHILD", "content", "child", Some("PAGE")).await;
+
+        insert_tag_assoc(&pool, "PAGE", "TAG").await;
+
+        // First rebuild
+        rebuild_all_split(&pool, &pool).await.unwrap();
+        let rows_first = get_inherited(&pool).await;
+
+        // Second rebuild
+        rebuild_all_split(&pool, &pool).await.unwrap();
+        let rows_second = get_inherited(&pool).await;
+
+        assert_eq!(
+            rows_first, rows_second,
+            "rebuild_all_split should be idempotent: first={rows_first:?}, second={rows_second:?}"
+        );
+        assert_eq!(rows_first.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn rebuild_all_split_multi_tag() {
+        let (pool, _dir) = test_pool().await;
+
+        // Tree: ROOT -> PAGE_A -> CHILD_A
+        //            -> PAGE_B -> CHILD_B
+        insert_block(&pool, "TAG1", "tag", "tag1", None).await;
+        insert_block(&pool, "TAG2", "tag", "tag2", None).await;
+        insert_block(&pool, "ROOT", "page", "root", None).await;
+        insert_block(&pool, "PAGE_A", "page", "page a", Some("ROOT")).await;
+        insert_block(&pool, "PAGE_B", "page", "page b", Some("ROOT")).await;
+        insert_block(&pool, "CHILD_A", "content", "child a", Some("PAGE_A")).await;
+        insert_block(&pool, "CHILD_B", "content", "child b", Some("PAGE_B")).await;
+
+        insert_tag_assoc(&pool, "ROOT", "TAG1").await;
+        insert_tag_assoc(&pool, "PAGE_B", "TAG2").await;
+
+        rebuild_all_split(&pool, &pool).await.unwrap();
+
+        let rows = get_inherited(&pool).await;
+
+        // TAG1 from ROOT propagates to all 4 descendants.
+        assert!(rows.contains(&("PAGE_A".into(), "TAG1".into(), "ROOT".into())));
+        assert!(rows.contains(&("PAGE_B".into(), "TAG1".into(), "ROOT".into())));
+        assert!(rows.contains(&("CHILD_A".into(), "TAG1".into(), "ROOT".into())));
+        assert!(rows.contains(&("CHILD_B".into(), "TAG1".into(), "ROOT".into())));
+
+        // TAG2 from PAGE_B propagates only to CHILD_B.
+        assert!(rows.contains(&("CHILD_B".into(), "TAG2".into(), "PAGE_B".into())));
+
+        assert_eq!(rows.len(), 5);
     }
 }

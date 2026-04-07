@@ -212,8 +212,12 @@ pub struct Materializer {
 }
 
 impl Materializer {
-    /// Create a new `Materializer`, spawning foreground and background
-    /// consumer tasks on the Tokio runtime.
+    /// Create a new `Materializer` with a single pool for all operations.
+    ///
+    /// Both foreground and background tasks use the same pool. For reduced
+    /// write-connection hold time, use [`with_read_pool`](Self::with_read_pool)
+    /// which offloads read-heavy phases of background cache rebuilds to a
+    /// separate read pool.
     pub fn new(pool: SqlitePool) -> Self {
         let (fg_tx, fg_rx) = mpsc::channel::<MaterializeTask>(FOREGROUND_CAPACITY);
         let (bg_tx, bg_rx) = mpsc::channel::<MaterializeTask>(BACKGROUND_CAPACITY);
@@ -232,7 +236,53 @@ impl Materializer {
         {
             let shutdown_flag = shutdown_flag.clone();
             let metrics = metrics.clone();
-            Self::spawn_task(Self::run_background(pool, bg_rx, shutdown_flag, metrics));
+            Self::spawn_task(Self::run_background(
+                pool,
+                bg_rx,
+                shutdown_flag,
+                metrics,
+                None,
+            ));
+        }
+
+        Self {
+            fg_tx: Arc::new(Mutex::new(Some(fg_tx))),
+            bg_tx: Arc::new(Mutex::new(Some(bg_tx))),
+            shutdown_flag,
+            metrics,
+        }
+    }
+
+    /// Create a `Materializer` with separate read and write pools.
+    ///
+    /// Background cache-rebuild tasks will read from `read_pool` and write
+    /// to `write_pool`, reducing write-connection hold time. Foreground
+    /// tasks always use `write_pool` (they need read-your-writes).
+    pub fn with_read_pool(write_pool: SqlitePool, read_pool: SqlitePool) -> Self {
+        let (fg_tx, fg_rx) = mpsc::channel::<MaterializeTask>(FOREGROUND_CAPACITY);
+        let (bg_tx, bg_rx) = mpsc::channel::<MaterializeTask>(BACKGROUND_CAPACITY);
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
+        let metrics = Arc::new(QueueMetrics::default());
+
+        // Spawn foreground consumer (always uses write pool)
+        {
+            let pool = write_pool.clone();
+            let shutdown_flag = shutdown_flag.clone();
+            let metrics = metrics.clone();
+            Self::spawn_task(Self::run_foreground(pool, fg_rx, shutdown_flag, metrics));
+        }
+
+        // Spawn background consumer with read pool for split operations
+        {
+            let shutdown_flag = shutdown_flag.clone();
+            let metrics = metrics.clone();
+            Self::spawn_task(Self::run_background(
+                write_pool,
+                bg_rx,
+                shutdown_flag,
+                metrics,
+                Some(read_pool.clone()),
+            ));
         }
 
         Self {
@@ -458,6 +508,7 @@ impl Materializer {
         mut rx: mpsc::Receiver<MaterializeTask>,
         shutdown_flag: Arc<AtomicBool>,
         metrics: Arc<QueueMetrics>,
+        read_pool: Option<SqlitePool>,
     ) {
         loop {
             // Block until at least one task arrives.
@@ -479,11 +530,13 @@ impl Materializer {
             // Process ALL deduped tasks FIRST — even if shutdown has been
             // signalled, these tasks were already dequeued and must not be lost.
             for task in deduped {
+                let rp_ref = read_pool.as_ref();
+
                 // Barrier tasks are ordering signals, not DB operations — never retry.
                 if matches!(&task, MaterializeTask::Barrier(_)) {
                     let pool_clone = pool.clone();
                     let result = tokio::task::spawn(async move {
-                        handle_background_task(&pool_clone, &task).await
+                        handle_background_task(&pool_clone, &task, None).await
                     })
                     .await;
                     Self::log_consumer_result("bg", &result);
@@ -500,8 +553,9 @@ impl Materializer {
                 // First attempt
                 let task_clone = task.clone();
                 let pool_clone = pool.clone();
+                let rp_clone = rp_ref.cloned();
                 let result = tokio::task::spawn(async move {
-                    handle_background_task(&pool_clone, &task_clone).await
+                    handle_background_task(&pool_clone, &task_clone, rp_clone.as_ref()).await
                 })
                 .await;
 
@@ -525,8 +579,14 @@ impl Materializer {
 
                             let retry_task = task.clone();
                             let pool_clone2 = pool.clone();
+                            let rp_clone2 = rp_ref.cloned();
                             let retry_result = tokio::task::spawn(async move {
-                                handle_background_task(&pool_clone2, &retry_task).await
+                                handle_background_task(
+                                    &pool_clone2,
+                                    &retry_task,
+                                    rp_clone2.as_ref(),
+                                )
+                                .await
                             })
                             .await;
 
@@ -1599,14 +1659,28 @@ async fn cleanup_orphaned_attachments(pool: &SqlitePool) -> Result<(), AppError>
     Ok(())
 }
 
-async fn handle_background_task(pool: &SqlitePool, task: &MaterializeTask) -> Result<(), AppError> {
+async fn handle_background_task(
+    pool: &SqlitePool,
+    task: &MaterializeTask,
+    read_pool: Option<&SqlitePool>,
+) -> Result<(), AppError> {
     match task {
-        MaterializeTask::RebuildTagsCache => cache::rebuild_tags_cache(pool).await,
-        MaterializeTask::RebuildPagesCache => cache::rebuild_pages_cache(pool).await,
-        MaterializeTask::RebuildAgendaCache => cache::rebuild_agenda_cache(pool).await,
-        MaterializeTask::ReindexBlockLinks { ref block_id } => {
-            cache::reindex_block_links(pool, block_id).await
-        }
+        MaterializeTask::RebuildTagsCache => match read_pool {
+            Some(rp) => cache::rebuild_tags_cache_split(pool, rp).await,
+            None => cache::rebuild_tags_cache(pool).await,
+        },
+        MaterializeTask::RebuildPagesCache => match read_pool {
+            Some(rp) => cache::rebuild_pages_cache_split(pool, rp).await,
+            None => cache::rebuild_pages_cache(pool).await,
+        },
+        MaterializeTask::RebuildAgendaCache => match read_pool {
+            Some(rp) => cache::rebuild_agenda_cache_split(pool, rp).await,
+            None => cache::rebuild_agenda_cache(pool).await,
+        },
+        MaterializeTask::ReindexBlockLinks { ref block_id } => match read_pool {
+            Some(rp) => cache::reindex_block_links_split(pool, rp, block_id).await,
+            None => cache::reindex_block_links(pool, block_id).await,
+        },
         MaterializeTask::UpdateFtsBlock { ref block_id } => {
             crate::fts::update_fts_for_block(pool, block_id).await
         }
@@ -1616,12 +1690,16 @@ async fn handle_background_task(pool: &SqlitePool, task: &MaterializeTask) -> Re
         MaterializeTask::RemoveFtsBlock { ref block_id } => {
             crate::fts::remove_fts_for_block(pool, block_id).await
         }
-        MaterializeTask::RebuildFtsIndex => crate::fts::rebuild_fts_index(pool).await,
+        MaterializeTask::RebuildFtsIndex => match read_pool {
+            Some(rp) => crate::fts::rebuild_fts_index_split(pool, rp).await,
+            None => crate::fts::rebuild_fts_index(pool).await,
+        },
         MaterializeTask::FtsOptimize => crate::fts::fts_optimize(pool).await,
         MaterializeTask::CleanupOrphanedAttachments => cleanup_orphaned_attachments(pool).await,
-        MaterializeTask::RebuildTagInheritanceCache => {
-            crate::tag_inheritance::rebuild_all(pool).await
-        }
+        MaterializeTask::RebuildTagInheritanceCache => match read_pool {
+            Some(rp) => crate::tag_inheritance::rebuild_all_split(pool, rp).await,
+            None => crate::tag_inheritance::rebuild_all(pool).await,
+        },
         MaterializeTask::ApplyOp(ref record) => {
             tracing::warn!(seq = record.seq, "unexpected ApplyOp in background queue");
             Ok(())
@@ -2648,7 +2726,7 @@ mod tests {
             r#"{"block_id":"X","block_type":"content","content":"t","parent_id":null,"position":null}"#,
         );
         let task = MaterializeTask::ApplyOp(record);
-        let result = handle_background_task(&pool, &task).await;
+        let result = handle_background_task(&pool, &task, None).await;
         assert!(
             result.is_ok(),
             "unexpected ApplyOp in bg queue should return Ok"
@@ -4644,5 +4722,63 @@ mod tests {
         );
 
         mat.shutdown();
+    }
+
+    // ======================================================================
+    // P-8 Phase 2: with_read_pool and handle_background_task split dispatch
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn with_read_pool_constructor_processes_background_tasks() {
+        // Verify that Materializer::with_read_pool works end-to-end
+        let (pool, _dir) = test_pool().await;
+        // Insert a tag block
+        insert_block_direct(&pool, "TAG01", "tag", "test-tag").await;
+        // Create materializer with split pools (same pool for both — test environment)
+        let mat = Materializer::with_read_pool(pool.clone(), pool.clone());
+        mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+        // Verify cache was rebuilt
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tags_cache")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count, 1,
+            "tags_cache should have 1 entry after split rebuild"
+        );
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn handle_background_task_with_read_pool_uses_split() {
+        // Test handle_background_task dispatches to _split variants when read_pool is Some
+        let (pool, _dir) = test_pool().await;
+        insert_block_direct(&pool, "TAG02", "tag", "split-tag").await;
+        // Call handle_background_task directly with Some read_pool
+        let result =
+            handle_background_task(&pool, &MaterializeTask::RebuildTagsCache, Some(&pool)).await;
+        assert!(result.is_ok(), "split rebuild should succeed");
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tags_cache")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "tags_cache should have 1 entry");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn handle_background_task_without_read_pool_uses_original() {
+        // Test handle_background_task falls back to original when read_pool is None
+        let (pool, _dir) = test_pool().await;
+        insert_block_direct(&pool, "TAG03", "tag", "orig-tag").await;
+        let result = handle_background_task(&pool, &MaterializeTask::RebuildTagsCache, None).await;
+        assert!(result.is_ok(), "original rebuild should succeed");
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tags_cache")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "tags_cache should have 1 entry");
     }
 }
