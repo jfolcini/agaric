@@ -1,5 +1,21 @@
 # Session Log
 
+## Session 256 — 2026-04-08 — P-8 resolved (2→1 remaining)
+
+### Summary
+Resolved P-8: split read/write paths in background materializer tasks. Background cache rebuild functions (tags, pages, agenda, FTS, tag inheritance, block links) now read from the read pool and only acquire the write connection for the final DELETE/INSERT transaction, reducing write-connection hold time. New `Materializer::with_read_pool(write_pool, read_pool)` constructor; existing `Materializer::new()` (339+ call sites) unchanged — passes `None`, falling back to original single-pool functions. 3 parallel build subagents (cache, tag_inheritance+fts, materializer+lib), 1 review subagent. Review found 1 blocker (unused struct field) and 1 should-fix (TOCTOU snapshot isolation in agenda cache split) — both fixed before commit. 5 files changed, 1125 insertions. 1665 Rust tests pass, 0 warnings.
+
+**Commit:** b1bb8c2
+
+| Area | Change |
+|------|--------|
+| cache.rs | 4 new `_split` functions: `rebuild_tags_cache_split`, `rebuild_pages_cache_split`, `rebuild_agenda_cache_split` (with snapshot-isolated read tx), `reindex_block_links_split`; 16 new tests |
+| tag_inheritance.rs | `rebuild_all_split(write_pool, read_pool)`; 3 new tests |
+| fts.rs | `rebuild_fts_index_split(write_pool, read_pool)`; 4 new tests |
+| materializer.rs | `Materializer::with_read_pool` constructor; `run_background` accepts `Option<SqlitePool>` read pool; `handle_background_task` dispatches to `_split` variants when read pool available; 3 new tests |
+| lib.rs | Production call site: `Materializer::new(pools.write)` → `Materializer::with_read_pool(pools.write, pools.read)` |
+| REVIEW-LATER.md | P-8 removed, summary updated (2→1 open items) |
+
 ## Session 255 — 2026-04-08 — B-23/P-6/P-7 resolved (5→2 remaining)
 
 ### Summary
