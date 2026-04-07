@@ -1026,7 +1026,7 @@ describe('PageHeader kebab menu reorganization (UX-H10/H12)', () => {
 
     // Property table should appear
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /^Properties/ })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Properties/ })).toBeInTheDocument()
     })
   })
 

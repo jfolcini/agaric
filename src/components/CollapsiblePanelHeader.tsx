@@ -1,4 +1,5 @@
 import { ChevronDown, ChevronRight } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 
 interface CollapsiblePanelHeaderProps {
@@ -14,6 +15,7 @@ export function CollapsiblePanelHeader({
   className,
   children,
 }: CollapsiblePanelHeaderProps) {
+  const { t } = useTranslation()
   return (
     <button
       type="button"
@@ -23,8 +25,14 @@ export function CollapsiblePanelHeader({
         'flex w-full items-center gap-2 rounded-md px-2 py-1.5',
         'text-sm font-medium text-muted-foreground',
         'hover:bg-accent/50 transition-colors',
+        'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
       )}
       aria-expanded={!collapsed}
+      aria-label={
+        typeof children === 'string'
+          ? t(collapsed ? 'common.expand' : 'common.collapse', { section: children })
+          : undefined
+      }
     >
       {!collapsed ? (
         <ChevronDown className="h-4 w-4 shrink-0" />

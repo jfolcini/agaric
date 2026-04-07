@@ -47,6 +47,9 @@ const resources = {
       'action.delete': 'Delete',
       'action.undo': 'Undo',
       'action.redo': 'Redo',
+      'action.retry': 'Retry',
+      'action.loadMore': 'Load more',
+      'action.loading': 'Loading\u2026',
 
       // Journal
       'journal.today': 'Today',
@@ -202,6 +205,8 @@ const resources = {
       'error.loadFailed': 'Failed to load data',
       'error.saveFailed': 'Failed to save',
       'error.createBlockFailed': 'Failed to create block',
+      'error.sectionCrashed': '{{section}} encountered an error',
+      'error.unexpected': 'An unexpected error occurred',
 
       // Slash commands
       'slash.repeatSet': 'Set repeat to {{value}}',
@@ -951,6 +956,10 @@ const resources = {
       'block.editLabel': 'Edit block',
       'tagList.deleteTagLabel': 'Delete tag',
 
+      // Common (collapsible panels)
+      'common.expand': 'Expand {{section}}',
+      'common.collapse': 'Collapse {{section}}',
+
       // Done panel empty state (UX-13)
       'donePanel.empty': 'No completed items yet.',
     },
@@ -965,5 +974,8 @@ i18n.use(initReactI18next).init({
     escapeValue: false, // React already escapes
   },
 })
+
+/** Standalone translation function — safe to call outside React components. */
+export const t = i18n.t.bind(i18n)
 
 export default i18n

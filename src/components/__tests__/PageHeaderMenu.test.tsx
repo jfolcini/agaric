@@ -218,4 +218,14 @@ describe('PageHeaderMenu accessibility', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  it('menu buttons have focus-visible ring classes', () => {
+    render(<PageHeaderMenu {...defaultProps} kebabOpen={true} />)
+
+    const addAliasButton = screen.getByText('Add alias').closest('button')
+    expect(addAliasButton).toBeTruthy()
+    expect(addAliasButton?.className).toContain('focus-visible:ring-2')
+    expect(addAliasButton?.className).toContain('focus-visible:ring-ring')
+    expect(addAliasButton?.className).toContain('focus-visible:ring-offset-1')
+  })
 })

@@ -12,6 +12,7 @@
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { truncateId } from '@/lib/format'
+import { cn } from '@/lib/utils'
 import type { BlockRow } from '../lib/tauri'
 import { renderRichContent } from './StaticBlock'
 
@@ -111,7 +112,10 @@ export function ConflictTypeRenderer({
   return (
     <>
       <div
-        className={`conflict-original text-sm${isExpanded ? ' max-h-40 overflow-y-auto' : ' truncate'}`}
+        className={cn(
+          'conflict-original text-sm',
+          isExpanded ? 'max-h-40 overflow-y-auto' : 'truncate',
+        )}
       >
         <span className="font-medium text-muted-foreground">Current:</span>{' '}
         {original ? (
@@ -125,7 +129,10 @@ export function ConflictTypeRenderer({
         )}
       </div>
       <div
-        className={`conflict-incoming text-sm${isExpanded ? ' max-h-40 overflow-y-auto' : ' truncate'}`}
+        className={cn(
+          'conflict-incoming text-sm',
+          isExpanded ? 'max-h-40 overflow-y-auto' : 'truncate',
+        )}
       >
         <span className="font-medium">Incoming:</span>{' '}
         <span className="conflict-item-text">

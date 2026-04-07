@@ -13,16 +13,21 @@ import { toHtml } from 'hast-util-to-html'
 import { common, createLowlight } from 'lowlight'
 import { File, FileText, Image as ImageIcon } from 'lucide-react'
 import type React from 'react'
-import { memo, useMemo, useRef, useState } from 'react'
+import { lazy, memo, Suspense, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { parse } from '../editor/markdown-serializer'
 import type { BlockLevelNode, DocNode, InlineNode } from '../editor/types'
 import { useBlockAttachments } from '../hooks/useBlockAttachments'
 import { openUrl } from '../lib/open-url'
 import { cn } from '../lib/utils'
-import { PdfViewerDialog } from './PdfViewerDialog'
 import { QueryResult } from './QueryResult'
+import { Spinner } from './ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
+
+// Lazy-load PdfViewerDialog to avoid bundling pdfjs-dist on initial load
+const LazyPdfViewerDialog = lazy(() =>
+  import('./PdfViewerDialog').then((m) => ({ default: m.PdfViewerDialog })),
+)
 
 const lowlight = createLowlight(common)
 
@@ -172,7 +177,7 @@ export function renderRichContent(
           elements.push(
             <span
               key={`tag-${keyIdx++}`}
-              className={`tag-ref-chip${status === 'deleted' ? ' tag-ref-deleted' : ''}`}
+              className={cn('tag-ref-chip', status === 'deleted' && 'tag-ref-deleted')}
               data-testid="tag-ref-chip"
               {...(status === 'deleted' ? { 'aria-label': `${name} (deleted)` } : {})}
               {...(options.interactive ? { tabIndex: 0 } : {})}
@@ -192,7 +197,10 @@ export function renderRichContent(
             // biome-ignore lint/a11y/noStaticElementInteractions: inline chip within a button — parent handles focus/keyboard
             <span
               key={`link-${keyIdx++}`}
-              className={`block-link-chip cursor-pointer${status === 'deleted' ? ' block-link-deleted' : ''}`}
+              className={cn(
+                'block-link-chip cursor-pointer',
+                status === 'deleted' && 'block-link-deleted',
+              )}
               data-testid="block-link-chip"
               {...(status === 'deleted' ? { 'aria-label': `${title} (deleted)` } : {})}
               onClick={(e) => {
@@ -237,7 +245,10 @@ export function renderRichContent(
               <TooltipTrigger asChild>
                 {/* biome-ignore lint/a11y/noStaticElementInteractions: role is spread dynamically via interactive option */}
                 <span
-                  className={`block-ref-chip cursor-pointer${status === 'deleted' ? ' block-ref-deleted' : ''}`}
+                  className={cn(
+                    'block-ref-chip cursor-pointer',
+                    status === 'deleted' && 'block-ref-deleted',
+                  )}
                   data-testid="block-ref-chip"
                   {...(status === 'deleted' ? { 'aria-label': `${chipLabel} (deleted)` } : {})}
                   onClick={(e) => {
@@ -526,12 +537,14 @@ function StaticBlockInner({
           })}
         </div>
       )}
-      <PdfViewerDialog
-        open={pdfViewerOpen}
-        onOpenChange={setPdfViewerOpen}
-        fileUrl={pdfViewerUrl}
-        filename={pdfViewerFilename}
-      />
+      <Suspense fallback={<Spinner />}>
+        <LazyPdfViewerDialog
+          open={pdfViewerOpen}
+          onOpenChange={setPdfViewerOpen}
+          fileUrl={pdfViewerUrl}
+          filename={pdfViewerFilename}
+        />
+      </Suspense>
     </>
   )
 }

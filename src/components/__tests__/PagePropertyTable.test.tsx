@@ -143,7 +143,7 @@ describe('PagePropertyTable rendering', () => {
 
     // After loading completes with empty properties, component returns null
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: /^Properties/ })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Properties/ })).not.toBeInTheDocument()
       expect(container.querySelector('.page-property-table')).not.toBeInTheDocument()
     })
   })
@@ -153,7 +153,7 @@ describe('PagePropertyTable rendering', () => {
     render(<PagePropertyTable pageId="PAGE_1" />)
 
     await waitFor(() => {
-      const toggle = screen.getByRole('button', { name: /^Properties/ })
+      const toggle = screen.getByRole('button', { name: /Properties/ })
       expect(toggle).toBeInTheDocument()
       expect(toggle).toHaveTextContent('Properties')
     })
@@ -167,7 +167,7 @@ describe('PagePropertyTable rendering', () => {
 
     render(<PagePropertyTable pageId="PAGE_1" />)
 
-    const toggle = screen.getByRole('button', { name: /^Properties/ })
+    const toggle = screen.getByRole('button', { name: /Properties/ })
     await user.click(toggle)
 
     await waitFor(() => {
@@ -196,7 +196,7 @@ describe('PagePropertyTable rendering', () => {
     render(<PagePropertyTable pageId="PAGE_1" />)
 
     await waitFor(() => {
-      const toggle = screen.getByRole('button', { name: /^Properties/ })
+      const toggle = screen.getByRole('button', { name: /Properties/ })
       expect(toggle).toHaveTextContent('Properties (2)')
     })
   })
@@ -208,7 +208,7 @@ describe('PagePropertyTable property display', () => {
     setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
 
     render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       const input = screen.getByLabelText('author value') as HTMLInputElement
@@ -223,7 +223,7 @@ describe('PagePropertyTable property display', () => {
     setupMock([makeProp('priority', { value_num: 42 })], [makeDef('priority', 'number')])
 
     render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       const input = screen.getByLabelText('priority value') as HTMLInputElement
@@ -237,7 +237,7 @@ describe('PagePropertyTable property display', () => {
     setupMock([makeProp('due', { value_date: '2026-06-15' })], [makeDef('due', 'date')])
 
     render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       const input = screen.getByLabelText('due value') as HTMLInputElement
@@ -254,7 +254,7 @@ describe('PagePropertyTable property display', () => {
     )
 
     render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       const select = screen.getByLabelText('stage value') as HTMLSelectElement
@@ -275,7 +275,7 @@ describe('PagePropertyTable property editing', () => {
     setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
 
     render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       expect(screen.getByLabelText('author value')).toBeInTheDocument()
@@ -303,7 +303,7 @@ describe('PagePropertyTable property editing', () => {
     setupMock([makeProp('priority', { value_num: 1 })], [makeDef('priority', 'number')])
 
     render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       expect(screen.getByLabelText('priority value')).toBeInTheDocument()
@@ -334,7 +334,7 @@ describe('PagePropertyTable property editing', () => {
     )
 
     render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       expect(screen.getByLabelText('stage value')).toBeInTheDocument()
@@ -360,7 +360,7 @@ describe('PagePropertyTable property editing', () => {
     setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
 
     render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       expect(screen.getByLabelText('Delete property author')).toBeInTheDocument()
@@ -395,7 +395,7 @@ describe('PagePropertyTable property editing', () => {
     )
 
     render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       expect(screen.getByLabelText('author value')).toBeInTheDocument()
@@ -650,7 +650,7 @@ describe('PagePropertyTable error handling', () => {
     })
 
     render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       expect(screen.getByLabelText('author value')).toBeInTheDocument()
@@ -674,7 +674,7 @@ describe('PagePropertyTable accessibility', () => {
     const { container } = render(<PagePropertyTable pageId="PAGE_1" />)
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /^Properties/ })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Properties/ })).toBeInTheDocument()
     })
 
     const results = await axe(container)
@@ -687,7 +687,7 @@ describe('PagePropertyTable accessibility', () => {
 
     const { container } = render(<PagePropertyTable pageId="PAGE_1" />)
 
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       expect(screen.getByLabelText('author value')).toBeInTheDocument()
@@ -706,7 +706,7 @@ describe('PagePropertyTable validation and confirmation', () => {
     setupMock([makeProp('priority', { value_num: 1 })], [makeDef('priority', 'number')])
 
     render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       expect(screen.getByLabelText('priority value')).toBeInTheDocument()
@@ -733,7 +733,7 @@ describe('PagePropertyTable validation and confirmation', () => {
     setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
 
     render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       expect(screen.getByLabelText('Delete property author')).toBeInTheDocument()
@@ -756,7 +756,7 @@ describe('PagePropertyTable validation and confirmation', () => {
     setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
 
     render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       expect(screen.getByLabelText('Delete property author')).toBeInTheDocument()
@@ -792,7 +792,7 @@ describe('PagePropertyTable edit select options', () => {
     )
 
     render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       expect(screen.getByLabelText('Edit options for stage')).toBeInTheDocument()
@@ -804,7 +804,7 @@ describe('PagePropertyTable edit select options', () => {
     setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
 
     render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       expect(screen.getByLabelText('author value')).toBeInTheDocument()
@@ -820,7 +820,7 @@ describe('PagePropertyTable edit select options', () => {
     )
 
     render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       expect(screen.getByLabelText('Edit options for stage')).toBeInTheDocument()
@@ -845,7 +845,7 @@ describe('PagePropertyTable edit select options', () => {
     )
 
     render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       expect(screen.getByLabelText('Edit options for stage')).toBeInTheDocument()
@@ -879,7 +879,7 @@ describe('PagePropertyTable edit select options', () => {
     )
 
     render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       expect(screen.getByLabelText('Edit options for stage')).toBeInTheDocument()
@@ -917,7 +917,7 @@ describe('PagePropertyTable edit select options', () => {
     })
 
     render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /^Properties/ }))
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
       expect(screen.getByLabelText('Edit options for stage')).toBeInTheDocument()
@@ -1014,7 +1014,7 @@ describe('PagePropertyTable forceExpanded', () => {
 
     // Should render even with no properties
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /^Properties/ })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Properties/ })).toBeInTheDocument()
     })
 
     // Should auto-expand and open add-property popover
@@ -1029,7 +1029,7 @@ describe('PagePropertyTable forceExpanded', () => {
 
     // Wait for loading to finish before asserting absence
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: /^Properties/ })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Properties/ })).not.toBeInTheDocument()
     })
   })
 
@@ -1038,7 +1038,7 @@ describe('PagePropertyTable forceExpanded', () => {
     render(<PagePropertyTable pageId="PAGE_1" />)
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /^Properties/ })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Properties/ })).toBeInTheDocument()
     })
   })
 })

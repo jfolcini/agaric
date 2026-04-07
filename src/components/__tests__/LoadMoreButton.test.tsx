@@ -1,14 +1,16 @@
 /**
- * Tests for LoadMoreButton component (R-3).
+ * Tests for LoadMoreButton component (R-3, UX-3).
  *
  * Validates:
  *  1. Renders button when hasMore=true
  *  2. Returns null when hasMore=false
  *  3. Click fires onLoadMore callback
  *  4. Loading state shows spinner and disables button
- *  5. Custom labels are rendered
+ *  5. Custom labels are rendered (override i18n defaults)
  *  6. Custom aria labels are applied
  *  7. A11y audit passes (axe)
+ *  8. i18n default label resolves to "Load more"
+ *  9. i18n loading label resolves to "Loading…"
  */
 
 import { render, screen, waitFor } from '@testing-library/react'
@@ -200,5 +202,39 @@ describe('LoadMoreButton', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+  })
+
+  // 10. i18n default label resolves to "Load more" (UX-3)
+  it('default label resolves from i18n to "Load more"', () => {
+    const onLoadMore = vi.fn()
+    render(<LoadMoreButton hasMore={true} loading={false} onLoadMore={onLoadMore} />)
+
+    const btn = screen.getByRole('button')
+    expect(btn).toHaveTextContent('Load more')
+  })
+
+  // 11. i18n loading label resolves to "Loading…" (UX-3)
+  it('default loading label resolves from i18n to "Loading…"', () => {
+    const onLoadMore = vi.fn()
+    render(<LoadMoreButton hasMore={true} loading={true} onLoadMore={onLoadMore} />)
+
+    const btn = screen.getByRole('button')
+    expect(btn).toHaveTextContent('Loading\u2026')
+  })
+
+  // 12. Custom labels override i18n defaults (UX-3)
+  it('custom labels override i18n defaults', () => {
+    const onLoadMore = vi.fn()
+    render(
+      <LoadMoreButton
+        hasMore={true}
+        loading={false}
+        onLoadMore={onLoadMore}
+        label="Fetch more"
+        loadingLabel="Fetching…"
+      />,
+    )
+
+    expect(screen.getByRole('button')).toHaveTextContent('Fetch more')
   })
 })

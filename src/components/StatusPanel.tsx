@@ -17,6 +17,7 @@ import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatTimestamp } from '@/lib/format'
+import { cn } from '@/lib/utils'
 import { usePollingQuery } from '../hooks/usePollingQuery'
 import type { ImportResult, StatusInfo } from '../lib/tauri'
 import { getStatus, importMarkdown } from '../lib/tauri'
@@ -183,7 +184,10 @@ export function StatusPanel(): React.ReactElement {
               <output className="status-panel-metrics block">
                 <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div
-                    className={`status-metric rounded-lg border bg-muted/30 p-4 text-center ${queueHealthClasses(status.foreground_queue_depth)}`}
+                    className={cn(
+                      'status-metric rounded-lg border bg-muted/30 p-4 text-center',
+                      queueHealthClasses(status.foreground_queue_depth),
+                    )}
                   >
                     <dd className="status-metric-value text-2xl font-bold">
                       {status.foreground_queue_depth}
@@ -282,7 +286,10 @@ export function StatusPanel(): React.ReactElement {
               <div className="sync-panel-details space-y-3">
                 <div className="flex items-center gap-2">
                   <span
-                    className={`sync-state-dot h-2 w-2 rounded-full ${syncStateDotClasses(syncState)}`}
+                    className={cn(
+                      'sync-state-dot h-2 w-2 rounded-full',
+                      syncStateDotClasses(syncState),
+                    )}
                     role="status"
                     aria-label={t('status.syncStateLabel', { state: syncStateLabel(syncState) })}
                   />

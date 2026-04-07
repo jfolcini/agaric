@@ -26,7 +26,7 @@ export function LoadingSkeleton({
     <div className={cn('space-y-2', className)} {...rest}>
       {Array.from({ length: count }).map((_, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: static list of identical skeletons
-        <Skeleton key={i} className={`${height} w-full rounded-lg`} />
+        <Skeleton key={i} className={cn(height, 'w-full rounded-lg')} />
       ))}
     </div>
   )

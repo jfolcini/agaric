@@ -40,6 +40,7 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { dispatchBlockEvent } from '@/lib/block-events'
+import { cn } from '@/lib/utils'
 import { LinkEditPopover } from './LinkEditPopover'
 import { Button } from './ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover'
@@ -381,7 +382,10 @@ export function FormattingToolbar({
                   key={level}
                   variant="ghost"
                   size="sm"
-                  className={`justify-start text-sm ${state.headingLevel === level ? 'bg-accent' : ''}`}
+                  className={cn(
+                    'justify-start text-sm',
+                    state.headingLevel === level && 'bg-accent',
+                  )}
                   onPointerDown={(e) => {
                     e.preventDefault()
                     editor.chain().focus().toggleHeading({ level }).run()
@@ -394,7 +398,7 @@ export function FormattingToolbar({
               <Button
                 variant="ghost"
                 size="sm"
-                className={`justify-start text-sm ${state.headingLevel === 0 ? 'bg-accent' : ''}`}
+                className={cn('justify-start text-sm', state.headingLevel === 0 && 'bg-accent')}
                 onPointerDown={(e) => {
                   e.preventDefault()
                   if (state.headingLevel > 0) {

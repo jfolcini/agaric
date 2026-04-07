@@ -70,21 +70,21 @@ export function PageHeaderMenu({
         >
           <button
             type="button"
-            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
+            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
             onClick={onAddAlias}
           >
             {t('pageHeader.menuAddAlias')}
           </button>
           <button
             type="button"
-            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
+            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
             onClick={onAddTag}
           >
             {t('pageHeader.menuAddTag')}
           </button>
           <button
             type="button"
-            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
+            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
             onClick={onAddProperty}
           >
             {t('pageHeader.menuAddProperty')}
@@ -92,14 +92,14 @@ export function PageHeaderMenu({
           <hr className="my-1 h-px bg-border border-none" />
           <button
             type="button"
-            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
+            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
             onClick={onToggleTemplate}
           >
             {isTemplate ? t('pageHeader.removeTemplate') : t('pageHeader.saveAsTemplate')}
           </button>
           <button
             type="button"
-            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
+            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
             onClick={onToggleJournalTemplate}
           >
             {isJournalTemplate
@@ -109,7 +109,7 @@ export function PageHeaderMenu({
           <hr className="my-1 h-px bg-border border-none" />
           <button
             type="button"
-            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
+            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
             onClick={onExport}
           >
             {t('pageHeader.exportMarkdown')}
@@ -117,7 +117,7 @@ export function PageHeaderMenu({
           <hr className="my-1 h-px bg-border border-none" />
           <button
             type="button"
-            className="w-full rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-accent touch-target"
+            className="w-full rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
             onClick={onDeleteRequest}
           >
             {t('pageHeader.deletePage')}

@@ -41,7 +41,7 @@ export function PageTagSection({
           {tag.name}
           <button
             type="button"
-            className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20"
+            className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
             onClick={() => onRemoveTag(tag.id)}
             aria-label={t('pageHeader.removeTag', { name: tag.name })}
           >

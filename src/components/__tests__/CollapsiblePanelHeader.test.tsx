@@ -8,6 +8,8 @@
  *  4. Calls onToggle when clicked
  *  5. Applies custom className
  *  6. Has no a11y violations (axe)
+ *  7. Focus-visible ring classes are present (UX-1)
+ *  8. aria-label changes with collapsed state (UX-2)
  */
 
 import { render, screen } from '@testing-library/react'
@@ -86,5 +88,48 @@ describe('CollapsiblePanelHeader', () => {
     )
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  it('includes focus-visible ring classes on the button (UX-1)', () => {
+    render(
+      <CollapsiblePanelHeader collapsed={false} onToggle={() => {}}>
+        Header
+      </CollapsiblePanelHeader>,
+    )
+    const button = screen.getByRole('button')
+    expect(button.className).toContain('focus-visible:ring-2')
+    expect(button.className).toContain('focus-visible:ring-ring')
+    expect(button.className).toContain('focus-visible:ring-offset-1')
+  })
+
+  it('sets aria-label to "Expand …" when collapsed (UX-2)', () => {
+    render(
+      <CollapsiblePanelHeader collapsed={true} onToggle={() => {}}>
+        References
+      </CollapsiblePanelHeader>,
+    )
+    const button = screen.getByRole('button')
+    expect(button).toHaveAttribute('aria-label', 'Expand References')
+  })
+
+  it('sets aria-label to "Collapse …" when not collapsed (UX-2)', () => {
+    render(
+      <CollapsiblePanelHeader collapsed={false} onToggle={() => {}}>
+        References
+      </CollapsiblePanelHeader>,
+    )
+    const button = screen.getByRole('button')
+    expect(button).toHaveAttribute('aria-label', 'Collapse References')
+  })
+
+  it('handles non-string children gracefully in aria-label (UX-2)', () => {
+    render(
+      <CollapsiblePanelHeader collapsed={true} onToggle={() => {}}>
+        <span>Complex child</span>
+      </CollapsiblePanelHeader>,
+    )
+    const button = screen.getByRole('button')
+    // Non-string children → aria-label is omitted, text content is the accessible name
+    expect(button).not.toHaveAttribute('aria-label')
   })
 })

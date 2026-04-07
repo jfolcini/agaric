@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { BootGate } from './components/BootGate'
 import { ConflictList } from './components/ConflictList'
+import { FeatureErrorBoundary } from './components/FeatureErrorBoundary'
 import { HistoryView } from './components/HistoryView'
 import { GlobalDateControls, JournalControls, JournalPage } from './components/JournalPage'
 import { KeyboardShortcuts } from './components/KeyboardShortcuts'
@@ -294,41 +295,43 @@ function App() {
             </div>
           </SidebarHeader>
           <SidebarContent>
-            <SidebarGroup>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {NAV_ITEMS.map((item) => {
-                    const label = t(item.labelKey)
-                    return (
-                      <SidebarMenuItem key={item.id}>
-                        <SidebarMenuButton
-                          isActive={currentView === item.id}
-                          aria-current={currentView === item.id ? 'page' : undefined}
-                          tooltip={label}
-                          onClick={() => setView(item.id)}
-                        >
-                          <item.icon />
-                          <span>{label}</span>
-                          {item.id === 'conflicts' && hasConflicts && (
-                            <span
-                              role="status"
-                              className="ml-auto h-2 w-2 rounded-full bg-destructive"
-                              aria-label={t('conflict.unresolvedLabel')}
-                            />
-                          )}
-                          {item.id === 'status' && (
-                            <span
-                              className={`ml-auto h-2.5 w-2.5 rounded-full ${syncDotClass(syncState, syncPeers.length > 0)}`}
-                              aria-hidden="true"
-                            />
-                          )}
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    )
-                  })}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
+            <FeatureErrorBoundary name="Sidebar">
+              <SidebarGroup>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    {NAV_ITEMS.map((item) => {
+                      const label = t(item.labelKey)
+                      return (
+                        <SidebarMenuItem key={item.id}>
+                          <SidebarMenuButton
+                            isActive={currentView === item.id}
+                            aria-current={currentView === item.id ? 'page' : undefined}
+                            tooltip={label}
+                            onClick={() => setView(item.id)}
+                          >
+                            <item.icon />
+                            <span>{label}</span>
+                            {item.id === 'conflicts' && hasConflicts && (
+                              <span
+                                role="status"
+                                className="ml-auto h-2 w-2 rounded-full bg-destructive"
+                                aria-label={t('conflict.unresolvedLabel')}
+                              />
+                            )}
+                            {item.id === 'status' && (
+                              <span
+                                className={`ml-auto h-2.5 w-2.5 rounded-full ${syncDotClass(syncState, syncPeers.length > 0)}`}
+                                aria-hidden="true"
+                              />
+                            )}
+                          </SidebarMenuButton>
+                        </SidebarMenuItem>
+                      )
+                    })}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </SidebarGroup>
+            </FeatureErrorBoundary>
           </SidebarContent>
           <SidebarFooter>
             <SidebarMenu>
@@ -398,35 +401,75 @@ function App() {
               }
               data-testid="view-transition-wrapper"
             >
-              {currentView === 'journal' && <JournalPage onNavigateToPage={handlePageSelect} />}
-              {currentView === 'search' && <SearchPanel />}
-              {currentView === 'pages' && <PageBrowser onPageSelect={handlePageSelect} />}
-              {currentView === 'tags' && (
-                <div className="space-y-8">
-                  <TagList onTagClick={(tagId, tagName) => navigateToPage(tagId, tagName)} />
-                  <div className="flex items-center gap-4">
-                    <div className="flex-1 border-t border-border" />
-                    <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                      Filter
-                    </span>
-                    <div className="flex-1 border-t border-border" />
-                  </div>
-                  <TagFilterPanel />
-                </div>
+              {currentView === 'journal' && (
+                <FeatureErrorBoundary name="Journal">
+                  <JournalPage onNavigateToPage={handlePageSelect} />
+                </FeatureErrorBoundary>
               )}
-              {currentView === 'trash' && <TrashView />}
-              {currentView === 'properties' && <PropertiesView />}
-              {currentView === 'status' && <StatusPanel />}
-              {currentView === 'conflicts' && <ConflictList />}
-              {currentView === 'history' && <HistoryView />}
-              {currentView === 'templates' && <TemplatesView />}
+              {currentView === 'search' && (
+                <FeatureErrorBoundary name="Search">
+                  <SearchPanel />
+                </FeatureErrorBoundary>
+              )}
+              {currentView === 'pages' && (
+                <FeatureErrorBoundary name="Pages">
+                  <PageBrowser onPageSelect={handlePageSelect} />
+                </FeatureErrorBoundary>
+              )}
+              {currentView === 'tags' && (
+                <FeatureErrorBoundary name="Tags">
+                  <div className="space-y-8">
+                    <TagList onTagClick={(tagId, tagName) => navigateToPage(tagId, tagName)} />
+                    <div className="flex items-center gap-4">
+                      <div className="flex-1 border-t border-border" />
+                      <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                        Filter
+                      </span>
+                      <div className="flex-1 border-t border-border" />
+                    </div>
+                    <TagFilterPanel />
+                  </div>
+                </FeatureErrorBoundary>
+              )}
+              {currentView === 'trash' && (
+                <FeatureErrorBoundary name="Trash">
+                  <TrashView />
+                </FeatureErrorBoundary>
+              )}
+              {currentView === 'properties' && (
+                <FeatureErrorBoundary name="Properties">
+                  <PropertiesView />
+                </FeatureErrorBoundary>
+              )}
+              {currentView === 'status' && (
+                <FeatureErrorBoundary name="Status">
+                  <StatusPanel />
+                </FeatureErrorBoundary>
+              )}
+              {currentView === 'conflicts' && (
+                <FeatureErrorBoundary name="Conflicts">
+                  <ConflictList />
+                </FeatureErrorBoundary>
+              )}
+              {currentView === 'history' && (
+                <FeatureErrorBoundary name="History">
+                  <HistoryView />
+                </FeatureErrorBoundary>
+              )}
+              {currentView === 'templates' && (
+                <FeatureErrorBoundary name="Templates">
+                  <TemplatesView />
+                </FeatureErrorBoundary>
+              )}
               {currentView === 'page-editor' && activePage && (
-                <PageEditor
-                  pageId={activePage.pageId}
-                  title={activePage.title}
-                  onBack={goBack}
-                  onNavigateToPage={handlePageSelect}
-                />
+                <FeatureErrorBoundary name="PageEditor">
+                  <PageEditor
+                    pageId={activePage.pageId}
+                    title={activePage.title}
+                    onBack={goBack}
+                    onNavigateToPage={handlePageSelect}
+                  />
+                </FeatureErrorBoundary>
               )}
             </div>
           </div>

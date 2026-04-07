@@ -8,6 +8,7 @@
 
 import type React from 'react'
 import { Spinner } from '@/components/ui/spinner'
+import { t } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { Button } from './ui/button'
 
@@ -35,8 +36,8 @@ export function LoadMoreButton({
   loading,
   onLoadMore,
   className,
-  label = 'Load more',
-  loadingLabel = 'Loading\u2026',
+  label = t('action.loadMore'),
+  loadingLabel = t('action.loading'),
   ariaLabel,
   ariaLoadingLabel,
 }: LoadMoreButtonProps): React.ReactElement | null {
