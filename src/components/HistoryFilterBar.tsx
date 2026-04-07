@@ -19,17 +19,18 @@ import {
 // ---------------------------------------------------------------------------
 
 const OP_TYPES = [
-  'edit',
-  'create',
-  'delete',
-  'move',
-  'tag',
-  'property',
-  'attachment',
-  'restore',
-  'purge',
-  'sync_merge',
-  'sync_receive',
+  { value: 'edit_block', label: 'Edit' },
+  { value: 'create_block', label: 'Create' },
+  { value: 'delete_block', label: 'Delete' },
+  { value: 'move_block', label: 'Move' },
+  { value: 'add_tag', label: 'Add tag' },
+  { value: 'remove_tag', label: 'Remove tag' },
+  { value: 'set_property', label: 'Set property' },
+  { value: 'delete_property', label: 'Delete property' },
+  { value: 'add_attachment', label: 'Add attachment' },
+  { value: 'delete_attachment', label: 'Delete attachment' },
+  { value: 'restore_block', label: 'Restore' },
+  { value: 'purge_block', label: 'Purge' },
 ] as const
 
 // ---------------------------------------------------------------------------
@@ -70,8 +71,8 @@ export function HistoryFilterBar({
         <SelectContent>
           <SelectItem value="__all__">{t('history.allTypesOption')}</SelectItem>
           {OP_TYPES.map((opType) => (
-            <SelectItem key={opType} value={opType}>
-              {opType}
+            <SelectItem key={opType.value} value={opType.value}>
+              {opType.label}
             </SelectItem>
           ))}
         </SelectContent>

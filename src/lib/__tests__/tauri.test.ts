@@ -918,7 +918,7 @@ describe('listPageHistory', () => {
 
     const result = await listPageHistory({
       pageId: 'PAGE1',
-      opTypeFilter: 'edit',
+      opTypeFilter: 'edit_block',
       cursor: 'cur1',
       limit: 20,
     })
@@ -926,7 +926,7 @@ describe('listPageHistory', () => {
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
       pageId: 'PAGE1',
-      opTypeFilter: 'edit',
+      opTypeFilter: 'edit_block',
       cursor: 'cur1',
       limit: 20,
     })

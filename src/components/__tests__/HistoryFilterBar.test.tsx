@@ -86,18 +86,18 @@ describe('HistoryFilterBar', () => {
     const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
     const options = select.querySelectorAll('option')
 
-    // __all__ + 11 op types = 12 options
-    expect(options).toHaveLength(12)
+    // __all__ + 12 op types = 13 options
+    expect(options).toHaveLength(13)
     expect(options[0]).toHaveTextContent('All types')
-    expect(options[1]).toHaveTextContent('edit')
-    expect(options[2]).toHaveTextContent('create')
-    expect(options[3]).toHaveTextContent('delete')
+    expect(options[1]).toHaveTextContent('Edit')
+    expect(options[2]).toHaveTextContent('Create')
+    expect(options[3]).toHaveTextContent('Delete')
   })
 
   it('calls onFilterChange(null) when "All types" is selected', async () => {
     const user = userEvent.setup()
     const onFilterChange = vi.fn()
-    render(<HistoryFilterBar opTypeFilter="edit" onFilterChange={onFilterChange} />)
+    render(<HistoryFilterBar opTypeFilter="edit_block" onFilterChange={onFilterChange} />)
 
     const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
     await user.selectOptions(select, '__all__')
@@ -111,17 +111,17 @@ describe('HistoryFilterBar', () => {
     render(<HistoryFilterBar opTypeFilter={null} onFilterChange={onFilterChange} />)
 
     const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
-    await user.selectOptions(select, 'edit')
+    await user.selectOptions(select, 'edit_block')
 
-    expect(onFilterChange).toHaveBeenCalledWith('edit')
+    expect(onFilterChange).toHaveBeenCalledWith('edit_block')
   })
 
   it('reflects the current filter value in the select', () => {
     const onFilterChange = vi.fn()
-    render(<HistoryFilterBar opTypeFilter="create" onFilterChange={onFilterChange} />)
+    render(<HistoryFilterBar opTypeFilter="create_block" onFilterChange={onFilterChange} />)
 
     const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
-    expect(select).toHaveValue('create')
+    expect(select).toHaveValue('create_block')
   })
 
   it('shows __all__ as selected value when opTypeFilter is null', () => {
@@ -145,7 +145,7 @@ describe('HistoryFilterBar', () => {
   it('has no a11y violations with a filter selected', async () => {
     const onFilterChange = vi.fn()
     const { container } = render(
-      <HistoryFilterBar opTypeFilter="edit" onFilterChange={onFilterChange} />,
+      <HistoryFilterBar opTypeFilter="edit_block" onFilterChange={onFilterChange} />,
     )
 
     const results = await axe(container)

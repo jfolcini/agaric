@@ -476,15 +476,15 @@ pub const DEFAULT_RETENTION_DAYS: u64 = 90;
 /// Compact the op log: create a snapshot and purge ops older than `retention_days`.
 /// Returns `Some(snapshot_id)` if compaction occurred, `None` if no old ops exist.
 ///
-/// # Safety invariant (single-writer pool)
+/// # Safety note
 ///
-/// This function does NOT wrap its steps in an explicit transaction, relying
-/// instead on the single-writer pool (`max_connections(1)` in `db.rs`) to
-/// serialise all writes through one connection.  No concurrent write can
-/// interleave between the count check, snapshot creation, and op purge.
-/// If compaction is ever exposed as a user-facing command or run from a
-/// background task, wrap the body in `BEGIN IMMEDIATE` to make the
-/// atomicity explicit.
+/// This function does NOT wrap its steps in an explicit transaction.
+/// Currently it relies on serialisation from the sync daemon's task
+/// scheduling.  With the write pool at `max_connections(2)`, concurrent
+/// calls could interleave between the count check, snapshot creation,
+/// and op purge.  If compaction is ever exposed as a user-facing command
+/// or run from a concurrent background task, wrap the body in
+/// `BEGIN IMMEDIATE` to make the atomicity explicit.
 pub async fn compact_op_log(
     pool: &SqlitePool,
     device_id: &str,

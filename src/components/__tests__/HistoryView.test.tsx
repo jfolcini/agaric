@@ -416,14 +416,14 @@ describe('HistoryView', () => {
       })
     })
 
-    // Change filter to 'edit'
+    // Change filter to 'edit_block'
     const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
-    await user.selectOptions(select, 'edit')
+    await user.selectOptions(select, 'edit_block')
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
         pageId: '__all__',
-        opTypeFilter: 'edit',
+        opTypeFilter: 'edit_block',
         cursor: null,
         limit: 50,
       })
@@ -833,7 +833,7 @@ describe('HistoryView', () => {
 
     // Change op type filter — this triggers a reset
     const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
-    await user.selectOptions(select, 'edit')
+    await user.selectOptions(select, 'edit_block')
 
     // After filter change, entries reload and focus resets to first item (auto-focus)
     await waitFor(() => {
@@ -862,7 +862,7 @@ describe('HistoryView', () => {
 
     // Change filter — resets focusedIndex to -1
     const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
-    await user.selectOptions(select, 'edit')
+    await user.selectOptions(select, 'edit_block')
 
     // Wait for reload
     await waitFor(() => {

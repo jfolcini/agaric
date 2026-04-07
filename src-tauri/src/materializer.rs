@@ -479,23 +479,91 @@ impl Materializer {
             // Process ALL deduped tasks FIRST — even if shutdown has been
             // signalled, these tasks were already dequeued and must not be lost.
             for task in deduped {
-                let pool_clone = pool.clone();
-                let result =
-                    tokio::task::spawn(
-                        async move { handle_background_task(&pool_clone, &task).await },
-                    )
+                // Barrier tasks are ordering signals, not DB operations — never retry.
+                if matches!(&task, MaterializeTask::Barrier(_)) {
+                    let pool_clone = pool.clone();
+                    let result = tokio::task::spawn(async move {
+                        handle_background_task(&pool_clone, &task).await
+                    })
                     .await;
+                    Self::log_consumer_result("bg", &result);
+                    metrics.bg_processed.fetch_add(1, Ordering::Relaxed);
+                    continue;
+                }
 
-                Self::log_consumer_result("bg", &result);
+                const MAX_RETRIES: u32 = 2;
+                const INITIAL_BACKOFF_MS: u64 = 50;
+
+                let mut succeeded = false;
+                let mut panicked = false;
+
+                // First attempt
+                let task_clone = task.clone();
+                let pool_clone = pool.clone();
+                let result = tokio::task::spawn(async move {
+                    handle_background_task(&pool_clone, &task_clone).await
+                })
+                .await;
 
                 match &result {
+                    Ok(Ok(())) => {
+                        succeeded = true;
+                    }
                     Ok(Err(_)) => {
-                        metrics.bg_errors.fetch_add(1, Ordering::Relaxed);
+                        Self::log_consumer_result("bg", &result);
+                        // Retry with exponential backoff
+                        for attempt in 1..=MAX_RETRIES {
+                            let backoff_ms = INITIAL_BACKOFF_MS * (1 << (attempt - 1));
+                            let backoff = std::time::Duration::from_millis(backoff_ms);
+                            tracing::warn!(
+                                task = ?format!("{:?}", std::mem::discriminant(&task)),
+                                retry = attempt,
+                                backoff_ms = backoff_ms,
+                                "retrying failed background task after {backoff_ms}ms backoff"
+                            );
+                            tokio::time::sleep(backoff).await;
+
+                            let retry_task = task.clone();
+                            let pool_clone2 = pool.clone();
+                            let retry_result = tokio::task::spawn(async move {
+                                handle_background_task(&pool_clone2, &retry_task).await
+                            })
+                            .await;
+
+                            match &retry_result {
+                                Ok(Ok(())) => {
+                                    succeeded = true;
+                                    break;
+                                }
+                                Ok(Err(_)) => {
+                                    Self::log_consumer_result(
+                                        &format!("bg-retry-{attempt}"),
+                                        &retry_result,
+                                    );
+                                }
+                                Err(_) => {
+                                    // Panic during retry — stop retrying
+                                    Self::log_consumer_result(
+                                        &format!("bg-retry-{attempt}"),
+                                        &retry_result,
+                                    );
+                                    panicked = true;
+                                    break;
+                                }
+                            }
+                        }
                     }
                     Err(_) => {
-                        metrics.bg_panics.fetch_add(1, Ordering::Relaxed);
+                        // Panic / JoinError — no retry
+                        Self::log_consumer_result("bg", &result);
+                        panicked = true;
                     }
-                    _ => {}
+                }
+
+                if panicked {
+                    metrics.bg_panics.fetch_add(1, Ordering::Relaxed);
+                } else if !succeeded {
+                    metrics.bg_errors.fetch_add(1, Ordering::Relaxed);
                 }
 
                 metrics.bg_processed.fetch_add(1, Ordering::Relaxed);

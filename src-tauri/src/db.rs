@@ -11,9 +11,10 @@ const MAX_POOL_CONNECTIONS: u32 = 5;
 /// WAL mode allows concurrent readers alongside a single writer.
 /// Splitting into two pools enforces this at the connection level:
 ///
-/// - **`write`**: `max_connections(1)` — used for all INSERT/UPDATE/DELETE
-///   operations.  Only one writer can hold the WAL write lock at a time,
-///   so a single-connection pool eliminates write contention.
+/// - **`write`**: `max_connections(2)` — used for all INSERT/UPDATE/DELETE
+///   operations.  SQLite WAL mode serialises writers at the engine level;
+///   the second connection allows a queued writer to wait behind the first
+///   (avoiding pool-level timeouts) while the lock is held.
 /// - **`read`**: `max_connections(4)` with `PRAGMA query_only = ON` —
 ///   used for all SELECT-only queries.  The `query_only` pragma causes
 ///   SQLite to reject any writes attempted through these connections,
@@ -57,10 +58,10 @@ fn base_connect_options(db_path: &Path) -> SqliteConnectOptions {
 /// Enables `PRAGMA foreign_keys = ON` on every connection in both pools —
 /// SQLite does NOT enforce FK constraints by default, so this is mandatory.
 pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppError> {
-    // --- Write pool: single connection for serialised writes ---
+    // --- Write pool: 2 connections — SQLite serialises at engine level ---
     let write_opts = base_connect_options(db_path);
     let write_pool = SqlitePoolOptions::new()
-        .max_connections(1)
+        .max_connections(2)
         .connect_with(write_opts)
         .await?;
 
@@ -481,5 +482,20 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let result = sqlx::query("PRAGMA optimize").execute(&pool).await;
         assert!(result.is_ok(), "PRAGMA optimize should succeed");
+    }
+
+    // ======================================================================
+    // P-7: Write pool allows two connections
+    // ======================================================================
+
+    #[tokio::test]
+    async fn init_pools_write_pool_allows_two_connections() {
+        let (pools, _dir) = test_pools().await;
+        // Acquire two write connections concurrently — should not deadlock
+        // or timeout with max_connections(2).
+        let conn1 = pools.write.acquire().await;
+        assert!(conn1.is_ok(), "first write connection should succeed");
+        let conn2 = pools.write.acquire().await;
+        assert!(conn2.is_ok(), "second write connection should succeed");
     }
 }
