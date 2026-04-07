@@ -14,10 +14,12 @@
 
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { Component, type ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { BacklinkGroup, BlockRow } from '../../lib/tauri'
 import { BacklinkGroupRenderer } from '../BacklinkGroupRenderer'
+import { renderRichContent } from '../StaticBlock'
 
 vi.mock('../PageLink', () => ({
   PageLink: ({
@@ -41,7 +43,7 @@ vi.mock('../PageLink', () => ({
 }))
 
 vi.mock('../StaticBlock', () => ({
-  renderRichContent: (content: string, _options?: unknown) => content,
+  renderRichContent: vi.fn((content: string, _options?: unknown) => content),
 }))
 
 function makeBlock(id: string, content: string | null): BlockRow {
@@ -329,6 +331,126 @@ describe('BacklinkGroupRenderer', () => {
     await waitFor(async () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  /*
+   * BacklinkGroupRenderer is purely presentational — it contains no invoke
+   * calls and no async work. Error-path tests below cover synchronous render
+   * failures (renderRichContent throwing) and data edge cases that upstream
+   * invoke failures would produce (empty groups, zero blocks, all-null content).
+   */
+
+  describe('error paths', () => {
+    it('renders nothing when groups array is empty', () => {
+      const { container } = render(
+        <BacklinkGroupRenderer
+          groups={[]}
+          expandedGroups={{}}
+          onToggleGroup={vi.fn()}
+          handleBlockClick={vi.fn()}
+          handleBlockKeyDown={vi.fn()}
+          {...defaultResolvers}
+        />,
+      )
+
+      expect(container.querySelector('.linked-references-group')).toBeNull()
+    })
+
+    it('renders group header but no block items when group has zero blocks', () => {
+      const groups = [makeGroup('P1', 'Empty Page', [])]
+
+      render(
+        <BacklinkGroupRenderer
+          groups={groups}
+          expandedGroups={{ P1: true }}
+          onToggleGroup={vi.fn()}
+          handleBlockClick={vi.fn()}
+          handleBlockKeyDown={vi.fn()}
+          {...defaultResolvers}
+        />,
+      )
+
+      expect(screen.getByText('Empty Page (0)')).toBeInTheDocument()
+      expect(screen.queryByRole('listitem')).not.toBeInTheDocument()
+    })
+
+    it('propagates render error when renderRichContent throws', () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const caughtError = { current: null as Error | null }
+      const mockFn = vi.mocked(renderRichContent)
+
+      class TestErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+        state = { hasError: false }
+        static getDerivedStateFromError() {
+          return { hasError: true }
+        }
+        componentDidCatch(error: Error) {
+          caughtError.current = error
+        }
+        render() {
+          return this.state.hasError ? (
+            <div data-testid="error-fallback">error</div>
+          ) : (
+            this.props.children
+          )
+        }
+      }
+
+      // Persistent mock — React 18 retries render after errors, so
+      // mockImplementationOnce is consumed on the first attempt and the
+      // retry succeeds with the default. Use mockImplementation instead.
+      mockFn.mockImplementation(() => {
+        throw new Error('parse failure')
+      })
+
+      const groups = [makeGroup('P1', 'Page', [makeBlock('B1', 'bad content')])]
+
+      render(
+        <TestErrorBoundary>
+          <BacklinkGroupRenderer
+            groups={groups}
+            expandedGroups={{ P1: true }}
+            onToggleGroup={vi.fn()}
+            handleBlockClick={vi.fn()}
+            handleBlockKeyDown={vi.fn()}
+            {...defaultResolvers}
+          />
+        </TestErrorBoundary>,
+      )
+
+      expect(screen.getByTestId('error-fallback')).toBeInTheDocument()
+      expect(caughtError.current).toBeInstanceOf(Error)
+      expect(caughtError.current?.message).toBe('parse failure')
+
+      // Restore default mock for subsequent tests
+      mockFn.mockImplementation((content: string) => content)
+      consoleSpy.mockRestore()
+    })
+
+    it('renders "(empty)" for every null-content block in a group', () => {
+      const groups = [
+        makeGroup('P1', 'Page', [
+          makeBlock('B1', null),
+          makeBlock('B2', null),
+          makeBlock('B3', 'valid'),
+        ]),
+      ]
+
+      render(
+        <BacklinkGroupRenderer
+          groups={groups}
+          expandedGroups={{ P1: true }}
+          onToggleGroup={vi.fn()}
+          handleBlockClick={vi.fn()}
+          handleBlockKeyDown={vi.fn()}
+          {...defaultResolvers}
+        />,
+      )
+
+      const empties = screen.getAllByText('(empty)')
+      expect(empties).toHaveLength(2)
+      expect(screen.getByText('valid')).toBeInTheDocument()
     })
   })
 })

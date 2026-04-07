@@ -48,6 +48,9 @@ const mockedUseBlockAttachments = vi.mocked(useBlockAttachments)
 const { parse } = await import('../../editor/markdown-serializer')
 const mockedParse = vi.mocked(parse)
 
+const { invoke } = await import('@tauri-apps/api/core')
+const mockedInvoke = vi.mocked(invoke)
+
 // Valid 26-char ULID-format test IDs (parser requires [0-9A-Z]{26}).
 const BLOCK_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
 const BLOCK_ID_2 = '01BRZ3NDEKTSV4RRFFQ69G5FAV'
@@ -1018,6 +1021,114 @@ describe('StaticBlock', () => {
       )
 
       const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  // -- Error paths (invoke rejection) -------------------------------------------
+
+  describe('error paths (invoke rejection)', () => {
+    it('shows error when tag query invoke rejects', async () => {
+      mockedInvoke.mockRejectedValueOnce(new Error('Backend unavailable'))
+      render(
+        <StaticBlock blockId="B1" content="{{query type:tag expr:project}}" onFocus={vi.fn()} />,
+      )
+      expect(await screen.findByText('Backend unavailable')).toBeInTheDocument()
+      // Block wrapper still in DOM
+      expect(screen.getByTestId('block-static')).toBeInTheDocument()
+    })
+
+    it('shows error when property query invoke rejects', async () => {
+      mockedInvoke.mockRejectedValueOnce(new Error('Property lookup failed'))
+      render(
+        <StaticBlock
+          blockId="B1"
+          content="{{query type:property key:status value:done}}"
+          onFocus={vi.fn()}
+        />,
+      )
+      expect(await screen.findByText('Property lookup failed')).toBeInTheDocument()
+    })
+
+    it('shows error when backlinks query invoke rejects', async () => {
+      mockedInvoke.mockRejectedValueOnce(new Error('Backlinks fetch failed'))
+      render(
+        <StaticBlock
+          blockId="B1"
+          content={`{{query type:backlinks target:${BLOCK_ID}}}`}
+          onFocus={vi.fn()}
+        />,
+      )
+      expect(await screen.findByText('Backlinks fetch failed')).toBeInTheDocument()
+    })
+
+    it('shows error when filtered query invoke rejects', async () => {
+      mockedInvoke.mockRejectedValueOnce(new Error('Filter query broken'))
+      render(
+        <StaticBlock blockId="B1" content="{{query property:todo_state=TODO}}" onFocus={vi.fn()} />,
+      )
+      expect(await screen.findByText('Filter query broken')).toBeInTheDocument()
+    })
+
+    it('shows error when batchResolve rejects after successful query', async () => {
+      mockedInvoke
+        .mockResolvedValueOnce({
+          items: [
+            {
+              id: 'BLK_RES_1',
+              parent_id: 'PARENT_1',
+              content: 'Result block',
+              position: 0,
+              block_type: 'text',
+              created_at: '2024-01-01T00:00:00Z',
+              updated_at: '2024-01-01T00:00:00Z',
+              deleted_at: null,
+              conflict_type: null,
+              todo_state: null,
+              priority: null,
+              due_date: null,
+              scheduled_date: null,
+            },
+          ],
+          next_cursor: null,
+          has_more: false,
+        })
+        .mockRejectedValueOnce(new Error('Batch resolve failed'))
+      render(
+        <StaticBlock blockId="B1" content="{{query type:tag expr:project}}" onFocus={vi.fn()} />,
+      )
+      expect(await screen.findByText('Batch resolve failed')).toBeInTheDocument()
+    })
+
+    it('shows generic fallback for non-Error rejection in query', async () => {
+      mockedInvoke.mockRejectedValueOnce('string error without Error wrapper')
+      render(
+        <StaticBlock blockId="B1" content="{{query type:tag expr:project}}" onFocus={vi.fn()} />,
+      )
+      expect(await screen.findByText('Query failed')).toBeInTheDocument()
+    })
+
+    it('query block remains clickable after invoke rejection', async () => {
+      mockedInvoke.mockRejectedValueOnce(new Error('Service down'))
+      const onFocus = vi.fn()
+      const user = userEvent.setup()
+      render(<StaticBlock blockId="B1" content="{{query type:tag expr:test}}" onFocus={onFocus} />)
+      await screen.findByText('Service down')
+      await user.click(screen.getByTestId('block-static'))
+      expect(onFocus).toHaveBeenCalledWith('B1')
+    })
+
+    it('has no a11y violations when query invoke fails', async () => {
+      mockedInvoke.mockRejectedValueOnce(new Error('Service unavailable'))
+      const { container } = render(
+        <StaticBlock blockId="B1" content="{{query type:tag expr:test}}" onFocus={vi.fn()} />,
+      )
+      await screen.findByText('Service unavailable')
+      // Disable nested-interactive: QueryResult renders a button inside
+      // StaticBlock's wrapper button — a pre-existing structural trade-off.
+      const results = await axe(container, {
+        rules: { 'nested-interactive': { enabled: false } },
+      })
       expect(results).toHaveNoViolations()
     })
   })

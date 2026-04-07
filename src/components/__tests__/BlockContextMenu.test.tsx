@@ -493,4 +493,76 @@ describe('BlockContextMenu', () => {
     expect(props.onMerge).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
   })
+
+  // ── Error paths ───────────────────────────────────────────────────
+  //
+  // BlockContextMenu has no invoke calls.  The only async operation that can
+  // fail is computePosition from @floating-ui/dom, called in a useEffect with
+  // .then() but no .catch().  When it fails, setComputedPos is never called
+  // and the menu gracefully stays at the initial `position` prop.
+  //
+  // We use mockImplementationOnce returning a non-settling thenable (same
+  // observable effect as a rejection: the onFulfilled handler never fires)
+  // so there is no unhandled-rejection noise in the test runner.
+
+  /**
+   * A thenable that never settles — the `.then(onFulfilled)` callback is never
+   * invoked, which mirrors the observable effect of a rejected promise when the
+   * consumer has no `.catch()` handler.  Unlike a real `Promise.reject`, this
+   * does not trigger Node's unhandled-rejection tracking.
+   */
+  function failedPositioning() {
+    // biome-ignore lint/suspicious/noThenProperty: intentional thenable mock to simulate non-settling promise
+    const t: Record<string, () => typeof t> = { then: () => t, catch: () => t, finally: () => t }
+    return t as unknown as ReturnType<typeof import('@floating-ui/dom').computePosition>
+  }
+
+  it('falls back to initial position when computePosition rejects', async () => {
+    const { computePosition } = await import('@floating-ui/dom')
+    vi.mocked(computePosition).mockImplementationOnce(() => failedPositioning())
+
+    renderMenu({ position: { x: 120, y: 250 } })
+
+    const menu = screen.getByRole('menu')
+    // computePosition failed → setComputedPos never called → stays at initial position
+    await waitFor(() => {
+      expect(menu.style.left).toBe('120px')
+      expect(menu.style.top).toBe('250px')
+    })
+  })
+
+  it('menu items remain functional when computePosition rejects', async () => {
+    const { computePosition } = await import('@floating-ui/dom')
+    vi.mocked(computePosition).mockImplementationOnce(() => failedPositioning())
+
+    const user = userEvent.setup()
+    const { props } = renderMenu({ position: { x: 100, y: 200 } })
+
+    // Menu should still be interactive even though positioning failed
+    await user.click(screen.getByText('Delete'))
+
+    expect(props.onDelete).toHaveBeenCalledWith('BLOCK_01')
+    expect(props.onClose).toHaveBeenCalled()
+  })
+
+  it('keyboard navigation works when computePosition rejects', async () => {
+    const { computePosition } = await import('@floating-ui/dom')
+    vi.mocked(computePosition).mockImplementationOnce(() => failedPositioning())
+
+    const user = userEvent.setup()
+    const { props } = renderMenu()
+
+    const items = screen.getAllByRole('menuitem')
+    expect(items[0]).toHaveFocus()
+
+    // Navigate to second item and activate
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowDown' })
+    expect(items[1]).toHaveFocus()
+
+    await user.keyboard('{Enter}')
+
+    // Second item is Indent
+    expect(props.onIndent).toHaveBeenCalledWith('BLOCK_01')
+    expect(props.onClose).toHaveBeenCalled()
+  })
 })
