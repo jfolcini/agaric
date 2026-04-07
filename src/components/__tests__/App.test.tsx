@@ -12,16 +12,32 @@ import { invoke } from '@tauri-apps/api/core'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { addDays, addMonths, addWeeks, subDays, subMonths, subWeeks } from 'date-fns'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import App from '../../App'
 import { announce } from '../../lib/announcer'
+import { logger } from '../../lib/logger'
 import { useBootStore } from '../../stores/boot'
 import { useJournalStore } from '../../stores/journal'
 import { useNavigationStore } from '../../stores/navigation'
 
 vi.mock('../../lib/announcer', () => ({
   announce: vi.fn(),
+}))
+
+vi.mock('sonner', () => ({
+  toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }),
+  Toaster: () => null,
+}))
+
+vi.mock('../../lib/logger', () => ({
+  logger: {
+    error: vi.fn(),
+    warn: vi.fn(),
+    info: vi.fn(),
+    debug: vi.fn(),
+  },
 }))
 
 // Mock DeviceManagement to prevent its own IPC calls from interfering
@@ -754,6 +770,133 @@ describe('App', () => {
 
       await waitFor(() => {
         expect(screen.getByText('Quick Reference')).toBeInTheDocument()
+      })
+    })
+  })
+
+  // ── Error paths ─────────────────────────────────────────────────────────
+
+  describe('error paths', () => {
+    it('renders error screen when boot status check fails', async () => {
+      // Reset boot store to initial state so BootGate triggers boot()
+      useBootStore.setState({ state: 'booting', error: null })
+
+      // Make the list_blocks health-check reject
+      mockedInvoke.mockRejectedValue(new Error('Database corrupted'))
+
+      render(<App />)
+
+      // BootGate should show the error screen
+      await waitFor(() => {
+        expect(screen.getByText('Failed to start')).toBeInTheDocument()
+      })
+      expect(screen.getByText('Database corrupted')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    })
+
+    it('Ctrl+N shows error toast when page creation fails', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'create_block') {
+          throw new Error('Disk full')
+        }
+        return emptyPage
+      })
+
+      render(<App />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to create page')
+      })
+
+      // Navigation should NOT have changed
+      expect(useNavigationStore.getState().currentView).toBe('journal')
+      expect(useNavigationStore.getState().pageStack).toHaveLength(0)
+    })
+
+    it('New Page sidebar button shows error toast when creation fails', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'create_block') {
+          throw new Error('Disk full')
+        }
+        return emptyPage
+      })
+
+      render(<App />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      const sidebar = getSidebar()
+      await user.click(sidebar.getByText('New Page'))
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to create page')
+      })
+
+      // Navigation should NOT have changed
+      expect(useNavigationStore.getState().currentView).toBe('journal')
+      expect(useNavigationStore.getState().pageStack).toHaveLength(0)
+    })
+
+    it('logs warning when listDrafts fails during boot recovery', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_drafts') {
+          throw new Error('Draft table locked')
+        }
+        return emptyPage
+      })
+
+      render(<App />)
+
+      // App should still render normally
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      await waitFor(() => {
+        expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+          'App',
+          'Failed to list drafts during boot recovery',
+          expect.objectContaining({ error: expect.stringContaining('Draft table locked') }),
+        )
+      })
+    })
+
+    it('logs warning when flushDraft fails during boot recovery', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_drafts') {
+          return [{ block_id: 'DRAFT_BLOCK_1', content: 'unsaved text', updated_at: '2025-01-01' }]
+        }
+        if (cmd === 'flush_draft') {
+          throw new Error('Write failed')
+        }
+        return emptyPage
+      })
+
+      render(<App />)
+
+      // App should still render normally
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      await waitFor(() => {
+        expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+          'App',
+          'Failed to flush orphaned draft during boot recovery',
+          expect.objectContaining({
+            blockId: 'DRAFT_BLOCK_1',
+            error: expect.stringContaining('Write failed'),
+          }),
+        )
       })
     })
   })

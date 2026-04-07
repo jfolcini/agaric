@@ -667,6 +667,203 @@ describe('PagePropertyTable error handling', () => {
   })
 })
 
+describe('PagePropertyTable error paths (mockRejectedValue)', () => {
+  it('delete_property rejection shows deleteFailed toast', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_properties') return [makeProp('author', { value_text: 'Alice' })]
+      if (cmd === 'list_property_defs') return [makeDef('author', 'text')]
+      if (cmd === 'delete_property') throw new Error('backend delete error')
+      return null
+    })
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Delete property author')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByLabelText('Delete property author'))
+
+    // Confirm in the dialog
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^Delete$/i })).toBeInTheDocument()
+    })
+    await user.click(screen.getByRole('button', { name: /^Delete$/i }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to delete property')
+    })
+  })
+
+  it('set_property rejection during handleAddFromDef shows addFailed toast', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs') return [makeDef('status', 'text')]
+      if (cmd === 'set_property') throw new Error('backend set error')
+      return null
+    })
+
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Status')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByText('Status'))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to add property')
+    })
+  })
+
+  it('get_properties rejection during handleAddFromDef shows addFailed toast', async () => {
+    const user = userEvent.setup()
+    let addPhase = false
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_properties') {
+        if (addPhase) throw new Error('backend reload error')
+        return []
+      }
+      if (cmd === 'list_property_defs') return [makeDef('status', 'text')]
+      if (cmd === 'set_property') {
+        addPhase = true
+        return undefined
+      }
+      return null
+    })
+
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Status')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByText('Status'))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to add property')
+    })
+  })
+
+  it('create_property_def rejection shows error message from backend', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'create_property_def') throw new Error('Duplicate key "status"')
+      return null
+    })
+
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Search definitions')).toBeInTheDocument()
+    })
+
+    await user.type(screen.getByLabelText('Search definitions'), 'status')
+
+    await waitFor(() => {
+      expect(screen.getByText(/Create "status"/)).toBeInTheDocument()
+    })
+    await user.click(screen.getByText(/Create "status"/))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /create definition/i })).toBeInTheDocument()
+    })
+    await user.click(screen.getByRole('button', { name: /create definition/i }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Duplicate key "status"')
+    })
+  })
+
+  it('create_property_def rejection without message shows fallback toast', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'create_property_def') {
+        const err: any = new Error()
+        err.message = undefined
+        throw err
+      }
+      return null
+    })
+
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Search definitions')).toBeInTheDocument()
+    })
+
+    await user.type(screen.getByLabelText('Search definitions'), 'newprop')
+
+    await waitFor(() => {
+      expect(screen.getByText(/Create "newprop"/)).toBeInTheDocument()
+    })
+    await user.click(screen.getByText(/Create "newprop"/))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /create definition/i })).toBeInTheDocument()
+    })
+    await user.click(screen.getByRole('button', { name: /create definition/i }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to create property definition')
+    })
+  })
+
+  it('set_property rejection during handleCreateDef shows error toast', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'create_property_def')
+        return makeDef(args?.key ?? 'myprop', args?.valueType ?? 'text')
+      if (cmd === 'set_property') throw new Error('set failed after create')
+      return null
+    })
+
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Search definitions')).toBeInTheDocument()
+    })
+
+    await user.type(screen.getByLabelText('Search definitions'), 'myprop')
+
+    await waitFor(() => {
+      expect(screen.getByText(/Create "myprop"/)).toBeInTheDocument()
+    })
+    await user.click(screen.getByText(/Create "myprop"/))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /create definition/i })).toBeInTheDocument()
+    })
+    await user.click(screen.getByRole('button', { name: /create definition/i }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('set failed after create')
+    })
+  })
+
+  it('component does not crash when all invoke calls reject on mount', async () => {
+    mockedInvoke.mockRejectedValue(new Error('total failure'))
+
+    const { container } = render(<PagePropertyTable pageId="PAGE_1" />)
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to load properties')
+    })
+
+    // Component should not crash — should either render nothing or a degraded state
+    expect(container).toBeTruthy()
+  })
+})
+
 describe('PagePropertyTable accessibility', () => {
   it('collapsed state has no a11y violations', async () => {
     setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])

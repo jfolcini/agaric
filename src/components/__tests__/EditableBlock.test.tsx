@@ -1081,6 +1081,239 @@ describe('EditableBlock', () => {
     })
   })
 
+  // ── Error paths ──────────────────────────────────────────────────────
+
+  describe('error paths', () => {
+    /**
+     * Store methods (edit, splitBlock) are called fire-and-forget in the
+     * component. In production the store catches internally, but if a
+     * rejected promise escapes, the blur / focus sequence must still
+     * complete. We suppress unhandled rejections in these tests so they
+     * don't pollute the test runner output.
+     */
+    let rejectHandler: ((e: PromiseRejectionEvent) => void) | null = null
+
+    afterEach(() => {
+      if (rejectHandler) {
+        window.removeEventListener('unhandledrejection', rejectHandler)
+        rejectHandler = null
+      }
+    })
+
+    function suppressUnhandledRejections() {
+      rejectHandler = (e: PromiseRejectionEvent) => e.preventDefault()
+      window.addEventListener('unhandledrejection', rejectHandler)
+    }
+
+    // ── Store method rejections ──────────────────────────────────────
+
+    it('continues blur sequence when edit() rejects', () => {
+      suppressUnhandledRejections()
+      mockEdit.mockRejectedValueOnce(new Error('backend error'))
+
+      const mockUnmount = vi.fn(() => 'updated text')
+      const roving = makeRovingEditor({
+        unmount: mockUnmount,
+        activeBlockId: 'B1',
+      })
+
+      const { container } = render(
+        <EditableBlock
+          blockId="B1"
+          content="original text"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      const wrapper = container.querySelector('.block-editor')
+      fireEvent.blur(wrapper as Element)
+
+      // edit was called (and will reject), but blur still completes
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'updated text')
+      expect(mockDeleteDraft).toHaveBeenCalledWith('B1')
+      expect(mockSetFocused).toHaveBeenCalledWith(null)
+    })
+
+    it('continues blur sequence when splitBlock() rejects', () => {
+      suppressUnhandledRejections()
+      mockSplitBlock.mockRejectedValueOnce(new Error('split failed'))
+
+      const mockUnmount = vi.fn(() => 'line1\nline2')
+      const roving = makeRovingEditor({
+        unmount: mockUnmount,
+        activeBlockId: 'B1',
+      })
+
+      const { container } = render(
+        <EditableBlock
+          blockId="B1"
+          content="original"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      const wrapper = container.querySelector('.block-editor')
+      fireEvent.blur(wrapper as Element)
+
+      expect(mockSplitBlock).toHaveBeenCalledWith('B1', 'line1\nline2')
+      expect(mockDeleteDraft).toHaveBeenCalledWith('B1')
+      expect(mockSetFocused).toHaveBeenCalledWith(null)
+    })
+
+    it('continues focus transition when edit() rejects for previous block', async () => {
+      suppressUnhandledRejections()
+      mockEdit.mockRejectedValueOnce(new Error('save failed'))
+
+      const mockMount = vi.fn()
+      const mockUnmount = vi.fn(() => 'unsaved changes')
+      const roving = makeRovingEditor({
+        mount: mockMount,
+        unmount: mockUnmount,
+        activeBlockId: 'PREV_BLOCK',
+      })
+
+      render(
+        <EditableBlock
+          blockId="B2"
+          content="New block"
+          isFocused={false}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      await userEvent.click(screen.getByTestId('static-block-B2'))
+
+      // edit was called for previous block (and rejects)
+      expect(mockEdit).toHaveBeenCalledWith('PREV_BLOCK', 'unsaved changes')
+      // Focus transition still completes
+      expect(mockSetFocused).toHaveBeenCalledWith('B2')
+      expect(mockMount).toHaveBeenCalledWith('B2', 'New block')
+    })
+
+    it('continues auto-mount when splitBlock() rejects for previous block', () => {
+      suppressUnhandledRejections()
+      mockSplitBlock.mockRejectedValueOnce(new Error('split failed'))
+
+      const mockMount = vi.fn()
+      const mockUnmount = vi.fn(() => 'line1\nline2')
+      const roving = makeRovingEditor({
+        mount: mockMount,
+        unmount: mockUnmount,
+        activeBlockId: 'OLD_BLOCK',
+      })
+
+      const { rerender } = render(
+        <EditableBlock blockId="B1" content="" isFocused={false} rovingEditor={roving as never} />,
+      )
+
+      rerender(
+        <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
+      )
+
+      // splitBlock was called for old block (and rejects)
+      expect(mockSplitBlock).toHaveBeenCalledWith('OLD_BLOCK', 'line1\nline2')
+      // Auto-mount still completes
+      expect(mockMount).toHaveBeenCalledWith('B1', '')
+    })
+
+    // ── Draft operation rejections (caught by useDraftAutosave .catch) ─
+
+    it('handles saveDraft rejection gracefully during editing', async () => {
+      vi.useFakeTimers()
+      mockSaveDraft.mockRejectedValueOnce(new Error('IPC failure'))
+
+      const mockGetMarkdown = vi.fn(() => 'typed content')
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        getMarkdown: mockGetMarkdown,
+      })
+
+      render(
+        <EditableBlock
+          blockId="B1"
+          content="original"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      // Advance past the 500ms polling interval so liveContent gets set
+      await act(async () => {
+        vi.advanceTimersByTime(500)
+      })
+
+      // Advance past the 2s debounce — saveDraft fires and rejects
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+
+      // saveDraft was called — rejection caught by hook's .catch()
+      expect(mockSaveDraft).toHaveBeenCalledWith('B1', 'typed content')
+
+      vi.useRealTimers()
+    })
+
+    it('handles deleteDraft rejection gracefully on blur', () => {
+      mockDeleteDraft.mockRejectedValueOnce(new Error('IPC failure'))
+
+      const mockUnmount = vi.fn(() => 'updated text')
+      const roving = makeRovingEditor({
+        unmount: mockUnmount,
+        activeBlockId: 'B1',
+      })
+
+      const { container } = render(
+        <EditableBlock
+          blockId="B1"
+          content="original"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      const wrapper = container.querySelector('.block-editor')
+      fireEvent.blur(wrapper as Element)
+
+      // deleteDraft was called via discardDraft() — rejection caught by hook
+      expect(mockDeleteDraft).toHaveBeenCalledWith('B1')
+      expect(mockSetFocused).toHaveBeenCalledWith(null)
+    })
+
+    it('handles flushDraft rejection gracefully on unmount', async () => {
+      vi.useFakeTimers()
+      mockFlushDraft.mockRejectedValueOnce(new Error('IPC failure'))
+
+      const mockGetMarkdown = vi.fn(() => 'unsaved')
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        getMarkdown: mockGetMarkdown,
+      })
+
+      const { unmount } = render(
+        <EditableBlock
+          blockId="B1"
+          content="original"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      // Advance past polling interval so content is set
+      await act(async () => {
+        vi.advanceTimersByTime(500)
+      })
+
+      // Unmount triggers cleanup — flushDraft fires and rejects
+      unmount()
+
+      expect(mockFlushDraft).toHaveBeenCalledWith('B1')
+
+      vi.useRealTimers()
+    })
+  })
+
   // ── F-18: Draft autosave integration ──────────────────────────────
 
   describe('draft autosave', () => {

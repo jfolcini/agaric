@@ -1042,4 +1042,139 @@ describe('LinkedReferences', () => {
 
     expect(mockNavigateToPage).toHaveBeenCalledWith('P1', 'Source Page')
   })
+
+  // ---------------------------------------------------------------------------
+  // Error path tests (mockRejectedValue coverage)
+  // ---------------------------------------------------------------------------
+
+  // 35. initial backlinks load failure: finishes loading and shows empty state
+  it('error: initial backlinks load failure shows empty state after loading finishes', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'list_backlinks_grouped') return Promise.reject(new Error('backend unavailable'))
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'list_property_keys') return []
+      if (cmd === 'list_tags_by_prefix') return []
+      return emptyGrouped
+    })
+
+    const { container } = render(<LinkedReferences pageId="PAGE1" />)
+
+    // Toast fires with the translated error message
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to load references')
+    })
+
+    // Loading finishes — no skeletons remain
+    await waitFor(() => {
+      expect(container.querySelector('[data-slot="skeleton"]')).not.toBeInTheDocument()
+    })
+
+    // Empty state is shown because groups are still []
+    expect(screen.getByText('No references to this page yet.')).toBeInTheDocument()
+  })
+
+  // 36. pagination failure: shows toast and preserves existing groups
+  it('error: pagination failure preserves existing groups and shows toast', async () => {
+    const user = userEvent.setup()
+    const page1 = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'first block' }])],
+      next_cursor: 'cursor_page2',
+      has_more: true,
+      total_count: 2,
+      filtered_count: 2,
+    }
+    let callCount = 0
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'list_backlinks_grouped') {
+        callCount++
+        if (callCount === 1) return page1
+        return Promise.reject(new Error('pagination timeout'))
+      }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'list_property_keys') return []
+      if (cmd === 'list_tags_by_prefix') return []
+      return emptyGrouped
+    })
+
+    render(<LinkedReferences pageId="PAGE1" />)
+
+    // Wait for initial load
+    const loadMoreBtn = await screen.findByRole('button', {
+      name: /load more references/i,
+    })
+
+    // Click "Load more" — this will trigger the rejected second call
+    await user.click(loadMoreBtn)
+
+    // Toast fires for the pagination failure
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to load references')
+    })
+
+    // Existing groups are still rendered (not wiped out)
+    expect(screen.getByText('first block')).toBeInTheDocument()
+    expect(screen.getByText('Page One (1)')).toBeInTheDocument()
+  })
+
+  // 37. property keys load failure: shows toast
+  it('error: property keys load failure shows toast', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'list_property_keys')
+        return Promise.reject(new Error('property keys unavailable'))
+      if (cmd === 'list_backlinks_grouped') return emptyGrouped
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'list_tags_by_prefix') return []
+      return emptyGrouped
+    })
+
+    render(<LinkedReferences pageId="PAGE1" />)
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('references.loadPropertiesFailed')
+    })
+  })
+
+  // 38. tags load failure: shows toast
+  it('error: tags load failure shows toast', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'list_tags_by_prefix') return Promise.reject(new Error('tags service down'))
+      if (cmd === 'list_backlinks_grouped') return emptyGrouped
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'list_property_keys') return []
+      return emptyGrouped
+    })
+
+    render(<LinkedReferences pageId="PAGE1" />)
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('references.loadTagsFailed')
+    })
+  })
+
+  // 39. all three invoke calls fail simultaneously: shows all toasts
+  it('error: simultaneous failures show all error toasts', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'list_backlinks_grouped') return Promise.reject(new Error('backlinks failed'))
+      if (cmd === 'list_property_keys') return Promise.reject(new Error('properties failed'))
+      if (cmd === 'list_tags_by_prefix') return Promise.reject(new Error('tags failed'))
+      if (cmd === 'batch_resolve') return []
+      return emptyGrouped
+    })
+
+    render(<LinkedReferences pageId="PAGE1" />)
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to load references')
+      expect(toast.error).toHaveBeenCalledWith('references.loadPropertiesFailed')
+      expect(toast.error).toHaveBeenCalledWith('references.loadTagsFailed')
+    })
+
+    // Verify all three distinct toasts fired
+    expect(toast.error).toHaveBeenCalledTimes(3)
+  })
 })

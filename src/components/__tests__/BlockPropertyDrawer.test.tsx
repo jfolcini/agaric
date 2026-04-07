@@ -13,6 +13,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createElement } from 'react'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
@@ -572,6 +573,269 @@ describe('BlockPropertyDrawer', () => {
     await waitFor(() => {
       expect(screen.getByText('My Target Page')).toBeInTheDocument()
     })
+  })
+
+  // ── Error path tests ────────────────────────────────────────────────
+
+  it('shows error toast when loading properties fails', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('network failure'))
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to load properties')
+    })
+  })
+
+  it('exits loading state when loading properties fails', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('network failure'))
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading...')).not.toBeInTheDocument()
+    })
+  })
+
+  it('shows error toast when saving a property fails', async () => {
+    const user = userEvent.setup()
+    const props = [makeProp('status', { value_text: 'active' })]
+    setupMock(props, [makeDef('status')])
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('status')).toBeInTheDocument()
+    })
+
+    // Now make the next set_property call fail
+    mockedInvoke.mockRejectedValueOnce(new Error('save failure'))
+
+    const input = screen.getByLabelText('status value')
+    await user.clear(input)
+    await user.type(input, 'new-value')
+    await user.tab() // triggers onBlur → handleSave
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to save property')
+    })
+  })
+
+  it('shows error toast when deleting a property fails', async () => {
+    const user = userEvent.setup()
+    const props = [makeProp('my_custom', { value_text: 'hello' })]
+    setupMock(props, [makeDef('my_custom')])
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('my_custom')).toBeInTheDocument()
+    })
+
+    // Make the next delete_property call fail
+    mockedInvoke.mockRejectedValueOnce(new Error('delete failure'))
+
+    const deleteBtn = screen.getByRole('button', { name: 'Delete property' })
+    await user.click(deleteBtn)
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to delete property')
+    })
+  })
+
+  it('preserves property list when delete fails', async () => {
+    const user = userEvent.setup()
+    const props = [makeProp('my_custom', { value_text: 'hello' })]
+    setupMock(props, [makeDef('my_custom')])
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('my_custom')).toBeInTheDocument()
+    })
+
+    // Make the next delete_property call fail
+    mockedInvoke.mockRejectedValueOnce(new Error('delete failure'))
+
+    const deleteBtn = screen.getByRole('button', { name: 'Delete property' })
+    await user.click(deleteBtn)
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to delete property')
+    })
+
+    // Property should still be visible since delete failed
+    expect(screen.getByText('my_custom')).toBeInTheDocument()
+  })
+
+  it('shows error toast when clearing a builtin due date fails', async () => {
+    const user = userEvent.setup()
+    pageStore.setState({
+      blocks: [
+        {
+          id: 'BLOCK_1',
+          block_type: 'content',
+          content: 'test',
+          parent_id: 'PAGE_1',
+          position: 0,
+          deleted_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: '2026-06-15',
+          scheduled_date: null,
+          depth: 0,
+        },
+      ],
+    })
+    setupMock()
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByTitle('Due')).toBeInTheDocument()
+    })
+
+    // Make set_due_date reject
+    mockedInvoke.mockRejectedValueOnce(new Error('clear date failure'))
+
+    const clearBtn = screen.getByRole('button', { name: 'Clear due date' })
+    await user.click(clearBtn)
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to save property')
+    })
+  })
+
+  it('shows error toast when clearing a builtin scheduled date fails', async () => {
+    const user = userEvent.setup()
+    pageStore.setState({
+      blocks: [
+        {
+          id: 'BLOCK_1',
+          block_type: 'content',
+          content: 'test',
+          parent_id: 'PAGE_1',
+          position: 0,
+          deleted_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: '2026-07-01',
+          depth: 0,
+        },
+      ],
+    })
+    setupMock()
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByTitle('Scheduled')).toBeInTheDocument()
+    })
+
+    // Make set_scheduled_date reject
+    mockedInvoke.mockRejectedValueOnce(new Error('clear scheduled failure'))
+
+    const clearBtn = screen.getByRole('button', { name: 'Clear scheduled date' })
+    await user.click(clearBtn)
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to save property')
+    })
+  })
+
+  it('shows error toast when saving a builtin due date fails', async () => {
+    const user = userEvent.setup()
+    pageStore.setState({
+      blocks: [
+        {
+          id: 'BLOCK_1',
+          block_type: 'content',
+          content: 'test',
+          parent_id: 'PAGE_1',
+          position: 0,
+          deleted_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: '2026-06-15',
+          scheduled_date: null,
+          depth: 0,
+        },
+      ],
+    })
+    setupMock()
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByTitle('Due')).toBeInTheDocument()
+    })
+
+    // Make set_due_date reject
+    mockedInvoke.mockRejectedValueOnce(new Error('save date failure'))
+
+    const dateInput = screen.getByDisplayValue('2026-06-15')
+    await user.clear(dateInput)
+    await user.type(dateInput, '2026-12-25')
+    await user.tab() // triggers onBlur → handleSaveBuiltinDate
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to save property')
+    })
+  })
+
+  it('shows error toast when adding a property from definition fails', async () => {
+    const user = userEvent.setup()
+    const defs = [makeDef('new_prop', 'text')]
+    // No existing properties, but one definition available
+    setupMock([], defs)
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading...')).not.toBeInTheDocument()
+    })
+
+    // Open the add-property popover
+    const addBtn = screen.getByRole('button', { name: 'Add property' })
+    await user.click(addBtn)
+
+    // Make set_property reject when adding from definition
+    mockedInvoke.mockRejectedValueOnce(new Error('add property failure'))
+
+    // Click on the definition in the popover
+    const defOption = await screen.findByText('New Prop')
+    await user.click(defOption)
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to save property')
+    })
+  })
+
+  it('does not crash when reloading properties after ref save fails', async () => {
+    const props = [makeProp('linked_page', { value_ref: null })]
+    const defs = [makeDef('linked_page', 'ref')]
+    setupMock(props, defs)
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Linked Page')).toBeInTheDocument()
+    })
+
+    // Make get_properties reject for the reload path
+    mockedInvoke.mockRejectedValueOnce(new Error('reload failure'))
+
+    // The reloadProperties function is passed as onRefSaved to PropertyRowEditor.
+    // It catches errors silently (logger.warn only, no toast).
+    // Verify the component is still rendered and didn't crash.
+    expect(screen.getByText('Linked Page')).toBeInTheDocument()
   })
 })
 

@@ -34,6 +34,7 @@ vi.mock('sonner', () => ({
 const mockedInvoke = vi.mocked(invoke)
 const mockedToast = vi.mocked(toast)
 const mockedToastSuccess = vi.mocked(toast.success)
+const mockedToastError = vi.mocked(toast.error)
 
 let pageStore: StoreApi<PageBlockState>
 
@@ -200,6 +201,54 @@ describe('AttachmentList', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+  })
+
+  it('shows error toast when list_attachments fails', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('network failure'))
+
+    const { container } = renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    // Should show error toast
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to load attachments')
+    })
+
+    // Loading should be finished (no skeletons)
+    const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
+    expect(skeletons.length).toBe(0)
+
+    // Should render empty state, not crash
+    expect(screen.getByText(/No attachments yet/)).toBeInTheDocument()
+  })
+
+  it('shows error toast when delete_attachment fails and keeps attachment in list', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+
+    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'keep-me.txt')])
+
+    renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    expect(await screen.findByText('keep-me.txt')).toBeInTheDocument()
+
+    const deleteBtn = screen.getByRole('button', { name: /delete attachment keep-me\.txt/i })
+
+    // First click — confirmation toast
+    await user.click(deleteBtn)
+    expect(mockedToast).toHaveBeenCalled()
+
+    // Mock delete_attachment to reject
+    mockedInvoke.mockRejectedValueOnce(new Error('backend error'))
+
+    // Second click — attempts delete, which fails
+    await user.click(deleteBtn)
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to delete attachment')
+    })
+
+    // Attachment should still be in the list (not removed)
+    expect(screen.getByText('keep-me.txt')).toBeInTheDocument()
   })
 })
 
