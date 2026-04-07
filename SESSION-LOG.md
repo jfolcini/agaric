@@ -1,9 +1,9 @@
 # Session Log
 
-## Session 237 — 2026-04-07 — Batches 84-90: 39 REVIEW-LATER items resolved
+## Session 237 — 2026-04-07 — Batches 84-91: 39 REVIEW-LATER items resolved + M-1 subtasks 1-2
 
 ### Summary
-Resolved 39 REVIEW-LATER items across 7 batches. **Batch 84 (Rust, 7):** B-3/B-4/S-1/S-2/P-1/M-3/T-5. **Batch 85 (a11y, 6):** UX-1/2/3/6/P-3/M-2. **Batch 86 (components, 12):** UX-8/9/10/11/12/13/14/17/18/19/20/P-2. **Batch 87 (touch/logging/tests, 5):** UX-15/16/21/M-4/T-4. **Batch 88 (bugs/design/i18n, 5):** B-5/B-6/UX-4/UX-5/UX-7. **Batch 89 (mobile/tests, 3):** UX-22/UX-23/T-3. **Batch 90 (feature, 1):** F-18. ~140 files changed, ~115 new tests. 1613 Rust + 4545 frontend tests pass. REVIEW-LATER: 41→3 items.
+Resolved 39 REVIEW-LATER items + started M-1 (2 of 8 subtasks) across 8 batches. **Batch 84 (Rust, 7):** B-3/B-4/S-1/S-2/P-1/M-3/T-5. **Batch 85 (a11y, 6):** UX-1/2/3/6/P-3/M-2. **Batch 86 (components, 12):** UX-8/9/10/11/12/13/14/17/18/19/20/P-2. **Batch 87 (touch/logging/tests, 5):** UX-15/16/21/M-4/T-4. **Batch 88 (bugs/design/i18n, 5):** B-5/B-6/UX-4/UX-5/UX-7. **Batch 89 (mobile/tests, 3):** UX-22/UX-23/T-3. **Batch 90 (feature, 1):** F-18. **Batch 91 (refactor, 2 subtasks):** M-1.1/M-1.2. ~150 files changed, ~125 new tests. 1613 Rust + 4555 frontend tests pass. REVIEW-LATER: 41→3 items (F-14/F-15 need user approval, M-1 has 6 remaining subtasks).
 
 ### Batch 84 — Rust backend fixes
 
@@ -139,6 +139,18 @@ Resolved 39 REVIEW-LATER items across 7 batches. **Batch 84 (Rust, 7):** B-3/B-4
 | App.tsx | Boot recovery: auto-flush orphaned drafts via listDrafts + flushDraft |
 | EditableBlock.test.tsx | 3 new tests: saveDraft timing, deleteDraft on blur, flushDraft on unmount |
 | REVIEW-LATER.md | Removed F-18. 4→3 items |
+
+### Batch 91 — M-1 subtasks 1-2 (BlockTree extraction)
+
+**Commit:** 7047bfe
+
+| Area | Change |
+|------|--------|
+| BlockHistorySheet.tsx | M-1.1: NEW — thin wrapper with blockId/open/onOpenChange props around HistorySheet |
+| BlockPropertyDrawerSheet.tsx | M-1.2: NEW — same pattern wrapping BlockPropertyDrawer |
+| BlockTree.tsx | Replaced inline Sheet/Drawer JSX with new components (~20 lines reduced) |
+| BlockHistorySheet.test.tsx | 5 new tests (open/closed, null blockId, callback, axe) |
+| BlockPropertyDrawerSheet.test.tsx | 5 new tests (same pattern) |
 
 ## Session 236 — 2026-04-06 — Fix B-1/B-2, F-16 sticky headers, REVIEW-LATER updates
 
