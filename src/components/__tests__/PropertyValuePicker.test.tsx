@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -146,6 +146,66 @@ describe('PropertyValuePicker', () => {
   it('has no a11y violations with pre-filled values', async () => {
     vi.mocked(invoke).mockResolvedValue(['project'])
     const { container } = renderPicker({ selected: ['project:alpha'] })
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
+  // -----------------------------------------------------------------------
+  // Error-path tests (mockRejectedValueOnce)
+  // -----------------------------------------------------------------------
+  it('listPropertyKeys rejection falls back to empty property key list', async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('DB read error'))
+
+    renderPicker()
+
+    await waitFor(() => {
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith('list_property_keys')
+    })
+
+    // The select should only contain the placeholder option, no property keys
+    const select = screen.getByLabelText('Property key')
+    const options = select.querySelectorAll('option')
+    expect(options).toHaveLength(1) // only the "__none__" placeholder
+  })
+
+  it('listPropertyKeys rejection still renders labels and input', async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('network timeout'))
+
+    renderPicker()
+
+    await waitFor(() => {
+      expect(vi.mocked(invoke)).toHaveBeenCalled()
+    })
+
+    expect(screen.getByLabelText('Property key')).toBeInTheDocument()
+    expect(screen.getByLabelText('Value (optional)')).toBeInTheDocument()
+  })
+
+  it('listPropertyKeys rejection does not prevent value input interaction', async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('backend unavailable'))
+
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    renderPicker({ selected: ['effort'], onChange })
+
+    await waitFor(() => {
+      expect(vi.mocked(invoke)).toHaveBeenCalled()
+    })
+
+    // User can still type in the value input even though property keys failed to load
+    await user.type(screen.getByLabelText('Value (optional)'), '3h')
+    expect(onChange).toHaveBeenCalledWith(['effort:3h'])
+  })
+
+  it('has no a11y violations when listPropertyKeys rejects', async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('a11y error path'))
+
+    const { container } = renderPicker()
+
+    await waitFor(() => {
+      expect(vi.mocked(invoke)).toHaveBeenCalled()
+    })
+
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })

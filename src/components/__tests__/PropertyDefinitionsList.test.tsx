@@ -224,6 +224,106 @@ describe('PropertyDefinitionsList', () => {
     expect(screen.getByRole('button', { name: /Edit options/i })).toBeInTheDocument()
   })
 
+  // ---------------------------------------------------------------------------
+  // Error path tests
+  // ---------------------------------------------------------------------------
+
+  it('shows toast error when loading definitions fails', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('DB error'))
+
+    render(<PropertyDefinitionsList />)
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to load property definitions'),
+      )
+    })
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(expect.stringContaining('DB error'))
+  })
+
+  it('shows toast error when creating a definition fails', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce([]) // initial load
+
+    render(<PropertyDefinitionsList />)
+
+    await waitFor(() => {
+      expect(screen.getByText('No property definitions yet')).toBeInTheDocument()
+    })
+
+    mockedInvoke.mockRejectedValueOnce(new Error('Duplicate key'))
+
+    const keyInput = screen.getByPlaceholderText('Property key')
+    await user.type(keyInput, 'my-prop')
+
+    const createBtn = screen.getByRole('button', { name: /Create/i })
+    await user.click(createBtn)
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to create property definition'),
+      )
+    })
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(expect.stringContaining('Duplicate key'))
+    // The definition should NOT appear in the list
+    expect(screen.queryByText('My Prop')).not.toBeInTheDocument()
+  })
+
+  it('shows toast error when deleting a definition fails and keeps item', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce([makePropDef('to-delete', 'text')]) // initial load
+
+    render(<PropertyDefinitionsList />)
+
+    expect(await screen.findByText('To Delete')).toBeInTheDocument()
+
+    mockedInvoke.mockRejectedValueOnce(new Error('Not found'))
+
+    const deleteBtn = screen.getByRole('button', { name: /Delete property to-delete/i })
+    await user.click(deleteBtn)
+
+    const confirmBtn = await screen.findByRole('button', { name: /^Delete$/i })
+    await user.click(confirmBtn)
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to delete property definition'),
+      )
+    })
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(expect.stringContaining('Not found'))
+    // The definition should still be in the list
+    expect(screen.getByText('To Delete')).toBeInTheDocument()
+  })
+
+  it('shows toast error when saving options fails', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce([makePropDef('status', 'select', '["open","closed"]')]) // initial load
+
+    render(<PropertyDefinitionsList />)
+
+    expect(await screen.findByText('Status')).toBeInTheDocument()
+
+    // Open the edit options popover
+    const editBtn = screen.getByRole('button', { name: /Edit options/i })
+    await user.click(editBtn)
+
+    mockedInvoke.mockRejectedValueOnce(new Error('Invalid JSON'))
+
+    const optionsInput = screen.getByLabelText('Options JSON')
+    await user.clear(optionsInput)
+    await user.type(optionsInput, 'not-valid-json')
+
+    const saveBtn = screen.getByRole('button', { name: /Save/i })
+    await user.click(saveBtn)
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to update options'),
+      )
+    })
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(expect.stringContaining('Invalid JSON'))
+  })
+
   it('has no a11y violations', async () => {
     mockedInvoke.mockResolvedValueOnce([
       makePropDef('status', 'select', '["open","closed"]'),

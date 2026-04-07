@@ -730,6 +730,115 @@ describe('PairingDialog', () => {
     })
   })
 
+  // -----------------------------------------------------------------------
+  // Error path tests for all invoke calls (#T-6)
+  // -----------------------------------------------------------------------
+
+  it('shows error when listPeerRefs fails during init', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'start_pairing') return mockPairingInfo
+      if (cmd === 'list_peer_refs') throw new Error('db connection lost')
+      return undefined
+    })
+
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      const errorEl = document.querySelector('.pairing-error')
+      expect(errorEl).toBeTruthy()
+      expect(errorEl?.textContent).toContain('Failed to start pairing:')
+      expect(errorEl?.textContent).toContain('db connection lost')
+    })
+  })
+
+  it('shows error when deletePeerRef fails during unpair', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'start_pairing') return mockPairingInfo
+      if (cmd === 'list_peer_refs') return mockPeers
+      if (cmd === 'delete_peer_ref') throw new Error('peer not found')
+      return undefined
+    })
+
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+
+    await screen.findByText('peer-abc-1234567890')
+
+    const unpairBtns = screen.getAllByRole('button', { name: /Unpair/i })
+    await user.click(unpairBtns[0] as HTMLElement)
+
+    // Confirmation dialog appears
+    expect(screen.getByText('Unpair device?')).toBeInTheDocument()
+
+    const yesBtn = screen.getByRole('button', { name: /Yes, unpair/i })
+    await user.click(yesBtn)
+
+    await waitFor(() => {
+      const errorEl = document.querySelector('.pairing-error')
+      expect(errorEl).toBeTruthy()
+      expect(errorEl?.textContent).toContain('Failed to unpair device:')
+      expect(errorEl?.textContent).toContain('peer not found')
+    })
+
+    // Peer should still be in the list (not removed on failure)
+    expect(screen.getByText('peer-abc-1234567890')).toBeInTheDocument()
+  })
+
+  it('shows error when listPeerRefs fails after successful confirmPairing', async () => {
+    const user = userEvent.setup()
+    let listCallCount = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'start_pairing') return mockPairingInfo
+      if (cmd === 'list_peer_refs') {
+        listCallCount++
+        if (listCallCount === 1) return [] // initial load succeeds
+        throw new Error('refresh failed') // post-pair refresh fails
+      }
+      if (cmd === 'confirm_pairing') return undefined
+      return undefined
+    })
+
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+
+    await screen.findByText('alpha bravo charlie delta')
+
+    const inputs = screen.getAllByRole('textbox')
+    await user.type(inputs[0] as HTMLElement, 'echo')
+    await user.type(inputs[1] as HTMLElement, 'foxtrot')
+    await user.type(inputs[2] as HTMLElement, 'golf')
+    await user.type(inputs[3] as HTMLElement, 'hotel')
+
+    const pairBtn = screen.getByRole('button', { name: /^Pair$/i })
+    await user.click(pairBtn)
+
+    await waitFor(() => {
+      const errorEl = document.querySelector('.pairing-error')
+      expect(errorEl).toBeTruthy()
+      expect(errorEl?.textContent).toContain('Pairing failed:')
+      expect(errorEl?.textContent).toContain('refresh failed')
+    })
+  })
+
+  it('shows toast error when cancelPairing fails on dialog close', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'start_pairing') return mockPairingInfo
+      if (cmd === 'list_peer_refs') return []
+      if (cmd === 'cancel_pairing') throw new Error('cancel failed')
+      return undefined
+    })
+
+    const { rerender } = render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+
+    await screen.findByText('alpha bravo charlie delta')
+
+    // Close the dialog — triggers useEffect cleanup which calls cancelPairing()
+    rerender(<PairingDialog open={false} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to cancel pairing')
+    })
+  })
+
   it('moves focus to Retry button when error occurs (#430)', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'start_pairing') throw new Error('network error')

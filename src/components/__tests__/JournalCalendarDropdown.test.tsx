@@ -3,7 +3,17 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { logger } from '@/lib/logger'
 import { computeSourceModifiers, JournalCalendarDropdown } from '../journal/JournalCalendarDropdown'
+
+vi.mock('@/lib/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}))
 
 vi.mock('../ui/calendar', () => ({
   Calendar: (props: Record<string, unknown>) => {
@@ -269,5 +279,70 @@ describe('JournalCalendarDropdown', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+  })
+
+  // -----------------------------------------------------------------------
+  // Error-path tests (mockRejectedValueOnce)
+  // -----------------------------------------------------------------------
+
+  it('still renders calendar when countAgendaBatchBySource rejects', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('Backend unavailable'))
+
+    render(<JournalCalendarDropdown {...defaultProps} />)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'count_agenda_batch_by_source',
+        expect.objectContaining({ dates: expect.any(Array) }),
+      )
+    })
+
+    expect(screen.getByRole('dialog', { name: /date picker/i })).toBeInTheDocument()
+    expect(screen.getByTestId('mock-calendar')).toBeInTheDocument()
+  })
+
+  it('logs warning when countAgendaBatchBySource rejects', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('DB connection lost'))
+
+    render(<JournalCalendarDropdown {...defaultProps} />)
+
+    await waitFor(() => {
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'JournalCalendarDropdown',
+        'Failed to load agenda counts for calendar',
+        expect.objectContaining({ error: expect.stringContaining('DB connection lost') }),
+      )
+    })
+  })
+
+  it('shows zero agenda-source dots when countAgendaBatchBySource rejects', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('Timeout'))
+
+    render(<JournalCalendarDropdown {...defaultProps} />)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalled()
+    })
+
+    const calendar = screen.getByTestId('mock-calendar')
+    expect(calendar).toHaveAttribute('data-has-due', '0')
+    expect(calendar).toHaveAttribute('data-has-scheduled', '0')
+    expect(calendar).toHaveAttribute('data-has-property', '0')
+  })
+
+  it('does not crash on non-Error rejection from countAgendaBatchBySource', async () => {
+    mockedInvoke.mockRejectedValueOnce('string error without Error wrapper')
+
+    render(<JournalCalendarDropdown {...defaultProps} />)
+
+    await waitFor(() => {
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'JournalCalendarDropdown',
+        'Failed to load agenda counts for calendar',
+        expect.objectContaining({ error: 'string error without Error wrapper' }),
+      )
+    })
+
+    expect(screen.getByRole('dialog', { name: /date picker/i })).toBeInTheDocument()
   })
 })

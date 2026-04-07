@@ -32,6 +32,9 @@ import { BootGate } from '../BootGate'
 
 const mockedInvoke = vi.mocked(invoke)
 
+/** Reference to the real boot function from the store (before any test overrides it). */
+const realBoot = useBootStore.getState().boot
+
 /** No-op boot function to prevent the useEffect from transitioning state. */
 const noopBoot = vi.fn(async () => {})
 
@@ -232,5 +235,113 @@ describe('BootGate', () => {
     })
 
     resolveBootFn?.()
+  })
+
+  describe('error paths (invoke rejection)', () => {
+    beforeEach(() => {
+      // Restore the real boot function (other tests may have replaced it with noopBoot).
+      useBootStore.setState({ state: 'booting', error: null, boot: realBoot })
+    })
+
+    it('renders error state when list_blocks rejects with an Error', async () => {
+      mockedInvoke.mockRejectedValueOnce(new Error('DB connection failed'))
+
+      render(
+        <BootGate>
+          <p>App content</p>
+        </BootGate>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to start')).toBeInTheDocument()
+      })
+      expect(screen.getByText('DB connection failed')).toBeInTheDocument()
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Retry/i })).toBeInTheDocument()
+      expect(screen.queryByText('App content')).not.toBeInTheDocument()
+    })
+
+    it('renders error state when list_blocks rejects with a non-Error value', async () => {
+      mockedInvoke.mockRejectedValueOnce('plain string error')
+
+      render(
+        <BootGate>
+          <p>App content</p>
+        </BootGate>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to start')).toBeInTheDocument()
+      })
+      expect(screen.getByText('plain string error')).toBeInTheDocument()
+      expect(screen.queryByText('App content')).not.toBeInTheDocument()
+    })
+
+    it('displays updated error message when retry also fails', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockRejectedValueOnce(new Error('First failure'))
+
+      render(
+        <BootGate>
+          <p>App content</p>
+        </BootGate>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('First failure')).toBeInTheDocument()
+      })
+
+      mockedInvoke.mockRejectedValueOnce(new Error('Second failure'))
+      await user.click(screen.getByRole('button', { name: /Retry/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText('Second failure')).toBeInTheDocument()
+      })
+      expect(screen.queryByText('First failure')).not.toBeInTheDocument()
+      expect(screen.queryByText('App content')).not.toBeInTheDocument()
+      expect(mockedInvoke).toHaveBeenCalledTimes(2)
+      expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {})
+    })
+
+    it('transitions to ready when retry succeeds after initial failure', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockRejectedValueOnce(new Error('Boot failed'))
+
+      render(
+        <BootGate>
+          <p>App content</p>
+        </BootGate>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('Boot failed')).toBeInTheDocument()
+      })
+
+      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+      await user.click(screen.getByRole('button', { name: /Retry/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText('App content')).toBeInTheDocument()
+      })
+      expect(screen.queryByText('Failed to start')).not.toBeInTheDocument()
+      expect(screen.queryByText('Boot failed')).not.toBeInTheDocument()
+    })
+
+    it('has no a11y violations when invoke rejection produces error state', async () => {
+      mockedInvoke.mockRejectedValueOnce(new Error('Backend unavailable'))
+
+      const { container } = render(
+        <BootGate>
+          <p>App content</p>
+        </BootGate>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to start')).toBeInTheDocument()
+      })
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 })

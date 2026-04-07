@@ -11,11 +11,14 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { useJournalStore } from '../../stores/journal'
 import { useNavigationStore } from '../../stores/navigation'
 import { GlobalDateControls } from '../JournalPage'
+
+vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() } }))
 
 // Mock the Calendar component used by JournalCalendarDropdown
 vi.mock('../ui/calendar', () => ({
@@ -99,6 +102,31 @@ describe('GlobalDateControls', () => {
         }),
       )
     })
+  })
+
+  it('shows error toast when page list fetch fails on mount', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('network error'))
+
+    render(<GlobalDateControls />)
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        expect.stringContaining('loadCalendarFailed'),
+      )
+    })
+  })
+
+  it('still renders controls when page list fetch fails', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('backend unavailable'))
+
+    render(<GlobalDateControls />)
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalled()
+    })
+
+    expect(screen.getByRole('button', { name: /today/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /calendar/i })).toBeInTheDocument()
   })
 
   it('has no a11y violations', async () => {
