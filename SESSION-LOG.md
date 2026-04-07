@@ -1,9 +1,9 @@
 # Session Log
 
-## Session 237 — 2026-04-07 — Batches 84-85: 13 REVIEW-LATER items resolved
+## Session 237 — 2026-04-07 — Batches 84-86: 25 REVIEW-LATER items resolved
 
 ### Summary
-Resolved 13 REVIEW-LATER items across 2 batches. **Batch 84 (Rust backend):** B-3 sync batch streaming, B-4 materializer retry, S-1 unpaired device rejection, S-2 cert CN verification, P-1 source_id index, M-3 FTS rebuild at boot, T-5 PRAGMA optimize. **Batch 85 (Frontend):** UX-1 focus-visible rings on 5 components (12 buttons), UX-2 CollapsiblePanelHeader aria-label, UX-3 LoadMoreButton i18n defaults, UX-6 template literal → cn() (12 replacements), P-3 pdfjs-dist lazy loading via React.lazy, M-2 FeatureErrorBoundary wrapping 12 sections. 31 files changed, 12 new Rust tests + 14 new frontend tests. 1611 Rust + 4455 frontend tests pass.
+Resolved 25 REVIEW-LATER items across 3 batches. **Batch 84 (Rust backend, 7 items):** B-3 sync batch streaming, B-4 materializer retry, S-1 unpaired device rejection, S-2 cert CN verification, P-1 source_id index, M-3 FTS rebuild at boot, T-5 PRAGMA optimize. **Batch 85 (Frontend a11y, 6 items):** UX-1 focus-visible rings, UX-2 aria-label, UX-3 i18n, UX-6 cn(), P-3 lazy loading, M-2 error boundaries. **Batch 86 (Components + perf, 12 items):** UX-9/10/11/12 shared component extractions, UX-13 PopoverMenuItem, UX-14 touch targets, UX-8 toolbar active class, UX-17/18/19/20 CSS alignment, P-2 FTS N+1 batching. 53 files changed, 67 new tests. 1611 Rust + 4495 frontend tests pass. REVIEW-LATER: 41→17 items.
 
 ### Batch 84 — Rust backend fixes
 
@@ -52,6 +52,31 @@ Resolved 13 REVIEW-LATER items across 2 batches. **Batch 84 (Rust backend):** B-
 | PageHeaderMenu.test.tsx | 1 new test (focus-visible ring classes) |
 | PagePropertyTable.test.tsx | Updated 28 button queries for new aria-label pattern |
 | PageHeader.test.tsx | Updated 1 button query for new aria-label pattern |
+
+### Batch 86 — Component consolidation, touch targets, CSS, FTS perf
+
+**Commit:** 2ebb06e
+
+| Area | Change |
+|------|--------|
+| ui/status-badge.tsx | UX-9: NEW — CVA component with 5 state variants (DONE/DOING/TODO/default/overdue) |
+| ui/priority-badge.tsx | UX-10: NEW — wraps priorityColor() utility |
+| ui/alert-list-item.tsx | UX-11: NEW — CVA li with destructive/pending variants |
+| ui/section-title.tsx | UX-12: NEW — h4 with color/label/count props |
+| ui/popover-menu-item.tsx | UX-13: NEW — button with active/disabled styling |
+| OverdueSection.tsx | UX-9/10/11/12: Replaced 4 inline patterns with shared components |
+| UpcomingSection.tsx | UX-9/11/12: Replaced 3 inline patterns with shared components |
+| QueryResultList.tsx | UX-9: Replaced ternary status badge with StatusBadge |
+| DuePanel.tsx | UX-10/18: PriorityBadge + group header alignment (bg-muted/50) |
+| AgendaFilterBuilder.tsx | UX-13: Replaced raw button with PopoverMenuItem |
+| AgendaSortGroupControls.tsx | UX-13: Replaced raw button with PopoverMenuItem |
+| PageTreeItem.tsx | UX-14: 44px touch targets, focus-visible, coarse-pointer visibility |
+| FormattingToolbar.tsx | UX-8: Shared toolbarActiveClass constant, 4 ternary replacements |
+| BlockListItem.tsx | UX-17: Padding standardized to px-3 py-2 |
+| PageBrowser.tsx | UX-19: Sticky header spacing tightened to space-y-2 |
+| CollapsiblePanelHeader.tsx | UX-20: Padding/weight increased to px-3 py-2 font-semibold |
+| fts.rs | P-2: Batch SELECT+DELETE via json_each(), reduces N×3 to N+2 queries |
+| 7 new test files | 38 new component tests (StatusBadge 12, PriorityBadge 11, AlertListItem 10, PopoverMenuItem 5) + 2 PageTreeItem touch tests + 1 FTS batch test |
 
 ## Session 236 — 2026-04-06 — Fix B-1/B-2, F-16 sticky headers, REVIEW-LATER updates
 
