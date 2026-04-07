@@ -2120,4 +2120,29 @@ mod tests {
             "reindex with no refs should be ok: {result:?}"
         );
     }
+
+    #[tokio::test]
+    async fn rebuild_fts_index_populates_empty_table() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert a block with content
+        insert_block(&pool, BLOCK_A, "content", "hello world", None, Some(0)).await;
+
+        // FTS table should be empty initially (no materializer ran)
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "FTS should be empty before rebuild");
+
+        // Rebuild
+        rebuild_fts_index(&pool).await.unwrap();
+
+        // FTS table should now have the block
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "FTS should have 1 entry after rebuild");
+    }
 }

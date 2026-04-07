@@ -432,6 +432,30 @@ impl rustls::client::danger::ServerCertVerifier for PinningCertVerifier {
             }
         }
 
+        // Verify CN matches expected device ID format (S-2: defense-in-depth)
+        use x509_parser::prelude::*;
+        if let Ok((_, parsed)) = X509Certificate::from_der(end_entity.as_ref()) {
+            let cn = parsed
+                .subject()
+                .iter_common_name()
+                .next()
+                .and_then(|attr| attr.as_str().ok());
+            match cn {
+                Some(name) if name.starts_with("agaric-") => {
+                    // Valid device certificate
+                }
+                _ => {
+                    return Err(rustls::Error::General(
+                        "certificate CN does not match expected agaric-{device_id} format".into(),
+                    ));
+                }
+            }
+        } else {
+            return Err(rustls::Error::General(
+                "failed to parse certificate for CN verification".into(),
+            ));
+        }
+
         Ok(rustls::client::danger::ServerCertVerified::assertion())
     }
 
@@ -1052,5 +1076,110 @@ mod tests {
 
         conn.close().await.ok();
         server.shutdown().await;
+    }
+
+    // -- 8. CN verification (S-2) -----------------------------------------
+
+    #[test]
+    fn cn_verification_accepts_valid_agaric_cert() {
+        install_crypto_provider();
+        let cert = generate_self_signed_cert("test-device").unwrap();
+        let cert_der = pem_to_der(&cert.cert_pem).unwrap();
+
+        let verifier = PinningCertVerifier {
+            expected_hash: Some(cert.cert_hash.clone()),
+            observed_hash: Arc::new(std::sync::Mutex::new(None)),
+        };
+
+        let ee = rustls::pki_types::CertificateDer::from(cert_der);
+        let server_name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+        let now = rustls::pki_types::UnixTime::now();
+
+        let result = rustls::client::danger::ServerCertVerifier::verify_server_cert(
+            &verifier,
+            &ee,
+            &[],
+            &server_name,
+            &[],
+            now,
+        );
+        assert!(
+            result.is_ok(),
+            "valid agaric-* CN should pass verification, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn cn_verification_rejects_non_agaric_cn() {
+        install_crypto_provider();
+        use rcgen::{CertificateParams, DnType, KeyPair};
+
+        // Generate a cert with a CN that does NOT start with "agaric-"
+        let key_pair = KeyPair::generate().unwrap();
+        let mut params = CertificateParams::new(vec!["localhost".to_string()]).unwrap();
+        params
+            .distinguished_name
+            .push(DnType::CommonName, "malicious-cert".to_string());
+        let bad_cert = params.self_signed(&key_pair).unwrap();
+        let bad_der = bad_cert.der().to_vec();
+
+        // Compute hash so the hash check passes
+        let hash = Sha256::digest(&bad_der);
+        let hex_hash: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+
+        let verifier = PinningCertVerifier {
+            expected_hash: Some(hex_hash),
+            observed_hash: Arc::new(std::sync::Mutex::new(None)),
+        };
+
+        let ee = rustls::pki_types::CertificateDer::from(bad_der);
+        let server_name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+        let now = rustls::pki_types::UnixTime::now();
+
+        let result = rustls::client::danger::ServerCertVerifier::verify_server_cert(
+            &verifier,
+            &ee,
+            &[],
+            &server_name,
+            &[],
+            now,
+        );
+        assert!(result.is_err(), "non-agaric CN should be rejected");
+        let err_msg = format!("{:?}", result.unwrap_err());
+        assert!(
+            err_msg.contains("CN does not match"),
+            "error should mention CN mismatch, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn cn_verification_rejects_unparseable_cert() {
+        install_crypto_provider();
+
+        let verifier = PinningCertVerifier {
+            expected_hash: None,
+            observed_hash: Arc::new(std::sync::Mutex::new(None)),
+        };
+
+        // Garbage DER bytes that cannot be parsed as X.509
+        let garbage = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        let ee = rustls::pki_types::CertificateDer::from(garbage);
+        let server_name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+        let now = rustls::pki_types::UnixTime::now();
+
+        let result = rustls::client::danger::ServerCertVerifier::verify_server_cert(
+            &verifier,
+            &ee,
+            &[],
+            &server_name,
+            &[],
+            now,
+        );
+        assert!(result.is_err(), "unparseable cert should be rejected");
+        let err_msg = format!("{:?}", result.unwrap_err());
+        assert!(
+            err_msg.contains("failed to parse certificate"),
+            "error should mention parse failure, got: {err_msg}"
+        );
     }
 }

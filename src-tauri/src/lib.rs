@@ -61,7 +61,7 @@ pub struct SyncCancelFlag(pub Arc<AtomicBool>);
 pub fn run() {
     use db::{ReadPool, WritePool};
     use device::DeviceId;
-    use materializer::Materializer;
+    use materializer::{MaterializeTask, Materializer};
     use sync_cert::PersistedCert;
     use tauri::Manager;
     use tauri_specta::{collect_commands, Builder};
@@ -206,6 +206,29 @@ pub fn run() {
 
             // Create materializer (spawns consumer tasks) — uses write pool for cache rebuilds
             let materializer = Materializer::new(pools.write.clone());
+
+            // M-3: Rebuild FTS index at boot if the table is empty (post-migration 0006).
+            let fts_count: i64 = tauri::async_runtime::block_on(
+                sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks")
+                    .fetch_one(&pools.write),
+            )
+            .unwrap_or(0);
+            if fts_count == 0 {
+                // Check if there are any blocks that should be indexed
+                let block_count: i64 = tauri::async_runtime::block_on(
+                    sqlx::query_scalar(
+                        "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 AND content IS NOT NULL"
+                    )
+                    .fetch_one(&pools.write),
+                )
+                .unwrap_or(0);
+                if block_count > 0 {
+                    tracing::info!(blocks = block_count, "FTS index empty — scheduling rebuild");
+                    if let Err(e) = materializer.try_enqueue_background(MaterializeTask::RebuildFtsIndex) {
+                        tracing::warn!(error = %e, "failed to enqueue FTS rebuild at boot");
+                    }
+                }
+            }
 
             // Create scheduler wrapped in Arc for sharing with the SyncDaemon
             let scheduler = std::sync::Arc::new(sync_scheduler::SyncScheduler::new());

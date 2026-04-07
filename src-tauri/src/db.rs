@@ -67,6 +67,12 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppErro
     // Run migrations on the write pool (needs write access)
     sqlx::migrate!("./migrations").run(&write_pool).await?;
 
+    // T-5: Update query planner statistics after migrations.
+    // PRAGMA optimize analyzes tables whose stats may be stale and runs
+    // ANALYZE only where beneficial. Safe, idempotent, runs in <100ms
+    // for typical personal databases.
+    sqlx::query("PRAGMA optimize").execute(&write_pool).await?;
+
     // --- Read pool: 4 concurrent readers, query_only enforced ---
     let read_opts = base_connect_options(db_path).pragma("query_only", "ON");
     let read_pool = SqlitePoolOptions::new()
@@ -445,5 +451,35 @@ mod tests {
             Some(1000),
             "read pool wal_autocheckpoint should be 1000 pages"
         );
+    }
+
+    // ======================================================================
+    // P-1: Index existence test
+    // ======================================================================
+
+    #[tokio::test]
+    async fn block_links_source_index_exists() {
+        let (pool, _dir) = test_pool().await;
+        let row = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_block_links_source'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row, 1,
+            "idx_block_links_source index should exist after migrations"
+        );
+    }
+
+    // ======================================================================
+    // T-5: PRAGMA optimize test
+    // ======================================================================
+
+    #[tokio::test]
+    async fn pragma_optimize_runs_without_error() {
+        let (pool, _dir) = test_pool().await;
+        let result = sqlx::query("PRAGMA optimize").execute(&pool).await;
+        assert!(result.is_ok(), "PRAGMA optimize should succeed");
     }
 }

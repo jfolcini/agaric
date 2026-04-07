@@ -1062,7 +1062,7 @@ fn group_tasks_by_block_id(
 async fn handle_foreground_task(
     pool: &SqlitePool,
     task: &MaterializeTask,
-    metrics: &QueueMetrics,
+    _metrics: &QueueMetrics,
 ) -> Result<(), AppError> {
     match task {
         MaterializeTask::ApplyOp(record) => {
@@ -1076,25 +1076,34 @@ async fn handle_foreground_task(
                     op_type = %record.op_type,
                     seq = record.seq,
                     error = %e,
-                    "failed to apply remote op (continuing)"
+                    "failed to apply remote op — will retry"
                 );
-                metrics.fg_errors.fetch_add(1, Ordering::Relaxed);
+                return Err(e);
             }
             Ok(())
         }
         MaterializeTask::BatchApplyOps(records) => {
+            let mut failed = 0u32;
+            let mut last_err = None;
             for record in records {
                 if let Err(e) = apply_op(pool, record).await {
                     tracing::warn!(
                         op_type = %record.op_type,
                         seq = record.seq,
                         error = %e,
-                        "failed to apply remote op in batch (continuing)"
+                        "failed to apply remote op in batch — will retry batch"
                     );
-                    metrics.fg_errors.fetch_add(1, Ordering::Relaxed);
+                    failed += 1;
+                    last_err = Some(e);
                 }
             }
-            Ok(())
+            match last_err {
+                Some(e) => {
+                    tracing::warn!(failed_count = failed, "batch had failures");
+                    Err(e)
+                }
+                None => Ok(()),
+            }
         }
         MaterializeTask::Barrier(ref notify) => {
             notify.notify_one();
@@ -4299,19 +4308,19 @@ mod tests {
     }
 
     /// Verify that a foreground task that fails (DB error path inside
-    /// `handle_foreground_task`) doesn't double-count — the handler
-    /// swallows individual apply_op errors and returns Ok(()), so the
-    /// retry path is not triggered. The task's internal error counter
-    /// is incremented once inside the handler itself.
+    /// `handle_foreground_task`) propagates the error so the retry path
+    /// in `process_single_foreground_task` fires. The retry also fails
+    /// (same bad payload), so `fg_errors` is incremented once by the
+    /// retry mechanism.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn fg_retry_task_with_bad_payload_handled_internally() {
         let (pool, _dir) = test_pool().await;
         let metrics = Arc::new(QueueMetrics::default());
 
         // ApplyOp with an unknown op_type — apply_op returns Err,
-        // handle_foreground_task catches it and increments fg_errors
-        // internally, then returns Ok(()). The retry path in
-        // process_single_foreground_task sees Ok(Ok(())) and does NOT retry.
+        // handle_foreground_task propagates it. The retry path in
+        // process_single_foreground_task sees Ok(Err(_)), retries once,
+        // the retry also fails, and fg_errors is incremented.
         let record = fake_op_record("bogus_op_type", "{}");
         let task = MaterializeTask::ApplyOp(record);
         Materializer::process_single_foreground_task(&pool, task, &metrics).await;
@@ -4321,11 +4330,11 @@ mod tests {
             1,
             "fg_processed should be 1"
         );
-        // The handler internally counted the error
+        // The retry mechanism counted the error after both attempts failed
         assert_eq!(
             metrics.fg_errors.load(AtomicOrdering::Relaxed),
             1,
-            "fg_errors should be 1 from internal handler error counting"
+            "fg_errors should be 1 from retry mechanism after propagated failure"
         );
         assert_eq!(
             metrics.fg_panics.load(AtomicOrdering::Relaxed),
@@ -4371,6 +4380,124 @@ mod tests {
             m.fg_panics.load(AtomicOrdering::Relaxed),
             0,
             "no panics expected"
+        );
+
+        mat.shutdown();
+    }
+
+    // ======================================================================
+    // B-4: Error propagation tests for ApplyOp / BatchApplyOps
+    // ======================================================================
+
+    /// Verify that a failed ApplyOp propagates the error through the retry
+    /// mechanism in `process_single_foreground_task`. A malformed payload
+    /// causes `apply_op()` to fail; `handle_foreground_task` now returns
+    /// `Err`, the retry fires and also fails, so `fg_errors` is incremented
+    /// exactly once by the retry mechanism.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn apply_op_failure_propagated_for_retry() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Enqueue an ApplyOp with a malformed payload that will fail
+        let record = fake_op_record("create_block", "{}");
+        mat.enqueue_foreground(MaterializeTask::ApplyOp(record))
+            .await
+            .unwrap();
+        mat.flush().await.unwrap();
+
+        let m = mat.metrics();
+        assert!(
+            m.fg_processed.load(AtomicOrdering::Relaxed) >= 1,
+            "task should be processed"
+        );
+        assert_eq!(
+            m.fg_errors.load(AtomicOrdering::Relaxed),
+            1,
+            "fg_errors should be 1 — error propagated and retry also failed"
+        );
+
+        mat.shutdown();
+    }
+
+    /// Verify that a BatchApplyOps with a mix of valid and invalid ops
+    /// propagates the error. The batch contains one valid create_block
+    /// and one malformed op. The batch handler collects failures and
+    /// returns the last error, which triggers the retry path.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn batch_apply_ops_partial_failure_propagated() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // One valid op
+        let good_record = make_op_record(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id("blk-batch-good"),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(0),
+                content: "batch good".into(),
+            }),
+        )
+        .await;
+
+        // One malformed op (empty JSON for create_block will fail deserialization)
+        let bad_record = fake_op_record("create_block", "{}");
+
+        let batch = vec![good_record, bad_record];
+        mat.enqueue_foreground(MaterializeTask::BatchApplyOps(batch))
+            .await
+            .unwrap();
+        mat.flush().await.unwrap();
+
+        let m = mat.metrics();
+        assert!(
+            m.fg_processed.load(AtomicOrdering::Relaxed) >= 1,
+            "batch task should be processed"
+        );
+        assert_eq!(
+            m.fg_errors.load(AtomicOrdering::Relaxed),
+            1,
+            "fg_errors should be 1 — partial batch failure propagated and retry also failed"
+        );
+
+        mat.shutdown();
+    }
+
+    /// Verify that a valid ApplyOp succeeds without any error counting.
+    /// This is the happy-path counterpart to the failure propagation tests.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn apply_op_success_no_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let record = make_op_record(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id("blk-success"),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(0),
+                content: "success test".into(),
+            }),
+        )
+        .await;
+
+        mat.enqueue_foreground(MaterializeTask::ApplyOp(record))
+            .await
+            .unwrap();
+        mat.flush().await.unwrap();
+
+        let m = mat.metrics();
+        assert!(
+            m.fg_processed.load(AtomicOrdering::Relaxed) >= 1,
+            "at least one fg task should be processed"
+        );
+        assert_eq!(
+            m.fg_errors.load(AtomicOrdering::Relaxed),
+            0,
+            "fg_errors should be 0 for a valid op"
         );
 
         mat.shutdown();

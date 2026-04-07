@@ -533,6 +533,10 @@ async fn run_sync_session(
         match response {
             Some(response) => {
                 conn.send_json(&response).await?;
+                // Drain any pending op batches (B-3)
+                while let Some(batch) = orch.next_message() {
+                    conn.send_json(&batch).await?;
+                }
             }
             None => {
                 let state = &orch.session().state;
@@ -574,6 +578,7 @@ async fn handle_incoming_sync(
 ) -> Result<(), AppError> {
     tracing::info!("incoming sync connection received, starting responder session");
 
+    let pool_ref = pool.clone();
     let event_sink_box: Box<dyn SyncEventSink> = Box::new(SharedEventSink(Arc::clone(&event_sink)));
     let mut orch = SyncOrchestrator::new(pool, device_id.clone(), materializer)
         .with_event_sink(event_sink_box);
@@ -591,6 +596,20 @@ async fn handle_incoming_sync(
             .unwrap_or_default();
 
         if !remote_id.is_empty() {
+            // Reject unpaired devices (S-1)
+            if peer_refs::get_peer_ref(&pool_ref, &remote_id)
+                .await?
+                .is_none()
+            {
+                tracing::warn!(peer_id = %remote_id, "rejecting sync from unpaired device");
+                conn.send_json(&SyncMessage::Error {
+                    message: "peer not paired with this device".into(),
+                })
+                .await?;
+                let _ = conn.close().await;
+                return Ok(());
+            }
+
             match scheduler.try_lock_peer(&remote_id) {
                 Some(guard) => {
                     tracing::info!(peer_id = %remote_id, "responder locked peer for sync");
@@ -620,6 +639,10 @@ async fn handle_incoming_sync(
     let response = orch.handle_message(first_msg).await?;
     if let Some(resp) = response {
         conn.send_json(&resp).await?;
+        // Drain any pending op batches (B-3)
+        while let Some(batch) = orch.next_message() {
+            conn.send_json(&batch).await?;
+        }
     }
 
     // ── Message loop (same structure as initiator) ────────────────────────
@@ -635,6 +658,10 @@ async fn handle_incoming_sync(
         match response {
             Some(resp) => {
                 conn.send_json(&resp).await?;
+                // Drain any pending op batches (B-3)
+                while let Some(batch) = orch.next_message() {
+                    conn.send_json(&batch).await?;
+                }
             }
             None => {
                 let state = &orch.session().state;
@@ -809,6 +836,133 @@ mod tests {
         assert!(
             cancel.load(Ordering::Acquire),
             "flag must remain set after multiple calls"
+        );
+    }
+
+    // ── B-3: batch draining test ────────────────────────────────────────
+
+    /// Verify the drain pattern works: a SyncOrchestrator with >1000 ops
+    /// returns one batch from handle_message() and the rest via
+    /// next_message(), with correct is_last flags.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn drain_pending_batches_after_handle_message() {
+        use crate::db::init_pool;
+        use crate::op::{CreateBlockPayload, OpPayload};
+        use crate::op_log::append_local_op_at;
+        use crate::ulid::BlockId;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        let materializer = Materializer::new(pool.clone());
+
+        // Insert 2500 ops on "responder-dev" to exceed OP_BATCH_SIZE (1000)
+        for i in 1..=2500 {
+            append_local_op_at(
+                &pool,
+                "responder-dev",
+                OpPayload::CreateBlock(CreateBlockPayload {
+                    block_id: BlockId::test_id(&format!("BLK{i}")),
+                    block_type: "content".into(),
+                    parent_id: None,
+                    position: Some(0),
+                    content: "test".into(),
+                }),
+                "2025-01-15T12:00:00+00:00".into(),
+            )
+            .await
+            .unwrap();
+        }
+
+        // Responder-side orchestrator
+        let mut orch = SyncOrchestrator::new(pool, "responder-dev".into(), materializer.clone());
+
+        // Simulate initiator sending HeadExchange with no heads
+        // → responder must send all 2500 ops
+        let first_response = orch
+            .handle_message(SyncMessage::HeadExchange { heads: vec![] })
+            .await
+            .unwrap();
+
+        // First batch: 1000 ops, is_last = false
+        let (batch1_ops, batch1_last) = match first_response {
+            Some(SyncMessage::OpBatch { ops, is_last }) => (ops.len(), is_last),
+            other => panic!("expected OpBatch from handle_message, got {other:?}"),
+        };
+        assert_eq!(batch1_ops, 1000, "first batch should have 1000 ops");
+        assert!(!batch1_last, "first batch must NOT be is_last");
+
+        // Drain remaining batches (this is the B-3 pattern)
+        let mut total_ops = batch1_ops;
+        let mut batch_count = 1;
+        while let Some(batch) = orch.next_message() {
+            match batch {
+                SyncMessage::OpBatch { ops, is_last } => {
+                    total_ops += ops.len();
+                    batch_count += 1;
+                    if is_last {
+                        assert!(
+                            orch.next_message().is_none(),
+                            "no more batches after is_last=true"
+                        );
+                        break;
+                    }
+                }
+                other => panic!("expected OpBatch from next_message, got {other:?}"),
+            }
+        }
+
+        assert_eq!(total_ops, 2500, "all 2500 ops must be drained");
+        assert_eq!(batch_count, 3, "2500 ops / 1000 batch size = 3 batches");
+        assert_eq!(
+            orch.session().ops_sent,
+            2500,
+            "session must track all sent ops"
+        );
+
+        materializer.shutdown();
+    }
+
+    // ── S-1: unpaired device rejection test ─────────────────────────────
+
+    /// Verify that get_peer_ref returns None for unknown devices (triggers
+    /// rejection) and Some for paired devices.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unpaired_device_rejected_via_peer_ref_lookup() {
+        use crate::db::init_pool;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+
+        // No peer_refs entries → lookup should return None (unpaired)
+        let result = peer_refs::get_peer_ref(&pool, "UNKNOWN_DEVICE_XYZ")
+            .await
+            .unwrap();
+        assert!(
+            result.is_none(),
+            "unknown device must return None (would be rejected)"
+        );
+
+        // Insert a paired device
+        peer_refs::upsert_peer_ref(&pool, "PAIRED_DEVICE_ABC")
+            .await
+            .unwrap();
+
+        // Paired device → lookup should return Some
+        let result = peer_refs::get_peer_ref(&pool, "PAIRED_DEVICE_ABC")
+            .await
+            .unwrap();
+        assert!(
+            result.is_some(),
+            "paired device must return Some (would be accepted)"
+        );
+        assert_eq!(
+            result.unwrap().peer_id,
+            "PAIRED_DEVICE_ABC",
+            "returned peer_id must match"
         );
     }
 }
