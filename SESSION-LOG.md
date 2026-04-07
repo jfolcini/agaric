@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 246 — 2026-04-07 — Batch 100: F-19 + M-6 resolved (6→4 remaining)
+
+### Summary
+Resolved F-19 (persistent frontend error logging, all 6 phases) and M-6 (remaining 10 complex UI primitives forwardRef). F-19 adds Rust bridge commands (`log_frontend`, `get_log_dir`), enhanced logger.ts with dual-write IPC + stack capture + cause extraction + rate limiting, global error/rejection handlers in main.tsx, logger.error in error boundaries, and logging across 52+ catch sites. M-6 completes the forwardRef migration for all 26 UI primitives. 5 parallel build subagents + orchestrator (Phases 3+4). 47 files changed, 2839 insertions, 1037 deletions. 4919 tests pass. REVIEW-LATER: 6→4.
+
+### Batch 100
+
+| Area | Change |
+|------|--------|
+| commands.rs | F-19 Phase 1: `log_frontend` + `get_log_dir` Tauri commands |
+| lib.rs | F-19: Registered both commands in `collect_commands!` |
+| bindings.ts | F-19: Auto-regenerated via specta with new command types |
+| tauri.ts | F-19: Added `logFrontend()` + `getLogDir()` TS wrappers |
+| logger.ts | F-19 Phase 2: Dual-write (console + IPC), stack capture, cause extraction (3-level chain), rate limiting (5/min), fire-and-forget IPC, Tauri fallback |
+| logger.test.ts | F-19: 22 new tests (IPC bridge, stack, cause, rate limiting) |
+| main.tsx | F-19 Phase 3: Global `window.onerror` + `unhandledrejection` handlers |
+| ErrorBoundary.tsx | F-19 Phase 4: `logger.error` with componentStack |
+| FeatureErrorBoundary.tsx | F-19 Phase 4: `logger.error` with componentStack |
+| 9 files (Phase 5) | F-19: 17 silent `.catch(() => {})` replaced with `logger.warn` |
+| 9 files (Phase 6) | F-19: 35+ toast-only catches now also `logger.error` |
+| scroll-area, tooltip, popover, sonner, calendar | M-6: forwardRef + displayName |
+| dialog, sheet, select, alert-dialog, sidebar | M-6: forwardRef + displayName (all sub-components) |
+| 9 new UI test files | M-6: ref forwarding + displayName + axe tests |
+
 ## Session 245 — 2026-04-07 — Batch 99: M-14, T-6 partial, M-6 partial resolved (8→6 remaining)
 
 ### Summary
