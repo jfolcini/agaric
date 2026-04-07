@@ -1,9 +1,9 @@
 # Session Log
 
-## Session 237 — 2026-04-07 — Batches 84-92: 39 REVIEW-LATER items resolved + M-1 subtasks 1-4
+## Session 237 — 2026-04-07 — Batches 84-93: 39 items resolved + M-1 subtasks 1-6
 
 ### Summary
-Resolved 39 REVIEW-LATER items + M-1 subtasks 1-4 across 9 batches. **84:** B-3/B-4/S-1/S-2/P-1/M-3/T-5. **85:** UX-1/2/3/6/P-3/M-2. **86:** UX-8/9/10/11/12/13/14/17/18/19/20/P-2. **87:** UX-15/16/21/M-4/T-4. **88:** B-5/B-6/UX-4/UX-5/UX-7. **89:** UX-22/UX-23/T-3. **90:** F-18. **91:** M-1.1/M-1.2. **92:** M-1.3/M-1.4. ~160 files changed, ~160 new tests. REVIEW-LATER: 41→3 items (F-14/F-15 need user approval, M-1 has 4 remaining subtasks).
+Resolved 39 REVIEW-LATER items + M-1 subtasks 1-6 across 10 batches. **84:** B-3/B-4/S-1/S-2/P-1/M-3/T-5. **85:** UX-1/2/3/6/P-3/M-2. **86:** UX-8-14/17-20/P-2. **87:** UX-15/16/21/M-4/T-4. **88:** B-5/6/UX-4/5/7. **89:** UX-22/23/T-3. **90:** F-18. **91:** M-1.1/1.2. **92:** M-1.3/1.4. **93:** M-1.5/1.6. ~170 files changed, ~175 new tests. REVIEW-LATER: 41→3 items (F-14/F-15 need user approval, M-1 has 2 remaining subtasks).
 
 ### Batch 84 — Rust backend fixes
 
@@ -165,6 +165,17 @@ Resolved 39 REVIEW-LATER items + M-1 subtasks 1-4 across 9 batches. **84:** B-3/
 | useBlockCollapse.test.ts | 14 new tests (toggle, visible blocks, localStorage, hasChildrenSet, onBeforeCollapse) |
 | useBlockZoom.test.ts | 12 new tests (zoomIn/Out/ToRoot, breadcrumbs, zoomedVisible, edge cases) |
 | BlockZoomBar.test.tsx | 9 new tests (render, clicks, empty state, untitled fallback, axe) |
+
+### Batch 93 — M-1 subtasks 5-6 (render loop + DnD overlay)
+
+**Commit:** 31a6e52
+
+| Area | Change |
+|------|--------|
+| BlockListRenderer.tsx | M-1.5: NEW — SortableContext wrapper + block map + empty state (~45 lines from BlockTree) |
+| BlockTree.tsx | Replaced inline render loop with `<BlockListRenderer />` |
+| BlockDndOverlay.test.tsx | M-1.6: NEW — 9 tests for existing BlockDndOverlay (overlay, SR, truncation, axe) |
+| BlockListRenderer.test.tsx | M-1.5: NEW — 6 tests (render, empty state, loading, axe) |
 
 ## Session 236 — 2026-04-06 — Fix B-1/B-2, F-16 sticky headers, REVIEW-LATER updates
 
