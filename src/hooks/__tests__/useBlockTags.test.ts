@@ -273,6 +273,31 @@ describe('useBlockTags handleAddTag', () => {
 
     expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
   })
+
+  it('does not call onNewAction when addTag fails', async () => {
+    const onNewActionSpy = vi.fn()
+    useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'add_tag') throw new Error('IPC failed')
+      return undefined
+    })
+
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    await act(async () => {
+      await result.current.handleAddTag('TAG_1')
+    })
+
+    expect(mockedToastError).toHaveBeenCalledWith('Failed to add tag')
+    expect(onNewActionSpy).not.toHaveBeenCalled()
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -373,6 +398,31 @@ describe('useBlockTags handleRemoveTag', () => {
     })
 
     expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
+  })
+
+  it('does not call onNewAction when removeTag fails', async () => {
+    const onNewActionSpy = vi.fn()
+    useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return ['TAG_1']
+      if (cmd === 'remove_tag') throw new Error('IPC failed')
+      return undefined
+    })
+
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.appliedTagIds.has('TAG_1')).toBe(true)
+    })
+
+    await act(async () => {
+      await result.current.handleRemoveTag('TAG_1')
+    })
+
+    expect(mockedToastError).toHaveBeenCalledWith('Failed to delete tag')
+    expect(onNewActionSpy).not.toHaveBeenCalled()
   })
 })
 
@@ -551,6 +601,65 @@ describe('useBlockTags handleCreateTag', () => {
     })
 
     expect(mockedToastError).toHaveBeenCalledWith('Failed to create tag')
+  })
+
+  it('does not update allTags or resolveStore when createBlock fails', async () => {
+    const resolveSetSpy = vi.fn()
+    useResolveStore.setState({ ...useResolveStore.getState(), set: resolveSetSpy })
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'create_block') throw new Error('IPC failed')
+      return undefined
+    })
+
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    await act(async () => {
+      await result.current.handleCreateTag('FailTag')
+    })
+
+    expect(mockedToastError).toHaveBeenCalledWith('Failed to create tag')
+    expect(result.current.allTags).toEqual([])
+    expect(resolveSetSpy).not.toHaveBeenCalled()
+    expect(result.current.appliedTagIds.size).toBe(0)
+  })
+
+  it('shows toast error when addTag fails after successful createBlock', async () => {
+    const createdBlock = makeTagBlock('NEW_TAG_1', 'PartialFail')
+    const onNewActionSpy = vi.fn()
+    useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'create_block') return createdBlock
+      if (cmd === 'add_tag') throw new Error('IPC failed')
+      return undefined
+    })
+
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    await act(async () => {
+      await result.current.handleCreateTag('PartialFail')
+    })
+
+    expect(mockedToastError).toHaveBeenCalledWith('Failed to create tag')
+    // allTags IS updated because setAllTags runs before addTag
+    expect(result.current.allTags).toEqual([{ id: 'NEW_TAG_1', name: 'PartialFail' }])
+    // appliedTagIds should NOT include the new tag
+    expect(result.current.appliedTagIds.has('NEW_TAG_1')).toBe(false)
+    // onNewAction should NOT be called
+    expect(onNewActionSpy).not.toHaveBeenCalled()
   })
 })
 

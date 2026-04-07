@@ -350,3 +350,67 @@ describe('useBlockAttachments handleDeleteAttachment', () => {
     expect(deleteCalls).toHaveLength(0)
   })
 })
+
+// ---------------------------------------------------------------------------
+// error paths — mockRejectedValueOnce for each invoke call
+// ---------------------------------------------------------------------------
+
+describe('useBlockAttachments error paths', () => {
+  it('listAttachments rejection shows toast and falls back to empty attachments', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('DB connection lost'))
+
+    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    expect(mockedToastError).toHaveBeenCalledWith('Failed to load attachments')
+    expect(result.current.attachments).toEqual([])
+  })
+
+  it('addAttachment rejection shows toast and preserves existing attachments', async () => {
+    const existing = [makeAttachmentRow('ATT_1', 'BLOCK_1', 'existing.pdf')]
+    mockedInvoke
+      .mockResolvedValueOnce(existing) // list_attachments succeeds
+      .mockRejectedValueOnce(new Error('Disk full')) // add_attachment fails
+
+    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.attachments).toHaveLength(1)
+    })
+
+    await act(async () => {
+      await result.current.handleAddAttachment('new.pdf', 'application/pdf', 5000, '/files/new.pdf')
+    })
+
+    expect(mockedToastError).toHaveBeenCalledWith('Failed to add attachment')
+    // Existing attachments must be preserved after failure
+    expect(result.current.attachments).toEqual(existing)
+  })
+
+  it('deleteAttachment rejection shows toast and preserves all attachments', async () => {
+    const existing = [
+      makeAttachmentRow('ATT_1', 'BLOCK_1', 'file1.pdf'),
+      makeAttachmentRow('ATT_2', 'BLOCK_1', 'file2.pdf'),
+    ]
+    mockedInvoke
+      .mockResolvedValueOnce(existing) // list_attachments succeeds
+      .mockRejectedValueOnce(new Error('FK constraint')) // delete_attachment fails
+
+    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.attachments).toHaveLength(2)
+    })
+
+    await act(async () => {
+      await result.current.handleDeleteAttachment('ATT_1')
+    })
+
+    expect(mockedToastError).toHaveBeenCalledWith('Failed to delete attachment')
+    // All attachments must remain after failed deletion
+    expect(result.current.attachments).toEqual(existing)
+  })
+})

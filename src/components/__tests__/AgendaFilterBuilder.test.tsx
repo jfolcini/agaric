@@ -562,6 +562,59 @@ describe('AgendaFilterBuilder', () => {
     expect(screen.getByText('Property:')).toBeInTheDocument()
     expect(screen.getByText('project:alpha')).toBeInTheDocument()
   })
+
+  // -----------------------------------------------------------------------
+  // Error paths
+  // -----------------------------------------------------------------------
+
+  it('tag search gracefully handles list_tags_by_prefix failure', async () => {
+    const mockedInvoke = vi.mocked(invoke)
+    mockedInvoke.mockRejectedValue(new Error('backend unavailable'))
+
+    const user = userEvent.setup()
+    renderBuilder()
+
+    await user.click(screen.getByRole('button', { name: /Add filter/i }))
+    await user.click(screen.getByText('Tag'))
+
+    const combobox = screen.getByRole('combobox')
+    await user.type(combobox, 'wor')
+
+    // Wait for the rejected promise to settle
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'list_tags_by_prefix',
+        expect.objectContaining({ prefix: 'wor' }),
+      )
+    })
+
+    // Dropdown should not appear — no results on error
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+  })
+
+  it('property picker gracefully handles list_property_keys failure', async () => {
+    const mockedInvoke = vi.mocked(invoke)
+    mockedInvoke.mockRejectedValue(new Error('backend unavailable'))
+
+    const user = userEvent.setup()
+    renderBuilder()
+
+    await user.click(screen.getByRole('button', { name: /Add filter/i }))
+    await user.click(screen.getByText('Property'))
+
+    // Wait for the rejected promise to settle and the picker to render
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('list_property_keys')
+    })
+
+    // The property key select should render but with no real keys — only the placeholder
+    const select = screen.getByLabelText('Property key')
+    expect(select).toBeInTheDocument()
+    const options = within(select).queryAllByRole('option')
+    // Only the placeholder "__none__" option should be present, no real keys
+    expect(options).toHaveLength(1)
+    expect(options[0]).toHaveValue('__none__')
+  })
 })
 
 // ---------------------------------------------------------------------------
