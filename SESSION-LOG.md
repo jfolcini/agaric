@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 248 — 2026-04-07 — Batch 102: T-6 error path tests batch 2 (6 more components)
+
+### Summary
+Added 37 error path tests to 6 more component test files: DuePanel (7), PageHeader (10), PropertiesView (4), DonePanel (4), SortableBlock (5), QueryResult (8). Combined with session 247 (36 tests, 6 components), T-6 now has 12 components with error path coverage (73 new error tests total). 6 parallel build subagents. 6 files changed, 1039 insertions. 4993 tests pass.
+
+### Batch 102 — T-6 error path tests (batch 2)
+
+**Commit:** c74507a
+
+| Test File | New Tests | Error Paths Covered |
+|-----------|-----------|-------------------|
+| DuePanel.test.tsx | 7 | listBlocks initial/loadMore, batchResolve, projected agenda, overdue/upcoming queryByProperty |
+| PageHeader.test.tsx | 10 | Undo/redo rollback, template toggle on/off, journal template, export, delete page, load aliases, add/remove alias |
+| PropertiesView.test.tsx | 4 | Load definitions, create definition, delete definition, update select options |
+| DonePanel.test.tsx | 4 | queryByProperty initial/loadMore, batchResolve initial/loadMore |
+| SortableBlock.test.tsx | 5 | listAttachments, listPropertyDefs, listBlocks (ref prop), combined functionality, state reset |
+| QueryResult.test.tsx | 8 | Tag/property/backlink queries, filtered multi-query, batchResolve after tag/property, non-Error rejection |
+
 ## Session 247 — 2026-04-07 — Batch 101: T-6 error path tests for 6 critical components
 
 ### Summary
