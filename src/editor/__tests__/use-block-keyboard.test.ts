@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   type BlockKeyboardCallbacks,
   type DeleteBlockOpts,
@@ -619,6 +619,63 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(cbs._calls.onMoveUp).toBeUndefined()
+    })
+  })
+
+  describe('arrow keys suppressed when suggestion popup is visible (B-22)', () => {
+    afterEach(() => {
+      // Clean up any popup elements added to the DOM
+      document.querySelectorAll('.suggestion-popup').forEach((el) => {
+        el.remove()
+      })
+    })
+
+    function addVisiblePopup() {
+      const popup = document.createElement('div')
+      popup.className = 'suggestion-popup'
+      // jsdom doesn't implement checkVisibility or offsetParent, so mock it
+      popup.checkVisibility = () => true
+      document.body.appendChild(popup)
+      return popup
+    }
+
+    it('ArrowUp at start does NOT switch blocks when popup is visible', () => {
+      addVisiblePopup()
+      const editor = makeEditor({ from: 1, to: 1, selectionEmpty: true })
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowUp')
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(cbs._calls.onFocusPrev).toBeUndefined()
+      expect(cbs._calls.onFlush).toBeUndefined()
+      expect(event.preventDefault).not.toHaveBeenCalled()
+    })
+
+    it('ArrowDown at end does NOT switch blocks when popup is visible', () => {
+      addVisiblePopup()
+      const editor = makeEditor({ from: 19, to: 19, selectionEmpty: true, docSize: 20 })
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowDown')
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(cbs._calls.onFocusNext).toBeUndefined()
+      expect(cbs._calls.onFlush).toBeUndefined()
+      expect(event.preventDefault).not.toHaveBeenCalled()
+    })
+
+    it('ArrowUp at start switches blocks when popup is absent', () => {
+      // No popup added — should work normally
+      const editor = makeEditor({ from: 1, to: 1, selectionEmpty: true })
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowUp')
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(cbs._calls.onFocusPrev).toBe(1)
+      expect(cbs._calls.onFlush).toBe(1)
+      expect(event.preventDefault).toHaveBeenCalled()
     })
   })
 })

@@ -9,6 +9,19 @@
 import type { Editor } from '@tiptap/core'
 import { useCallback, useEffect } from 'react'
 
+/**
+ * Check whether a suggestion popup (.suggestion-popup) is currently visible.
+ * Used to suppress arrow-key block navigation when a popup menu is open,
+ * so Up/Down scroll the menu instead of switching blocks.
+ */
+function isSuggestionPopupVisible(): boolean {
+  const popup = document.querySelector('.suggestion-popup') as HTMLElement | null
+  if (!popup) return false
+  return typeof popup.checkVisibility === 'function'
+    ? popup.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+    : popup.offsetParent !== null
+}
+
 export interface DeleteBlockOpts {
   /** Where to place the cursor in the target block after deletion. */
   cursorPlacement: 'end'
@@ -146,7 +159,8 @@ export function handleBlockKeyDown(
   }
 
   // ArrowUp / ArrowLeft at position 0 → previous block
-  if ((key === 'ArrowUp' || key === 'ArrowLeft') && atStart) {
+  // (suppressed when a suggestion popup is visible so Up/Down navigate the menu)
+  if ((key === 'ArrowUp' || key === 'ArrowLeft') && atStart && !isSuggestionPopupVisible()) {
     event.preventDefault()
     callbacks.onFlush()
     callbacks.onFocusPrev()
@@ -154,7 +168,8 @@ export function handleBlockKeyDown(
   }
 
   // ArrowDown / ArrowRight at end → next block
-  if ((key === 'ArrowDown' || key === 'ArrowRight') && atEnd) {
+  // (suppressed when a suggestion popup is visible so Up/Down navigate the menu)
+  if ((key === 'ArrowDown' || key === 'ArrowRight') && atEnd && !isSuggestionPopupVisible()) {
     event.preventDefault()
     callbacks.onFlush()
     callbacks.onFocusNext()
@@ -211,14 +226,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
         !event.ctrlKey &&
         !event.metaKey
       ) {
-        const popup = document.querySelector('.suggestion-popup') as HTMLElement | null
-        if (popup) {
-          const visible =
-            typeof popup.checkVisibility === 'function'
-              ? popup.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
-              : popup.offsetParent !== null
-          if (visible) return // let ProseMirror / Suggestion plugin handle it
-        }
+        if (isSuggestionPopupVisible()) return // let ProseMirror / Suggestion plugin handle it
       }
 
       handleBlockKeyDown(event, editor, {
