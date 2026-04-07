@@ -138,3 +138,7 @@ harness = false
 [[bench]]
 name = "import_bench"
 harness = false
+
+[[bench]]
+name = "tag_query_bench"
+harness = false
