@@ -1,31 +1,57 @@
 # Session Log
 
-## Session 237 — 2026-04-07 — Batch 84: B-3/B-4/S-1/S-2/P-1/M-3/T-5
+## Session 237 — 2026-04-07 — Batches 84-85: 13 REVIEW-LATER items resolved
 
 ### Summary
-Resolved 7 REVIEW-LATER items: 2 critical/high bugs, 2 security issues, 1 performance issue, 1 maintenance item, 1 testing gap. All Rust backend. **B-3:** Sync daemon now drains pending op batches via `orch.next_message()` after each `send_json()` — prevents deadlock and data loss for syncs with >1000 ops. **S-1:** Responder rejects unpaired devices by checking `peer_refs` before processing. **S-2:** `PinningCertVerifier` now verifies certificate CN starts with `agaric-` (defense-in-depth). Added `x509-parser` dependency. **B-4:** Materializer propagates remote op failures for retry instead of swallowing errors. **P-1:** New migration 0020 adds `idx_block_links_source` index. **T-5:** `PRAGMA optimize` runs after migrations in `init_pools()`. **M-3:** FTS index rebuilds at boot when `fts_blocks` is empty (fixes search after migration 0006). 10 files changed, 1611 Rust tests + 4441 frontend tests pass (12 new Rust tests).
+Resolved 13 REVIEW-LATER items across 2 batches. **Batch 84 (Rust backend):** B-3 sync batch streaming, B-4 materializer retry, S-1 unpaired device rejection, S-2 cert CN verification, P-1 source_id index, M-3 FTS rebuild at boot, T-5 PRAGMA optimize. **Batch 85 (Frontend):** UX-1 focus-visible rings on 5 components (12 buttons), UX-2 CollapsiblePanelHeader aria-label, UX-3 LoadMoreButton i18n defaults, UX-6 template literal → cn() (12 replacements), P-3 pdfjs-dist lazy loading via React.lazy, M-2 FeatureErrorBoundary wrapping 12 sections. 31 files changed, 12 new Rust tests + 14 new frontend tests. 1611 Rust + 4455 frontend tests pass.
 
-### Batch 84
+### Batch 84 — Rust backend fixes
 
 **Commit:** dbb16a7
 
 | Area | Change |
 |------|--------|
-| sync_daemon.rs | B-3: Added `while let Some(batch) = orch.next_message()` drain loop after `send_json` in 3 locations: `run_sync_session()`, `handle_incoming_sync()` first message, `handle_incoming_sync()` message loop |
-| sync_daemon.rs | S-1: Added `peer_refs::get_peer_ref()` validation before mutex lock in `handle_incoming_sync()`. Rejects unpaired devices with `SyncMessage::Error` |
-| sync_daemon.rs (tests) | 2 new tests: `drain_pending_batches_after_handle_message` (2500 ops, 3 batches), `unpaired_device_rejected_via_peer_ref_lookup` |
-| sync_net.rs | S-2: CN verification in `PinningCertVerifier::verify_server_cert()` — parses cert with x509-parser, validates CN starts with `agaric-` |
-| sync_net.rs (tests) | 3 new tests: valid cert passes, non-agaric CN rejected, unparseable cert rejected |
-| Cargo.toml | Added `x509-parser = "0.18.1"` dependency |
-| materializer.rs | B-4: `ApplyOp` returns `Err(e)` instead of swallowing. `BatchApplyOps` collects failures and returns last error. Removed double-count of `fg_errors` |
-| materializer.rs (tests) | 3 new tests + 1 updated: `apply_op_failure_propagated_for_retry`, `batch_apply_ops_partial_failure_propagated`, `apply_op_success_no_error` |
-| migrations/0020 | P-1: `CREATE INDEX IF NOT EXISTS idx_block_links_source ON block_links(source_id)` |
+| sync_daemon.rs | B-3: Added `while let Some(batch) = orch.next_message()` drain loop after `send_json` in 3 locations |
+| sync_daemon.rs | S-1: Added `peer_refs::get_peer_ref()` validation in `handle_incoming_sync()`. Rejects unpaired devices |
+| sync_daemon.rs (tests) | 2 new tests: `drain_pending_batches_after_handle_message`, `unpaired_device_rejected_via_peer_ref_lookup` |
+| sync_net.rs | S-2: CN verification in `PinningCertVerifier::verify_server_cert()` via x509-parser |
+| sync_net.rs (tests) | 3 new tests: valid cert, non-agaric CN rejection, unparseable cert rejection |
+| Cargo.toml | Added `x509-parser = "0.18.1"` |
+| materializer.rs | B-4: `ApplyOp`/`BatchApplyOps` propagate errors for retry instead of swallowing |
+| materializer.rs (tests) | 3 new tests + 1 updated for retry propagation |
+| migrations/0020 | P-1: `idx_block_links_source` index on `block_links(source_id)` |
 | db.rs | T-5: `PRAGMA optimize` after migrations in `init_pools()` |
-| db.rs (tests) | 2 new tests: `block_links_source_index_exists`, `pragma_optimize_runs_without_error` |
-| lib.rs | M-3: Boot-time FTS rebuild — checks if `fts_blocks` is empty + blocks exist, enqueues `RebuildFtsIndex` via `try_enqueue_background` |
+| db.rs (tests) | 2 new tests: index exists, pragma optimize |
+| lib.rs | M-3: Boot-time FTS rebuild when `fts_blocks` is empty |
 | fts.rs (tests) | 1 new test: `rebuild_fts_index_populates_empty_table` |
-| .nsprc | Exempted 3 new vite dev-only security advisories (1116007, 1116009, 1116101) |
-| REVIEW-LATER.md | Removed B-3/B-4/S-1/S-2/P-1/M-3/T-5 (resolved). 39→32 items |
+
+### Batch 85 — Frontend a11y, i18n, lazy loading, error boundaries
+
+**Commit:** 210acd7
+
+| Area | Change |
+|------|--------|
+| CollapsiblePanelHeader.tsx | UX-1: focus-visible ring. UX-2: dynamic aria-label for string children |
+| PageHeaderMenu.tsx | UX-1: focus-visible ring on 7 buttons |
+| PageHeader.tsx | UX-1: focus-visible ring on breadcrumb button |
+| PageAliasSection.tsx | UX-1: focus-visible ring on remove button |
+| PageTagSection.tsx | UX-1: focus-visible ring on remove button |
+| LoadMoreButton.tsx | UX-3: defaults use `t('action.loadMore')` / `t('action.loading')` |
+| DuePanel.tsx | UX-6: template literal → cn() |
+| StatusPanel.tsx | UX-6: 3 template literals → cn(), added cn import |
+| FormattingToolbar.tsx | UX-6: 2 template literals → cn(), added cn import |
+| ConflictTypeRenderer.tsx | UX-6: 2 template literals → cn(), added cn import |
+| LoadingSkeleton.tsx | UX-6: template literal → cn() |
+| StaticBlock.tsx | P-3: lazy-load PdfViewerDialog via React.lazy + Suspense. UX-6: 3 cn() replacements |
+| FeatureErrorBoundary.tsx | M-2: NEW — reusable error boundary with retry, role="alert", i18n |
+| App.tsx | M-2: Wrapped 12 sections with FeatureErrorBoundary |
+| i18n.ts | Added 7 keys: action.loadMore, action.loading, action.retry, common.expand, common.collapse, error.sectionCrashed, error.unexpected. Exported `t` function |
+| CollapsiblePanelHeader.test.tsx | 4 new tests (focus-visible, aria-label states, non-string children) |
+| FeatureErrorBoundary.test.tsx | NEW — 5 tests (render, error fallback, section name, retry, axe) |
+| LoadMoreButton.test.tsx | 3 new tests (i18n defaults, loading state, custom override) |
+| PageHeaderMenu.test.tsx | 1 new test (focus-visible ring classes) |
+| PagePropertyTable.test.tsx | Updated 28 button queries for new aria-label pattern |
+| PageHeader.test.tsx | Updated 1 button query for new aria-label pattern |
 
 ## Session 236 — 2026-04-06 — Fix B-1/B-2, F-16 sticky headers, REVIEW-LATER updates
 
