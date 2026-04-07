@@ -232,6 +232,65 @@ fn bench_eval_tag_query_paginated(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// 6. CTE vs Materialized — direct comparison
+// ---------------------------------------------------------------------------
+
+/// Run the OLD recursive-CTE approach for a single tag and return the match count.
+async fn bench_cte_query(pool: &SqlitePool, tag_id: &str) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        r#"
+        WITH RECURSIVE tagged_tree AS (
+            SELECT bt.block_id AS id
+            FROM block_tags bt
+            JOIN blocks b ON b.id = bt.block_id
+            WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0
+            UNION ALL
+            SELECT b.id
+            FROM blocks b
+            JOIN tagged_tree tt ON b.parent_id = tt.id
+            WHERE b.deleted_at IS NULL AND b.is_conflict = 0
+        )
+        SELECT COUNT(DISTINCT id) FROM tagged_tree
+        "#,
+    )
+    .bind(tag_id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+fn bench_cte_vs_materialized(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("cte_vs_materialized");
+
+    for count in [1_000, 10_000] {
+        let dir = TempDir::new().unwrap();
+        let pool = make_pool(&rt, &dir);
+        let tag_id = "TAG_BENCH_0000000000000001";
+        rt.block_on(seed_tagged_tree(&pool, tag_id, count, 3));
+        // rebuild_all populates the materialized table for the materialized path
+        rt.block_on(rebuild_all(&pool)).unwrap();
+
+        let expr = TagExpr::Tag(tag_id.to_string());
+        let page = PageRequest::new(None, Some(50)).unwrap();
+
+        group.throughput(Throughput::Elements(count as u64));
+
+        // Materialized (uses precomputed block_tag_inherited table)
+        group.bench_with_input(BenchmarkId::new("materialized", count), &count, |b, _| {
+            b.to_async(&rt)
+                .iter(|| eval_tag_query(&pool, &expr, &page, true));
+        });
+
+        // CTE (old recursive approach — does NOT need the materialized table)
+        group.bench_with_input(BenchmarkId::new("cte", count), &count, |b, _| {
+            b.to_async(&rt).iter(|| bench_cte_query(&pool, tag_id));
+        });
+    }
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Criterion harness
 // ---------------------------------------------------------------------------
 
@@ -242,5 +301,6 @@ criterion_group!(
     bench_inheritance_varying_depth,
     bench_inheritance_wide_tree,
     bench_eval_tag_query_paginated,
+    bench_cte_vs_materialized,
 );
 criterion_main!(benches);

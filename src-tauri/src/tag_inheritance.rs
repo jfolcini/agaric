@@ -77,10 +77,10 @@ pub async fn remove_inherited_tag(
                  JOIN descendants d ON b.parent_id = d.id \
                  WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
              ), \
-             ancestors(id) AS ( \
-                 SELECT parent_id AS id FROM blocks WHERE id = ?1 \
+             ancestors(id, depth) AS ( \
+                 SELECT parent_id AS id, 1 AS depth FROM blocks WHERE id = ?1 \
                  UNION ALL \
-                 SELECT b.parent_id FROM blocks b \
+                 SELECT b.parent_id, a.depth + 1 FROM blocks b \
                  JOIN ancestors a ON b.id = a.id \
                  WHERE b.parent_id IS NOT NULL \
              ), \
@@ -89,6 +89,7 @@ pub async fn remove_inherited_tag(
                  JOIN block_tags bt ON bt.block_id = a.id AND bt.tag_id = ?2 \
                  JOIN blocks b ON b.id = a.id \
                  WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                 ORDER BY a.depth ASC \
                  LIMIT 1 \
              ) \
          INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
@@ -110,10 +111,10 @@ pub async fn remove_inherited_tag(
     // (block_id no longer has the tag directly, but might inherit from above)
     sqlx::query(
         "WITH RECURSIVE \
-             ancestors(id) AS ( \
-                 SELECT parent_id AS id FROM blocks WHERE id = ?1 \
+             ancestors(id, depth) AS ( \
+                 SELECT parent_id AS id, 1 AS depth FROM blocks WHERE id = ?1 \
                  UNION ALL \
-                 SELECT b.parent_id FROM blocks b \
+                 SELECT b.parent_id, a.depth + 1 FROM blocks b \
                  JOIN ancestors a ON b.id = a.id \
                  WHERE b.parent_id IS NOT NULL \
              ), \
@@ -122,6 +123,7 @@ pub async fn remove_inherited_tag(
                  JOIN block_tags bt ON bt.block_id = a.id AND bt.tag_id = ?2 \
                  JOIN blocks b ON b.id = a.id \
                  WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                 ORDER BY a.depth ASC \
                  LIMIT 1 \
              ) \
          INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
@@ -765,5 +767,215 @@ mod tests {
         assert!(rows.contains(&("CHILD_B".into(), "TAG2".into(), "PAGE_B".into())));
 
         assert_eq!(rows.len(), 5);
+    }
+
+    // ======================================================================
+    // recompute_subtree_inheritance: skips deleted blocks
+    // ======================================================================
+
+    #[tokio::test]
+    async fn recompute_subtree_skips_deleted() {
+        let (pool, _dir) = test_pool().await;
+
+        // grandparent -> parent -> child -> grandchild
+        insert_block(&pool, "TAG", "tag", "tag-name", None).await;
+        insert_block(&pool, "GPARENT", "page", "grandparent", None).await;
+        insert_block(&pool, "PARENT", "content", "parent", Some("GPARENT")).await;
+        insert_block(&pool, "CHILD", "content", "child", Some("PARENT")).await;
+        insert_block(&pool, "GCHILD", "content", "grandchild", Some("CHILD")).await;
+
+        insert_tag_assoc(&pool, "GPARENT", "TAG").await;
+
+        // Soft-delete the child — breaks the chain between parent and grandchild
+        soft_delete(&pool, "CHILD").await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        recompute_subtree_inheritance(&mut *conn, "PARENT")
+            .await
+            .unwrap();
+
+        let rows = get_inherited(&pool).await;
+
+        // PARENT should inherit TAG from GPARENT
+        assert!(
+            rows.contains(&("PARENT".into(), "TAG".into(), "GPARENT".into())),
+            "PARENT should inherit TAG from GPARENT, got: {rows:?}"
+        );
+        // GRANDCHILD should NOT inherit (CHILD is deleted, breaking the chain)
+        assert!(
+            !rows.iter().any(|(bid, _, _)| bid == "GCHILD"),
+            "GRANDCHILD should not inherit because CHILD is deleted, got: {rows:?}"
+        );
+        // CHILD itself should not inherit (it's deleted)
+        assert!(
+            !rows.iter().any(|(bid, _, _)| bid == "CHILD"),
+            "Deleted CHILD should not have inherited entries, got: {rows:?}"
+        );
+    }
+
+    // ======================================================================
+    // recompute_subtree_inheritance: multi-tag propagation
+    // ======================================================================
+
+    #[tokio::test]
+    async fn recompute_subtree_multi_tag() {
+        let (pool, _dir) = test_pool().await;
+
+        // root -> parent -> child
+        insert_block(&pool, "TAG1", "tag", "tag1", None).await;
+        insert_block(&pool, "TAG2", "tag", "tag2", None).await;
+        insert_block(&pool, "TAG3", "tag", "tag3", None).await;
+        insert_block(&pool, "ROOT", "page", "root", None).await;
+        insert_block(&pool, "PARENT", "content", "parent", Some("ROOT")).await;
+        insert_block(&pool, "CHILD", "content", "child", Some("PARENT")).await;
+
+        // Root has TAG1 and TAG2, parent has TAG3
+        insert_tag_assoc(&pool, "ROOT", "TAG1").await;
+        insert_tag_assoc(&pool, "ROOT", "TAG2").await;
+        insert_tag_assoc(&pool, "PARENT", "TAG3").await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        recompute_subtree_inheritance(&mut *conn, "PARENT")
+            .await
+            .unwrap();
+
+        let rows = get_inherited(&pool).await;
+
+        // PARENT inherits TAG1 and TAG2 from ROOT
+        assert!(
+            rows.contains(&("PARENT".into(), "TAG1".into(), "ROOT".into())),
+            "PARENT should inherit TAG1 from ROOT, got: {rows:?}"
+        );
+        assert!(
+            rows.contains(&("PARENT".into(), "TAG2".into(), "ROOT".into())),
+            "PARENT should inherit TAG2 from ROOT, got: {rows:?}"
+        );
+        // PARENT should NOT inherit TAG3 (it has it directly)
+        assert!(
+            !rows
+                .iter()
+                .any(|(bid, tid, _)| bid == "PARENT" && tid == "TAG3"),
+            "PARENT should not inherit TAG3 (it has it directly), got: {rows:?}"
+        );
+
+        // CHILD inherits TAG1, TAG2 from ROOT and TAG3 from PARENT
+        assert!(
+            rows.contains(&("CHILD".into(), "TAG1".into(), "ROOT".into())),
+            "CHILD should inherit TAG1 from ROOT, got: {rows:?}"
+        );
+        assert!(
+            rows.contains(&("CHILD".into(), "TAG2".into(), "ROOT".into())),
+            "CHILD should inherit TAG2 from ROOT, got: {rows:?}"
+        );
+        assert!(
+            rows.contains(&("CHILD".into(), "TAG3".into(), "PARENT".into())),
+            "CHILD should inherit TAG3 from PARENT, got: {rows:?}"
+        );
+    }
+
+    // ======================================================================
+    // remove_subtree_inherited: cleans inherited_from references
+    // ======================================================================
+
+    #[tokio::test]
+    async fn remove_subtree_cleans_inherited_from() {
+        let (pool, _dir) = test_pool().await;
+
+        // root -> parent -> child1, child2
+        insert_block(&pool, "TAG", "tag", "tag-name", None).await;
+        insert_block(&pool, "ROOT", "page", "root", None).await;
+        insert_block(&pool, "PARENT", "content", "parent", Some("ROOT")).await;
+        insert_block(&pool, "CHILD1", "content", "child1", Some("PARENT")).await;
+        insert_block(&pool, "CHILD2", "content", "child2", Some("PARENT")).await;
+
+        insert_tag_assoc(&pool, "ROOT", "TAG").await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        propagate_tag_to_descendants(&mut *conn, "ROOT", "TAG")
+            .await
+            .unwrap();
+
+        // Verify propagation worked: PARENT, CHILD1, CHILD2 all inherit from ROOT
+        let rows_before = get_inherited(&pool).await;
+        assert_eq!(rows_before.len(), 3);
+        assert!(rows_before.contains(&("PARENT".into(), "TAG".into(), "ROOT".into())));
+        assert!(rows_before.contains(&("CHILD1".into(), "TAG".into(), "ROOT".into())));
+        assert!(rows_before.contains(&("CHILD2".into(), "TAG".into(), "ROOT".into())));
+
+        // Remove the subtree rooted at PARENT
+        remove_subtree_inherited(&mut *conn, "PARENT")
+            .await
+            .unwrap();
+
+        let rows_after = get_inherited(&pool).await;
+
+        // All inherited entries for PARENT, CHILD1, CHILD2 should be gone
+        assert!(
+            !rows_after.iter().any(|(bid, _, _)| bid == "PARENT"),
+            "PARENT inherited entries should be removed, got: {rows_after:?}"
+        );
+        assert!(
+            !rows_after.iter().any(|(bid, _, _)| bid == "CHILD1"),
+            "CHILD1 inherited entries should be removed, got: {rows_after:?}"
+        );
+        assert!(
+            !rows_after.iter().any(|(bid, _, _)| bid == "CHILD2"),
+            "CHILD2 inherited entries should be removed, got: {rows_after:?}"
+        );
+
+        // Also verify no entries reference PARENT as inherited_from
+        assert!(
+            !rows_after.iter().any(|(_, _, from)| from == "PARENT"),
+            "No entries should reference PARENT as inherited_from, got: {rows_after:?}"
+        );
+    }
+
+    // ======================================================================
+    // rebuild_all: idempotent
+    // ======================================================================
+
+    #[tokio::test]
+    async fn rebuild_all_idempotent() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG", "tag", "tag-name", None).await;
+        insert_block(&pool, "PAGE", "page", "page", None).await;
+        insert_block(&pool, "CHILD", "content", "child", Some("PAGE")).await;
+        insert_block(&pool, "GRANDCHILD", "content", "grandchild", Some("CHILD")).await;
+
+        insert_tag_assoc(&pool, "PAGE", "TAG").await;
+
+        // First rebuild
+        rebuild_all(&pool).await.unwrap();
+        let rows_first = get_inherited(&pool).await;
+
+        // Second rebuild
+        rebuild_all(&pool).await.unwrap();
+        let rows_second = get_inherited(&pool).await;
+
+        assert_eq!(
+            rows_first, rows_second,
+            "rebuild_all should be idempotent: first={rows_first:?}, second={rows_second:?}"
+        );
+        // Sanity check: should have 2 inherited entries (CHILD and GRANDCHILD)
+        assert_eq!(rows_first.len(), 2);
+    }
+
+    // ======================================================================
+    // rebuild_all: empty database
+    // ======================================================================
+
+    #[tokio::test]
+    async fn rebuild_all_empty_db() {
+        let (pool, _dir) = test_pool().await;
+
+        // No blocks, no tags — just call rebuild_all and ensure it doesn't crash
+        rebuild_all(&pool).await.unwrap();
+
+        let rows = get_inherited(&pool).await;
+        assert!(
+            rows.is_empty(),
+            "Empty database should produce no inherited entries, got: {rows:?}"
+        );
     }
 }

@@ -227,6 +227,73 @@ fn resolve_expr<'a>(
     })
 }
 
+/// CTE-based tag resolution — kept as correctness oracle for the
+/// P-4 materialized `block_tag_inherited` table.
+///
+/// Returns the same results as `resolve_expr` but uses recursive CTEs
+/// instead of the pre-computed inheritance table. Used only in tests
+/// to verify the materialized path produces identical results.
+#[cfg(test)]
+pub(crate) fn resolve_expr_cte<'a>(
+    pool: &'a SqlitePool,
+    expr: &'a TagExpr,
+    include_inherited: bool,
+) -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<FxHashSet<String>, AppError>> + Send + 'a>,
+> {
+    Box::pin(async move {
+        match expr {
+            TagExpr::Tag(tag_id) if include_inherited => {
+                let rows = sqlx::query_scalar::<_, String>(
+                    "WITH RECURSIVE tagged_tree AS ( \
+                         SELECT bt.block_id AS id \
+                         FROM block_tags bt \
+                         JOIN blocks b ON b.id = bt.block_id \
+                         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+                         UNION ALL \
+                         SELECT b.id \
+                         FROM blocks b \
+                         JOIN tagged_tree tt ON b.parent_id = tt.id \
+                         WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                     ) \
+                     SELECT DISTINCT id FROM tagged_tree",
+                )
+                .bind(tag_id)
+                .fetch_all(pool)
+                .await?;
+                Ok(rows.into_iter().collect())
+            }
+            TagExpr::Prefix(prefix) if include_inherited => {
+                let escaped = format!("{}%", escape_like(prefix));
+                let rows = sqlx::query_scalar::<_, String>(
+                    "WITH RECURSIVE tagged_tree AS ( \
+                         SELECT DISTINCT bt.block_id AS id \
+                         FROM tags_cache tc \
+                         JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+                         JOIN blocks b ON b.id = bt.block_id \
+                         WHERE tc.name LIKE ?1 ESCAPE '\\' \
+                           AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+                         UNION ALL \
+                         SELECT b.id \
+                         FROM blocks b \
+                         JOIN tagged_tree tt ON b.parent_id = tt.id \
+                         WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                     ) \
+                     SELECT DISTINCT id FROM tagged_tree",
+                )
+                .bind(&escaped)
+                .fetch_all(pool)
+                .await?;
+                Ok(rows.into_iter().collect())
+            }
+            _ => {
+                // include_inherited=false or boolean operators: delegate to resolve_expr
+                resolve_expr(pool, expr, include_inherited).await
+            }
+        }
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Public: eval_tag_query (paginated)
 // ---------------------------------------------------------------------------
@@ -1389,5 +1456,85 @@ mod tests {
         // Total items across all pages = 5 (PAGE_PG + 4 children)
         let total = resp1.items.len() + resp2.items.len() + resp3.items.len();
         assert_eq!(total, 5);
+    }
+
+    // ======================================================================
+    // CTE oracle vs materialized correctness verification
+    // ======================================================================
+
+    #[tokio::test]
+    async fn materialized_matches_cte_oracle() {
+        let (pool, _dir) = test_pool().await;
+
+        // Build a multi-level tree: page -> child1, child2 -> grandchild1
+        insert_block(&pool, "TAG1", "tag", "tag1").await;
+        insert_block(&pool, "TAG2", "tag", "tag2").await;
+        insert_tag_cache(&pool, "TAG1", "tag1", 1).await;
+        insert_tag_cache(&pool, "TAG2", "tag2", 1).await;
+
+        insert_block(&pool, "PAGE_O", "page", "oracle page").await;
+        insert_child_block(&pool, "CHILD_O1", "content", "child one", "PAGE_O").await;
+        insert_child_block(&pool, "CHILD_O2", "content", "child two", "PAGE_O").await;
+        insert_child_block(&pool, "GRAND_O1", "content", "grandchild one", "CHILD_O2").await;
+
+        // Tag the page with TAG1, child2 with TAG2
+        insert_tag_assoc(&pool, "PAGE_O", "TAG1").await;
+        insert_tag_assoc(&pool, "CHILD_O2", "TAG2").await;
+
+        // Populate materialized table
+        crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
+
+        // --- TagExpr::Tag with inheritance ---
+        for tag in &["TAG1", "TAG2"] {
+            let expr = TagExpr::Tag((*tag).to_string());
+            let mat = resolve_expr(&pool, &expr, true).await.unwrap();
+            let cte = resolve_expr_cte(&pool, &expr, true).await.unwrap();
+            assert_eq!(
+                mat, cte,
+                "Tag({tag}) materialized vs CTE mismatch: mat={mat:?}, cte={cte:?}"
+            );
+        }
+
+        // --- TagExpr::Prefix with inheritance ---
+        let prefix_expr = TagExpr::Prefix("tag".into());
+        let mat_prefix = resolve_expr(&pool, &prefix_expr, true).await.unwrap();
+        let cte_prefix = resolve_expr_cte(&pool, &prefix_expr, true).await.unwrap();
+        assert_eq!(
+            mat_prefix, cte_prefix,
+            "Prefix(\"tag\") materialized vs CTE mismatch: mat={mat_prefix:?}, cte={cte_prefix:?}"
+        );
+
+        // --- TagExpr::And ---
+        let and_expr = TagExpr::And(vec![
+            TagExpr::Tag("TAG1".into()),
+            TagExpr::Tag("TAG2".into()),
+        ]);
+        let mat_and = resolve_expr(&pool, &and_expr, true).await.unwrap();
+        let cte_and = resolve_expr_cte(&pool, &and_expr, true).await.unwrap();
+        assert_eq!(
+            mat_and, cte_and,
+            "And(TAG1,TAG2) materialized vs CTE mismatch: mat={mat_and:?}, cte={cte_and:?}"
+        );
+
+        // --- TagExpr::Or ---
+        let or_expr = TagExpr::Or(vec![
+            TagExpr::Tag("TAG1".into()),
+            TagExpr::Tag("TAG2".into()),
+        ]);
+        let mat_or = resolve_expr(&pool, &or_expr, true).await.unwrap();
+        let cte_or = resolve_expr_cte(&pool, &or_expr, true).await.unwrap();
+        assert_eq!(
+            mat_or, cte_or,
+            "Or(TAG1,TAG2) materialized vs CTE mismatch: mat={mat_or:?}, cte={cte_or:?}"
+        );
+
+        // --- TagExpr::Not ---
+        let not_expr = TagExpr::Not(Box::new(TagExpr::Tag("TAG1".into())));
+        let mat_not = resolve_expr(&pool, &not_expr, true).await.unwrap();
+        let cte_not = resolve_expr_cte(&pool, &not_expr, true).await.unwrap();
+        assert_eq!(
+            mat_not, cte_not,
+            "Not(TAG1) materialized vs CTE mismatch: mat={mat_not:?}, cte={cte_not:?}"
+        );
     }
 }

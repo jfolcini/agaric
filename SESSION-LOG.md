@@ -1,5 +1,18 @@
 # Session Log
 
+## Session 254 — 2026-04-07 — P-4 review fixes: CTE oracle, benchmarks, ancestor ordering
+
+### Summary
+Review of P-4 implementation (2 subagent reviewers) identified 6 issues. Fixed: (1) ancestor CTE in `remove_inherited_tag` now uses explicit `depth` column + `ORDER BY depth ASC` instead of relying on SQLite CTE traversal order; (2) added `resolve_expr_cte` correctness oracle preserving old recursive CTE path; (3) added `materialized_matches_cte_oracle` test verifying both paths produce identical results for Tag/Prefix/And/Or/Not; (4) added `bench_cte_vs_materialized` benchmark comparing CTE vs materialized at 1K/10K blocks; (5) added 5 new tests for under-tested functions (`recompute_subtree_skips_deleted`, `recompute_subtree_multi_tag`, `remove_subtree_cleans_inherited_from`, `rebuild_all_idempotent`, `rebuild_all_empty_db`); (6) updated `.nsprc` for 2 new vite CVEs. Materializer race condition (separate connections in `apply_op`) assessed as LOW severity — background rebuild is safety net. 3 files changed, 425 insertions. 1637 Rust tests pass.
+
+**Commit:** 86afa11
+
+| Area | Change |
+|------|--------|
+| tag_inheritance.rs | Ancestor CTE: `depth` column + `ORDER BY depth ASC` in both `nearest_ancestor` CTEs; 5 new tests |
+| tag_query.rs | `resolve_expr_cte` oracle function (CTE path, `#[cfg(test)]`); `materialized_matches_cte_oracle` test |
+| tag_query_bench.rs | `bench_cte_vs_materialized` group + `bench_cte_query` helper; registered in criterion_group |
+
 ## Session 253 — 2026-04-07 — P-4 resolved: materialized tag inheritance cache
 
 ### Summary
