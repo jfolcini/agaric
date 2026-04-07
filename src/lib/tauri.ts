@@ -11,6 +11,7 @@ export type {
   DeleteResponse,
   DiffSpan,
   DiffTag,
+  Draft,
   GroupedBacklinkResponse,
   HistoryEntry,
   MoveResponse,
@@ -32,6 +33,7 @@ import type {
   DateRange,
   DeleteResponse,
   DiffSpan,
+  Draft,
   GroupedBacklinkResponse,
   HistoryEntry,
   MoveResponse,
@@ -724,4 +726,9 @@ export async function flushDraft(blockId: string): Promise<void> {
 /** Delete a draft for a block (e.g. after a successful normal save). */
 export async function deleteDraft(blockId: string): Promise<void> {
   await invoke('delete_draft', { blockId })
+}
+
+/** List all drafts, ordered by updated_at ascending. */
+export function listDrafts(): Promise<Draft[]> {
+  return invoke('list_drafts')
 }

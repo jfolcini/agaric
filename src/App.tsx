@@ -58,7 +58,8 @@ import { useSyncEvents } from './hooks/useSyncEvents'
 import { useSyncTrigger } from './hooks/useSyncTrigger'
 import { useUndoShortcuts } from './hooks/useUndoShortcuts'
 import { announce } from './lib/announcer'
-import { createBlock, getConflicts } from './lib/tauri'
+import { logger } from './lib/logger'
+import { createBlock, flushDraft, getConflicts, listDrafts } from './lib/tauri'
 import { useJournalStore } from './stores/journal'
 import { useNavigationStore, type View } from './stores/navigation'
 import { useResolveStore } from './stores/resolve'
@@ -150,6 +151,20 @@ function App() {
   // Preload the resolve cache (pages + tags) once on app boot
   useEffect(() => {
     useResolveStore.getState().preload()
+  }, [])
+
+  // ── Boot recovery: flush orphaned drafts from previous crash ──────
+  useEffect(() => {
+    listDrafts()
+      .then((drafts) => {
+        for (const draft of drafts) {
+          flushDraft(draft.block_id).catch(() => {})
+        }
+        if (drafts.length > 0) {
+          logger.info('boot', `Recovered ${drafts.length} unsaved draft(s)`)
+        }
+      })
+      .catch(() => {})
   }, [])
 
   // ── Focus main content when view changes ──────────────────────────

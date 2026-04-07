@@ -7,8 +7,9 @@
  */
 
 import { EditorContent } from '@tiptap/react'
-import React, { useCallback, useEffect, useRef } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
+import { useDraftAutosave } from '@/hooks/useDraftAutosave'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { useBlockStore } from '../stores/blocks'
 import { usePageBlockStore } from '../stores/page-blocks'
@@ -85,6 +86,23 @@ function EditableBlockInner({
   editRef.current = edit
   const splitBlockRef = useRef(splitBlock)
   splitBlockRef.current = splitBlock
+
+  // ── Draft autosave: poll editor content while focused ──────────────
+  const [liveContent, setLiveContent] = useState('')
+
+  useEffect(() => {
+    if (!isFocused || rovingEditor.activeBlockId !== blockId) {
+      setLiveContent('')
+      return
+    }
+    const interval = setInterval(() => {
+      const md = rovingEditor.getMarkdown()
+      if (md !== null) setLiveContent(md)
+    }, 500)
+    return () => clearInterval(interval)
+  }, [isFocused, blockId, rovingEditor])
+
+  const { discardDraft } = useDraftAutosave(isFocused ? blockId : null, liveContent)
 
   // Scroll the editor wrapper into view when the block becomes focused.
   // Uses requestAnimationFrame to avoid layout thrashing after mount.
@@ -199,10 +217,11 @@ function EditableBlockInner({
             edit(blockId, changed)
           })
         }
+        discardDraft()
       }
       setFocused(null)
     },
-    [rovingEditor, blockId, edit, splitBlock, setFocused],
+    [rovingEditor, blockId, edit, splitBlock, setFocused, discardDraft],
   )
 
   if (!isFocused) {

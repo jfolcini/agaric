@@ -12,9 +12,9 @@
  *  - a11y compliance for both states
  */
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { EDITOR_PORTAL_SELECTORS, EditableBlock } from '../EditableBlock'
 
@@ -49,6 +49,20 @@ vi.mock('../StaticBlock', () => ({
     </button>
   ),
 }))
+
+// Mock Tauri draft functions used by useDraftAutosave
+const mockSaveDraft = vi.fn().mockResolvedValue(undefined)
+const mockDeleteDraft = vi.fn().mockResolvedValue(undefined)
+const mockFlushDraft = vi.fn().mockResolvedValue(undefined)
+vi.mock('@/lib/tauri', async () => {
+  const actual = await vi.importActual('@/lib/tauri')
+  return {
+    ...actual,
+    saveDraft: (...args: unknown[]) => mockSaveDraft(...args),
+    deleteDraft: (...args: unknown[]) => mockDeleteDraft(...args),
+    flushDraft: (...args: unknown[]) => mockFlushDraft(...args),
+  }
+})
 
 // Mock block store — capture calls to setFocused (focus stays on global store)
 const mockEdit = vi.fn()
@@ -968,6 +982,100 @@ describe('EditableBlock', () => {
       // The store update must happen (not be skipped or deferred)
       expect(mockEdit).toHaveBeenCalledWith('B1', 'ArrowRight content')
       expect(mockSetFocused).toHaveBeenCalledWith(null)
+    })
+  })
+
+  // ── F-18: Draft autosave integration ──────────────────────────────
+
+  describe('draft autosave', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('calls saveDraft after 2s of editing', async () => {
+      const mockGetMarkdown = vi.fn(() => 'typed content')
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        getMarkdown: mockGetMarkdown,
+      })
+
+      render(
+        <EditableBlock
+          blockId="B1"
+          content="original"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      // Advance past the 500ms polling interval so liveContent gets set
+      await act(async () => {
+        vi.advanceTimersByTime(500)
+      })
+
+      // Now advance 2s for the debounce in useDraftAutosave to fire
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+
+      // saveDraft should have been called with the polled content
+      expect(mockSaveDraft).toHaveBeenCalledWith('B1', 'typed content')
+    })
+
+    it('calls deleteDraft on blur after successful save', () => {
+      const mockUnmount = vi.fn(() => 'updated text')
+      const mockGetMarkdown = vi.fn(() => 'updated text')
+      const roving = makeRovingEditor({
+        unmount: mockUnmount,
+        activeBlockId: 'B1',
+        getMarkdown: mockGetMarkdown,
+      })
+
+      const { container } = render(
+        <EditableBlock
+          blockId="B1"
+          content="original text"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      const wrapper = container.querySelector('.block-editor')
+      fireEvent.blur(wrapper as Element)
+
+      // discardDraft calls deleteDraft internally
+      expect(mockDeleteDraft).toHaveBeenCalledWith('B1')
+    })
+
+    it('flushes draft on unmount without blur', async () => {
+      const mockGetMarkdown = vi.fn(() => 'unsaved content')
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        getMarkdown: mockGetMarkdown,
+      })
+
+      const { unmount } = render(
+        <EditableBlock
+          blockId="B1"
+          content="original"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      // Advance past polling interval so content is set
+      await act(async () => {
+        vi.advanceTimersByTime(500)
+      })
+
+      // Unmount without blur — useDraftAutosave cleanup calls flushDraft
+      unmount()
+
+      expect(mockFlushDraft).toHaveBeenCalledWith('B1')
     })
   })
 })

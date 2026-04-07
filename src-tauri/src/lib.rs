@@ -168,6 +168,7 @@ pub fn run() {
         commands::save_draft,
         commands::flush_draft,
         commands::delete_draft,
+        commands::list_drafts,
     ]);
 
     tauri::Builder::default()
@@ -379,6 +380,7 @@ mod specta_tests {
             crate::commands::save_draft,
             crate::commands::flush_draft,
             crate::commands::delete_draft,
+            crate::commands::list_drafts,
         ])
     }
 

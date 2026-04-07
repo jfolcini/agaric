@@ -746,6 +746,17 @@ async deleteDraft(blockId: string) : Promise<Result<null, { kind: string; messag
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Tauri command: list all drafts. Delegates to [`draft::get_all_drafts`].
+ */
+async listDrafts() : Promise<Result<Draft[], { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_drafts") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -816,6 +827,10 @@ export type DiffSpan = { tag: DiffTag; value: string }
  * Tag indicating what happened to a span of text.
  */
 export type DiffTag = "Equal" | "Delete" | "Insert"
+/**
+ * A single draft row from `block_drafts`.
+ */
+export type Draft = { block_id: string; content: string; updated_at: string }
 /**
  * Response for grouped backlink queries — backlinks organized by source page.
  */

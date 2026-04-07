@@ -20,7 +20,7 @@ use crate::ulid::BlockId;
 // ---------------------------------------------------------------------------
 
 /// A single draft row from `block_drafts`.
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, specta::Type)]
 pub struct Draft {
     pub block_id: String,
     pub content: String,

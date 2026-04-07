@@ -4951,6 +4951,21 @@ pub async fn delete_draft(pool: State<'_, WritePool>, block_id: String) -> Resul
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: list all drafts. Delegates to [`draft::get_all_drafts`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_drafts(pool: State<'_, ReadPool>) -> Result<Vec<draft::Draft>, AppError> {
+    draft::get_all_drafts(&pool.0)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Inner implementation for `list_drafts`, usable from tests without Tauri state.
+pub async fn list_drafts_inner(pool: &sqlx::SqlitePool) -> Result<Vec<draft::Draft>, AppError> {
+    draft::get_all_drafts(pool).await
+}
+
 // ---------------------------------------------------------------------------
 // Journal commands — daily page navigation
 // ---------------------------------------------------------------------------
@@ -16296,5 +16311,25 @@ mod tests {
                 .is_none(),
             "draft must be gone after delete"
         );
+    }
+
+    #[tokio::test]
+    async fn list_drafts_returns_all_drafts() {
+        let (pool, _dir) = test_pool().await;
+
+        // Start with no drafts
+        let result = list_drafts_inner(&pool).await.unwrap();
+        assert!(result.is_empty(), "should start with zero drafts");
+
+        // Save two drafts
+        draft::save_draft(&pool, "01HZ000000000000000000DRF03", "content one")
+            .await
+            .unwrap();
+        draft::save_draft(&pool, "01HZ000000000000000000DRF04", "content two")
+            .await
+            .unwrap();
+
+        let result = list_drafts_inner(&pool).await.unwrap();
+        assert_eq!(result.len(), 2, "should return both drafts");
     }
 }
