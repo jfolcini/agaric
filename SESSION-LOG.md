@@ -1,5 +1,34 @@
 # Session Log
 
+## Session 242 — 2026-04-07 — Batch 96: 10 editor lifecycle bugs resolved (31→20 remaining)
+
+### Summary
+Resolved 10 REVIEW-LATER items in one batch: B-7, B-8, B-9, B-10, B-12, B-13, B-14, B-15, B-16, M-5. All are editor lifecycle content-integrity bugs. 5 parallel build subagents + orchestrator B-16 fix. 3 technical review subagents (all PASS). 13 files changed, 675 insertions, 43 deletions. 4627 tests pass. REVIEW-LATER: 31→20.
+
+### Batch 96 — Editor lifecycle bugs
+
+**Commit:** 232fd94
+
+| Area | Change |
+|------|--------|
+| BlockTree.tsx | B-7: `handleContainerMouseDown` uses `handleFlush()` instead of discarding `unmount()` return |
+| BlockTree.tsx | B-8: `handleUnfocusedEscape` uses `handleFlush()` to save content on unfocused Escape |
+| BlockTree.tsx | B-14: New useEffect clears focus when zoom changes and focused block is outside visible subtree |
+| BlockTree.test.tsx | 4 new tests (B-7 whitespace save, B-8 Escape save, B-14 zoom clears focus + negative case) |
+| EditableBlock.tsx | B-9: `handleBlur` uses `shouldSplitOnBlur()` instead of naive `includes('\n')` check |
+| EditableBlock.tsx | M-5: Extracted `persistUnmount()` shared helper, used by auto-mount effect + handleFocus |
+| EditableBlock.tsx | B-15: Added `.block-context-menu` to `EDITOR_PORTAL_SELECTORS` |
+| BlockContextMenu.tsx | B-15: Added `block-context-menu` class to portal container |
+| EditableBlock.test.tsx | 4 new tests (B-9 code block no-split, B-9 multi-paragraph split, B-15 selector, M-5 auto-mount) |
+| BlockContextMenu.test.tsx | 1 new test (B-15 class presence) |
+| page-blocks.ts | B-10: `edit()` captures `previousContent`, rolls back store on backend failure |
+| page-blocks.test.ts | 3 new/updated tests (rollback on error, toast on failure, non-existent block) |
+| use-roving-editor.ts | B-12: `unmount()` wraps `computeContentDelta()` in try-catch-finally, logs via `logger.warn` |
+| use-roving-editor.test.ts | 4 new tests (serialize error boundary: propagation, null return, normal path, unchanged) |
+| useDraftAutosave.ts | B-13: Version counter prevents race condition between `saveDraft()` and `discardDraft()` |
+| useDraftAutosave.test.ts | NEW — 7 tests (normal save, debounce, discard cancel, race condition, cleanup flush, null/empty) |
+| block-ref-picker.ts | B-16: Added `allowSpaces: true` to Suggestion config (parity with other pickers) |
+
 ## Session 237 — 2026-04-07 — Batches 84-95: 41 items resolved (41→1 remaining)
 
 ### Summary
