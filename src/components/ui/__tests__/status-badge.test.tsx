@@ -10,6 +10,7 @@
  */
 
 import { render, screen } from '@testing-library/react'
+import * as React from 'react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 import { StatusBadge } from '../status-badge'
@@ -96,5 +97,15 @@ describe('StatusBadge', () => {
     const { container } = render(<StatusBadge state="overdue">TODO</StatusBadge>)
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  it('forwards ref', () => {
+    const ref = React.createRef<HTMLSpanElement>()
+    render(
+      <StatusBadge ref={ref} state="TODO">
+        TODO
+      </StatusBadge>,
+    )
+    expect(ref.current).toBeInstanceOf(HTMLSpanElement)
   })
 })

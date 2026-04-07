@@ -10,6 +10,7 @@
  */
 
 import { render, screen } from '@testing-library/react'
+import * as React from 'react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 import { PriorityBadge } from '../priority-badge'
@@ -82,5 +83,11 @@ describe('PriorityBadge', () => {
     const { container } = render(<PriorityBadge priority="3" />)
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  it('forwards ref', () => {
+    const ref = React.createRef<HTMLSpanElement>()
+    render(<PriorityBadge ref={ref} priority="1" />)
+    expect(ref.current).toBeInstanceOf(HTMLSpanElement)
   })
 })

@@ -167,7 +167,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
           <>
             {/* Main header -- collapsible */}
             <CollapsiblePanelHeader
-              collapsed={collapsed}
+              isCollapsed={collapsed}
               onToggle={toggleCollapsed}
               className="due-panel-header"
             >

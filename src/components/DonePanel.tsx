@@ -189,7 +189,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
           <>
             {/* Main header -- collapsible */}
             <CollapsiblePanelHeader
-              collapsed={collapsed}
+              isCollapsed={collapsed}
               onToggle={toggleCollapsed}
               className="done-panel-header"
             >

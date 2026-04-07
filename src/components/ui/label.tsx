@@ -6,7 +6,7 @@
  */
 
 import { cva, type VariantProps } from 'class-variance-authority'
-import type * as React from 'react'
+import * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -29,9 +29,12 @@ const labelVariants = cva('font-medium', {
 
 type LabelProps = React.ComponentProps<'label'> & VariantProps<typeof labelVariants>
 
-function Label({ className, size, muted, ...props }: LabelProps) {
-  // biome-ignore lint/a11y/noLabelWithoutControl: htmlFor is forwarded via spread props
-  return <label className={cn(labelVariants({ size, muted, className }))} {...props} />
-}
+const Label = React.forwardRef<HTMLLabelElement, LabelProps>(
+  ({ className, size, muted, ...props }, ref) => {
+    // biome-ignore lint/a11y/noLabelWithoutControl: htmlFor is forwarded via spread props
+    return <label ref={ref} className={cn(labelVariants({ size, muted, className }))} {...props} />
+  },
+)
+Label.displayName = 'Label'
 
 export { Label, labelVariants }

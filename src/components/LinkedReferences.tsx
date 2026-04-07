@@ -225,7 +225,7 @@ export function LinkedReferences({
           <>
             {/* Main header -- collapsible */}
             <CollapsiblePanelHeader
-              collapsed={!expanded}
+              isCollapsed={!expanded}
               onToggle={toggleExpanded}
               className="linked-references-header"
             >

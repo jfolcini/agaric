@@ -13,8 +13,9 @@
  *  - re-render transitions between states
  */
 
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+import { axe } from 'vitest-axe'
 import { ListViewState } from '../ListViewState'
 
 interface Item {
@@ -476,6 +477,34 @@ describe('ListViewState', () => {
       const status = screen.getByRole('status')
       expect(status).toHaveAttribute('aria-busy', 'true')
       expect(status).toHaveTextContent('Loading content...')
+    })
+  })
+
+  it('has no a11y violations (loading state)', async () => {
+    const { container } = render(
+      <ListViewState loading items={[]} empty={<p>Empty</p>}>
+        {() => null}
+      </ListViewState>,
+    )
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
+  })
+
+  it('has no a11y violations (content state)', async () => {
+    const { container } = render(
+      <ListViewState loading={false} items={[{ id: '1' }]} empty={<p>Empty</p>}>
+        {(items) => (
+          <ul>
+            {items.map((i) => (
+              <li key={i.id}>{i.id}</li>
+            ))}
+          </ul>
+        )}
+      </ListViewState>,
+    )
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
     })
   })
 })

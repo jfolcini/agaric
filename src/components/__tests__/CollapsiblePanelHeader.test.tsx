@@ -27,7 +27,7 @@ import { CollapsiblePanelHeader } from '../CollapsiblePanelHeader'
 describe('CollapsiblePanelHeader', () => {
   it('renders children text', () => {
     render(
-      <CollapsiblePanelHeader collapsed={false} onToggle={() => {}}>
+      <CollapsiblePanelHeader isCollapsed={false} onToggle={() => {}}>
         3 Completed
       </CollapsiblePanelHeader>,
     )
@@ -36,7 +36,7 @@ describe('CollapsiblePanelHeader', () => {
 
   it('shows ChevronDown when not collapsed (aria-expanded=true)', () => {
     render(
-      <CollapsiblePanelHeader collapsed={false} onToggle={() => {}}>
+      <CollapsiblePanelHeader isCollapsed={false} onToggle={() => {}}>
         Header
       </CollapsiblePanelHeader>,
     )
@@ -48,7 +48,7 @@ describe('CollapsiblePanelHeader', () => {
 
   it('shows ChevronRight when collapsed (aria-expanded=false)', () => {
     render(
-      <CollapsiblePanelHeader collapsed={true} onToggle={() => {}}>
+      <CollapsiblePanelHeader isCollapsed={true} onToggle={() => {}}>
         Header
       </CollapsiblePanelHeader>,
     )
@@ -62,7 +62,7 @@ describe('CollapsiblePanelHeader', () => {
     const user = userEvent.setup()
     const onToggle = vi.fn()
     render(
-      <CollapsiblePanelHeader collapsed={false} onToggle={onToggle}>
+      <CollapsiblePanelHeader isCollapsed={false} onToggle={onToggle}>
         Header
       </CollapsiblePanelHeader>,
     )
@@ -72,7 +72,7 @@ describe('CollapsiblePanelHeader', () => {
 
   it('applies custom className', () => {
     render(
-      <CollapsiblePanelHeader collapsed={false} onToggle={() => {}} className="done-panel-header">
+      <CollapsiblePanelHeader isCollapsed={false} onToggle={() => {}} className="done-panel-header">
         Header
       </CollapsiblePanelHeader>,
     )
@@ -82,7 +82,7 @@ describe('CollapsiblePanelHeader', () => {
 
   it('has no a11y violations', async () => {
     const { container } = render(
-      <CollapsiblePanelHeader collapsed={false} onToggle={() => {}} className="due-panel-header">
+      <CollapsiblePanelHeader isCollapsed={false} onToggle={() => {}} className="due-panel-header">
         2 Due
       </CollapsiblePanelHeader>,
     )
@@ -92,7 +92,7 @@ describe('CollapsiblePanelHeader', () => {
 
   it('includes focus-visible ring classes on the button (UX-1)', () => {
     render(
-      <CollapsiblePanelHeader collapsed={false} onToggle={() => {}}>
+      <CollapsiblePanelHeader isCollapsed={false} onToggle={() => {}}>
         Header
       </CollapsiblePanelHeader>,
     )
@@ -104,7 +104,7 @@ describe('CollapsiblePanelHeader', () => {
 
   it('sets aria-label to "Expand …" when collapsed (UX-2)', () => {
     render(
-      <CollapsiblePanelHeader collapsed={true} onToggle={() => {}}>
+      <CollapsiblePanelHeader isCollapsed={true} onToggle={() => {}}>
         References
       </CollapsiblePanelHeader>,
     )
@@ -114,7 +114,7 @@ describe('CollapsiblePanelHeader', () => {
 
   it('sets aria-label to "Collapse …" when not collapsed (UX-2)', () => {
     render(
-      <CollapsiblePanelHeader collapsed={false} onToggle={() => {}}>
+      <CollapsiblePanelHeader isCollapsed={false} onToggle={() => {}}>
         References
       </CollapsiblePanelHeader>,
     )
@@ -124,7 +124,7 @@ describe('CollapsiblePanelHeader', () => {
 
   it('handles non-string children gracefully in aria-label (UX-2)', () => {
     render(
-      <CollapsiblePanelHeader collapsed={true} onToggle={() => {}}>
+      <CollapsiblePanelHeader isCollapsed={true} onToggle={() => {}}>
         <span>Complex child</span>
       </CollapsiblePanelHeader>,
     )

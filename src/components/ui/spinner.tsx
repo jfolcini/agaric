@@ -8,7 +8,7 @@
 
 import { cva, type VariantProps } from 'class-variance-authority'
 import { Loader2 } from 'lucide-react'
-import type * as React from 'react'
+import * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -29,10 +29,18 @@ const spinnerVariants = cva('animate-spin', {
 type SpinnerProps = Omit<React.ComponentProps<typeof Loader2>, 'ref'> &
   VariantProps<typeof spinnerVariants>
 
-function Spinner({ size, className, ...props }: SpinnerProps) {
-  return (
-    <Loader2 data-slot="spinner" className={cn(spinnerVariants({ size, className }))} {...props} />
-  )
-}
+const Spinner = React.forwardRef<SVGSVGElement, SpinnerProps>(
+  ({ size, className, ...props }, ref) => {
+    return (
+      <Loader2
+        ref={ref}
+        data-slot="spinner"
+        className={cn(spinnerVariants({ size, className }))}
+        {...props}
+      />
+    )
+  },
+)
+Spinner.displayName = 'Spinner'
 
 export { Spinner, spinnerVariants }

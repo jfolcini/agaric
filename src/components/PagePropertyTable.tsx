@@ -170,7 +170,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   return (
     <div className="page-property-table">
       <CollapsiblePanelHeader
-        collapsed={!expanded}
+        isCollapsed={!expanded}
         onToggle={() => setExpanded((prev) => !prev)}
         className="page-property-table-header"
       >

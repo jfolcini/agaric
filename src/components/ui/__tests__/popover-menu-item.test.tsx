@@ -11,6 +11,7 @@
 
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import * as React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { PopoverMenuItem } from '../popover-menu-item'
@@ -62,5 +63,11 @@ describe('PopoverMenuItem', () => {
     expect(btn.className).toContain('focus-visible:outline-none')
     expect(btn.className).toContain('focus-visible:ring-[3px]')
     expect(btn.className).toContain('focus-visible:ring-ring/50')
+  })
+
+  it('forwards ref', () => {
+    const ref = React.createRef<HTMLButtonElement>()
+    render(<PopoverMenuItem ref={ref}>Item</PopoverMenuItem>)
+    expect(ref.current).toBeInstanceOf(HTMLButtonElement)
   })
 })

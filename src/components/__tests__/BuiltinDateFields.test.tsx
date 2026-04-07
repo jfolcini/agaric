@@ -12,9 +12,10 @@
  *  - Date input calls onSaveDate
  */
 
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
 
 vi.mock('lucide-react', () => ({
   CalendarCheck2: ({ size }: { size: number }) => (
@@ -198,5 +199,20 @@ describe('BuiltinDateFields', () => {
 
     const scheduledBadge = screen.getByTitle('Scheduled')
     expect(scheduledBadge.querySelector('svg')).toBeInTheDocument()
+  })
+
+  it('has no a11y violations', async () => {
+    const { container } = render(
+      <BuiltinDateFields
+        dueDate="2025-06-15"
+        scheduledDate="2025-07-01"
+        hasCustomProperties
+        onSaveDate={vi.fn()}
+        onClearDate={vi.fn()}
+      />,
+    )
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
   })
 })

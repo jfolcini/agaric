@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from 'class-variance-authority'
-import type * as React from 'react'
+import * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -22,8 +22,11 @@ interface AlertListItemProps
   className?: string
 }
 
-export function AlertListItem({ variant, className, ...props }: AlertListItemProps) {
-  return <li className={cn(alertListItemVariants({ variant }), className)} {...props} />
-}
+const AlertListItem = React.forwardRef<HTMLLIElement, AlertListItemProps>(
+  ({ variant, className, ...props }, ref) => {
+    return <li ref={ref} className={cn(alertListItemVariants({ variant }), className)} {...props} />
+  },
+)
+AlertListItem.displayName = 'AlertListItem'
 
-export { alertListItemVariants }
+export { AlertListItem, alertListItemVariants }

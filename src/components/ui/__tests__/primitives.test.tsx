@@ -10,6 +10,7 @@
 
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import * as React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { CardButton } from '../card-button'
@@ -99,6 +100,12 @@ describe('Spinner', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  it('forwards ref', () => {
+    const ref = React.createRef<SVGSVGElement>()
+    render(<Spinner ref={ref} />)
+    expect(ref.current).toBeInstanceOf(SVGSVGElement)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -140,6 +147,16 @@ describe('CloseButtonIcon', () => {
     )
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  it('forwards ref', () => {
+    const ref = React.createRef<HTMLSpanElement>()
+    render(
+      <button type="button">
+        <CloseButtonIcon ref={ref} />
+      </button>,
+    )
+    expect(ref.current).toBeInstanceOf(HTMLSpanElement)
   })
 })
 
@@ -206,6 +223,12 @@ describe('CardButton', () => {
     expect(btn.className).toContain('focus-visible:ring-ring/50')
   })
 
+  it('forwards ref', () => {
+    const ref = React.createRef<HTMLButtonElement>()
+    render(<CardButton ref={ref}>Ref test</CardButton>)
+    expect(ref.current).toBeInstanceOf(HTMLButtonElement)
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(<CardButton>Accessible card</CardButton>)
     const results = await axe(container)
@@ -250,6 +273,12 @@ describe('Label', () => {
     const label = screen.getByText('Field')
     expect(label.className).toContain('mb-2')
     expect(label.className).toContain('font-medium')
+  })
+
+  it('forwards ref', () => {
+    const ref = React.createRef<HTMLLabelElement>()
+    render(<Label ref={ref}>Ref test</Label>)
+    expect(ref.current).toBeInstanceOf(HTMLLabelElement)
   })
 
   it('has no a11y violations with htmlFor pointing to an input', async () => {
@@ -323,6 +352,16 @@ describe('ListItem', () => {
     expect(screen.getByText('Child node')).toBeInTheDocument()
   })
 
+  it('forwards ref', () => {
+    const ref = React.createRef<HTMLLIElement>()
+    render(
+      <ul>
+        <ListItem ref={ref}>Ref test</ListItem>
+      </ul>,
+    )
+    expect(ref.current).toBeInstanceOf(HTMLLIElement)
+  })
+
   it('has no a11y violations inside a ul', async () => {
     const { container } = render(
       <ul>
@@ -378,6 +417,12 @@ describe('Input', () => {
     const el = screen.getByTestId('test-input')
     expect(el.className).toContain('focus-visible:ring-[3px]')
     expect(el.className).toContain('focus-visible:ring-ring/50')
+  })
+
+  it('forwards ref', () => {
+    const ref = React.createRef<HTMLInputElement>()
+    render(<Input ref={ref} />)
+    expect(ref.current).toBeInstanceOf(HTMLInputElement)
   })
 
   it('has no a11y violations', async () => {

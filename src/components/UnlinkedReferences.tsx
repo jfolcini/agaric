@@ -169,7 +169,7 @@ export function UnlinkedReferences({
     <section className="unlinked-references" aria-label={t('unlinkedRefs.panelLabel')}>
       {/* Main header — collapsible, collapsed by default */}
       <CollapsiblePanelHeader
-        collapsed={collapsed}
+        isCollapsed={collapsed}
         onToggle={toggleCollapsed}
         className="unlinked-references-header"
       >

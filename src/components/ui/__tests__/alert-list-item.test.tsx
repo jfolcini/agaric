@@ -11,6 +11,7 @@
  */
 
 import { render, screen } from '@testing-library/react'
+import * as React from 'react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 import { AlertListItem } from '../alert-list-item'
@@ -151,5 +152,15 @@ describe('AlertListItem', () => {
     expect(el.className).toContain('focus-visible:outline-none')
     expect(el.className).toContain('focus-visible:ring-[3px]')
     expect(el.className).toContain('focus-visible:ring-ring/50')
+  })
+
+  it('forwards ref', () => {
+    const ref = React.createRef<HTMLLIElement>()
+    render(
+      <ul>
+        <AlertListItem ref={ref}>Item</AlertListItem>
+      </ul>,
+    )
+    expect(ref.current).toBeInstanceOf(HTMLLIElement)
   })
 })

@@ -3,14 +3,14 @@ import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 
 interface CollapsiblePanelHeaderProps {
-  collapsed: boolean
+  isCollapsed: boolean
   onToggle: () => void
   className?: string
   children: React.ReactNode
 }
 
 export function CollapsiblePanelHeader({
-  collapsed,
+  isCollapsed,
   onToggle,
   className,
   children,
@@ -27,14 +27,14 @@ export function CollapsiblePanelHeader({
         'hover:bg-accent/50 active:bg-accent/70 transition-colors',
         'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
       )}
-      aria-expanded={!collapsed}
+      aria-expanded={!isCollapsed}
       aria-label={
         typeof children === 'string'
-          ? t(collapsed ? 'common.expand' : 'common.collapse', { section: children })
+          ? t(isCollapsed ? 'common.expand' : 'common.collapse', { section: children })
           : undefined
       }
     >
-      {!collapsed ? (
+      {!isCollapsed ? (
         <ChevronDown className="h-4 w-4 shrink-0" />
       ) : (
         <ChevronRight className="h-4 w-4 shrink-0" />

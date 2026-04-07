@@ -16,6 +16,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
 import type { PropertyDefinition } from '../../lib/tauri'
 
 vi.mock('lucide-react', () => ({
@@ -261,6 +262,16 @@ describe('AddPropertyPopover', () => {
     await waitFor(() => {
       expect(screen.getByText('text')).toBeInTheDocument()
       expect(screen.getByText('number')).toBeInTheDocument()
+    })
+  })
+
+  it('has no a11y violations', async () => {
+    const defs = [makeDef('status', 'text')]
+    const { container } = render(
+      <AddPropertyPopover definitions={defs} onAdd={vi.fn()} open onOpenChange={vi.fn()} />,
+    )
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
     })
   })
 })

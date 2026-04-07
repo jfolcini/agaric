@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from 'class-variance-authority'
-import type * as React from 'react'
+import * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -21,8 +21,15 @@ interface StatusBadgeProps extends VariantProps<typeof statusBadgeVariants> {
   className?: string
 }
 
-export function StatusBadge({ state, children, className }: StatusBadgeProps) {
-  return <span className={cn(statusBadgeVariants({ state }), className)}>{children}</span>
-}
+const StatusBadge = React.forwardRef<HTMLSpanElement, StatusBadgeProps>(
+  ({ state, children, className }, ref) => {
+    return (
+      <span ref={ref} className={cn(statusBadgeVariants({ state }), className)}>
+        {children}
+      </span>
+    )
+  },
+)
+StatusBadge.displayName = 'StatusBadge'
 
-export { statusBadgeVariants }
+export { StatusBadge, statusBadgeVariants }
