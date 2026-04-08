@@ -6,6 +6,7 @@
  * the Suggestion plugin via the imperative ref.
  */
 
+import { Plus } from 'lucide-react'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { cn } from '@/lib/utils'
@@ -97,7 +98,7 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
             className={cn(
               'suggestion-item flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm transition-colors [@media(pointer:coarse)]:py-3 touch-target focus-outline',
               index === selectedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
-              item.isCreate && 'border-t border-border',
+              item.isCreate && 'border-t border-border bg-accent/5',
             )}
             data-testid="suggestion-item"
             onClick={() => selectItem(index)}
@@ -107,9 +108,9 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
             aria-selected={index === selectedIndex}
           >
             {item.isCreate ? (
-              <span>
-                <span className="mr-1 text-muted-foreground">+</span>
-                Create <strong>{item.label}</strong>
+              <span className="flex items-center">
+                <Plus className="mr-1 h-3.5 w-3.5 text-primary" />
+                Create <strong className="ml-1">{item.label}</strong>
               </span>
             ) : (
               item.label

@@ -1084,6 +1084,17 @@ const resources = {
       // UX-72: Journal template tooltip
       'templates.journalTooltip':
         'This template is automatically applied when creating new journal entries',
+
+      // UX-57: Calendar dot legend
+      'journal.legendPage': 'Page',
+      'journal.legendDue': 'Due',
+      'journal.legendScheduled': 'Scheduled',
+      'journal.legendProperty': 'Property',
+
+      // UX-73: Template removal confirmation
+      'templates.removeConfirmTitle': 'Remove template status',
+      'templates.removeConfirmDesc':
+        'Remove template status from "{{name}}"? Pages already created from this template will not be affected.',
     },
   },
 }

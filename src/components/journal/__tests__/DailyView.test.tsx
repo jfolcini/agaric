@@ -134,6 +134,15 @@ describe('DailyView', () => {
     expect(sections).toHaveLength(1)
   })
 
+  it('applies fade animation keyed on date', () => {
+    const { container } = render(<DailyView entry={ENTRY} onAddBlock={vi.fn()} />)
+
+    const wrapper = container.firstElementChild as HTMLElement
+    expect(wrapper.className).toContain('animate-in')
+    expect(wrapper.className).toContain('fade-in-0')
+    expect(wrapper.className).toContain('duration-150')
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(
       <DailyView entry={ENTRY} onNavigateToPage={vi.fn()} onAddBlock={vi.fn()} />,

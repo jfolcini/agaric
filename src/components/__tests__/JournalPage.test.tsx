@@ -1959,9 +1959,9 @@ describe('JournalPage', () => {
         expect(screen.getAllByRole('region').length).toBe(7)
       })
 
-      // No badge buttons should be rendered
-      expect(screen.queryByText(/Due/)).toBeNull()
-      expect(screen.queryByText(/refs/)).toBeNull()
+      // No badge buttons should be rendered (legend shows "Due" without a count prefix)
+      expect(screen.queryByText(/\d+\s+Due/)).toBeNull()
+      expect(screen.queryByText(/\d+\s+refs/)).toBeNull()
     })
 
     it('badge click navigates to daily view', async () => {
@@ -2799,6 +2799,58 @@ describe('JournalPage', () => {
         expect(scheduledDots.length).toBeGreaterThan(0)
         expect(propDots.length).toBeGreaterThan(0)
       })
+    })
+  })
+
+  // ── Calendar dot legend ─────────────────────────────────────────────
+
+  describe('calendar dot legend', () => {
+    it('renders color dot legend with all 4 source labels', async () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const legend = screen.getByTestId('calendar-legend')
+      expect(legend).toBeInTheDocument()
+
+      // All 4 legend labels should be present
+      expect(within(legend).getByText('Page')).toBeInTheDocument()
+      expect(within(legend).getByText('Due')).toBeInTheDocument()
+      expect(within(legend).getByText('Scheduled')).toBeInTheDocument()
+      expect(within(legend).getByText('Property')).toBeInTheDocument()
+    })
+
+    it('legend is visible in all journal modes', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      // Daily mode (default)
+      expect(screen.getByTestId('calendar-legend')).toBeInTheDocument()
+
+      // Weekly mode
+      const weekTab = screen.getByRole('tab', { name: /weekly view/i })
+      await user.click(weekTab)
+      expect(screen.getByTestId('calendar-legend')).toBeInTheDocument()
+
+      // Monthly mode
+      const monthTab = screen.getByRole('tab', { name: /monthly view/i })
+      await user.click(monthTab)
+      expect(screen.getByTestId('calendar-legend')).toBeInTheDocument()
+
+      // Agenda mode
+      const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
+      await user.click(agendaTab)
+      expect(screen.getByTestId('calendar-legend')).toBeInTheDocument()
     })
   })
 })

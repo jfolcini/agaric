@@ -10,6 +10,7 @@ import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -33,6 +34,7 @@ export function TemplatesView(): React.ReactElement {
   const [templates, setTemplates] = useState<TemplateItem[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [pendingRemoval, setPendingRemoval] = useState<{ id: string; name: string } | null>(null)
 
   const loadTemplates = useCallback(async () => {
     setLoading(true)
@@ -157,7 +159,7 @@ export function TemplatesView(): React.ReactElement {
                         '[@media(pointer:coarse)]:opacity-100',
                         'touch-target [@media(pointer:coarse)]:min-w-[44px]',
                       ].join(' ')}
-                      onClick={() => handleRemoveTemplate(tpl.id, tpl.content)}
+                      onClick={() => setPendingRemoval({ id: tpl.id, name: tpl.content ?? '' })}
                     >
                       <X className="h-3.5 w-3.5" />
                     </Button>
@@ -173,6 +175,20 @@ export function TemplatesView(): React.ReactElement {
           </>
         )}
       </ListViewState>
+      <ConfirmDialog
+        open={pendingRemoval !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingRemoval(null)
+        }}
+        title={t('templates.removeConfirmTitle')}
+        description={t('templates.removeConfirmDesc', { name: pendingRemoval?.name ?? '' })}
+        onAction={() => {
+          if (pendingRemoval) {
+            handleRemoveTemplate(pendingRemoval.id, pendingRemoval.name)
+            setPendingRemoval(null)
+          }
+        }}
+      />
     </section>
   )
 }

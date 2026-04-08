@@ -228,11 +228,15 @@ describe('TemplatesView', () => {
     // Wait for the template to appear
     expect(await screen.findByText('Meeting Notes')).toBeInTheDocument()
 
-    // Click the remove button
+    // Click the remove button — opens confirmation dialog
     const removeBtn = screen.getByRole('button', {
       name: /Remove template status from Meeting Notes/i,
     })
     await user.click(removeBtn)
+
+    // Confirm in the dialog
+    const confirmBtn = await screen.findByRole('button', { name: /Confirm/i })
+    await user.click(confirmBtn)
 
     // Template should be removed from the list
     await waitFor(() => {
@@ -247,6 +251,104 @@ describe('TemplatesView', () => {
 
     // Verify success toast
     expect(toast.success).toHaveBeenCalledWith('Removed template status from Meeting Notes')
+  })
+
+  describe('remove template confirmation dialog', () => {
+    const setupSingleTemplate = () => {
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'query_by_property') {
+          const params = args as { key: string }
+          if (params.key === 'template') {
+            return {
+              items: [makeTemplate('T1', 'Meeting Notes')],
+              next_cursor: null,
+              has_more: false,
+            }
+          }
+          return emptyPage
+        }
+        if (cmd === 'list_blocks') return emptyPage
+        if (cmd === 'delete_property') return null
+        return emptyPage
+      })
+    }
+
+    it('shows confirmation dialog when clicking remove template', async () => {
+      const user = userEvent.setup()
+      setupSingleTemplate()
+
+      render(<TemplatesView />)
+      expect(await screen.findByText('Meeting Notes')).toBeInTheDocument()
+
+      const removeBtn = screen.getByRole('button', {
+        name: /Remove template status from Meeting Notes/i,
+      })
+      await user.click(removeBtn)
+
+      // Dialog should appear with title and description
+      expect(await screen.findByText('Remove template status')).toBeInTheDocument()
+      expect(
+        screen.getByText(
+          /Remove template status from "Meeting Notes"\? Pages already created from this template will not be affected\./,
+        ),
+      ).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Confirm/i })).toBeInTheDocument()
+    })
+
+    it('removes template after confirming dialog', async () => {
+      const user = userEvent.setup()
+      setupSingleTemplate()
+
+      render(<TemplatesView />)
+      expect(await screen.findByText('Meeting Notes')).toBeInTheDocument()
+
+      const removeBtn = screen.getByRole('button', {
+        name: /Remove template status from Meeting Notes/i,
+      })
+      await user.click(removeBtn)
+
+      // Confirm
+      const confirmBtn = await screen.findByRole('button', { name: /Confirm/i })
+      await user.click(confirmBtn)
+
+      // Template removed from list
+      await waitFor(() => {
+        expect(screen.queryByText('Meeting Notes')).not.toBeInTheDocument()
+      })
+
+      // delete_property was called
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_property', {
+        blockId: 'T1',
+        key: 'template',
+      })
+    })
+
+    it('does not remove template when dialog is cancelled', async () => {
+      const user = userEvent.setup()
+      setupSingleTemplate()
+
+      render(<TemplatesView />)
+      expect(await screen.findByText('Meeting Notes')).toBeInTheDocument()
+
+      const removeBtn = screen.getByRole('button', {
+        name: /Remove template status from Meeting Notes/i,
+      })
+      await user.click(removeBtn)
+
+      // Cancel
+      const cancelBtn = await screen.findByRole('button', { name: /Cancel/i })
+      await user.click(cancelBtn)
+
+      // Template should still be visible
+      expect(screen.getByText('Meeting Notes')).toBeInTheDocument()
+
+      // Dialog should be gone
+      expect(screen.queryByText('Remove template status')).not.toBeInTheDocument()
+
+      // delete_property should NOT have been called
+      expect(mockedInvoke).not.toHaveBeenCalledWith('delete_property', expect.anything())
+    })
   })
 
   it('shows journal template badge', async () => {
@@ -433,10 +535,15 @@ describe('TemplatesView', () => {
     render(<TemplatesView />)
     expect(await screen.findByText('Meeting Notes')).toBeInTheDocument()
 
+    // Open dialog
     const removeBtn = screen.getByRole('button', {
       name: /remove template status/i,
     })
     await user.click(removeBtn)
+
+    // Confirm in the dialog
+    const confirmBtn = await screen.findByRole('button', { name: /Confirm/i })
+    await user.click(confirmBtn)
 
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith('Failed to remove template status')

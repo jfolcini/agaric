@@ -1030,6 +1030,23 @@ describe('SortableBlock task marker', () => {
     expect(contentWrapper?.getAttribute('class')).toContain('opacity-50')
   })
 
+  it('applies transition classes to task content wrapper', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        todoState="DONE"
+      />,
+    )
+
+    const contentWrapper = container.querySelector('.line-through')
+    expect(contentWrapper).toBeInTheDocument()
+    expect(contentWrapper?.className).toContain('transition-')
+    expect(contentWrapper?.className).toContain('duration-200')
+  })
+
   it('does not apply line-through when todoState is not DONE', () => {
     const { container } = render(
       <SortableBlock
@@ -1060,6 +1077,9 @@ describe('SortableBlock task marker', () => {
     const contentWrapper = editableBlock.parentElement
     expect(contentWrapper?.className).not.toContain('line-through')
     expect(contentWrapper?.className).not.toContain('opacity-50')
+    // Transition classes should still be present
+    expect(contentWrapper?.className).toContain('transition-')
+    expect(contentWrapper?.className).toContain('duration-200')
   })
 
   it('applies DONE strikethrough/opacity when block is not focused', () => {
@@ -1077,6 +1097,9 @@ describe('SortableBlock task marker', () => {
     const contentWrapper = editableBlock.parentElement
     expect(contentWrapper?.className).toContain('line-through')
     expect(contentWrapper?.className).toContain('opacity-50')
+    // Transition classes should be present
+    expect(contentWrapper?.className).toContain('transition-')
+    expect(contentWrapper?.className).toContain('duration-200')
   })
 })
 

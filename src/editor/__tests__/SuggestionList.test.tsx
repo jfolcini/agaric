@@ -183,22 +183,22 @@ describe('SuggestionList', () => {
 
     render(<SuggestionList items={items} command={command} />)
 
-    // The create button (2nd option) should contain "+ Create <strong>label</strong>"
+    // The create button (2nd option) should contain "Create <strong>label</strong>"
     const createBtn = screen.getAllByRole('option')[1] as HTMLElement
-    expect(createBtn).toHaveTextContent('+Create My New Page')
+    expect(createBtn).toHaveTextContent('Create My New Page')
 
     // Verify the strong element for the label
     const strongEl = createBtn.querySelector('strong')
     expect(strongEl).toBeInTheDocument()
     expect(strongEl).toHaveTextContent('My New Page')
 
-    // Verify the "+" prefix
-    const plusSpan = createBtn.querySelector('.text-muted-foreground')
-    expect(plusSpan).toBeInTheDocument()
-    expect(plusSpan).toHaveTextContent('+')
+    // Verify the Plus icon (lucide-react) is rendered with text-primary
+    const plusIcon = createBtn.querySelector('.text-primary')
+    expect(plusIcon).toBeInTheDocument()
 
-    // Verify the border-t styling class is applied on the button
+    // Verify the border-t and bg-accent/5 styling classes are applied on the button
     expect(createBtn.className).toContain('border-t')
+    expect(createBtn.className).toContain('bg-accent/5')
   })
 
   it('resets selected index when items change', () => {
@@ -314,5 +314,33 @@ describe('SuggestionList', () => {
     const el = screen.getByRole('status')
     expect(el).toHaveTextContent('No results')
     expect(el).toHaveAttribute('aria-live', 'polite')
+  })
+
+  // -- UX-66: Popup animation --------------------------------------------------
+
+  it('popup container has "suggestion-list" class for CSS animation (UX-66)', () => {
+    const command = vi.fn()
+    render(<SuggestionList items={sampleItems} command={command} />)
+
+    const listbox = screen.getByRole('listbox')
+    expect(listbox.className).toContain('suggestion-list')
+  })
+
+  // -- UX-67: "Create new" prominence ------------------------------------------
+
+  it('"Create new" item renders a Plus SVG icon with text-primary class (UX-67)', () => {
+    const command = vi.fn()
+    const items: PickerItem[] = [
+      { id: '1', label: 'Existing Page' },
+      { id: 'create-new', label: 'My New Page', isCreate: true },
+    ]
+
+    render(<SuggestionList items={items} command={command} />)
+
+    const createBtn = screen.getAllByRole('option')[1] as HTMLElement
+
+    // Should contain an SVG (lucide Plus icon) with text-primary
+    const svgIcon = createBtn.querySelector('svg.text-primary')
+    expect(svgIcon).toBeInTheDocument()
   })
 })

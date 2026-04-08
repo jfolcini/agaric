@@ -432,8 +432,10 @@ function SortableBlockInner({
           {/* ── Block content ─────────────────────────────────────────── */}
           <div
             className={cn(
-              'flex-1 min-w-0',
-              todoState === 'DONE' && !isFocused && 'line-through opacity-50',
+              'flex-1 min-w-0 transition-[text-decoration-color,opacity] duration-200',
+              todoState === 'DONE' && !isFocused
+                ? 'line-through opacity-50'
+                : 'no-underline opacity-100',
             )}
           >
             <EditableBlock

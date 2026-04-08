@@ -18,7 +18,7 @@ export function DailyView({
   onAddBlock,
 }: DailyViewProps): React.ReactElement {
   return (
-    <div className="space-y-4">
+    <div key={entry.dateStr} className="space-y-4 animate-in fade-in-0 duration-150">
       <DaySection
         entry={entry}
         headingLevel="h2"
