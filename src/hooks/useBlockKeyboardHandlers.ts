@@ -278,6 +278,7 @@ export function useBlockKeyboardHandlers({
       if (newBlockId) {
         justCreatedBlockIds.current.add(newBlockId)
         setFocused(newBlockId)
+        announce('Block created')
       } else {
         // createBelow returned null (e.g. backend error) — re-mount editor
         // so the user isn't stuck with an unmounted block.

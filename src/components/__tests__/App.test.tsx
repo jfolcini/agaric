@@ -900,4 +900,35 @@ describe('App', () => {
       })
     })
   })
+
+  describe('skip-to-main link', () => {
+    it('renders a skip-to-main link', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+      const skipLink = screen.getByText('Skip to main content')
+      expect(skipLink).toBeInTheDocument()
+      expect(skipLink.tagName).toBe('A')
+      expect(skipLink).toHaveAttribute('href', '#main-content')
+    })
+
+    it('skip link is sr-only by default', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+      const skipLink = screen.getByText('Skip to main content')
+      expect(skipLink).toHaveClass('sr-only')
+    })
+
+    it('main content has id="main-content"', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+      const main = document.getElementById('main-content')
+      expect(main).toBeInTheDocument()
+    })
+  })
 })

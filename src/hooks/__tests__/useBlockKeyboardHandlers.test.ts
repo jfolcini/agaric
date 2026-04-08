@@ -553,6 +553,29 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
 
     expect(params.setFocused).not.toHaveBeenCalled()
   })
+
+  it('announces block creation on Enter', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(mockedAnnounce).toHaveBeenCalledWith('Block created')
+  })
+
+  it('does not announce when createBelow returns null', async () => {
+    const params = makeDefaultParams()
+    params.createBelow = vi.fn(async () => null)
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(mockedAnnounce).not.toHaveBeenCalled()
+  })
 })
 
 describe('useBlockKeyboardHandlers handleEscapeCancel', () => {

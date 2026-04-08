@@ -18,7 +18,9 @@ import { Button } from '@/components/ui/button'
 import { CardButton } from '@/components/ui/card-button'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
+import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
+import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
 import type { BlockRow } from '../lib/tauri'
@@ -158,6 +160,14 @@ export function SearchPanel(): React.ReactElement {
     [navigateToPage, t],
   )
 
+  const { focusedIndex, handleKeyDown: handleListKeyDown } = useListKeyboardNavigation({
+    itemCount: results.length,
+    onSelect: (idx) => {
+      const block = results[idx]
+      if (block) handleResultClick(block)
+    },
+  })
+
   const handleRecentClick = useCallback(
     (page: RecentPage) => {
       addRecentPage(page.id, page.title)
@@ -229,9 +239,28 @@ export function SearchPanel(): React.ReactElement {
         )}
 
         {results.length > 0 && (
-          <ul className="search-results space-y-3 list-none m-0 p-0" data-testid="search-results">
-            {results.map((block) => (
-              <li key={block.id}>
+          <div
+            className="search-results space-y-3 list-none m-0 p-0"
+            data-testid="search-results"
+            role="listbox"
+            tabIndex={0}
+            aria-label="Search results"
+            onKeyDown={(e) => {
+              if (handleListKeyDown(e)) e.preventDefault()
+            }}
+            aria-activedescendant={
+              results[focusedIndex] ? `search-result-${results[focusedIndex].id}` : undefined
+            }
+          >
+            {results.map((block, index) => (
+              <div
+                key={block.id}
+                id={`search-result-${block.id}`}
+                role="option"
+                aria-selected={index === focusedIndex}
+                tabIndex={-1}
+                className={cn(index === focusedIndex && 'bg-accent rounded-lg')}
+              >
                 <ResultCard
                   block={block}
                   onClick={() => handleResultClick(block)}
@@ -250,9 +279,9 @@ export function SearchPanel(): React.ReactElement {
                     </p>
                   )}
                 </ResultCard>
-              </li>
+              </div>
             ))}
-          </ul>
+          </div>
         )}
         {searched && !searchLoading && !error && results.length > 0 && (
           <span className="text-xs text-muted-foreground">

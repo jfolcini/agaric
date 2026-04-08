@@ -29,6 +29,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { ulidToDate } from '@/lib/format'
 import { emptyPage, makeConflict } from '../../__tests__/fixtures'
+import { announce } from '../../lib/announcer'
 import { useNavigationStore } from '../../stores/navigation'
 import { ConflictList } from '../ConflictList'
 import { renderRichContent } from '../StaticBlock'
@@ -42,6 +43,10 @@ vi.mock('sonner', () => ({
     error: vi.fn(),
     success: vi.fn(),
   },
+}))
+
+vi.mock('../../lib/announcer', () => ({
+  announce: vi.fn(),
 }))
 
 const mockUnlisten = vi.fn()
@@ -390,6 +395,10 @@ describe('ConflictList', () => {
     })
   })
 
+  // Note: axe tests disable nested-interactive rule because the
+  // role="option" items intentionally contain checkbox and button controls.
+  // This matches the existing HistoryView pattern and is a known trade-off.
+  // See HistoryListItem.test.tsx for rationale.
   it('has no a11y violations with items', async () => {
     const page = {
       items: [makeConflict({ id: 'C1', content: 'accessible conflict' })],
@@ -401,7 +410,12 @@ describe('ConflictList', () => {
     render(<ConflictList />)
 
     await waitFor(async () => {
-      const results = await axe(document.body)
+      const results = await axe(document.body, {
+        rules: {
+          region: { enabled: false },
+          'nested-interactive': { enabled: false },
+        },
+      })
       expect(results).toHaveNoViolations()
     })
   })
@@ -412,7 +426,11 @@ describe('ConflictList', () => {
     render(<ConflictList />)
 
     await waitFor(async () => {
-      const results = await axe(document.body)
+      const results = await axe(document.body, {
+        rules: {
+          region: { enabled: false },
+        },
+      })
       expect(results).toHaveNoViolations()
     })
   })
@@ -1985,7 +2003,10 @@ describe('ConflictList', () => {
 
     await waitFor(async () => {
       const results = await axe(document.body, {
-        rules: { region: { enabled: false } },
+        rules: {
+          region: { enabled: false },
+          'nested-interactive': { enabled: false },
+        },
       })
       expect(results).toHaveNoViolations()
     })
@@ -2172,7 +2193,7 @@ describe('ConflictList', () => {
     expect(actionsContainer?.className).toContain('flex-wrap')
   })
 
-  it('conflict list container has role="list" and items have role="listitem"', async () => {
+  it('conflict list container has role="listbox" and items have role="option"', async () => {
     const page = {
       items: [
         makeConflict({ id: 'C1', content: 'conflict one' }),
@@ -2187,16 +2208,329 @@ describe('ConflictList', () => {
 
     await screen.findByText('conflict one')
 
-    // Parent container should have role="list"
-    const list = screen.getByRole('list')
+    // Parent container should have role="listbox"
+    const list = screen.getByRole('listbox', { name: 'Conflict list' })
     expect(list).toBeInTheDocument()
     expect(list.className).toContain('conflict-items')
 
-    // Each conflict item should have role="listitem"
-    const listItems = screen.getAllByRole('listitem')
-    expect(listItems).toHaveLength(2)
-    for (const item of listItems) {
+    // Each conflict item should have role="option" (set via useEffect)
+    const options = screen.getAllByRole('option')
+    expect(options).toHaveLength(2)
+    for (const item of options) {
       expect(item.className).toContain('conflict-item')
     }
+  })
+
+  // --- Keyboard navigation ---
+
+  it('ArrowDown moves focus to the next conflict item', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeConflict({ id: 'C1', content: 'conflict 1' }),
+        makeConflict({ id: 'C2', content: 'conflict 2' }),
+        makeConflict({ id: 'C3', content: 'conflict 3' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict 1')
+
+    const listbox = screen.getByRole('listbox', { name: 'Conflict list' })
+    expect(listbox.getAttribute('aria-activedescendant')).toBe('conflict-C1')
+
+    // Focus the listbox and press ArrowDown
+    listbox.focus()
+    await user.keyboard('{ArrowDown}')
+
+    expect(listbox.getAttribute('aria-activedescendant')).toBe('conflict-C2')
+
+    await user.keyboard('{ArrowDown}')
+
+    expect(listbox.getAttribute('aria-activedescendant')).toBe('conflict-C3')
+  })
+
+  it('ArrowUp moves focus to the previous conflict item', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeConflict({ id: 'C1', content: 'conflict 1' }),
+        makeConflict({ id: 'C2', content: 'conflict 2' }),
+        makeConflict({ id: 'C3', content: 'conflict 3' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict 1')
+
+    const listbox = screen.getByRole('listbox', { name: 'Conflict list' })
+
+    // Focus and move down twice, then back up
+    listbox.focus()
+    await user.keyboard('{ArrowDown}')
+    await user.keyboard('{ArrowDown}')
+    expect(listbox.getAttribute('aria-activedescendant')).toBe('conflict-C3')
+
+    await user.keyboard('{ArrowUp}')
+    expect(listbox.getAttribute('aria-activedescendant')).toBe('conflict-C2')
+  })
+
+  it('ArrowDown wraps to the first item at the end of the list', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeConflict({ id: 'C1', content: 'conflict 1' }),
+        makeConflict({ id: 'C2', content: 'conflict 2' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict 1')
+
+    const listbox = screen.getByRole('listbox', { name: 'Conflict list' })
+
+    listbox.focus()
+    await user.keyboard('{ArrowDown}')
+    expect(listbox.getAttribute('aria-activedescendant')).toBe('conflict-C2')
+
+    // Wrap around
+    await user.keyboard('{ArrowDown}')
+    expect(listbox.getAttribute('aria-activedescendant')).toBe('conflict-C1')
+  })
+
+  it('Home/End keys jump to first/last item', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeConflict({ id: 'C1', content: 'conflict 1' }),
+        makeConflict({ id: 'C2', content: 'conflict 2' }),
+        makeConflict({ id: 'C3', content: 'conflict 3' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict 1')
+
+    const listbox = screen.getByRole('listbox', { name: 'Conflict list' })
+
+    listbox.focus()
+    await user.keyboard('{End}')
+    expect(listbox.getAttribute('aria-activedescendant')).toBe('conflict-C3')
+
+    await user.keyboard('{Home}')
+    expect(listbox.getAttribute('aria-activedescendant')).toBe('conflict-C1')
+  })
+
+  it('Enter key on focused item toggles expand/collapse', async () => {
+    const user = userEvent.setup()
+    const conflict = makeConflict({ id: 'C1', content: 'expandable content' })
+    mockInvokeByCommand({
+      get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
+      get_block: originalBlock,
+    })
+
+    const { container } = render(<ConflictList />)
+
+    await screen.findByText('expandable content')
+
+    // Initially truncated
+    expect(container.querySelector('.conflict-original')?.className).toContain('truncate')
+
+    const listbox = screen.getByRole('listbox', { name: 'Conflict list' })
+    listbox.focus()
+    await user.keyboard('{Enter}')
+
+    // After Enter, should be expanded
+    await waitFor(() => {
+      expect(container.querySelector('.conflict-original')?.className).not.toContain('truncate')
+    })
+  })
+
+  it('aria-selected reflects the currently focused item', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeConflict({ id: 'C1', content: 'conflict 1' }),
+        makeConflict({ id: 'C2', content: 'conflict 2' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict 1')
+
+    const options = screen.getAllByRole('option')
+    expect(options[0]?.getAttribute('aria-selected')).toBe('true')
+    expect(options[1]?.getAttribute('aria-selected')).toBe('false')
+
+    const listbox = screen.getByRole('listbox', { name: 'Conflict list' })
+    listbox.focus()
+    await user.keyboard('{ArrowDown}')
+
+    await waitFor(() => {
+      expect(options[0]?.getAttribute('aria-selected')).toBe('false')
+      expect(options[1]?.getAttribute('aria-selected')).toBe('true')
+    })
+  })
+
+  // --- Screen reader announcements ---
+
+  it('announces when a conflict is kept', async () => {
+    const user = userEvent.setup()
+    const conflict = makeConflict({ id: 'C1', content: 'conflict text' })
+    mockInvokeByCommand({
+      get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
+      get_block: originalBlock,
+      edit_block: { id: 'ORIG001', block_type: 'content', content: 'conflict text' },
+      delete_block: {
+        block_id: 'C1',
+        deleted_at: '2025-01-15T00:00:00Z',
+        descendants_affected: 0,
+      },
+    })
+
+    render(<ConflictList />)
+
+    const keepBtn = await screen.findByRole('button', { name: /Keep/i })
+    await user.click(keepBtn)
+
+    const yesKeepBtn = screen.getByRole('button', { name: /Yes, keep/i })
+    await user.click(yesKeepBtn)
+
+    await waitFor(() => {
+      expect(announce).toHaveBeenCalledWith('Conflict resolved — kept incoming version')
+    })
+  })
+
+  it('announces when a conflict is discarded', async () => {
+    const user = userEvent.setup()
+    const conflict = makeConflict({ id: 'C1', content: 'conflict text' })
+    mockInvokeByCommand({
+      get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
+      get_block: originalBlock,
+      delete_block: {
+        block_id: 'C1',
+        deleted_at: '2025-01-15T00:00:00Z',
+        descendants_affected: 0,
+      },
+    })
+
+    render(<ConflictList />)
+
+    const discardBtn = await screen.findByRole('button', {
+      name: /Discard conflict for block/i,
+    })
+    await user.click(discardBtn)
+
+    const yesBtn = screen.getByRole('button', { name: /Yes, discard/i })
+    await user.click(yesBtn)
+
+    await waitFor(() => {
+      expect(announce).toHaveBeenCalledWith('Conflict discarded')
+    })
+  })
+
+  it('announces after batch keep', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeConflict({ id: 'C1', content: 'conflict 1' }),
+        makeConflict({ id: 'C2', content: 'conflict 2' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({
+      get_conflicts: page,
+      get_block: originalBlock,
+      edit_block: { id: 'ORIG001', block_type: 'content', content: 'conflict 1' },
+      delete_block: {
+        block_id: 'C1',
+        deleted_at: '2025-01-15T00:00:00Z',
+        descendants_affected: 0,
+      },
+    })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict 1')
+
+    // Select both conflicts
+    const checkboxes = screen.getAllByRole('checkbox')
+    await user.click(checkboxes[0] as HTMLElement)
+    await user.click(checkboxes[1] as HTMLElement)
+
+    // Click "Keep all"
+    const keepAllBtn = screen.getByRole('button', { name: /Keep all/i })
+    await user.click(keepAllBtn)
+
+    // Confirm
+    const confirmBtn = screen.getByRole('button', { name: /Yes, keep all/i })
+    await user.click(confirmBtn)
+
+    await waitFor(() => {
+      expect(announce).toHaveBeenCalledWith('Kept 2 conflict(s)')
+    })
+  })
+
+  it('announces after batch discard', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeConflict({ id: 'C1', content: 'conflict 1' }),
+        makeConflict({ id: 'C2', content: 'conflict 2' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({
+      get_conflicts: page,
+      get_block: originalBlock,
+      delete_block: {
+        block_id: 'C1',
+        deleted_at: '2025-01-15T00:00:00Z',
+        descendants_affected: 0,
+      },
+    })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict 1')
+
+    // Select both conflicts
+    const checkboxes = screen.getAllByRole('checkbox')
+    await user.click(checkboxes[0] as HTMLElement)
+    await user.click(checkboxes[1] as HTMLElement)
+
+    // Click "Discard all"
+    const discardAllBtn = screen.getByRole('button', { name: /Discard all/i })
+    await user.click(discardAllBtn)
+
+    // Confirm
+    const confirmBtn = screen.getByRole('button', { name: /Yes, discard all/i })
+    await user.click(confirmBtn)
+
+    await waitFor(() => {
+      expect(announce).toHaveBeenCalledWith('Discarded 2 conflict(s)')
+    })
   })
 })

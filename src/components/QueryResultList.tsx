@@ -1,6 +1,8 @@
 import type React from 'react'
+import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import type { BlockRow } from '../lib/tauri'
 import { truncateContent } from '../lib/text-utils'
+import { cn } from '../lib/utils'
 import { PageLink } from './PageLink'
 import { StatusBadge } from './ui/status-badge'
 
@@ -13,6 +15,8 @@ export interface QueryResultListProps {
   onNavigate?: ((pageId: string) => void) | undefined
   /** Resolve block title by ID. */
   resolveBlockTitle?: ((id: string) => string) | undefined
+  /** Called when an item is selected via keyboard. */
+  onItemSelect?: ((index: number) => void) | undefined
 }
 
 export function QueryResultList({
@@ -20,22 +24,61 @@ export function QueryResultList({
   pageTitles,
   onNavigate,
   resolveBlockTitle,
+  onItemSelect,
 }: QueryResultListProps): React.ReactElement {
+  const { focusedIndex, handleKeyDown } = useListKeyboardNavigation({
+    itemCount: results.length,
+    onSelect: (idx) => {
+      onItemSelect?.(idx)
+      const block = results[idx]
+      if (block?.parent_id && onNavigate) onNavigate(block.parent_id)
+    },
+  })
+
   return (
-    <ul className="divide-y divide-muted-foreground/10">
-      {results.map((block) => {
+    <div
+      className="divide-y divide-muted-foreground/10"
+      tabIndex={0}
+      role="listbox"
+      aria-label="Query results"
+      aria-activedescendant={
+        results[focusedIndex] ? `query-result-${results[focusedIndex].id}` : undefined
+      }
+      onKeyDown={(e) => {
+        if (handleKeyDown(e)) e.preventDefault()
+      }}
+    >
+      {results.map((block, index) => {
         const pageTitle = block.parent_id ? pageTitles.get(block.parent_id) : undefined
         return (
-          <li key={block.id} className="query-result-item" data-testid="query-result-item">
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted/40 transition-colors"
-              onClick={(e) => {
+          <div
+            key={block.id}
+            id={`query-result-${block.id}`}
+            className="query-result-item"
+            data-testid="query-result-item"
+            role="option"
+            aria-selected={index === focusedIndex}
+            tabIndex={-1}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (block.parent_id && onNavigate) {
+                onNavigate(block.parent_id)
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
                 e.stopPropagation()
                 if (block.parent_id && onNavigate) {
                   onNavigate(block.parent_id)
                 }
-              }}
+              }
+            }}
+          >
+            <div
+              className={cn(
+                'flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted/40 transition-colors cursor-pointer',
+                index === focusedIndex && 'bg-accent',
+              )}
             >
               {block.todo_state && (
                 <StatusBadge
@@ -60,10 +103,10 @@ export function QueryResultList({
                   <PageLink pageId={block.parent_id} title={pageTitle} />
                 </span>
               )}
-            </button>
-          </li>
+            </div>
+          </div>
         )
       })}
-    </ul>
+    </div>
   )
 }

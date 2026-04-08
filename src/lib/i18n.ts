@@ -1066,6 +1066,9 @@ const resources = {
 
       // Done panel empty state (UX-13)
       'donePanel.empty': 'No completed items yet.',
+
+      // Accessibility
+      'accessibility.skipToMain': 'Skip to main content',
     },
   },
 }

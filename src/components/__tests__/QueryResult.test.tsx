@@ -245,7 +245,7 @@ describe('QueryResult', () => {
     render(<QueryResult expression="type:tag expr:test" onNavigate={onNavigate} />)
 
     const item = await screen.findByText(/Click me/)
-    await user.click(item.closest('button') as HTMLElement)
+    await user.click(item.closest('[role="option"]') as HTMLElement)
 
     expect(onNavigate).toHaveBeenCalledWith('P1')
   })
@@ -491,7 +491,7 @@ describe('QueryResult – table mode', () => {
 
     // Should render a list, not a table
     await waitFor(() => {
-      expect(screen.getByRole('list')).toBeInTheDocument()
+      expect(screen.getByRole('listbox')).toBeInTheDocument()
     })
     expect(screen.queryByRole('grid')).not.toBeInTheDocument()
   })

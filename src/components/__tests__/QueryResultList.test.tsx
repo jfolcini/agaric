@@ -53,15 +53,15 @@ describe('QueryResultList', () => {
 
     render(<QueryResultList results={results} pageTitles={new Map()} />)
 
-    expect(screen.getByRole('list')).toBeInTheDocument()
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
     expect(screen.getByText('First task')).toBeInTheDocument()
     expect(screen.getByText('Second task')).toBeInTheDocument()
   })
 
   it('renders empty list when no results', () => {
-    const { container } = render(<QueryResultList results={[]} pageTitles={new Map()} />)
+    render(<QueryResultList results={[]} pageTitles={new Map()} />)
 
-    const list = container.querySelector('ul')
+    const list = screen.getByRole('listbox')
     expect(list).toBeInTheDocument()
     expect(list?.children).toHaveLength(0)
   })
@@ -98,7 +98,7 @@ describe('QueryResultList', () => {
     render(<QueryResultList results={results} pageTitles={new Map()} onNavigate={onNavigate} />)
 
     const item = screen.getByText('Click me')
-    await user.click(item.closest('button') as HTMLElement)
+    await user.click(item.closest('[role="option"]') as HTMLElement)
 
     expect(onNavigate).toHaveBeenCalledWith('P1')
   })
@@ -111,7 +111,7 @@ describe('QueryResultList', () => {
     render(<QueryResultList results={results} pageTitles={new Map()} onNavigate={onNavigate} />)
 
     const item = screen.getByText('No parent')
-    await user.click(item.closest('button') as HTMLElement)
+    await user.click(item.closest('[role="option"]') as HTMLElement)
 
     expect(onNavigate).not.toHaveBeenCalled()
   })
@@ -174,5 +174,84 @@ describe('QueryResultList', () => {
 
     const axeResults = await axe(container)
     expect(axeResults).toHaveNoViolations()
+  })
+
+  it('supports arrow-key navigation', async () => {
+    const results = [
+      makeBlock({ id: 'B1', content: 'First' }),
+      makeBlock({ id: 'B2', content: 'Second' }),
+      makeBlock({ id: 'B3', content: 'Third' }),
+    ]
+    const user = userEvent.setup()
+
+    render(<QueryResultList results={results} pageTitles={new Map()} />)
+
+    const listbox = screen.getByRole('listbox')
+    await user.click(listbox)
+
+    // Initially first item is focused
+    const options = screen.getAllByRole('option')
+    expect(options[0]).toHaveAttribute('aria-selected', 'true')
+    expect(options[1]).toHaveAttribute('aria-selected', 'false')
+
+    // ArrowDown moves to second item
+    await user.keyboard('{ArrowDown}')
+    expect(options[0]).toHaveAttribute('aria-selected', 'false')
+    expect(options[1]).toHaveAttribute('aria-selected', 'true')
+
+    // ArrowDown again moves to third item
+    await user.keyboard('{ArrowDown}')
+    expect(options[1]).toHaveAttribute('aria-selected', 'false')
+    expect(options[2]).toHaveAttribute('aria-selected', 'true')
+
+    // ArrowUp moves back to second item
+    await user.keyboard('{ArrowUp}')
+    expect(options[1]).toHaveAttribute('aria-selected', 'true')
+    expect(options[2]).toHaveAttribute('aria-selected', 'false')
+  })
+
+  it('navigates on Enter key', async () => {
+    const onNavigate = vi.fn()
+    const results = [
+      makeBlock({ id: 'B1', content: 'First', parent_id: 'P1' }),
+      makeBlock({ id: 'B2', content: 'Second', parent_id: 'P2' }),
+    ]
+    const user = userEvent.setup()
+
+    render(<QueryResultList results={results} pageTitles={new Map()} onNavigate={onNavigate} />)
+
+    const listbox = screen.getByRole('listbox')
+    await user.click(listbox)
+
+    await user.keyboard('{ArrowDown}')
+    await user.keyboard('{Enter}')
+
+    expect(onNavigate).toHaveBeenCalledWith('P2')
+  })
+
+  it('wraps around on arrow keys', async () => {
+    const results = [
+      makeBlock({ id: 'B1', content: 'First' }),
+      makeBlock({ id: 'B2', content: 'Second' }),
+      makeBlock({ id: 'B3', content: 'Third' }),
+    ]
+    const user = userEvent.setup()
+
+    render(<QueryResultList results={results} pageTitles={new Map()} />)
+
+    const listbox = screen.getByRole('listbox')
+    await user.click(listbox)
+
+    const options = screen.getAllByRole('option')
+
+    // ArrowDown past last item wraps to first
+    await user.keyboard('{ArrowDown}')
+    await user.keyboard('{ArrowDown}')
+    await user.keyboard('{ArrowDown}')
+    expect(options[0]).toHaveAttribute('aria-selected', 'true')
+
+    // ArrowUp from first item wraps to last
+    await user.keyboard('{ArrowUp}')
+    expect(options[2]).toHaveAttribute('aria-selected', 'true')
   })
 })

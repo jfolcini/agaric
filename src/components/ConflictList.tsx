@@ -32,7 +32,9 @@ import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
+import { announce } from '../lib/announcer'
 import type { BlockRow, DeleteResponse } from '../lib/tauri'
 import {
   deleteBlock,
@@ -79,6 +81,7 @@ export function ConflictList(): React.ReactElement {
   const [batchAction, setBatchAction] = useState<'keep' | 'discard' | null>(null)
   const [deviceNames, setDeviceNames] = useState<Map<string, string>>(new Map())
   const fetchedParentsRef = useRef(new Set<string>())
+  const listRef = useRef<HTMLDivElement>(null)
 
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
 
@@ -220,6 +223,31 @@ export function ConflictList(): React.ReactElement {
     })
   }, [])
 
+  const { focusedIndex, handleKeyDown } = useListKeyboardNavigation({
+    itemCount: blocks.length,
+    onSelect: (idx) => {
+      const block = blocks[idx]
+      if (block) toggleExpanded(block.id)
+    },
+    vim: false,
+    homeEnd: true,
+  })
+
+  // Programmatically set ARIA attributes on <li> children for listbox pattern
+  // without modifying ConflictListItem.
+  useEffect(() => {
+    if (!listRef.current) return
+    const items = listRef.current.querySelectorAll<HTMLLIElement>(':scope > .conflict-item')
+    items.forEach((item, index) => {
+      const block = blocks[index]
+      if (block) {
+        item.id = `conflict-${block.id}`
+        item.setAttribute('role', 'option')
+        item.setAttribute('aria-selected', String(index === focusedIndex))
+      }
+    })
+  }, [blocks, focusedIndex])
+
   const handleToggleSelectAll = useCallback(() => {
     if (selectedIds.size === blocks.length) {
       setSelectedIds(new Set())
@@ -288,6 +316,7 @@ export function ConflictList(): React.ReactElement {
             },
           },
         })
+        announce('Conflict resolved — kept incoming version')
       } catch (err: unknown) {
         toast.error(
           `Failed to resolve conflict: ${err instanceof Error ? err.message : String(err)}`,
@@ -319,6 +348,7 @@ export function ConflictList(): React.ReactElement {
             },
           },
         })
+        announce('Conflict discarded')
       } catch (err: unknown) {
         toast.error(
           `Failed to discard conflict: ${err instanceof Error ? err.message : String(err)}`,
@@ -359,11 +389,12 @@ export function ConflictList(): React.ReactElement {
         },
       })
     } else {
-      toast.success(
+      const msg =
         savedBatchAction === 'keep'
           ? `Kept ${selectedBlocks.length} conflict(s)`
-          : `Discarded ${selectedBlocks.length} conflict(s)`,
-      )
+          : `Discarded ${selectedBlocks.length} conflict(s)`
+      toast.success(msg)
+      announce(msg)
     }
   }, [blocks, selectedIds, batchAction, setBlocks])
 
@@ -410,7 +441,19 @@ export function ConflictList(): React.ReactElement {
         </div>
       )}
 
-      <ul className="conflict-items space-y-2 list-none p-0">
+      <div
+        ref={listRef}
+        className="conflict-items space-y-2 list-none p-0"
+        tabIndex={0}
+        role="listbox"
+        aria-label="Conflict list"
+        aria-activedescendant={
+          blocks[focusedIndex] ? `conflict-${blocks[focusedIndex].id}` : undefined
+        }
+        onKeyDown={(e) => {
+          if (handleKeyDown(e)) e.preventDefault()
+        }}
+      >
         {blocks.map((block) => {
           const original = block.parent_id ? originals.get(block.parent_id) : undefined
           return (
@@ -429,7 +472,7 @@ export function ConflictList(): React.ReactElement {
             />
           )
         })}
-      </ul>
+      </div>
 
       <LoadMoreButton
         hasMore={hasMore}

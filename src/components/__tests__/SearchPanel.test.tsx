@@ -744,7 +744,7 @@ describe('SearchPanel', () => {
     expect(screen.getByText('Search requires at least 3 characters')).toBeInTheDocument()
   })
 
-  it('results container has role=list', async () => {
+  it('results container has role=listbox', async () => {
     mockedInvoke.mockResolvedValueOnce({
       items: [makeSearchResult()],
       next_cursor: null,
@@ -756,7 +756,7 @@ describe('SearchPanel', () => {
     typeAndSubmit(input, 'test')
 
     await waitFor(() => {
-      expect(screen.getByRole('list')).toBeInTheDocument()
+      expect(screen.getByRole('listbox')).toBeInTheDocument()
     })
   })
 
@@ -1009,5 +1009,145 @@ describe('SearchPanel', () => {
     expect(navState.pageStack).toHaveLength(1)
     expect(navState.pageStack[0]?.pageId).toBe('PARENT1')
     expect(navState.pageStack[0]?.title).toBe('Breadcrumb Page')
+  })
+
+  // =========================================================================
+  // Keyboard navigation tests
+  // =========================================================================
+
+  describe('keyboard navigation', () => {
+    it('supports ArrowDown/ArrowUp through results', async () => {
+      const user = userEvent.setup()
+
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makeSearchResult({ id: 'B1', content: 'result1' }),
+          makeSearchResult({ id: 'B2', content: 'result2' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<SearchPanel />)
+
+      const input = screen.getByPlaceholderText('Search blocks...')
+      typeAndSubmit(input, 'test')
+
+      await waitFor(() => {
+        expect(screen.getByRole('listbox')).toBeInTheDocument()
+      })
+
+      const listbox = screen.getByRole('listbox')
+      listbox.focus()
+
+      const options = screen.getAllByRole('option')
+
+      // Initial state: focusedIndex=0, first item selected
+      expect(options[0]).toHaveAttribute('aria-selected', 'true')
+      expect(options[1]).toHaveAttribute('aria-selected', 'false')
+
+      // Press ArrowDown — second item should be focused (0→1)
+      await user.keyboard('{ArrowDown}')
+
+      expect(options[0]).toHaveAttribute('aria-selected', 'false')
+      expect(options[1]).toHaveAttribute('aria-selected', 'true')
+
+      // Press ArrowUp — first item should be focused again (1→0)
+      await user.keyboard('{ArrowUp}')
+
+      expect(options[0]).toHaveAttribute('aria-selected', 'true')
+      expect(options[1]).toHaveAttribute('aria-selected', 'false')
+    })
+
+    it('navigates to result on Enter key', async () => {
+      const user = userEvent.setup()
+
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makeSearchResult({
+            id: 'B1',
+            content: 'enter result',
+            parent_id: 'PARENT1',
+            block_type: 'content',
+          }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<SearchPanel />)
+
+      const input = screen.getByPlaceholderText('Search blocks...')
+      typeAndSubmit(input, 'enter')
+
+      await waitFor(() => {
+        expect(screen.getByRole('listbox')).toBeInTheDocument()
+      })
+
+      // Mock get_block for parent lookup
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'PARENT1',
+        block_type: 'page',
+        content: 'Parent Page',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+        is_conflict: false,
+      })
+
+      const listbox = screen.getByRole('listbox')
+      listbox.focus()
+
+      // ArrowDown to select first item, then Enter to navigate
+      await user.keyboard('{ArrowDown}')
+      await user.keyboard('{Enter}')
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('get_block', { blockId: 'PARENT1' })
+      })
+
+      await waitFor(() => {
+        const navState = useNavigationStore.getState()
+        expect(navState.currentView).toBe('page-editor')
+        expect(navState.pageStack[0]?.pageId).toBe('PARENT1')
+      })
+    })
+
+    it('highlights focused result visually', async () => {
+      const user = userEvent.setup()
+
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makeSearchResult({ id: 'B1', content: 'highlight result' }),
+          makeSearchResult({ id: 'B2', content: 'other result' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<SearchPanel />)
+
+      const input = screen.getByPlaceholderText('Search blocks...')
+      typeAndSubmit(input, 'highlight')
+
+      await waitFor(() => {
+        expect(screen.getByRole('listbox')).toBeInTheDocument()
+      })
+
+      const options = screen.getAllByRole('option')
+
+      // Initial state: focusedIndex=0, first item has bg-accent
+      expect(options[0]).toHaveClass('bg-accent')
+      expect(options[1]).not.toHaveClass('bg-accent')
+
+      const listbox = screen.getByRole('listbox')
+      listbox.focus()
+
+      // Press ArrowDown — second item should get bg-accent (0→1)
+      await user.keyboard('{ArrowDown}')
+
+      expect(options[0]).not.toHaveClass('bg-accent')
+      expect(options[1]).toHaveClass('bg-accent')
+    })
   })
 })
