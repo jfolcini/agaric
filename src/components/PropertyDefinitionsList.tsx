@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -23,7 +24,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Skeleton } from '@/components/ui/skeleton'
 import { formatPropertyName } from '@/lib/property-utils'
 import type { PropertyDefinition } from '../lib/tauri'
 import {
@@ -189,13 +189,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
       <ListViewState
         loading={loading}
         items={definitions}
-        skeleton={
-          <div className="space-y-2" data-testid="properties-loading">
-            <Skeleton className="h-10 w-full rounded-lg" />
-            <Skeleton className="h-10 w-full rounded-lg" />
-            <Skeleton className="h-10 w-full rounded-lg" />
-          </div>
-        }
+        skeleton={<LoadingSkeleton count={3} height="h-10" data-testid="properties-loading" />}
         empty={<EmptyState icon={Settings2} message={t('propertiesView.empty')} />}
       >
         {() =>

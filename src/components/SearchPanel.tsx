@@ -13,10 +13,10 @@ import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { CardButton } from '@/components/ui/card-button'
 import { Input } from '@/components/ui/input'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
@@ -220,10 +220,7 @@ export function SearchPanel(): React.ReactElement {
       )}
 
       {searchLoading && results.length === 0 && (
-        <div className="search-loading space-y-2">
-          <Skeleton className="h-12 w-full rounded-lg" />
-          <Skeleton className="h-12 w-full rounded-lg" />
-        </div>
+        <LoadingSkeleton count={2} height="h-12" className="search-loading" />
       )}
 
       <div aria-live="polite">

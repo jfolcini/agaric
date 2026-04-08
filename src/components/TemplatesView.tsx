@@ -10,10 +10,10 @@ import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { deleteProperty, queryByProperty } from '../lib/tauri'
 import { loadTemplatePagesWithPreview } from '../lib/template-utils'
@@ -88,13 +88,7 @@ export function TemplatesView(): React.ReactElement {
       <ListViewState
         loading={loading}
         items={templates}
-        skeleton={
-          <div className="space-y-2" data-testid="templates-loading">
-            <Skeleton className="h-14 w-full rounded-lg" />
-            <Skeleton className="h-14 w-full rounded-lg" />
-            <Skeleton className="h-14 w-full rounded-lg" />
-          </div>
-        }
+        skeleton={<LoadingSkeleton count={3} height="h-14" data-testid="templates-loading" />}
         empty={<EmptyState icon={LayoutTemplate} message={t('templates.empty')} />}
       >
         {() => (

@@ -10,16 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
 import {
   buildInitParams,
   handleDeleteProperty,
@@ -225,25 +216,17 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
       )}
 
       {/* Delete confirmation dialog */}
-      <AlertDialog
+      <ConfirmDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => {
           if (!open) setDeleteTarget(null)
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('property.deleteConfirm')}</AlertDialogTitle>
-            <AlertDialogDescription>{t('property.deleteConfirmDesc')}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('action.cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmDelete}>
-              {t('action.delete')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title={t('property.deleteConfirm')}
+        description={t('property.deleteConfirmDesc')}
+        cancelLabel={t('action.cancel')}
+        actionLabel={t('action.delete')}
+        onAction={handleConfirmDelete}
+      />
     </div>
   )
 }

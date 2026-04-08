@@ -12,6 +12,7 @@ const PopoverMenuItem = React.forwardRef<HTMLButtonElement, PopoverMenuItemProps
       <button
         ref={ref}
         type="button"
+        data-slot="popover-menu-item"
         className={cn(
           'w-full rounded px-2 py-1.5 text-left text-xs hover:bg-accent cursor-pointer transition-colors [@media(pointer:coarse)]:min-h-11 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
           active && 'bg-accent font-medium',

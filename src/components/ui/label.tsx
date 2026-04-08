@@ -31,8 +31,15 @@ type LabelProps = React.ComponentProps<'label'> & VariantProps<typeof labelVaria
 
 const Label = React.forwardRef<HTMLLabelElement, LabelProps>(
   ({ className, size, muted, ...props }, ref) => {
-    // biome-ignore lint/a11y/noLabelWithoutControl: htmlFor is forwarded via spread props
-    return <label ref={ref} className={cn(labelVariants({ size, muted, className }))} {...props} />
+    return (
+      // biome-ignore lint/a11y/noLabelWithoutControl: htmlFor is forwarded via spread props
+      <label
+        ref={ref}
+        data-slot="label"
+        className={cn(labelVariants({ size, muted, className }))}
+        {...props}
+      />
+    )
   },
 )
 Label.displayName = 'Label'

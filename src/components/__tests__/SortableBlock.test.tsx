@@ -1525,7 +1525,7 @@ describe('SortableBlock visibility controls', () => {
     expect(collapseBtn.className).not.toContain('opacity-0')
   })
 
-  it('drag handle has [@media(pointer:coarse)]:hidden for touch devices', () => {
+  it('drag handle has no per-button coarse-pointer classes for touch devices', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1536,10 +1536,11 @@ describe('SortableBlock visibility controls', () => {
     )
 
     const handle = screen.getByRole('button', { name: /reorder block/i })
-    expect(handle.className).toContain('[@media(pointer:coarse)]:hidden')
+    expect(handle.className).not.toContain('[@media(pointer:coarse)]:hidden')
+    expect(handle.className).not.toContain('[@media(pointer:coarse)]:flex')
   })
 
-  it('history button has [@media(pointer:coarse)]:hidden for touch devices', () => {
+  it('history button has no per-button coarse-pointer classes for touch devices', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1551,10 +1552,11 @@ describe('SortableBlock visibility controls', () => {
     )
 
     const historyBtn = screen.getByRole('button', { name: /block history/i })
-    expect(historyBtn.className).toContain('[@media(pointer:coarse)]:hidden')
+    expect(historyBtn.className).not.toContain('[@media(pointer:coarse)]:hidden')
+    expect(historyBtn.className).not.toContain('[@media(pointer:coarse)]:flex')
   })
 
-  it('delete handle has [@media(pointer:coarse)]:hidden for touch devices', () => {
+  it('delete handle has no per-button coarse-pointer classes for touch devices', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1566,7 +1568,8 @@ describe('SortableBlock visibility controls', () => {
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    expect(deleteBtn.className).toContain('[@media(pointer:coarse)]:hidden')
+    expect(deleteBtn.className).not.toContain('[@media(pointer:coarse)]:hidden')
+    expect(deleteBtn.className).not.toContain('[@media(pointer:coarse)]:flex')
   })
 
   it('priority badge is not rendered when no priority is set', () => {
@@ -3793,7 +3796,7 @@ describe('SortableBlock mobile gutter hidden (UX-21)', () => {
     mockUseSortable.mockReturnValue(makeSortable())
   })
 
-  it('drag handle has [@media(pointer:coarse)]:hidden class', () => {
+  it('drag handle has no per-button coarse-pointer classes (gutter container handles hiding)', () => {
     render(
       <SortableBlock
         blockId="BLOCK_MOBILE"
@@ -3804,13 +3807,13 @@ describe('SortableBlock mobile gutter hidden (UX-21)', () => {
     )
 
     const dragHandle = screen.getByTestId('drag-handle')
-    expect(dragHandle.className).toContain('[@media(pointer:coarse)]:hidden')
+    expect(dragHandle.className).not.toContain('[@media(pointer:coarse)]:hidden')
+    expect(dragHandle.className).not.toContain('[@media(pointer:coarse)]:flex')
     expect(dragHandle.className).not.toContain('[@media(pointer:coarse)]:opacity-100')
     expect(dragHandle.className).not.toContain('[@media(pointer:coarse)]:pointer-events-auto')
-    expect(dragHandle.className).not.toContain('[@media(pointer:coarse)]:min-w-[44px]')
   })
 
-  it('history button has [@media(pointer:coarse)]:hidden class', () => {
+  it('history button has no per-button coarse-pointer classes (gutter container handles hiding)', () => {
     render(
       <SortableBlock
         blockId="BLOCK_MOBILE"
@@ -3822,13 +3825,13 @@ describe('SortableBlock mobile gutter hidden (UX-21)', () => {
     )
 
     const historyBtn = screen.getByRole('button', { name: /block history/i })
-    expect(historyBtn.className).toContain('[@media(pointer:coarse)]:hidden')
+    expect(historyBtn.className).not.toContain('[@media(pointer:coarse)]:hidden')
+    expect(historyBtn.className).not.toContain('[@media(pointer:coarse)]:flex')
     expect(historyBtn.className).not.toContain('[@media(pointer:coarse)]:opacity-100')
     expect(historyBtn.className).not.toContain('[@media(pointer:coarse)]:pointer-events-auto')
-    expect(historyBtn.className).not.toContain('[@media(pointer:coarse)]:min-w-[44px]')
   })
 
-  it('delete button has [@media(pointer:coarse)]:hidden class', () => {
+  it('delete button has no per-button coarse-pointer classes (gutter container handles hiding)', () => {
     render(
       <SortableBlock
         blockId="BLOCK_MOBILE"
@@ -3840,10 +3843,10 @@ describe('SortableBlock mobile gutter hidden (UX-21)', () => {
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    expect(deleteBtn.className).toContain('[@media(pointer:coarse)]:hidden')
+    expect(deleteBtn.className).not.toContain('[@media(pointer:coarse)]:hidden')
+    expect(deleteBtn.className).not.toContain('[@media(pointer:coarse)]:flex')
     expect(deleteBtn.className).not.toContain('[@media(pointer:coarse)]:opacity-100')
     expect(deleteBtn.className).not.toContain('[@media(pointer:coarse)]:pointer-events-auto')
-    expect(deleteBtn.className).not.toContain('[@media(pointer:coarse)]:min-w-[44px]')
   })
 
   it('gutter container has touch-collapse classes', () => {

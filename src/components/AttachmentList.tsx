@@ -11,7 +11,7 @@ import type React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { Skeleton } from '@/components/ui/skeleton'
+import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { cn } from '@/lib/utils'
 import { useBlockAttachments } from '../hooks/useBlockAttachments'
 import type { AttachmentRow } from '../lib/tauri'
@@ -89,10 +89,12 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
       loading={loading}
       items={attachments}
       skeleton={
-        <div className="space-y-2" role="status" aria-label={t('attachments.loading')}>
-          <Skeleton className="h-8 w-full rounded-md" />
-          <Skeleton className="h-8 w-full rounded-md" />
-        </div>
+        <LoadingSkeleton
+          count={2}
+          height="h-8"
+          role="status"
+          aria-label={t('attachments.loading')}
+        />
       }
       empty={<EmptyState compact icon={Paperclip} message={t('attachments.empty')} />}
     >

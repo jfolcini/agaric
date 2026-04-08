@@ -5,6 +5,7 @@ const Toaster = React.forwardRef<HTMLElement, ToasterProps>(({ ...props }, ref) 
   return (
     <Sonner
       ref={ref}
+      data-slot="toaster"
       className="toaster group"
       style={
         {

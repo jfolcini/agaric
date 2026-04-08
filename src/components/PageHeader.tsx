@@ -10,16 +10,7 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { logger } from '@/lib/logger'
 import { useBlockTags } from '../hooks/useBlockTags'
@@ -450,20 +441,15 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       <PagePropertyTable pageId={pageId} forceExpanded={forcePropertyExpanded} />
 
       {/* Delete page confirmation dialog */}
-      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('pageHeader.deletePageTitle')}</AlertDialogTitle>
-            <AlertDialogDescription>{t('pageHeader.deletePageDescription')}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('pageHeader.cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeletePage}>
-              {t('pageHeader.deletePage')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        title={t('pageHeader.deletePageTitle')}
+        description={t('pageHeader.deletePageDescription')}
+        cancelLabel={t('pageHeader.cancel')}
+        actionLabel={t('pageHeader.deletePage')}
+        onAction={handleDeletePage}
+      />
     </div>
   )
 }

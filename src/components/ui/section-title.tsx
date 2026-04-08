@@ -14,6 +14,7 @@ const SectionTitle = React.forwardRef<HTMLHeadingElement, SectionTitleProps>(
     return (
       <h4
         ref={ref}
+        data-slot="section-title"
         className={cn('text-xs font-semibold mb-1.5 flex items-center gap-1', color, className)}
       >
         <span>{label}</span>

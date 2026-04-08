@@ -11,10 +11,10 @@ import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
@@ -290,11 +290,7 @@ export function TagFilterPanel(): React.ReactElement {
 
       {/* Loading indicator */}
       {loading && results.length === 0 && (
-        <div className="tag-filter-loading space-y-3">
-          <Skeleton className="h-12 w-full rounded-lg" />
-          <Skeleton className="h-12 w-full rounded-lg" />
-          <Skeleton className="h-12 w-full rounded-lg" />
-        </div>
+        <LoadingSkeleton count={3} height="h-12" className="tag-filter-loading" />
       )}
 
       {/* Empty results */}

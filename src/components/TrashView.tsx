@@ -11,9 +11,9 @@ import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { formatTimestamp } from '../lib/format'
@@ -76,12 +76,7 @@ export function TrashView(): React.ReactElement {
       <ListViewState
         loading={loading}
         items={blocks}
-        skeleton={
-          <div className="trash-view-loading space-y-2">
-            <Skeleton className="h-14 w-full rounded-lg" />
-            <Skeleton className="h-14 w-full rounded-lg" />
-          </div>
-        }
+        skeleton={<LoadingSkeleton count={2} height="h-14" className="trash-view-loading" />}
         empty={<EmptyState icon={Trash2} message={t('trash.emptyMessage')} />}
       >
         {(items) => (

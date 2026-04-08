@@ -12,8 +12,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
@@ -267,7 +267,7 @@ export function HistoryView(): React.ReactElement {
 
   return (
     <div className="history-view space-y-4">
-      <div className="sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-4 border-b border-border/40 space-y-4">
+      <div className="sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-4 border-b border-border/40 space-y-2">
         {/* Filter bar */}
         <HistoryFilterBar opTypeFilter={opTypeFilter} onFilterChange={setOpTypeFilter} />
 
@@ -284,11 +284,7 @@ export function HistoryView(): React.ReactElement {
 
       {/* Loading skeletons */}
       {loading && entries.length === 0 && (
-        <div className="history-view-loading space-y-2">
-          <Skeleton className="h-16 w-full rounded-lg" />
-          <Skeleton className="h-16 w-full rounded-lg" />
-          <Skeleton className="h-16 w-full rounded-lg" />
-        </div>
+        <LoadingSkeleton count={3} height="h-16" className="history-view-loading" />
       )}
 
       {/* Error banner */}

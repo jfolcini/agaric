@@ -13,6 +13,7 @@ const PriorityBadge = React.forwardRef<HTMLSpanElement, PriorityBadgeProps>(
     return (
       <span
         ref={ref}
+        data-slot="priority-badge"
         className={cn(
           'inline-flex h-4 min-w-4 items-center justify-center rounded px-1 text-xs font-bold leading-none',
           priorityColor(priority),

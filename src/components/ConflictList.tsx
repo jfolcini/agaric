@@ -29,16 +29,7 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
@@ -337,6 +328,45 @@ export function ConflictList(): React.ReactElement {
     [setBlocks, t],
   )
 
+  const handleBatchConfirm = useCallback(async () => {
+    const selectedBlocks = blocks.filter((b) => selectedIds.has(b.id))
+    let failCount = 0
+    const savedBatchAction = batchAction
+    for (const block of selectedBlocks) {
+      try {
+        if (savedBatchAction === 'keep') {
+          if (block.parent_id && block.content != null) {
+            await editBlock(block.parent_id, block.content)
+          }
+          await deleteBlock(block.id)
+          setBlocks((prev) => prev.filter((b) => b.id !== block.id))
+        } else {
+          await deleteBlock(block.id)
+          setBlocks((prev) => prev.filter((b) => b.id !== block.id))
+        }
+      } catch {
+        failCount++
+      }
+    }
+    setSelectedIds(new Set())
+    setBatchAction(null)
+    if (failCount > 0) {
+      toast.error(`${failCount} of ${selectedBlocks.length} operations failed`, {
+        duration: 5000,
+        action: {
+          label: 'Retry',
+          onClick: () => setBatchAction(savedBatchAction),
+        },
+      })
+    } else {
+      toast.success(
+        savedBatchAction === 'keep'
+          ? `Kept ${selectedBlocks.length} conflict(s)`
+          : `Discarded ${selectedBlocks.length} conflict(s)`,
+      )
+    }
+  }, [blocks, selectedIds, batchAction, setBlocks])
+
   return (
     <div className="conflict-list space-y-4">
       {loading && blocks.length === 0 && (
@@ -409,169 +439,98 @@ export function ConflictList(): React.ReactElement {
       />
 
       {/* Keep confirmation dialog */}
-      <AlertDialog
+      <ConfirmDialog
         open={!!confirmKeepBlock}
         onOpenChange={(open) => {
           if (!open) setConfirmKeepBlock(null)
         }}
-      >
-        <AlertDialogContent className="conflict-keep-confirm">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Keep incoming version?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will replace the current content with the incoming version.
-              {confirmKeepBlock && (
-                <span className="mt-2 block space-y-1 text-xs">
-                  <span className="block">
-                    <span className="font-medium">Current:</span>{' '}
-                    <span className="text-muted-foreground">
-                      {truncatePreview(
-                        confirmKeepBlock.parent_id
-                          ? (originals.get(confirmKeepBlock.parent_id)?.content ??
-                              t('conflict.originalNotAvailable'))
-                          : '(no original)',
-                      )}
-                    </span>
-                  </span>
-                  <span className="block">
-                    <span className="font-medium">Incoming:</span>{' '}
-                    <span className="text-muted-foreground">
-                      {truncatePreview(confirmKeepBlock.content ?? t('conflict.emptyContent'))}
-                    </span>
+        title="Keep incoming version?"
+        description={
+          <>
+            This will replace the current content with the incoming version.
+            {confirmKeepBlock && (
+              <span className="mt-2 block space-y-1 text-xs">
+                <span className="block">
+                  <span className="font-medium">Current:</span>{' '}
+                  <span className="text-muted-foreground">
+                    {truncatePreview(
+                      confirmKeepBlock.parent_id
+                        ? (originals.get(confirmKeepBlock.parent_id)?.content ??
+                            t('conflict.originalNotAvailable'))
+                        : '(no original)',
+                    )}
                   </span>
                 </span>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="conflict-keep-no">Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="conflict-keep-yes"
-              onClick={() => {
-                if (confirmKeepBlock) handleKeep(confirmKeepBlock)
-              }}
-            >
-              Yes, keep
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+                <span className="block">
+                  <span className="font-medium">Incoming:</span>{' '}
+                  <span className="text-muted-foreground">
+                    {truncatePreview(confirmKeepBlock.content ?? t('conflict.emptyContent'))}
+                  </span>
+                </span>
+              </span>
+            )}
+          </>
+        }
+        cancelLabel="Cancel"
+        actionLabel="Yes, keep"
+        onAction={() => {
+          if (confirmKeepBlock) handleKeep(confirmKeepBlock)
+        }}
+        className="conflict-keep-confirm"
+      />
 
       {/* Discard confirmation dialog */}
-      <AlertDialog
+      <ConfirmDialog
         open={!!confirmDiscardId}
         onOpenChange={(open) => {
           if (!open) setConfirmDiscardId(null)
         }}
-      >
-        <AlertDialogContent
-          className="conflict-discard-confirm"
-          data-testid="conflict-discard-confirm"
-        >
-          <AlertDialogHeader>
-            <AlertDialogTitle>Discard conflict?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently remove the conflicting version.
-              {confirmDiscardId &&
-                (() => {
-                  const discardBlock = blocks.find((b) => b.id === confirmDiscardId)
-                  return discardBlock ? (
-                    <span className="mt-2 block text-xs">
-                      <span className="font-medium">Content:</span>{' '}
-                      <span className="text-muted-foreground">
-                        {truncatePreview(discardBlock.content ?? t('conflict.emptyContent'))}
-                      </span>
+        title="Discard conflict?"
+        description={
+          <>
+            This will permanently remove the conflicting version.
+            {confirmDiscardId &&
+              (() => {
+                const discardBlock = blocks.find((b) => b.id === confirmDiscardId)
+                return discardBlock ? (
+                  <span className="mt-2 block text-xs">
+                    <span className="font-medium">Content:</span>{' '}
+                    <span className="text-muted-foreground">
+                      {truncatePreview(discardBlock.content ?? t('conflict.emptyContent'))}
                     </span>
-                  ) : null
-                })()}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="conflict-discard-no" data-testid="conflict-discard-no">
-              No
-            </AlertDialogCancel>
-            <AlertDialogAction
-              className="conflict-discard-yes"
-              data-testid="conflict-discard-yes"
-              onClick={() => {
-                if (confirmDiscardId) {
-                  const discardBlock = blocks.find((b) => b.id === confirmDiscardId)
-                  if (discardBlock) handleDiscard(discardBlock)
-                }
-              }}
-            >
-              Yes, discard
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+                  </span>
+                ) : null
+              })()}
+          </>
+        }
+        cancelLabel="No"
+        actionLabel="Yes, discard"
+        onAction={() => {
+          if (confirmDiscardId) {
+            const discardBlock = blocks.find((b) => b.id === confirmDiscardId)
+            if (discardBlock) handleDiscard(discardBlock)
+          }
+        }}
+        className="conflict-discard-confirm"
+      />
 
       {/* Batch action confirmation dialog */}
-      <AlertDialog
+      <ConfirmDialog
         open={!!batchAction}
         onOpenChange={(open) => {
           if (!open) setBatchAction(null)
         }}
-      >
-        <AlertDialogContent className="conflict-batch-confirm">
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {batchAction === 'keep' ? 'Keep all selected?' : 'Discard all selected?'}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {batchAction === 'keep'
-                ? `This will replace ${selectedIds.size} block(s) with their incoming versions.`
-                : `This will permanently remove ${selectedIds.size} conflicting version(s).`}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="conflict-batch-yes"
-              onClick={async () => {
-                const selectedBlocks = blocks.filter((b) => selectedIds.has(b.id))
-                let failCount = 0
-                const savedBatchAction = batchAction
-                for (const block of selectedBlocks) {
-                  try {
-                    if (savedBatchAction === 'keep') {
-                      if (block.parent_id && block.content != null) {
-                        await editBlock(block.parent_id, block.content)
-                      }
-                      await deleteBlock(block.id)
-                      setBlocks((prev) => prev.filter((b) => b.id !== block.id))
-                    } else {
-                      await deleteBlock(block.id)
-                      setBlocks((prev) => prev.filter((b) => b.id !== block.id))
-                    }
-                  } catch {
-                    failCount++
-                  }
-                }
-                setSelectedIds(new Set())
-                setBatchAction(null)
-                if (failCount > 0) {
-                  toast.error(`${failCount} of ${selectedBlocks.length} operations failed`, {
-                    duration: 5000,
-                    action: {
-                      label: 'Retry',
-                      onClick: () => setBatchAction(savedBatchAction),
-                    },
-                  })
-                } else {
-                  toast.success(
-                    savedBatchAction === 'keep'
-                      ? `Kept ${selectedBlocks.length} conflict(s)`
-                      : `Discarded ${selectedBlocks.length} conflict(s)`,
-                  )
-                }
-              }}
-            >
-              {batchAction === 'keep' ? 'Yes, keep all' : 'Yes, discard all'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title={batchAction === 'keep' ? 'Keep all selected?' : 'Discard all selected?'}
+        description={
+          batchAction === 'keep'
+            ? `This will replace ${selectedIds.size} block(s) with their incoming versions.`
+            : `This will permanently remove ${selectedIds.size} conflicting version(s).`
+        }
+        cancelLabel="Cancel"
+        actionLabel={batchAction === 'keep' ? 'Yes, keep all' : 'Yes, discard all'}
+        onAction={handleBatchConfirm}
+        className="conflict-batch-confirm"
+      />
     </div>
   )
 }

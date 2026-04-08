@@ -11,9 +11,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
 import { formatTimestamp } from '../lib/format'
@@ -106,12 +106,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
       <ListViewState
         loading={loading}
         items={entries}
-        skeleton={
-          <div className="history-panel-loading space-y-2">
-            <Skeleton className="h-14 w-full rounded-lg" />
-            <Skeleton className="h-14 w-full rounded-lg" />
-          </div>
-        }
+        skeleton={<LoadingSkeleton count={2} height="h-14" className="history-panel-loading" />}
         empty={<EmptyState icon={Clock} message="No history for this block" />}
       >
         {(items) => (

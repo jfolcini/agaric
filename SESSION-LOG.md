@@ -1,5 +1,34 @@
 # Session Log
 
+## Session 264 — 2026-04-08 — 6 UX consistency fixes (91→85 open)
+
+### Summary
+Resolved 6 REVIEW-LATER UX items: UX-25 (data-slot attributes on 5 UI primitives), UX-27 (ScrollArea outline conflict), UX-28 (SortableBlock gutter redundant classes), UX-31 (HistoryView sticky header spacing), UX-33 (5 AlertDialogs→ConfirmDialog), UX-34 (8 files raw Skeleton→LoadingSkeleton). All S-cost frontend-only changes. 2 build subagents (UX-33: 4 files, UX-34+UX-31: 8 files) + 2 review subagents. Orchestrator did UX-25/UX-27/UX-28 directly. ConfirmDialog `description` widened from `string` to `React.ReactNode` to support ConflictList's rich JSX descriptions. ConflictList batch handler extracted from inline onClick to named `handleBatchConfirm` useCallback. SortableBlock test updates: 6 assertions flipped from `toContain` to `not.toContain` for removed coarse-pointer classes. Minor standardizations: AttachmentList rounded-md→rounded-lg, TagFilterPanel space-y-3→space-y-2. 20 files changed. All 5066 frontend tests pass.
+
+| Area | Change |
+|------|--------|
+| label.tsx | UX-25: Added `data-slot="label"` |
+| section-title.tsx | UX-25: Added `data-slot="section-title"` |
+| popover-menu-item.tsx | UX-25: Added `data-slot="popover-menu-item"` |
+| priority-badge.tsx | UX-25: Added `data-slot="priority-badge"` |
+| sonner.tsx | UX-25: Added `data-slot="toaster"` |
+| scroll-area.tsx | UX-27: `outline-none` → `outline-hidden` (fixes conflicting focus-visible:outline-1) |
+| SortableBlock.tsx | UX-28: Removed redundant `[@media(pointer:coarse)]:hidden`/`flex`/`items-center`/`justify-center` from 3 gutter buttons (parent w-0/overflow-hidden handles hiding) |
+| SortableBlock.test.tsx | UX-28: Updated 6 assertions to verify classes are absent |
+| ConfirmDialog.tsx | UX-33: `description: string` → `description: React.ReactNode` |
+| PageHeader.tsx | UX-33: Inline AlertDialog → ConfirmDialog (delete page dialog) |
+| PagePropertyTable.tsx | UX-33: Inline AlertDialog → ConfirmDialog (delete property dialog) |
+| ConflictList.tsx | UX-33: 3 inline AlertDialogs → ConfirmDialog (keep/discard/batch); extracted handleBatchConfirm useCallback |
+| HistoryView.tsx | UX-31+UX-34: Sticky header `space-y-4`→`space-y-2`; Skeleton→LoadingSkeleton |
+| HistoryPanel.tsx | UX-34: Skeleton→LoadingSkeleton (count=2, h-14) |
+| SearchPanel.tsx | UX-34: Skeleton→LoadingSkeleton (count=2, h-12) |
+| AttachmentList.tsx | UX-34: Skeleton→LoadingSkeleton (count=2, h-8, role/aria-label preserved) |
+| TagFilterPanel.tsx | UX-34: Skeleton→LoadingSkeleton (count=3, h-12) |
+| PropertyDefinitionsList.tsx | UX-34: Skeleton→LoadingSkeleton (count=3, h-10, data-testid preserved) |
+| TemplatesView.tsx | UX-34: Skeleton→LoadingSkeleton (count=3, h-14, data-testid preserved) |
+| TrashView.tsx | UX-34: Skeleton→LoadingSkeleton (count=2, h-14) |
+| REVIEW-LATER.md | 6 items removed (UX-25/UX-27/UX-28/UX-31/UX-33/UX-34), summary updated (91→85) |
+
 ## Session 263 — 2026-04-08 — 5 frontend test quality fixes (96→91 open)
 
 ### Summary
