@@ -6,7 +6,7 @@ What you can do with Agaric. For technical architecture and implementation detai
 
 ## 1. Views
 
-10 sidebar views plus a page editor.
+10 sidebar views plus a page editor. Sidebar footer has: New Page button, Sync button with "last synced" relative time display (UX-76), theme toggle cycling auto/dark/light (UX-43), keyboard shortcuts button. Conflict and Trash views show numeric count badges via `SidebarMenuBadge` (UX-60).
 
 ### Journal
 
@@ -447,6 +447,8 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **useBlockSwipeActions** (`src/hooks/useBlockSwipeActions.ts`): Swipe-left-to-delete gesture for mobile (touch-only, coarse-pointer devices). 80px reveal threshold, 200px auto-delete. Returns `{ translateX, isRevealed, handlers, reset }`. Used by SortableBlock.
 - **useDraftAutosave** (`src/hooks/useDraftAutosave.ts`): Autosaves block draft content with 2s debounce. Calls `saveDraft()`/`deleteDraft()` via Tauri. Returns `{ discardDraft }`. Used by EditableBlock.
 - **useScrollRestore** (`src/hooks/useScrollRestore.ts`): Saves and restores scroll position per view key on a scrollable container with requestAnimationFrame timing. Used by App.
+- **useTheme** (`src/hooks/useTheme.ts`): Theme preference hook with auto/dark/light cycle. Reads from localStorage (`theme-preference`), respects `prefers-color-scheme` for auto mode via `useSyncExternalStore`, applies `.dark` class on `document.documentElement`. Returns `{ theme, isDark, toggleTheme }`. Used by App (UX-43).
+- **useItemCount** (`src/hooks/useItemCount.ts`): Reusable polling count hook. Wraps `usePollingQuery` to poll a paginated command and return item count. Used by App for conflict/trash badge counts (UX-60).
 
 ### Per-Page Block Store (R-18)
 - **PageBlockStore** (`src/stores/page-blocks.ts`): Per-page Zustand store instances via React context. Factory `createPageBlockStore(pageId)`, context provider `PageBlockStoreProvider`, hooks `usePageBlockStore(selector)` / `usePageBlockStoreApi()`, module-level `pageBlockRegistry` for global access. Each BlockTree gets its own store. Replaces the block/loading/mutation portion of the old global useBlockStore.
@@ -461,6 +463,8 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **query-utils** (`src/lib/query-utils.ts`): Query expression parsing and filter building utilities. `parseQueryExpression()`, `buildFilters()`, column detection. Extracted from QueryResult (R-14). Used by QueryResult.
 - **property-save-utils** (`src/lib/property-save-utils.ts`): Shared property management helpers. `NON_DELETABLE_PROPERTIES` (11 system-managed keys), `buildInitParams(blockId, def)` returns type-appropriate init params (number→0, date→today, text/select→'', ref→null), `handleSaveProperty()`, `handleDeleteProperty()`. Used by PagePropertyTable, BlockPropertyDrawer.
 - **logger** (`src/lib/logger.ts`): Structured frontend logging with dual-write (console + Tauri IPC bridge), stack capture at call site, cause chain extraction (3-level deep), and rate limiting (5 per 60s per module:message). Methods: `debug`, `info`, `warn`, `error`. Global error/unhandledrejection handlers in `main.tsx`. Used by 24+ production files.
+- **format-relative-time** (`src/lib/format-relative-time.ts`): `formatRelativeTime(isoString, t)` returns human-readable relative time ("just now", "Xm ago", "Xh ago", "Xd ago"). Uses i18n `t()` for all strings. Used by App sidebar sync status (UX-76).
 
 ### CSS Utilities
 - **`.touch-target`** (`src/index.css`): Tailwind `@utility` for `@media(pointer:coarse)` min-height 44px touch targets. Used across 19+ components.
+- **`.block-children-enter`** (`src/index.css`): CSS keyframe animation (150ms ease-out opacity+translateY) applied to block children on expand. Respects `prefers-reduced-motion`. Used by BlockListRenderer (UX-79).

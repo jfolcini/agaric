@@ -1,5 +1,38 @@
 # Session Log
 
+## Session 269 — 2026-04-08 — 6 UX polish items (61→55 open)
+
+### Summary
+Batch 4: resolved 6 REVIEW-LATER UX polish items: UX-41 (20 hardcoded user-visible strings replaced with i18n t() calls across BlockPropertyDrawer, ConflictList, TrashView, HistoryView, PageBrowser, PairingDialog, PdfViewerDialog, SuggestionList), UX-42 (6 hardcoded sr-only/accessibility strings replaced with i18n t() calls in sidebar, close-button, StaticBlock, BacklinkFilterBuilder), UX-43 (theme toggle — new useTheme hook with auto/dark/light cycle, localStorage persistence, prefers-color-scheme listener, sidebar footer toggle button with Moon/Sun icons), UX-60 (sidebar badge counts — conflict red dot replaced with numeric SidebarMenuBadge, trash count badge added, new reusable useItemCount hook), UX-76 (sync status display — new formatRelativeTime utility, "Last synced: Xm ago" text in sidebar footer), UX-79 (block collapse/expand animation — CSS keyframe opacity+translateY on expand, ref-based diff tracking in BlockListRenderer, prefers-reduced-motion respected). Review fix: SidebarRail changed from i18n.t() to useTranslation() hook. Biome fixes: unused import cleanup, line length formatting, non-null assertions replaced with type casts, exhaustive dependency arrays. 60+ new i18n keys added. 23 files changed, +859/-59 lines. All 5161 frontend tests pass (222 test files), all prek hooks pass.
+
+**Commit:** b173d96
+
+| Area | Change |
+|------|--------|
+| i18n.ts | 60+ new i18n keys for all 6 items (property, conflict, trash, history, pageBrowser, pairing, pdfViewer, suggestion, link, backlink, sidebar, ui, theme) |
+| BlockPropertyDrawer.tsx | UX-41: 4 announce() calls → t() |
+| ConflictList.tsx | UX-41: 4 strings → t() (loadFailed, dialog titles) |
+| TrashView.tsx | UX-41: 1 onError string → t() |
+| HistoryView.tsx | UX-41: 2 strings → t() (loadFailed, loadedMoreEntries) |
+| PageBrowser.tsx | UX-41: 1 string → t() (loadedMorePages) |
+| PairingDialog.tsx | UX-41: 1 string → t() (inProgress) |
+| PdfViewerDialog.tsx | UX-41: 4 strings → t() with interpolation (description, loading, error, pageIndicator) |
+| SuggestionList.tsx | UX-41: 2 strings → t() (noResults, create) |
+| StaticBlock.tsx | UX-42: 1 string → i18n.t() (opensInNewTab — non-React context) |
+| BacklinkFilterBuilder.tsx | UX-42: 2 strings → t() (filtersLegend, filtersApplied with pluralization) |
+| sidebar.tsx | UX-42: 2 sr-only strings → t() (label, toggleSidebar); SidebarRail fixed to use useTranslation() |
+| close-button.tsx | UX-42: 1 sr-only string → t() (ui.close) |
+| useTheme.ts | UX-43: New hook — auto/dark/light cycle, localStorage, prefers-color-scheme, .dark class |
+| useTheme.test.ts | UX-43: 11 tests — cycling, persistence, dark class, system mode |
+| useItemCount.ts | UX-60: New reusable polling count hook |
+| App.tsx | UX-43+60+76: Theme toggle button, conflict/trash SidebarMenuBadge counts, sync status display |
+| App.test.tsx | UX-43+60+76: Tests for badge counts, theme toggle, sync status |
+| format-relative-time.ts | UX-76: New utility — time bracket formatting (just now, Xm ago, Xh ago, Xd ago) |
+| format-relative-time.test.ts | UX-76: 12 tests — all brackets and edge cases |
+| index.css | UX-79: CSS keyframe animation (.block-children-enter, 150ms ease-out) |
+| BlockListRenderer.tsx | UX-79: Expand animation tracking via ref-based collapsedIds diff |
+| BlockListRenderer.test.tsx | UX-79: 4 new tests — expand animation, initial render, collapse-only, nested |
+
 ## Session 268 — 2026-04-08 — 6 UX polish items (67→61 open)
 
 ### Summary
