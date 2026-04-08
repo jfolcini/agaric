@@ -24,7 +24,7 @@ See **[BUILD.md](BUILD.md)** for the full build guide (prerequisites, platform-s
 # Quick reference
 cargo tauri dev              # Dev mode with hot reload
 cargo tauri build            # Production build (per-platform)
-npm run test                 # Vitest (~2800 tests)
+npm run test                 # Vitest (~5000 tests)
 cd src-tauri && cargo nextest run   # Rust tests
 npx playwright test          # E2E tests
 cargo tauri android build --target x86_64 --debug   # Android debug APK
@@ -55,14 +55,14 @@ The architecture is mature and robust. **Do not introduce significant architectu
 
 - **File:** `notes.db` in `~/.local/share/com.agaric.app/` (Linux) or app data dir (Android)
 - **WAL mode**, foreign keys ON on every connection
-- **Pool:** 1 writer + 4 readers (5 total)
-- **Migrations:** `src-tauri/migrations/` (17 files) — auto-run on pool init
-- **Schema:** 14 tables + 1 FTS5 virtual table (trigram tokenizer), 19 indexes, 2 triggers
+- **Pool:** 2 writers + 4 readers (6 total)
+- **Migrations:** `src-tauri/migrations/` (21 files) — auto-run on pool init
+- **Schema:** 15 tables + 1 FTS5 virtual table (trigram tokenizer), 22 indexes, 2 triggers
 
 ## Frontend Architecture
 
-- **State:** 7 Zustand stores — `useBootStore`, `useBlockStore`, `useNavigationStore`, `useJournalStore`, `useResolveStore`, `useUndoStore`, `useSyncStore`
-- **Editor:** Single roving TipTap instance with 6 custom extensions (TagRef, BlockLink, ExternalLink, AtTagPicker, BlockLinkPicker, SlashCommand)
+- **State:** 8 Zustand stores — `useBootStore`, `useBlockStore`, `useNavigationStore`, `useJournalStore`, `usePageBlocksStore`, `useResolveStore`, `useUndoStore`, `useSyncStore`
+- **Editor:** Single roving TipTap instance with 10 custom extensions (TagRef, BlockLink, BlockRef, ExternalLink, AtTagPicker, BlockLinkPicker, BlockRefPicker, PropertyPicker, CheckboxInputRule, SlashCommand)
 - **Serializer:** Custom Markdown serializer (`src/editor/markdown-serializer.ts`) — zero external deps, handles `#[ULID]` and `[[ULID]]` tokens
 - **Sync hooks:** `useSyncTrigger` (exponential backoff periodic sync), `useSyncEvents` (Tauri event listener), `useOnlineStatus` (navigator.onLine)
 - **Code style:** 2-space indent, single quotes, no semicolons, 100-char line width (Biome)
@@ -131,7 +131,7 @@ The measure of good frontend work is not just "does it work" but "does it make t
 - **Error handling:** `AppError` enum (11 variants) serializes to `{ kind, message }` for Tauri 2 IPC. Specta-derived TS bindings.
 - **Undo/redo:** Two-tier model. In-editor: TipTap/ProseMirror history (cleared on blur). Page-level: `reverse.rs` computes inverse ops from op log. Non-reversible: `purge_block`, `delete_attachment`.
 - **Materializer:** Foreground queue (256 cap, core tables + `BatchApplyOps`) + background queue (1024 cap, caches/FTS). Auto-dedup, silent drop on backpressure.
-- **Commands:** 60 Tauri command handlers in `commands.rs` (55 core + 5 sync). Each has an `inner_*` function taking `&SqlitePool` for testability.
+- **Commands:** 70 Tauri command handlers in `commands.rs`. Each has an `inner_*` function taking `&SqlitePool` for testability.
 - **Sync daemon:** `sync_daemon.rs` — background task with mDNS discovery, TLS WebSocket server, initiator-side sync via `SyncOrchestrator`. Per-peer backoff via `SyncScheduler`.
 - **Sync cert:** `sync_cert.rs` — persistent TLS certificate (generate-once-then-load pattern). `PersistedCert` managed state.
 
@@ -174,7 +174,7 @@ During development, run only the relevant check:
 - **Min SDK:** 24, **Target SDK:** 36, **NDK:** 27
 - **Emulator AVD:** `spike_test` (x86_64, API 34) — start with `emulator -avd spike_test -gpu host &`
 - **DB path:** `/data/data/com.agaric.app/notes.db` (via `app.path().app_data_dir()`)
-- **Known issues:** 4 open items in REVIEW-LATER.md (all deferred by design).
+- **Known issues:** See REVIEW-LATER.md for open items (deferred by design).
 - **Headless testing:** See [BUILD.md](BUILD.md#installing-on-emulator) for ADB recipes and emulator setup.
 
 ## Subagent Workflow
