@@ -28,14 +28,6 @@ vi.mock('lucide-react', () => ({
       className={props.className}
     />
   ),
-  ChevronRight: (props: { size: number; className?: string }) => (
-    <svg
-      data-testid="chevron-right-icon"
-      width={props.size}
-      height={props.size}
-      className={props.className}
-    />
-  ),
   Paperclip: (props: { size: number; className?: string }) => (
     <svg
       data-testid="paperclip-icon"
@@ -51,6 +43,16 @@ vi.mock('lucide-react', () => ({
       height={props.size}
       className={props.className}
     />
+  ),
+}))
+
+vi.mock('@/components/ui/chevron-toggle', () => ({
+  ChevronToggle: ({
+    isExpanded,
+    className,
+    ...rest
+  }: { isExpanded: boolean; className?: string } & Record<string, unknown>) => (
+    <svg data-testid="chevron-toggle" data-expanded={isExpanded} className={className} {...rest} />
   ),
 }))
 
@@ -250,12 +252,12 @@ describe('BlockInlineControls', () => {
     const { container } = renderControls(makeProps())
     const spacer = container.querySelector('.w-5')
     expect(spacer).toBeInTheDocument()
-    expect(screen.queryByTestId('chevron-right-icon')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('chevron-toggle')).not.toBeInTheDocument()
   })
 
   it('renders collapse toggle when hasChildren is true', () => {
     renderControls(makeProps({ hasChildren: true }))
-    expect(screen.getByTestId('chevron-right-icon')).toBeInTheDocument()
+    expect(screen.getByTestId('chevron-toggle')).toBeInTheDocument()
     expect(screen.getByTestId('collapse-toggle')).toBeInTheDocument()
   })
 
@@ -277,16 +279,16 @@ describe('BlockInlineControls', () => {
     expect(screen.getByRole('button', { name: 'Collapse children' })).toBeInTheDocument()
   })
 
-  it('applies rotate-90 when expanded', () => {
+  it('passes isExpanded=true when expanded', () => {
     renderControls(makeProps({ hasChildren: true, isCollapsed: false }))
-    const chevron = screen.getByTestId('chevron-right-icon')
-    expect(chevron.getAttribute('class')).toContain('rotate-90')
+    const chevron = screen.getByTestId('chevron-toggle')
+    expect(chevron.getAttribute('data-expanded')).toBe('true')
   })
 
-  it('does not apply rotate-90 when collapsed', () => {
+  it('passes isExpanded=false when collapsed', () => {
     renderControls(makeProps({ hasChildren: true, isCollapsed: true }))
-    const chevron = screen.getByTestId('chevron-right-icon')
-    expect(chevron.getAttribute('class')).not.toContain('rotate-90')
+    const chevron = screen.getByTestId('chevron-toggle')
+    expect(chevron.getAttribute('data-expanded')).toBe('false')
   })
 
   it('renders task marker button', () => {

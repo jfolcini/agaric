@@ -1474,6 +1474,7 @@ pub async fn query_by_tags_inner(
 
     let expr = match mode.as_str() {
         "and" => TagExpr::And(exprs),
+        "not" => TagExpr::Not(Box::new(TagExpr::Or(exprs))),
         _ => TagExpr::Or(exprs), // default to OR
     };
 

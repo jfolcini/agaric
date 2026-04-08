@@ -17,9 +17,10 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-vi.mock('lucide-react', () => ({
-  ChevronRight: (props: Record<string, unknown>) => <svg data-testid="chevron-right" {...props} />,
-  ChevronDown: (props: Record<string, unknown>) => <svg data-testid="chevron-down" {...props} />,
+vi.mock('@/components/ui/chevron-toggle', () => ({
+  ChevronToggle: ({ isExpanded, ...rest }: { isExpanded: boolean } & Record<string, unknown>) => (
+    <svg data-testid={isExpanded ? 'chevron-down' : 'chevron-right'} {...rest} />
+  ),
 }))
 
 import { CollapsiblePanelHeader } from '../CollapsiblePanelHeader'

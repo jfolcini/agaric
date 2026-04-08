@@ -1,5 +1,5 @@
-import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { cn } from '@/lib/utils'
 
 interface CollapsiblePanelHeaderProps {
@@ -34,11 +34,7 @@ export function CollapsiblePanelHeader({
           : undefined
       }
     >
-      {!isCollapsed ? (
-        <ChevronDown className="h-4 w-4 shrink-0" />
-      ) : (
-        <ChevronRight className="h-4 w-4 shrink-0" />
-      )}
+      <ChevronToggle isExpanded={!isCollapsed} size="lg" />
       {children}
     </button>
   )

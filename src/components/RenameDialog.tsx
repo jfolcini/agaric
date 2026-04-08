@@ -1,13 +1,21 @@
 /**
  * RenameDialog — modal for renaming a paired device (#422).
  *
- * Replaces the old window.prompt() flow with a proper AlertDialog.
+ * Uses Dialog (not AlertDialog) because the modal contains a form input.
  */
 
 import type React from 'react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 
 interface RenameDialogProps {
@@ -39,26 +47,35 @@ export function RenameDialog({
   }
 
   return (
-    <ConfirmDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title="Rename device"
-      description="Enter a name for this device."
-      cancelLabel="Cancel"
-      actionLabel="Save"
-      onAction={handleSave}
-      className={className}
-    >
-      <Input
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') handleSave()
-        }}
-        placeholder="Device name"
-        aria-label={t('device.deviceNameLabel')}
-        autoFocus
-      />
-    </ConfirmDialog>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className={className}>
+        <DialogHeader>
+          <DialogTitle>Rename device</DialogTitle>
+          <DialogDescription>Enter a name for this device.</DialogDescription>
+        </DialogHeader>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            handleSave()
+          }}
+        >
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Device name"
+            aria-label={t('device.deviceNameLabel')}
+            autoFocus
+          />
+        </form>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={!name.trim()}>
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

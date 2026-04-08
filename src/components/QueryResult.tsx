@@ -1,12 +1,12 @@
-import { ChevronDown, Search } from 'lucide-react'
+import { Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Spinner } from '@/components/ui/spinner'
 import { parseQueryExpression } from '../lib/query-utils'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, listBlocks, queryByProperty, queryByTags } from '../lib/tauri'
-import { cn } from '../lib/utils'
 import { EmptyState } from './EmptyState'
 import { QueryResultList } from './QueryResultList'
 import { QueryResultTable } from './QueryResultTable'
@@ -246,9 +246,7 @@ export function QueryResult({
         <span className="shrink-0 tabular-nums">
           {loading ? '...' : `${results.length} result${results.length !== 1 ? 's' : ''}`}
         </span>
-        <ChevronDown
-          className={cn('h-3 w-3 shrink-0 transition-transform', collapsed && '-rotate-90')}
-        />
+        <ChevronToggle isExpanded={!collapsed} />
       </button>
 
       {/* Results */}

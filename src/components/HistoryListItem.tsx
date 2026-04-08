@@ -7,12 +7,12 @@
  * Extracted from HistoryView for testability.
  */
 
-import { ChevronDown, ChevronRight, Lock } from 'lucide-react'
+import { Lock } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/spinner'
+import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { formatTimestamp } from '../lib/format'
@@ -170,13 +170,7 @@ export function HistoryListItem({
               onToggleDiff(entry)
             }}
           >
-            {isLoadingDiff ? (
-              <Spinner size="sm" />
-            ) : isExpanded ? (
-              <ChevronDown className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5" />
-            )}
+            <ChevronToggle isExpanded={isExpanded} loading={isLoadingDiff} size="md" />
             {t('history.diffButton')}
           </Button>
         )}

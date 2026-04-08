@@ -1,7 +1,9 @@
-import { MoreVertical, Redo2, Undo2 } from 'lucide-react'
+import { LayoutTemplate, MoreVertical, Redo2, Undo2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 
 export interface PageHeaderMenuProps {
   canRedo: boolean
@@ -57,6 +59,22 @@ export function PageHeaderMenu({
       >
         <Redo2 className="h-3.5 w-3.5" />
       </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            onClick={onToggleTemplate}
+            aria-label={t('pageHeader.toggleTemplate')}
+            aria-pressed={isTemplate}
+          >
+            <LayoutTemplate className={cn('h-3.5 w-3.5', isTemplate && 'text-primary')} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          {isTemplate ? t('pageHeader.templateActive') : t('pageHeader.toggleTemplate')}
+        </TooltipContent>
+      </Tooltip>
       <Popover open={kebabOpen} onOpenChange={onKebabOpenChange}>
         <PopoverTrigger asChild>
           <Button variant="ghost" size="icon-xs" aria-label={t('pageHeader.pageActions')}>

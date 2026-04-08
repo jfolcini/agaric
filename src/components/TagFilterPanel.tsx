@@ -1,8 +1,8 @@
 /**
- * TagFilterPanel — boolean tag filter with AND/OR mode (p3-t9).
+ * TagFilterPanel — boolean tag filter with AND/OR/NOT mode (p3-t9).
  *
  * Lets users select multiple tags via prefix search and see blocks
- * matching all (AND) or any (OR) of the selected tags.
+ * matching all (AND), any (OR), or none (NOT) of the selected tags.
  * Results are paginated with cursor-based "Load more" via usePaginatedQuery.
  */
 
@@ -52,7 +52,7 @@ export function TagFilterPanel(): React.ReactElement {
   const [prefix, setPrefix] = useState('')
   const [matchingTags, setMatchingTags] = useState<MatchingTag[]>([])
   const [selectedTags, setSelectedTags] = useState<SelectedTag[]>([])
-  const [mode, setMode] = useState<'and' | 'or'>('and')
+  const [mode, setMode] = useState<'and' | 'or' | 'not'>('and')
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
 
   // Debounced prefix search
@@ -202,7 +202,7 @@ export function TagFilterPanel(): React.ReactElement {
         </div>
       )}
 
-      {/* AND/OR mode toggle */}
+      {/* AND/OR/NOT mode toggle */}
       <div className="flex items-center gap-2">
         <span className="text-sm text-muted-foreground">{t('tagFilter.modeLabel')}</span>
         <TooltipProvider>
@@ -236,6 +236,23 @@ export function TagFilterPanel(): React.ReactElement {
             </TooltipTrigger>
             <TooltipContent>
               <p>{t('tagFilter.orModeTooltip')}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={mode === 'not' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setMode('not')}
+                aria-pressed={mode === 'not'}
+              >
+                {t('tagFilter.notMode')}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t('tagFilter.notModeTooltip')}</p>
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>

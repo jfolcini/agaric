@@ -22,9 +22,10 @@ import { axe } from 'vitest-axe'
 import type { GroupItem } from '../CollapsibleGroupList'
 import { CollapsibleGroupList } from '../CollapsibleGroupList'
 
-vi.mock('lucide-react', () => ({
-  ChevronRight: (props: Record<string, unknown>) => <svg data-testid="chevron-right" {...props} />,
-  ChevronDown: (props: Record<string, unknown>) => <svg data-testid="chevron-down" {...props} />,
+vi.mock('@/components/ui/chevron-toggle', () => ({
+  ChevronToggle: ({ isExpanded, ...rest }: { isExpanded: boolean } & Record<string, unknown>) => (
+    <svg data-testid={isExpanded ? 'chevron-down' : 'chevron-right'} {...rest} />
+  ),
 }))
 
 vi.mock('../PageLink', () => ({

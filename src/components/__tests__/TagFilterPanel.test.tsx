@@ -6,7 +6,7 @@
  *  - Tag search by prefix (debounced)
  *  - Adding a tag to selection
  *  - Removing a tag from selection
- *  - AND/OR mode toggle
+ *  - AND/OR/NOT mode toggle
  *  - Querying blocks on tag selection
  *  - Pagination (Load more)
  *  - Empty results state
@@ -92,10 +92,11 @@ describe('TagFilterPanel', () => {
     expect(screen.getByText('Tag Filter')).toBeInTheDocument()
   })
 
-  it('renders AND/OR mode toggle', () => {
+  it('renders AND/OR/NOT mode toggle', () => {
     render(<TagFilterPanel />)
     expect(screen.getByRole('button', { name: /AND/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /OR/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /NOT/i })).toBeInTheDocument()
   })
 
   it('searches tags by prefix with debounce', async () => {
@@ -205,27 +206,38 @@ describe('TagFilterPanel', () => {
     expect(screen.queryByLabelText('Remove tag work')).not.toBeInTheDocument()
   })
 
-  it('toggles AND/OR mode', async () => {
+  it('toggles AND/OR/NOT mode', async () => {
     render(<TagFilterPanel />)
 
     const andBtn = screen.getByRole('button', { name: /AND/i })
     const orBtn = screen.getByRole('button', { name: /OR/i })
+    const notBtn = screen.getByRole('button', { name: /NOT/i })
 
     // AND is default active
     expect(andBtn).toHaveAttribute('aria-pressed', 'true')
     expect(orBtn).toHaveAttribute('aria-pressed', 'false')
+    expect(notBtn).toHaveAttribute('aria-pressed', 'false')
 
     // Switch to OR
     await user.click(orBtn)
 
     expect(andBtn).toHaveAttribute('aria-pressed', 'false')
     expect(orBtn).toHaveAttribute('aria-pressed', 'true')
+    expect(notBtn).toHaveAttribute('aria-pressed', 'false')
+
+    // Switch to NOT
+    await user.click(notBtn)
+
+    expect(andBtn).toHaveAttribute('aria-pressed', 'false')
+    expect(orBtn).toHaveAttribute('aria-pressed', 'false')
+    expect(notBtn).toHaveAttribute('aria-pressed', 'true')
 
     // Switch back to AND
     await user.click(andBtn)
 
     expect(andBtn).toHaveAttribute('aria-pressed', 'true')
     expect(orBtn).toHaveAttribute('aria-pressed', 'false')
+    expect(notBtn).toHaveAttribute('aria-pressed', 'false')
   })
 
   it('queries blocks when a tag is selected', async () => {
@@ -561,6 +573,158 @@ describe('TagFilterPanel', () => {
     expect(navState.pageStack[0]?.pageId).toBe('PAGE1')
     expect(navState.pageStack[0]?.title).toBe('My Tagged Page')
     expect(navState.selectedBlockId).toBeNull()
+  })
+
+  // -- NOT mode specific tests --------------------------------------------------
+
+  it('clicking NOT button calls queryByTags with mode=not', async () => {
+    // list_tags_by_prefix response
+    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+
+    render(<TagFilterPanel />)
+
+    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    await typeAndWaitForTags(input, 'work')
+
+    const addBtn = screen.getByRole('button', { name: /Add/i })
+
+    // query_by_tags returns results (initial AND mode)
+    mockedInvoke.mockResolvedValue({
+      items: [makeBlock({ id: 'B1', content: 'work item' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    await user.click(addBtn)
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Switch to NOT mode
+    const notBtn = screen.getByRole('button', { name: /^NOT$/i })
+    await user.click(notBtn)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(mockedInvoke).toHaveBeenCalledWith('query_by_tags', {
+      tagIds: ['T1'],
+      prefixes: [],
+      mode: 'not',
+      includeInherited: null,
+      cursor: null,
+      limit: 50,
+    })
+  })
+
+  it('shows match summary with (NOT) when mode is not', async () => {
+    // list_tags_by_prefix response
+    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+
+    render(<TagFilterPanel />)
+
+    // Switch to NOT mode first
+    const notBtn = screen.getByRole('button', { name: /^NOT$/i })
+    await user.click(notBtn)
+
+    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    await typeAndWaitForTags(input, 'work')
+
+    const addBtn = screen.getByRole('button', { name: /Add/i })
+
+    // query_by_tags returns results
+    mockedInvoke.mockResolvedValue({
+      items: [
+        makeBlock({ id: 'B1', content: 'result one' }),
+        makeBlock({ id: 'B2', content: 'result two' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    await user.click(addBtn)
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Should show feedback with (NOT)
+    expect(screen.getByTestId('tag-filter-feedback')).toHaveTextContent(
+      '2 blocks match 1 tag (NOT)',
+    )
+  })
+
+  it('switching from NOT to AND updates query', async () => {
+    // list_tags_by_prefix response
+    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+
+    render(<TagFilterPanel />)
+
+    // Switch to NOT mode first
+    const notBtn = screen.getByRole('button', { name: /^NOT$/i })
+    await user.click(notBtn)
+
+    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    await typeAndWaitForTags(input, 'work')
+
+    const addBtn = screen.getByRole('button', { name: /Add/i })
+
+    // query_by_tags returns results in NOT mode
+    mockedInvoke.mockResolvedValue({
+      items: [makeBlock({ id: 'B1', content: 'excluded result' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    await user.click(addBtn)
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Verify NOT mode was used
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'query_by_tags',
+      expect.objectContaining({ mode: 'not' }),
+    )
+
+    // Switch to AND mode
+    const andBtn = screen.getByRole('button', { name: /^AND$/i })
+    await user.click(andBtn)
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Verify AND mode is now used
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'query_by_tags',
+      expect.objectContaining({ mode: 'and' }),
+    )
+  })
+
+  it('switching from NOT to OR updates query', async () => {
+    // list_tags_by_prefix response
+    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+
+    render(<TagFilterPanel />)
+
+    // Switch to NOT mode first
+    const notBtn = screen.getByRole('button', { name: /^NOT$/i })
+    await user.click(notBtn)
+
+    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    await typeAndWaitForTags(input, 'work')
+
+    const addBtn = screen.getByRole('button', { name: /Add/i })
+
+    // query_by_tags returns results in NOT mode
+    mockedInvoke.mockResolvedValue({
+      items: [makeBlock({ id: 'B1', content: 'excluded result' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    await user.click(addBtn)
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Switch to OR mode
+    const orBtn = screen.getByRole('button', { name: /^OR$/i })
+    await user.click(orBtn)
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Verify OR mode is now used
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'query_by_tags',
+      expect.objectContaining({ mode: 'or' }),
+    )
   })
 
   // -- Keyboard interaction tests -----------------------------------------------

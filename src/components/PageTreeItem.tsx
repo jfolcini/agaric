@@ -7,12 +7,12 @@
  * Extracted from PageBrowser for testability.
  */
 
-import { ChevronRight, FileText, Plus, Trash2 } from 'lucide-react'
+import { FileText, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { HighlightMatch } from '@/components/HighlightMatch'
 import { Button } from '@/components/ui/button'
+import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import type { PageTreeNode } from '@/lib/page-tree'
-import { cn } from '@/lib/utils'
 
 export interface PageTreeItemProps {
   node: PageTreeNode
@@ -83,9 +83,7 @@ export function PageTreeItem({
             onClick={() => !forceExpand && setExpanded(!expanded)}
             className="flex-1 text-left px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 active:bg-accent/70 rounded flex items-center gap-1"
           >
-            <ChevronRight
-              className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-90')}
-            />
+            <ChevronToggle isExpanded={isExpanded} />
             <HighlightMatch text={node.name} filterText={filterText} />
           </button>
           <button
@@ -127,7 +125,7 @@ export function PageTreeItem({
           onClick={() => !forceExpand && setExpanded(!expanded)}
           className="px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 active:bg-accent/70 rounded flex items-center"
         >
-          <ChevronRight className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-90')} />
+          <ChevronToggle isExpanded={isExpanded} />
         </button>
         <button
           type="button"

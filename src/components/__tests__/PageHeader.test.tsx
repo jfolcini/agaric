@@ -28,6 +28,7 @@ import {
 import { useResolveStore } from '../../stores/resolve'
 import { useUndoStore } from '../../stores/undo'
 import { PageHeader } from '../PageHeader'
+import { TooltipProvider } from '../ui/tooltip'
 
 const mockedInvoke = vi.mocked(invoke)
 const emptyPage = { items: [], next_cursor: null, has_more: false }
@@ -43,6 +44,9 @@ vi.mock('lucide-react', () => ({
   ChevronDown: () => <svg data-testid="chevron-down" />,
   ChevronRight: () => <svg data-testid="chevron-right" />,
   Clock: () => <svg data-testid="clock-icon" />,
+  LayoutTemplate: (props: Record<string, unknown>) => (
+    <svg data-testid="layout-template-icon" {...props} />
+  ),
   MapPin: () => <svg data-testid="map-pin-icon" />,
   MoreVertical: () => <svg data-testid="more-vertical-icon" />,
   Plus: () => <svg data-testid="plus-icon" />,
@@ -83,6 +87,7 @@ beforeEach(() => {
 
 /** Helper to set up invoke mock with tags */
 function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) {
+  // biome-ignore lint/suspicious/noExplicitAny: test mock needs flexible arg access
   mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
     if (cmd === 'list_blocks') {
       return {
@@ -144,7 +149,11 @@ function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) 
 
 /** Wrap PageHeader with PageBlockStoreProvider so usePageBlockStoreApi() resolves */
 function renderPageHeader(el: JSX.Element) {
-  return render(<PageBlockContext.Provider value={pageStore}>{el}</PageBlockContext.Provider>)
+  return render(
+    <TooltipProvider>
+      <PageBlockContext.Provider value={pageStore}>{el}</PageBlockContext.Provider>
+    </TooltipProvider>,
+  )
 }
 
 describe('PageHeader rendering', () => {

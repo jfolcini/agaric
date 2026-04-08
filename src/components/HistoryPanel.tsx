@@ -5,7 +5,7 @@
  * Supports restoring a block to a previous state via the op log payload.
  */
 
-import { ChevronDown, ChevronRight, Clock, RotateCcw } from 'lucide-react'
+import { Clock, RotateCcw } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -14,6 +14,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Spinner } from '@/components/ui/spinner'
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
 import { formatTimestamp } from '../lib/format'
@@ -146,13 +147,11 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
                         className="diff-toggle-btn shrink-0 h-7 px-2"
                         onClick={() => handleToggleDiff(entry)}
                       >
-                        {loadingDiffs.has(entry.seq) ? (
-                          <Spinner size="sm" />
-                        ) : expandedKeys.has(entry.seq) ? (
-                          <ChevronDown className="h-3.5 w-3.5" />
-                        ) : (
-                          <ChevronRight className="h-3.5 w-3.5" />
-                        )}
+                        <ChevronToggle
+                          isExpanded={expandedKeys.has(entry.seq)}
+                          loading={loadingDiffs.has(entry.seq)}
+                          size="md"
+                        />
                         Diff
                       </Button>
                     )}

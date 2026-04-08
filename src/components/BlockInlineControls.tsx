@@ -1,11 +1,12 @@
 import type { LucideIcon } from 'lucide-react'
-import { Calendar, CalendarDays, Check, ChevronRight, Paperclip, Repeat } from 'lucide-react'
+import { Calendar, CalendarDays, Check, Paperclip, Repeat } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { priorityColor } from '../lib/priority-color'
 import { formatRepeatLabel } from '../lib/repeat-utils'
 import { cn } from '../lib/utils'
 import { PropertyChip } from './PropertyChip'
+import { ChevronToggle } from './ui/chevron-toggle'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
 export const PRIORITY_DISPLAY: Record<string, string> = { '1': 'P1', '2': 'P2', '3': 'P3' }
@@ -190,9 +191,7 @@ export function BlockInlineControls({
               aria-label={isCollapsed ? t('block.expandChildren') : t('block.collapseChildren')}
               aria-expanded={!isCollapsed}
             >
-              <ChevronRight
-                className={cn('h-4 w-4 transition-transform', !isCollapsed && 'rotate-90')}
-              />
+              <ChevronToggle isExpanded={!isCollapsed} size="lg" />
             </button>
           </TooltipTrigger>
           <TooltipContent side="bottom" sideOffset={4}>

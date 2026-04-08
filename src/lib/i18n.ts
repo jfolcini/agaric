@@ -1091,6 +1091,14 @@ const resources = {
       'journal.legendScheduled': 'Scheduled',
       'journal.legendProperty': 'Property',
 
+      // UX-70: NOT operator in tag query
+      'tagFilter.notMode': 'NOT',
+      'tagFilter.notModeTooltip': 'Show blocks WITHOUT any selected tag',
+
+      // UX-74: Template toggle button
+      'pageHeader.toggleTemplate': 'Toggle template status',
+      'pageHeader.templateActive': 'Page is a template',
+
       // UX-73: Template removal confirmation
       'templates.removeConfirmTitle': 'Remove template status',
       'templates.removeConfirmDesc':

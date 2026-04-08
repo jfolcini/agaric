@@ -6,8 +6,8 @@
  * a render prop so each consumer can provide its own block UI.
  */
 
-import { ChevronDown, ChevronRight } from 'lucide-react'
 import type React from 'react'
+import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { PageLink } from './PageLink'
 
 export interface GroupItem {
@@ -74,11 +74,7 @@ export function CollapsibleGroupList<G extends GroupItem>({
                   aria-expanded={isExpanded}
                   aria-label={isExpanded ? 'Collapse group' : 'Expand group'}
                 >
-                  {isExpanded ? (
-                    <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-                  ) : (
-                    <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-                  )}
+                  <ChevronToggle isExpanded={isExpanded} size="md" />
                 </button>
                 <PageLink
                   pageId={group.page_id}
@@ -97,11 +93,7 @@ export function CollapsibleGroupList<G extends GroupItem>({
                 }
                 aria-expanded={isExpanded}
               >
-                {isExpanded ? (
-                  <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-                ) : (
-                  <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-                )}
+                <ChevronToggle isExpanded={isExpanded} size="md" />
                 {title} ({group.blocks.length})
               </button>
             )}
