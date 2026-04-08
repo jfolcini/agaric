@@ -128,14 +128,14 @@ export function TagValuePicker({
 
   // Close dropdown on outside click
   useEffect(() => {
-    function onMouseDown(e: MouseEvent) {
+    function onPointerDown(e: PointerEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(false)
         setActiveIndex(-1)
       }
     }
-    document.addEventListener('mousedown', onMouseDown)
-    return () => document.removeEventListener('mousedown', onMouseDown)
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
   }, [])
 
   const activeId = activeIndex >= 0 ? `tag-option-${results[activeIndex]?.tag_id}` : undefined

@@ -124,7 +124,7 @@ function PageEditorInner({
   }, [blocks, createBelow, setFocused, pageId, t, pageStore])
 
   // ── Click on page background whitespace closes active editor (UX-M9) ──
-  const handleBackgroundMouseDown = useCallback((e: React.MouseEvent) => {
+  const handleBackgroundMouseDown = useCallback((e: React.PointerEvent) => {
     if (e.target !== e.currentTarget) return
     const { focusedBlockId } = useBlockStore.getState()
     if (!focusedBlockId) return
@@ -139,8 +139,7 @@ function PageEditorInner({
   }, [])
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: whitespace click to dismiss editor
-    <div className="page-editor flex flex-col gap-3" onMouseDown={handleBackgroundMouseDown}>
+    <div className="page-editor flex flex-col gap-3" onPointerDown={handleBackgroundMouseDown}>
       {/* Header: back button + editable title + tag badges */}
       <PageHeader pageId={pageId} title={title} onBack={onBack} />
 

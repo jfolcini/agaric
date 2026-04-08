@@ -55,7 +55,7 @@ export interface BlockListRendererProps {
   onShowProperties: (blockId: string) => void
   onZoomIn: (blockId: string) => void
   onSelect: (blockId: string, mode: 'toggle' | 'range') => void
-  onContainerMouseDown: (e: React.MouseEvent) => void
+  onContainerPointerDown: (e: React.PointerEvent) => void
 
   // ── Resolve callbacks ──────────────────────────────────────────────
   resolveBlockTitle: (id: string) => string
@@ -95,7 +95,7 @@ export function BlockListRenderer({
   onShowProperties,
   onZoomIn,
   onSelect,
-  onContainerMouseDown,
+  onContainerPointerDown,
   resolveBlockTitle,
   resolveTagName,
   resolveBlockStatus,
@@ -111,7 +111,7 @@ export function BlockListRenderer({
       {/* biome-ignore lint/a11y/noStaticElementInteractions: whitespace click to dismiss editor */}
       <div
         className="block-tree space-y-0.5 [@media(pointer:coarse)]:space-y-1.5"
-        onMouseDown={onContainerMouseDown}
+        onPointerDown={onContainerPointerDown}
       >
         {visibleItems.map((block) => {
           const isFocused = focusedBlockId === block.id

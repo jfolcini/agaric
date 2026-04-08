@@ -168,9 +168,9 @@ export function JournalCalendarDropdown({
         />
         <style>{`
           .has-content-dot { position: relative; --dot-page: var(--primary); }
-          .has-due-dot { position: relative; --dot-due: #ea580c; }
-          .has-scheduled-dot { position: relative; --dot-sched: #16a34a; }
-          .has-property-dot { position: relative; --dot-prop: #9333ea; }
+          .has-due-dot { position: relative; --dot-due: var(--date-due-foreground); }
+          .has-scheduled-dot { position: relative; --dot-sched: var(--date-scheduled-foreground); }
+          .has-property-dot { position: relative; --dot-prop: var(--date-property-foreground); }
           .has-content-dot::after,
           .has-due-dot::after,
           .has-scheduled-dot::after,

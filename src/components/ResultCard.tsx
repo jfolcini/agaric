@@ -6,6 +6,7 @@
  */
 
 import type React from 'react'
+import { HighlightMatch } from '@/components/HighlightMatch'
 import { Badge } from '@/components/ui/badge'
 import { CardButton } from '@/components/ui/card-button'
 import { Spinner } from '@/components/ui/spinner'
@@ -22,6 +23,8 @@ export interface ResultCardProps {
   showSpinner?: boolean
   /** CSS class name for the content span */
   contentClassName?: string
+  /** Text to highlight within block content */
+  highlightText?: string
 }
 
 export function ResultCard({
@@ -31,11 +34,22 @@ export function ResultCard({
   children,
   showSpinner,
   contentClassName,
+  highlightText,
 }: ResultCardProps): React.ReactElement {
   return (
     <CardButton onClick={onClick} disabled={disabled}>
       <div className="flex items-center gap-2">
-        <span className={cn('flex-1 text-sm', contentClassName)}>{block.content || '(empty)'}</span>
+        <span className={cn('flex-1 text-sm', contentClassName)}>
+          {block.content ? (
+            highlightText ? (
+              <HighlightMatch text={block.content} filterText={highlightText} />
+            ) : (
+              block.content
+            )
+          ) : (
+            '(empty)'
+          )}
+        </span>
         {showSpinner && <Spinner className="shrink-0 text-muted-foreground" />}
         {(block.block_type === 'tag' || block.block_type === 'page') && (
           <Badge variant="secondary">{block.block_type}</Badge>

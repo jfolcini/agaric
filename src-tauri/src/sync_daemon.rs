@@ -595,41 +595,47 @@ async fn handle_incoming_sync(
             .map(|h| h.device_id.clone())
             .unwrap_or_default();
 
-        if !remote_id.is_empty() {
-            // Reject unpaired devices (S-1)
-            if peer_refs::get_peer_ref(&pool_ref, &remote_id)
-                .await?
-                .is_none()
-            {
-                tracing::warn!(peer_id = %remote_id, "rejecting sync from unpaired device");
+        if remote_id.is_empty() || remote_id == device_id {
+            tracing::warn!("rejecting sync with self (remote_id matches local device_id)");
+            conn.send_json(&SyncMessage::Error {
+                message: "cannot sync with self".into(),
+            })
+            .await?;
+            let _ = conn.close().await;
+            return Ok(());
+        }
+
+        // Reject unpaired devices (S-1)
+        if peer_refs::get_peer_ref(&pool_ref, &remote_id)
+            .await?
+            .is_none()
+        {
+            tracing::warn!(peer_id = %remote_id, "rejecting sync from unpaired device");
+            conn.send_json(&SyncMessage::Error {
+                message: "peer not paired with this device".into(),
+            })
+            .await?;
+            let _ = conn.close().await;
+            return Ok(());
+        }
+
+        match scheduler.try_lock_peer(&remote_id) {
+            Some(guard) => {
+                tracing::info!(peer_id = %remote_id, "responder locked peer for sync");
+                Some(guard)
+            }
+            None => {
+                tracing::info!(
+                    peer_id = %remote_id,
+                    "rejecting incoming sync: already syncing with this peer"
+                );
                 conn.send_json(&SyncMessage::Error {
-                    message: "peer not paired with this device".into(),
+                    message: "peer is busy with another sync session".into(),
                 })
                 .await?;
                 let _ = conn.close().await;
                 return Ok(());
             }
-
-            match scheduler.try_lock_peer(&remote_id) {
-                Some(guard) => {
-                    tracing::info!(peer_id = %remote_id, "responder locked peer for sync");
-                    Some(guard)
-                }
-                None => {
-                    tracing::info!(
-                        peer_id = %remote_id,
-                        "rejecting incoming sync: already syncing with this peer"
-                    );
-                    conn.send_json(&SyncMessage::Error {
-                        message: "peer is busy with another sync session".into(),
-                    })
-                    .await?;
-                    let _ = conn.close().await;
-                    return Ok(());
-                }
-            }
-        } else {
-            None
         }
     } else {
         None

@@ -716,13 +716,13 @@ const resources = {
       'conflict.undoDiscardFailed': 'Failed to undo discard.',
       'conflict.noConflicts':
         'No conflicts. Conflicts appear when the same block is edited on multiple devices.',
-      'conflict.keepLabel': 'Keep',
-      'conflict.discardLabel': 'Discard',
+      'conflict.keepLabel': 'Keep Incoming',
+      'conflict.discardLabel': 'Discard Incoming',
       'conflict.refreshLabel': 'Refresh conflict list',
       'conflict.deselectAllButton': 'Deselect all',
       'conflict.selectAllButton': 'Select all',
-      'conflict.keepAllButton': 'Keep all',
-      'conflict.discardAllButton': 'Discard all',
+      'conflict.keepAllButton': 'Keep All Incoming',
+      'conflict.discardAllButton': 'Discard All Incoming',
       'conflict.selectConflictLabel': 'Select conflict {{id}}',
       'conflict.viewOriginalLabel': 'View original block for {{id}}',
       'conflict.keepIncomingLabel': 'Keep incoming version for block {{id}}',
@@ -897,6 +897,7 @@ const resources = {
       'search.noResultsFound': 'No results found. Try different keywords or check your spelling.',
       'search.loadingMessage': 'Loading...',
       'search.loadMoreButton': 'Load more',
+      'search.resultsCount': '{{count}} results found',
 
       // Status panel (additions)
       'status.foregroundQueueTooltip':
@@ -1057,6 +1058,7 @@ const resources = {
       'pdfViewer.nextPageLabel': 'Next page',
       'block.editLabel': 'Edit block',
       'tagList.deleteTagLabel': 'Delete tag',
+      'tagList.newTagLabel': 'New tag name',
 
       // Common (collapsible panels)
       'common.expand': 'Expand {{section}}',

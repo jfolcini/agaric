@@ -941,8 +941,8 @@ export function BlockTree({
   }, [focusedBlockId, handleSlashCommand])
 
   // ── Click on whitespace within block tree closes editor (UX-M9) ──
-  const handleContainerMouseDown = useCallback(
-    (e: React.MouseEvent) => {
+  const handleContainerPointerDown = useCallback(
+    (e: React.PointerEvent) => {
       if (e.target !== e.currentTarget) return
       const { focusedBlockId: fid } = useBlockStore.getState()
       if (!fid) return
@@ -1036,7 +1036,7 @@ export function BlockTree({
           onShowProperties={handleShowProperties}
           onZoomIn={handleZoomIn}
           onSelect={handleSelect}
-          onContainerMouseDown={handleContainerMouseDown}
+          onContainerPointerDown={handleContainerPointerDown}
           resolveBlockTitle={resolve.resolveBlockTitle}
           resolveTagName={resolve.resolveTagName}
           resolveBlockStatus={resolve.resolveBlockStatus}

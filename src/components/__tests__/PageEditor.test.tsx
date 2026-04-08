@@ -419,8 +419,8 @@ describe('PageEditor undo/redo integration', () => {
   })
 })
 
-describe('PageEditor background mousedown (UX-M9)', () => {
-  it('mousedown on page background closes active editor', () => {
+describe('PageEditor background pointerdown (UX-M9)', () => {
+  it('pointerdown on page background closes active editor', () => {
     useBlockStore.setState({
       focusedBlockId: 'B1',
     })
@@ -429,12 +429,12 @@ describe('PageEditor background mousedown (UX-M9)', () => {
 
     // The outer container has class "page-editor"
     const container = document.querySelector('.page-editor') as HTMLElement
-    fireEvent.mouseDown(container)
+    fireEvent.pointerDown(container)
 
     expect(useBlockStore.getState().focusedBlockId).toBeNull()
   })
 
-  it('mousedown on child element does not close editor', () => {
+  it('pointerdown on child element does not close editor', () => {
     useBlockStore.setState({
       focusedBlockId: 'B1',
     })
@@ -443,7 +443,7 @@ describe('PageEditor background mousedown (UX-M9)', () => {
 
     // Click on a child (e.g. the block-tree mock div)
     const child = screen.getByTestId('block-tree')
-    fireEvent.mouseDown(child)
+    fireEvent.pointerDown(child)
 
     // Should NOT close the editor since target !== currentTarget
     expect(useBlockStore.getState().focusedBlockId).toBe('B1')

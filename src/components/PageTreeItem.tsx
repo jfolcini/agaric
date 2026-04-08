@@ -57,7 +57,7 @@ export function PageTreeItem({
           <Button
             variant="ghost"
             size="icon-xs"
-            className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+            className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive [@media(pointer:coarse)]:opacity-100 [@media(pointer:coarse)]:h-[44px] [@media(pointer:coarse)]:w-[44px]"
             aria-label={`Delete ${node.fullPath}`}
             onClick={(e) => {
               e.stopPropagation()

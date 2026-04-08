@@ -617,7 +617,7 @@ impl SyncConnection {
             Ok(Some(Ok(msg))) => Ok(msg),
             Ok(Some(Err(e))) => Err(sync_err(format!("recv: {e}"))),
             Ok(None) => Err(sync_err("connection closed")),
-            Err(_elapsed) => Err(sync_err("recv timed out after 60s")),
+            Err(_elapsed) => Err(sync_err("recv timed out after 30s")),
         }
     }
 }

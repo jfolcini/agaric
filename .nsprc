@@ -15,15 +15,15 @@
     "active": true,
     "notes": "lodash via depcheck (dev-only transitive dep, not used in production)"
   },
-  "1116125": {
+  "1116231": {
     "active": true,
     "notes": "vite path traversal in optimized deps .map handling (dev-only, not exposed in production Tauri app)"
   },
-  "1116127": {
+  "1116233": {
     "active": true,
     "notes": "vite server.fs.deny bypass with queries (dev-only, not exposed in production Tauri app)"
   },
-  "1116101": {
+  "1116236": {
     "active": true,
     "notes": "vite dev server WebSocket file read (dev-only, not exposed in production Tauri app)"
   }

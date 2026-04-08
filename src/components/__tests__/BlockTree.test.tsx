@@ -5557,7 +5557,7 @@ describe('BlockTree container mousedown (UX-M9)', () => {
     mockedInvoke.mockResolvedValue({})
   })
 
-  it('mousedown on whitespace within block tree closes active editor', async () => {
+  it('pointerdown on whitespace within block tree closes active editor', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
@@ -5568,15 +5568,15 @@ describe('BlockTree container mousedown (UX-M9)', () => {
     renderBlockTree()
     await screen.findByTestId('sortable-block-A')
 
-    // The .block-tree div is the container with the onMouseDown handler.
+    // The .block-tree div is the container with the onPointerDown handler.
     // Clicking it directly (target === currentTarget) triggers the handler.
     const container = document.querySelector('.block-tree') as HTMLElement
-    fireEvent.mouseDown(container)
+    fireEvent.pointerDown(container)
 
     expect(useBlockStore.getState().focusedBlockId).toBeNull()
   })
 
-  it('mousedown on child element does not close editor', async () => {
+  it('pointerdown on child element does not close editor', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({
@@ -5588,7 +5588,7 @@ describe('BlockTree container mousedown (UX-M9)', () => {
     const block = await screen.findByTestId('sortable-block-A')
 
     // Clicking on a child element (block) should NOT close the editor
-    fireEvent.mouseDown(block)
+    fireEvent.pointerDown(block)
 
     expect(useBlockStore.getState().focusedBlockId).toBe('A')
   })
@@ -5830,10 +5830,10 @@ describe('B-7: whitespace click saves edits when DOM-unfocused', () => {
     renderBlockTree()
     await screen.findByTestId('sortable-block-A')
 
-    // The .block-tree div is the container with the onMouseDown handler.
+    // The .block-tree div is the container with the onPointerDown handler.
     // ProseMirror is NOT in document.activeElement (DOM-unfocused).
     const container = document.querySelector('.block-tree') as HTMLElement
-    fireEvent.mouseDown(container)
+    fireEvent.pointerDown(container)
 
     // unmount should have been called (by handleFlush internally)
     expect(mockUnmount).toHaveBeenCalled()

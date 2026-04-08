@@ -12,6 +12,7 @@
 import { CheckCircle2, Circle, Clock } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+import { EmptyState } from '@/components/EmptyState'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { formatCompactDate, getTodayString } from '@/lib/date-utils'
@@ -131,23 +132,21 @@ export function AgendaResults({
   if (blocks.length === 0) {
     if (hasActiveFilters) {
       return (
-        <div className="agenda-results-empty flex flex-col items-center gap-3 py-8 text-center">
-          <p className="text-sm text-muted-foreground">{t('agenda.noMatch')}</p>
-          <Button variant="outline" size="sm" onClick={onClearFilters}>
-            {t('agenda.clearFilters')}
-          </Button>
-          <div role="status" className="sr-only">
-            {t('agenda.zeroResults')}
-          </div>
+        <div role="status">
+          <EmptyState
+            message={t('agenda.noMatch')}
+            action={
+              <Button variant="outline" size="sm" onClick={onClearFilters} className="mt-2">
+                {t('agenda.clearFilters')}
+              </Button>
+            }
+          />
         </div>
       )
     }
     return (
-      <div className="agenda-results-empty flex flex-col items-center gap-2 py-8 text-center">
-        <p className="text-sm text-muted-foreground">{t('agenda.noTasks')}</p>
-        <div role="status" className="sr-only">
-          {t('agenda.zeroResults')}
-        </div>
+      <div role="status">
+        <EmptyState message={t('agenda.noTasks')} />
       </div>
     )
   }

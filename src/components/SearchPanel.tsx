@@ -241,6 +241,7 @@ export function SearchPanel(): React.ReactElement {
                   disabled={loadingResultId === block.id}
                   showSpinner={loadingResultId === block.id}
                   contentClassName="line-clamp-2"
+                  highlightText={debouncedQuery}
                 >
                   {block.parent_id && pageTitles.get(block.parent_id) && (
                     <p className="text-xs text-muted-foreground mt-1">
@@ -256,8 +257,10 @@ export function SearchPanel(): React.ReactElement {
             ))}
           </ul>
         )}
-        {searched && !searchLoading && !error && (
-          <span className="sr-only">{results.length} results found</span>
+        {searched && !searchLoading && !error && results.length > 0 && (
+          <span className="text-xs text-muted-foreground">
+            {t('search.resultsCount', { count: results.length })}
+          </span>
         )}
       </div>
 

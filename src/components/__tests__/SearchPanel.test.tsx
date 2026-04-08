@@ -71,6 +71,23 @@ function typeAndSubmit(input: HTMLElement, value: string) {
   if (form) fireEvent.submit(form)
 }
 
+/**
+ * Custom text matcher for content broken up by child elements (e.g., <mark> highlights).
+ * RTL's getByText only checks direct text node children; this checks full textContent.
+ * Returns the innermost element whose textContent equals the given text.
+ */
+function textContent(text: string) {
+  return (_content: string, element: Element | null) => {
+    if (!element) return false
+    const hasMatch = element.textContent === text
+    // Only match the innermost element — exclude parents whose children also match.
+    const childAlsoMatches = Array.from(element.children).some(
+      (child) => child.textContent === text,
+    )
+    return hasMatch && !childAlsoMatches
+  }
+}
+
 describe('SearchPanel', () => {
   it('renders search input', () => {
     render(<SearchPanel />)
@@ -104,7 +121,7 @@ describe('SearchPanel', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByText('test content')).toBeInTheDocument()
+      expect(screen.getByText(textContent('test content'))).toBeInTheDocument()
     })
   })
 
@@ -200,8 +217,8 @@ describe('SearchPanel', () => {
 
     // Both results should be rendered (accumulated)
     await waitFor(() => {
-      expect(screen.getByText('first result')).toBeInTheDocument()
-      expect(screen.getByText('second result')).toBeInTheDocument()
+      expect(screen.getByText(textContent('first result'))).toBeInTheDocument()
+      expect(screen.getByText(textContent('second result'))).toBeInTheDocument()
     })
 
     // Load More should disappear after last page
@@ -250,14 +267,14 @@ describe('SearchPanel', () => {
     typeAndSubmit(input, 'test')
 
     await waitFor(() => {
-      expect(screen.getByText('test content')).toBeInTheDocument()
+      expect(screen.getByText(textContent('test content'))).toBeInTheDocument()
     })
 
     // Clear the input — triggers onChange with empty value, which resets results
     fireEvent.change(input, { target: { value: '' } })
 
     await waitFor(() => {
-      expect(screen.queryByText('test content')).not.toBeInTheDocument()
+      expect(screen.queryByText(textContent('test content'))).not.toBeInTheDocument()
       expect(screen.queryByText(/No results found/)).not.toBeInTheDocument()
     })
   })
@@ -356,7 +373,7 @@ describe('SearchPanel', () => {
     typeAndSubmit(input, 'child')
 
     await waitFor(() => {
-      expect(screen.getByText('child content')).toBeInTheDocument()
+      expect(screen.getByText(textContent('child content'))).toBeInTheDocument()
     })
 
     // Mock get_block for parent lookup
@@ -370,7 +387,7 @@ describe('SearchPanel', () => {
       is_conflict: false,
     })
 
-    await user.click(screen.getByText('child content'))
+    await user.click(screen.getByText(textContent('child content')))
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('get_block', { blockId: 'PARENT1' })
@@ -406,10 +423,10 @@ describe('SearchPanel', () => {
     typeAndSubmit(input, 'page')
 
     await waitFor(() => {
-      expect(screen.getByText('My Page')).toBeInTheDocument()
+      expect(screen.getByText(textContent('My Page'))).toBeInTheDocument()
     })
 
-    await user.click(screen.getByText('My Page'))
+    await user.click(screen.getByText(textContent('My Page')))
 
     await waitFor(() => {
       const navState = useNavigationStore.getState()
@@ -443,10 +460,10 @@ describe('SearchPanel', () => {
     typeAndSubmit(input, 'root')
 
     await waitFor(() => {
-      expect(screen.getByText('root block')).toBeInTheDocument()
+      expect(screen.getByText(textContent('root block'))).toBeInTheDocument()
     })
 
-    await user.click(screen.getByText('root block'))
+    await user.click(screen.getByText(textContent('root block')))
 
     // Navigation should not have changed
     const navState = useNavigationStore.getState()
@@ -476,12 +493,12 @@ describe('SearchPanel', () => {
     typeAndSubmit(input, 'child')
 
     await waitFor(() => {
-      expect(screen.getByText('child block')).toBeInTheDocument()
+      expect(screen.getByText(textContent('child block'))).toBeInTheDocument()
     })
 
     mockedInvoke.mockRejectedValueOnce(new Error('fail'))
 
-    await user.click(screen.getByText('child block'))
+    await user.click(screen.getByText(textContent('child block')))
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to load search results')
@@ -613,7 +630,7 @@ describe('SearchPanel', () => {
 
     // Wait for first page
     await waitFor(() => {
-      expect(screen.getByText('page one result')).toBeInTheDocument()
+      expect(screen.getByText(textContent('page one result'))).toBeInTheDocument()
     })
 
     // Load more (page 2)
@@ -621,7 +638,7 @@ describe('SearchPanel', () => {
     await user.click(loadMoreBtn)
 
     await waitFor(() => {
-      expect(screen.getByText('page two result')).toBeInTheDocument()
+      expect(screen.getByText(textContent('page two result'))).toBeInTheDocument()
     })
 
     // Load more (page 3 — last page)
@@ -629,13 +646,13 @@ describe('SearchPanel', () => {
     await user.click(loadMoreBtn)
 
     await waitFor(() => {
-      expect(screen.getByText('page three result')).toBeInTheDocument()
+      expect(screen.getByText(textContent('page three result'))).toBeInTheDocument()
     })
 
     // All three results visible, Load more button gone
-    expect(screen.getByText('page one result')).toBeInTheDocument()
-    expect(screen.getByText('page two result')).toBeInTheDocument()
-    expect(screen.getByText('page three result')).toBeInTheDocument()
+    expect(screen.getByText(textContent('page one result'))).toBeInTheDocument()
+    expect(screen.getByText(textContent('page two result'))).toBeInTheDocument()
+    expect(screen.getByText(textContent('page three result'))).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Load more/i })).not.toBeInTheDocument()
   })
 
@@ -676,7 +693,7 @@ describe('SearchPanel', () => {
     typeAndSubmit(input, 'child')
 
     await waitFor(() => {
-      expect(screen.getByText('child block')).toBeInTheDocument()
+      expect(screen.getByText(textContent('child block'))).toBeInTheDocument()
     })
 
     // Mock get_block with a pending promise so loading state persists
@@ -689,7 +706,7 @@ describe('SearchPanel', () => {
     )
 
     // biome-ignore lint/style/noNonNullAssertion: test assertion — button always exists in rendered output
-    const resultBtn = screen.getByText('child block').closest('button')!
+    const resultBtn = screen.getByText(textContent('child block')).closest('button')!
     await user.click(resultBtn)
 
     // Button should be disabled while loading
@@ -823,10 +840,10 @@ describe('SearchPanel', () => {
     typeAndSubmit(input, 'page')
 
     await waitFor(() => {
-      expect(screen.getByText('My Page')).toBeInTheDocument()
+      expect(screen.getByText(textContent('My Page'))).toBeInTheDocument()
     })
 
-    await user.click(screen.getByText('My Page'))
+    await user.click(screen.getByText(textContent('My Page')))
 
     const stored = JSON.parse(localStorage.getItem('recent_pages') ?? '[]')
     expect(stored).toHaveLength(1)
@@ -856,7 +873,7 @@ describe('SearchPanel', () => {
     typeAndSubmit(input, 'child')
 
     await waitFor(() => {
-      expect(screen.getByText('child content')).toBeInTheDocument()
+      expect(screen.getByText(textContent('child content'))).toBeInTheDocument()
     })
 
     mockedInvoke.mockResolvedValueOnce({
@@ -869,7 +886,7 @@ describe('SearchPanel', () => {
       is_conflict: false,
     })
 
-    await user.click(screen.getByText('child content'))
+    await user.click(screen.getByText(textContent('child content')))
 
     await waitFor(() => {
       const stored = JSON.parse(localStorage.getItem('recent_pages') ?? '[]')
@@ -914,6 +931,49 @@ describe('SearchPanel', () => {
   })
 
   // --- PageLink breadcrumb navigation ---
+  it('shows visible result count after search', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      items: [makeSearchResult(), makeSearchResult({ id: 'B2', content: 'second result' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText('Search blocks...')
+    typeAndSubmit(input, 'test')
+
+    await waitFor(() => {
+      expect(screen.getByText('2 results found')).toBeInTheDocument()
+    })
+
+    // The result count should be visible (not sr-only)
+    const countSpan = screen.getByText('2 results found')
+    expect(countSpan).not.toHaveClass('sr-only')
+    expect(countSpan).toHaveClass('text-xs')
+  })
+
+  it('highlights search query in result cards', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      items: [makeSearchResult({ content: 'the test content here' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText('Search blocks...')
+    typeAndSubmit(input, 'test')
+
+    await waitFor(() => {
+      expect(screen.getByText(textContent('the test content here'))).toBeInTheDocument()
+    })
+
+    const mark = document.querySelector('mark')
+    expect(mark).toBeInTheDocument()
+    expect(mark?.textContent).toBe('test')
+  })
+
   it('clicking page title in breadcrumb navigates to the page', async () => {
     const user = userEvent.setup()
 

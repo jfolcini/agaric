@@ -116,6 +116,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
           value={newTagName}
           onChange={(e) => setNewTagName(e.target.value)}
           placeholder="New tag name..."
+          aria-label={t('tagList.newTagLabel')}
           className="flex-1"
         />
         <Button type="submit" variant="outline" disabled={!newTagName.trim() || isCreating}>

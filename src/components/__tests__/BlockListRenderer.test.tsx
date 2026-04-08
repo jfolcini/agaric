@@ -74,7 +74,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof BlockListRende
     onShowProperties: noop,
     onZoomIn: noop,
     onSelect: noop,
-    onContainerMouseDown: noop,
+    onContainerPointerDown: noop,
     resolveBlockTitle: (id: string) => id,
     resolveTagName: (id: string) => id,
     resolveBlockStatus: resolveActive,

@@ -111,6 +111,24 @@ describe('ResultCard', () => {
     expect(span).toHaveClass('line-clamp-2')
   })
 
+  it('highlights matching text when highlightText is provided', () => {
+    render(
+      <ResultCard
+        block={makeBlock({ content: 'hello world' })}
+        onClick={() => {}}
+        highlightText="world"
+      />,
+    )
+    const mark = document.querySelector('mark')
+    expect(mark).toBeInTheDocument()
+    expect(mark?.textContent).toBe('world')
+  })
+
+  it('does not highlight when highlightText is not provided', () => {
+    render(<ResultCard block={makeBlock({ content: 'hello world' })} onClick={() => {}} />)
+    expect(document.querySelector('mark')).not.toBeInTheDocument()
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(<ResultCard block={makeBlock()} onClick={() => {}} />)
     const results = await axe(container)
