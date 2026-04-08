@@ -866,4 +866,94 @@ describe('TagFilterPanel', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  // -- UX-71: Breadcrumb tests ---------------------------------------------------
+
+  it('renders page breadcrumbs for results', async () => {
+    // list_tags_by_prefix response
+    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+
+    render(<TagFilterPanel />)
+
+    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    await typeAndWaitForTags(input, 'work')
+
+    const addBtn = screen.getByRole('button', { name: /Add/i })
+
+    // Use mockImplementation so query_by_tags and batch_resolve both resolve correctly
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') {
+        return {
+          items: [
+            makeBlock({
+              id: 'B1',
+              parent_id: 'PAGE1',
+              content: 'tagged block',
+              block_type: 'content',
+            }),
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'batch_resolve') {
+        return [{ id: 'PAGE1', title: 'My Page', block_type: 'page', deleted: false }]
+      }
+      return null
+    })
+
+    await user.click(addBtn)
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Wait for breadcrumb to appear
+    await waitFor(() => {
+      expect(screen.getByText('in:')).toBeInTheDocument()
+    })
+
+    // Page title should be rendered as a link
+    expect(screen.getByRole('link', { name: 'My Page' })).toBeInTheDocument()
+  })
+
+  it('handles batchResolve failure gracefully', async () => {
+    // list_tags_by_prefix response
+    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+
+    render(<TagFilterPanel />)
+
+    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    await typeAndWaitForTags(input, 'work')
+
+    const addBtn = screen.getByRole('button', { name: /Add/i })
+
+    // Use mockImplementation: query_by_tags succeeds, batch_resolve rejects
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') {
+        return {
+          items: [
+            makeBlock({
+              id: 'B1',
+              parent_id: 'PAGE1',
+              content: 'tagged block',
+              block_type: 'content',
+            }),
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'batch_resolve') {
+        throw new Error('resolve failed')
+      }
+      return null
+    })
+
+    await user.click(addBtn)
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Results should still be shown despite batch_resolve failure
+    expect(screen.getByText('tagged block')).toBeInTheDocument()
+
+    // No breadcrumb should appear (batch_resolve failed)
+    expect(screen.queryByText('in:')).not.toBeInTheDocument()
+  })
 })

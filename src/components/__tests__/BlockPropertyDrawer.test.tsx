@@ -904,7 +904,7 @@ describe('PropertyRow', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
 
-  it('renders a date input when inputType is "date"', () => {
+  it('renders a text input for NL date support when inputType is "date"', () => {
     render(
       <PropertyRow
         label="Due"
@@ -916,7 +916,7 @@ describe('PropertyRow', () => {
     )
 
     const input = screen.getByLabelText('Due value')
-    expect(input).toHaveAttribute('type', 'date')
+    expect(input).toHaveAttribute('type', 'text')
     expect(input).toHaveValue('2026-06-15')
   })
 

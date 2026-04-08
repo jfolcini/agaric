@@ -3,6 +3,7 @@ import {
   formatCompactDate,
   getDateRangeForFilter,
   getTodayString,
+  getWeekOptions,
   isDateFormattedPage,
 } from '../date-utils'
 
@@ -46,12 +47,14 @@ describe('getDateRangeForFilter', () => {
   const FAKE_NOW = new Date(2026, 3, 10)
 
   beforeEach(() => {
+    localStorage.clear()
     vi.useFakeTimers()
     vi.setSystemTime(FAKE_NOW)
   })
 
   afterEach(() => {
     vi.useRealTimers()
+    localStorage.clear()
   })
 
   it('returns today range for "today"', () => {
@@ -108,6 +111,13 @@ describe('getDateRangeForFilter', () => {
   it('returns null for unknown preset', () => {
     expect(getDateRangeForFilter('unknown', FAKE_NOW)).toBeNull()
   })
+
+  it('returns Sunday-Saturday range for "this-week" when week starts on Sunday', () => {
+    localStorage.setItem('week-start-preference', '0')
+    // April 10, 2026 is Friday -> Sunday is April 5, Saturday is April 11
+    const result = getDateRangeForFilter('this-week', FAKE_NOW)
+    expect(result).toEqual({ start: '2026-04-05', end: '2026-04-11' })
+  })
 })
 
 describe('getTodayString', () => {
@@ -130,5 +140,26 @@ describe('isDateFormattedPage', () => {
     expect(isDateFormattedPage('2026-04')).toBe(false)
     expect(isDateFormattedPage('2026-04-06 extra')).toBe(false)
     expect(isDateFormattedPage('')).toBe(false)
+  })
+})
+
+describe('getWeekOptions', () => {
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  it('returns weekStartsOn: 1 by default', () => {
+    localStorage.clear()
+    expect(getWeekOptions()).toEqual({ weekStartsOn: 1 })
+  })
+
+  it('returns weekStartsOn: 0 when preference is Sunday', () => {
+    localStorage.setItem('week-start-preference', '0')
+    expect(getWeekOptions()).toEqual({ weekStartsOn: 0 })
+  })
+
+  it('returns weekStartsOn: 1 for invalid preference', () => {
+    localStorage.setItem('week-start-preference', 'garbage')
+    expect(getWeekOptions()).toEqual({ weekStartsOn: 1 })
   })
 })

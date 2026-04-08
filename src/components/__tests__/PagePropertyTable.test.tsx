@@ -241,7 +241,7 @@ describe('PagePropertyTable property display', () => {
 
     await waitFor(() => {
       const input = screen.getByLabelText('due value') as HTMLInputElement
-      expect(input.type).toBe('date')
+      expect(input.type).toBe('text')
       expect(input.value).toBe('2026-06-15')
     })
   })

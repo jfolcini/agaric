@@ -12,6 +12,7 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useWeekStart } from '../../hooks/useWeekStart'
 import { parseDate } from '../../lib/parse-date'
 import { Calendar } from '../ui/calendar'
 import { ScrollArea } from '../ui/scroll-area'
@@ -24,6 +25,7 @@ export function BlockDatePicker({
   onClose: () => void
 }): React.ReactElement {
   const { t } = useTranslation()
+  const { weekStartsOn } = useWeekStart()
   const dialogRef = useRef<HTMLDivElement>(null)
   const [dateTextInput, setDateTextInput] = useState('')
   const [dateTextPreview, setDateTextPreview] = useState<string | null>(null)
@@ -116,15 +118,16 @@ export function BlockDatePicker({
               <p className="mt-1 text-xs text-muted-foreground">
                 {dateTextPreview ? (
                   <>
-                    Parsed: <strong>{dateTextPreview}</strong> (press Enter to apply)
+                    {t('datePicker.parsed')} <strong>{dateTextPreview}</strong> (
+                    {t('datePicker.pressEnter')})
                   </>
                 ) : (
-                  <span className="text-destructive">Could not parse date</span>
+                  <span className="text-destructive">{t('property.dateParseError')}</span>
                 )}
               </p>
             )}
           </div>
-          <Calendar mode="single" weekStartsOn={1} showOutsideDays onSelect={onSelect} />
+          <Calendar mode="single" weekStartsOn={weekStartsOn} showOutsideDays onSelect={onSelect} />
         </ScrollArea>
       </div>
     </>

@@ -1,19 +1,18 @@
+import { startOfWeek } from 'date-fns'
 import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Calendar } from '@/components/ui/calendar'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
-import { formatDate } from '../../lib/date-utils'
+import { useWeekStart } from '../../hooks/useWeekStart'
+import { formatDate, getWeekOptions } from '../../lib/date-utils'
 import { countAgendaBatchBySource } from '../../lib/tauri'
 
 /** Compute ~42 date strings (6 weeks) for the calendar view centred on the given month. */
 function getCalendarDateRange(month: Date): string[] {
   const firstOfMonth = new Date(month.getFullYear(), month.getMonth(), 1)
-  const dow = firstOfMonth.getDay()
-  const startOffset = dow === 0 ? 6 : dow - 1
-  const start = new Date(firstOfMonth)
-  start.setDate(start.getDate() - startOffset)
+  const start = startOfWeek(firstOfMonth, getWeekOptions())
   const dates: string[] = []
   for (let i = 0; i < 42; i++) {
     const d = new Date(start)
@@ -68,6 +67,7 @@ export function JournalCalendarDropdown({
   onClose,
 }: JournalCalendarDropdownProps): React.ReactElement {
   const { t } = useTranslation()
+  const { weekStartsOn } = useWeekStart()
   const calRef = useRef<HTMLDivElement>(null)
   const [flipAbove, setFlipAbove] = useState(false)
   const [shiftLeft, setShiftLeft] = useState(0)
@@ -148,7 +148,7 @@ export function JournalCalendarDropdown({
           selected={currentDate}
           onSelect={(day) => day && onSelectDate(day)}
           defaultMonth={currentDate}
-          weekStartsOn={1}
+          weekStartsOn={weekStartsOn}
           showWeekNumber
           showOutsideDays
           onWeekNumberClick={(_wn: number, dates: Date[]) => onSelectWeek(dates)}

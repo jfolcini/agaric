@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { logger } from '@/lib/logger'
+import { parseDate } from '@/lib/parse-date'
 import { formatPropertyName } from '@/lib/property-utils'
 import type { BlockRow, PropertyDefinition, PropertyRow } from '../lib/tauri'
 import { listBlocks, setProperty, updatePropertyDefOptions } from '../lib/tauri'
@@ -64,6 +65,7 @@ export function PropertyRowEditor({
   })()
 
   const [localValue, setLocalValue] = useState(currentValue)
+  const [datePreview, setDatePreview] = useState<string | null>(null)
 
   // Sync localValue when prop changes externally
   useEffect(() => {
@@ -71,10 +73,28 @@ export function PropertyRowEditor({
   }, [currentValue])
 
   const handleBlur = useCallback(() => {
+    if (valueType === 'date') {
+      const trimmed = localValue.trim()
+      setDatePreview(null)
+      if (!trimmed) {
+        if (localValue !== currentValue) onSave(localValue)
+        return
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        const parsed = parseDate(trimmed)
+        if (parsed) {
+          setLocalValue(parsed)
+          onSave(parsed)
+          return
+        }
+        // Invalid NL — don't save
+        return
+      }
+    }
     if (localValue !== currentValue) {
       onSave(localValue)
     }
-  }, [localValue, currentValue, onSave])
+  }, [localValue, currentValue, onSave, valueType])
 
   const handleSelectChange = useCallback(
     (val: string) => {
@@ -251,14 +271,33 @@ export function PropertyRowEditor({
             </SelectContent>
           </Select>
         ) : (
-          <Input
-            className="h-7 text-xs"
-            type={valueType === 'number' ? 'number' : valueType === 'date' ? 'date' : 'text'}
-            value={localValue}
-            onChange={(e) => setLocalValue(e.target.value)}
-            onBlur={handleBlur}
-            aria-label={t('pageProperty.valueLabel', { key: prop.key })}
-          />
+          <>
+            <Input
+              className="h-7 text-xs"
+              type={valueType === 'number' ? 'number' : 'text'}
+              value={localValue}
+              placeholder={valueType === 'date' ? t('property.datePlaceholder') : undefined}
+              onChange={(e) => {
+                setLocalValue(e.target.value)
+                if (valueType === 'date') {
+                  const raw = e.target.value.trim()
+                  if (!raw || /^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+                    setDatePreview(raw || null)
+                  } else {
+                    setDatePreview(parseDate(raw))
+                  }
+                }
+              }}
+              onBlur={handleBlur}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+              }}
+              aria-label={t('pageProperty.valueLabel', { key: prop.key })}
+            />
+            {valueType === 'date' && datePreview && (
+              <p className="text-[10px] text-muted-foreground mt-0.5">{datePreview}</p>
+            )}
+          </>
         )}
       </div>
       {valueType === 'select' && (

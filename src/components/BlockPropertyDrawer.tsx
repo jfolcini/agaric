@@ -29,6 +29,7 @@ import {
 } from '@/lib/property-save-utils'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
 import { announce } from '../lib/announcer'
+import { parseDate } from '../lib/parse-date'
 import type { PropertyDefinition, PropertyRow as PropertyRowData } from '../lib/tauri'
 import {
   getProperties,
@@ -349,6 +350,49 @@ export function PropertyRow({
   onRemove,
   removeAriaLabel,
 }: PropertyRowProps): React.ReactElement {
+  const { t } = useTranslation()
+  const isDate = inputType === 'date'
+  const [datePreview, setDatePreview] = useState<string | null>(null)
+  const [dateError, setDateError] = useState(false)
+
+  const handleDateBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    const raw = e.target.value.trim()
+    setDatePreview(null)
+    setDateError(false)
+    if (!raw) {
+      onSave('')
+      return
+    }
+    // If it's already a valid YYYY-MM-DD, accept as-is
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      onSave(raw)
+      return
+    }
+    const parsed = parseDate(raw)
+    if (parsed) {
+      onSave(parsed)
+      e.target.value = parsed
+    } else {
+      setDateError(true)
+      // Don't save — leave the field as is
+    }
+  }
+
+  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value.trim()
+    setDateError(false)
+    if (!raw) {
+      setDatePreview(null)
+      return
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      setDatePreview(raw)
+    } else {
+      const parsed = parseDate(raw)
+      setDatePreview(parsed)
+    }
+  }
+
   return (
     <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
       <Badge
@@ -363,16 +407,26 @@ export function PropertyRow({
         {Icon && <Icon className="h-3 w-3" />}
         {label}
       </Badge>
-      <Input
-        className="flex-1 h-7 text-xs"
-        type={inputType}
-        aria-label={ariaLabel}
-        defaultValue={value}
-        onBlur={(e) => onSave(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-        }}
-      />
+      <div className="flex-1">
+        <Input
+          className="h-7 text-xs"
+          type={isDate ? 'text' : inputType}
+          aria-label={ariaLabel}
+          defaultValue={value}
+          placeholder={isDate ? t('property.datePlaceholder') : undefined}
+          onBlur={isDate ? handleDateBlur : (e) => onSave(e.target.value)}
+          onChange={isDate ? handleDateChange : undefined}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+          }}
+        />
+        {isDate && datePreview && (
+          <p className="text-[10px] text-muted-foreground mt-0.5">{datePreview}</p>
+        )}
+        {isDate && dateError && (
+          <p className="text-[10px] text-destructive mt-0.5">{t('property.dateParseError')}</p>
+        )}
+      </div>
       {onRemove && (
         <Button
           variant="ghost"

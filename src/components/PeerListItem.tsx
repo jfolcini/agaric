@@ -8,10 +8,13 @@
 
 import { Globe, Pencil, RefreshCw, Smartphone, Unplug } from 'lucide-react'
 import type React from 'react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
 import { formatLastSynced, truncateId } from '@/lib/format'
 import type { PeerRefRow } from '../lib/tauri'
@@ -39,6 +42,20 @@ export function PeerListItem({
   onAddressUpdated,
 }: PeerListItemProps): React.ReactElement {
   const { t } = useTranslation()
+  const [addrOpen, setAddrOpen] = useState(false)
+  const [addrInput, setAddrInput] = useState('')
+
+  const handleSaveAddress = useCallback(() => {
+    const addr = addrInput.trim()
+    if (!addr) return
+    setPeerAddress(peer.peer_id, addr)
+      .then(() => {
+        toast.success(t('status.addressUpdated'))
+        onAddressUpdated()
+        setAddrOpen(false)
+      })
+      .catch(() => toast.error(t('status.addressInvalid')))
+  }, [addrInput, peer.peer_id, t, onAddressUpdated])
 
   return (
     <div
@@ -70,27 +87,51 @@ export function PeerListItem({
             <span className="text-xs text-muted-foreground truncate">
               {peer.last_address ?? t('device.noAddress')}
             </span>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              className="peer-address-edit"
-              onClick={() => {
-                const addr = prompt('Enter peer address (host:port):', peer.last_address ?? '')
-                if (addr) {
-                  setPeerAddress(peer.peer_id, addr)
-                    .then(() => {
-                      toast.success(t('status.addressUpdated'))
-                      onAddressUpdated()
-                    })
-                    .catch(() => toast.error(t('status.addressInvalid')))
-                }
+            <Popover
+              open={addrOpen}
+              onOpenChange={(open) => {
+                setAddrOpen(open)
+                if (open) setAddrInput(peer.last_address ?? '')
               }}
-              aria-label={t('device.editAddressLabel', {
-                name: peer.device_name || truncateId(peer.peer_id),
-              })}
             >
-              <Pencil className="h-3 w-3" />
-            </Button>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="peer-address-edit"
+                  aria-label={t('device.editAddressLabel', {
+                    name: peer.device_name || truncateId(peer.peer_id),
+                  })}
+                >
+                  <Pencil className="h-3 w-3" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-64 p-3 space-y-2" align="start">
+                <p className="text-xs font-medium">{t('device.editAddressTitle')}</p>
+                <Input
+                  className="h-7 text-xs"
+                  placeholder="192.168.1.100:5000"
+                  value={addrInput}
+                  onChange={(e) => setAddrInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      handleSaveAddress()
+                    }
+                  }}
+                  aria-label={t('device.addressInputLabel')}
+                />
+                <p className="text-[10px] text-muted-foreground">{t('device.addressHint')}</p>
+                <Button
+                  size="sm"
+                  className="w-full"
+                  onClick={handleSaveAddress}
+                  disabled={!addrInput.trim()}
+                >
+                  {t('device.saveAddressButton')}
+                </Button>
+              </PopoverContent>
+            </Popover>
           </div>
         </div>
       </div>

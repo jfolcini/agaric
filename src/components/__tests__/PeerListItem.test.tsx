@@ -13,7 +13,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { PeerRefRow } from '../../lib/tauri'
 import { PeerListItem } from '../PeerListItem'
@@ -129,23 +129,24 @@ describe('PeerListItem', () => {
     })
   })
 
-  describe('setPeerAddress error path', () => {
-    afterEach(() => {
-      vi.restoreAllMocks()
-    })
-
+  describe('setPeerAddress via popover', () => {
     it('shows error toast when setPeerAddress rejects', async () => {
       const user = userEvent.setup()
       const peer = makePeer({ device_name: 'Work Laptop' })
       const onAddressUpdated = vi.fn()
 
-      vi.spyOn(window, 'prompt').mockReturnValueOnce('bad-address')
       mockedInvoke.mockRejectedValueOnce(new Error('invalid address format'))
 
       render(<PeerListItem peer={peer} {...defaultProps} onAddressUpdated={onAddressUpdated} />)
 
       const editBtn = screen.getByRole('button', { name: /Edit address for Work Laptop/i })
       await user.click(editBtn)
+
+      // Popover is now open — type an address and submit
+      const input = screen.getByLabelText('Address (host:port)')
+      await user.clear(input)
+      await user.type(input, 'bad-address')
+      await user.click(screen.getByRole('button', { name: /Save/i }))
 
       await waitFor(() => {
         expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
@@ -156,18 +157,22 @@ describe('PeerListItem', () => {
       expect(onAddressUpdated).not.toHaveBeenCalled()
     })
 
-    it('shows success toast and calls onAddressUpdated when setPeerAddress resolves', async () => {
+    it('shows success toast and calls onAddressUpdated when address is saved', async () => {
       const user = userEvent.setup()
       const peer = makePeer({ device_name: 'Work Laptop' })
       const onAddressUpdated = vi.fn()
 
-      vi.spyOn(window, 'prompt').mockReturnValueOnce('192.168.1.1:8080')
       mockedInvoke.mockResolvedValueOnce(undefined)
 
       render(<PeerListItem peer={peer} {...defaultProps} onAddressUpdated={onAddressUpdated} />)
 
       const editBtn = screen.getByRole('button', { name: /Edit address for Work Laptop/i })
       await user.click(editBtn)
+
+      const input = screen.getByLabelText('Address (host:port)')
+      await user.clear(input)
+      await user.type(input, '192.168.1.1:8080')
+      await user.click(screen.getByRole('button', { name: /Save/i }))
 
       await waitFor(() => {
         expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Address updated')
@@ -176,43 +181,41 @@ describe('PeerListItem', () => {
       expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
     })
 
-    it('does not call invoke when prompt is cancelled', async () => {
+    it('does not call invoke when popover is closed without saving', async () => {
       const user = userEvent.setup()
       const peer = makePeer({ device_name: 'Work Laptop' })
-
-      vi.spyOn(window, 'prompt').mockReturnValueOnce(null)
 
       render(<PeerListItem peer={peer} {...defaultProps} />)
 
       const editBtn = screen.getByRole('button', { name: /Edit address for Work Laptop/i })
       await user.click(editBtn)
 
+      // Popover opened but user doesn't save — press Escape
+      await user.keyboard('{Escape}')
+
       expect(mockedInvoke).not.toHaveBeenCalled()
-      expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
-      expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
     })
 
-    it('does not call invoke when prompt returns empty string', async () => {
+    it('save button is disabled with empty input', async () => {
       const user = userEvent.setup()
       const peer = makePeer({ device_name: 'Work Laptop' })
-
-      vi.spyOn(window, 'prompt').mockReturnValueOnce('')
 
       render(<PeerListItem peer={peer} {...defaultProps} />)
 
       const editBtn = screen.getByRole('button', { name: /Edit address for Work Laptop/i })
       await user.click(editBtn)
 
-      expect(mockedInvoke).not.toHaveBeenCalled()
-      expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
-      expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+      const input = screen.getByLabelText('Address (host:port)')
+      await user.clear(input)
+
+      const saveBtn = screen.getByRole('button', { name: /Save/i })
+      expect(saveBtn).toBeDisabled()
     })
 
     it('passes correct args to set_peer_address invoke call', async () => {
       const user = userEvent.setup()
       const peer = makePeer({ device_name: 'Work Laptop' })
 
-      vi.spyOn(window, 'prompt').mockReturnValueOnce('10.0.0.1:9090')
       mockedInvoke.mockResolvedValueOnce(undefined)
 
       render(<PeerListItem peer={peer} {...defaultProps} />)
@@ -220,12 +223,31 @@ describe('PeerListItem', () => {
       const editBtn = screen.getByRole('button', { name: /Edit address for Work Laptop/i })
       await user.click(editBtn)
 
+      const input = screen.getByLabelText('Address (host:port)')
+      await user.clear(input)
+      await user.type(input, '10.0.0.1:9090')
+      await user.click(screen.getByRole('button', { name: /Save/i }))
+
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith('set_peer_address', {
           peerId: 'peer-abc-1234567890',
           address: '10.0.0.1:9090',
         })
       })
+    })
+  })
+
+  it('has no a11y violations with address popover open', async () => {
+    const user = userEvent.setup()
+    const peer = makePeer({ device_name: 'Test Device' })
+
+    const { container } = render(<PeerListItem peer={peer} {...defaultProps} />)
+
+    await user.click(screen.getByRole('button', { name: /Edit address/i }))
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
     })
   })
 })

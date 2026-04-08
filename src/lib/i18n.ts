@@ -1163,6 +1163,26 @@ const resources = {
       'sidebar.minutesAgo': '{{count}}m ago',
       'sidebar.hoursAgo': '{{count}}h ago',
       'sidebar.daysAgo': '{{count}}d ago',
+
+      // UX-71: Tag filter breadcrumbs
+      'tagFilter.inPage': 'in:',
+
+      // UX-88: NL date input
+      'property.datePlaceholder': 'today, +3d, Apr 15, 2025-04-15',
+      'property.dateParseError': 'Could not parse date',
+      'datePicker.parsed': 'Parsed:',
+      'datePicker.pressEnter': 'press Enter to apply',
+
+      // UX-77: Manual address entry
+      'device.editAddressTitle': 'Peer address',
+      'device.addressInputLabel': 'Address (host:port)',
+      'device.addressHint': 'Format: host:port (e.g., 192.168.1.100:5000)',
+      'device.saveAddressButton': 'Save',
+
+      // UX-62: Code block language selector
+      'toolbar.codeBlockLanguageTip': 'Code block language',
+      'toolbar.codeBlockLanguage': 'Code block language',
+      'toolbar.plainText': 'Plain text',
     },
   },
 }

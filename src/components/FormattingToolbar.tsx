@@ -51,6 +51,48 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/t
 /** Shared active-state class applied to toolbar buttons when their feature is on. */
 const toolbarActiveClass = 'bg-accent text-accent-foreground'
 
+/** Languages available in the code block language selector popover. */
+const CODE_LANGUAGES = [
+  'javascript',
+  'typescript',
+  'python',
+  'rust',
+  'bash',
+  'sql',
+  'html',
+  'css',
+  'json',
+  'go',
+  'java',
+  'c',
+  'cpp',
+  'ruby',
+  'markdown',
+  'yaml',
+  'toml',
+] as const
+
+/** Short display labels shown on the toolbar button when a code block language is active. */
+const LANG_SHORT: Record<string, string> = {
+  javascript: 'JS',
+  typescript: 'TS',
+  python: 'PY',
+  rust: 'RS',
+  bash: 'SH',
+  sql: 'SQL',
+  html: 'HTML',
+  css: 'CSS',
+  json: 'JSON',
+  go: 'GO',
+  java: 'JA',
+  c: 'C',
+  cpp: 'C++',
+  ruby: 'RB',
+  markdown: 'MD',
+  yaml: 'YML',
+  toml: 'TOML',
+}
+
 interface FormattingToolbarProps {
   editor: Editor
   /** Block ID used to associate toolbar with its editor via aria-controls. */
@@ -126,6 +168,7 @@ export function FormattingToolbar({
   const { t } = useTranslation()
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
   const [headingPopoverOpen, setHeadingPopoverOpen] = useState(false)
+  const [codeBlockPopoverOpen, setCodeBlockPopoverOpen] = useState(false)
 
   const state = useEditorState({
     editor,
@@ -137,6 +180,9 @@ export function FormattingToolbar({
       highlight: ctx.editor.isActive('highlight'),
       link: ctx.editor.isActive('link'),
       codeBlock: ctx.editor.isActive('codeBlock'),
+      codeBlockLanguage: ctx.editor.isActive('codeBlock')
+        ? ((ctx.editor.getAttributes('codeBlock').language as string) ?? '')
+        : '',
       blockquote: ctx.editor.isActive('blockquote'),
       headingLevel: ctx.editor.isActive('heading', { level: 1 })
         ? 1
@@ -228,13 +274,6 @@ export function FormattingToolbar({
         label: 'toolbar.insertTag',
         tip: 'toolbar.tagTip',
         action: () => editor.chain().focus().insertContent('@').run(),
-      },
-      {
-        icon: FileCode2,
-        label: 'toolbar.codeBlock',
-        tip: 'toolbar.codeBlockTip',
-        activeKey: 'codeBlock',
-        action: () => editor.chain().focus().toggleCodeBlock().run(),
       },
       {
         icon: Quote,
@@ -360,6 +399,82 @@ export function FormattingToolbar({
             state={state as Record<string, unknown>}
             t={t}
           />
+
+          <Popover open={codeBlockPopoverOpen} onOpenChange={setCodeBlockPopoverOpen}>
+            <Tip label={t('toolbar.codeBlockLanguageTip')}>
+              <PopoverAnchor asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={t('toolbar.codeBlockLanguage')}
+                  aria-pressed={state.codeBlock}
+                  className={cn(state.codeBlock && toolbarActiveClass)}
+                  onPointerDown={(e) => {
+                    e.preventDefault()
+                    setCodeBlockPopoverOpen((prev) => !prev)
+                  }}
+                >
+                  <FileCode2 className="h-3.5 w-3.5" />
+                  {state.codeBlock && state.codeBlockLanguage && (
+                    <span className="text-[10px] font-bold">
+                      {LANG_SHORT[state.codeBlockLanguage] ?? state.codeBlockLanguage}
+                    </span>
+                  )}
+                </Button>
+              </PopoverAnchor>
+            </Tip>
+            <PopoverContent align="start" className="w-auto p-1">
+              <div className="flex flex-col gap-0.5">
+                {CODE_LANGUAGES.map((lang) => (
+                  <Button
+                    key={lang}
+                    variant="ghost"
+                    size="sm"
+                    className={cn(
+                      'justify-start text-sm',
+                      state.codeBlockLanguage === lang && 'bg-accent',
+                    )}
+                    onPointerDown={(e) => {
+                      e.preventDefault()
+                      const attrs = { language: lang }
+                      if (!state.codeBlock) {
+                        editor
+                          .chain()
+                          .focus()
+                          .toggleCodeBlock()
+                          .updateAttributes('codeBlock', attrs)
+                          .run()
+                      } else {
+                        editor.chain().focus().updateAttributes('codeBlock', attrs).run()
+                      }
+                      setCodeBlockPopoverOpen(false)
+                    }}
+                  >
+                    {lang}
+                  </Button>
+                ))}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={cn(
+                    'justify-start text-sm',
+                    state.codeBlock && !state.codeBlockLanguage && 'bg-accent',
+                  )}
+                  onPointerDown={(e) => {
+                    e.preventDefault()
+                    if (state.codeBlock) {
+                      editor.chain().focus().updateAttributes('codeBlock', { language: '' }).run()
+                    } else {
+                      editor.chain().focus().toggleCodeBlock().run()
+                    }
+                    setCodeBlockPopoverOpen(false)
+                  }}
+                >
+                  {t('toolbar.plainText')}
+                </Button>
+              </div>
+            </PopoverContent>
+          </Popover>
 
           <Popover open={headingPopoverOpen} onOpenChange={setHeadingPopoverOpen}>
             <Tip label={t('toolbar.headingTip')}>

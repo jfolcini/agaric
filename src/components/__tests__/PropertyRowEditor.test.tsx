@@ -160,7 +160,7 @@ describe('PropertyRowEditor rendering', () => {
     expect(input.value).toBe('42')
   })
 
-  it('renders date input with type="date"', () => {
+  it('renders date input with type="text" for NL support', () => {
     render(
       <PropertyRowEditor
         blockId="BLOCK_1"
@@ -172,7 +172,7 @@ describe('PropertyRowEditor rendering', () => {
     )
 
     const input = screen.getByLabelText('due value') as HTMLInputElement
-    expect(input.type).toBe('date')
+    expect(input.type).toBe('text')
     expect(input.value).toBe('2026-06-15')
   })
 
@@ -325,6 +325,109 @@ describe('PropertyRowEditor editing', () => {
     await user.click(deleteBtn)
 
     expect(onDelete).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('PropertyRowEditor NL date input', () => {
+  it('parses NL date "tomorrow" on blur and calls onSave with YYYY-MM-DD', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('due', { value_date: '' })}
+        def={makeDef('due', 'date')}
+        onSave={onSave}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByLabelText('due value')
+    await user.click(input)
+    await user.type(input, 'tomorrow')
+    await user.tab()
+
+    expect(onSave).toHaveBeenCalledTimes(1)
+    const savedValue = onSave.mock.calls[0]?.[0]
+    expect(savedValue).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+
+  it('accepts ISO date as-is without NL parsing', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('due', { value_date: '' })}
+        def={makeDef('due', 'date')}
+        onSave={onSave}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByLabelText('due value')
+    await user.click(input)
+    await user.type(input, '2025-04-15')
+    await user.tab()
+
+    expect(onSave).toHaveBeenCalledWith('2025-04-15')
+  })
+
+  it('shows preview text while typing NL date', async () => {
+    const user = userEvent.setup()
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('due', { value_date: '' })}
+        def={makeDef('due', 'date')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByLabelText('due value')
+    await user.click(input)
+    await user.type(input, 'today')
+
+    const preview = input.parentElement?.querySelector('.text-muted-foreground')
+    expect(preview).toBeInTheDocument()
+    expect(preview?.textContent).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+
+  it('does not call onSave for invalid NL date input', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('due', { value_date: '' })}
+        def={makeDef('due', 'date')}
+        onSave={onSave}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByLabelText('due value')
+    await user.click(input)
+    await user.type(input, 'not a date')
+    await user.tab()
+
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it('shows placeholder for date input', () => {
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('due', { value_date: '' })}
+        def={makeDef('due', 'date')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByLabelText('due value') as HTMLInputElement
+    expect(input.placeholder).toBe('today, +3d, Apr 15, 2025-04-15')
   })
 })
 

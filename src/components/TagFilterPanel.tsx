@@ -19,8 +19,9 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import type { BlockRow } from '../lib/tauri'
-import { getBlock, listTagsByPrefix, queryByTags } from '../lib/tauri'
+import { batchResolve, getBlock, listTagsByPrefix, queryByTags } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
+import { PageLink } from './PageLink'
 import { ResultCard } from './ResultCard'
 
 interface SelectedTag {
@@ -53,6 +54,7 @@ export function TagFilterPanel(): React.ReactElement {
   const [matchingTags, setMatchingTags] = useState<MatchingTag[]>([])
   const [selectedTags, setSelectedTags] = useState<SelectedTag[]>([])
   const [mode, setMode] = useState<'and' | 'or' | 'not'>('and')
+  const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
 
   // Debounced prefix search
@@ -120,6 +122,29 @@ export function TagFilterPanel(): React.ReactElement {
   useEffect(() => {
     if (selectedTags.length === 0) setItems([])
   }, [selectedTags.length, setItems])
+
+  // Resolve page titles for breadcrumbs when results change
+  useEffect(() => {
+    const parentIds = [
+      ...new Set(results.map((b) => b.parent_id).filter((id): id is string => id != null)),
+    ]
+    if (parentIds.length === 0) return
+    batchResolve(parentIds)
+      .then((resolved) => {
+        if (Array.isArray(resolved)) {
+          setPageTitles((prev) => {
+            const next = new Map(prev)
+            for (const r of resolved) {
+              next.set(r.id, r.title ?? 'Untitled')
+            }
+            return next
+          })
+        }
+      })
+      .catch(() => {
+        // breadcrumbs are non-critical
+      })
+  }, [results])
 
   const handleAddTag = useCallback(
     (tag: MatchingTag) => {
@@ -329,7 +354,17 @@ export function TagFilterPanel(): React.ReactElement {
               block={block}
               onClick={() => handleResultClick(block)}
               contentClassName="whitespace-pre-wrap"
-            />
+            >
+              {block.parent_id && pageTitles.get(block.parent_id) && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  {t('tagFilter.inPage')}{' '}
+                  <PageLink
+                    pageId={block.parent_id}
+                    title={pageTitles.get(block.parent_id) ?? ''}
+                  />
+                </p>
+              )}
+            </ResultCard>
           ))}
         </section>
       )}

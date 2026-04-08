@@ -32,6 +32,7 @@ const mockEditorState = {
   highlight: false,
   link: false,
   codeBlock: false,
+  codeBlockLanguage: '',
   blockquote: false,
   headingLevel: 0,
   canUndo: false,
@@ -111,7 +112,7 @@ const mockToggleItalic = vi.fn(() => ({ run: mockRun }))
 const mockToggleCode = vi.fn(() => ({ run: mockRun }))
 const mockToggleStrike = vi.fn(() => ({ run: mockRun }))
 const mockToggleHighlight = vi.fn(() => ({ run: mockRun }))
-const mockToggleCodeBlock = vi.fn(() => ({ run: mockRun }))
+const mockToggleCodeBlock = vi.fn(() => ({ run: mockRun, updateAttributes: mockUpdateAttributes }))
 const mockToggleBlockquote = vi.fn(() => ({ run: mockRun }))
 const mockToggleHeading = vi.fn(() => ({ run: mockRun }))
 const mockSetLink = vi.fn(() => ({ run: mockRun }))
@@ -119,6 +120,7 @@ const mockUnsetLink = vi.fn(() => ({ run: mockRun }))
 const mockInsertContent = vi.fn(() => ({ run: mockRun }))
 const mockUndo = vi.fn(() => ({ run: mockRun }))
 const mockRedo = vi.fn(() => ({ run: mockRun }))
+const mockUpdateAttributes = vi.fn(() => ({ run: mockRun }))
 const mockFocus = vi.fn(() => ({
   toggleBold: mockToggleBold,
   toggleItalic: mockToggleItalic,
@@ -133,6 +135,7 @@ const mockFocus = vi.fn(() => ({
   insertContent: mockInsertContent,
   undo: mockUndo,
   redo: mockRedo,
+  updateAttributes: mockUpdateAttributes,
 }))
 const mockChain = vi.fn(() => ({
   focus: mockFocus,
@@ -161,6 +164,7 @@ describe('FormattingToolbar', () => {
     mockEditorState.highlight = false
     mockEditorState.link = false
     mockEditorState.codeBlock = false
+    mockEditorState.codeBlockLanguage = ''
     mockEditorState.blockquote = false
     mockEditorState.headingLevel = 0
     mockEditorState.canUndo = false
@@ -193,7 +197,7 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: 'External link' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Internal link' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Insert tag' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Code block' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Code block language' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Blockquote' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Heading level' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Cycle priority' })).toBeInTheDocument()
@@ -425,16 +429,21 @@ describe('FormattingToolbar', () => {
 
     it('toggles code block via editor chain', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Code block' }))
-
-      expect(mockToggleCodeBlock).toHaveBeenCalled()
-      expect(mockRun).toHaveBeenCalled()
+      // Code block button is now a popover — click opens it, select "Plain text" to toggle
+      const btn = screen.getByRole('button', { name: 'Code block language' })
+      fireEvent.pointerDown(btn)
+      // The popover content shows language options including "Plain text"
+      const popoverContents = screen.getAllByTestId('popover-content')
+      const codeBlockPopover = popoverContents.find((el) =>
+        el.textContent?.includes('Plain text'),
+      ) as HTMLElement
+      expect(codeBlockPopover).toBeInTheDocument()
     })
 
     it('shows Code block as pressed when active', () => {
       mockEditorState.codeBlock = true
       render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: 'Code block' })
+      const btn = screen.getByRole('button', { name: 'Code block language' })
       expect(btn).toHaveAttribute('aria-pressed', 'true')
       expect(btn.className).toContain('bg-accent')
     })
@@ -588,7 +597,7 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: 'External link' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Internal link' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Insert tag' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Code block' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Code block language' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Blockquote' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Heading level' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Cycle priority' })).toBeInTheDocument()
@@ -696,8 +705,8 @@ describe('FormattingToolbar', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       // The popover content is always rendered in our mock
       const popoverContents = screen.getAllByTestId('popover-content')
-      // The heading popover is the second popover-content (after the link popover)
-      const headingPopover = popoverContents[1] as HTMLElement
+      // The heading popover is the third popover-content (after link and code block popovers)
+      const headingPopover = popoverContents[2] as HTMLElement
       expect(headingPopover).toBeInTheDocument()
       for (let i = 1; i <= 6; i++) {
         expect(headingPopover.textContent).toContain(`H${i}`)
@@ -732,6 +741,128 @@ describe('FormattingToolbar', () => {
       const toolbar = screen.getByRole('toolbar', { name: 'Formatting' })
       const scrollArea = toolbar.closest('[data-slot="scroll-area"]')
       expect(scrollArea).toBeInTheDocument()
+    })
+  })
+
+  // ── UX-62: Code block language popover ────────────────────────────────
+
+  describe('code block language popover', () => {
+    it('renders code block language popover button', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: 'Code block language' })
+      expect(btn).toBeInTheDocument()
+    })
+
+    it('opens code block language popover on click', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: 'Code block language' })
+      const popover = btn.closest('[data-popover]') as HTMLElement
+      expect(popover).toHaveAttribute('data-open', 'false')
+
+      fireEvent.pointerDown(btn)
+
+      const popoverAfter = screen
+        .getByRole('button', { name: 'Code block language' })
+        .closest('[data-popover]') as HTMLElement
+      expect(popoverAfter).toHaveAttribute('data-open', 'true')
+    })
+
+    it('shows language options in popover content', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const popoverContents = screen.getAllByTestId('popover-content')
+      // The code block popover is the second popover-content (after the link popover)
+      const codeBlockPopover = popoverContents[1] as HTMLElement
+      expect(codeBlockPopover).toBeInTheDocument()
+      for (const lang of ['javascript', 'typescript', 'python', 'rust', 'bash', 'sql']) {
+        expect(codeBlockPopover.textContent).toContain(lang)
+      }
+      expect(codeBlockPopover.textContent).toContain('Plain text')
+    })
+
+    it('shows active language highlight', () => {
+      mockEditorState.codeBlock = true
+      mockEditorState.codeBlockLanguage = 'python'
+      render(<FormattingToolbar editor={makeEditor()} />)
+
+      const popoverContents = screen.getAllByTestId('popover-content')
+      const codeBlockPopover = popoverContents[1] as HTMLElement
+      // Find the python button inside the popover
+      const buttons = codeBlockPopover.querySelectorAll('button')
+      const pythonBtn = Array.from(buttons).find((b) => b.textContent === 'python')
+      expect(pythonBtn).toBeDefined()
+      expect(pythonBtn?.className).toContain('bg-accent')
+    })
+
+    it('selects a language when not in code block', () => {
+      mockEditorState.codeBlock = false
+      render(<FormattingToolbar editor={makeEditor()} />)
+
+      const popoverContents = screen.getAllByTestId('popover-content')
+      const codeBlockPopover = popoverContents[1] as HTMLElement
+      const buttons = codeBlockPopover.querySelectorAll('button')
+      const jsBtn = Array.from(buttons).find((b) => b.textContent === 'javascript')
+      expect(jsBtn).toBeDefined()
+
+      fireEvent.pointerDown(jsBtn as HTMLElement)
+
+      expect(mockToggleCodeBlock).toHaveBeenCalled()
+      expect(mockUpdateAttributes).toHaveBeenCalledWith('codeBlock', { language: 'javascript' })
+    })
+
+    it('updates language when already in code block', () => {
+      mockEditorState.codeBlock = true
+      mockEditorState.codeBlockLanguage = 'python'
+      render(<FormattingToolbar editor={makeEditor()} />)
+
+      const popoverContents = screen.getAllByTestId('popover-content')
+      const codeBlockPopover = popoverContents[1] as HTMLElement
+      const buttons = codeBlockPopover.querySelectorAll('button')
+      const rustBtn = Array.from(buttons).find((b) => b.textContent === 'rust')
+      expect(rustBtn).toBeDefined()
+
+      fireEvent.pointerDown(rustBtn as HTMLElement)
+
+      expect(mockToggleCodeBlock).not.toHaveBeenCalled()
+      expect(mockUpdateAttributes).toHaveBeenCalledWith('codeBlock', { language: 'rust' })
+    })
+
+    it('shows short language label when active', () => {
+      mockEditorState.codeBlock = true
+      mockEditorState.codeBlockLanguage = 'javascript'
+      render(<FormattingToolbar editor={makeEditor()} />)
+
+      const btn = screen.getByRole('button', { name: 'Code block language' })
+      expect(btn.textContent).toContain('JS')
+    })
+
+    it('shows short label for typescript', () => {
+      mockEditorState.codeBlock = true
+      mockEditorState.codeBlockLanguage = 'typescript'
+      render(<FormattingToolbar editor={makeEditor()} />)
+
+      const btn = screen.getByRole('button', { name: 'Code block language' })
+      expect(btn.textContent).toContain('TS')
+    })
+
+    it('does not show short label when no language is set', () => {
+      mockEditorState.codeBlock = true
+      mockEditorState.codeBlockLanguage = ''
+      render(<FormattingToolbar editor={makeEditor()} />)
+
+      const btn = screen.getByRole('button', { name: 'Code block language' })
+      // Should only have the icon, no text label
+      expect(btn.querySelector('.text-\\[10px\\]')).toBeNull()
+    })
+
+    it('a11y: no violations with code block popover open', async () => {
+      mockEditorState.codeBlock = true
+      mockEditorState.codeBlockLanguage = 'python'
+      const { container } = render(<FormattingToolbar editor={makeEditor()} />)
+
+      // Open the popover
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Code block language' }))
+
+      expect(await axe(container)).toHaveNoViolations()
     })
   })
 })

@@ -1056,8 +1056,7 @@ describe('DeviceManagement', () => {
       expect(editBtn?.getAttribute('aria-label')).toBe('Edit address for peer-abc-123...')
     })
 
-    it('calls set_peer_address when user enters an address via prompt', async () => {
-      vi.spyOn(window, 'prompt').mockReturnValue('10.0.0.5:8080')
+    it('calls set_peer_address when user enters an address via popover', async () => {
       mockInvokeByCommand({
         get_device_id: mockDeviceId,
         list_peer_refs: [{ ...mockPeers[0], last_address: null }],
@@ -1070,14 +1069,17 @@ describe('DeviceManagement', () => {
       const editBtn = container.querySelector('.peer-address-edit') as HTMLButtonElement
       await userEvent.click(editBtn)
 
+      // Popover opens — type address and click Save
+      const input = await screen.findByLabelText('Address (host:port)')
+      await userEvent.type(input, '10.0.0.5:8080')
+      await userEvent.click(screen.getByRole('button', { name: /Save/i }))
+
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith('set_peer_address', {
           peerId: 'peer-abc-1234567890',
           address: '10.0.0.5:8080',
         })
       })
-
-      vi.restoreAllMocks()
     })
 
     it('shows manual IP hint text', async () => {

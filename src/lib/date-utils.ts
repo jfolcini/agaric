@@ -3,7 +3,14 @@
  */
 
 import { addMonths, eachDayOfInterval, endOfWeek, format, startOfWeek } from 'date-fns'
+import { getWeekStartDay } from '../hooks/useWeekStart'
 
+/** Dynamic week options — reads weekStartsOn from user preference. */
+export function getWeekOptions(): { weekStartsOn: 0 | 1 } {
+  return { weekStartsOn: getWeekStartDay() }
+}
+
+/** @deprecated Use getWeekOptions() instead. */
 export const WEEK_OPTIONS = { weekStartsOn: 1 as const }
 
 /** Earliest navigable journal date. */
@@ -27,11 +34,12 @@ export function formatDateDisplay(d: Date): string {
   })
 }
 
-/** Get the Monday-start week range for a given date. */
+/** Get the week range for a given date (respects user week-start preference). */
 export function getWeekRange(d: Date): { start: Date; end: Date } {
+  const opts = getWeekOptions()
   return {
-    start: startOfWeek(d, WEEK_OPTIONS),
-    end: endOfWeek(d, WEEK_OPTIONS),
+    start: startOfWeek(d, opts),
+    end: endOfWeek(d, opts),
   }
 }
 
@@ -93,12 +101,8 @@ export function getDateRangeForFilter(
   }
 
   if (preset === 'this-week') {
-    const day = today.getDay()
-    const mondayOffset = day === 0 ? -6 : 1 - day
-    const weekStart = new Date(today)
-    weekStart.setDate(today.getDate() + mondayOffset)
-    const weekEnd = new Date(weekStart)
-    weekEnd.setDate(weekStart.getDate() + 6)
+    const weekStart = startOfWeek(today, getWeekOptions())
+    const weekEnd = endOfWeek(today, getWeekOptions())
     return { start: formatDate(weekStart), end: formatDate(weekEnd) }
   }
 

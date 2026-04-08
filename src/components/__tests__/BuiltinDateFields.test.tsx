@@ -165,7 +165,7 @@ describe('BuiltinDateFields', () => {
     expect(onClearDate).toHaveBeenCalledWith('scheduled_date')
   })
 
-  it('date inputs have correct type attribute', () => {
+  it('date inputs have text type for NL input (not native date)', () => {
     render(
       <BuiltinDateFields
         dueDate="2026-06-15"
@@ -177,10 +177,140 @@ describe('BuiltinDateFields', () => {
     )
 
     const dueInput = screen.getByDisplayValue('2026-06-15')
-    expect(dueInput).toHaveAttribute('type', 'date')
+    expect(dueInput).toHaveAttribute('type', 'text')
 
     const schedInput = screen.getByDisplayValue('2026-07-01')
-    expect(schedInput).toHaveAttribute('type', 'date')
+    expect(schedInput).toHaveAttribute('type', 'text')
+  })
+
+  it('accepts natural language date input "tomorrow"', async () => {
+    const user = userEvent.setup()
+    const onSaveDate = vi.fn()
+    render(
+      <BuiltinDateFields
+        dueDate="2026-06-15"
+        scheduledDate={null}
+        hasCustomProperties={false}
+        onSaveDate={onSaveDate}
+        onClearDate={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByDisplayValue('2026-06-15')
+    await user.clear(input)
+    await user.type(input, 'tomorrow')
+    await user.tab()
+
+    expect(onSaveDate).toHaveBeenCalledTimes(1)
+    // The saved value should be a YYYY-MM-DD string (tomorrow's date)
+    const savedValue = onSaveDate.mock.calls[0]?.[1]
+    expect(savedValue).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+
+  it('accepts ISO date input as-is', async () => {
+    const user = userEvent.setup()
+    const onSaveDate = vi.fn()
+    render(
+      <BuiltinDateFields
+        dueDate="2026-06-15"
+        scheduledDate={null}
+        hasCustomProperties={false}
+        onSaveDate={onSaveDate}
+        onClearDate={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByDisplayValue('2026-06-15')
+    await user.clear(input)
+    await user.type(input, '2025-04-15')
+    await user.tab()
+
+    expect(onSaveDate).toHaveBeenCalledWith('due_date', '2025-04-15')
+  })
+
+  it('shows preview for valid NL input', async () => {
+    const user = userEvent.setup()
+    render(
+      <BuiltinDateFields
+        dueDate="2026-06-15"
+        scheduledDate={null}
+        hasCustomProperties={false}
+        onSaveDate={vi.fn()}
+        onClearDate={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByDisplayValue('2026-06-15')
+    await user.clear(input)
+    await user.type(input, 'today')
+
+    // Preview should show a YYYY-MM-DD date
+    const preview = input.parentElement?.querySelector('.text-muted-foreground')
+    expect(preview).toBeInTheDocument()
+    expect(preview?.textContent).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+
+  it('does not call onSaveDate for invalid NL input', async () => {
+    const user = userEvent.setup()
+    const onSaveDate = vi.fn()
+    render(
+      <BuiltinDateFields
+        dueDate="2026-06-15"
+        scheduledDate={null}
+        hasCustomProperties={false}
+        onSaveDate={onSaveDate}
+        onClearDate={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByDisplayValue('2026-06-15')
+    await user.clear(input)
+    await user.type(input, 'not a date')
+    await user.tab()
+
+    expect(onSaveDate).not.toHaveBeenCalled()
+  })
+
+  it('shows error message for invalid NL input on blur', async () => {
+    const user = userEvent.setup()
+    render(
+      <BuiltinDateFields
+        dueDate="2026-06-15"
+        scheduledDate={null}
+        hasCustomProperties={false}
+        onSaveDate={vi.fn()}
+        onClearDate={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByDisplayValue('2026-06-15')
+    await user.clear(input)
+    await user.type(input, 'not a date')
+    await user.tab()
+
+    const error = input.parentElement?.querySelector('.text-destructive')
+    expect(error).toBeInTheDocument()
+    expect(error?.textContent).toBe('Could not parse date')
+  })
+
+  it('calls onSaveDate with empty string when input is cleared', async () => {
+    const user = userEvent.setup()
+    const onSaveDate = vi.fn()
+    render(
+      <BuiltinDateFields
+        dueDate="2026-06-15"
+        scheduledDate={null}
+        hasCustomProperties={false}
+        onSaveDate={onSaveDate}
+        onClearDate={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByDisplayValue('2026-06-15')
+    await user.clear(input)
+    await user.tab()
+
+    expect(onSaveDate).toHaveBeenCalledWith('due_date', '')
   })
 
   it('renders icons for date fields', () => {
