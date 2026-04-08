@@ -3,7 +3,9 @@
 ## Session 264 — 2026-04-08 — 6 UX consistency fixes (91→85 open)
 
 ### Summary
-Resolved 6 REVIEW-LATER UX items: UX-25 (data-slot attributes on 5 UI primitives), UX-27 (ScrollArea outline conflict), UX-28 (SortableBlock gutter redundant classes), UX-31 (HistoryView sticky header spacing), UX-33 (5 AlertDialogs→ConfirmDialog), UX-34 (8 files raw Skeleton→LoadingSkeleton). All S-cost frontend-only changes. 2 build subagents (UX-33: 4 files, UX-34+UX-31: 8 files) + 2 review subagents. Orchestrator did UX-25/UX-27/UX-28 directly. ConfirmDialog `description` widened from `string` to `React.ReactNode` to support ConflictList's rich JSX descriptions. ConflictList batch handler extracted from inline onClick to named `handleBatchConfirm` useCallback. SortableBlock test updates: 6 assertions flipped from `toContain` to `not.toContain` for removed coarse-pointer classes. Minor standardizations: AttachmentList rounded-md→rounded-lg, TagFilterPanel space-y-3→space-y-2. 20 files changed. All 5066 frontend tests pass.
+Resolved 6 REVIEW-LATER UX items: UX-25 (data-slot attributes on 5 UI primitives), UX-27 (ScrollArea outline conflict), UX-28 (SortableBlock gutter redundant classes), UX-31 (HistoryView sticky header spacing), UX-33 (5 AlertDialogs→ConfirmDialog), UX-34 (8 files raw Skeleton→LoadingSkeleton). All S-cost frontend-only changes. 2 build subagents (UX-33: 4 files, UX-34+UX-31: 8 files) + 2 review subagents. Orchestrator did UX-25/UX-27/UX-28 directly. ConfirmDialog `description` widened from `string` to `React.ReactNode` to support ConflictList's rich JSX descriptions. ConflictList batch handler extracted from inline onClick to named `handleBatchConfirm` useCallback. SortableBlock test updates: 6 assertions flipped from `toContain` to `not.toContain` for removed coarse-pointer classes. Minor standardizations: AttachmentList rounded-md→rounded-lg, TagFilterPanel space-y-3→space-y-2. 22 files changed, 218 insertions, 332 deletions. All 5066 frontend tests pass.
+
+**Commit:** 9977d28
 
 | Area | Change |
 |------|--------|
