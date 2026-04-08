@@ -521,6 +521,12 @@ export function BlockTree({
     return changed
   }, [rovingEditor, edit, splitBlock, rootParentId, t, pageStore])
 
+  // ── Scroll container ref (for auto-scroll during drag) ──────────────
+  const scrollContainerRef = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    scrollContainerRef.current = document.getElementById('main-content')
+  }, [])
+
   // ── DnD hook (needs handleFlush + collapsedVisible) ────────────────
   const dnd = useBlockDnD({
     blocks,
@@ -531,6 +537,7 @@ export function BlockTree({
     setFocused,
     reorder,
     moveToParent,
+    scrollContainerRef,
   })
 
   // ── Wire up the onBeforeCollapse ref now that handleFlush is available ──

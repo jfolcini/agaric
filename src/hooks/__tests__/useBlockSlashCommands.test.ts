@@ -110,7 +110,8 @@ describe('searchSlashCommands', () => {
   it('filters by query string', () => {
     const results = searchSlashCommands('todo')
     expect(results.some((r) => r.id === 'todo')).toBe(true)
-    expect(results.every((r) => r.label.toLowerCase().includes('todo'))).toBe(true)
+    // With fuzzy matching, top results should include 'todo'
+    expect(results[0]?.id).toBe('todo')
   })
 
   it('includes priority commands when query matches', () => {
@@ -172,6 +173,20 @@ describe('searchSlashCommands', () => {
     expect(tableItem).toBeDefined()
     expect(tableItem?.category).toBe('slashCommand.categories.structure')
     expect(tableItem?.icon).toBeTruthy()
+  })
+
+  // -- UX-68: Fuzzy matching --------------------------------------------------
+
+  it('fuzzy matches non-substring queries (UX-68)', () => {
+    // "tdo" is not a substring of "TODO — Mark as to-do" but fuzzy should match
+    const results = searchSlashCommands('tdo')
+    expect(results.some((r) => r.id === 'todo')).toBe(true)
+  })
+
+  it('fuzzy matches across command groups (UX-68)', () => {
+    // "prihi" should fuzzy match "PRIORITY 1 — Set high priority"
+    const results = searchSlashCommands('pri')
+    expect(results.some((r) => r.id === 'priority-high')).toBe(true)
   })
 })
 

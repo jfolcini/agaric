@@ -454,4 +454,46 @@ describe('SuggestionList', () => {
     expect(screen.queryByTestId('suggestion-category')).not.toBeInTheDocument()
     expect(screen.queryByRole('separator')).not.toBeInTheDocument()
   })
+
+  // -- UX-65: Breadcrumbs -------------------------------------------------------
+
+  it('renders breadcrumb text below the label when present (UX-65)', () => {
+    const command = vi.fn()
+    const items: PickerItem[] = [{ id: '1', label: 'standup', breadcrumb: 'work / meetings' }]
+
+    render(<SuggestionList items={items} command={command} />)
+
+    expect(screen.getByText('standup')).toBeInTheDocument()
+    const breadcrumb = screen.getByTestId('suggestion-breadcrumb')
+    expect(breadcrumb).toBeInTheDocument()
+    expect(breadcrumb).toHaveTextContent('work / meetings')
+    expect(breadcrumb.className).toContain('text-xs')
+    expect(breadcrumb.className).toContain('text-muted-foreground')
+  })
+
+  it('does not render breadcrumb when not present (UX-65)', () => {
+    const command = vi.fn()
+    const items: PickerItem[] = [{ id: '1', label: 'Simple Item' }]
+
+    render(<SuggestionList items={items} command={command} />)
+
+    expect(screen.getByText('Simple Item')).toBeInTheDocument()
+    expect(screen.queryByTestId('suggestion-breadcrumb')).not.toBeInTheDocument()
+  })
+
+  it('renders icon with breadcrumb together (UX-65)', () => {
+    const command = vi.fn()
+    const MockIcon = ({ className }: { className?: string | undefined }) => (
+      <svg data-testid="breadcrumb-icon" className={className} />
+    )
+    const items: PickerItem[] = [
+      { id: '1', label: 'standup', breadcrumb: 'work / meetings', icon: MockIcon },
+    ]
+
+    render(<SuggestionList items={items} command={command} />)
+
+    expect(screen.getByTestId('breadcrumb-icon')).toBeInTheDocument()
+    expect(screen.getByText('standup')).toBeInTheDocument()
+    expect(screen.getByTestId('suggestion-breadcrumb')).toHaveTextContent('work / meetings')
+  })
 })

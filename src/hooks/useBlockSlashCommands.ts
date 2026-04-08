@@ -27,6 +27,7 @@ import {
   Timer,
   UserCircle,
 } from 'lucide-react'
+import { matchSorter } from 'match-sorter'
 import type { MutableRefObject } from 'react'
 import { useCallback, useState } from 'react'
 import { toast } from 'sonner'
@@ -394,15 +395,15 @@ export const REPEAT_END_COMMANDS: PickerItem[] = [
 
 export function searchSlashCommands(query: string): PickerItem[] {
   const q = query.toLowerCase()
-  const baseResults = SLASH_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
+  const baseResults = q ? matchSorter(SLASH_COMMANDS, q, { keys: ['label'] }) : SLASH_COMMANDS
   if (!q) return baseResults
-  const priorityResults = PRIORITY_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
-  const headingResults = HEADING_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
-  const repeatResults = REPEAT_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
-  const repeatEndResults = REPEAT_END_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
-  const effortResults = EFFORT_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
-  const assigneeResults = ASSIGNEE_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
-  const locationResults = LOCATION_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
+  const priorityResults = matchSorter(PRIORITY_COMMANDS, q, { keys: ['label'] })
+  const headingResults = matchSorter(HEADING_COMMANDS, q, { keys: ['label'] })
+  const repeatResults = matchSorter(REPEAT_COMMANDS, q, { keys: ['label'] })
+  const repeatEndResults = matchSorter(REPEAT_END_COMMANDS, q, { keys: ['label'] })
+  const effortResults = matchSorter(EFFORT_COMMANDS, q, { keys: ['label'] })
+  const assigneeResults = matchSorter(ASSIGNEE_COMMANDS, q, { keys: ['label'] })
+  const locationResults = matchSorter(LOCATION_COMMANDS, q, { keys: ['label'] })
 
   const tableMatch = q.match(/^table\s+(\d+)\s*x\s*(\d+)$/i)
   let results = [

@@ -254,11 +254,15 @@ describe('searchTags', () => {
 
     expect(mockedListTagsByPrefix).toHaveBeenCalledWith({ prefix: 'pr' })
     // Non-exact match, so a "Create new tag" option is prepended (F-26)
-    expect(items).toEqual([
-      { id: '__create__', label: 'pr', isCreate: true },
-      { id: 'T1', label: 'project' },
-      { id: 'T2', label: 'priority' },
-    ])
+    expect(items[0]).toEqual({ id: '__create__', label: 'pr', isCreate: true })
+    const tagItems = items.filter((i) => !i.isCreate)
+    expect(tagItems).toHaveLength(2)
+    expect(tagItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'T1', label: 'project' }),
+        expect.objectContaining({ id: 'T2', label: 'priority' }),
+      ]),
+    )
   })
 
   it('returns only "Create new tag" option when no tags match', async () => {
@@ -491,7 +495,9 @@ describe('searchPages — short query (<=2 chars)', () => {
 
     // Should NOT call listBlocks since cache is populated
     expect(mockedListBlocks).not.toHaveBeenCalled()
-    expect(items).toEqual(expect.arrayContaining([{ id: 'P1', label: 'My Page' }]))
+    expect(items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'P1', label: 'My Page' })]),
+    )
     // "Another Page" and "Meeting Notes" don't contain "my"
     const ids = items.filter((i) => !i.isCreate).map((i) => i.id)
     expect(ids).toContain('P1')
@@ -611,7 +617,9 @@ describe('searchPages — short query (<=2 chars)', () => {
     })
 
     // "Untitled" contains "un"
-    expect(items).toEqual(expect.arrayContaining([{ id: 'P30', label: 'Untitled' }]))
+    expect(items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'P30', label: 'Untitled' })]),
+    )
     expect(result.current.pagesListRef.current).toEqual([{ id: 'P30', title: 'Untitled' }])
   })
 
@@ -721,8 +729,8 @@ describe('searchPages — long query (>2 chars)', () => {
     // Only page-type blocks should be returned
     const nonCreate = items.filter((i) => !i.isCreate)
     expect(nonCreate).toEqual([
-      { id: 'F1', label: 'Meeting Notes' },
-      { id: 'F3', label: 'Team Meeting' },
+      expect.objectContaining({ id: 'F1', label: 'Meeting Notes' }),
+      expect.objectContaining({ id: 'F3', label: 'Team Meeting' }),
     ])
   })
 
@@ -769,9 +777,9 @@ describe('searchPages — long query (>2 chars)', () => {
     // FTS returned 1 result (< 5), so cache supplementation kicks in
     // F10 from FTS + C1 and C2 from cache (C3 doesn't match, F10 is deduped)
     expect(nonCreate).toEqual([
-      { id: 'F10', label: 'Design Doc' },
-      { id: 'C1', label: 'Design Review' },
-      { id: 'C2', label: 'Design Sprint' },
+      expect.objectContaining({ id: 'F10', label: 'Design Doc' }),
+      expect.objectContaining({ id: 'C1', label: 'Design Review' }),
+      expect.objectContaining({ id: 'C2', label: 'Design Sprint' }),
     ])
   })
 
@@ -848,7 +856,7 @@ describe('searchPages — long query (>2 chars)', () => {
 
     const nonCreate = items.filter((i) => !i.isCreate)
     expect(nonCreate).toHaveLength(1)
-    expect(nonCreate[0]).toEqual({ id: 'F20', label: 'Lonely Result' })
+    expect(nonCreate[0]).toEqual(expect.objectContaining({ id: 'F20', label: 'Lonely Result' }))
   })
 
   it('handles null content as "Untitled" in FTS results', async () => {
@@ -881,7 +889,7 @@ describe('searchPages — long query (>2 chars)', () => {
     })
 
     const nonCreate = items.filter((i) => !i.isCreate)
-    expect(nonCreate).toEqual([{ id: 'F30', label: 'Untitled' }])
+    expect(nonCreate).toEqual([expect.objectContaining({ id: 'F30', label: 'Untitled' })])
   })
 })
 
@@ -1079,7 +1087,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
     // FTS receives "text" (stripped), not "text]]"
     expect(mockedSearchBlocks).toHaveBeenCalledWith({ query: 'text', limit: 20 })
     const nonCreate = items.filter((i) => !i.isCreate)
-    expect(nonCreate).toEqual([{ id: 'P2', label: 'Text Document' }])
+    expect(nonCreate).toEqual([expect.objectContaining({ id: 'P2', label: 'Text Document' })])
   })
 
   it('strips single trailing ] from query', async () => {
@@ -1113,7 +1121,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
 
     expect(mockedSearchBlocks).toHaveBeenCalledWith({ query: 'test', limit: 20 })
     const nonCreate = items.filter((i) => !i.isCreate)
-    expect(nonCreate).toEqual([{ id: 'P1', label: 'Test Page' }])
+    expect(nonCreate).toEqual([expect.objectContaining({ id: 'P1', label: 'Test Page' })])
   })
 
   it('"Create new" label strips trailing ]] too', async () => {
@@ -1186,7 +1194,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
     // FTS receives "meeting" (stripped), returns Meeting Notes
     expect(mockedSearchBlocks).toHaveBeenCalledWith({ query: 'meeting', limit: 20 })
     const nonCreate = items.filter((i) => !i.isCreate)
-    expect(nonCreate).toEqual([{ id: 'F60', label: 'Meeting Notes' }])
+    expect(nonCreate).toEqual([expect.objectContaining({ id: 'F60', label: 'Meeting Notes' })])
   })
 })
 
@@ -1449,7 +1457,9 @@ describe('searchPages — alias matching via resolvePageByAlias', () => {
     // The alias match should NOT be duplicated
     const nonCreate = items.filter((i) => !i.isCreate)
     expect(nonCreate).toHaveLength(1)
-    expect(nonCreate[0]).toEqual({ id: 'ALIAS_PAGE_2', label: 'Weekly Review' })
+    expect(nonCreate[0]).toEqual(
+      expect.objectContaining({ id: 'ALIAS_PAGE_2', label: 'Weekly Review' }),
+    )
   })
 
   it('searchPages ignores alias lookup failure silently', async () => {
@@ -1510,5 +1520,233 @@ describe('searchPages — alias matching via resolvePageByAlias', () => {
     })
 
     expect(mockedResolvePageByAlias).not.toHaveBeenCalled()
+  })
+})
+
+// ── UX-65: Icons in picker items ────────────────────────────────────────
+
+describe('searchTags — icons (UX-65)', () => {
+  it('includes icon in tag picker items', async () => {
+    mockedListTagsByPrefix.mockResolvedValue([
+      { tag_id: 'T100', name: 'work', usage_count: 1, updated_at: '2024-01-01' },
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('work')
+    })
+
+    const tagItem = items.find((i) => i.id === 'T100')
+    expect(tagItem).toBeDefined()
+    expect(tagItem?.icon).toBeDefined()
+  })
+})
+
+describe('searchPages — icons and breadcrumbs (UX-65)', () => {
+  it('includes icon in page picker items', async () => {
+    const { result } = renderHook(() => useBlockResolve())
+
+    act(() => {
+      result.current.pagesListRef.current = [{ id: 'P100', title: 'My Page' }]
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('my')
+    })
+
+    const pageItem = items.find((i) => i.id === 'P100')
+    expect(pageItem).toBeDefined()
+    expect(pageItem?.icon).toBeDefined()
+  })
+
+  it('adds breadcrumb for namespaced page titles', async () => {
+    const { result } = renderHook(() => useBlockResolve())
+
+    act(() => {
+      result.current.pagesListRef.current = [{ id: 'NS1', title: 'work/meetings/standup' }]
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+
+    const nsItem = items.find((i) => i.id === 'NS1')
+    expect(nsItem).toBeDefined()
+    expect(nsItem?.label).toBe('standup')
+    expect(nsItem?.breadcrumb).toBe('work / meetings')
+  })
+
+  it('does not add breadcrumb for non-namespaced pages', async () => {
+    const { result } = renderHook(() => useBlockResolve())
+
+    act(() => {
+      result.current.pagesListRef.current = [{ id: 'P200', title: 'Simple Page' }]
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+
+    const simpleItem = items.find((i) => i.id === 'P200')
+    expect(simpleItem).toBeDefined()
+    expect(simpleItem?.label).toBe('Simple Page')
+    expect(simpleItem?.breadcrumb).toBeUndefined()
+  })
+
+  it('adds breadcrumb for namespaced pages via FTS (long query)', async () => {
+    mockedSearchBlocks.mockResolvedValue({
+      items: [
+        {
+          id: 'FNS1',
+          block_type: 'page',
+          content: 'projects/frontend/react-app',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('react')
+    })
+
+    const nsItem = items.find((i) => i.id === 'FNS1')
+    expect(nsItem).toBeDefined()
+    expect(nsItem?.label).toBe('react-app')
+    expect(nsItem?.breadcrumb).toBe('projects / frontend')
+  })
+})
+
+describe('searchBlockRefs — icons (UX-65)', () => {
+  it('includes icon in block ref picker items', async () => {
+    mockedSearchBlocks.mockResolvedValue({
+      items: [
+        {
+          id: 'BR1',
+          block_type: 'block',
+          content: 'Some block content',
+          parent_id: null,
+          position: 0,
+          deleted_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchBlockRefs>> = []
+    await act(async () => {
+      items = await result.current.searchBlockRefs('some block')
+    })
+
+    expect(items).toHaveLength(1)
+    expect(items[0]?.icon).toBeDefined()
+  })
+
+  it('shows parent page title as breadcrumb when available', async () => {
+    // Pre-populate the resolve cache with a parent page
+    useResolveStore.getState().set('PARENT_PAGE', 'My Page Title', false)
+
+    mockedSearchBlocks.mockResolvedValue({
+      items: [
+        {
+          id: 'BR2',
+          block_type: 'block',
+          content: 'A child block',
+          parent_id: 'PARENT_PAGE',
+          position: 0,
+          deleted_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchBlockRefs>> = []
+    await act(async () => {
+      items = await result.current.searchBlockRefs('child block')
+    })
+
+    expect(items).toHaveLength(1)
+    expect(items[0]?.breadcrumb).toBe('My Page Title')
+  })
+})
+
+// ── UX-68: Fuzzy matching ───────────────────────────────────────────────
+
+describe('searchTags — fuzzy matching (UX-68)', () => {
+  it('matches tags via fuzzy matching, not just substring', async () => {
+    mockedListTagsByPrefix.mockResolvedValue([
+      { tag_id: 'TF1', name: 'quick-notes', usage_count: 1, updated_at: '2024-01-01' },
+      { tag_id: 'TF2', name: 'quarterly', usage_count: 1, updated_at: '2024-01-01' },
+      { tag_id: 'TF3', name: 'unrelated', usage_count: 1, updated_at: '2024-01-01' },
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('qn')
+    })
+
+    // matchSorter with 'qn' should match 'quick-notes' (q + n)
+    const tagIds = items.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(tagIds).toContain('TF1')
+  })
+})
+
+describe('searchPages — fuzzy matching (UX-68)', () => {
+  it('matches pages via fuzzy matching for short queries', async () => {
+    const { result } = renderHook(() => useBlockResolve())
+
+    act(() => {
+      result.current.pagesListRef.current = [
+        { id: 'PF1', title: 'Quick Notes' },
+        { id: 'PF2', title: 'Quarterly Report' },
+        { id: 'PF3', title: 'Zzz Unrelated' },
+      ]
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('qn')
+    })
+
+    // matchSorter with 'qn' should match 'Quick Notes' (q + n)
+    const pageIds = items.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(pageIds).toContain('PF1')
   })
 })

@@ -319,9 +319,9 @@ describe('BlockTree picker wiring', () => {
       limit: null,
     })
     expect(results).toEqual([
-      { id: '__create__', label: 'imp', isCreate: true },
-      { id: 'TAG_01', label: 'important' },
-      { id: 'TAG_02', label: 'improvement' },
+      expect.objectContaining({ id: '__create__', label: 'imp', isCreate: true }),
+      expect.objectContaining({ id: 'TAG_01', label: 'important' }),
+      expect.objectContaining({ id: 'TAG_02', label: 'improvement' }),
     ])
   })
 
@@ -396,8 +396,8 @@ describe('BlockTree picker wiring', () => {
     )
     // Should filter to pages only (exclude content blocks)
     expect(results).toEqual([
-      { id: 'P1', label: 'Meeting Notes' },
-      { id: '__create__', label: 'meet', isCreate: true },
+      expect.objectContaining({ id: 'P1', label: 'Meeting Notes' }),
+      expect.objectContaining({ id: '__create__', label: 'meet', isCreate: true }),
     ])
   })
 
@@ -449,9 +449,9 @@ describe('BlockTree picker wiring', () => {
     const results = await capturedSearchPages?.('PAGE')
 
     expect(results).toEqual([
-      { id: 'P1', label: 'UPPERCASE PAGE' },
-      { id: 'P2', label: 'lowercase page' },
-      { id: '__create__', label: 'PAGE', isCreate: true },
+      expect.objectContaining({ id: 'P1', label: 'UPPERCASE PAGE' }),
+      expect.objectContaining({ id: 'P2', label: 'lowercase page' }),
+      expect.objectContaining({ id: '__create__', label: 'PAGE', isCreate: true }),
     ])
   })
 
@@ -489,7 +489,7 @@ describe('BlockTree picker wiring', () => {
     // Empty query matches everything (including null content treated as '')
     const results = await capturedSearchPages?.('')
 
-    expect(results).toEqual([{ id: 'P1', label: 'Untitled' }])
+    expect(results).toEqual([expect.objectContaining({ id: 'P1', label: 'Untitled' })])
   })
 
   it('searchPages returns create-new item when no pages match query', async () => {
@@ -543,8 +543,8 @@ describe('BlockTree picker wiring', () => {
     const results = await capturedSearchPages?.('Meet')
 
     expect(results).toEqual([
-      { id: 'P1', label: 'Meeting Notes' },
-      { id: '__create__', label: 'Meet', isCreate: true },
+      expect.objectContaining({ id: 'P1', label: 'Meeting Notes' }),
+      expect.objectContaining({ id: '__create__', label: 'Meet', isCreate: true }),
     ])
   })
 
@@ -581,7 +581,7 @@ describe('BlockTree picker wiring', () => {
 
     const results = await capturedSearchPages?.('meeting notes')
 
-    expect(results).toEqual([{ id: 'P1', label: 'Meeting Notes' }])
+    expect(results).toEqual([expect.objectContaining({ id: 'P1', label: 'Meeting Notes' })])
   })
 
   it('searchPages does NOT append create-new for empty query', async () => {
@@ -617,7 +617,7 @@ describe('BlockTree picker wiring', () => {
 
     const results = await capturedSearchPages?.('')
 
-    expect(results).toEqual([{ id: 'P1', label: 'Some page' }])
+    expect(results).toEqual([expect.objectContaining({ id: 'P1', label: 'Some page' })])
   })
 
   it('searchPages does NOT append create-new for whitespace-only query', async () => {
@@ -1346,7 +1346,7 @@ describe('BlockTree slash command wiring', () => {
 
     const results = await capturedSearchSlashCommands?.('to-do')
 
-    expect(results).toHaveLength(1)
+    expect(results).toHaveLength(2)
     expect((results?.[0] as { id: string }).id).toBe('todo')
   })
 
@@ -2036,8 +2036,8 @@ describe('BlockTree searchPages caching', () => {
     const result1 = await capturedSearchPages?.('al')
 
     expect(result1).toEqual([
-      { id: 'P1', label: 'Alpha Page' },
-      { id: '__create__', label: 'al', isCreate: true },
+      expect.objectContaining({ id: 'P1', label: 'Alpha Page' }),
+      expect.objectContaining({ id: '__create__', label: 'al', isCreate: true }),
     ])
 
     // Second call — should NOT trigger another list_blocks call (cached in pagesListRef)
@@ -2052,8 +2052,8 @@ describe('BlockTree searchPages caching', () => {
 
     expect(listBlocksCallsAfter).toBe(listBlocksCallsBefore)
     expect(result2).toEqual([
-      { id: 'P1', label: 'Alpha Page' },
-      { id: '__create__', label: 'al', isCreate: true },
+      expect.objectContaining({ id: 'P1', label: 'Alpha Page' }),
+      expect.objectContaining({ id: '__create__', label: 'al', isCreate: true }),
     ])
   })
 

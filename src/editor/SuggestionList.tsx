@@ -24,6 +24,8 @@ export interface PickerItem {
   category?: string
   /** Icon component from lucide-react, rendered inline before the label. */
   icon?: React.ComponentType<{ className?: string | undefined }>
+  /** Secondary breadcrumb text shown below the label (e.g. parent namespace). */
+  breadcrumb?: string | undefined
 }
 
 export interface SuggestionListProps {
@@ -117,15 +119,28 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
         )
       }
       const Icon = item.icon
+      const labelNode = item.breadcrumb ? (
+        <span className="flex min-w-0 flex-col">
+          <span className="truncate">{item.label}</span>
+          <span
+            className="text-xs text-muted-foreground truncate"
+            data-testid="suggestion-breadcrumb"
+          >
+            {item.breadcrumb}
+          </span>
+        </span>
+      ) : (
+        item.label
+      )
       if (Icon) {
         return (
-          <span className="flex items-center">
-            <Icon className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
-            {item.label}
+          <span className={cn('flex items-center', item.breadcrumb && 'items-start')}>
+            <Icon className="mr-2 mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+            {labelNode}
           </span>
         )
       }
-      return item.label
+      return labelNode
     }
 
     const renderItem = (item: PickerItem, index: number) => (

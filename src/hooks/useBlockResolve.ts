@@ -10,6 +10,8 @@
  * the original effect ordering: load() must fire before preload.
  */
 
+import { FileText, Hash, Tag } from 'lucide-react'
+import { matchSorter } from 'match-sorter'
 import { useCallback, useRef } from 'react'
 import type { PickerItem } from '../editor/SuggestionList'
 import { logger } from '../lib/logger'
@@ -88,9 +90,11 @@ export function useBlockResolve(): UseBlockResolveReturn {
           .getState()
           .batchSet(tags.map((t) => ({ id: t.tag_id, title: t.name, deleted: false })))
       }
-      const result: PickerItem[] = tags.map((tag) => ({
+      const sorted = q ? matchSorter(tags, q, { keys: ['name'] }) : tags
+      const result: PickerItem[] = sorted.map((tag) => ({
         id: tag.tag_id,
         label: tag.name,
+        icon: Tag,
       }))
 
       // Prepend a "Create new tag" option when the query doesn't exactly match
@@ -126,23 +130,34 @@ export function useBlockResolve(): UseBlockResolveReturn {
       let matches: PickerItem[]
 
       if (q.length <= 2) {
-        // Short query — use cache (substring match)
+        // Short query — use cache (fuzzy match)
         let source = pagesListRef.current
         if (source.length === 0) {
           const resp = await listBlocks({ blockType: 'page', limit: 500 })
           source = resp.items.map((p) => ({ id: p.id, title: p.content ?? 'Untitled' }))
           pagesListRef.current = source
         }
-        matches = source
-          .filter((p) => !q || p.title.toLowerCase().includes(q))
-          .slice(0, 20)
-          .map((p) => ({ id: p.id, label: p.title }))
+        const filtered = q ? matchSorter(source, q, { keys: ['title'] }) : source
+        matches = filtered.slice(0, 20).map((p) => {
+          const breadcrumb = p.title.includes('/')
+            ? p.title.split('/').slice(0, -1).join(' / ')
+            : undefined
+          const label = p.title.includes('/') ? (p.title.split('/').pop() as string) : p.title
+          return { id: p.id, label, icon: FileText, breadcrumb }
+        })
       } else {
         // Longer query — use FTS5 search, filter to pages
         const resp = await searchBlocks({ query: q, limit: 20 })
         matches = resp.items
           .filter((b) => b.block_type === 'page')
-          .map((b) => ({ id: b.id, label: b.content ?? 'Untitled' }))
+          .map((b) => {
+            const title = b.content ?? 'Untitled'
+            const breadcrumb = title.includes('/')
+              ? title.split('/').slice(0, -1).join(' / ')
+              : undefined
+            const label = title.includes('/') ? (title.split('/').pop() as string) : title
+            return { id: b.id, label, icon: FileText, breadcrumb }
+          })
 
         // If FTS returns few results, supplement from cache
         if (matches.length < 5 && pagesListRef.current.length > 0) {
@@ -150,7 +165,13 @@ export function useBlockResolve(): UseBlockResolveReturn {
           const cacheMatches = pagesListRef.current
             .filter((p) => p.title.toLowerCase().includes(q) && !ftsIds.has(p.id))
             .slice(0, 10)
-            .map((p) => ({ id: p.id, label: p.title }))
+            .map((p) => {
+              const breadcrumb = p.title.includes('/')
+                ? p.title.split('/').slice(0, -1).join(' / ')
+                : undefined
+              const label = p.title.includes('/') ? (p.title.split('/').pop() as string) : p.title
+              return { id: p.id, label, icon: FileText, breadcrumb }
+            })
           matches = [...matches, ...cacheMatches].slice(0, 20)
         }
       }
@@ -222,7 +243,9 @@ export function useBlockResolve(): UseBlockResolveReturn {
           const content = b.content ?? 'Untitled'
           const firstLine = content.split('\n')[0] as string
           const label = firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine
-          return { id: b.id, label }
+          // Show parent page title as breadcrumb when available
+          const parentTitle = b.parent_id ? cacheRef.current.get(b.parent_id)?.title : undefined
+          return { id: b.id, label, icon: Hash, breadcrumb: parentTitle }
         })
 
       // Populate resolve cache

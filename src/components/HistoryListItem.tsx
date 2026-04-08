@@ -7,7 +7,19 @@
  * Extracted from HistoryView for testability.
  */
 
-import { Lock } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+import {
+  ArrowRight,
+  Circle,
+  Lock,
+  Paperclip,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Settings,
+  Tag,
+  Trash2,
+} from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
@@ -49,6 +61,22 @@ function opBadgeClasses(opType: string): string {
     return 'bg-muted text-muted-foreground'
   }
   return 'bg-secondary text-secondary-foreground'
+}
+
+// ---------------------------------------------------------------------------
+// Badge icon mapping
+// ---------------------------------------------------------------------------
+
+export function opIcon(opType: string): LucideIcon {
+  if (opType.startsWith('restore')) return RotateCcw
+  if (opType.startsWith('create')) return Plus
+  if (opType.startsWith('edit')) return Pencil
+  if (opType.startsWith('move')) return ArrowRight
+  if (opType === 'add_tag' || opType === 'remove_tag') return Tag
+  if (opType === 'set_property' || opType === 'delete_property') return Settings
+  if (opType === 'add_attachment' || opType === 'delete_attachment') return Paperclip
+  if (opType.startsWith('delete') || opType.startsWith('purge')) return Trash2
+  return Circle
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +163,10 @@ export function HistoryListItem({
           )}
           data-testid="history-type-badge"
         >
+          {(() => {
+            const IconComponent = opIcon(entry.op_type)
+            return <IconComponent className="h-3 w-3 mr-1" />
+          })()}
           {entry.op_type}
         </Badge>
 

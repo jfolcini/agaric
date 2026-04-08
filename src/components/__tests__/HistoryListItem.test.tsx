@@ -24,10 +24,21 @@
 
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import {
+  ArrowRight,
+  Circle,
+  Paperclip,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Settings,
+  Tag,
+  Trash2,
+} from 'lucide-react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { HistoryListItemProps } from '../HistoryListItem'
-import { HistoryListItem } from '../HistoryListItem'
+import { HistoryListItem, opIcon } from '../HistoryListItem'
 
 function makeEntry(
   seq: number,
@@ -485,6 +496,68 @@ describe('HistoryListItem', () => {
     await waitFor(async () => {
       const results = await axe(container, axeOpts)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // -- Op type icons ---------------------------------------------------------
+
+  describe('opIcon helper', () => {
+    it.each([
+      ['create_block', Plus],
+      ['create_page', Plus],
+      ['restore_block', RotateCcw],
+      ['edit_block', Pencil],
+      ['edit_heading', Pencil],
+      ['delete_block', Trash2],
+      ['purge_block', Trash2],
+      ['move_block', ArrowRight],
+      ['add_tag', Tag],
+      ['remove_tag', Tag],
+      ['set_property', Settings],
+      ['delete_property', Settings],
+      ['add_attachment', Paperclip],
+      ['delete_attachment', Paperclip],
+      ['unknown_op', Circle],
+    ])('returns correct icon for %s', (opType, expectedIcon) => {
+      expect(opIcon(opType)).toBe(expectedIcon)
+    })
+  })
+
+  describe('op type badge icons', () => {
+    it('renders an icon inside the badge with correct sizing classes', () => {
+      renderInListbox(defaultProps())
+
+      const badge = screen.getByTestId('history-type-badge')
+      const svg = badge.querySelector('svg')
+      expect(svg).toBeInTheDocument()
+      expect(svg).toHaveClass('h-3', 'w-3', 'mr-1')
+    })
+
+    it.each([
+      ['create_block', { content: 'New block' }],
+      ['restore_block', { block_id: 'B1' }],
+      ['edit_block', { to_text: 'content' }],
+      ['delete_block', { block_id: 'B1' }],
+      ['purge_block', { block_id: 'B1' }],
+      ['move_block', { target_id: 'T1' }],
+      ['add_tag', { tag: 'todo' }],
+      ['remove_tag', { tag: 'todo' }],
+      ['set_property', { key: 'k', value: 'v' }],
+      ['delete_property', { key: 'k' }],
+      ['add_attachment', { name: 'f.txt' }],
+      ['delete_attachment', { name: 'f.txt' }],
+      ['unknown_op', {}],
+    ] as const)('renders an icon in badge for %s', (opType, payload) => {
+      renderInListbox(
+        defaultProps({
+          entry: makeEntry(1, opType, payload as Record<string, unknown>),
+        }),
+      )
+
+      const badge = screen.getByTestId('history-type-badge')
+      const svg = badge.querySelector('svg')
+      expect(svg).toBeInTheDocument()
+      expect(svg).toHaveClass('h-3', 'w-3', 'mr-1')
     })
   })
 })

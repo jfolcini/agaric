@@ -19,7 +19,7 @@ import {
   useSensors,
 } from '@dnd-kit/core'
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
-import { useCallback, useMemo, useState } from 'react'
+import { type RefObject, useCallback, useMemo, useRef, useState } from 'react'
 import { INDENT_WIDTH } from '../components/SortableBlock'
 import {
   computePosition,
@@ -29,6 +29,7 @@ import {
   type Projection,
 } from '../lib/tree-utils'
 import { useIsMobile } from './use-mobile'
+import { useAutoScrollOnDrag } from './useAutoScrollOnDrag'
 
 interface UseBlockDnDParams {
   blocks: FlatBlock[]
@@ -39,6 +40,7 @@ interface UseBlockDnDParams {
   setFocused: (id: string | null) => void
   reorder: (blockId: string, newIndex: number) => Promise<void>
   moveToParent: (blockId: string, newParentId: string | null, newPosition: number) => Promise<void>
+  scrollContainerRef?: RefObject<HTMLElement | null>
 }
 
 export interface UseBlockDnDReturn {
@@ -63,10 +65,15 @@ export function useBlockDnD({
   setFocused,
   reorder,
   moveToParent,
+  scrollContainerRef,
 }: UseBlockDnDParams): UseBlockDnDReturn {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [overId, setOverId] = useState<string | null>(null)
   const [offsetLeft, setOffsetLeft] = useState(0)
+
+  // Auto-scroll when dragging near viewport edges
+  const fallbackRef = useRef<HTMLElement | null>(null)
+  useAutoScrollOnDrag(scrollContainerRef ?? fallbackRef, !!activeId)
 
   // Items visible during drag: exclude descendants of the active item
   const activeDescendants = useMemo(
