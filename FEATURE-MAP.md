@@ -22,6 +22,7 @@ The default view — one page per day, created automatically.
 - Floating calendar picker for jumping to any date, with per-source colored dots (blue=page, orange=due, green=scheduled, purple=property)
 - **Global date controls**: Today button and date picker available in all views (non-journal views navigate to journal first)
 - Days with content are highlighted
+- **Today highlight**: 8% accent background + 2px left accent border on today's section (UX-55)
 - Template support: auto-populates structure on new journal pages
 - Keyboard: Alt+Left/Right (prev/next period), Alt+T (go to today)
 
@@ -45,6 +46,7 @@ The default view — one page per day, created automatically.
 ### Tags
 
 - Browse and create tags
+- Usage counts displayed next to each tag name (UX-69)
 - Boolean tag queries (AND / OR / NOT) via filter panel
 - Click to navigate to tag page
 
@@ -90,7 +92,7 @@ The default view — one page per day, created automatically.
 
 - Browse all pages marked as templates
 - Search/filter by template name
-- Journal template indicator badge
+- Journal template indicator badge with tooltip explaining auto-application (UX-72)
 - Click to navigate to template page
 - Remove template status with confirmation toast
 
@@ -100,6 +102,7 @@ Opens when navigating to any page:
 
 - Editable page title with alias support
 - Block tree with full outliner editing
+- Empty blocks show helpful placeholder: "Type / for commands..." (UX-64)
 - Auto-creates first empty block on new/empty pages for immediate typing
 - Page properties table
 - Linked references (grouped by source page)
@@ -276,7 +279,7 @@ Shows tasks with due or scheduled dates for today, grouped by date (Overdue / To
 
 ### Filtering
 
-8 dimensions:
+8 dimensions + clear-all button (UX-53):
 
 - Status (custom keywords configurable)
 - Priority (1/2/3)
@@ -303,7 +306,7 @@ Shows tasks completed on the current day, grouped by source page.
 
 ### Due Panel
 
-Shows tasks with due/scheduled dates for the current day. Filter bar with 4 buttons: All, Due, Scheduled, Properties. Per-source breakdown in header when multiple source types exist (e.g., "2 Due · 1 Scheduled · 1 Properties").
+Shows tasks with due/scheduled dates for the current day. Filter bar with 4 buttons: All, Due, Scheduled, Properties. Per-source breakdown in header when multiple source types exist (e.g., "2 Due · 1 Scheduled · 1 Properties"). Overdue items show "(Xd overdue)" label next to due date (UX-56).
 
 ---
 

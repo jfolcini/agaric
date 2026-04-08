@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 266 — 2026-04-08 — 6 UX polish items (79→73 open)
+
+### Summary
+Resolved 6 REVIEW-LATER UX polish items: UX-53 (clear all agenda filters button), UX-55 (today highlight strengthening with 8% bg + left accent border), UX-56 (overdue days label in AlertSection), UX-64 (empty block placeholder "Type / for commands..." in StaticBlock + BlockDndOverlay), UX-69 (tag usage counts in TagList via listTagsByPrefix API switch), UX-72 (journal template badge tooltip in TemplatesView). 6 build subagents + 3 review subagents (batched). Review caught missed BlockDndOverlay file for UX-64 and test reliability issue for UX-72 — both fixed by orchestrator. Biome formatting fixes applied. 15 files changed, 248 insertions, 97 deletions. All 5096 frontend tests pass, all 20 prek hooks pass.
+
+**Commit:** 29a8f70
+
+| Area | Change |
+|------|--------|
+| AgendaFilterBuilder.tsx | UX-53: Ghost "Clear all" button (X icon) when filters active, calls onFiltersChange([]) |
+| AgendaFilterBuilder.test.tsx | UX-53: 3 new tests (no button when empty, shows when active, clears on click) |
+| DaySection.tsx | UX-55: `bg-accent/[0.04]` → `bg-accent/[0.08] border-l-2 border-accent` for today highlight |
+| DaySection.test.tsx | UX-55: 2 new tests (isToday=true has classes, isToday=false doesn't) |
+| AlertSection.tsx | UX-56: Compute daysOverdue, render "(Xd overdue)" label next to due dates; removed unused biome suppression |
+| OverdueSection.test.tsx | UX-56: 2 new tests with vi.useFakeTimers (overdue label renders, no label for today) |
+| StaticBlock.tsx | UX-64: "Empty block" → t('block.emptyPlaceholder') |
+| StaticBlock.test.tsx | UX-64: Updated assertion to match new placeholder text |
+| BlockDndOverlay.tsx | UX-64: "Empty block" → t('block.emptyPlaceholder'), added useTranslation import |
+| BlockDndOverlay.test.tsx | UX-64: Updated 2 test assertions and descriptions |
+| TagList.tsx | UX-69: Switched from listBlocks to listTagsByPrefix; renders usage_count in Badge |
+| TagList.test.tsx | UX-69: Updated mocks to TagCacheRow shape, added usage count display test |
+| TemplatesView.tsx | UX-72: Wrapped Journal badge in Tooltip with explanatory text |
+| TemplatesView.test.tsx | UX-72: Added hover tooltip test with waitFor for reliability |
+| i18n.ts | Added 6 i18n keys: agendaFilter.clearAll/clearAllLabel, duePanel.daysOverdue_one/_other, block.emptyPlaceholder, templates.journalTooltip |
+
 ## Session 265 — 2026-04-08 — 6 accessibility UX fixes (85→79 open)
 
 ### Summary
