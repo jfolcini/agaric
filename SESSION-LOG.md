@@ -1,5 +1,21 @@
 # Session Log
 
+## Session 262 — 2026-04-08 — 6 Rust backend fixes (102→96 open)
+
+### Summary
+Resolved 6 REVIEW-LATER items: 1 false-positive bug (B-26), 1 sync dead code (S-3), 1 maint/mDNS (M-15), 3 perf (P-10, P-11, P-14). All S-cost Rust-only changes. 5 parallel build subagents + 1 technical review subagent. Review found 0 blockers, 2 NITs (P-10 doc comment expanded, P-11 migration comment already adequate). Cargo fmt auto-fixed P-14 test formatting. 1667 Rust tests pass. 5 files changed, 131 insertions, 92 deletions.
+
+**Commit:** 2c14e93
+
+| Area | Change |
+|------|--------|
+| pairing.rs | S-3: `is_expired()` + `PAIRING_TIMEOUT` scoped to `#[cfg(test)]` — pairings are permanent by design |
+| sync_daemon.rs | M-15: mDNS discovered peers now carry `(DiscoveredPeer, Instant)` tuple; `retain()` evicts entries >5min stale before resync; new test `stale_mdns_peers_evicted` |
+| cache.rs | P-10: `rebuild_tags_cache_split` + `rebuild_pages_cache_split` delegate to non-split versions (batch `INSERT INTO...SELECT` instead of per-row INSERT) |
+| migrations/0022 | P-11: `CREATE INDEX idx_block_properties_key_value_num ON block_properties(key, value_num) WHERE value_num IS NOT NULL` |
+| materializer.rs | P-14: `hash_id()` helper for 64-bit hash; 4 `HashSet<String>` → `HashSet<u64>`; eliminates `block_id.clone()` in dedup hot path; new test `dedup_tasks_uses_hash_dedup` |
+| REVIEW-LATER.md | 6 items removed (B-26/S-3/M-15/P-10/P-11/P-14), SYNC + MAINT sections emptied and removed, summary updated (102→96) |
+
 ## Session 261 — 2026-04-08 — 11 bug fixes and UX improvements (113→102 open)
 
 ### Summary
