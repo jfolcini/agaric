@@ -3,7 +3,7 @@
 > Goal: Agaric is meant to fully replace Logseq for the author's personal workflow.
 > This document maps every Logseq capability to what we have, what's planned, and what's missing.
 >
-> **Methodology:** Logseq features verified against official documentation (docs.logseq.com, GitHub logseq/docs), release notes (0.10.15, Dec 2025), and community forums (discuss.logseq.com). Last updated April 2026.
+> **Methodology:** Logseq features verified against official documentation (docs.logseq.com, GitHub logseq/docs), release notes (0.10.15, Dec 2025), and community forums (discuss.logseq.com). Last updated 2026-04-08 (session 256).
 
 **Status key:**
 
@@ -20,7 +20,7 @@
 
 ## Context: Two Different Animals
 
-**Logseq** is a mature, open-source knowledge management platform (41.8k GitHub stars, 23k+ commits, large community). Written in ClojureScript, runs on Electron. Currently undergoing a major transition from file-based storage to a "DB version" (SQLite + Datascript backend) which is in beta with data loss warnings. Last stable release: 0.10.15 (Dec 2025). Desktop binaries: ~190 MB.
+**Logseq** is a mature, open-source knowledge management platform (41.9k GitHub stars, 23.5k+ commits, large community). Written in ClojureScript, runs on Electron. Currently undergoing a major transition from file-based storage to a "DB version" (SQLite + Datascript backend) which is in beta with data loss warnings. Last stable release: 0.10.15 (Dec 2025). Desktop binaries: ~190 MB.
 
 **Agaric** is a personal-use local-first app. Written in Rust + React, runs on Tauri 2. SQLite-backed from the start. Production Android APK: 24 MB. Designed to replace Logseq for one specific user's workflow — daily journaling, task management, and project notes — without trying to replicate features outside that scope (graph view, whiteboards, PDF annotation, plugins).
 
@@ -35,9 +35,9 @@
 | Everything is a block (outliner) | Yes — every piece of content is a bullet | Yes — `blocks` table, tree via `parent_id` + `position` | Done |
 | Block nesting / indentation | Unlimited depth in practice | Unlimited depth (max 20), visual indentation via `depth` in flat tree | Done |
 | Block UUIDs | UUID v4 (random, not sortable) | ULID (uppercase Crockford base32, sortable, time-encoded) | Done |
-| Block references `((uuid))` | Inline renders source content, live-updating. Reference counter shows all refs grouped by page | `[[ULID]]` links to pages/blocks as navigable chips. No inline content rendering of referenced block | Gap |
+| Block references `((uuid))` | Inline renders source content, live-updating. Reference counter shows all refs grouped by page | `((ULID))` block references via FTS picker, violet chips (first-line preview, hover tooltip with full content). Click-to-navigate. Tracked in `block_links` table. No inline editable content or reference counter | Partial |
 | Block embeds `{{embed ((uuid))}}` | Full content + children rendered inline, editable in-place | Not implemented | Gap |
-| Block properties `key:: value` | Inline `key:: value` syntax parsed from content. `::` autocomplete for names and values | `block_properties` table with typed values (text, num, date, ref). PagePropertyTable for page-level CRUD. Slash commands for block-level. PropertyChip inline display (max 3). No inline `key::` syntax | Partial |
+| Block properties `key:: value` | Inline `key:: value` syntax parsed from content. `::` autocomplete for names and values | `block_properties` table with 5 typed values (text, num, date, select, ref). `::` triggers property name autocomplete. PagePropertyTable + BlockPropertyDrawer for CRUD. PropertyChip inline display (max 3, click-to-edit). AddPropertyPopover | Done |
 | Collapse/expand children | Click arrow or `Ctrl+Up/Down`. State persisted via `collapsed` property in block | Chevron toggle, `Ctrl+.` shortcut. State persisted in localStorage (survives reload) | Done |
 | Zoom into block (focus mode) | `Alt+Right` shows block + descendants as focus page | Zoom-in with breadcrumb trail. Home button + ancestor navigation | Done |
 | Move block up/down | `Alt+Shift+Up/Down` | DnD reordering (tree-aware, @dnd-kit) + `Ctrl+Shift+Up/Down` keyboard shortcuts | Done |
@@ -64,8 +64,8 @@
 | Org-mode support | Full `.org` format — Org-mode properties, headings, lists | Not implemented. Org-mode inspires features (tags, properties, agenda), not file format | Design choice |
 | **Bold** | `**bold**` | `**bold**` | Done |
 | *Italic* | `*italic*` | `*italic*` | Done |
-| ~~Strikethrough~~ | `~~text~~` | `~~text~~` (serializer supports, no toggle shortcut yet) | Partial |
-| ==Highlight== | `^^text^^` (Logseq-specific syntax) | `==text==` (serializer supports, no toggle shortcut yet) | Partial |
+| ~~Strikethrough~~ | `~~text~~` | `~~text~~` with `Ctrl+Shift+S` toggle | Done |
+| ==Highlight== | `^^text^^` (Logseq-specific syntax) | `==text==` with `Ctrl+Shift+H` toggle | Done |
 | `Inline code` | `` `code` `` | `` `code` `` | Done |
 | Headings | `# H1` ... `###### H6` inside blocks | `/h1`-`/h6` slash commands + TipTap Heading extension (levels 1-6) | Done |
 | Code blocks | Fenced with language, syntax highlighting | Fenced code blocks with lowlight syntax highlighting (common language set, auto-detect fallback) | Done |
@@ -75,17 +75,17 @@
 | Slash commands `/` | ~20+ commands (task markers, dates, links, templates, etc.) | 17 base + progressive disclosure: TODO, DOING, DONE, DATE, DUE, SCHEDULED, LINK, TAG, CODE, EFFORT, ASSIGNEE, LOCATION, REPEAT, TEMPLATE, QUOTE, TABLE, QUERY + PRIORITY 1/2/3 + H1-H6 + repeat variants | Done |
 | Autocomplete `[[` | Search all pages, create new | block-link-picker extension, page search, "Create new" option | Done |
 | Autocomplete `@` | N/A (Logseq uses `#` for tags) | at-tag-picker extension, tag search, "Create new" option | Done |
-| Autocomplete `((` | Search all blocks for reference, inline preview | Not implemented — no block reference system | Gap |
-| Property autocomplete `::` | Suggests property names and values from usage history | Not implemented | Gap |
+| Autocomplete `((` | Search all blocks for reference, inline preview | `((` trigger opens block reference picker with FTS search. Renders as violet chip with first-line preview + hover tooltip | Done |
+| Property autocomplete `::` | Suggests property names and values from usage history | `::` triggers property name autocomplete picker (suggests existing property keys). No value autocomplete | Partial |
 | Multi-line blocks | `Shift+Enter` for line break | `Shift+Enter` for hard break, `Enter` creates sibling | Done |
-| Formatting toolbar | No visible toolbar — keyboard-only formatting | BubbleMenu: bold/italic/code/link/page-link/tag/code-block/priority/date/undo/redo (11 buttons) + Radix tooltips with shortcut hints | Better |
+| Formatting toolbar | No visible toolbar — keyboard-only formatting | FormattingToolbar: 20 buttons (bold, italic, code, strikethrough, highlight, link, page-link, tag, code-block, quote, heading, priority, date, due-date, scheduled-date, todo, properties, undo, redo, discard) + Radix tooltips with shortcut hints | Better |
 
 ### 4. Linking System
 
 | Capability | Logseq | Agaric | Status |
 |---|---|---|---|
 | Page links `[[page]]` | `[[page name]]` — human-readable names, creates page if needed | `[[ULID]]` rendered as clickable chips with title resolution. Links by ID (robust to renames, less human-readable in raw text) | Done |
-| Block references `((uuid))` | Inline content preview with live-updating. Editable in some contexts. Reference counter | Not implemented | Gap |
+| Block references `((uuid))` | Inline content preview with live-updating. Editable in some contexts. Reference counter | `((ULID))` FTS picker. Violet chip (first-line truncated to 60 chars), hover tooltip (full content to 300 chars), click-to-navigate. Tracked in `block_links`. Not inline-editable, no reference counter | Partial |
 | Block embeds `{{embed ((uuid))}}` | Full tree rendered inline, editable | Not implemented | Gap |
 | Page embeds `{{embed [[page]]}}` | Entire page content inline | Not implemented | Gap |
 | Tags as links | `#tag` = `[[tag]]` — tags ARE pages. Backlinks accumulate | Tags are separate entities (`block_type = 'tag'`). `#[ULID]` renders as tag chip. Separate namespaces for tags vs pages | Design choice |
@@ -100,18 +100,14 @@
 
 | Capability | Logseq | Agaric | Status |
 |---|---|---|---|
-| Block properties | Inline `key:: value` syntax. Parsed from content automatically | `block_properties` table with typed columns. set/delete/get/batch API. PropertyChip inline display (max 3, click-to-edit popovers) | Done |
-| Typed values | Text, Number, Date, DateTime, Checkbox, URL, Node (file version). DB version adds Classes with typed schema | 4 types: text, number, date, ref. Schema registry via `property_definitions` with select options | Partial |
+| Block properties | Inline `key:: value` syntax. Parsed from content automatically | `block_properties` table with typed columns. set/delete/get/batch API. `::` property name autocomplete. PropertyChip inline display (max 3, click-to-edit popovers). BlockPropertyDrawer for full CRUD | Done |
+| Typed values | Text, Number, Date, DateTime, Checkbox, URL, Node (file version). DB version adds Classes with typed schema | 5 types: text, number, date, select, ref. Schema registry via `property_definitions` with select options. Ref-type picker with page search | Partial |
 | Built-in properties | ~15+ editable (icon, title, tags, template, template-including-parent, alias, filters, public, exclude-from-graph-view) + hidden (collapsed, id, created-at, updated-at, query-table, query-properties, query-sort-by, query-sort-desc) | 14 seeded: todo_state, priority, due_date, scheduled_date, created_at, completed_at, effort, assignee, location, repeat, repeat-until, repeat-count, repeat-seq, repeat-origin | Done |
 | Property-based queries | `{{query (property type book)}}` — simple queries. Full Datalog for complex queries | `query_by_property` command with cursor pagination. Used by agenda, DonePanel. Inline query blocks `{{query type:tag expr:...}}` | Partial |
-| Property name autocomplete | `::` triggers suggestions from usage history | Not implemented | Gap |
+| Property name autocomplete | `::` triggers suggestions from usage history | `::` triggers property picker with existing property keys, ordered by usage. Follows same pattern as `@` and `[[` pickers | Done |
 | Property value autocomplete | Suggests previously-used values for that property | Not implemented | Gap |
 | Comma-separated multi-values | `tags:: a, b, c` parsed as multiple page refs. Configurable for custom properties | Not supported | Gap |
 | DB version: Classes & typed schema | DB version introduces "Classes" (like database tables) with typed property definitions, tag-based organization, table views | Not applicable — Agaric uses typed `property_definitions` from the start | Design choice |
-
-**Planned improvements:**
-- Properties management view: browse, rename, change type, delete, usage counts (Planned #643)
-- Inline property chips on blocks, click-to-edit popovers, block property drawer (Planned #645)
 
 ### 6. Tags
 
@@ -119,11 +115,11 @@
 |---|---|---|---|
 | Inline tag syntax | `#tag` or `#[[multi word]]` — tags are page references | `#[ULID]` rendered as styled chip with resolved name | Done |
 | Tags as pages | Every tag IS a page — `#book` = `[[book]]` | Tags and pages are separate `block_type` values. Separate namespaces | Design choice |
-| Tag hierarchy / namespaces | `/` separator in tag names. DB version: tag inheritance via `Extends` | Prefix-based: `work/meeting` naming convention with LIKE search for hierarchy queries. No parent-child relationships | Partial |
+| Tag hierarchy / namespaces | `/` separator in tag names. DB version: tag inheritance via `Extends` | Prefix-based: `work/meeting` naming convention with LIKE search. Materialized `block_tag_inherited` cache: blocks inherit ancestor tags, O(1) lookups, incrementally maintained by materializer + command handlers on 7 op types | Done |
 | Tag filtering | Filter in linked references | TagFilterPanel with boolean AND/OR/NOT, prefix search. TagExpr with full boolean composition | Better |
 | Tag usage counts | Shown in various UIs | `tags_cache` tracks `usage_count` | Done |
 | Tag autocomplete | `#` triggers search | @picker extension with create-new option | Done |
-| Tag inheritance (DB version) | Parent tags via `Extends` relationship. Schema inheritance | Not implemented | Gap |
+| Tag inheritance (DB version) | Parent tags via `Extends` relationship. Schema inheritance | Ancestor-based tag inheritance: `block_tag_inherited` materialized table, propagation on add/remove/move/create/delete/restore/purge, background rebuild safety net. No `Extends` schema inheritance | Partial |
 
 ### 7. Query System
 
@@ -136,7 +132,7 @@
 | Task queries | `(task TODO DOING)`, `(priority A B C)` | Agenda mode: TODO/DOING/DONE sections with priority sorting. DonePanel: completed tasks by date | Done |
 | Property queries | `(property type book)` — matches page refs in values | `query_by_property` with cursor pagination. Single key+value filter | Partial |
 | Advanced Datalog queries | Full Datascript query language: complex graph traversal, aggregations, custom transformations, rule definitions. Steep learning curve | Not applicable — backend uses SQL. Simpler but less expressive | Gap |
-| Query result as table | `query-table:: true` renders results as sortable table with column selection | Not implemented | Gap |
+| Query result as table | `query-table:: true` renders results as sortable table with column selection | QueryResultTable component: sortable columns, column definitions, click-to-navigate. Used by inline query blocks | Done |
 | Live-updating results | Queries re-evaluate on data change | FTS search, agenda, and inline query blocks are live-updating | Done |
 | Query sort/transform | `:result-transform` (custom fn), `:sort-by` (property-based), `:query-sort-by`/`:query-sort-desc` built-in properties | Fixed sort orders in agenda/backlinks. AgendaSortGroupControls for agenda (date/priority/state). No user-customizable sort on queries | Partial |
 
@@ -255,7 +251,7 @@
 | **Task dashboard** | Dedicated agenda mode with collapsible TODO/DOING/DONE sections, priority sorting, DonePanel, DuePanel with overdue accumulation, sort/group toolbar | SCHEDULED/DEADLINE blocks shown on journal; custom dashboards require Datalog |
 | **Recurrence** | Native backend recurrence with 3 modes, end conditions (repeat-until/repeat-count), agenda projection of virtual future occurrences, automatic sibling creation on DONE | Native repeater syntax (`.+`, `++`, `+`) but no end conditions, no future projection, no dedicated repeat UI |
 | **Backlink filtering** | Server-side expression tree: 17 filter types + And/Or/Not composition, keyset pagination | Simple filter bar with basic matching |
-| **Formatting toolbar** | BubbleMenu: 11 buttons with Radix tooltips + shortcut hints | No visible toolbar — keyboard-only |
+| **Formatting toolbar** | BubbleMenu: 20 buttons (bold, italic, strikethrough, highlight, code, headings 1-4, link, blockquote, bullet/ordered/task lists, undo/redo, indent/dedent, text color, divider) with Radix tooltips + shortcut hints | No visible toolbar — keyboard-only |
 | **Sync architecture** | Free LAN sync: mDNS discovery + TLS WebSocket + cert pinning + three-way merge + exponential backoff. No account, no cloud, no subscription | Logseq Sync: paid BETA ($5-15/mo), AWS-hosted, 10 graph limit. DIY sync is fragile |
 | **Conflict resolution** | Three-way merge with type-specific rendering (property diffs, move diffs, text). Batch resolution UI with multi-select keep/discard. Source device info | File-level conflicts (DIY) or "Smart Merge" (Sync BETA). DB version RTC alpha has data loss reports |
 | **Data integrity** | Every op hash-verified (blake3 chain), crash recovery at boot, op-level undo/redo with HistoryView batch revert + word-level diff | No checksums or hash chains. `created-at`/`updated-at` timestamps only |
@@ -266,7 +262,9 @@
 | **ID system** | ULIDs: sortable, time-encoded, case-normalized (Crockford base32), deterministic ordering | UUID v4: random, not sortable, no time information |
 | **Soft delete** | Cascade soft-delete with restore + purge, timestamp verification for concurrency | Delete is file/block removal (file version). No explicit trash/restore in file version |
 | **Undo/redo history** | Op-level undo/redo + HistoryView with multi-select batch revert, op-type filter, word-level diff display | Session-level undo only. No explicit undo history UI |
-| **Accessibility** | ARIA coverage on core components, keyboard navigation, semantic HTML, axe a11y tests on every component | Basic keyboard shortcuts, limited ARIA coverage |
+| **Tag inheritance** | Materialized `block_tag_inherited` table: blocks automatically inherit ancestor tags, O(1) lookups, incrementally maintained on 7 op types | File version: no tag inheritance. DB version: `Extends` relationship (still beta) |
+| **Inline queries** | 3 query types (tag, property, backlinks) as live-updating embedded blocks with table/list rendering, click-to-navigate | `{{query}}` blocks with simple or Datalog syntax. More flexible but steeper learning curve |
+| **Accessibility** | ARIA coverage on core components, keyboard navigation, semantic HTML, axe a11y tests on 105+ components (6713 total tests: 1665 Rust + 5048 frontend) | Basic keyboard shortcuts, limited ARIA coverage |
 
 ---
 
@@ -276,9 +274,8 @@ This section is important for honesty. These are areas where Logseq has capabili
 
 | Area | Logseq Advantage | Agaric Limitation |
 |---|---|---|
-| **Block references & embeds** | `((uuid))` inline content rendering (live-updating). `{{embed}}` for blocks and pages. Fundamental to Zettelkasten workflow | No block reference system. `[[ULID]]` links navigate but don't show content inline |
+| **Block references & embeds** | `((uuid))` inline content rendering (live-updating). `{{embed}}` for blocks and pages. Fundamental to Zettelkasten workflow | Block references: `((` FTS picker, violet chips with hover tooltip. No inline content embedding (`{{embed}}`), no ref counter, no inline editing of referenced content |
 | **Advanced queries (Datalog)** | Full Datascript query language: graph traversal, aggregations, custom transforms, rule definitions. Extremely powerful for power users | SQL-based queries. Simpler but less expressive. No user-facing query language |
-| **Query result as table** | `query-table:: true` renders any query as sortable table with column selection (`query-properties`) and sort (`query-sort-by`) | No table view for query results |
 | **Human-readable format** | Plain .md/.org files on disk. Readable in any text editor. Version-controllable with git. True data ownership | Binary SQLite file. Readable only through app or SQL tools. Export available but not the primary format |
 | **Plugin ecosystem** | 200+ community plugins covering themes, tools, integrations (Zotero, web clipper, kanban, etc.). Marketplace with one-click install | No plugin system. All features must be built-in |
 | **Graph visualization** | Global + local graph view. Visual discovery of connections between pages/blocks | Not implemented (out of scope) |
@@ -309,7 +306,7 @@ Logseq is undergoing a fundamental architectural shift from file-based storage t
 **Current reality (as of April 2026):**
 - DB version is in **beta** — "data loss is possible" (official README)
 - RTC sync is in **alpha** — data loss reported (db-test issue #781)
-- 239 open issues in logseq/db-test repo
+- 241 open issues in logseq/db-test repo
 - Specific issues: sync doesn't resume after internet reconnects (#780), synced files differ in size (#783), large blocks not editable (#782), rendering blanked out when scrolling (#785), terrible performance with numbered lists (#784)
 - iOS app in alpha (sign-up required), Android "coming soon"
 - Plugin ecosystem not compatible with DB version
@@ -358,13 +355,13 @@ Logseq is undergoing a fundamental architectural shift from file-based storage t
 
 **Logseq:** Atomic ideas as blocks with `[[links]]` -> block references `((uuid))` for cross-referencing -> block embeds for content reuse -> backlinks accumulate connections -> unlinked references discover implicit connections -> graph view for exploration -> Datalog queries for complex retrieval.
 
-**Agaric:** Blocks with `[[ULID]]` page/block links (rendered as chips) -> linked references grouped by source page -> unlinked references with "Link it" button -> tags for categorization with boolean AND/OR/NOT queries -> backlink filter expressions (17 types, full composition).
+**Agaric:** Blocks with `[[ULID]]` page/block links (rendered as chips) -> block references via `((` with FTS picker (violet chips, hover tooltip) -> linked references grouped by source page -> unlinked references with "Link it" button -> tags for categorization with boolean AND/OR/NOT queries -> backlink filter expressions (17 types, full composition).
 
-**Logseq advantage:** Block references and embeds are the core precision tools for Zettelkasten. The ability to see referenced content inline and navigate the graph visually is fundamental to this workflow. Datalog enables complex cross-graph queries.
+**Logseq advantage:** Block embeds show referenced content inline. Graph view enables visual exploration. Datalog enables complex cross-graph queries.
 
-**Agaric advantage:** Better backlink filtering (17 types with boolean composition vs. simple filter bar). Better search (trigram tokenizer for CJK/substring).
+**Agaric advantage:** Better backlink filtering (17 types with boolean composition vs. simple filter bar). Better search (trigram tokenizer for CJK/substring). Block references with FTS-powered picker.
 
-**Verdict: Logseq.** Block references and embeds are essential for Zettelkasten workflows. This is the biggest capability gap in Agaric, accepted as a deliberate trade-off for the target user's workflow.
+**Verdict: Logseq.** Block embeds and graph view are important for Zettelkasten workflows. Agaric now has block references but still lacks inline content embedding, which limits content reuse in this workflow.
 
 ---
 
@@ -416,11 +413,11 @@ Scoring: 1-10 per category based on shipped, stable functionality. Not promises 
 |---|:---:|:---:|---|
 | Block CRUD | 10 | 10 | Both excellent. Logseq: refs/embeds. Agaric: multi-select batch toolbar |
 | Page management | 9 | 9 | Both: aliases, namespaces. Logseq: configurable titles. Agaric: tree view, breadcrumbs |
-| Editor formatting | 9 | 8 | Logseq: strikethrough/highlight toggles, math, org-mode. Agaric: formatting toolbar, tables, blockquotes |
-| Linking system | 10 | 7 | Logseq: block refs + embeds + graph view. Agaric: links + backlink filtering only |
-| Properties | 7 | 8 | Logseq: inline syntax, autocomplete. Agaric: typed from start, PropertyChip, schema registry |
-| Tags | 8 | 7 | Logseq: tags=pages (more connected). Agaric: boolean tag queries (more structured) |
-| Query system | 9 | 6 | Logseq: Datalog + simple queries + table view. Agaric: inline queries + agenda |
+| Editor formatting | 9 | 9 | Both: strikethrough/highlight with shortcuts. Logseq: math, org-mode. Agaric: 20-button toolbar, text color, tables |
+| Linking system | 10 | 8 | Logseq: block refs + embeds + graph view. Agaric: block refs (FTS picker, violet chips, hover tooltip) + backlink filtering. No embeds or graph |
+| Properties | 7 | 8 | Logseq: inline syntax, autocomplete. Agaric: typed from start, PropertyChip, schema registry, `::` autocomplete |
+| Tags | 8 | 8 | Logseq: tags=pages (more connected). Agaric: boolean tag queries + materialized tag inheritance |
+| Query system | 9 | 7 | Logseq: Datalog + simple queries + table view. Agaric: inline query blocks (3 types) with table/list rendering + agenda |
 | Task management | 7 | 10 | Agaric: agenda dashboard + recurrence end conditions + future projection + sort/group |
 | Daily journal | 7 | 9 | Agaric: 4 modes + calendar picker. Logseq: infinite scroll + configurable format |
 | Search | 7 | 8 | Agaric: trigram tokenizer + CJK + advanced backlink filters. Logseq: desktop-only full-text |
@@ -432,11 +429,26 @@ Scoring: 1-10 per category based on shipped, stable functionality. Not promises 
 | Mobile | 6 | 7 | Agaric: 24 MB Android APK, good perf. Logseq: Android slow, iOS available but limited |
 | Extras | 9 | 0 | Logseq: graph view, whiteboards, PDF reader, flashcards, plugins |
 
-**Totals: Logseq 124 / Agaric 128**
+**Totals: Logseq 125 / Agaric 132**
 
-This is close — and deliberately so. Logseq's 9 in "Extras" covers real functionality (graph view, whiteboards, PDF reader, flashcards, 200+ plugins) that Agaric doesn't attempt. For the target workflow (daily journaling + task management + project notes), Agaric's advantages in sync, data integrity, performance, and task management are decisive. For broader knowledge management workflows (Zettelkasten, research), Logseq's linking system and Datalog queries remain superior.
+The gap has widened since the initial comparison due to block references, tag inheritance, inline queries, and formatting improvements. Logseq's 9 in "Extras" covers real functionality (graph view, whiteboards, PDF reader, flashcards, 200+ plugins) that Agaric doesn't attempt. For the target workflow (daily journaling + task management + project notes), Agaric's advantages in sync, data integrity, performance, and task management are decisive. For broader knowledge management workflows (Zettelkasten, research), Logseq's linking system and Datalog queries remain superior.
 
 **Key insight:** Agaric doesn't try to be a universal Logseq replacement. It replaces Logseq specifically for a workflow centered on journaling, tasks, and project notes — and does so with better architecture, better task tooling, and zero subscription costs. Users who rely heavily on block references, graph view, PDF annotation, or plugins should stay with Logseq.
+
+---
+
+## Part 7: Remaining Improvement Opportunities
+
+These are the highest-impact gaps that could further narrow the comparison. Ordered by estimated workflow impact for the target user.
+
+| Gap | Impact | Effort | Notes |
+|---|---|---|---|
+| **Block embeds** (`{{embed}}`) | High | Medium | Would complete the block reference story. Render referenced block content inline (read-only). Required for full Zettelkasten parity |
+| **Property value autocomplete** | Medium | Low | Suggest previously-used values when editing properties. Logseq does this; we have `::` key autocomplete but not value autocomplete |
+| **Custom link labels** `[text]([[page]])` | Medium | Low | Human-readable link text instead of showing page name. Logseq supports this syntax |
+| **Block reference counter** | Low | Low | Show count of references to a block (e.g., "3 refs"). Helps discover highly-referenced content |
+| **Math/LaTeX rendering** | Low | Medium | `$$` notation for mathematical expressions. Niche but Logseq has it |
+| **Configurable date format** | Low | Low | Currently fixed `YYYY-MM-DD`. Logseq allows `:journal/page-title-format` |
 
 ---
 
@@ -444,10 +456,10 @@ This is close — and deliberately so. Logseq's 9 in "Extras" covers real functi
 
 - Logseq Documentation: https://docs.logseq.com/ (client-rendered SPA)
 - Logseq Docs Repository: https://github.com/logseq/docs (raw Markdown sources)
-- Logseq GitHub: https://github.com/logseq/logseq (41.8k stars, 920 open issues)
+- Logseq GitHub: https://github.com/logseq/logseq (41.9k stars, 920 open issues)
 - Logseq Blog: https://blog.logseq.com/ (last post: Aug 2024)
 - Logseq Forum: https://discuss.logseq.com/ (active, latest topics Apr 2026)
-- Logseq DB Test Issues: https://github.com/logseq/db-test/issues (239 open, Apr 2026)
+- Logseq DB Test Issues: https://github.com/logseq/db-test/issues (241 open, Apr 2026)
 - Logseq Releases: https://github.com/logseq/logseq/releases (0.10.15, Dec 2025)
 - Logseq Tasks Doc: https://raw.githubusercontent.com/logseq/docs/master/pages/Tasks.md
 - Logseq Properties Doc: https://raw.githubusercontent.com/logseq/docs/master/pages/Properties.md
