@@ -1,5 +1,27 @@
 # Session Log
 
+## Session 263 — 2026-04-08 — 5 frontend test quality fixes (96→91 open)
+
+### Summary
+Resolved 5 REVIEW-LATER items: T-8 (BlockRef/BlockRefPicker test coverage), T-9 (arbBlockRef fuzz generator), T-10 (shared makeBlock fixture), T-11 (fireEvent.click→userEvent.click), T-12 (vi.clearAllMocks). All S-cost frontend-only changes. 4 parallel build subagents + 1 review subagent. Review found 0 blockers, 0 NITs. SortableBlock's 1 fireEvent.click reverted to keep fireEvent (mock context menu unmounts during userEvent's multi-step simulation, causing timeout — valid mock-boundary exception). Biome auto-formatted 2 files (QueryResult, ResultCard). 11 files changed, 298 insertions, 186 deletions. All 5066 frontend tests pass.
+
+**Commit:** d968987
+
+| Area | Change |
+|------|--------|
+| block-ref.test.ts | T-8: New test file (10 tests) — extension config + NodeView (deleted/active refs, click navigation) |
+| block-ref-picker.test.ts | T-8: New test file (4 tests) — extension name, default options, custom items, async callback |
+| markdown-serializer.property.test.ts | T-9: Added `arbBlockRef` generator + included in `arbInlineNode` fc.oneof (weight: 1) |
+| ResultCard.test.tsx | T-10+T-11: Replaced local makeBlock with shared fixture import; 2 fireEvent.click→userEvent.click |
+| QueryResult.test.tsx | T-10: Replaced 2 local makeBlock definitions with shared fixture import |
+| TagFilterPanel.test.tsx | T-10+T-11: Replaced local makeBlock; 18 fireEvent.click→userEvent.click with fake timer integration (`advanceTimers: vi.advanceTimersByTime`) |
+| FormattingToolbar.test.tsx | T-11: 1 fireEvent.click→userEvent.click |
+| BlockZoomBar.test.tsx | T-11: 3 fireEvent.click→userEvent.click; removed unused fireEvent import |
+| SortableBlock.test.tsx | T-11: Reverted — kept fireEvent.click (mock boundary exception, comment added) |
+| CollapsiblePanelHeader.test.tsx | T-12: Added beforeEach + vi.clearAllMocks() |
+| BlockContextMenu.test.tsx | T-12: Added beforeEach + vi.clearAllMocks() |
+| REVIEW-LATER.md | 5 items removed (T-8/T-9/T-10/T-11/T-12), summary updated (96→91) |
+
 ## Session 262 — 2026-04-08 — 6 Rust backend fixes (102→96 open)
 
 ### Summary
