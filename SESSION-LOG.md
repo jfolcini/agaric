@@ -1,5 +1,27 @@
 # Session Log
 
+## Session 270 — Batch 5: 6 UX polish items (2026-04-08)
+
+**Commit:** `1144d09` — `feat(ux): 6 UX polish items (UX-62/63/71/77/82/88)` — 20 files, +1026/-108
+
+### Items resolved
+- **UX-62**: Code block language selector — Popover in FormattingToolbar with 17 languages + short labels (JS, TS, PY, etc.)
+- **UX-63**: Dark mode syntax highlighting — verified already complete (GitHub Dark Dimmed theme in index.css)
+- **UX-71**: Tag filter result breadcrumbs — batchResolve parent_id, show "in: PageName" with PageLink
+- **UX-77**: Manual address entry — replaced prompt() with Radix Popover (labeled input, format hint, Save button)
+- **UX-82**: Configurable first day of week — new useWeekStart hook (localStorage-backed), updated all Calendar/date-utils consumers
+- **UX-88**: NL date input everywhere — PropertyRow and PropertyRowEditor now use parseDate() with live preview
+
+### New files
+- `src/hooks/useWeekStart.ts` — week start preference hook (useSyncExternalStore + localStorage)
+- `src/hooks/__tests__/useWeekStart.test.ts` — 6 tests
+
+### Test count
+- 5195 tests across 223 test files (was 5161, +34 new tests)
+
+### REVIEW-LATER
+- 55 → 49 items (19 UX remaining)
+
 ## Session 269 — 2026-04-08 — 6 UX polish items (61→55 open)
 
 ### Summary

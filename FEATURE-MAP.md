@@ -20,6 +20,7 @@ The default view — one page per day, created automatically.
 | **Agenda** | Tasks grouped by date (Overdue / Today / Tomorrow / future) with configurable sort and group controls |
 
 - Floating calendar picker for jumping to any date, with per-source colored dots (blue=page, orange=due, green=scheduled, purple=property)
+- **Configurable week start** (UX-82): useWeekStart hook (localStorage). Applied to BlockDatePicker, JournalCalendarDropdown, date-utils. `useWeekStart.ts`, `date-utils.ts`.
 - **Color dot legend**: inline legend below calendar showing Page/Due/Scheduled/Property color dots with flex-wrap for narrow viewports (UX-57)
 - **Global date controls**: Today button and date picker available in all views (non-journal views navigate to journal first)
 - Days with content are highlighted
@@ -51,6 +52,7 @@ The default view — one page per day, created automatically.
 - Browse and create tags
 - Usage counts displayed next to each tag name (UX-69)
 - Boolean tag queries (AND / OR / NOT) via filter panel with 3-way mode toggle (UX-70)
+- **Tag filter breadcrumbs** (UX-71): Results show parent page title via batchResolve + PageLink. `TagFilterPanel.tsx`.
 - Click to navigate to tag page
 
 ### Properties
@@ -126,6 +128,7 @@ Markdown-based WYSIWYG editing:
 - **Bold** (`**`), *italic* (`*`), `inline code` (`` ` ``), ~~strikethrough~~ (`~~`), ==highlight== (`==`)
 - Headings (levels 1–6)
 - Fenced code blocks with syntax highlighting
+- **Code block language selector** (UX-62): Popover in FormattingToolbar with 17 language choices. Short labels on active button. `FormattingToolbar.tsx`, tested in `FormattingToolbar.test.tsx`.
 - Tables (pipe-delimited)
 - Blockquotes (`>`)
 - External links (Ctrl+K, autolink, paste detection)
@@ -263,6 +266,7 @@ Text, number, date, select, and reference (link to another block).
 - Reference values show resolved page titles
 - Click-to-edit with type-aware inputs (text field, dropdown, page picker)
 - Block property drawer renders all built-in properties with icons and formatted names (consistent styling)
+- **NL date input** (UX-88): PropertyRow and PropertyRowEditor accept natural language dates ("today", "+3d", "Apr 15") via `parseDate()`. Live preview. `BlockPropertyDrawer.tsx`, `PropertyRowEditor.tsx`.
 
 ### Repeat Properties
 
@@ -363,6 +367,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **Auto-sync**: background daemon with change-triggered (3s debounce) and periodic sync (60s), exponential backoff on failure
 - **Manual sync feedback**: sidebar sync button shows toast when no peers are paired ("No paired devices — use Device Management to pair.") and resets sync state to idle
 - **Manual address**: set a peer's IP:port when mDNS is unavailable (e.g., across subnets)
+- **Peer address popover** (UX-77): Replaced prompt() with Radix Popover for manual address entry. `PeerListItem.tsx`.
 - **Conflict handling**: non-overlapping edits merge automatically; overlapping edits create conflict copies for manual resolution
 - **Certificate pinning**: devices are identified by their TLS certificate hash
 
