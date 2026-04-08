@@ -1056,6 +1056,15 @@ impl Materializer {
 // Dedup logic for background batch-drain
 // ---------------------------------------------------------------------------
 
+/// Compute a fast 64-bit hash for dedup comparison.
+/// Collision probability is negligible for the batch sizes involved (≤1024).
+fn hash_id(s: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    h.finish()
+}
+
 /// Coalesce duplicate tasks from a batch:
 ///
 /// - Parameterless cache-rebuild tasks (`RebuildTagsCache`, `RebuildPagesCache`,
@@ -1067,31 +1076,31 @@ impl Materializer {
 ///   queue, but we never silently drop them).
 fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
     let mut seen_discriminants: HashSet<mem::Discriminant<MaterializeTask>> = HashSet::new();
-    let mut seen_block_ids: HashSet<String> = HashSet::new();
-    let mut seen_fts_update_ids: HashSet<String> = HashSet::new();
-    let mut seen_fts_remove_ids: HashSet<String> = HashSet::new();
-    let mut seen_fts_reindex_ref_ids: HashSet<String> = HashSet::new();
+    let mut seen_block_ids: HashSet<u64> = HashSet::new();
+    let mut seen_fts_update_ids: HashSet<u64> = HashSet::new();
+    let mut seen_fts_remove_ids: HashSet<u64> = HashSet::new();
+    let mut seen_fts_reindex_ref_ids: HashSet<u64> = HashSet::new();
     let mut result = Vec::with_capacity(tasks.len());
 
     for task in tasks {
         match &task {
             MaterializeTask::ReindexBlockLinks { block_id } => {
-                if seen_block_ids.insert(block_id.clone()) {
+                if seen_block_ids.insert(hash_id(block_id)) {
                     result.push(task);
                 }
             }
             MaterializeTask::UpdateFtsBlock { block_id } => {
-                if seen_fts_update_ids.insert(block_id.clone()) {
+                if seen_fts_update_ids.insert(hash_id(block_id)) {
                     result.push(task);
                 }
             }
             MaterializeTask::ReindexFtsReferences { block_id } => {
-                if seen_fts_reindex_ref_ids.insert(block_id.clone()) {
+                if seen_fts_reindex_ref_ids.insert(hash_id(block_id)) {
                     result.push(task);
                 }
             }
             MaterializeTask::RemoveFtsBlock { block_id } => {
-                if seen_fts_remove_ids.insert(block_id.clone()) {
+                if seen_fts_remove_ids.insert(hash_id(block_id)) {
                     result.push(task);
                 }
             }
@@ -2868,6 +2877,29 @@ mod tests {
         assert!(matches!(deduped[0], MaterializeTask::FtsOptimize));
         assert!(matches!(deduped[1], MaterializeTask::RebuildFtsIndex));
         assert!(matches!(deduped[2], MaterializeTask::RebuildTagsCache));
+    }
+
+    #[test]
+    fn dedup_tasks_uses_hash_dedup() {
+        let tasks = vec![
+            MaterializeTask::ReindexBlockLinks {
+                block_id: "BLOCK_A".into(),
+            },
+            MaterializeTask::ReindexBlockLinks {
+                block_id: "BLOCK_A".into(),
+            },
+            MaterializeTask::ReindexBlockLinks {
+                block_id: "BLOCK_B".into(),
+            },
+            MaterializeTask::UpdateFtsBlock {
+                block_id: "BLOCK_A".into(),
+            },
+            MaterializeTask::UpdateFtsBlock {
+                block_id: "BLOCK_A".into(),
+            },
+        ];
+        let result = dedup_tasks(tasks);
+        assert_eq!(result.len(), 3, "dedup should keep one ReindexBlockLinks per block_id + one UpdateFtsBlock per block_id");
     }
 
     // ======================================================================

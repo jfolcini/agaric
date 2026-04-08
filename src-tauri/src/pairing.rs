@@ -143,9 +143,6 @@ pub fn generate_qr_svg(data: &str) -> Result<String, AppError> {
 // Pairing Session
 // ---------------------------------------------------------------------------
 
-/// Duration after which a pairing session is considered expired.
-const PAIRING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300); // 5 minutes
-
 /// Short-lived pairing session that holds the passphrase and derived key.
 pub struct PairingSession {
     pub passphrase: String,
@@ -183,11 +180,6 @@ impl PairingSession {
             session_key,
             created_at: std::time::Instant::now(),
         }
-    }
-
-    /// Returns `true` if the session has exceeded the 5-minute timeout.
-    pub fn is_expired(&self) -> bool {
-        self.created_at.elapsed() >= PAIRING_TIMEOUT
     }
 
     /// Build a deterministic salt from both device IDs.
@@ -262,6 +254,26 @@ pub fn verify_device_exchange(
     }
 
     Ok((device_id, cert_hash))
+}
+
+// ---------------------------------------------------------------------------
+// Test-only helpers
+// ---------------------------------------------------------------------------
+
+/// Duration after which a pairing session is considered expired.
+#[cfg(test)]
+const PAIRING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300); // 5 minutes
+
+#[cfg(test)]
+impl PairingSession {
+    /// Returns `true` if the session has exceeded the 5-minute timeout.
+    ///
+    /// **Not used in production** — pairings are permanent by design.
+    /// Retained for test coverage of timeout logic in case time-limited
+    /// sessions are needed in the future.
+    pub fn is_expired(&self) -> bool {
+        self.created_at.elapsed() >= PAIRING_TIMEOUT
+    }
 }
 
 // ---------------------------------------------------------------------------

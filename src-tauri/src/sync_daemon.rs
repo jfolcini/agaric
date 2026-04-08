@@ -225,8 +225,8 @@ async fn daemon_loop(
         });
     }
 
-    // 5. Maintain discovered peers (device_id → DiscoveredPeer)
-    let mut discovered: HashMap<String, DiscoveredPeer> = HashMap::new();
+    // 5. Maintain discovered peers (device_id → (DiscoveredPeer, last_seen))
+    let mut discovered: HashMap<String, (DiscoveredPeer, tokio::time::Instant)> = HashMap::new();
 
     // 6. Periodic resync interval (replaces the former 500ms poll cadence)
     let mut resync_interval = tokio::time::interval(std::time::Duration::from_secs(30));
@@ -240,7 +240,7 @@ async fn daemon_loop(
                 if let Some(peer) = sync_net::parse_service_event(event) {
                     if peer.device_id != device_id {
                         let is_new = !discovered.contains_key(&peer.device_id);
-                        discovered.insert(peer.device_id.clone(), peer.clone());
+                        discovered.insert(peer.device_id.clone(), (peer.clone(), tokio::time::Instant::now()));
                         if is_new {
                             tracing::info!(
                                 peer_id = %peer.device_id,
@@ -278,7 +278,7 @@ async fn daemon_loop(
                     vec![]
                 });
                 for peer_ref in &refs {
-                    if let Some(dp) = discovered.get(&peer_ref.peer_id) {
+                    if let Some((dp, _)) = discovered.get(&peer_ref.peer_id) {
                         try_sync_with_peer(
                             &pool,
                             &device_id,
@@ -316,6 +316,10 @@ async fn daemon_loop(
 
             // Branch C: periodic resync check (30s interval)
             _ = resync_interval.tick() => {
+                // Evict stale mDNS peers not seen in last 5 minutes
+                let stale_threshold = tokio::time::Instant::now() - std::time::Duration::from_secs(300);
+                discovered.retain(|_, (_, last_seen)| *last_seen > stale_threshold);
+
                 let refs = peer_refs::list_peer_refs(&pool).await.unwrap_or_else(|e| {
                     tracing::warn!("list_peer_refs failed: {e}");
                     vec![]
@@ -328,7 +332,7 @@ async fn daemon_loop(
                 let refs_by_id: std::collections::HashMap<&str, &peer_refs::PeerRef> =
                     refs.iter().map(|r| (r.peer_id.as_str(), r)).collect();
                 for pid in due {
-                    if let Some(dp) = discovered.get(&pid) {
+                    if let Some((dp, _)) = discovered.get(&pid) {
                         try_sync_with_peer(
                             &pool,
                             &device_id,
@@ -969,6 +973,49 @@ mod tests {
             result.unwrap().peer_id,
             "PAIRED_DEVICE_ABC",
             "returned peer_id must match"
+        );
+    }
+
+    // ── M-15: stale mDNS peer eviction test ────────────────────────────
+
+    #[test]
+    fn stale_mdns_peers_evicted() {
+        use std::time::Duration;
+        use tokio::time::Instant;
+
+        let mut discovered: HashMap<String, (sync_net::DiscoveredPeer, Instant)> = HashMap::new();
+
+        let fresh_peer = sync_net::DiscoveredPeer {
+            device_id: "FRESH_PEER".into(),
+            addresses: vec!["192.168.1.10".parse().unwrap()],
+            port: 9000,
+        };
+        discovered.insert("FRESH_PEER".into(), (fresh_peer, Instant::now()));
+
+        let stale_peer = sync_net::DiscoveredPeer {
+            device_id: "STALE_PEER".into(),
+            addresses: vec!["192.168.1.20".parse().unwrap()],
+            port: 9001,
+        };
+        // 10 minutes ago — well past the 5-minute threshold
+        discovered.insert(
+            "STALE_PEER".into(),
+            (stale_peer, Instant::now() - Duration::from_secs(600)),
+        );
+
+        assert_eq!(discovered.len(), 2, "should start with 2 peers");
+
+        let stale_threshold = Instant::now() - Duration::from_secs(300);
+        discovered.retain(|_, (_, last_seen)| *last_seen > stale_threshold);
+
+        assert_eq!(discovered.len(), 1, "stale peer must be evicted");
+        assert!(
+            discovered.contains_key("FRESH_PEER"),
+            "fresh peer must be retained"
+        );
+        assert!(
+            !discovered.contains_key("STALE_PEER"),
+            "stale peer must be removed"
         );
     }
 }

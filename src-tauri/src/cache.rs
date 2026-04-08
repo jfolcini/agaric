@@ -362,87 +362,29 @@ pub async fn rebuild_all_caches(pool: &SqlitePool) -> Result<(), AppError> {
 
 /// Read/write split variant of [`rebuild_tags_cache`].
 ///
-/// Reads tag data from `read_pool`, writes to `write_pool`.
-/// Used by the materializer when a separate read pool is available.
+/// Delegates to the single-pool implementation using the write pool
+/// for atomic `INSERT INTO ... SELECT`.  The read pool parameter is
+/// accepted for API compatibility but unused — holding the write pool
+/// for the combined SELECT+INSERT is acceptable because cache rebuilds
+/// are background stale-while-revalidate operations, not latency-critical.
 pub async fn rebuild_tags_cache_split(
     write_pool: &SqlitePool,
-    read_pool: &SqlitePool,
+    _read_pool: &SqlitePool,
 ) -> Result<(), AppError> {
-    let now = crate::now_rfc3339();
-
-    // Read phase: fetch tag data from read pool
-    let rows = sqlx::query_as::<_, (String, Option<String>, i64)>(
-        "SELECT b.id, b.content, COALESCE(t.cnt, 0) \
-         FROM blocks b \
-         LEFT JOIN ( \
-             SELECT bt.tag_id, COUNT(*) AS cnt \
-             FROM block_tags bt \
-             JOIN blocks blk ON blk.id = bt.block_id \
-             WHERE blk.deleted_at IS NULL \
-             GROUP BY bt.tag_id \
-         ) t ON t.tag_id = b.id \
-         WHERE b.block_type = 'tag' AND b.deleted_at IS NULL AND b.content IS NOT NULL \
-           AND b.is_conflict = 0 \
-         ORDER BY b.id",
-    )
-    .fetch_all(read_pool)
-    .await?;
-
-    // Write phase: DELETE + INSERT on write pool
-    let mut tx = write_pool.begin().await?;
-    sqlx::query("DELETE FROM tags_cache")
-        .execute(&mut *tx)
-        .await?;
-    for (tag_id, name, usage_count) in &rows {
-        sqlx::query(
-            "INSERT OR IGNORE INTO tags_cache (tag_id, name, usage_count, updated_at) \
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(tag_id)
-        .bind(name.as_deref().unwrap_or(""))
-        .bind(usage_count)
-        .bind(&now)
-        .execute(&mut *tx)
-        .await?;
-    }
-    tx.commit().await?;
-    Ok(())
+    rebuild_tags_cache(write_pool).await
 }
 
 /// Read/write split variant of [`rebuild_pages_cache`].
 ///
-/// Reads page data from `read_pool`, writes to `write_pool`.
-/// Used by the materializer when a separate read pool is available.
+/// Delegates to the single-pool implementation using the write pool
+/// for atomic `INSERT INTO ... SELECT`.  The read pool parameter is
+/// accepted for API compatibility but unused — see
+/// [`rebuild_tags_cache_split`] for rationale.
 pub async fn rebuild_pages_cache_split(
     write_pool: &SqlitePool,
-    read_pool: &SqlitePool,
+    _read_pool: &SqlitePool,
 ) -> Result<(), AppError> {
-    let now = crate::now_rfc3339();
-
-    // Read phase
-    let rows = sqlx::query_as::<_, (String, Option<String>)>(
-        "SELECT id, content FROM blocks \
-         WHERE block_type = 'page' AND deleted_at IS NULL AND content IS NOT NULL \
-           AND is_conflict = 0",
-    )
-    .fetch_all(read_pool)
-    .await?;
-
-    // Write phase
-    let mut tx = write_pool.begin().await?;
-    sqlx::query("DELETE FROM pages_cache")
-        .execute(&mut *tx)
-        .await?;
-    for (page_id, title) in &rows {
-        sqlx::query("INSERT INTO pages_cache (page_id, title, updated_at) VALUES (?, ?, ?)")
-            .bind(page_id)
-            .bind(title.as_deref().unwrap_or(""))
-            .bind(&now)
-            .execute(&mut *tx)
-            .await?;
-    }
-    tx.commit().await?;
-    Ok(())
+    rebuild_pages_cache(write_pool).await
 }
 
 /// Read/write split variant of [`rebuild_agenda_cache`].
