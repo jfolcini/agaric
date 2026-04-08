@@ -8,6 +8,7 @@
 
 import { Plus } from 'lucide-react'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { cn } from '@/lib/utils'
 
@@ -34,6 +35,7 @@ export interface SuggestionListRef {
 
 export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>(
   ({ items, command, label }, ref) => {
+    const { t } = useTranslation()
     const listRef = useRef<HTMLDivElement>(null)
 
     const selectItem = useCallback(
@@ -74,7 +76,7 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
     if (items.length === 0) {
       return (
         <output className="suggestion-empty p-2 text-sm text-muted-foreground" aria-live="polite">
-          No results
+          {t('suggestion.noResults')}
         </output>
       )
     }
@@ -110,7 +112,7 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
             {item.isCreate ? (
               <span className="flex items-center">
                 <Plus className="mr-1 h-3.5 w-3.5 text-primary" />
-                Create <strong className="ml-1">{item.label}</strong>
+                {t('suggestion.create')} <strong className="ml-1">{item.label}</strong>
               </span>
             ) : (
               item.label

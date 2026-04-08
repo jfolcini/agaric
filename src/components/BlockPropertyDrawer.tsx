@@ -98,7 +98,7 @@ export function BlockPropertyDrawer({
           toast.error(t('property.invalidNumber'))
           return
         }
-        announce('Property saved')
+        announce(t('property.saved'))
       } catch (err) {
         logger.error('BlockPropertyDrawer', 'Failed to save property', {
           blockId: blockId ?? '',
@@ -119,7 +119,7 @@ export function BlockPropertyDrawer({
         await handleDeleteProperty(blockId, key, () => {
           setProperties((prev) => prev.filter((p) => p.key !== key))
         })
-        announce('Property deleted')
+        announce(t('property.deleted'))
       } catch (err) {
         logger.error('BlockPropertyDrawer', 'Failed to delete property', {
           blockId: blockId ?? '',
@@ -167,7 +167,7 @@ export function BlockPropertyDrawer({
         pageStore.setState((s) => ({
           blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, [field]: null } : b)),
         }))
-        announce('Date cleared')
+        announce(t('property.dateCleared'))
       } catch (err) {
         logger.error('BlockPropertyDrawer', 'Failed to clear builtin date', {
           blockId: blockId ?? '',
@@ -193,7 +193,7 @@ export function BlockPropertyDrawer({
         pageStore.setState((s) => ({
           blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, [field]: value } : b)),
         }))
-        announce('Date updated')
+        announce(t('property.dateUpdated'))
       } catch (err) {
         logger.error('BlockPropertyDrawer', 'Failed to save builtin date', {
           blockId: blockId ?? '',

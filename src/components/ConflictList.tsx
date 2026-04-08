@@ -71,7 +71,7 @@ export function ConflictList(): React.ReactElement {
     loadMore,
     reload,
     setItems: setBlocks,
-  } = usePaginatedQuery(queryFn, { onError: 'Failed to load conflicts' })
+  } = usePaginatedQuery(queryFn, { onError: t('conflict.loadFailed') })
 
   const [confirmDiscardId, setConfirmDiscardId] = useState<string | null>(null)
   const [confirmKeepBlock, setConfirmKeepBlock] = useState<BlockRow | null>(null)
@@ -487,7 +487,7 @@ export function ConflictList(): React.ReactElement {
         onOpenChange={(open) => {
           if (!open) setConfirmKeepBlock(null)
         }}
-        title="Keep incoming version?"
+        title={t('conflict.keepIncomingTitle')}
         description={
           <>
             This will replace the current content with the incoming version.
@@ -528,7 +528,7 @@ export function ConflictList(): React.ReactElement {
         onOpenChange={(open) => {
           if (!open) setConfirmDiscardId(null)
         }}
-        title="Discard conflict?"
+        title={t('conflict.discardTitle')}
         description={
           <>
             This will permanently remove the conflicting version.
@@ -563,7 +563,11 @@ export function ConflictList(): React.ReactElement {
         onOpenChange={(open) => {
           if (!open) setBatchAction(null)
         }}
-        title={batchAction === 'keep' ? 'Keep all selected?' : 'Discard all selected?'}
+        title={
+          batchAction === 'keep'
+            ? t('conflict.keepAllSelectedTitle')
+            : t('conflict.discardAllSelectedTitle')
+        }
         description={
           batchAction === 'keep'
             ? `This will replace ${selectedIds.size} block(s) with their incoming versions.`

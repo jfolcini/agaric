@@ -8,6 +8,7 @@
 
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import type React from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import type { ViewportObserver } from '../hooks/useViewportObserver'
@@ -106,9 +107,42 @@ export function BlockListRenderer({
 }: BlockListRendererProps): React.ReactElement {
   const { t } = useTranslation()
 
+  // ── Expand animation (UX-79) ──────────────────────────────────────
+  // Track previous collapsedIds to detect which parents were just expanded.
+  // Children of those parents get a CSS enter animation.
+  const prevCollapsedRef = useRef(collapsedIds)
+  const animatingBlockIds = useMemo(() => {
+    const prev = prevCollapsedRef.current
+    if (prev === collapsedIds) return new Set<string>()
+
+    // IDs that were collapsed before but are no longer collapsed → just expanded
+    const justExpanded = new Set<string>()
+    for (const id of prev) {
+      if (!collapsedIds.has(id)) justExpanded.add(id)
+    }
+    if (justExpanded.size === 0) return new Set<string>()
+
+    // Collect descendants of each just-expanded parent in the flat list
+    const animated = new Set<string>()
+    for (let i = 0; i < visibleItems.length; i++) {
+      const block = visibleItems[i]
+      if (!block || !justExpanded.has(block.id)) continue
+      const parentDepth = block.depth
+      for (let j = i + 1; j < visibleItems.length; j++) {
+        const child = visibleItems[j]
+        if (!child || child.depth <= parentDepth) break
+        animated.add(child.id)
+      }
+    }
+    return animated
+  }, [collapsedIds, visibleItems])
+
+  useEffect(() => {
+    prevCollapsedRef.current = collapsedIds
+  }, [collapsedIds])
+
   return (
     <SortableContext items={visibleItems.map((b) => b.id)} strategy={verticalListSortingStrategy}>
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: whitespace click to dismiss editor */}
       <div
         className="block-tree space-y-0.5 [@media(pointer:coarse)]:space-y-1.5"
         onPointerDown={onContainerPointerDown}
@@ -132,7 +166,12 @@ export function BlockListRenderer({
             )
           }
           return (
-            <div key={block.id} ref={viewport.observeRef} data-block-id={block.id}>
+            <div
+              key={block.id}
+              ref={viewport.observeRef}
+              data-block-id={block.id}
+              className={animatingBlockIds.has(block.id) ? 'block-children-enter' : undefined}
+            >
               {/* Drop indicator: shows where the dragged block will land */}
               {projected && overId === block.id && activeId !== block.id && (
                 <div

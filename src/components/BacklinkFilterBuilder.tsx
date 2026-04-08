@@ -576,10 +576,10 @@ export function BacklinkFilterBuilder({
       className="backlink-filter-builder space-y-2 border-0 p-0 m-0"
       aria-label={t('backlink.filtersLabel')}
     >
-      <legend className="sr-only">Backlink filters</legend>
+      <legend className="sr-only">{t('backlink.filtersLegend')}</legend>
 
       <div className="sr-only" aria-live="polite" aria-atomic="true">
-        {filters.length} filter{filters.length === 1 ? '' : 's'} applied
+        {t('backlink.filtersApplied', { count: filters.length })}
       </div>
 
       {/* Filter pills + Add button row */}

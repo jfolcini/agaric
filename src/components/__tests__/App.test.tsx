@@ -21,6 +21,7 @@ import { logger } from '../../lib/logger'
 import { useBootStore } from '../../stores/boot'
 import { useJournalStore } from '../../stores/journal'
 import { useNavigationStore } from '../../stores/navigation'
+import { useSyncStore } from '../../stores/sync'
 
 vi.mock('../../lib/announcer', () => ({
   announce: vi.fn(),
@@ -77,6 +78,13 @@ beforeEach(() => {
     pageStack: [],
     selectedBlockId: null,
   })
+
+  // Reset the sync store so lastSyncedAt is null.
+  useSyncStore.getState().reset()
+
+  // Reset theme state.
+  localStorage.removeItem('theme-preference')
+  document.documentElement.classList.remove('dark')
 
   // Default mock: all invoke calls return an empty page response.
   // This covers: boot store's list_blocks, JournalPage, PageBrowser, TagList, TrashView.
@@ -582,10 +590,10 @@ describe('App', () => {
     })
   })
 
-  // ── Conflict dot indicator ────────────────────────────────────────────
+  // ── Conflict badge indicator ────────────────────────────────────────────
 
-  describe('conflict dot indicator', () => {
-    it('shows conflict dot when getConflicts returns items', async () => {
+  describe('conflict badge indicator', () => {
+    it('shows conflict badge with count when getConflicts returns items', async () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'get_conflicts') {
           return {
@@ -596,6 +604,13 @@ describe('App', () => {
                 content: 'x',
                 parent_id: null,
                 position: 0,
+              },
+              {
+                id: 'CONFLICT_2',
+                block_type: 'paragraph',
+                content: 'y',
+                parent_id: null,
+                position: 1,
               },
             ],
             next_cursor: null,
@@ -611,11 +626,11 @@ describe('App', () => {
       })
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Has unresolved conflicts')).toBeInTheDocument()
+        expect(screen.getByLabelText('2 unresolved conflicts')).toBeInTheDocument()
       })
     })
 
-    it('hides conflict dot when getConflicts returns empty', async () => {
+    it('hides conflict badge when getConflicts returns empty', async () => {
       // Default mock already returns emptyPage for all commands
       render(<App />)
       await waitFor(() => {
@@ -624,7 +639,7 @@ describe('App', () => {
 
       // Give the hook time to resolve
       await waitFor(() => {
-        expect(screen.queryByLabelText('Has unresolved conflicts')).not.toBeInTheDocument()
+        expect(screen.queryByLabelText(/unresolved conflicts/)).not.toBeInTheDocument()
       })
     })
 
@@ -645,9 +660,9 @@ describe('App', () => {
         expect(screen.getByText('Agaric')).toBeInTheDocument()
       })
 
-      // Initially no conflict dot
+      // Initially no conflict badge
       await waitFor(() => {
-        expect(screen.queryByLabelText('Has unresolved conflicts')).not.toBeInTheDocument()
+        expect(screen.queryByLabelText(/unresolved conflicts/)).not.toBeInTheDocument()
       })
 
       // Now conflicts appear on the backend
@@ -670,10 +685,107 @@ describe('App', () => {
       // Dispatch focus event to trigger re-poll
       fireEvent(window, new Event('focus'))
 
-      // The conflict dot should appear after the focus-triggered poll
+      // The conflict badge should appear after the focus-triggered poll
       await waitFor(() => {
-        expect(screen.getByLabelText('Has unresolved conflicts')).toBeInTheDocument()
+        expect(screen.getByLabelText('1 unresolved conflicts')).toBeInTheDocument()
       })
+    })
+  })
+
+  // ── Trash badge ─────────────────────────────────────────────────────────
+
+  describe('trash badge', () => {
+    it('shows trash badge with count when listBlocks (showDeleted) returns items', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'list_blocks' && (args as Record<string, unknown>)?.showDeleted) {
+          return {
+            items: [
+              {
+                id: 'DELETED_1',
+                block_type: 'page',
+                content: 'deleted page',
+                parent_id: null,
+                position: 0,
+              },
+            ],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        return emptyPage
+      })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('1 items in trash')).toBeInTheDocument()
+      })
+    })
+
+    it('hides trash badge when no deleted items', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      await waitFor(() => {
+        expect(screen.queryByLabelText(/items in trash/)).not.toBeInTheDocument()
+      })
+    })
+  })
+
+  // ── Theme toggle ────────────────────────────────────────────────────────
+
+  describe('theme toggle', () => {
+    it('renders theme toggle button in sidebar footer', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      const sidebar = getSidebar()
+      expect(sidebar.getByText('Toggle theme')).toBeInTheDocument()
+    })
+
+    it('toggles theme on click', async () => {
+      const user = userEvent.setup()
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      const sidebar = getSidebar()
+      const themeBtn = sidebar.getByTestId('theme-toggle')
+      await user.click(themeBtn)
+
+      // After first click: auto → dark
+      expect(document.documentElement.classList.contains('dark')).toBe(true)
+    })
+  })
+
+  // ── Sync status display ─────────────────────────────────────────────────
+
+  describe('sync status display', () => {
+    it('shows "Never synced" when lastSyncedAt is null', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      expect(screen.getByTestId('last-synced')).toHaveTextContent('Never synced')
+    })
+
+    it('shows last synced time when lastSyncedAt is set', async () => {
+      useSyncStore.setState({ lastSyncedAt: new Date().toISOString() })
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      expect(screen.getByTestId('last-synced')).toHaveTextContent(/Last synced/)
     })
   })
 

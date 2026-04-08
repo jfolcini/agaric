@@ -61,12 +61,14 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const prevLengthRef = useRef(0)
   useEffect(() => {
     if (pages.length > prevLengthRef.current && prevLengthRef.current > 0) {
-      setLoadMoreAnnouncement(`Loaded ${pages.length - prevLengthRef.current} more pages`)
+      setLoadMoreAnnouncement(
+        t('pageBrowser.loadedMorePages', { count: pages.length - prevLengthRef.current }),
+      )
     } else if (pages.length < prevLengthRef.current) {
       setLoadMoreAnnouncement('')
     }
     prevLengthRef.current = pages.length
-  }, [pages.length])
+  }, [pages.length, t])
 
   const handleCreatePage = useCallback(async () => {
     const name = newPageName.trim() || t('pageBrowser.untitled')

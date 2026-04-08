@@ -36,7 +36,7 @@ export function TrashView(): React.ReactElement {
     hasMore,
     loadMore,
     setItems: setBlocks,
-  } = usePaginatedQuery(queryFn, { onError: 'Failed to load trash' })
+  } = usePaginatedQuery(queryFn, { onError: t('trash.loadFailed') })
 
   const [confirmPurgeId, setConfirmPurgeId] = useState<string | null>(null)
 

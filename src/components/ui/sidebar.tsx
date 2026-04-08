@@ -2,6 +2,7 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { PanelLeftIcon } from 'lucide-react'
 import { Slot } from 'radix-ui'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
@@ -15,7 +16,6 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsMobile } from '@/hooks/use-mobile'
-import i18n from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 
 const SIDEBAR_COOKIE_NAME = 'sidebar_state'
@@ -283,6 +283,7 @@ const Sidebar = React.forwardRef<
     ref,
   ) => {
     const { isMobile, state, openMobile, setOpenMobile, isResizing } = useSidebar()
+    const { t } = useTranslation()
 
     if (collapsible === 'none') {
       return (
@@ -316,7 +317,7 @@ const Sidebar = React.forwardRef<
             side={side}
           >
             <SheetHeader className="sr-only">
-              <SheetTitle>Sidebar</SheetTitle>
+              <SheetTitle>{t('sidebar.label')}</SheetTitle>
               <SheetDescription>Displays the mobile sidebar.</SheetDescription>
             </SheetHeader>
             <div ref={ref} className="flex h-full w-full flex-col">
@@ -385,6 +386,7 @@ const SidebarTrigger = React.forwardRef<
   React.ComponentProps<typeof Button>
 >(({ className, onClick, ...props }, ref) => {
   const { toggleSidebar } = useSidebar()
+  const { t } = useTranslation()
 
   return (
     <Button
@@ -401,7 +403,7 @@ const SidebarTrigger = React.forwardRef<
       {...props}
     >
       <PanelLeftIcon />
-      <span className="sr-only">Toggle Sidebar</span>
+      <span className="sr-only">{t('sidebar.toggleSidebar')}</span>
     </Button>
   )
 })
@@ -409,6 +411,7 @@ SidebarTrigger.displayName = 'SidebarTrigger'
 
 const SidebarRail = React.forwardRef<HTMLButtonElement, React.ComponentProps<'button'>>(
   ({ className, ...props }, ref) => {
+    const { t } = useTranslation()
     const { toggleSidebar, setSidebarWidth, sidebarWidth, setIsResizing, setOpen, open } =
       useSidebar()
     const dragState = React.useRef({
@@ -491,11 +494,11 @@ const SidebarRail = React.forwardRef<HTMLButtonElement, React.ComponentProps<'bu
         ref={ref}
         data-sidebar="rail"
         data-slot="sidebar-rail"
-        aria-label={i18n.t('sidebar.toggleSidebar')}
+        aria-label={t('sidebar.toggleSidebar')}
         tabIndex={-1}
         onPointerDown={onPointerDown}
         onDoubleClick={onDoubleClick}
-        title={i18n.t('sidebar.toggleSidebar')}
+        title={t('sidebar.toggleSidebar')}
         className={cn(
           'absolute inset-y-0 z-20 hidden w-4 [@media(pointer:coarse)]:w-8 -translate-x-1/2 transition-all ease-linear group-data-[side=left]:-right-4 group-data-[side=right]:left-0 after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex',
           'in-data-[side=left]:cursor-col-resize in-data-[side=right]:cursor-col-resize',

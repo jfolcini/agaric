@@ -1103,6 +1103,66 @@ const resources = {
       'templates.removeConfirmTitle': 'Remove template status',
       'templates.removeConfirmDesc':
         'Remove template status from "{{name}}"? Pages already created from this template will not be affected.',
+
+      // UX-41: Property actions
+      'property.saved': 'Property saved',
+      'property.deleted': 'Property deleted',
+      'property.dateCleared': 'Date cleared',
+      'property.dateUpdated': 'Date updated',
+
+      // UX-41: Conflict dialogs
+      'conflict.loadFailed': 'Failed to load conflicts',
+      'conflict.keepIncomingTitle': 'Keep incoming version?',
+      'conflict.discardTitle': 'Discard conflict?',
+      'conflict.keepAllSelectedTitle': 'Keep all selected?',
+      'conflict.discardAllSelectedTitle': 'Discard all selected?',
+
+      // UX-41: Trash
+      'trash.loadFailed': 'Failed to load trash',
+
+      // UX-41: History
+      'history.loadedMoreEntries': 'Loaded {{count}} more entries',
+
+      // UX-41: Pairing
+      'pairing.inProgress': 'Pairing in progress...',
+
+      // UX-41: PDF viewer
+      'pdfViewer.description': 'PDF viewer for {{filename}}',
+      'pdfViewer.loading': 'Loading PDF...',
+      'pdfViewer.error': 'Error: {{error}}',
+      'pdfViewer.pageIndicator': 'Page {{current}} / {{total}}',
+
+      // UX-41: Suggestions
+      'suggestion.noResults': 'No results',
+      'suggestion.create': 'Create',
+
+      // UX-41: Page browser
+      'pageBrowser.loadedMorePages': 'Loaded {{count}} more pages',
+
+      // UX-42: Accessibility text
+      'sidebar.label': 'Sidebar',
+      'ui.close': 'Close',
+      'link.opensInNewTab': '(opens in new tab)',
+      'backlink.filtersLegend': 'Backlink filters',
+      'backlink.filtersApplied_one': '{{count}} filter applied',
+      'backlink.filtersApplied_other': '{{count}} filters applied',
+
+      // UX-43: Theme
+      'sidebar.toggleTheme': 'Toggle theme',
+      'sidebar.themeDark': 'Dark mode',
+      'sidebar.themeLight': 'Light mode',
+
+      // UX-60: Sidebar badge counts
+      'sidebar.conflictCount': '{{count}} unresolved conflicts',
+      'sidebar.trashCount': '{{count}} items in trash',
+
+      // UX-76: Sync status
+      'sidebar.lastSynced': 'Last synced {{time}}',
+      'sidebar.lastSyncedNever': 'Never synced',
+      'sidebar.justNow': 'just now',
+      'sidebar.minutesAgo': '{{count}}m ago',
+      'sidebar.hoursAgo': '{{count}}h ago',
+      'sidebar.daysAgo': '{{count}}d ago',
     },
   },
 }

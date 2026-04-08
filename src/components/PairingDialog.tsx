@@ -373,7 +373,7 @@ export function PairingDialog({
               {/* Status message for screen readers */}
               <div aria-live="polite" className="sr-only">
                 {loading && t('pairing.startingMessage')}
-                {pairLoading && 'Pairing in progress...'}
+                {pairLoading && t('pairing.inProgress')}
                 {error}
               </div>
             </div>

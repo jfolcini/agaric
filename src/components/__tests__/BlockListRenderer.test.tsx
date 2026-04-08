@@ -5,6 +5,8 @@
  *  - Smoke render with blocks
  *  - Renders empty state when blocks array is empty
  *  - Renders SortableBlock for each visible item
+ *  - Expand animation class applied to children of just-expanded block (UX-79)
+ *  - No animation on initial render or collapse
  *  - Axe a11y audit passes
  */
 
@@ -139,5 +141,132 @@ describe('BlockListRenderer', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // ── Expand animation tests (UX-79) ─────────────────────────────────
+
+  it('applies block-children-enter class to children of a just-expanded block', () => {
+    const parent = makeBlock({ id: 'PARENT', content: 'Parent', depth: 0 })
+    const child1 = makeBlock({ id: 'CHILD1', content: 'Child 1', depth: 1 })
+    const child2 = makeBlock({ id: 'CHILD2', content: 'Child 2', depth: 1 })
+    const allBlocks = [parent, child1, child2]
+
+    // Initially collapsed — only parent visible
+    const { rerender } = render(
+      <BlockListRenderer
+        {...makeProps({
+          visibleItems: [parent],
+          blocks: allBlocks,
+          collapsedIds: new Set(['PARENT']),
+          hasChildrenSet: new Set(['PARENT']),
+        })}
+      />,
+    )
+
+    // Expand — children become visible
+    rerender(
+      <BlockListRenderer
+        {...makeProps({
+          visibleItems: allBlocks,
+          blocks: allBlocks,
+          collapsedIds: new Set<string>(),
+          hasChildrenSet: new Set(['PARENT']),
+        })}
+      />,
+    )
+
+    // Children should have the animation class
+    const child1Wrapper = screen.getByTestId('sortable-block-CHILD1').parentElement as HTMLElement
+    const child2Wrapper = screen.getByTestId('sortable-block-CHILD2').parentElement as HTMLElement
+    expect(child1Wrapper).toHaveClass('block-children-enter')
+    expect(child2Wrapper).toHaveClass('block-children-enter')
+
+    // Parent should NOT have the animation class
+    const parentWrapper = screen.getByTestId('sortable-block-PARENT').parentElement as HTMLElement
+    expect(parentWrapper).not.toHaveClass('block-children-enter')
+  })
+
+  it('does not apply animation class on initial render', () => {
+    const blocks = [
+      makeBlock({ id: 'BLK001', content: 'First', depth: 0 }),
+      makeBlock({ id: 'BLK002', content: 'Second', depth: 1 }),
+    ]
+    render(<BlockListRenderer {...makeProps({ visibleItems: blocks, blocks })} />)
+
+    const wrapper = screen.getByTestId('sortable-block-BLK002').parentElement as HTMLElement
+    expect(wrapper).not.toHaveClass('block-children-enter')
+  })
+
+  it('does not apply animation class when collapsing (only on expand)', () => {
+    const parent = makeBlock({ id: 'PARENT', content: 'Parent', depth: 0 })
+    const child = makeBlock({ id: 'CHILD', content: 'Child', depth: 1 })
+    const allBlocks = [parent, child]
+
+    // Start expanded
+    const { rerender } = render(
+      <BlockListRenderer
+        {...makeProps({
+          visibleItems: allBlocks,
+          blocks: allBlocks,
+          collapsedIds: new Set<string>(),
+          hasChildrenSet: new Set(['PARENT']),
+        })}
+      />,
+    )
+
+    // Collapse — children removed
+    rerender(
+      <BlockListRenderer
+        {...makeProps({
+          visibleItems: [parent],
+          blocks: allBlocks,
+          collapsedIds: new Set(['PARENT']),
+          hasChildrenSet: new Set(['PARENT']),
+        })}
+      />,
+    )
+
+    // Parent should NOT have the animation class
+    const parentWrapper = screen.getByTestId('sortable-block-PARENT').parentElement as HTMLElement
+    expect(parentWrapper).not.toHaveClass('block-children-enter')
+  })
+
+  it('animates deeply nested descendants when expanding', () => {
+    const parent = makeBlock({ id: 'PARENT', content: 'Parent', depth: 0 })
+    const child = makeBlock({ id: 'CHILD', content: 'Child', depth: 1 })
+    const grandchild = makeBlock({ id: 'GRANDCHILD', content: 'Grandchild', depth: 2 })
+    const allBlocks = [parent, child, grandchild]
+
+    // Initially collapsed
+    const { rerender } = render(
+      <BlockListRenderer
+        {...makeProps({
+          visibleItems: [parent],
+          blocks: allBlocks,
+          collapsedIds: new Set(['PARENT']),
+          hasChildrenSet: new Set(['PARENT']),
+        })}
+      />,
+    )
+
+    // Expand
+    rerender(
+      <BlockListRenderer
+        {...makeProps({
+          visibleItems: allBlocks,
+          blocks: allBlocks,
+          collapsedIds: new Set<string>(),
+          hasChildrenSet: new Set(['PARENT']),
+        })}
+      />,
+    )
+
+    // Both child and grandchild should animate
+    expect(screen.getByTestId('sortable-block-CHILD').parentElement as HTMLElement).toHaveClass(
+      'block-children-enter',
+    )
+    expect(
+      screen.getByTestId('sortable-block-GRANDCHILD').parentElement as HTMLElement,
+    ).toHaveClass('block-children-enter')
   })
 })

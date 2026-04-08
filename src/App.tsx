@@ -8,10 +8,12 @@ import {
   History,
   Keyboard,
   LayoutTemplate,
+  Moon,
   Plus,
   RefreshCw,
   Search,
   Settings2,
+  Sun,
   Tag,
   Trash2,
   WifiOff,
@@ -43,6 +45,7 @@ import {
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
@@ -51,15 +54,17 @@ import {
   useSidebar,
 } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
+import { useItemCount } from './hooks/useItemCount'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
-import { usePollingQuery } from './hooks/usePollingQuery'
 import { useScrollRestore } from './hooks/useScrollRestore'
 import { useSyncEvents } from './hooks/useSyncEvents'
 import { useSyncTrigger } from './hooks/useSyncTrigger'
+import { useTheme } from './hooks/useTheme'
 import { useUndoShortcuts } from './hooks/useUndoShortcuts'
 import { announce } from './lib/announcer'
+import { formatRelativeTime } from './lib/format-relative-time'
 import { logger } from './lib/logger'
-import { createBlock, flushDraft, getConflicts, listDrafts } from './lib/tauri'
+import { createBlock, flushDraft, getConflicts, listBlocks, listDrafts } from './lib/tauri'
 import { useJournalStore } from './stores/journal'
 import { useNavigationStore, type View } from './stores/navigation'
 import { useResolveStore } from './stores/resolve'
@@ -124,25 +129,32 @@ function syncDotClass(syncState: string, hasPeers: boolean): string {
   }
 }
 
-/** Returns true when at least one unresolved conflict exists. Polls every 30 s and on focus. */
-function useHasConflicts(): boolean {
+/** Returns the number of unresolved conflicts. Polls every 30 s and on focus. */
+function useConflictCount(): number {
   const currentView = useNavigationStore((s) => s.currentView)
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-poll when view changes (user may have resolved conflicts)
-  const queryFn = useCallback(() => getConflicts({ limit: 1 }), [currentView])
-  const { data } = usePollingQuery(queryFn, {
-    intervalMs: 30_000,
-    refetchOnFocus: true,
-  })
-  return (data?.items.length ?? 0) > 0
+  const queryFn = useCallback(() => getConflicts({ limit: 100 }), [currentView])
+  return useItemCount(queryFn, 30_000)
+}
+
+/** Returns the number of trashed items. Polls every 30 s and on focus. */
+function useTrashCount(): number {
+  const currentView = useNavigationStore((s) => s.currentView)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-poll when view changes (user may have restored items)
+  const queryFn = useCallback(() => listBlocks({ showDeleted: true, limit: 100 }), [currentView])
+  return useItemCount(queryFn, 30_000)
 }
 
 function App() {
   const { t } = useTranslation()
   const { currentView, pageStack, setView, navigateToPage, goBack } = useNavigationStore()
   const headerLabel = useHeaderLabel()
-  const hasConflicts = useHasConflicts()
+  const conflictCount = useConflictCount()
+  const trashCount = useTrashCount()
+  const { isDark, toggleTheme } = useTheme()
   const syncState = useSyncStore((s) => s.state)
   const syncPeers = useSyncStore((s) => s.peers)
+  const lastSyncedAt = useSyncStore((s) => s.lastSyncedAt)
   const { syncing, syncAll } = useSyncTrigger()
   const isOnline = useOnlineStatus()
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
@@ -343,12 +355,19 @@ function App() {
                           >
                             <item.icon />
                             <span>{label}</span>
-                            {item.id === 'conflicts' && hasConflicts && (
-                              <span
-                                role="status"
-                                className="ml-auto h-2 w-2 rounded-full bg-destructive"
-                                aria-label={t('conflict.unresolvedLabel')}
-                              />
+                            {item.id === 'conflicts' && conflictCount > 0 && (
+                              <SidebarMenuBadge
+                                aria-label={t('sidebar.conflictCount', { count: conflictCount })}
+                              >
+                                {conflictCount}
+                              </SidebarMenuBadge>
+                            )}
+                            {item.id === 'trash' && trashCount > 0 && (
+                              <SidebarMenuBadge
+                                aria-label={t('sidebar.trashCount', { count: trashCount })}
+                              >
+                                {trashCount}
+                              </SidebarMenuBadge>
                             )}
                             {item.id === 'status' && (
                               <span
@@ -391,6 +410,24 @@ function App() {
                     <RefreshCw className={syncing ? 'animate-spin' : ''} />
                   )}
                   <span>{isOnline ? t('sidebar.sync') : t('sidebar.offline')}</span>
+                </SidebarMenuButton>
+                <span
+                  className="px-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden"
+                  data-testid="last-synced"
+                >
+                  {lastSyncedAt
+                    ? t('sidebar.lastSynced', { time: formatRelativeTime(lastSyncedAt, t) })
+                    : t('sidebar.lastSyncedNever')}
+                </span>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  tooltip={t('sidebar.toggleTheme')}
+                  onClick={toggleTheme}
+                  data-testid="theme-toggle"
+                >
+                  {isDark ? <Sun /> : <Moon />}
+                  <span>{t('sidebar.toggleTheme')}</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>

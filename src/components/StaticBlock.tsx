@@ -18,6 +18,7 @@ import { useTranslation } from 'react-i18next'
 import { parse } from '../editor/markdown-serializer'
 import type { BlockLevelNode, DocNode, InlineNode } from '../editor/types'
 import { useBlockAttachments } from '../hooks/useBlockAttachments'
+import i18n from '../lib/i18n'
 import { openUrl } from '../lib/open-url'
 import { cn } from '../lib/utils'
 import { QueryResult } from './QueryResult'
@@ -148,7 +149,7 @@ export function renderRichContent(
                   : {})}
               >
                 {node.text}
-                <span className="sr-only"> (opens in new tab)</span>
+                <span className="sr-only"> {i18n.t('link.opensInNewTab')}</span>
                 <span className="inline-block ml-0.5 text-[0.7em] opacity-60" aria-hidden="true">
                   ↗
                 </span>

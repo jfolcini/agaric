@@ -74,18 +74,20 @@ export function HistoryView(): React.ReactElement {
     loadMore,
     reload,
     setItems: setEntries,
-  } = usePaginatedQuery(queryFn, { onError: 'Failed to load history' })
+  } = usePaginatedQuery(queryFn, { onError: t('history.loadFailed') })
 
   // Track load-more announcements for screen readers
   const prevLengthRef = useRef(0)
   useEffect(() => {
     if (entries.length > prevLengthRef.current && prevLengthRef.current > 0) {
-      setLoadMoreAnnouncement(`Loaded ${entries.length - prevLengthRef.current} more entries`)
+      setLoadMoreAnnouncement(
+        t('history.loadedMoreEntries', { count: entries.length - prevLengthRef.current }),
+      )
     } else if (entries.length < prevLengthRef.current) {
       setLoadMoreAnnouncement('')
     }
     prevLengthRef.current = entries.length
-  }, [entries.length])
+  }, [entries.length, t])
 
   // ── List keyboard navigation (ArrowUp/Down, j/k) ────────────────
   const {
