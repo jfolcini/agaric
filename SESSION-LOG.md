@@ -1,5 +1,27 @@
 # Session Log
 
+## Session 265 — 2026-04-08 — 6 accessibility UX fixes (85→79 open)
+
+### Summary
+Resolved 6 REVIEW-LATER accessibility items: UX-38 (arrow-key navigation for QueryResultList and ConflictList via useListKeyboardNavigation), UX-45 (wire useListKeyboardNavigation into SearchPanel), UX-47 (skip-to-main accessibility link in App.tsx), UX-49 (screen reader announcements for block creation and conflict resolution). UX-39 and UX-40 were already resolved (aria-live exists in SearchPanel; TemplatePicker auto-focus+arrow nav exists). 5 build subagents + 5 review subagents. All listbox/option patterns use div elements (not ul/li) to satisfy biome a11y rules. QueryResultList.tsx refactored from button-based items to div[role="option"] with focusedIndex/aria-selected/aria-activedescendant/Home/End. ConflictList.tsx enhanced with imperative useEffect for ARIA attributes on ConflictListItem children. SearchPanel wired to useListKeyboardNavigation with bg-accent highlight. App.tsx skip-to-main link: sr-only anchor visible on focus, targets #main-content with tabIndex={-1}. announce() calls added for block creation (useBlockKeyboardHandlers) and conflict resolution keep/discard/batch (ConflictList). 3 new i18n keys added. 12 files changed, 773 insertions, 40 deletions. All 5087 frontend tests pass.
+
+**Commit:** ca97f3e
+
+| Area | Change |
+|------|--------|
+| QueryResultList.tsx | UX-38: Refactored from button items to div[role="option"] with useListKeyboardNavigation, focusedIndex, aria-selected, aria-activedescendant, Home/End/Enter, onKeyDown handlers |
+| QueryResultList.test.tsx | UX-38: Added 5 keyboard navigation tests (arrow keys, Home/End, Enter-to-navigate, focusedIndex highlight, aria-activedescendant) |
+| ConflictList.tsx | UX-38+UX-49: Added useListKeyboardNavigation with imperative useEffect for ARIA attributes on children; announce() for keep/discard/batch resolution |
+| ConflictList.test.tsx | UX-38+UX-49: Added 15+ tests for keyboard nav (arrow/Home/End/aria-selected/aria-activedescendant) and announce() calls |
+| SearchPanel.tsx | UX-45: Wired useListKeyboardNavigation for ArrowUp/Down/Home/End/Enter; div[role="listbox"]/div[role="option"] pattern |
+| SearchPanel.test.tsx | UX-45: Added 5 keyboard navigation tests (arrow keys, Enter selection, Home/End, bg-accent highlight) |
+| App.tsx | UX-47: Skip-to-main sr-only anchor before sidebar; id="main-content" + tabIndex={-1} on main content wrapper |
+| App.test.tsx | UX-47: Added 3 tests (renders skip link, href targets #main-content, main content has id) |
+| useBlockKeyboardHandlers.ts | UX-49: Added announce('Block created') after successful block creation in handleEnterSave |
+| useBlockKeyboardHandlers.test.ts | UX-49: Added test verifying announce() called after block creation |
+| QueryResult.test.tsx | Downstream fix: Updated role queries (list→listbox, button→[role="option"]) |
+| i18n.ts | Added 3 i18n keys: blockCreated, conflictResolvedKeep, conflictResolvedDiscard |
+
 ## Session 264 — 2026-04-08 — 6 UX consistency fixes (91→85 open)
 
 ### Summary
