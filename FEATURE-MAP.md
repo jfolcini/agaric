@@ -49,7 +49,7 @@ The default view — one page per day, created automatically.
 ### Properties
 
 - Browse, create, and manage property definitions
-- 5 value types: text, number, date, select, ref (block reference)
+- 5 value types: text, number, date, select, ref (block reference with page picker)
 - Search/filter property keys
 - Edit select-type options inline
 
@@ -79,7 +79,7 @@ The default view — one page per day, created automatically.
 ### History
 
 - Global operation log browser
-- Filter by operation type (edit, create, delete, move, tag, property, attachment, restore, purge)
+- Filter by 12 operation types (edit, create, delete, move, add/remove tag, set/delete property, add/delete attachment, restore, purge)
 - Word-level diff display for edit operations
 - Multi-select for batch revert (Ctrl+Click, Shift+Click, Ctrl+A)
 - Vim-style navigation (j/k, Space to toggle, Enter to revert)
@@ -104,6 +104,7 @@ Opens when navigating to any page:
 - Unlinked references (mentions not yet linked, with "Link it" button)
 - Zoom-in: focus on a block and its descendants with breadcrumb trail
 - Back navigation via page stack
+- **View transitions**: opacity fade (150ms) on view switch with per-view scroll position restoration
 
 ---
 
@@ -127,25 +128,30 @@ Markdown-based WYSIWYG editing:
 - **Backspace on empty**: delete block, focus previous
 - **Backspace at start**: merge with previous block
 - **Escape**: cancel editing, discard changes
-- **Tab / Shift+Tab**: indent / dedent (reparent in tree)
+- **Ctrl+Shift+Right / Ctrl+Shift+Left**: indent / dedent (reparent in tree)
 - **Ctrl+Shift+Up/Down**: move block up/down among siblings
 - **Ctrl+.**: collapse/expand children
 - Drag-and-drop reordering with depth projection for indent/reparent
 - Auto-split: multiple paragraphs split into separate blocks on blur
 - Multi-selection (Ctrl+Click, Shift+Click, Ctrl+A) with batch delete and batch todo state
+- **Draft autosave**: content auto-saved every 2s while editing; orphaned drafts recovered on boot
+- **Swipe-to-delete** (mobile): swipe left 80px to reveal delete button, 200px to auto-delete
+- **Sticky headers** in 6 views: SearchPanel, PageBrowser, PageHeader, HistoryView, ConflictList, AgendaView
 
 ### Inline References
 
 - Type `@` to open tag picker with fuzzy search (create-new option auto-selected on Enter when no exact match)
-- Type `[[` to open page/block link picker with fuzzy search (create-new option)
-- Type `[[text]]` (with closing brackets) to auto-resolve: exact-match page links directly, no match creates a new page
+- Type `#[tagname]` to auto-resolve an existing tag or create a new one (input rule, no popup)
+- Type `[[` to open page/block link picker with fuzzy search (create-new option, multi-word support)
+- Type `[[text]]` (with closing brackets) to auto-resolve: exact-match page links directly, alias matches link to the aliased page, no match creates a new page
 - Type `((` to open block reference picker with FTS search (reference existing blocks)
 - Tags and links render as clickable chips with resolved names
 - **Backspace after a chip** re-expands it into trigger text (`[[title` or `@name`) so the suggestion picker reopens for editing
-- All suggestion pickers and context menus use `@floating-ui/dom` for viewport-aware positioning
+- All suggestion pickers and context menus use `@floating-ui/dom` for viewport-aware positioning; popup has `role="region"` and `aria-label` for screen readers
 - Block references render as violet chips showing first line of content, with hover tooltip for full preview
 - Click a block reference to navigate to the referenced block's page
 - Renaming a tag or page propagates everywhere automatically
+- **Broken link chips** (deleted targets) show "Broken link — click to remove" tooltip; clicking removes the chip (recoverable via undo)
 - `((ULID))` tokens are tracked in the `block_links` table alongside `[[ULID]]` links
 
 ### Task Management
@@ -202,13 +208,14 @@ Type `/` in the editor to access the command palette:
 | | Escape | Cancel, discard changes |
 | | Backspace (empty) | Delete block |
 | | Backspace (at start) | Merge with previous |
-| **Organization** | Tab / Shift+Tab | Indent / dedent |
+| **Organization** | Ctrl+Shift+Right/Left | Indent / dedent |
 | | Ctrl+Shift+Up/Down | Move block up/down |
 | **Task** | Ctrl+Enter | Cycle TODO/DOING/DONE/none |
 | | Ctrl+Shift+1/2/3 | Priority 1/2/3 |
 | | Ctrl+Shift+P | Show block properties drawer |
 | **Collapse** | Ctrl+. | Toggle collapse/expand |
 | **Pickers** | @ | Tag picker |
+| | #[name] | Tag input rule (auto-resolve) |
 | | [[ | Block link picker |
 | | / | Slash command menu |
 | **Journal** | Alt+Left/Right | Previous/next period |
@@ -396,6 +403,21 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **QueryResultList** (`src/components/QueryResultList.tsx`): List-mode renderer for inline query results with status badges, page links, content truncation. Extracted from QueryResult (R-14). Used by QueryResult.
 - **QueryResultTable** (`src/components/QueryResultTable.tsx`): Table-mode renderer for inline query results with dynamic columns. Extracted from QueryResult (R-14). Used by QueryResult.
 - **Select** (`src/components/ui/select.tsx`): Radix UI Select wrapper with 10 exported parts and `size` prop on SelectTrigger (`'default'` | `'sm'`). Replaces all native `<select>` elements across 5 component files. Uses `__none__`/`__all__` sentinels for empty values (Radix doesn't support `value=""`).
+- **StatusBadge** (`src/components/ui/status-badge.tsx`): CVA-based status badge with 5 state variants (DONE, DOING, TODO, overdue, default). Used by AlertSection, QueryResultList.
+- **PriorityBadge** (`src/components/ui/priority-badge.tsx`): Renders "P{n}" badge with dynamic color based on priority level via `priorityColor()`. Used by AlertSection, DuePanel.
+- **AlertListItem** (`src/components/ui/alert-list-item.tsx`): CVA-based `<li>` for alerts with `destructive` and `pending` variants. Used by AlertSection.
+- **SectionTitle** (`src/components/ui/section-title.tsx`): Section heading `<h4>` with label, count badge, and customizable color class. Used by AlertSection.
+- **PopoverMenuItem** (`src/components/ui/popover-menu-item.tsx`): Full-width button for popover menus with active/disabled styling. Used by AgendaFilterBuilder, AgendaSortGroupControls.
+- **AlertSection** (`src/components/AlertSection.tsx`): Parameterized list component for overdue/upcoming alert blocks with status badges and optional priority badges. Eliminates duplication between OverdueSection and UpcomingSection (M-11). Used by OverdueSection, UpcomingSection.
+- **BlockHistorySheet** (`src/components/BlockHistorySheet.tsx`): Thin wrapper for block-level history side-drawer. Passes blockId, open state, and onOpenChange callback (M-1.1). Used by BlockTree.
+- **BlockPropertyDrawerSheet** (`src/components/BlockPropertyDrawerSheet.tsx`): Thin wrapper for block-level property drawer side-sheet (M-1.2). Used by BlockTree.
+- **BlockListRenderer** (`src/components/BlockListRenderer.tsx`): Presentational sorted block list with SortableContext, viewport-aware virtualization with placeholder elements, and drop indicators during drag (M-1.5). Used by BlockTree.
+- **BlockZoomBar** (`src/components/BlockZoomBar.tsx`): Breadcrumb navigation bar for zoomed block view with Home and clickable ancestor buttons (M-1.4). Used by BlockTree.
+- **TagValuePicker** (`src/components/TagValuePicker.tsx`): Searchable tag autocomplete combobox for filter builders. Calls `listTagsByPrefix()` on keystroke, displays tags with usage counts, keyboard navigation. Used by AgendaFilterBuilder.
+- **FeatureErrorBoundary** (`src/components/FeatureErrorBoundary.tsx`): Feature-level error boundary with inline error card, retry button, and `logger.error` with component stack. Takes `name` prop. Wraps 12 sections in App.tsx (M-2). Separate from app-level ErrorBoundary.
+- **ListViewState** (`src/components/ListViewState.tsx`): Generic loading/empty/loaded branching component. Eliminates repetitive three-way conditionals. Used by 11 components: LinkedReferences, UnlinkedReferences, DonePanel, DuePanel, HistoryPanel, AttachmentList, DeviceManagement, TagList, PropertyDefinitionsList, TemplatesView, TrashView.
+- **BlockListItem** (`src/components/BlockListItem.tsx`): Shared block item for list views with consistent [metadata] → [content] → [breadcrumb] layout. Used by DonePanel, DuePanel, AgendaResults.
+- **PropertyRowEditor** (`src/components/PropertyRowEditor.tsx`): Property row with typed input supporting text, number, date, select, and ref value types. Ref properties render a page picker popover with search (R-11). Used by BlockPropertyDrawer, PagePropertyTable.
 
 ### Shared Hooks
 - **useBlockNavigation** (`src/hooks/useBlockNavigation.ts`): Returns `{ handleBlockClick, handleBlockKeyDown }` for block click + keyboard (Enter/Space) navigation. Accepts `NavigateToPageFn` type. Used by AgendaResults, DonePanel, DuePanel, LinkedReferences, UnlinkedReferences.
@@ -407,18 +429,25 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **usePageDelete** (`src/hooks/usePageDelete.ts`): Page deletion hook with confirmation state management. Returns `{ pendingDeleteId, requestDelete, confirmDelete, cancelDelete }`. Extracted from PageBrowser (R-12). Used by PageBrowser.
 - **useDuePanelData** (`src/hooks/useDuePanelData.ts`): Data fetching hook for DuePanel encapsulating block/overdue/upcoming/projected queries and page title resolution. Returns fetched data, loading states, pageTitles map, and loadMore. Extracted from DuePanel (R-6). Used by DuePanel.
 - **useAgendaPreferences** (`src/hooks/useAgendaPreferences.ts`): LocalStorage-persisted agenda sort/group preferences hook. Returns `{ groupBy, sortBy, setGroupBy, setSortBy }`. Extracted from AgendaView (R-13). Used by AgendaView.
+- **useBlockCollapse** (`src/hooks/useBlockCollapse.ts`): Manages collapsed block state with localStorage persistence. Returns `{ collapsedIds, toggleCollapse, visibleBlocks, hasChildrenSet }`. Extracted from BlockTree (M-1.3). Used by BlockTree.
+- **useBlockZoom** (`src/hooks/useBlockZoom.ts`): Manages zoom state, breadcrumb trail, and zoomed-view filtering with depth-adjusted visible blocks. Returns `{ zoomedBlockId, zoomIn, zoomOut, zoomToRoot, breadcrumbs, zoomedVisible }`. Extracted from BlockTree (M-1.4). Used by BlockTree, BlockZoomBar.
+- **useBlockSwipeActions** (`src/hooks/useBlockSwipeActions.ts`): Swipe-left-to-delete gesture for mobile (touch-only, coarse-pointer devices). 80px reveal threshold, 200px auto-delete. Returns `{ translateX, isRevealed, handlers, reset }`. Used by SortableBlock.
+- **useDraftAutosave** (`src/hooks/useDraftAutosave.ts`): Autosaves block draft content with 2s debounce. Calls `saveDraft()`/`deleteDraft()` via Tauri. Returns `{ discardDraft }`. Used by EditableBlock.
+- **useScrollRestore** (`src/hooks/useScrollRestore.ts`): Saves and restores scroll position per view key on a scrollable container with requestAnimationFrame timing. Used by App.
 
 ### Per-Page Block Store (R-18)
 - **PageBlockStore** (`src/stores/page-blocks.ts`): Per-page Zustand store instances via React context. Factory `createPageBlockStore(pageId)`, context provider `PageBlockStoreProvider`, hooks `usePageBlockStore(selector)` / `usePageBlockStoreApi()`, module-level `pageBlockRegistry` for global access. Each BlockTree gets its own store. Replaces the block/loading/mutation portion of the old global useBlockStore.
-- **useBlockStore** (`src/stores/blocks.ts`): Slimmed global singleton — focus/selection only. `focusedBlockId`, `selectedBlockIds`, `pendingFocusId`, `setFocused`, `toggleSelected`, `rangeSelect(id, visibleIds)`, `selectAll(visibleIds)`, `clearSelected`, `setSelected`, `consumePendingFocus`.
+- **useBlockStore** (`src/stores/blocks.ts`): Slimmed global singleton — focus/selection only. `focusedBlockId`, `selectedBlockIds`, `setFocused`, `toggleSelected`, `rangeSelect(id, visibleIds)`, `selectAll(visibleIds)`, `clearSelected`, `setSelected`.
 
 ### Shared Utilities
 - **block-events** (`src/lib/block-events.ts`): `BLOCK_EVENTS` constant object (10 event names), `dispatchBlockEvent()`/`onBlockEvent()` helpers for custom DOM event communication between FormattingToolbar and BlockTree. Exports `NavigateToPageFn` type alias for standardized navigation callbacks.
 - **date-property-colors** (`src/lib/date-property-colors.ts`): `getSourceColor(source)` returns light/dark mode Tailwind classes for agenda sources (due=orange, scheduled=blue, properties=purple). `getSourceLabel(source)` returns display labels. Used by DaySection colored pills.
 - **date-utils** (`src/lib/date-utils.ts`): Consolidated date formatting utilities. `formatDate(d)` (yyyy-MM-dd), `formatDateDisplay(d)` (human-readable), `formatGroupDate(s)` (group headers), `formatCompactDate(s)` (compact display), `getTodayString()`, `getDateRangeForFilter(preset, today)` (7 presets: today/this-week/this-month/overdue/next-7/14/30-days). Single source of truth — eliminates duplicates from parse-date.ts, DuePanel, AgendaResults, AgendaView. Used by DuePanel, DonePanel, AgendaResults, AgendaView, parse-date.
 - **page-tree** (`src/lib/page-tree.ts`): Pure utility for building hierarchical page tree from flat page list. `buildPageTree()` creates namespace-aware tree nodes with hybrid page/folder support. Extracted from PageBrowser (R-12). Used by PageBrowser.
-- **agenda-filters** (`src/lib/agenda-filters.ts`): Pure function `executeAgendaFilters()` for agenda view filter logic. Handles 7+ filter dimensions, date range calculations, page title resolution. Extracted from AgendaView (R-13). Used by AgendaView.
+- **agenda-filters** (`src/lib/agenda-filters.ts`): Pure function `executeAgendaFilters()` for agenda view filter logic. Handles 7+ filter dimensions, date range calculations, page title resolution. Tag filters resolve names to IDs via `listTagsByPrefix()`. Extracted from AgendaView (R-13). Used by AgendaView.
 - **query-utils** (`src/lib/query-utils.ts`): Query expression parsing and filter building utilities. `parseQueryExpression()`, `buildFilters()`, column detection. Extracted from QueryResult (R-14). Used by QueryResult.
+- **property-save-utils** (`src/lib/property-save-utils.ts`): Shared property management helpers. `NON_DELETABLE_PROPERTIES` (11 system-managed keys), `buildInitParams(blockId, def)` returns type-appropriate init params (number→0, date→today, text/select→'', ref→null), `handleSaveProperty()`, `handleDeleteProperty()`. Used by PagePropertyTable, BlockPropertyDrawer.
+- **logger** (`src/lib/logger.ts`): Structured frontend logging with dual-write (console + Tauri IPC bridge), stack capture at call site, cause chain extraction (3-level deep), and rate limiting (5 per 60s per module:message). Methods: `debug`, `info`, `warn`, `error`. Global error/unhandledrejection handlers in `main.tsx`. Used by 24+ production files.
 
 ### CSS Utilities
-- **`.touch-target-44`** (`src/index.css`): Utility class for `@media(pointer:coarse)` min-height 44px touch targets. Used across 19+ components.
+- **`.touch-target`** (`src/index.css`): Tailwind `@utility` for `@media(pointer:coarse)` min-height 44px touch targets. Used across 19+ components.
