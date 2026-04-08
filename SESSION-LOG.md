@@ -1,5 +1,41 @@
 # Session Log
 
+## Session 273 — Batch 8: Rust perf + 3 UX features (2026-04-09)
+
+**Commit:** `3ed2fb7` — `feat: P-9/UX-61/UX-78/UX-84` — 16 files, +1456/-256
+
+### Items resolved
+- **P-9**: N+1 agenda query — batched 4 per-block property queries into initial SQL via LEFT JOINs (RepeatingBlockRow struct). Reduces 1+4N queries to 1 query.
+- **P-12**: PropertyIsEmpty — verified already optimized (uses NOT EXISTS subquery). Removed from REVIEW-LATER.
+- **UX-61**: Page metadata bar — new PageMetadataBar component (collapsible), shows word count + block count + created date (from ULID). countWords() utility. 18 tests.
+- **UX-78**: Trash multi-select + breadcrumbs — Set-based selection, Shift+Click range, Ctrl+A, batch restore/purge with ConfirmDialog, batchResolve parent_id breadcrumbs. 35 tests (up from 18). Search deferred (may need backend).
+- **UX-84**: Image lightbox — new ImageLightbox component (Radix Dialog, 90vw/90vh), "open externally" fallback. StaticBlock click opens lightbox. 10 tests.
+
+### New files
+- `src/components/PageMetadataBar.tsx` (UX-61)
+- `src/components/__tests__/PageMetadataBar.test.tsx` (18 tests)
+- `src/components/ImageLightbox.tsx` (UX-84)
+- `src/components/__tests__/ImageLightbox.test.tsx` (10 tests)
+
+### Files changed
+
+| Area | Change |
+|------|--------|
+| commands.rs | P-9: RepeatingBlockRow struct, LEFT JOIN repeat-until/count/seq, remove 4 per-block queries |
+| .sqlx/ | P-9: Updated query cache (4 old removed, 1 new added) |
+| PageMetadataBar.tsx | UX-61: collapsible bar, countWords(), ULID date, ChevronToggle |
+| PageEditor.tsx | UX-61: integrate PageMetadataBar at bottom |
+| TrashView.tsx | UX-78: multi-select state, checkboxes, toolbar, batch ops, batchResolve breadcrumbs |
+| ImageLightbox.tsx | UX-84: Radix Dialog lightbox, 90vw/vh, open-externally button |
+| StaticBlock.tsx | UX-84: image click → lightbox instead of openUrl |
+| i18n.ts | UX-61+78+84: 23 new i18n keys |
+
+### Test count
+- 5310 tests across 226 test files (was 5267, +43 new tests)
+
+### REVIEW-LATER
+- 38 → 34 items (9 UX remaining, 1 PERF remaining)
+
 ## Session 272 — Batch 7: 5 items — picker UX, history icons, DnD scroll, animation tokens (2026-04-09)
 
 **Commit:** `babbb6f` — `feat(ux): UX-65/68/75 + B-31 + UX-81` — 17 files, +991/-65

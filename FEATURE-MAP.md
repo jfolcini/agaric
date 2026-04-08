@@ -68,6 +68,8 @@ The default view — one page per day, created automatically.
 - Soft-deleted blocks with deletion timestamps
 - Restore (un-delete) or permanently purge
 - Purge requires confirmation (non-reversible)
+- **Multi-select** (UX-78): Checkboxes on each item, Shift+Click range select, Ctrl+A select all. Selection toolbar with batch restore/purge (ConfirmDialog for destructive purge).
+- **Original location breadcrumbs** (UX-78): Each deleted block shows "from: Page Name" via batchResolve. Shows "(deleted page)" for missing parents.
 
 ### Status
 
@@ -117,6 +119,8 @@ Opens when navigating to any page:
 - Unlinked references (mentions not yet linked, with "Link it" button)
 - Zoom-in: focus on a block and its descendants with breadcrumb trail
 - Back navigation via page stack
+- **Page metadata bar** (UX-61): Collapsible footer showing word count, block count, and created date (from ULID). `PageMetadataBar.tsx`, `countWords()` utility.
+- **Image lightbox** (UX-84): Click inline images to open fullscreen Radix Dialog viewer (90vw/90vh). Close via Escape, click outside, or close button. "Open externally" fallback button. `ImageLightbox.tsx`.
 - **View transitions**: opacity fade (150ms) on view switch with per-view scroll position restoration
 
 ---
