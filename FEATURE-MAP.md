@@ -20,11 +20,13 @@ The default view — one page per day, created automatically.
 | **Agenda** | Tasks grouped by date (Overdue / Today / Tomorrow / future) with configurable sort and group controls |
 
 - Floating calendar picker for jumping to any date, with per-source colored dots (blue=page, orange=due, green=scheduled, purple=property)
+- **Color dot legend**: inline legend below calendar showing Page/Due/Scheduled/Property color dots with flex-wrap for narrow viewports (UX-57)
 - **Global date controls**: Today button and date picker available in all views (non-journal views navigate to journal first)
 - Days with content are highlighted
 - **Today highlight**: 8% accent background + 2px left accent border on today's section (UX-55)
 - Template support: auto-populates structure on new journal pages
 - Keyboard: Alt+Left/Right (prev/next period), Alt+T (go to today)
+- **Day transition animation**: fade-in on day change via key-based remount with 150ms duration (UX-54)
 
 ### Search
 
@@ -94,7 +96,7 @@ The default view — one page per day, created automatically.
 - Search/filter by template name
 - Journal template indicator badge with tooltip explaining auto-application (UX-72)
 - Click to navigate to template page
-- Remove template status with confirmation toast
+- Remove template status with confirmation dialog (UX-73) and toast
 
 ### Page Editor
 
@@ -153,6 +155,8 @@ Markdown-based WYSIWYG editing:
 - Tags and links render as clickable chips with resolved names
 - **Backspace after a chip** re-expands it into trigger text (`[[title` or `@name`) so the suggestion picker reopens for editing
 - All suggestion pickers and context menus use `@floating-ui/dom` for viewport-aware positioning; popup has `role="region"` and `aria-label` for screen readers
+- **Picker popup animation**: CSS fade + translateY animation (100ms ease-out) on appearance via @keyframes suggestion-appear (UX-66)
+- **"Create new" prominence**: Plus icon + bg-accent/5 tint on "Create new" option in pickers for better discoverability (UX-67)
 - Block references render as violet chips showing first line of content, with hover tooltip for full preview
 - Click a block reference to navigate to the referenced block's page
 - Renaming a tag or page propagates everywhere automatically
@@ -162,6 +166,7 @@ Markdown-based WYSIWYG editing:
 ### Task Management
 
 - **Ctrl+Enter**: cycle task state (TODO → DOING → DONE → none)
+- **Task state animation**: smooth opacity + text-decoration-color transition (200ms) on DONE strikethrough (UX-51)
 - **Ctrl+Shift+1/2/3**: set priority level (color-coded badges)
 - Due date and scheduled date (via slash commands or property panel)
 - Repeating tasks: daily, weekly, monthly, yearly

@@ -1,5 +1,27 @@
 # Session Log
 
+## Session 267 — 2026-04-08 — 6 UX polish items (73→67 open)
+
+### Summary
+Resolved 6 REVIEW-LATER UX polish items: UX-51 (task checkbox animation with opacity transition on DONE state in SortableBlock), UX-54 (fade-in animation on day change in DailyView via key-based remount), UX-57 (color dot legend for calendar date indicators in JournalPage with flex-wrap for narrow viewports), UX-66 (CSS fade animation on picker popup appearance via @keyframes suggestion-appear), UX-67 ("Create new" option prominence with Plus icon + bg-accent/5 tint in SuggestionList), UX-73 (ConfirmDialog before removing template status in TemplatesView). 5 build subagents + 4 review subagents. All reviews passed. 12 files changed, 307 insertions, 19 deletions. All 5105 frontend tests pass (9 new), all 20 prek hooks pass.
+
+**Commit:** 4bfb67d
+
+| Area | Change |
+|------|--------|
+| SortableBlock.tsx | UX-51: transition-[text-decoration-color,opacity] duration-200 on task content wrapper |
+| SortableBlock.test.tsx | UX-51: 5 new tests (DONE strikethrough, transition classes, not-DONE state, focused override, unfocused state) |
+| DailyView.tsx | UX-54: key={entry.dateStr} + animate-in fade-in-0 duration-150 for day transition |
+| DailyView.test.tsx | UX-54: 1 new test (fade animation keyed on date) |
+| JournalPage.tsx | UX-57: Color dot legend (Page/Due/Scheduled/Property) with semantic color tokens + flex-wrap |
+| JournalPage.test.tsx | UX-57: 2 new tests (legend renders all 4 labels, visible in all modes) + regex fix for badge test |
+| SuggestionList.tsx | UX-67: Plus icon (lucide-react) + bg-accent/5 on "Create new" option |
+| SuggestionList.test.tsx | UX-66/67: 2 new tests (suggestion-list class for animation, Plus SVG icon) + updated create item test |
+| index.css | UX-66: @keyframes suggestion-appear (100ms ease-out, opacity+translateY) on .suggestion-list |
+| TemplatesView.tsx | UX-73: ConfirmDialog with pendingRemoval state, i18n title/description |
+| TemplatesView.test.tsx | UX-73: 3 new tests (shows dialog, confirms removal, cancels without removing) + 2 updated existing tests |
+| i18n.ts | 6 new i18n keys: journal.legendPage/legendDue/legendScheduled/legendProperty, templates.removeConfirmTitle/removeConfirmDesc |
+
 ## Session 266 — 2026-04-08 — 6 UX polish items (79→73 open)
 
 ### Summary
