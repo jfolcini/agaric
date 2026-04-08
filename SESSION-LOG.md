@@ -1,5 +1,36 @@
 # Session Log
 
+## Session 261 — 2026-04-08 — 11 bug fixes and UX improvements (113→102 open)
+
+### Summary
+Resolved 11 REVIEW-LATER items in parallel: 5 bugs (B-25, B-27, B-28, B-29, B-30), 1 sync (S-4), 5 UX (UX-29, UX-35, UX-37, UX-44, UX-46). All S-cost fixes. 6 parallel build subagents + 5 review subagents. Reviews found 1 blocker (B-27 type mismatch in BlockTree.tsx — prop/callback not renamed to match PointerEvent), 1 blocker (UX-46 result count shown for 0 results), 2 should-fixes (capitalization consistency, role="status" for EmptyState) — all resolved before commit. Also updated .nsprc for 3 new vite CVE advisory IDs. 21 files changed, 805 insertions. 1665 Rust tests + 5049 frontend tests pass.
+
+**Commit:** deb3968
+
+| Area | Change |
+|------|--------|
+| sync_net.rs | B-25: error message "60s" → "30s" to match RECV_TIMEOUT constant |
+| sync_daemon.rs | S-4: self-device guard in responder path (reject sync when remote_id == local device_id) |
+| TagValuePicker.tsx | B-27: mousedown → pointerdown for outside-click dismissal |
+| BlockListRenderer.tsx | B-27: onMouseDown → onPointerDown, prop renamed onContainerMouseDown → onContainerPointerDown |
+| PageEditor.tsx | B-27: handleBackgroundMouseDown type React.MouseEvent → React.PointerEvent, onMouseDown → onPointerDown |
+| BlockTree.tsx | B-27: handleContainerMouseDown → handleContainerPointerDown (type + naming) |
+| PageTreeItem.tsx | B-28: delete button touch visibility + 44px touch target via @media(pointer:coarse) |
+| JournalCalendarDropdown.tsx | B-29: hardcoded hex → var(--date-due-foreground) etc. for dark mode support |
+| i18n.ts | B-30: Keep→Keep Incoming, Discard→Discard Incoming (+ batch variants). UX-37: tagList.newTagLabel. UX-46: search.resultsCount |
+| HistorySelectionToolbar.tsx | UX-29: variant="default" → variant="outline" |
+| AgendaResults.tsx | UX-35: inline empty state divs → EmptyState component with role="status" wrapper |
+| TagList.tsx | UX-37: aria-label={t('tagList.newTagLabel')} on new tag input |
+| ResultCard.tsx | UX-44: optional highlightText prop + HighlightMatch integration |
+| SearchPanel.tsx | UX-44: pass debouncedQuery as highlightText. UX-46: visible result count (was sr-only) |
+| .nsprc | Updated 3 vite CVE exception IDs (1116101/1116125/1116127 → 1116231/1116233/1116236) |
+| ResultCard.test.tsx | 2 new tests: highlight present/absent |
+| SearchPanel.test.tsx | 2 new tests + textContent() helper for <mark> element matching |
+| PageEditor.test.tsx | fireEvent.mouseDown → fireEvent.pointerDown |
+| BlockTree.test.tsx | fireEvent.mouseDown → fireEvent.pointerDown, test names updated |
+| BlockListRenderer.test.tsx | Prop name onContainerMouseDown → onContainerPointerDown |
+| REVIEW-LATER.md | 11 items removed, summary updated (113→102 open) |
+
 ## Session 258 — 2026-04-08 — Deep UX review: 22 new findings (B-27..B-29, UX-24..UX-42)
 
 ### Summary

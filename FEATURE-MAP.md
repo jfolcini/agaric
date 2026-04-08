@@ -30,6 +30,8 @@ The default view — one page per day, created automatically.
 - Full-text search across all content (case-insensitive)
 - Debounced input with instant results
 - Paginated results with click-through to source page
+- Visible result count (live-updated)
+- Query term highlighting in result cards (via HighlightMatch)
 - CJK support (3+ character minimum)
 
 ### Pages
@@ -380,7 +382,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **TaskStatesSection** (`src/components/TaskStatesSection.tsx`): Task state cycle editor. Manages custom task keywords with add/remove/reorder controls, persisted to localStorage. Extracted from PropertiesView (R-17). Used by PropertiesView.
 - **DeadlineWarningSection** (`src/components/DeadlineWarningSection.tsx`): Deadline warning days setting. Input for configuring days-before-due warning threshold, persisted to localStorage. Extracted from PropertiesView (R-17). Used by PropertiesView.
 - **PropertyDefinitionsList** (`src/components/PropertyDefinitionsList.tsx`): Property definitions CRUD with search, filter, inline editing, and delete confirmation. Extracted from PropertiesView (R-17). Used by PropertiesView.
-- **ResultCard** (`src/components/ResultCard.tsx`): Block result card button with content display, Badge for page/tag types, optional spinner, optional children slot. Used by SearchPanel, TagFilterPanel.
+- **ResultCard** (`src/components/ResultCard.tsx`): Block result card button with content display, Badge for page/tag types, optional spinner, optional children slot, optional `highlightText` prop for HighlightMatch integration. Used by SearchPanel, TagFilterPanel.
 - **PageLink** (`src/components/PageLink.tsx`): Inline clickable page name (`<span role="link">`) that navigates via `navigateToPage`. Handles click/Enter/Space with stopPropagation. Uses `<span>` to allow nesting inside `<button>` containers. Used by CollapsibleGroupList, DonePanel, AgendaResults, DuePanel, SearchPanel, QueryResult.
 - **PropertyRow** (`src/components/BlockPropertyDrawer.tsx`): Extracted sub-component for property rows with badge+input+remove layout. Supports optional icon, date/text input types.
 - **ConflictBatchToolbar** (`src/components/ConflictBatchToolbar.tsx`): Batch action toolbar for conflict resolution. Shows selection count, select/deselect all, keep all, discard all buttons. Extracted from ConflictList (R-3). Used by ConflictList.
