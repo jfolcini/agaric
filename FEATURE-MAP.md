@@ -90,6 +90,7 @@ The default view — one page per day, created automatically.
 
 - Global operation log browser
 - Filter by 12 operation types (edit, create, delete, move, add/remove tag, set/delete property, add/delete attachment, restore, purge)
+- **Op type icons** (UX-75): Each op type badge has a lucide-react icon (Plus, Pencil, Trash2, ArrowRight, RotateCcw, Tag, Settings, Paperclip) alongside color coding
 - Word-level diff display for edit operations
 - Multi-select for batch revert (Ctrl+Click, Shift+Click, Ctrl+A)
 - Vim-style navigation (j/k, Space to toggle, Enter to revert)
@@ -145,6 +146,7 @@ Markdown-based WYSIWYG editing:
 - **Ctrl+Shift+Up/Down**: move block up/down among siblings
 - **Ctrl+.**: collapse/expand children
 - Drag-and-drop reordering with depth projection for indent/reparent
+- **Auto-scroll on drag** (B-31): When dragging blocks near viewport edges (50px zone), auto-scrolls at speed proportional to proximity. RAF-based 60fps. `useAutoScrollOnDrag` hook.
 - Auto-split: multiple paragraphs split into separate blocks on blur
 - Multi-selection (Ctrl+Click, Shift+Click, Ctrl+A) with batch delete and batch todo state
 - **Draft autosave**: content auto-saved every 2s while editing; orphaned drafts recovered on boot
@@ -158,6 +160,8 @@ Markdown-based WYSIWYG editing:
 - Type `[[` to open page/block link picker with fuzzy search (create-new option, multi-word support)
 - Type `[[text]]` (with closing brackets) to auto-resolve: exact-match page links directly, alias matches link to the aliased page, no match creates a new page
 - Type `((` to open block reference picker with FTS search (reference existing blocks)
+- **Picker icons and breadcrumbs** (UX-65): Tag picker shows Tag icon, page picker shows FileText icon, block ref picker shows Hash icon. Namespaced pages show parent path as breadcrumb (e.g., `work/meetings/standup` → label "standup", breadcrumb "work / meetings"). Block refs show parent page title as breadcrumb.
+- **Fuzzy matching** (UX-68): All pickers use `match-sorter` for fuzzy matching (e.g., "qn" finds "Quick Notes"). FTS5 preserved for longer page queries (>2 chars).
 - Tags and links render as clickable chips with resolved names
 - **Backspace after a chip** re-expands it into trigger text (`[[title` or `@name`) so the suggestion picker reopens for editing
 - All suggestion pickers and context menus use `@floating-ui/dom` for viewport-aware positioning; popup has `role="region"` and `aria-label` for screen readers
@@ -474,3 +478,4 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 ### CSS Utilities
 - **`.touch-target`** (`src/index.css`): Tailwind `@utility` for `@media(pointer:coarse)` min-height 44px touch targets. Used across 19+ components.
 - **`.block-children-enter`** (`src/index.css`): CSS keyframe animation (150ms ease-out opacity+translateY) applied to block children on expand. Respects `prefers-reduced-motion`. Used by BlockListRenderer (UX-79).
+- **Animation/transition tokens** (UX-81): 8 CSS custom properties (`--duration-fast` 100ms through `--duration-slower` 500ms, `--ease-out`, `--ease-in-out`, `--ease-spring`) with matching Tailwind `@utility` classes (`duration-fast`, `duration-normal`, `duration-moderate`, `duration-slow`, `duration-slower`, `ease-smooth`, `ease-smooth-in-out`, `ease-spring`). Keyframe animations reference tokens. `prefers-reduced-motion` sets all durations to 0ms.

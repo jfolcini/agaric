@@ -1,5 +1,41 @@
 # Session Log
 
+## Session 272 — Batch 7: 5 items — picker UX, history icons, DnD scroll, animation tokens (2026-04-09)
+
+**Commit:** `babbb6f` — `feat(ux): UX-65/68/75 + B-31 + UX-81` — 17 files, +991/-65
+
+### Items resolved
+- **UX-65**: Picker item icons + breadcrumbs — Tag/FileText/Hash icons for tag/page/block pickers. Namespace breadcrumbs (`work/meetings/standup` → label `standup`, breadcrumb `work / meetings`). Block refs show parent page title as breadcrumb.
+- **UX-68**: Fuzzy matching in pickers — added `match-sorter` library (~2KB). Replaced `.includes()` with `matchSorter()` in tag picker, page picker (short queries), and all 8 slash command arrays. FTS5 preserved for longer page queries.
+- **UX-75**: History op type icons — `opIcon()` maps 12 op types to lucide-react icons (Plus, Pencil, Trash2, ArrowRight, RotateCcw, Tag, Settings, Paperclip, Circle). Rendered inline in Badge.
+- **B-31**: Auto-scroll on DnD — new `useAutoScrollOnDrag` hook with RAF-based scrolling, 50px scroll zones, speed proportional to proximity. Integrated into `useBlockDnD` via `scrollContainerRef`.
+- **UX-81**: Animation/transition tokens — 8 CSS custom properties (5 durations + 3 easings), 8 Tailwind `@utility` classes, keyframe animations updated to reference tokens, `prefers-reduced-motion` override.
+
+### New files
+- `src/hooks/useAutoScrollOnDrag.ts` — DnD auto-scroll hook (B-31)
+- `src/hooks/__tests__/useAutoScrollOnDrag.test.ts` — 12 tests
+
+### Files changed
+
+| Area | Change |
+|------|--------|
+| SuggestionList.tsx | UX-65: breadcrumb field + rendering (flex-col, text-xs muted) |
+| useBlockResolve.ts | UX-65+68: icons (Tag/FileText/Hash), namespace breadcrumbs, matchSorter fuzzy matching |
+| useBlockSlashCommands.ts | UX-68: matchSorter for all 8 command arrays |
+| HistoryListItem.tsx | UX-75: opIcon() helper + icon rendering in Badge |
+| useAutoScrollOnDrag.ts | B-31: new hook (RAF, 50px zones, pointer tracking) |
+| useBlockDnD.ts | B-31: scrollContainerRef param + hook integration |
+| BlockTree.tsx | B-31: scroll container ref targeting #main-content |
+| index.css | UX-81: 8 tokens, 8 utilities, keyframe updates, reduced-motion |
+| template-utils.test.ts | Fix pre-existing UTC/local timezone bug |
+| package.json | UX-68: match-sorter dependency |
+
+### Test count
+- 5267 tests across 224 test files (was 5212, +55 new tests)
+
+### REVIEW-LATER
+- 43 → 38 items (11 UX remaining, 1 BUG remaining)
+
 ## Session 271 — Batch 6: 4 UX fixes + 2 doc updates (2026-04-08)
 
 **Commit:** `4fd3578` — `feat(ux): UX-24/32/50/59 + D-2/D-3` — 16 files, +921/-126
