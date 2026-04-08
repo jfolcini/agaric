@@ -1,5 +1,44 @@
 # Session Log
 
+## Session 271 — Batch 6: 4 UX fixes + 2 doc updates (2026-04-08)
+
+**Commit:** `4fd3578` — `feat(ux): UX-24/32/50/59 + D-2/D-3` — 16 files, +921/-126
+
+### Items resolved
+- **UX-24**: Focus ring standardization — replaced `ring-2/ring-offset-2` with `ring-[3px]/ring-ring/50` in button link variant, calendar buttons, close-button, PageHeader breadcrumbs. Sidebar `ring-sidebar-ring` preserved.
+- **UX-32**: Touch target sizing (2 remaining) — added `touch-target` class to BlockTree template picker and PageHeader breadcrumbs. All touch targets now meet 44px WCAG minimum.
+- **UX-50**: Slash command categories + icons — extended PickerItem with category/icon fields, grouped 55 commands into 8 categories (Tasks, Dates, References, Structure, Properties, Templates, Queries, Repeat), added lucide-react icons, category headers with separators, backward-compatible flat list fallback.
+- **UX-59**: Recent pages sort in PageBrowser — added sort dropdown (Recent/Alphabetical/Created) with localStorage persistence, `getRecentPages()` integration for recent sort, ULID descending for created sort.
+- **D-2**: ARCHITECTURE.md stale counts — pool (1→2 writers), schema (14→15 tables, 19→22 indexes/migrations), commands (67→70), hooks (31→37), shadcn/ui (21→27), lib modules (27→29), benches (12→16), E2E specs (14→20), backend modules (31→33).
+- **D-3**: BUILD.md and README.md stale counts — frontend tests (2063→~5000), benches (12→16), pool (1w+4r→2w+4r).
+
+### Files changed
+
+| Area | Change |
+|------|--------|
+| button.tsx | UX-24: Remove old focus ring from link variant (inherits from base) |
+| calendar.tsx | UX-24: WeekNumber + CaptionLabel buttons → standard ring |
+| close-button.tsx | UX-24: Remove ring-offset-background, standard ring |
+| PageHeader.tsx | UX-24+32: Breadcrumbs → standard ring + touch-target |
+| BlockTree.tsx | UX-32: Template picker buttons → touch-target |
+| primitives.test.tsx | UX-24: Update closeButton test to assert new ring pattern |
+| useBlockSlashCommands.ts | UX-50: 22 lucide-react icon imports, category + icon metadata on all 55 commands |
+| SuggestionList.tsx | UX-50: PickerItem interface extended, category grouping with useMemo, icon rendering, fieldset-based groups, hr separators |
+| SuggestionList.test.tsx | UX-50: 6 new tests (categories, icons, filtering, keyboard nav, separators, backward compat) |
+| useBlockSlashCommands.test.ts | UX-50: 3 new tests (metadata presence, filter preservation, dynamic table) |
+| PageBrowser.tsx | UX-59: Sort dropdown (Select), sortOption state, localStorage persistence, 3 sort modes |
+| PageBrowser.test.tsx | UX-59: Select mock, 8 new tests (render, default, 3 sort modes, persistence, a11y) |
+| i18n.ts | UX-50+59: 12 new i18n keys (8 slash command categories + 4 sort labels) |
+| ARCHITECTURE.md | D-2: 10 stale values updated |
+| BUILD.md | D-3: Test count + bench count updated |
+| README.md | D-3: Test count + pool description updated |
+
+### Test count
+- 5212 tests across 223 test files (was 5195, +17 new tests)
+
+### REVIEW-LATER
+- 49 → 43 items (15 UX remaining, 2 DOC remaining)
+
 ## Session 270 — Batch 5: 6 UX polish items (2026-04-08)
 
 **Commit:** `1144d09` — `feat(ux): 6 UX polish items (UX-62/63/71/77/82/88)` — 20 files, +1026/-108

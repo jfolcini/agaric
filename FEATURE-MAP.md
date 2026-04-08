@@ -41,6 +41,7 @@ The default view — one page per day, created automatically.
 ### Pages
 
 - Browse all pages with inline text filter
+- **Sort dropdown** (UX-59): Sort by Recent (last visited via recent-pages store), Alphabetical (localeCompare, default), or Created (ULID descending). Persisted to localStorage (`page-browser-sort`).
 - Namespaced pages (e.g., `work/meetings/standup`) render as collapsible tree hierarchy; hybrid nodes (pages that are also namespaces) show both navigation and expand/collapse
 - Create pages under a namespace with the `+` button on folders
 - Breadcrumb navigation for namespaced titles
@@ -194,7 +195,7 @@ Results display as collapsible panels with todo badges and click-to-navigate.
 
 ## 3. Slash Commands
 
-Type `/` in the editor to access the command palette:
+Type `/` in the editor to access the command palette. Commands are grouped by category with lucide-react icons for quick scanning (UX-50). 55 commands across 8 categories:
 
 | Category | Commands |
 |----------|----------|
