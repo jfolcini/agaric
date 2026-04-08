@@ -66,11 +66,19 @@ const arbTagRef = arbUlid.map((id) => ({ type: 'tag_ref' as const, attrs: { id }
 /** A block_link node. */
 const arbBlockLink = arbUlid.map((id) => ({ type: 'block_link' as const, attrs: { id } }))
 
+/** A block_ref node (atomic inline — no content). */
+const arbBlockRef = arbUlid.map((id) => ({
+  type: 'block_ref' as const,
+  attrs: { id },
+  content: undefined,
+}))
+
 /** Any inline node (weighted toward text since that's the common case). */
 const arbInlineNode: fc.Arbitrary<InlineNode> = fc.oneof(
   { weight: 6, arbitrary: arbTextNode },
   { weight: 1, arbitrary: arbTagRef },
   { weight: 1, arbitrary: arbBlockLink },
+  { weight: 1, arbitrary: arbBlockRef },
   // Omit hardBreak — it becomes \n which splits paragraphs in the parser,
   // making structural equality comparison complex. Tested separately.
 )

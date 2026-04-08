@@ -11,7 +11,8 @@
  * - a11y compliance (axe)
  */
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { BreadcrumbItem } from '../../hooks/useBlockZoom'
@@ -57,32 +58,35 @@ describe('BlockZoomBar', () => {
     expect(screen.getByText('Detail')).toBeInTheDocument()
   })
 
-  it('calls onZoomToRoot when Home button is clicked', () => {
+  it('calls onZoomToRoot when Home button is clicked', async () => {
+    const user = userEvent.setup()
     const onZoomToRoot = vi.fn()
     render(
       <BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={onZoomToRoot} />,
     )
     // Home button is the first button in the nav
     const buttons = screen.getAllByRole('button')
-    fireEvent.click(buttons[0] as HTMLElement)
+    await user.click(buttons[0] as HTMLElement)
     expect(onZoomToRoot).toHaveBeenCalledTimes(1)
   })
 
-  it('calls onNavigate when a non-last breadcrumb is clicked', () => {
+  it('calls onNavigate when a non-last breadcrumb is clicked', async () => {
+    const user = userEvent.setup()
     const onNavigate = vi.fn()
     render(
       <BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={onNavigate} onZoomToRoot={vi.fn()} />,
     )
-    fireEvent.click(screen.getByText('Page'))
+    await user.click(screen.getByText('Page'))
     expect(onNavigate).toHaveBeenCalledWith('A')
   })
 
-  it('does not call onNavigate when the last breadcrumb is clicked', () => {
+  it('does not call onNavigate when the last breadcrumb is clicked', async () => {
+    const user = userEvent.setup()
     const onNavigate = vi.fn()
     render(
       <BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={onNavigate} onZoomToRoot={vi.fn()} />,
     )
-    fireEvent.click(screen.getByText('Detail'))
+    await user.click(screen.getByText('Detail'))
     expect(onNavigate).not.toHaveBeenCalled()
   })
 

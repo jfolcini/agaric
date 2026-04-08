@@ -25,7 +25,7 @@
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { BlockContextMenu, type BlockContextMenuProps } from '../BlockContextMenu'
 
@@ -35,6 +35,10 @@ vi.mock('@floating-ui/dom', () => ({
   shift: vi.fn(() => ({})),
   offset: vi.fn(() => ({})),
 }))
+
+beforeEach(() => {
+  vi.clearAllMocks()
+})
 
 type MenuOverrides = { [K in keyof BlockContextMenuProps]?: BlockContextMenuProps[K] | undefined }
 

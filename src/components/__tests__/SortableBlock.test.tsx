@@ -2128,7 +2128,7 @@ describe('SortableBlock long-press and context menu', () => {
     fireEvent.contextMenu(wrapper, { clientX: 50, clientY: 75 })
     expect(screen.getByTestId('block-context-menu')).toBeInTheDocument()
 
-    // Click close button (triggers onClose callback)
+    // Click close button (triggers onClose callback via mock boundary)
     fireEvent.click(screen.getByTestId('close-context-menu'))
 
     expect(screen.queryByTestId('block-context-menu')).not.toBeInTheDocument()

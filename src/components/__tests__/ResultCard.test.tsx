@@ -12,31 +12,16 @@
  *  - axe a11y audit
  */
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import type { BlockRow } from '../../lib/tauri'
+import { makeBlock } from '../../__tests__/fixtures'
 import { ResultCard } from '../ResultCard'
-
-const makeBlock = (overrides?: Partial<BlockRow>): BlockRow => ({
-  id: 'BLOCK1',
-  block_type: 'content',
-  content: 'test content',
-  parent_id: null,
-  position: 1,
-  deleted_at: null,
-  is_conflict: false,
-  conflict_type: null,
-  todo_state: null,
-  priority: null,
-  due_date: null,
-  scheduled_date: null,
-  ...overrides,
-})
 
 describe('ResultCard', () => {
   it('renders block content', () => {
-    render(<ResultCard block={makeBlock()} onClick={() => {}} />)
+    render(<ResultCard block={makeBlock({ content: 'test content' })} onClick={() => {}} />)
     expect(screen.getByText('test content')).toBeInTheDocument()
   })
 
@@ -55,11 +40,12 @@ describe('ResultCard', () => {
     expect(screen.queryByText('content')).not.toBeInTheDocument()
   })
 
-  it('calls onClick when clicked', () => {
+  it('calls onClick when clicked', async () => {
+    const user = userEvent.setup()
     const onClick = vi.fn()
     render(<ResultCard block={makeBlock()} onClick={onClick} />)
 
-    fireEvent.click(screen.getByRole('button'))
+    await user.click(screen.getByRole('button'))
     expect(onClick).toHaveBeenCalledOnce()
   })
 
@@ -87,11 +73,12 @@ describe('ResultCard', () => {
     expect(screen.getByRole('button')).toBeDisabled()
   })
 
-  it('does not call onClick when disabled', () => {
+  it('does not call onClick when disabled', async () => {
+    const user = userEvent.setup()
     const onClick = vi.fn()
     render(<ResultCard block={makeBlock()} onClick={onClick} disabled />)
 
-    fireEvent.click(screen.getByRole('button'))
+    await user.click(screen.getByRole('button'))
     expect(onClick).not.toHaveBeenCalled()
   })
 
@@ -106,7 +93,13 @@ describe('ResultCard', () => {
   })
 
   it('applies contentClassName to the content span', () => {
-    render(<ResultCard block={makeBlock()} onClick={() => {}} contentClassName="line-clamp-2" />)
+    render(
+      <ResultCard
+        block={makeBlock({ content: 'test content' })}
+        onClick={() => {}}
+        contentClassName="line-clamp-2"
+      />,
+    )
     const span = screen.getByText('test content')
     expect(span).toHaveClass('line-clamp-2')
   })

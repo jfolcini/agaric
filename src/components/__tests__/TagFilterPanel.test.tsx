@@ -15,9 +15,11 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { makeBlock } from '../../__tests__/fixtures'
 import { useNavigationStore } from '../../stores/navigation'
 import { TagFilterPanel } from '../TagFilterPanel'
 
@@ -36,17 +38,6 @@ const makeTag = (overrides?: Partial<Record<string, unknown>>) => ({
   name: 'work',
   usage_count: 5,
   updated_at: '2025-01-15T00:00:00Z',
-  ...overrides,
-})
-
-const makeBlock = (overrides?: Partial<Record<string, unknown>>) => ({
-  id: 'BLOCK1',
-  block_type: 'content',
-  content: 'test content',
-  parent_id: null,
-  position: 1,
-  deleted_at: null,
-  is_conflict: false,
   ...overrides,
 })
 
@@ -73,9 +64,12 @@ async function typeAndWaitForTags(input: HTMLElement, prefix: string): Promise<v
   })
 }
 
+let user: ReturnType<typeof userEvent.setup>
+
 beforeEach(() => {
   vi.clearAllMocks()
-  vi.useFakeTimers()
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
   useNavigationStore.setState({
     currentView: 'search',
     pageStack: [],
@@ -177,10 +171,8 @@ describe('TagFilterPanel', () => {
     // Mock query_by_tags for when tag is selected
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    await act(async () => {
-      fireEvent.click(addBtn)
-      await vi.advanceTimersByTimeAsync(0)
-    })
+    await user.click(addBtn)
+    await vi.advanceTimersByTimeAsync(0)
 
     // Tag badge should appear in selected section
     expect(screen.getByText('Selected:')).toBeInTheDocument()
@@ -199,18 +191,14 @@ describe('TagFilterPanel', () => {
 
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    await act(async () => {
-      fireEvent.click(addBtn)
-      await vi.advanceTimersByTimeAsync(0)
-    })
+    await user.click(addBtn)
+    await vi.advanceTimersByTimeAsync(0)
 
     // Badge should be present
     const removeBtn = screen.getByLabelText('Remove tag work')
 
-    await act(async () => {
-      fireEvent.click(removeBtn)
-      await vi.advanceTimersByTimeAsync(0)
-    })
+    await user.click(removeBtn)
+    await vi.advanceTimersByTimeAsync(0)
 
     // Badge should be gone
     expect(screen.queryByText('Selected:')).not.toBeInTheDocument()
@@ -228,17 +216,13 @@ describe('TagFilterPanel', () => {
     expect(orBtn).toHaveAttribute('aria-pressed', 'false')
 
     // Switch to OR
-    await act(async () => {
-      fireEvent.click(orBtn)
-    })
+    await user.click(orBtn)
 
     expect(andBtn).toHaveAttribute('aria-pressed', 'false')
     expect(orBtn).toHaveAttribute('aria-pressed', 'true')
 
     // Switch back to AND
-    await act(async () => {
-      fireEvent.click(andBtn)
-    })
+    await user.click(andBtn)
 
     expect(andBtn).toHaveAttribute('aria-pressed', 'true')
     expect(orBtn).toHaveAttribute('aria-pressed', 'false')
@@ -262,10 +246,8 @@ describe('TagFilterPanel', () => {
       has_more: false,
     })
 
-    await act(async () => {
-      fireEvent.click(addBtn)
-      await vi.advanceTimersByTimeAsync(0)
-    })
+    await user.click(addBtn)
+    await vi.advanceTimersByTimeAsync(0)
 
     expect(mockedInvoke).toHaveBeenCalledWith('query_by_tags', {
       tagIds: ['T1'],
@@ -297,10 +279,8 @@ describe('TagFilterPanel', () => {
       has_more: true,
     })
 
-    await act(async () => {
-      fireEvent.click(addBtn)
-      await vi.advanceTimersByTimeAsync(0)
-    })
+    await user.click(addBtn)
+    await vi.advanceTimersByTimeAsync(0)
 
     expect(screen.getByText('first result')).toBeInTheDocument()
     const loadMoreBtn = screen.getByRole('button', { name: /Load more/i })
@@ -313,10 +293,8 @@ describe('TagFilterPanel', () => {
       has_more: false,
     })
 
-    await act(async () => {
-      fireEvent.click(loadMoreBtn)
-      await vi.advanceTimersByTimeAsync(0)
-    })
+    await user.click(loadMoreBtn)
+    await vi.advanceTimersByTimeAsync(0)
 
     expect(mockedInvoke).toHaveBeenCalledWith('query_by_tags', {
       tagIds: ['T1'],
@@ -349,10 +327,8 @@ describe('TagFilterPanel', () => {
     // query_by_tags returns empty
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    await act(async () => {
-      fireEvent.click(addBtn)
-      await vi.advanceTimersByTimeAsync(0)
-    })
+    await user.click(addBtn)
+    await vi.advanceTimersByTimeAsync(0)
 
     expect(screen.getByText('No matching blocks found.')).toBeInTheDocument()
   })
@@ -389,10 +365,8 @@ describe('TagFilterPanel', () => {
       has_more: false,
     })
 
-    await act(async () => {
-      fireEvent.click(addBtn)
-      await vi.advanceTimersByTimeAsync(0)
-    })
+    await user.click(addBtn)
+    await vi.advanceTimersByTimeAsync(0)
 
     // Should show feedback: "2 blocks match 1 tag (AND)"
     expect(screen.getByTestId('tag-filter-feedback')).toHaveTextContent(
@@ -418,10 +392,8 @@ describe('TagFilterPanel', () => {
       has_more: false,
     })
 
-    await act(async () => {
-      fireEvent.click(addBtn)
-      await vi.advanceTimersByTimeAsync(0)
-    })
+    await user.click(addBtn)
+    await vi.advanceTimersByTimeAsync(0)
 
     // Should show singular: "1 block matches 1 tag (AND)"
     expect(screen.getByTestId('tag-filter-feedback')).toHaveTextContent(
@@ -481,10 +453,8 @@ describe('TagFilterPanel', () => {
     // Mock query_by_tags response for when tag is selected
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    await act(async () => {
-      fireEvent.click(addBtns[0] as HTMLElement)
-      await vi.advanceTimersByTimeAsync(0)
-    })
+    await user.click(addBtns[0] as HTMLElement)
+    await vi.advanceTimersByTimeAsync(0)
 
     // First tag should be removed from matching list (it's now in selected)
     expect(findTagSpan(/work \(5\)/)).toBeNull()
@@ -525,10 +495,8 @@ describe('TagFilterPanel', () => {
       has_more: false,
     })
 
-    await act(async () => {
-      fireEvent.click(addBtn)
-      await vi.advanceTimersByTimeAsync(0)
-    })
+    await user.click(addBtn)
+    await vi.advanceTimersByTimeAsync(0)
 
     expect(screen.getByText('tagged content')).toBeInTheDocument()
 
@@ -543,10 +511,8 @@ describe('TagFilterPanel', () => {
       is_conflict: false,
     })
 
-    await act(async () => {
-      fireEvent.click(screen.getByText('tagged content'))
-      await vi.advanceTimersByTimeAsync(0)
-    })
+    await user.click(screen.getByText('tagged content'))
+    await vi.advanceTimersByTimeAsync(0)
 
     expect(mockedInvoke).toHaveBeenCalledWith('get_block', { blockId: 'PARENT1' })
 
@@ -582,17 +548,13 @@ describe('TagFilterPanel', () => {
       has_more: false,
     })
 
-    await act(async () => {
-      fireEvent.click(addBtn)
-      await vi.advanceTimersByTimeAsync(0)
-    })
+    await user.click(addBtn)
+    await vi.advanceTimersByTimeAsync(0)
 
     expect(screen.getByText('My Tagged Page')).toBeInTheDocument()
 
-    await act(async () => {
-      fireEvent.click(screen.getByText('My Tagged Page'))
-      await vi.advanceTimersByTimeAsync(0)
-    })
+    await user.click(screen.getByText('My Tagged Page'))
+    await vi.advanceTimersByTimeAsync(0)
 
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
@@ -642,10 +604,8 @@ describe('TagFilterPanel', () => {
 
       mockedInvoke.mockResolvedValue(emptyPage)
 
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /Add/i }))
-        await vi.advanceTimersByTimeAsync(0)
-      })
+      await user.click(screen.getByRole('button', { name: /Add/i }))
+      await vi.advanceTimersByTimeAsync(0)
 
       // Remove button has aria-label for screen readers and keyboard users
       const removeBtn = screen.getByLabelText('Remove tag work')
@@ -688,10 +648,8 @@ describe('TagFilterPanel', () => {
       has_more: false,
     })
 
-    await act(async () => {
-      fireEvent.click(addBtn)
-      await vi.advanceTimersByTimeAsync(0)
-    })
+    await user.click(addBtn)
+    await vi.advanceTimersByTimeAsync(0)
 
     // The results heading should be inside a <section>
     const heading = screen.getByText(/Results \(1\)/)

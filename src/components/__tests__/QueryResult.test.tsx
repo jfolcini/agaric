@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { makeBlock } from '../../__tests__/fixtures'
 import { useNavigationStore } from '../../stores/navigation'
 import { buildFilters, detectColumns, parseQueryExpression, QueryResult } from '../QueryResult'
 
@@ -461,31 +462,6 @@ describe('detectColumns', () => {
 describe('QueryResult – table mode', () => {
   const TABLE_EXPRESSION = 'type:tag expr:project table:true'
 
-  const makeBlock = (
-    overrides: Partial<{
-      id: string
-      content: string
-      parent_id: string | null
-      todo_state: string | null
-      priority: string | null
-      due_date: string | null
-      scheduled_date: string | null
-    }> = {},
-  ) => ({
-    id: overrides.id ?? 'B1',
-    block_type: 'content',
-    content: overrides.content ?? 'Task A',
-    parent_id: overrides.parent_id ?? 'P1',
-    position: 1,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: overrides.todo_state ?? 'TODO',
-    priority: overrides.priority ?? null,
-    due_date: overrides.due_date ?? null,
-    scheduled_date: overrides.scheduled_date ?? null,
-  })
-
   function mockTagResults(items: ReturnType<typeof makeBlock>[]) {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'query_by_tags') {
@@ -502,7 +478,7 @@ describe('QueryResult – table mode', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'query_by_tags') {
         return {
-          items: [makeBlock()],
+          items: [makeBlock({ id: 'B1', content: 'Task A', parent_id: 'P1', todo_state: 'TODO' })],
           next_cursor: null,
           has_more: false,
         }
@@ -521,7 +497,9 @@ describe('QueryResult – table mode', () => {
   })
 
   it('renders as table when table:true in query params', async () => {
-    mockTagResults([makeBlock()])
+    mockTagResults([
+      makeBlock({ id: 'B1', content: 'Task A', parent_id: 'P1', todo_state: 'TODO' }),
+    ])
 
     render(<QueryResult expression={TABLE_EXPRESSION} />)
 
@@ -537,11 +515,19 @@ describe('QueryResult – table mode', () => {
       makeBlock({
         id: 'B1',
         content: 'Task A',
+        parent_id: 'P1',
         todo_state: 'TODO',
         priority: '1',
         due_date: '2025-06-01',
       }),
-      makeBlock({ id: 'B2', content: 'Task B', todo_state: 'DONE', priority: '2', due_date: null }),
+      makeBlock({
+        id: 'B2',
+        content: 'Task B',
+        parent_id: 'P1',
+        todo_state: 'DONE',
+        priority: '2',
+        due_date: null,
+      }),
     ])
 
     render(<QueryResult expression={TABLE_EXPRESSION} />)
@@ -567,8 +553,8 @@ describe('QueryResult – table mode', () => {
 
   it('clicking column header sorts results', async () => {
     mockTagResults([
-      makeBlock({ id: 'B1', content: 'Beta task', todo_state: 'TODO' }),
-      makeBlock({ id: 'B2', content: 'Alpha task', todo_state: 'DONE' }),
+      makeBlock({ id: 'B1', content: 'Beta task', parent_id: 'P1', todo_state: 'TODO' }),
+      makeBlock({ id: 'B2', content: 'Alpha task', parent_id: 'P1', todo_state: 'DONE' }),
     ])
 
     const user = userEvent.setup()
@@ -626,7 +612,13 @@ describe('QueryResult – table mode', () => {
 
   it('axe a11y for table mode', async () => {
     mockTagResults([
-      makeBlock({ id: 'B1', content: 'Accessible task', todo_state: 'TODO', priority: '1' }),
+      makeBlock({
+        id: 'B1',
+        content: 'Accessible task',
+        parent_id: 'P1',
+        todo_state: 'TODO',
+        priority: '1',
+      }),
     ])
 
     const { container } = render(<QueryResult expression={TABLE_EXPRESSION} />)
@@ -693,36 +685,13 @@ describe('buildFilters', () => {
 /* ------------------------------------------------------------------ */
 
 describe('QueryResult – multi-filter (filtered)', () => {
-  const makeBlock = (
-    overrides: Partial<{
-      id: string
-      content: string
-      parent_id: string | null
-      todo_state: string | null
-      priority: string | null
-      due_date: string | null
-      scheduled_date: string | null
-    }> = {},
-  ) => ({
-    id: overrides.id ?? 'B1',
-    block_type: 'content',
-    content: overrides.content ?? 'Task A',
-    parent_id: overrides.parent_id ?? 'P1',
-    position: 1,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: overrides.todo_state ?? null,
-    priority: overrides.priority ?? null,
-    due_date: overrides.due_date ?? null,
-    scheduled_date: overrides.scheduled_date ?? null,
-  })
-
   it('single property shorthand filter works (backward compat)', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'query_by_property') {
         return {
-          items: [makeBlock({ id: 'B1', content: 'TODO task', todo_state: 'TODO' })],
+          items: [
+            makeBlock({ id: 'B1', content: 'TODO task', parent_id: 'P1', todo_state: 'TODO' }),
+          ],
           next_cursor: null,
           has_more: false,
         }
@@ -749,12 +718,36 @@ describe('QueryResult – multi-filter (filtered)', () => {
   it('multiple property filters produce AND semantics', async () => {
     // Block B1 matches both filters, B2 matches only todo_state, B3 matches only priority
     const todoBlocks = [
-      makeBlock({ id: 'B1', content: 'High-pri TODO', todo_state: 'TODO', priority: '1' }),
-      makeBlock({ id: 'B2', content: 'Low-pri TODO', todo_state: 'TODO', priority: '3' }),
+      makeBlock({
+        id: 'B1',
+        content: 'High-pri TODO',
+        parent_id: 'P1',
+        todo_state: 'TODO',
+        priority: '1',
+      }),
+      makeBlock({
+        id: 'B2',
+        content: 'Low-pri TODO',
+        parent_id: 'P1',
+        todo_state: 'TODO',
+        priority: '3',
+      }),
     ]
     const priorityBlocks = [
-      makeBlock({ id: 'B1', content: 'High-pri TODO', todo_state: 'TODO', priority: '1' }),
-      makeBlock({ id: 'B3', content: 'High-pri DONE', todo_state: 'DONE', priority: '1' }),
+      makeBlock({
+        id: 'B1',
+        content: 'High-pri TODO',
+        parent_id: 'P1',
+        todo_state: 'TODO',
+        priority: '1',
+      }),
+      makeBlock({
+        id: 'B3',
+        content: 'High-pri DONE',
+        parent_id: 'P1',
+        todo_state: 'DONE',
+        priority: '1',
+      }),
     ]
 
     mockedInvoke.mockImplementation((async (cmd: string, args?: Record<string, unknown>) => {
@@ -783,12 +776,12 @@ describe('QueryResult – multi-filter (filtered)', () => {
 
   it('tag + property combination works', async () => {
     const tagBlocks = [
-      makeBlock({ id: 'B1', content: 'Tagged TODO', todo_state: 'TODO' }),
-      makeBlock({ id: 'B2', content: 'Tagged DONE', todo_state: 'DONE' }),
+      makeBlock({ id: 'B1', content: 'Tagged TODO', parent_id: 'P1', todo_state: 'TODO' }),
+      makeBlock({ id: 'B2', content: 'Tagged DONE', parent_id: 'P1', todo_state: 'DONE' }),
     ]
     const propertyBlocks = [
-      makeBlock({ id: 'B1', content: 'Tagged TODO', todo_state: 'TODO' }),
-      makeBlock({ id: 'B3', content: 'Untagged TODO', todo_state: 'TODO' }),
+      makeBlock({ id: 'B1', content: 'Tagged TODO', parent_id: 'P1', todo_state: 'TODO' }),
+      makeBlock({ id: 'B3', content: 'Untagged TODO', parent_id: 'P1', todo_state: 'TODO' }),
     ]
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -818,7 +811,13 @@ describe('QueryResult – multi-filter (filtered)', () => {
       if (cmd === 'query_by_property') {
         return {
           items: [
-            makeBlock({ id: 'B1', content: 'Filtered task', todo_state: 'TODO', priority: '1' }),
+            makeBlock({
+              id: 'B1',
+              content: 'Filtered task',
+              parent_id: 'P1',
+              todo_state: 'TODO',
+              priority: '1',
+            }),
           ],
           next_cursor: null,
           has_more: false,
@@ -842,8 +841,8 @@ describe('QueryResult – multi-filter (filtered)', () => {
   })
 
   it('shows empty state when filtered results have no intersection', async () => {
-    const set1 = [makeBlock({ id: 'B1', content: 'Only in set 1' })]
-    const set2 = [makeBlock({ id: 'B2', content: 'Only in set 2' })]
+    const set1 = [makeBlock({ id: 'B1', content: 'Only in set 1', parent_id: 'P1' })]
+    const set2 = [makeBlock({ id: 'B2', content: 'Only in set 2', parent_id: 'P1' })]
 
     let callCount = 0
     mockedInvoke.mockImplementation(async (cmd: string) => {

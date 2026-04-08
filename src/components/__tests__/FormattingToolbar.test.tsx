@@ -15,6 +15,7 @@
  */
 
 import { act, fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -376,7 +377,8 @@ describe('FormattingToolbar', () => {
       expect(mock).toHaveAttribute('data-initial-url', 'https://example.com')
     })
 
-    it('closes popover when LinkEditPopover calls onClose', () => {
+    it('closes popover when LinkEditPopover calls onClose', async () => {
+      const user = userEvent.setup()
       render(<FormattingToolbar editor={makeEditor()} />)
 
       // Open the popover first
@@ -387,7 +389,7 @@ describe('FormattingToolbar', () => {
       expect(popover).toHaveAttribute('data-open', 'true')
 
       // Click the close button in the mocked LinkEditPopover
-      fireEvent.click(closeBtn)
+      await user.click(closeBtn)
       // After another re-render, find the popover again
       const linkEditMock = screen.getByTestId('link-edit-popover-mock')
       const popoverAfter = linkEditMock.closest('[data-popover]') as HTMLElement
