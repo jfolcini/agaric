@@ -1,5 +1,14 @@
 # Session Log
 
+## Session 258 — 2026-04-08 — Deep UX review: 22 new findings (B-27..B-29, UX-24..UX-42)
+
+### Summary
+Deep UX review of the entire frontend. 7 parallel investigation subagents covered: UI primitives, hardcoded colors, code duplication/reuse, touch/mobile, i18n compliance, accessibility, and visual language. 3 validation subagents verified findings against source — 1 finding (RenameDialog) was partially false (correctly uses ConfirmDialog, but semantic concern remains valid), 1 (inline Skeleton) was confirmed as exaggerated but still a consistency gap. Separate mobile investigation confirmed SortableBlock gutter hiding is intentional (swipe-to-delete + long-press context menu + BlockInlineControls), but PageTreeItem delete button is a real gap (no mobile alternative). 22 validated findings written to REVIEW-LATER.md: 3 bugs (mouse events, PageTreeItem touch, hardcoded hex colors) + 19 UX items (focus ring fragmentation, missing data-slots, CVA gaps, ScrollArea conflict, SortableBlock clarity, ConfirmDialog reuse, LoadingSkeleton reuse, touch targets, keyboard navigation, i18n gaps). No code changes — documentation only.
+
+| Area | Change |
+|------|--------|
+| REVIEW-LATER.md | Added B-27..B-29 (3 bugs), UX-24..UX-42 (19 UX items). Summary updated: 18→39 open items, new UX section created |
+
 ## Session 256 — 2026-04-08 — P-8 resolved (2→1 remaining)
 
 ### Summary
