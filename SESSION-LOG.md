@@ -1,5 +1,36 @@
 # Session Log
 
+## Session 268 — 2026-04-08 — 6 UX polish items (67→61 open)
+
+### Summary
+Batch 3: resolved 6 REVIEW-LATER UX polish items: UX-26 (PopoverMenuItem + PriorityBadge refactored to CVA variants), UX-30 (RenameDialog migrated from AlertDialog to Dialog semantics), UX-36 (ChevronToggle extracted as reusable component — 7 consumers migrated: CollapsiblePanelHeader, BlockInlineControls, PageTreeItem, QueryResult, CollapsibleGroupList, HistoryPanel, HistoryListItem), UX-52 (priority badge sizing increased in agenda context), UX-70 (NOT operator added to tag filter — backend TagExpr::Not in commands.rs + frontend 3-way mode toggle in TagFilterPanel.tsx + tests), UX-74 (template toggle button added to PageHeaderMenu with LayoutTemplate icon + tooltip). Test fixes: updated mocks for ChevronToggle migration (CollapsiblePanelHeader, BlockInlineControls tests), added LayoutTemplate to PageHeader test mock, wrapped PageHeader test render with TooltipProvider. 23 files changed, +657/-152 lines. All 5128 frontend tests pass (220 test files), all prek hooks pass.
+
+**Commit:** b26d8b1
+
+| Area | Change |
+|------|--------|
+| popover-menu-item.tsx | UX-26: Refactored to CVA variants (active/disabled) replacing conditional className strings |
+| priority-badge.tsx | UX-26: Refactored to CVA with priority variant replacing external `priorityColor()` function |
+| RenameDialog.tsx | UX-30: Migrated from ConfirmDialog (AlertDialog wrapper) to Dialog-based implementation with form semantics |
+| chevron-toggle.tsx | UX-36: New reusable ChevronToggle component (`src/components/ui/chevron-toggle.tsx`) with isExpanded/loading/size props |
+| chevron-toggle.test.tsx | UX-36: New test file for ChevronToggle |
+| CollapsiblePanelHeader.tsx | UX-36: Migrated to ChevronToggle |
+| BlockInlineControls.tsx | UX-36: Migrated to ChevronToggle |
+| PageTreeItem.tsx | UX-36: Migrated to ChevronToggle |
+| QueryResult.tsx | UX-36: Migrated to ChevronToggle |
+| CollapsibleGroupList.tsx | UX-36: Migrated to ChevronToggle |
+| HistoryPanel.tsx | UX-36: Migrated to ChevronToggle |
+| HistoryListItem.tsx | UX-36: Migrated to ChevronToggle |
+| AgendaResults.tsx | UX-52: Priority badge sizing increased (padding/font adjustments) |
+| commands.rs | UX-70: TagExpr::Not variant added to backend tag query support |
+| TagFilterPanel.tsx | UX-70: 3-way mode toggle (AND/OR/NOT) replacing 2-way AND/OR toggle |
+| TagFilterPanel.test.tsx | UX-70: Tests for NOT operator mode |
+| PageHeaderMenu.tsx | UX-74: Template toggle button with LayoutTemplate icon + tooltip |
+| CollapsiblePanelHeader.test.tsx | Test fix: Updated mocks for ChevronToggle migration |
+| BlockInlineControls.test.tsx | Test fix: Updated mocks for ChevronToggle migration |
+| PageHeader.test.tsx | Test fix: Added LayoutTemplate to mock, wrapped render with TooltipProvider |
+| REVIEW-LATER.md | 6 items removed (UX-26/UX-30/UX-36/UX-52/UX-70/UX-74), summary updated (67→61, 31 UX remaining) |
+
 ## Session 267 — 2026-04-08 — 6 UX polish items (73→67 open)
 
 ### Summary

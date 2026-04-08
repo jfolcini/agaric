@@ -44,12 +44,13 @@ The default view — one page per day, created automatically.
 - Create pages under a namespace with the `+` button on folders
 - Breadcrumb navigation for namespaced titles
 - Create new page (Ctrl+N), delete with confirmation
+- Rename page via Dialog-based RenameDialog with proper form semantics (UX-30)
 
 ### Tags
 
 - Browse and create tags
 - Usage counts displayed next to each tag name (UX-69)
-- Boolean tag queries (AND / OR / NOT) via filter panel
+- Boolean tag queries (AND / OR / NOT) via filter panel with 3-way mode toggle (UX-70)
 - Click to navigate to tag page
 
 ### Properties
@@ -97,6 +98,7 @@ The default view — one page per day, created automatically.
 - Journal template indicator badge with tooltip explaining auto-application (UX-72)
 - Click to navigate to template page
 - Remove template status with confirmation dialog (UX-73) and toast
+- **Template toggle button**: LayoutTemplate icon button in PageHeaderMenu to toggle template status with tooltip (UX-74)
 
 ### Page Editor
 
@@ -381,6 +383,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **LoadingSkeleton** (`src/components/LoadingSkeleton.tsx`): Skeleton loading placeholder with `count`/`height` props. Used by 7 components.
 - **Spinner** (`src/components/ui/spinner.tsx`): Animated loading indicator wrapping Loader2 with CVA size variants (`sm`=h-3.5, `md`=h-4, `lg`=h-5, `xl`=h-6). Default `md`. Used by 14 components.
 - **CloseButton** (`src/components/ui/close-button.tsx`): Shared `closeButtonClassName` constant + `CloseButtonIcon` component for overlay close buttons. Used by Dialog, Sheet.
+- **ChevronToggle** (`src/components/ui/chevron-toggle.tsx`): Reusable expand/collapse chevron with rotation transition. Props: `isExpanded`, `loading` (shows spinner), `size` (sm/md). Replaces duplicated ChevronRight rotation pattern across 7 consumers (UX-36). Used by CollapsiblePanelHeader, BlockInlineControls, PageTreeItem, QueryResult, CollapsibleGroupList, HistoryPanel, HistoryListItem.
 - **CardButton** (`src/components/ui/card-button.tsx`): Full-width card-style button with border, bg-card, hover:bg-accent/50, focus-visible ring. Used by ResultCard, SearchPanel.
 - **Label** (`src/components/ui/label.tsx`): Form label with CVA variants: `size` (sm/xs), `muted` (true/false). Used by HistoryView, AgendaFilterBuilder, PagePropertyTable, LinkEditPopover.
 - **ListItem** (`src/components/ui/list-item.tsx`): Interactive list item with group flex layout, gap-3, rounded-lg, hover:bg-accent/50. Used by TagList, PropertiesView.
@@ -414,10 +417,10 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **QueryResultTable** (`src/components/QueryResultTable.tsx`): Table-mode renderer for inline query results with dynamic columns. Extracted from QueryResult (R-14). Used by QueryResult.
 - **Select** (`src/components/ui/select.tsx`): Radix UI Select wrapper with 10 exported parts and `size` prop on SelectTrigger (`'default'` | `'sm'`). Replaces all native `<select>` elements across 5 component files. Uses `__none__`/`__all__` sentinels for empty values (Radix doesn't support `value=""`).
 - **StatusBadge** (`src/components/ui/status-badge.tsx`): CVA-based status badge with 5 state variants (DONE, DOING, TODO, overdue, default). Used by AlertSection, QueryResultList.
-- **PriorityBadge** (`src/components/ui/priority-badge.tsx`): Renders "P{n}" badge with dynamic color based on priority level via `priorityColor()`. Used by AlertSection, DuePanel.
+- **PriorityBadge** (`src/components/ui/priority-badge.tsx`): CVA-based "P{n}" badge with priority variant for dynamic color based on priority level (UX-26). Used by AlertSection, DuePanel.
 - **AlertListItem** (`src/components/ui/alert-list-item.tsx`): CVA-based `<li>` for alerts with `destructive` and `pending` variants. Used by AlertSection.
 - **SectionTitle** (`src/components/ui/section-title.tsx`): Section heading `<h4>` with label, count badge, and customizable color class. Used by AlertSection.
-- **PopoverMenuItem** (`src/components/ui/popover-menu-item.tsx`): Full-width button for popover menus with active/disabled styling. Used by AgendaFilterBuilder, AgendaSortGroupControls.
+- **PopoverMenuItem** (`src/components/ui/popover-menu-item.tsx`): CVA-based full-width button for popover menus with active/disabled variants (UX-26). Used by AgendaFilterBuilder, AgendaSortGroupControls.
 - **AlertSection** (`src/components/AlertSection.tsx`): Parameterized list component for overdue/upcoming alert blocks with status badges and optional priority badges. Eliminates duplication between OverdueSection and UpcomingSection (M-11). Used by OverdueSection, UpcomingSection.
 - **BlockHistorySheet** (`src/components/BlockHistorySheet.tsx`): Thin wrapper for block-level history side-drawer. Passes blockId, open state, and onOpenChange callback (M-1.1). Used by BlockTree.
 - **BlockPropertyDrawerSheet** (`src/components/BlockPropertyDrawerSheet.tsx`): Thin wrapper for block-level property drawer side-sheet (M-1.2). Used by BlockTree.
