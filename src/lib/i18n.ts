@@ -222,6 +222,16 @@ const resources = {
       'slash.templatePicker': 'Select template',
       'slash.selectTemplate': 'Select a template',
 
+      // Slash command category labels (UX-50)
+      'slashCommand.categories.tasks': 'Tasks',
+      'slashCommand.categories.dates': 'Dates',
+      'slashCommand.categories.references': 'References',
+      'slashCommand.categories.structure': 'Structure',
+      'slashCommand.categories.properties': 'Properties',
+      'slashCommand.categories.templates': 'Templates',
+      'slashCommand.categories.queries': 'Queries',
+      'slashCommand.categories.repeat': 'Repeat',
+
       // Linked References
       'references.headerOne': '1 Reference',
       'references.header': '{{count}} References',
@@ -415,6 +425,10 @@ const resources = {
       'pageBrowser.exportFailed': 'Failed to export pages',
       'pageBrowser.searchPlaceholder': 'Search pages...',
       'pageBrowser.noMatches': 'No matching pages',
+      'pageBrowser.sortLabel': 'Sort order',
+      'pageBrowser.sortRecent': 'Recent',
+      'pageBrowser.sortAlphabetical': 'Alphabetical',
+      'pageBrowser.sortCreated': 'Created',
 
       // Due Panel
       'duePanel.headerOne': '1 Due',

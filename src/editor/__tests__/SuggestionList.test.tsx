@@ -343,4 +343,115 @@ describe('SuggestionList', () => {
     const svgIcon = createBtn.querySelector('svg.text-primary')
     expect(svgIcon).toBeInTheDocument()
   })
+
+  // -- UX-50: Category grouping and icons --------------------------------------
+
+  it('renders category headers when items have categories (UX-50)', () => {
+    const command = vi.fn()
+    const items: PickerItem[] = [
+      { id: '1', label: 'TODO', category: 'slashCommand.categories.tasks' },
+      { id: '2', label: 'DOING', category: 'slashCommand.categories.tasks' },
+      { id: '3', label: 'DATE', category: 'slashCommand.categories.dates' },
+    ]
+
+    render(<SuggestionList items={items} command={command} />)
+
+    const categoryHeaders = screen.getAllByTestId('suggestion-category')
+    expect(categoryHeaders).toHaveLength(2)
+    expect(categoryHeaders[0]).toHaveTextContent('Tasks')
+    expect(categoryHeaders[1]).toHaveTextContent('Dates')
+  })
+
+  it('renders icons inline before item labels (UX-50)', () => {
+    const command = vi.fn()
+    const MockIcon = ({ className }: { className?: string | undefined }) => (
+      <svg data-testid="mock-icon" className={className} />
+    )
+    const items: PickerItem[] = [
+      { id: '1', label: 'TODO', icon: MockIcon, category: 'slashCommand.categories.tasks' },
+    ]
+
+    render(<SuggestionList items={items} command={command} />)
+
+    const icon = screen.getByTestId('mock-icon')
+    expect(icon).toBeInTheDocument()
+    const cls = icon.getAttribute('class') ?? ''
+    expect(cls).toContain('h-4')
+    expect(cls).toContain('w-4')
+    expect(cls).toContain('text-muted-foreground')
+  })
+
+  it('does not show empty category headers when filtering removes all items in a group (UX-50)', () => {
+    const command = vi.fn()
+    // Simulate a filtered result where only "Tasks" items match
+    const items: PickerItem[] = [
+      { id: '1', label: 'TODO', category: 'slashCommand.categories.tasks' },
+    ]
+
+    render(<SuggestionList items={items} command={command} />)
+
+    const categoryHeaders = screen.getAllByTestId('suggestion-category')
+    expect(categoryHeaders).toHaveLength(1)
+    expect(categoryHeaders[0]).toHaveTextContent('Tasks')
+    // "Dates" category should not appear at all
+    expect(screen.queryByText('Dates')).not.toBeInTheDocument()
+  })
+
+  it('keyboard navigation works across category groups (UX-50)', () => {
+    const ref = createRef<SuggestionListRef>()
+    const command = vi.fn()
+    const items: PickerItem[] = [
+      { id: '1', label: 'TODO', category: 'slashCommand.categories.tasks' },
+      { id: '2', label: 'DATE', category: 'slashCommand.categories.dates' },
+      { id: '3', label: 'LINK', category: 'slashCommand.categories.references' },
+    ]
+
+    render(<SuggestionList ref={ref} items={items} command={command} />)
+
+    // First item selected by default
+    const options = screen.getAllByRole('option')
+    expect(options[0]).toHaveAttribute('aria-selected', 'true')
+
+    // ArrowDown moves to next item across categories
+    act(() => {
+      ref.current?.onKeyDown({ event: makeKeyEvent('ArrowDown') })
+    })
+    expect(options[1]).toHaveAttribute('aria-selected', 'true')
+
+    // ArrowDown again
+    act(() => {
+      ref.current?.onKeyDown({ event: makeKeyEvent('ArrowDown') })
+    })
+    expect(options[2]).toHaveAttribute('aria-selected', 'true')
+
+    // Enter selects the item
+    act(() => {
+      ref.current?.onKeyDown({ event: makeKeyEvent('Enter') })
+    })
+    expect(command).toHaveBeenCalledWith(items[2])
+  })
+
+  it('renders separator between category groups but not before the first group (UX-50)', () => {
+    const command = vi.fn()
+    const items: PickerItem[] = [
+      { id: '1', label: 'TODO', category: 'slashCommand.categories.tasks' },
+      { id: '2', label: 'DATE', category: 'slashCommand.categories.dates' },
+      { id: '3', label: 'CODE', category: 'slashCommand.categories.structure' },
+    ]
+
+    render(<SuggestionList items={items} command={command} />)
+
+    const separators = screen.getAllByRole('separator')
+    // Should have separators between groups (2 separators for 3 groups)
+    expect(separators).toHaveLength(2)
+  })
+
+  it('does not render category headers for items without categories (UX-50)', () => {
+    const command = vi.fn()
+    // Plain items without categories (like tag picker items)
+    render(<SuggestionList items={sampleItems} command={command} />)
+
+    expect(screen.queryByTestId('suggestion-category')).not.toBeInTheDocument()
+    expect(screen.queryByRole('separator')).not.toBeInTheDocument()
+  })
 })

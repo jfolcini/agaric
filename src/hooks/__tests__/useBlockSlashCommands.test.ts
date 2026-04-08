@@ -92,6 +92,13 @@ describe('SLASH_COMMANDS', () => {
     expect(ids).toContain('template')
     expect(ids).toContain('attach')
   })
+
+  it('all commands have category and icon metadata (UX-50)', () => {
+    for (const cmd of SLASH_COMMANDS) {
+      expect(cmd.category).toBeTruthy()
+      expect(cmd.icon).toBeTruthy()
+    }
+  })
 })
 
 describe('searchSlashCommands', () => {
@@ -149,6 +156,22 @@ describe('searchSlashCommands', () => {
   it('returns empty array-like for non-matching query', () => {
     const results = searchSlashCommands('zzzzzzzznonexistent')
     expect(results.length).toBe(0)
+  })
+
+  it('filtered results preserve category and icon metadata (UX-50)', () => {
+    const results = searchSlashCommands('todo')
+    const todoItem = results.find((r) => r.id === 'todo')
+    expect(todoItem).toBeDefined()
+    expect(todoItem?.category).toBe('slashCommand.categories.tasks')
+    expect(todoItem?.icon).toBeTruthy()
+  })
+
+  it('dynamic table command includes category and icon (UX-50)', () => {
+    const results = searchSlashCommands('table 3x3')
+    const tableItem = results.find((r) => r.id === 'table:3:3')
+    expect(tableItem).toBeDefined()
+    expect(tableItem?.category).toBe('slashCommand.categories.structure')
+    expect(tableItem?.icon).toBeTruthy()
   })
 })
 

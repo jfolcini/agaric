@@ -7,7 +7,7 @@
  */
 
 import { Plus } from 'lucide-react'
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { cn } from '@/lib/utils'
@@ -20,6 +20,10 @@ export interface PickerItem {
   isCreate?: boolean
   /** When true, this item was matched via page alias (not direct title). */
   isAlias?: boolean
+  /** Category for grouping in the slash command menu (e.g. "Tasks", "Dates"). */
+  category?: string
+  /** Icon component from lucide-react, rendered inline before the label. */
+  icon?: React.ComponentType<{ className?: string | undefined }>
 }
 
 export interface SuggestionListProps {
@@ -73,6 +77,28 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
       },
     }))
 
+    // Group items by category while preserving flat index for keyboard navigation.
+    // Items without a category are rendered ungrouped.
+    const hasCategories = items.some((item) => item.category)
+
+    // Build ordered groups: [ { category, items: [ { item, flatIndex } ] } ]
+    const groups = useMemo(() => {
+      if (!hasCategories) return null
+      const groupMap = new Map<string, Array<{ item: PickerItem; flatIndex: number }>>()
+      const groupOrder: string[] = []
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        if (!item) continue
+        const cat = item.category ?? ''
+        if (!groupMap.has(cat)) {
+          groupMap.set(cat, [])
+          groupOrder.push(cat)
+        }
+        groupMap.get(cat)?.push({ item, flatIndex: i })
+      }
+      return groupOrder.map((cat) => ({ category: cat, items: groupMap.get(cat) ?? [] }))
+    }, [items, hasCategories])
+
     if (items.length === 0) {
       return (
         <output className="suggestion-empty p-2 text-sm text-muted-foreground" aria-live="polite">
@@ -80,6 +106,47 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
         </output>
       )
     }
+
+    const renderItemContent = (item: PickerItem) => {
+      if (item.isCreate) {
+        return (
+          <span className="flex items-center">
+            <Plus className="mr-1 h-3.5 w-3.5 text-primary" />
+            {t('suggestion.create')} <strong className="ml-1">{item.label}</strong>
+          </span>
+        )
+      }
+      const Icon = item.icon
+      if (Icon) {
+        return (
+          <span className="flex items-center">
+            <Icon className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
+            {item.label}
+          </span>
+        )
+      }
+      return item.label
+    }
+
+    const renderItem = (item: PickerItem, index: number) => (
+      <button
+        key={item.id}
+        id={`suggestion-${item.id}`}
+        className={cn(
+          'suggestion-item flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm transition-colors [@media(pointer:coarse)]:py-3 touch-target focus-outline',
+          index === selectedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+          item.isCreate && 'border-t border-border bg-accent/5',
+        )}
+        data-testid="suggestion-item"
+        onClick={() => selectItem(index)}
+        onPointerEnter={() => setSelectedIndex(index)}
+        type="button"
+        role="option"
+        aria-selected={index === selectedIndex}
+      >
+        {renderItemContent(item)}
+      </button>
+    )
 
     return (
       <div
@@ -93,32 +160,24 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
         }
         tabIndex={0}
       >
-        {items.map((item, index) => (
-          <button
-            key={item.id}
-            id={`suggestion-${item.id}`}
-            className={cn(
-              'suggestion-item flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm transition-colors [@media(pointer:coarse)]:py-3 touch-target focus-outline',
-              index === selectedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
-              item.isCreate && 'border-t border-border bg-accent/5',
-            )}
-            data-testid="suggestion-item"
-            onClick={() => selectItem(index)}
-            onPointerEnter={() => setSelectedIndex(index)}
-            type="button"
-            role="option"
-            aria-selected={index === selectedIndex}
-          >
-            {item.isCreate ? (
-              <span className="flex items-center">
-                <Plus className="mr-1 h-3.5 w-3.5 text-primary" />
-                {t('suggestion.create')} <strong className="ml-1">{item.label}</strong>
-              </span>
-            ) : (
-              item.label
-            )}
-          </button>
-        ))}
+        {groups
+          ? groups.map((group, groupIdx) => (
+              <fieldset key={group.category || '__ungrouped__'} className="border-none p-0 m-0">
+                {group.category && (
+                  <>
+                    {groupIdx > 0 && <hr className="border-t border-border/50 my-1" />}
+                    <div
+                      className="px-2 pt-2 pb-1 text-xs font-medium text-muted-foreground uppercase tracking-wider"
+                      data-testid="suggestion-category"
+                    >
+                      {t(group.category)}
+                    </div>
+                  </>
+                )}
+                {group.items.map(({ item, flatIndex }) => renderItem(item, flatIndex))}
+              </fieldset>
+            ))
+          : items.map((item, index) => renderItem(item, index))}
       </div>
     )
   },

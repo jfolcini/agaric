@@ -92,7 +92,7 @@ cargo tauri dev              # Launch app with hot reload
 ### Testing
 
 ```bash
-npm test                     # Frontend tests (~3200+ tests, Vitest)
+npm test                     # Frontend tests (~5000+ tests, Vitest)
 cd src-tauri && cargo nextest run   # Rust tests (~850+ tests)
 npx playwright test          # E2E tests (Playwright + Chromium)
 ```
@@ -140,7 +140,7 @@ ARCHITECTURE.md              # Architecture deep-dive
 
 ## Database
 
-SQLite database stored at the platform's app data directory. WAL mode with foreign keys enforced. 1 writer + 4 reader connection pool.
+SQLite database stored at the platform's app data directory. WAL mode with foreign keys enforced. 2 writers + 4 readers (6 total) connection pool.
 
 | Platform | Path |
 |----------|------|

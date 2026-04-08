@@ -27,6 +27,62 @@ vi.mock('sonner', () => ({
   },
 }))
 
+vi.mock('@/components/ui/select', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const React = require('react')
+  const Ctx = React.createContext({})
+
+  function Select({ value, onValueChange, children, disabled }: any) {
+    const triggerPropsRef = React.useRef({})
+    return React.createElement(
+      Ctx.Provider,
+      { value: { value, onValueChange, triggerPropsRef, disabled } },
+      children,
+    )
+  }
+
+  function SelectTrigger({ size, className, ...props }: any) {
+    const ctx = React.useContext(Ctx)
+    Object.assign(ctx.triggerPropsRef.current, { size, className, ...props })
+    return null
+  }
+
+  function SelectValue() {
+    return null
+  }
+
+  function SelectContent({ children }: any) {
+    const ctx = React.useContext(Ctx)
+    const tp = ctx.triggerPropsRef.current
+    return React.createElement(
+      'select',
+      {
+        value: ctx.value ?? '',
+        onChange: (e: any) => ctx.onValueChange?.(e.target.value),
+        disabled: ctx.disabled,
+        'aria-label': tp['aria-label'],
+        className: tp.className,
+        'data-size': tp.size,
+      },
+      children,
+    )
+  }
+
+  function SelectItem({ value, children }: any) {
+    return React.createElement('option', { value }, children)
+  }
+
+  return { Select, SelectTrigger, SelectValue, SelectContent, SelectItem }
+})
+
+vi.mock('@/lib/recent-pages', () => ({
+  getRecentPages: vi.fn(() => []),
+}))
+
+import { getRecentPages } from '@/lib/recent-pages'
+
+const mockedGetRecentPages = vi.mocked(getRecentPages)
+
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
 
@@ -37,6 +93,7 @@ function findTrashButton(row: HTMLElement): HTMLButtonElement {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.removeItem('page-browser-sort')
 })
 
 describe('PageBrowser', () => {
@@ -1057,6 +1114,171 @@ describe('PageBrowser', () => {
 
       expect(screen.getByText('Meeting notes')).toBeInTheDocument()
       expect(screen.getByText('Shopping list')).toBeInTheDocument()
+    })
+  })
+
+  describe('sort dropdown', () => {
+    it('renders sort dropdown with 3 options', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'A Page' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('A Page')
+
+      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
+      expect(sortSelect).toBeInTheDocument()
+
+      const options = within(sortSelect).getAllByRole('option')
+      expect(options).toHaveLength(3)
+      expect(options.map((o) => o.textContent)).toEqual(['Alphabetical', 'Recent', 'Created'])
+    })
+
+    it('defaults to Alphabetical sort', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'A Page' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('A Page')
+
+      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
+      expect(sortSelect).toHaveValue('alphabetical')
+    })
+
+    it('sorts pages alphabetically by default', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Cherry' }),
+          makePage({ id: 'P2', content: 'Apple' }),
+          makePage({ id: 'P3', content: 'Banana' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('Apple')
+
+      const listItems = screen.getAllByRole('listitem')
+      const titles = listItems.map(
+        (li) => li.querySelector('.page-browser-item-title')?.textContent,
+      )
+      expect(titles).toEqual(['Apple', 'Banana', 'Cherry'])
+    })
+
+    it('switching to Created sort orders pages by ULID descending (newest first)', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: '01AAA', content: 'Oldest' }),
+          makePage({ id: '01CCC', content: 'Newest' }),
+          makePage({ id: '01BBB', content: 'Middle' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('Oldest')
+
+      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
+      await user.selectOptions(sortSelect, 'created')
+
+      const listItems = screen.getAllByRole('listitem')
+      const titles = listItems.map(
+        (li) => li.querySelector('.page-browser-item-title')?.textContent,
+      )
+      expect(titles).toEqual(['Newest', 'Middle', 'Oldest'])
+    })
+
+    it('switching to Recent sort uses recent-pages store', async () => {
+      const user = userEvent.setup()
+      mockedGetRecentPages.mockReturnValue([
+        { id: 'P2', title: 'Banana', visitedAt: '2025-01-15T12:00:00Z' },
+        { id: 'P3', title: 'Cherry', visitedAt: '2025-01-14T12:00:00Z' },
+      ])
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Apple' }),
+          makePage({ id: 'P2', content: 'Banana' }),
+          makePage({ id: 'P3', content: 'Cherry' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('Apple')
+
+      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
+      await user.selectOptions(sortSelect, 'recent')
+
+      const listItems = screen.getAllByRole('listitem')
+      const titles = listItems.map(
+        (li) => li.querySelector('.page-browser-item-title')?.textContent,
+      )
+      // Banana (most recent), Cherry (second recent), Apple (not in recent, alphabetical fallback)
+      expect(titles).toEqual(['Banana', 'Cherry', 'Apple'])
+    })
+
+    it('persists sort preference to localStorage', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'A Page' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('A Page')
+
+      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
+      await user.selectOptions(sortSelect, 'created')
+
+      expect(localStorage.getItem('page-browser-sort')).toBe('created')
+    })
+
+    it('reads persisted sort preference from localStorage', async () => {
+      localStorage.setItem('page-browser-sort', 'recent')
+
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'A Page' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('A Page')
+
+      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
+      expect(sortSelect).toHaveValue('recent')
+    })
+
+    it('sort dropdown passes a11y audit', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'Accessible page' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      const { container } = render(<PageBrowser />)
+
+      await waitFor(async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      })
     })
   })
 })

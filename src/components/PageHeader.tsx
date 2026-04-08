@@ -396,7 +396,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
                     {i > 0 && <span className="text-muted-foreground/50">/</span>}
                     <button
                       type="button"
-                      className="hover:text-foreground hover:underline transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 rounded"
+                      className="hover:text-foreground hover:underline transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 rounded touch-target"
                       onClick={() => navigateToNamespace()}
                     >
                       {segment}

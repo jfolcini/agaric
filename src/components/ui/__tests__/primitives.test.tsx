@@ -115,7 +115,8 @@ describe('Spinner', () => {
 describe('CloseButtonIcon', () => {
   it('closeButtonClassName contains expected classes', () => {
     expect(closeButtonClassName).toContain('opacity-70')
-    expect(closeButtonClassName).toContain('ring-offset-background')
+    expect(closeButtonClassName).toContain('focus-visible:ring-[3px]')
+    expect(closeButtonClassName).toContain('focus-visible:ring-ring/50')
     expect(closeButtonClassName).toContain('[@media(pointer:coarse)]')
   })
 

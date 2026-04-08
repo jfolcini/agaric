@@ -169,8 +169,9 @@ common ancestor content. User sees both and chooses. On resolution: chosen conte
 SQLite in WAL mode. Database file at `~/.local/share/com.agaric.app/notes.db`.
 
 **Pool architecture:**
-- **Write pool:** Single connection (`max_connections(1)`) — serialises all writes including
-  materializer ops. No write contention by design.
+- **Write pool:** 2 connections (`max_connections(2)`) — SQLite WAL mode serialises writers at
+  the engine level; the second connection allows a queued writer to wait behind the first
+  without blocking the caller.
 - **Read pool:** 4 concurrent readers with `PRAGMA query_only = ON` enforced at SQLite level.
   Type-safe `State<WritePool>` and `State<ReadPool>` newtypes prevent accidental writes on the
   read pool.
@@ -189,7 +190,7 @@ limited to PRAGMAs, FTS5 operations, and dynamic SQL (~11 queries).
 
 ### Schema
 
-14 tables + 1 FTS5 virtual table, 19 indexes across 19 migrations.
+15 tables + 1 FTS5 virtual table, 22 indexes across 22 migrations.
 
 **Core tables:**
 
@@ -801,10 +802,10 @@ status/priority colors use these tokens — no hardcoded Tailwind colors for sem
 
 ### Tauri command wrappers
 
-`src/lib/tauri.ts` provides 67 type-safe wrappers over auto-generated `bindings.ts`. Handles
+`src/lib/tauri.ts` provides 70 type-safe wrappers over auto-generated `bindings.ts`. Handles
 Tauri 2's requirement for explicit `null` (not `undefined`) on `Option<T>` parameters.
 
-### Extracted hooks (31 in src/hooks/)
+### Extracted hooks (37 in src/hooks/)
 
 BlockTree's concerns are decomposed into focused hooks. Additional hooks extracted from
 component decompositions provide reusable logic across multiple views.
@@ -873,11 +874,11 @@ changes the hook re-fetches page 1 (paginated) or restarts polling.
 
 **Editor**: SuggestionList
 
-**shadcn/ui (21)**: alert-dialog, badge, button, calendar, card, card-button, close-button, dialog, input, label, list-item, popover, scroll-area, select, separator, sheet, sidebar, skeleton, sonner, spinner, tooltip
+**shadcn/ui (27)**: alert-dialog, alert-list-item, badge, button, calendar, card, card-button, chevron-toggle, close-button, dialog, input, label, list-item, popover, popover-menu-item, priority-badge, scroll-area, section-title, select, separator, sheet, sidebar, skeleton, sonner, spinner, status-badge, tooltip
 
-### Utility modules (src/lib/ — 27 modules)
+### Utility modules (src/lib/ — 29 modules)
 
-- `tauri.ts` — Hand-written wrappers with object-style APIs for all 67 commands
+- `tauri.ts` — Hand-written wrappers with object-style APIs for all 70 commands
 - `bindings.ts` — Auto-generated from Rust types via specta
 - `tauri-mock.ts` — In-memory backend mock (activates when Tauri absent)
 - `tree-utils.ts` — Flat tree manipulation (depth, descendants, DnD projection)
@@ -1060,8 +1061,8 @@ CI doesn't need a live database. `cargo sqlx prepare --check` is a CI gate.
 | Frontend unit | Vitest (jsdom) | Pure functions, store logic, hooks |
 | Frontend component | Vitest + @testing-library/react | Render, interaction, a11y (vitest-axe) |
 | Frontend property | Vitest + fast-check | Markdown serializer fuzzing, round-trip stability |
-| E2E | Playwright (Chromium, 14 spec files) | Smoke, editor lifecycle, links, keyboard, Markdown syntax, slash commands, toolbar, tags, undo/redo, conflicts, history, error scenarios, sync UI, features coverage |
-| Benchmarks | Criterion (12 bench files) | Backlink queries, cache, commands, drafts, FTS, hash, move/reorder, op log, pagination, soft delete, sync, undo/redo (manual only) |
+| E2E | Playwright (Chromium, 20 spec files) | Smoke, editor lifecycle, links, keyboard, Markdown syntax, slash commands, toolbar, tags, undo/redo, conflicts, history, error scenarios, sync UI, features coverage |
+| Benchmarks | Criterion (16 bench files) | Backlink queries, cache, commands, drafts, FTS, hash, import, merge, move/reorder, op log, pagination, snapshot, soft delete, sync, tag query, undo/redo (manual only) |
 
 ### Pre-commit hooks (prek)
 
@@ -1456,7 +1457,7 @@ architectural changes were required.
 
 ## 20. Tauri Command API
 
-62 core + 5 sync = 67 total commands. Each has an `inner_*` function taking `&SqlitePool` for
+70 total commands (including 11 sync/pairing). Each has an `inner_*` function taking `&SqlitePool` for
 testability. All use cursor-based pagination where applicable.
 
 ### Block Operations (9)
@@ -1562,9 +1563,9 @@ testability. All use cursor-based pagination where applicable.
 
 ---
 
-## 21. Rust Backend Modules (31)
+## 21. Rust Backend Modules (33)
 
 backlink_query, cache, commands, dag, db, device, draft, error, fts, hash, import, materializer,
-merge, op, op_log, pagination, pairing, peer_refs, recovery, reverse, snapshot, soft_delete,
-sync_cert, sync_daemon, sync_events, sync_net, sync_protocol, sync_scheduler, tag_query, ulid,
-word_diff
+merge, op, op_log, pagination, pairing, peer_refs, recovery, recurrence, reverse, snapshot,
+soft_delete, sync_cert, sync_daemon, sync_events, sync_net, sync_protocol, sync_scheduler,
+tag_inheritance, tag_query, ulid, word_diff

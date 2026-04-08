@@ -140,7 +140,7 @@ cargo tauri android dev --target x86_64
 ### Frontend Tests (Vitest)
 
 ```bash
-npm test                    # Single run (2063 tests)
+npm test                    # Single run (~5000 tests)
 npm run test:watch          # Watch mode
 npm run test:coverage       # With v8 coverage (thresholds: 80% lines/functions/statements, 75% branches)
 ```
@@ -185,7 +185,7 @@ E2E tests run against the Vite dev server with the in-memory mock backend. They 
 ```bash
 cd src-tauri
 
-# All benchmarks (12 bench files)
+# All benchmarks (16 bench files)
 cargo bench
 
 # Specific benchmark
@@ -193,7 +193,7 @@ cargo bench --bench hash_bench
 cargo bench --bench commands_bench
 ```
 
-Benchmarks are manual only — never run in CI. They cover: commands, sync, cache, op_log, FTS, backlinks, pagination, hash, draft, soft_delete, move/reorder, undo/redo.
+Benchmarks are manual only — never run in CI. They cover: backlink queries, cache, commands, drafts, FTS, hash, import, merge, move/reorder, op_log, pagination, snapshot, soft_delete, sync, tag query, undo/redo.
 
 ### Pre-commit Hooks
 

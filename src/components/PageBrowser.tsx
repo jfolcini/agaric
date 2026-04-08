@@ -17,8 +17,16 @@ import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { PageTreeItem } from '@/components/PageTreeItem'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { buildPageTree } from '@/lib/page-tree'
+import { getRecentPages } from '@/lib/recent-pages'
 import { usePageDelete } from '../hooks/usePageDelete'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { downloadBlob, exportGraphAsZip } from '../lib/export-graph'
@@ -26,6 +34,28 @@ import type { BlockRow } from '../lib/tauri'
 import { createBlock, listBlocks } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
 import { LoadMoreButton } from './LoadMoreButton'
+
+type SortOption = 'alphabetical' | 'recent' | 'created'
+
+const SORT_STORAGE_KEY = 'page-browser-sort'
+
+function readSortPreference(): SortOption {
+  try {
+    const stored = localStorage.getItem(SORT_STORAGE_KEY)
+    if (stored === 'alphabetical' || stored === 'recent' || stored === 'created') return stored
+  } catch {
+    // localStorage unavailable
+  }
+  return 'alphabetical'
+}
+
+function writeSortPreference(value: SortOption): void {
+  try {
+    localStorage.setItem(SORT_STORAGE_KEY, value)
+  } catch {
+    // localStorage unavailable
+  }
+}
 
 interface PageBrowserProps {
   /** Called when a page is selected. */
@@ -53,6 +83,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const [isCreating, setIsCreating] = useState(false)
   const [newPageName, setNewPageName] = useState('')
   const [filterText, setFilterText] = useState('')
+  const [sortOption, setSortOption] = useState<SortOption>(readSortPreference)
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
   const [exporting, setExporting] = useState(false)
   const formRef = useRef<HTMLFormElement>(null)
@@ -120,11 +151,37 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     }, 0)
   }, [])
 
+  const handleSortChange = useCallback((value: SortOption) => {
+    setSortOption(value)
+    writeSortPreference(value)
+  }, [])
+
   const filteredPages = useMemo(() => {
-    if (!filterText.trim()) return pages
-    const lower = filterText.toLowerCase()
-    return pages.filter((p) => (p.content ?? '').toLowerCase().includes(lower))
-  }, [pages, filterText])
+    let result = pages
+    if (filterText.trim()) {
+      const lower = filterText.toLowerCase()
+      result = result.filter((p) => (p.content ?? '').toLowerCase().includes(lower))
+    }
+
+    const sorted = [...result]
+    if (sortOption === 'alphabetical') {
+      sorted.sort((a, b) => (a.content ?? '').localeCompare(b.content ?? ''))
+    } else if (sortOption === 'created') {
+      sorted.sort((a, b) => b.id.localeCompare(a.id))
+    } else if (sortOption === 'recent') {
+      const recentPages = getRecentPages()
+      const recentMap = new Map(recentPages.map((rp) => [rp.id, rp.visitedAt]))
+      sorted.sort((a, b) => {
+        const aTime = recentMap.get(a.id)
+        const bTime = recentMap.get(b.id)
+        if (aTime && bTime) return bTime.localeCompare(aTime)
+        if (aTime) return -1
+        if (bTime) return 1
+        return (a.content ?? '').localeCompare(b.content ?? '')
+      })
+    }
+    return sorted
+  }, [pages, filterText, sortOption])
 
   const isFiltering = filterText.trim().length > 0
 
@@ -152,20 +209,36 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           </Button>
         </form>
 
-        {/* Search/filter input */}
+        {/* Search/filter input + sort dropdown */}
         {pages.length > 0 && (
-          <div className="relative">
-            <Search
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
-              aria-hidden="true"
-            />
-            <Input
-              value={filterText}
-              onChange={(e) => setFilterText(e.target.value)}
-              placeholder={t('pageBrowser.searchPlaceholder')}
-              className="pl-8"
-              aria-label={t('pageBrowser.searchPlaceholder')}
-            />
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <Input
+                value={filterText}
+                onChange={(e) => setFilterText(e.target.value)}
+                placeholder={t('pageBrowser.searchPlaceholder')}
+                className="pl-8"
+                aria-label={t('pageBrowser.searchPlaceholder')}
+              />
+            </div>
+            <Select value={sortOption} onValueChange={(v) => handleSortChange(v as SortOption)}>
+              <SelectTrigger
+                size="sm"
+                className="w-auto min-w-[7rem]"
+                aria-label={t('pageBrowser.sortLabel')}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="alphabetical">{t('pageBrowser.sortAlphabetical')}</SelectItem>
+                <SelectItem value="recent">{t('pageBrowser.sortRecent')}</SelectItem>
+                <SelectItem value="created">{t('pageBrowser.sortCreated')}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         )}
       </div>
