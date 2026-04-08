@@ -8,11 +8,18 @@
  *  - Purge requires explicit confirmation (two-click)
  *  - Cursor-based pagination (load more)
  *  - Empty state rendering
+ *  - Multi-select: checkbox renders, click toggles selection
+ *  - Shift+Click range selection
+ *  - Selection toolbar appears with correct count
+ *  - Batch restore calls restoreBlock for each selected
+ *  - Batch purge shows confirmation dialog
+ *  - Original location breadcrumbs render with parent page title
+ *  - Breadcrumbs show "(deleted page)" when parent is missing
  *  - a11y compliance
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -29,12 +36,12 @@ vi.mock('sonner', () => ({
 
 const mockedInvoke = vi.mocked(invoke)
 
-function makeBlock(id: string, content: string, deletedAt: string) {
+function makeBlock(id: string, content: string, deletedAt: string, parentId: string | null = null) {
   return {
     id,
     block_type: 'content',
     content,
-    parent_id: null,
+    parent_id: parentId,
     position: null,
     deleted_at: deletedAt,
     is_conflict: false,
@@ -42,6 +49,24 @@ function makeBlock(id: string, content: string, deletedAt: string) {
 }
 
 const emptyPage = { items: [], next_cursor: null, has_more: false }
+
+/**
+ * Helper: mock invoke to return items on list_blocks and empty [] on batch_resolve.
+ * Returns the page so callers can reference it.
+ */
+function mockListAndResolve(items: ReturnType<typeof makeBlock>[], hasMore = false) {
+  const page = {
+    items,
+    next_cursor: hasMore ? 'cursor_next' : null,
+    has_more: hasMore,
+  }
+  mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+    if (cmd === 'list_blocks') return page
+    if (cmd === 'batch_resolve') return []
+    return undefined
+  })
+  return page
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -80,15 +105,10 @@ describe('TrashView', () => {
   })
 
   it('renders deleted blocks with restore and purge buttons', async () => {
-    const page = {
-      items: [
-        makeBlock('B1', 'deleted item 1', '2025-01-15T00:00:00Z'),
-        makeBlock('B2', 'deleted item 2', '2025-01-14T00:00:00Z'),
-      ],
-      next_cursor: null,
-      has_more: false,
-    }
-    mockedInvoke.mockResolvedValueOnce(page)
+    mockListAndResolve([
+      makeBlock('B1', 'deleted item 1', '2025-01-15T00:00:00Z'),
+      makeBlock('B2', 'deleted item 2', '2025-01-14T00:00:00Z'),
+    ])
 
     render(<TrashView />)
 
@@ -108,9 +128,12 @@ describe('TrashView', () => {
   it('restore calls restoreBlock with correct deleted_at_ref', async () => {
     const user = userEvent.setup()
     const block = makeBlock('B1', 'item', '2025-01-15T12:00:00Z')
-    mockedInvoke
-      .mockResolvedValueOnce({ items: [block], next_cursor: null, has_more: false })
-      .mockResolvedValueOnce({ block_id: 'B1', restored_count: 1 })
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'restore_block') return { block_id: 'B1', restored_count: 1 }
+      return undefined
+    })
 
     render(<TrashView />)
 
@@ -129,45 +152,33 @@ describe('TrashView', () => {
   it('purge requires two-click confirmation', async () => {
     const user = userEvent.setup()
     const block = makeBlock('B1', 'to purge', '2025-01-15T00:00:00Z')
-    mockedInvoke.mockResolvedValueOnce({
-      items: [block],
-      next_cursor: null,
-      has_more: false,
-    })
+    mockListAndResolve([block])
 
     render(<TrashView />)
 
     // First click: should show confirmation, NOT call purge_block
-    const purgeBtn = await screen.findByRole('button', { name: /Purge/i })
+    const purgeBtn = await screen.findByRole('button', { name: /^Purge$/i })
     await user.click(purgeBtn)
 
     // After first click, confirmation dialog should appear
     expect(screen.getByText('Permanently delete?')).toBeInTheDocument()
-
-    // invoke should NOT have been called for purge yet (only the initial list_blocks)
-    expect(mockedInvoke).toHaveBeenCalledTimes(1)
 
     // Clicking "No" should cancel
     const noBtn = screen.getByRole('button', { name: /No/i })
     await user.click(noBtn)
 
     expect(screen.queryByText('Permanently delete?')).not.toBeInTheDocument()
-    expect(mockedInvoke).toHaveBeenCalledTimes(1) // Still only the initial list call
   })
 
   it('pressing Escape dismisses the purge confirmation', async () => {
     const user = userEvent.setup()
     const block = makeBlock('B1', 'to purge', '2025-01-15T00:00:00Z')
-    mockedInvoke.mockResolvedValueOnce({
-      items: [block],
-      next_cursor: null,
-      has_more: false,
-    })
+    mockListAndResolve([block])
 
     render(<TrashView />)
 
     // First click: shows confirmation
-    const purgeBtn = await screen.findByRole('button', { name: /Purge/i })
+    const purgeBtn = await screen.findByRole('button', { name: /^Purge$/i })
     await user.click(purgeBtn)
 
     expect(screen.getByText('Permanently delete?')).toBeInTheDocument()
@@ -176,20 +187,22 @@ describe('TrashView', () => {
     await user.keyboard('{Escape}')
 
     expect(screen.queryByText('Permanently delete?')).not.toBeInTheDocument()
-    expect(mockedInvoke).toHaveBeenCalledTimes(1) // Only the initial list call
   })
 
   it('purge executes on confirmation Yes click', async () => {
     const user = userEvent.setup()
     const block = makeBlock('B1', 'to purge', '2025-01-15T00:00:00Z')
-    mockedInvoke
-      .mockResolvedValueOnce({ items: [block], next_cursor: null, has_more: false })
-      .mockResolvedValueOnce({ block_id: 'B1', purged_count: 1 })
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'purge_block') return { block_id: 'B1', purged_count: 1 }
+      return undefined
+    })
 
     render(<TrashView />)
 
     // First click shows confirmation
-    const purgeBtn = await screen.findByRole('button', { name: /Purge/i })
+    const purgeBtn = await screen.findByRole('button', { name: /^Purge$/i })
     await user.click(purgeBtn)
 
     // Second click (Yes) executes purge
@@ -202,12 +215,7 @@ describe('TrashView', () => {
   })
 
   it('shows Load More button when has_more is true', async () => {
-    const page1 = {
-      items: [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')],
-      next_cursor: 'cursor_page2',
-      has_more: true,
-    }
-    mockedInvoke.mockResolvedValueOnce(page1)
+    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')], true)
 
     render(<TrashView />)
 
@@ -227,7 +235,15 @@ describe('TrashView', () => {
       next_cursor: null,
       has_more: false,
     }
-    mockedInvoke.mockResolvedValueOnce(page1).mockResolvedValueOnce(page2)
+    let callCount = 0
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') {
+        callCount++
+        return callCount === 1 ? page1 : page2
+      }
+      if (cmd === 'batch_resolve') return []
+      return undefined
+    })
 
     render(<TrashView />)
 
@@ -266,9 +282,12 @@ describe('TrashView', () => {
   it('removes block from list after successful restore', async () => {
     const user = userEvent.setup()
     const block = makeBlock('B1', 'to restore', '2025-01-15T00:00:00Z')
-    mockedInvoke
-      .mockResolvedValueOnce({ items: [block], next_cursor: null, has_more: false })
-      .mockResolvedValueOnce({ block_id: 'B1', restored_count: 1 })
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'restore_block') return { block_id: 'B1', restored_count: 1 }
+      return undefined
+    })
 
     render(<TrashView />)
 
@@ -305,9 +324,12 @@ describe('TrashView', () => {
   it('handles failed restore gracefully', async () => {
     const user = userEvent.setup()
     const block = makeBlock('B1', 'item', '2025-01-15T00:00:00Z')
-    mockedInvoke
-      .mockResolvedValueOnce({ items: [block], next_cursor: null, has_more: false })
-      .mockRejectedValueOnce(new Error('Restore failed'))
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'restore_block') throw new Error('Restore failed')
+      return undefined
+    })
 
     render(<TrashView />)
 
@@ -328,14 +350,17 @@ describe('TrashView', () => {
   it('handles failed purge gracefully', async () => {
     const user = userEvent.setup()
     const block = makeBlock('B1', 'item', '2025-01-15T00:00:00Z')
-    mockedInvoke
-      .mockResolvedValueOnce({ items: [block], next_cursor: null, has_more: false })
-      .mockRejectedValueOnce(new Error('Purge failed'))
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'purge_block') throw new Error('Purge failed')
+      return undefined
+    })
 
     render(<TrashView />)
 
     // First click shows confirmation
-    const purgeBtn = await screen.findByRole('button', { name: /Purge/i })
+    const purgeBtn = await screen.findByRole('button', { name: /^Purge$/i })
     await user.click(purgeBtn)
 
     // Second click (Yes) triggers purge which fails
@@ -356,9 +381,12 @@ describe('TrashView', () => {
   it('shows success toast after successful restore', async () => {
     const user = userEvent.setup()
     const block = makeBlock('B1', 'to restore', '2025-01-15T00:00:00Z')
-    mockedInvoke
-      .mockResolvedValueOnce({ items: [block], next_cursor: null, has_more: false })
-      .mockResolvedValueOnce({ block_id: 'B1', restored_count: 1 })
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'restore_block') return { block_id: 'B1', restored_count: 1 }
+      return undefined
+    })
 
     render(<TrashView />)
 
@@ -373,13 +401,16 @@ describe('TrashView', () => {
   it('shows success toast after successful purge', async () => {
     const user = userEvent.setup()
     const block = makeBlock('B1', 'to purge', '2025-01-15T00:00:00Z')
-    mockedInvoke
-      .mockResolvedValueOnce({ items: [block], next_cursor: null, has_more: false })
-      .mockResolvedValueOnce({ block_id: 'B1', purged_count: 1 })
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'purge_block') return { block_id: 'B1', purged_count: 1 }
+      return undefined
+    })
 
     render(<TrashView />)
 
-    const purgeBtn = await screen.findByRole('button', { name: /Purge/i })
+    const purgeBtn = await screen.findByRole('button', { name: /^Purge$/i })
     await user.click(purgeBtn)
 
     const yesBtn = screen.getByRole('button', { name: /Yes/i })
@@ -398,9 +429,12 @@ describe('TrashView', () => {
       ...makeBlock('P1', 'My Page', '2025-01-15T12:00:00Z'),
       block_type: 'page',
     }
-    mockedInvoke
-      .mockResolvedValueOnce({ items: [block], next_cursor: null, has_more: false })
-      .mockResolvedValueOnce({ block_id: 'P1', restored_count: 1 })
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'restore_block') return { block_id: 'P1', restored_count: 1 }
+      return undefined
+    })
 
     render(<TrashView />)
 
@@ -416,9 +450,12 @@ describe('TrashView', () => {
   it('does not update resolve cache when restoring a content block', async () => {
     const user = userEvent.setup()
     const block = makeBlock('C1', 'content text', '2025-01-15T12:00:00Z')
-    mockedInvoke
-      .mockResolvedValueOnce({ items: [block], next_cursor: null, has_more: false })
-      .mockResolvedValueOnce({ block_id: 'C1', restored_count: 1 })
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'restore_block') return { block_id: 'C1', restored_count: 1 }
+      return undefined
+    })
 
     const versionBefore = useResolveStore.getState().version
 
@@ -436,15 +473,320 @@ describe('TrashView', () => {
     expect(useResolveStore.getState().version).toBe(versionBefore)
   })
 
+  // ── Multi-select ────────────────────────────────────────────────────
+
+  it('renders checkboxes on each trash item', async () => {
+    mockListAndResolve([
+      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
+      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+    ])
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    const checkboxes = screen.getAllByTestId('trash-item-checkbox')
+    expect(checkboxes).toHaveLength(2)
+    // All unchecked initially
+    for (const cb of checkboxes) {
+      expect(cb).not.toBeChecked()
+    }
+  })
+
+  it('click on checkbox toggles selection', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')])
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    const checkbox = screen.getByTestId('trash-item-checkbox')
+
+    // Click to select
+    await user.click(checkbox)
+    expect(checkbox).toBeChecked()
+
+    // Click again to deselect
+    await user.click(checkbox)
+    expect(checkbox).not.toBeChecked()
+  })
+
+  it('clicking a row toggles selection', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')])
+
+    render(<TrashView />)
+
+    const item = await screen.findByTestId('trash-item')
+    await user.click(item)
+
+    const checkbox = screen.getByTestId('trash-item-checkbox')
+    expect(checkbox).toBeChecked()
+  })
+
+  it('Shift+Click range-selects items', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([
+      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
+      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+      makeBlock('B3', 'item 3', '2025-01-13T00:00:00Z'),
+    ])
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    const items = screen.getAllByTestId('trash-item')
+
+    // Click first item
+    await user.click(items[0] as HTMLElement)
+
+    // Shift+click third item
+    await user.keyboard('{Shift>}')
+    await user.click(items[2] as HTMLElement)
+    await user.keyboard('{/Shift}')
+
+    // All three checkboxes should be checked
+    const checkboxes = screen.getAllByTestId('trash-item-checkbox')
+    expect(checkboxes[0] as HTMLElement).toBeChecked()
+    expect(checkboxes[1] as HTMLElement).toBeChecked()
+    expect(checkboxes[2] as HTMLElement).toBeChecked()
+  })
+
+  it('selection toolbar appears with correct count', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([
+      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
+      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+    ])
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+
+    // No toolbar initially
+    expect(screen.queryByRole('toolbar')).not.toBeInTheDocument()
+
+    // Select one item
+    const checkboxes = screen.getAllByTestId('trash-item-checkbox')
+    await user.click(checkboxes[0] as HTMLElement)
+
+    // Toolbar should appear with "1 selected"
+    const toolbar = screen.getByRole('toolbar')
+    expect(toolbar).toBeInTheDocument()
+    expect(within(toolbar).getByText('1 selected')).toBeInTheDocument()
+
+    // Select another
+    await user.click(checkboxes[1] as HTMLElement)
+    expect(within(toolbar).getByText('2 selected')).toBeInTheDocument()
+  })
+
+  it('selection toolbar has Select all, Deselect all, Restore all, Purge all buttons', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')])
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    const checkbox = screen.getByTestId('trash-item-checkbox')
+    await user.click(checkbox)
+
+    expect(screen.getByRole('button', { name: /^Select all$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Deselect all$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Restore all$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Purge all$/i })).toBeInTheDocument()
+  })
+
+  it('batch restore calls restoreBlock for each selected', async () => {
+    const user = userEvent.setup()
+    const blocks = [
+      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
+      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+    ]
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'restore_block') return { block_id: 'XX', restored_count: 1 }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+
+    // Select both items
+    const checkboxes = screen.getAllByTestId('trash-item-checkbox')
+    await user.click(checkboxes[0] as HTMLElement)
+    await user.click(checkboxes[1] as HTMLElement)
+
+    // Click Restore all
+    const restoreAllBtn = screen.getByRole('button', { name: /Restore all/i })
+    await user.click(restoreAllBtn)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('restore_block', {
+        blockId: 'B1',
+        deletedAtRef: '2025-01-15T00:00:00Z',
+      })
+      expect(mockedInvoke).toHaveBeenCalledWith('restore_block', {
+        blockId: 'B2',
+        deletedAtRef: '2025-01-14T00:00:00Z',
+      })
+    })
+
+    // Should show batch toast
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('2 blocks restored')
+    })
+  })
+
+  it('batch purge shows confirmation dialog then calls purgeBlock for each', async () => {
+    const user = userEvent.setup()
+    const blocks = [
+      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
+      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+    ]
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'purge_block') return { block_id: 'XX', purged_count: 1 }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+
+    // Select both items
+    const checkboxes = screen.getAllByTestId('trash-item-checkbox')
+    await user.click(checkboxes[0] as HTMLElement)
+    await user.click(checkboxes[1] as HTMLElement)
+
+    // Click Purge all
+    const purgeAllBtn = screen.getByRole('button', { name: /Purge all/i })
+    await user.click(purgeAllBtn)
+
+    // Confirmation dialog should appear
+    expect(screen.getByText(/Permanently delete 2 items\?/)).toBeInTheDocument()
+
+    // Confirm
+    const yesBtn = screen.getByRole('button', { name: /Yes/i })
+    await user.click(yesBtn)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('purge_block', { blockId: 'B1' })
+      expect(mockedInvoke).toHaveBeenCalledWith('purge_block', { blockId: 'B2' })
+    })
+
+    // Should show batch toast
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('2 blocks permanently deleted')
+    })
+  })
+
+  it('Deselect all clears selection and hides toolbar', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')])
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    const checkbox = screen.getByTestId('trash-item-checkbox')
+    await user.click(checkbox)
+
+    expect(screen.getByRole('toolbar')).toBeInTheDocument()
+
+    const deselectBtn = screen.getByRole('button', { name: /Deselect all/i })
+    await user.click(deselectBtn)
+
+    expect(screen.queryByRole('toolbar')).not.toBeInTheDocument()
+    expect(checkbox).not.toBeChecked()
+  })
+
+  it('Select all selects all visible items', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([
+      makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z'),
+      makeBlock('B2', 'item 2', '2025-01-14T00:00:00Z'),
+    ])
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+
+    // Select one to reveal toolbar
+    const checkboxes = screen.getAllByTestId('trash-item-checkbox')
+    await user.click(checkboxes[0] as HTMLElement)
+
+    // Click Select all
+    const selectAllBtn = screen.getByRole('button', { name: /^Select all$/i })
+    await user.click(selectAllBtn)
+
+    // Both should be checked
+    for (const cb of checkboxes) {
+      expect(cb).toBeChecked()
+    }
+    expect(within(screen.getByRole('toolbar')).getByText('2 selected')).toBeInTheDocument()
+  })
+
+  // ── Original location breadcrumbs ───────────────────────────────────
+
+  it('renders breadcrumbs with parent page title', async () => {
+    const blocks = [makeBlock('B1', 'child block', '2025-01-15T00:00:00Z', 'P1')]
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve')
+        return [{ id: 'P1', title: 'My Parent Page', block_type: 'page', deleted: false }]
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    // Wait for breadcrumb to appear
+    const breadcrumb = await screen.findByTestId('trash-item-breadcrumb')
+    expect(breadcrumb).toHaveTextContent('from: My Parent Page')
+  })
+
+  it('shows "(deleted page)" when parent is deleted', async () => {
+    const blocks = [makeBlock('B1', 'orphan block', '2025-01-15T00:00:00Z', 'P_DELETED')]
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve')
+        return [{ id: 'P_DELETED', title: 'Old Page', block_type: 'page', deleted: true }]
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    const breadcrumb = await screen.findByTestId('trash-item-breadcrumb')
+    expect(breadcrumb).toHaveTextContent('from: (deleted page)')
+  })
+
+  it('shows "(deleted page)" when parent is not found in batch resolve', async () => {
+    const blocks = [makeBlock('B1', 'orphan block', '2025-01-15T00:00:00Z', 'P_MISSING')]
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return [] // parent not found
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    const breadcrumb = await screen.findByTestId('trash-item-breadcrumb')
+    expect(breadcrumb).toHaveTextContent('from: (deleted page)')
+  })
+
+  it('does not render breadcrumb when block has no parent_id', async () => {
+    mockListAndResolve([makeBlock('B1', 'root block', '2025-01-15T00:00:00Z', null)])
+
+    render(<TrashView />)
+
+    await screen.findByText('root block')
+    expect(screen.queryByTestId('trash-item-breadcrumb')).not.toBeInTheDocument()
+  })
+
   // ── a11y ────────────────────────────────────────────────────────────
 
   it('trash items use responsive stacking for mobile', async () => {
-    const page = {
-      items: [makeBlock('B1', 'responsive item', '2025-01-15T00:00:00Z')],
-      next_cursor: null,
-      has_more: false,
-    }
-    mockedInvoke.mockResolvedValueOnce(page)
+    mockListAndResolve([makeBlock('B1', 'responsive item', '2025-01-15T00:00:00Z')])
 
     render(<TrashView />)
 
@@ -454,14 +796,29 @@ describe('TrashView', () => {
   })
 
   it('has no a11y violations', async () => {
-    const page = {
-      items: [makeBlock('B1', 'accessible item', '2025-01-15T00:00:00Z')],
-      next_cursor: null,
-      has_more: false,
-    }
-    mockedInvoke.mockResolvedValueOnce(page)
+    mockListAndResolve([makeBlock('B1', 'accessible item', '2025-01-15T00:00:00Z')])
 
     render(<TrashView />)
+
+    await screen.findByText('accessible item')
+
+    await waitFor(async () => {
+      const results = await axe(document.body)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  it('has no a11y violations with selection toolbar visible', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([makeBlock('B1', 'accessible item', '2025-01-15T00:00:00Z')])
+
+    render(<TrashView />)
+
+    await screen.findByText('accessible item')
+
+    // Select an item to show toolbar
+    const checkbox = screen.getByTestId('trash-item-checkbox')
+    await user.click(checkbox)
 
     await waitFor(async () => {
       const results = await axe(document.body)

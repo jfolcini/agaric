@@ -21,6 +21,7 @@ import { useBlockAttachments } from '../hooks/useBlockAttachments'
 import i18n from '../lib/i18n'
 import { openUrl } from '../lib/open-url'
 import { cn } from '../lib/utils'
+import { ImageLightbox } from './ImageLightbox'
 import { QueryResult } from './QueryResult'
 import { ScrollArea } from './ui/scroll-area'
 import { Spinner } from './ui/spinner'
@@ -437,6 +438,13 @@ function StaticBlockInner({
   const [pdfViewerUrl, setPdfViewerUrl] = useState('')
   const [pdfViewerFilename, setPdfViewerFilename] = useState('')
 
+  // Image lightbox state
+  const [lightboxImage, setLightboxImage] = useState<{
+    src: string
+    alt: string
+    fsPath: string
+  } | null>(null)
+
   // Detect {{query ...}} blocks and render QueryResult instead of the text
   if (content?.startsWith('{{query ') && content.endsWith('}}')) {
     const expression = content.slice(8, -2).trim()
@@ -505,7 +513,7 @@ function StaticBlockInner({
                   style={{ maxWidth: '100%', maxHeight: '400px', objectFit: 'contain' }}
                   onClick={(e) => {
                     e.stopPropagation()
-                    openUrl(att.fs_path)
+                    setLightboxImage({ src: url, alt: att.filename, fsPath: att.fs_path })
                   }}
                 />
               )
@@ -548,6 +556,17 @@ function StaticBlockInner({
           filename={pdfViewerFilename}
         />
       </Suspense>
+      {lightboxImage && (
+        <ImageLightbox
+          src={lightboxImage.src}
+          alt={lightboxImage.alt}
+          open={!!lightboxImage}
+          onOpenChange={(open) => {
+            if (!open) setLightboxImage(null)
+          }}
+          onOpenExternal={() => openUrl(lightboxImage.fsPath)}
+        />
+      )}
     </>
   )
 }

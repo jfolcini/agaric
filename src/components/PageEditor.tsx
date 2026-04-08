@@ -25,6 +25,7 @@ import { DonePanel } from './DonePanel'
 import { DuePanel } from './DuePanel'
 import { LinkedReferences } from './LinkedReferences'
 import { PageHeader } from './PageHeader'
+import { PageMetadataBar } from './PageMetadataBar'
 import { UnlinkedReferences } from './UnlinkedReferences'
 
 export interface PageEditorProps {
@@ -168,6 +169,9 @@ function PageEditorInner({
       <div>
         <AddBlockButton onClick={handleAddBlock} />
       </div>
+
+      {/* Page metadata bar — word count, block count, created date */}
+      <PageMetadataBar blocks={blocks} pageId={pageId} />
     </div>
   )
 }

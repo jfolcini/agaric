@@ -87,6 +87,13 @@ vi.mock('../DonePanel', () => ({
   },
 }))
 
+// ── Mock PageMetadataBar ────────────────────────────────────────────
+vi.mock('../PageMetadataBar', () => ({
+  PageMetadataBar: (props: { blocks: unknown[]; pageId: string }) => (
+    <div data-testid="page-metadata-bar" data-page-id={props.pageId} />
+  ),
+}))
+
 // ── Mock lucide-react ───────────────────────────────────────────────
 vi.mock('lucide-react', () => ({
   ArrowLeft: () => <svg data-testid="arrow-left-icon" />,

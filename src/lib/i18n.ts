@@ -817,6 +817,20 @@ const resources = {
         'This action cannot be undone. This block will be permanently deleted.',
       'trash.noButton': 'No',
       'trash.yesDeleteButton': 'Yes, delete',
+      'trash.selectAllButton': 'Select all',
+      'trash.deselectAllButton': 'Deselect all',
+      'trash.restoreAllButton': 'Restore all',
+      'trash.purgeAllButton': 'Purge all',
+      'trash.selectItemLabel': 'Select {{content}}',
+      'trash.listLabel': 'Trash items',
+      'trash.fromPage': 'from: {{page}}',
+      'trash.deletedPage': '(deleted page)',
+      'trash.batchRestored': '{{count}} blocks restored',
+      'trash.batchPurged': '{{count}} blocks permanently deleted',
+      'trash.batchPurgeTitle': 'Permanently delete {{count}} items?',
+      'trash.batchPurgeDescription':
+        'This action cannot be undone. {{count}} blocks will be permanently deleted.',
+      'trash.regionLabel': 'Trash',
 
       // Device management
       'device.title': 'Device Management',
@@ -1192,6 +1206,19 @@ const resources = {
       'device.addressInputLabel': 'Address (host:port)',
       'device.addressHint': 'Format: host:port (e.g., 192.168.1.100:5000)',
       'device.saveAddressButton': 'Save',
+
+      // UX-61: Page metadata bar
+      'metadata.label': 'Info',
+      'metadata.toggleLabel': 'Toggle page metadata',
+      'metadata.wordCount_one': '{{count}} word',
+      'metadata.wordCount_other': '{{count}} words',
+      'metadata.blockCount_one': '{{count}} block',
+      'metadata.blockCount_other': '{{count}} blocks',
+      'metadata.created': 'Created {{date}}',
+
+      // UX-84: Image lightbox
+      'lightbox.description': 'Fullscreen preview of {{filename}}',
+      'lightbox.openExternal': 'Open externally',
 
       // UX-62: Code block language selector
       'toolbar.codeBlockLanguageTip': 'Code block language',

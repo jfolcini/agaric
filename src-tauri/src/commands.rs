@@ -3061,6 +3061,51 @@ pub(crate) async fn count_agenda_batch_by_source_inner(
     Ok(result)
 }
 
+/// Intermediate row for the projected-agenda query.
+///
+/// Extends [`BlockRow`] with pre-fetched repeat properties so that we can
+/// avoid N+1 queries inside the projection loop.
+#[derive(Debug, Clone)]
+struct RepeatingBlockRow {
+    id: String,
+    block_type: String,
+    content: Option<String>,
+    parent_id: Option<String>,
+    position: Option<i64>,
+    deleted_at: Option<String>,
+    is_conflict: bool,
+    conflict_type: Option<String>,
+    todo_state: Option<String>,
+    priority: Option<String>,
+    due_date: Option<String>,
+    scheduled_date: Option<String>,
+    repeat_rule: Option<String>,
+    repeat_until: Option<String>,
+    repeat_count: Option<f64>,
+    repeat_seq: Option<f64>,
+}
+
+impl RepeatingBlockRow {
+    /// Extract the core [`BlockRow`] fields (used when building
+    /// [`ProjectedAgendaEntry`] values).
+    fn to_block_row(&self) -> BlockRow {
+        BlockRow {
+            id: self.id.clone(),
+            block_type: self.block_type.clone(),
+            content: self.content.clone(),
+            parent_id: self.parent_id.clone(),
+            position: self.position,
+            deleted_at: self.deleted_at.clone(),
+            is_conflict: self.is_conflict,
+            conflict_type: self.conflict_type.clone(),
+            todo_state: self.todo_state.clone(),
+            priority: self.priority.clone(),
+            due_date: self.due_date.clone(),
+            scheduled_date: self.scheduled_date.clone(),
+        }
+    }
+}
+
 /// Compute projected future agenda entries for repeating tasks.
 ///
 /// Finds non-DONE blocks with a `repeat` property and at least one date
@@ -3094,13 +3139,22 @@ pub async fn list_projected_agenda_inner(
 
     // Find repeating blocks: non-DONE, non-deleted, has repeat property,
     // has at least one date column.
+    // LEFT JOINs fetch repeat-until / repeat-count / repeat-seq in the same
+    // round-trip, eliminating per-block N+1 queries.
     let rows = sqlx::query_as!(
-        BlockRow,
+        RepeatingBlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at, b.is_conflict as "is_conflict: bool",
-                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date
+                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date,
+                bp.value_text AS repeat_rule,
+                bp_until.value_date AS repeat_until,
+                bp_count.value_num AS repeat_count,
+                bp_seq.value_num AS repeat_seq
          FROM blocks b
          JOIN block_properties bp ON bp.block_id = b.id AND bp.key = 'repeat'
+         LEFT JOIN block_properties bp_until ON bp_until.block_id = b.id AND bp_until.key = 'repeat-until'
+         LEFT JOIN block_properties bp_count ON bp_count.block_id = b.id AND bp_count.key = 'repeat-count'
+         LEFT JOIN block_properties bp_seq ON bp_seq.block_id = b.id AND bp_seq.key = 'repeat-seq'
          WHERE b.deleted_at IS NULL
            AND b.is_conflict = 0
            AND (b.todo_state IS NULL OR b.todo_state != 'DONE')
@@ -3117,44 +3171,16 @@ pub async fn list_projected_agenda_inner(
             break;
         }
 
-        // Get the repeat rule
-        let rule: Option<String> = sqlx::query_scalar!(
-            "SELECT value_text FROM block_properties WHERE block_id = ?1 AND key = 'repeat'",
-            block.id,
-        )
-        .fetch_optional(pool)
-        .await?
-        .flatten();
-
-        let rule = match rule {
-            Some(r) if !r.is_empty() => r,
+        // Get the repeat rule (pre-fetched via JOIN)
+        let rule = match &block.repeat_rule {
+            Some(r) if !r.is_empty() => r.clone(),
             _ => continue,
         };
 
-        // Get end conditions
-        let repeat_until: Option<String> = sqlx::query_scalar!(
-            "SELECT value_date FROM block_properties WHERE block_id = ?1 AND key = 'repeat-until'",
-            block.id,
-        )
-        .fetch_optional(pool)
-        .await?
-        .flatten();
-
-        let repeat_count: Option<f64> = sqlx::query_scalar!(
-            "SELECT value_num FROM block_properties WHERE block_id = ?1 AND key = 'repeat-count'",
-            block.id,
-        )
-        .fetch_optional(pool)
-        .await?
-        .flatten();
-
-        let repeat_seq: Option<f64> = sqlx::query_scalar!(
-            "SELECT value_num FROM block_properties WHERE block_id = ?1 AND key = 'repeat-seq'",
-            block.id,
-        )
-        .fetch_optional(pool)
-        .await?
-        .flatten();
+        // Get end conditions (pre-fetched via LEFT JOINs)
+        let repeat_until = block.repeat_until.clone();
+        let repeat_count = block.repeat_count;
+        let repeat_seq = block.repeat_seq;
 
         let until_date = repeat_until
             .as_deref()
@@ -3245,7 +3271,7 @@ pub async fn list_projected_agenda_inner(
                 if let Some(until) = until_date {
                     if current <= until {
                         entries.push(ProjectedAgendaEntry {
-                            block: block.clone(),
+                            block: block.to_block_row(),
                             projected_date: current.format("%Y-%m-%d").to_string(),
                             source: source_name.to_string(),
                         });
@@ -3253,7 +3279,7 @@ pub async fn list_projected_agenda_inner(
                     }
                 } else {
                     entries.push(ProjectedAgendaEntry {
-                        block: block.clone(),
+                        block: block.to_block_row(),
                         projected_date: current.format("%Y-%m-%d").to_string(),
                         source: source_name.to_string(),
                     });
@@ -3287,7 +3313,7 @@ pub async fn list_projected_agenda_inner(
                 // Within range — add entry
                 if current >= range_start {
                     entries.push(ProjectedAgendaEntry {
-                        block: block.clone(),
+                        block: block.to_block_row(),
                         projected_date: current.format("%Y-%m-%d").to_string(),
                         source: source_name.to_string(),
                     });
