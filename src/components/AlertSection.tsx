@@ -65,6 +65,9 @@ export function AlertSection({
   const { t } = useTranslation()
   const config = variantConfig[variant]
 
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+
   if (blocks.length === 0) return null
 
   return (
@@ -75,11 +78,14 @@ export function AlertSection({
           .sort((a, b) => (a.due_date ?? '').localeCompare(b.due_date ?? ''))
           .map((block) => {
             const pageTitle = block.parent_id ? pageTitles.get(block.parent_id) : undefined
+            const dueDate = block.due_date ? new Date(`${block.due_date}T00:00:00`) : null
+            const daysOverdue = dueDate
+              ? Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24))
+              : 0
             return (
               <AlertListItem
                 key={`${config.keyPrefix}-${block.id}`}
                 variant={variant}
-                // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
                 tabIndex={0}
                 onClick={() => {
                   if (block.parent_id && onNavigateToPage) {
@@ -101,7 +107,14 @@ export function AlertSection({
                 <span className="min-w-0 flex-1 truncate">
                   {truncateContent(block.content, 120, t('duePanel.emptyContent'))}
                 </span>
-                <span className={`shrink-0 text-xs ${config.dateColor}`}>{block.due_date}</span>
+                <span className={`shrink-0 text-xs ${config.dateColor}`}>
+                  <span>{block.due_date}</span>
+                  {daysOverdue > 0 && (
+                    <span className="text-muted-foreground ml-1">
+                      ({t('duePanel.daysOverdue', { count: daysOverdue })})
+                    </span>
+                  )}
+                </span>
               </AlertListItem>
             )
           })}

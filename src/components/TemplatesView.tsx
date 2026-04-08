@@ -136,9 +136,16 @@ export function TemplatesView(): React.ReactElement {
                       </Tooltip>
                     </TooltipProvider>
                     {tpl.isJournalTemplate && (
-                      <Badge variant="secondary" className="shrink-0 text-xs">
-                        {t('templates.journalIndicator')}
-                      </Badge>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="secondary" className="shrink-0 text-xs">
+                              {t('templates.journalIndicator')}
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent>{t('templates.journalTooltip')}</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     )}
                     <Button
                       variant="ghost"

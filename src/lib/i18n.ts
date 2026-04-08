@@ -1069,6 +1069,21 @@ const resources = {
 
       // Accessibility
       'accessibility.skipToMain': 'Skip to main content',
+
+      // UX-53: Clear all filters
+      'agendaFilter.clearAll': 'Clear all',
+      'agendaFilter.clearAllLabel': 'Clear all filters',
+
+      // UX-56: Overdue duration
+      'duePanel.daysOverdue_one': '{{count}}d overdue',
+      'duePanel.daysOverdue_other': '{{count}}d overdue',
+
+      // UX-64: Empty block placeholder
+      'block.emptyPlaceholder': 'Type / for commands...',
+
+      // UX-72: Journal template tooltip
+      'templates.journalTooltip':
+        'This template is automatically applied when creating new journal entries',
     },
   },
 }

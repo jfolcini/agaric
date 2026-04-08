@@ -592,6 +592,33 @@ describe('AgendaFilterBuilder', () => {
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
   })
 
+  // -----------------------------------------------------------------------
+  // Clear all filters button
+  // -----------------------------------------------------------------------
+  it('does not show clear-all button when no filters are active', () => {
+    renderBuilder()
+    expect(screen.queryByRole('button', { name: /Clear all filters/i })).not.toBeInTheDocument()
+  })
+
+  it('shows clear-all button when filters are active', () => {
+    const filters: AgendaFilter[] = [{ dimension: 'status', values: ['TODO'] }]
+    renderBuilder({ filters })
+    expect(screen.getByRole('button', { name: /Clear all filters/i })).toBeInTheDocument()
+  })
+
+  it('clears all filters when clear-all is clicked', async () => {
+    const user = userEvent.setup()
+    const onFiltersChange = vi.fn()
+    const filters: AgendaFilter[] = [
+      { dimension: 'status', values: ['TODO'] },
+      { dimension: 'priority', values: ['1'] },
+    ]
+    renderBuilder({ filters, onFiltersChange })
+
+    await user.click(screen.getByRole('button', { name: /Clear all filters/i }))
+    expect(onFiltersChange).toHaveBeenCalledWith([])
+  })
+
   it('property picker gracefully handles list_property_keys failure', async () => {
     const mockedInvoke = vi.mocked(invoke)
     mockedInvoke.mockRejectedValue(new Error('backend unavailable'))

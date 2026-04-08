@@ -74,16 +74,16 @@ describe('BlockDndOverlay', () => {
     expect(overlay.textContent).toHaveLength(80)
   })
 
-  it('shows "Empty block" for blocks with empty content', () => {
+  it('shows placeholder for blocks with empty content', () => {
     render(<BlockDndOverlay activeBlock={{ content: '' }} projected={null} activeId="BLK001" />)
 
-    expect(screen.getByTestId('sortable-block-overlay')).toHaveTextContent('Empty block')
+    expect(screen.getByTestId('sortable-block-overlay')).toHaveTextContent('Type / for commands...')
   })
 
-  it('shows "Empty block" for blocks with null content', () => {
+  it('shows placeholder for blocks with null content', () => {
     render(<BlockDndOverlay activeBlock={{ content: null }} projected={null} activeId="BLK001" />)
 
-    expect(screen.getByTestId('sortable-block-overlay')).toHaveTextContent('Empty block')
+    expect(screen.getByTestId('sortable-block-overlay')).toHaveTextContent('Type / for commands...')
   })
 
   it('has no a11y violations', async () => {

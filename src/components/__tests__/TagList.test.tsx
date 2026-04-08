@@ -30,17 +30,14 @@ vi.mock('sonner', () => ({
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
 
-const emptyPage = { items: [], next_cursor: null, has_more: false }
+const emptyPage: never[] = []
 
-function makeTag(id: string, name: string) {
+function makeTag(id: string, name: string, usageCount = 0) {
   return {
-    id,
-    block_type: 'tag',
-    content: name,
-    parent_id: null,
-    position: null,
-    deleted_at: null,
-    is_conflict: false,
+    tag_id: id,
+    name,
+    usage_count: usageCount,
+    updated_at: '2025-01-15T00:00:00Z',
   }
 }
 
@@ -66,16 +63,22 @@ describe('TagList', () => {
   })
 
   it('loads and renders tags', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makeTag('T1', 'important'), makeTag('T2', 'work')],
-      next_cursor: null,
-      has_more: false,
-    })
+    mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'important', 3), makeTag('T2', 'work', 7)])
 
     render(<TagList />)
 
     expect(await screen.findByText('important')).toBeInTheDocument()
     expect(screen.getByText('work')).toBeInTheDocument()
+  })
+
+  it('displays usage counts next to tag names', async () => {
+    mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'important', 3), makeTag('T2', 'work', 7)])
+
+    render(<TagList />)
+
+    expect(await screen.findByText('important')).toBeInTheDocument()
+    expect(screen.getByText('3')).toBeInTheDocument()
+    expect(screen.getByText('7')).toBeInTheDocument()
   })
 
   it('shows empty state when no tags exist', async () => {
@@ -162,11 +165,7 @@ describe('TagList', () => {
   describe('delete confirmation dialog', () => {
     it('shows AlertDialog when trash icon is clicked', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makeTag('T1', 'to-delete')],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'to-delete', 2)])
 
       render(<TagList />)
 
@@ -188,11 +187,7 @@ describe('TagList', () => {
 
     it('cancelling the dialog keeps the tag', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makeTag('T1', 'keep-me')],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'keep-me')])
 
       render(<TagList />)
 
@@ -214,11 +209,7 @@ describe('TagList', () => {
 
     it('confirming the dialog deletes the tag', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makeTag('T1', 'to-delete')],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'to-delete')])
 
       render(<TagList />)
 
@@ -252,11 +243,7 @@ describe('TagList', () => {
     it('calls onTagClick when a tag name is clicked', async () => {
       const user = userEvent.setup()
       const onTagClick = vi.fn()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makeTag('T1', 'clickable-tag')],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'clickable-tag', 5)])
 
       render(<TagList onTagClick={onTagClick} />)
 
@@ -269,11 +256,7 @@ describe('TagList', () => {
     it('calls onTagClick with correct args for each tag', async () => {
       const user = userEvent.setup()
       const onTagClick = vi.fn()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makeTag('T1', 'alpha'), makeTag('T2', 'beta')],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'alpha', 1), makeTag('T2', 'beta', 2)])
 
       render(<TagList onTagClick={onTagClick} />)
 
@@ -284,11 +267,7 @@ describe('TagList', () => {
     })
 
     it('does not crash when onTagClick is not provided', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makeTag('T1', 'no-handler')],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'no-handler')])
 
       render(<TagList />)
 
@@ -338,11 +317,7 @@ describe('TagList', () => {
 
     it('shows toast on failed tag deletion', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makeTag('T1', 'fail-delete')],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'fail-delete')])
 
       render(<TagList />)
 
@@ -417,11 +392,7 @@ describe('TagList', () => {
   })
 
   it('has no a11y violations', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makeTag('T1', 'accessible-tag')],
-      next_cursor: null,
-      has_more: false,
-    })
+    mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'accessible-tag', 4)])
 
     const { container } = render(<TagList />)
 
@@ -434,11 +405,7 @@ describe('TagList', () => {
   describe('long tag name overflow (TG-12)', () => {
     it('truncates long tag names', async () => {
       const longName = 'a'.repeat(200)
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makeTag('T1', longName)],
-        next_cursor: null,
-        has_more: false,
-      })
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', longName)])
 
       render(<TagList />)
 

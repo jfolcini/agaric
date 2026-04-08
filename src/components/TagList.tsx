@@ -16,8 +16,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ListItem } from '@/components/ui/list-item'
-import type { BlockRow } from '../lib/tauri'
-import { createBlock, deleteBlock, listBlocks } from '../lib/tauri'
+import type { TagCacheRow } from '../lib/tauri'
+import { createBlock, deleteBlock, listTagsByPrefix } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
 import { ListViewState } from './ListViewState'
@@ -30,7 +30,7 @@ interface TagListProps {
 
 export function TagList({ onTagClick }: TagListProps): React.ReactElement {
   const { t } = useTranslation()
-  const [tags, setTags] = useState<BlockRow[]>([])
+  const [tags, setTags] = useState<TagCacheRow[]>([])
   const [loading, setLoading] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
   const [newTagName, setNewTagName] = useState('')
@@ -39,8 +39,8 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
   const loadTags = useCallback(async () => {
     setLoading(true)
     try {
-      const resp = await listBlocks({ blockType: 'tag', limit: 500 })
-      setTags(resp.items)
+      const resp = await listTagsByPrefix({ prefix: '', limit: 500 })
+      setTags(resp)
     } catch (error) {
       toast.error(`Failed to load tags: ${String(error)}`)
     }
@@ -61,19 +61,11 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
     setIsCreating(true)
     try {
       const resp = await createBlock({ blockType: 'tag', content: name })
-      const newTag: BlockRow = {
-        id: resp.id,
-        block_type: resp.block_type,
-        content: resp.content,
-        parent_id: resp.parent_id,
-        position: resp.position,
-        deleted_at: null,
-        is_conflict: false,
-        conflict_type: null,
-        todo_state: null,
-        priority: null,
-        due_date: null,
-        scheduled_date: null,
+      const newTag: TagCacheRow = {
+        tag_id: resp.id,
+        name: resp.content ?? name,
+        usage_count: 0,
+        updated_at: new Date().toISOString(),
       }
       setTags((prev) => [newTag, ...prev])
       setNewTagName('')
@@ -88,7 +80,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
   const handleDeleteTag = useCallback(async (tagId: string) => {
     try {
       await deleteBlock(tagId)
-      setTags((prev) => prev.filter((t) => t.id !== tagId))
+      setTags((prev) => prev.filter((t) => t.tag_id !== tagId))
       useResolveStore.getState().set(tagId, '(deleted)', true)
     } catch (error) {
       toast.error(`Failed to delete tag: ${String(error)}`)
@@ -137,19 +129,20 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         {(items) => (
           <ul className="space-y-2">
             {items.map((tag) => (
-              <ListItem key={tag.id}>
+              <ListItem key={tag.tag_id}>
                 <Tag className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <button
                   type="button"
                   className="cursor-pointer border-none bg-transparent p-0"
-                  onClick={() => onTagClick?.(tag.id, tag.content || 'Unnamed')}
+                  onClick={() => onTagClick?.(tag.tag_id, tag.name || 'Unnamed')}
                 >
                   <Badge
                     variant="secondary"
                     className="truncate max-w-[150px]"
-                    title={tag.content || 'Unnamed'}
+                    title={tag.name || 'Unnamed'}
                   >
-                    {tag.content || 'Unnamed'}
+                    {tag.name || 'Unnamed'}
+                    <span className="ml-1.5 text-muted-foreground">{tag.usage_count}</span>
                   </Badge>
                 </button>
                 <div className="flex-1" />
@@ -158,7 +151,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                   size="icon-xs"
                   aria-label={t('tagList.deleteTagLabel')}
                   className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
-                  onClick={() => setDeleteTarget({ id: tag.id, name: tag.content || 'Unnamed' })}
+                  onClick={() => setDeleteTarget({ id: tag.tag_id, name: tag.name || 'Unnamed' })}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>

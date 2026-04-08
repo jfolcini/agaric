@@ -482,7 +482,9 @@ function StaticBlockInner({
         }}
       >
         {richContent ?? (
-          <span className="block-placeholder text-muted-foreground italic">Empty block</span>
+          <span className="block-placeholder text-muted-foreground italic">
+            {t('block.emptyPlaceholder')}
+          </span>
         )}
       </button>
       {hasAttachments && (

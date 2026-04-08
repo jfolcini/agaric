@@ -314,6 +314,19 @@ export function AgendaFilterBuilder({
           </ul>
         )}
 
+        {filters.length > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-auto px-1.5 py-1 text-xs text-muted-foreground hover:text-foreground"
+            onClick={() => onFiltersChange([])}
+            aria-label={t('agendaFilter.clearAllLabel')}
+          >
+            <X className="mr-0.5 h-3 w-3" />
+            {t('agendaFilter.clearAll')}
+          </Button>
+        )}
+
         <AddFilterPopover existingDimensions={existingDimensions} onAdd={handleAdd} />
 
         {filters.length >= 2 && (

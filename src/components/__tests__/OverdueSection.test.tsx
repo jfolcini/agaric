@@ -15,7 +15,7 @@
 
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import type { BlockRow } from '../../lib/tauri'
@@ -170,6 +170,41 @@ describe('OverdueSection', () => {
     await user.click(item.closest('li') as HTMLElement)
 
     expect(onNavigate).not.toHaveBeenCalled()
+  })
+
+  describe('overdue label', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2025-06-15T12:00:00'))
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('displays days overdue for overdue blocks', () => {
+      render(
+        <OverdueSection
+          blocks={[makeBlock({ id: 'B1', due_date: '2025-06-08' })]}
+          pageTitles={defaultTitles}
+        />,
+      )
+
+      expect(screen.getByText('2025-06-08')).toBeInTheDocument()
+      expect(screen.getByText('(7d overdue)')).toBeInTheDocument()
+    })
+
+    it("does not show overdue label for today's due date", () => {
+      render(
+        <OverdueSection
+          blocks={[makeBlock({ id: 'B1', due_date: '2025-06-15' })]}
+          pageTitles={defaultTitles}
+        />,
+      )
+
+      expect(screen.getByText('2025-06-15')).toBeInTheDocument()
+      expect(screen.queryByText(/\d+d overdue/)).not.toBeInTheDocument()
+    })
   })
 
   it('a11y: no violations', async () => {

@@ -284,6 +284,48 @@ describe('TemplatesView', () => {
     expect(screen.getByText('Journal template')).toBeInTheDocument()
   })
 
+  it('shows tooltip on journal template badge hover', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'query_by_property') {
+        const params = args as { key: string }
+        if (params.key === 'template') {
+          return {
+            items: [makeTemplate('T1', 'Daily Journal')],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (params.key === 'journal-template') {
+          return {
+            items: [makeTemplate('T1', 'Daily Journal')],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        return emptyPage
+      }
+      if (cmd === 'list_blocks') {
+        return emptyPage
+      }
+      return emptyPage
+    })
+
+    render(<TemplatesView />)
+
+    // Wait for the journal badge to appear
+    const badge = await screen.findByText('Journal template')
+    await user.hover(badge)
+
+    // Tooltip text should appear (Radix renders it in multiple DOM nodes)
+    await waitFor(() => {
+      const tooltipElements = screen.getAllByText(
+        'This template is automatically applied when creating new journal entries',
+      )
+      expect(tooltipElements.length).toBeGreaterThanOrEqual(1)
+    })
+  })
+
   it('has no a11y violations', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 

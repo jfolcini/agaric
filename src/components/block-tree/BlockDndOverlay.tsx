@@ -10,6 +10,7 @@
 
 import { DragOverlay } from '@dnd-kit/core'
 import type React from 'react'
+import { useTranslation } from 'react-i18next'
 
 interface BlockDndOverlayProps {
   activeBlock: { content?: string | null } | null
@@ -22,6 +23,7 @@ export function BlockDndOverlay({
   projected,
   activeId,
 }: BlockDndOverlayProps): React.ReactElement {
+  const { t } = useTranslation()
   return (
     <>
       {/* SR announcement for DnD projected drop position */}
@@ -38,7 +40,7 @@ export function BlockDndOverlay({
             data-testid="sortable-block-overlay"
             style={{ maxWidth: 320 }}
           >
-            {(activeBlock.content ?? '').slice(0, 80) || 'Empty block'}
+            {(activeBlock.content ?? '').slice(0, 80) || t('block.emptyPlaceholder')}
           </div>
         ) : null}
       </DragOverlay>

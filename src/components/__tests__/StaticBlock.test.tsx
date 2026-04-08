@@ -85,7 +85,7 @@ describe('StaticBlock', () => {
 
   it('renders empty block placeholder when content is empty', () => {
     render(<StaticBlock blockId="B1" content="" onFocus={vi.fn()} />)
-    expect(screen.getByText('Empty block')).toBeInTheDocument()
+    expect(screen.getByText('Type / for commands...')).toBeInTheDocument()
   })
 
   it('empty block has min-height class for visibility', () => {

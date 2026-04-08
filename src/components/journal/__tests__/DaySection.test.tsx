@@ -570,6 +570,39 @@ describe('DaySection', () => {
     expect(screen.queryByLabelText(/items, click to view/)).not.toBeInTheDocument()
   })
 
+  // 25. Today highlight: isToday applies strengthened highlight classes
+  it('applies strengthened highlight classes when isToday is true', () => {
+    const today = new Date()
+    const entry = makeDayEntry({
+      date: today,
+      dateStr: formatDate(today),
+      displayDate: 'Today Display',
+    })
+
+    render(<DaySection entry={entry} mode="weekly" onAddBlock={noop} />)
+
+    const section = screen.getByRole('region', { name: 'Journal for Today Display' })
+    expect(section.className).toContain('bg-accent/[0.08]')
+    expect(section.className).toContain('border-l-2')
+    expect(section.className).toContain('border-accent')
+  })
+
+  // 26. Non-today: does NOT have highlight classes
+  it('does NOT apply highlight classes when isToday is false', () => {
+    const entry = makeDayEntry({
+      date: new Date(2025, 5, 15),
+      dateStr: '2025-06-15',
+      displayDate: 'Sun, Jun 15, 2025',
+    })
+
+    render(<DaySection entry={entry} mode="weekly" onAddBlock={noop} />)
+
+    const section = screen.getByRole('region', { name: 'Journal for Sun, Jun 15, 2025' })
+    expect(section.className).not.toContain('bg-accent/[0.08]')
+    expect(section.className).not.toContain('border-l-2')
+    expect(section.className).not.toContain('border-accent')
+  })
+
   // A11y: no violations (with content)
   it('a11y: no violations with content', async () => {
     const entry = makeDayEntry({
