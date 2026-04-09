@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 276 — Batch 11: T-7 finish — remaining 6 Rust modules (2026-04-09)
+
+**Commit:** `5ed79d0` — `test(rust): T-7 finish — assertion messages for remaining 6 modules (~735)` — 6 files, +1885/-729
+
+### Items resolved
+- **T-7**: Fully resolved. Added ~735 descriptive assertion messages to the remaining 6 Rust test modules:
+  - `commands.rs`: ~249 assertions (split across 2 subagents at line 8557)
+  - `backlink_query.rs`: ~170 assertions
+  - `pagination.rs`: ~264 assertions
+  - `soft_delete.rs`: ~21 assertions
+  - `op_log.rs`: ~15 assertions
+  - `recurrence.rs`: ~16 assertions
+  - Combined with session 274 (~482): **total ~1217 assertions** across all 12 modules now have messages.
+
+### Test counts
+- Rust: 1667 tests pass
+- Open REVIEW-LATER items: 28 (was 29)
+
 ## Session 275 — Batch 10: F-22, F-29, UX-58, UX-80, P-13 (2026-04-09)
 
 **Commit:** `da4669f` — `feat: batch 10 — inline date editing, tag rename, starred pages, typography tokens` — 13 files, +1171/-26
