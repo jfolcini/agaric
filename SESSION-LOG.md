@@ -1,5 +1,40 @@
 # Session Log
 
+## Session 290 — Batch 23: F-33 (2026-04-09)
+
+**Commit:** `42a2a50` — `feat: F-33 graph view — page relationship visualization` — 12 files, +797
+
+### Items resolved
+- **F-33**: Graph view — page relationship visualization. Backend: new `list_page_links` command queries `block_links` joined with `blocks` to return page-to-page edges. Content block sources rolled up to parent page via `COALESCE`. LEFT JOIN validates parent page exists, is not deleted, and is page-type. Excludes self-links, deduplicates with DISTINCT. Uses `ReadPool`. 4 Rust tests. Frontend: new `GraphView` component with d3-force simulation (`forceLink`, `forceManyBody`, `forceCenter`, `forceCollide`). SVG rendering with circle nodes, text labels (truncated 20 chars), line edges. Zoom/pan via d3-zoom, node drag via d3-drag. Click-to-navigate via `navigateToPage`. Loading skeleton, error alert, empty state. New "Graph" sidebar view with Network icon. `d3-force`, `d3-drag`, `d3-selection`, `d3-zoom` added (all MIT). 8 frontend tests.
+
+### Files created
+- `src/components/GraphView.tsx` — force-directed graph view (200 lines)
+- `src/components/__tests__/GraphView.test.tsx` — 8 tests
+
+### Files modified
+
+| Area | Change |
+|------|--------|
+| commands.rs | F-33: PageLink struct, list_page_links_inner() with LEFT JOIN parent validation, 4 tests |
+| lib.rs | F-33: register list_page_links in invoke_handler + specta_builder |
+| .sqlx/ | F-33: new query cache |
+| bindings.ts | F-33: auto-regenerated |
+| tauri.ts | F-33: listPageLinks() wrapper |
+| navigation.ts | F-33: add 'graph' to View type |
+| App.tsx | F-33: Network icon, NAV_ITEMS entry, view routing with FeatureErrorBoundary |
+| i18n.ts | F-33: 4 new keys (sidebar.graph, graph.*) |
+| package.json | F-33: d3-force, d3-drag, d3-selection, d3-zoom dependencies |
+
+### Review findings fixed
+- SQL query: added LEFT JOIN to validate parent page (not deleted, is page-type) — reviewer caught missing validation
+- CSS vars: removed `hsl()` wrapping (project uses raw CSS vars)
+- Biome: removed unused variable
+
+### Test counts
+- Frontend: 241 files, 5682 tests (was 5674)
+- Rust: 1691 tests (was 1687)
+- Open REVIEW-LATER items: 3 (was 4)
+
 ## Session 289 — Batch 22: F-24 (2026-04-09)
 
 **Commit:** `29f54a1` — `feat: F-24 visual query builder for inline queries` — 6 files, +824/-17

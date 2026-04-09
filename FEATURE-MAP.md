@@ -6,7 +6,7 @@ What you can do with Agaric. For technical architecture and implementation detai
 
 ## 1. Views
 
-10 sidebar views plus a page editor. Sidebar footer has: New Page button, Sync button with "last synced" relative time display (UX-76), theme toggle cycling auto/dark/light (UX-43), keyboard shortcuts button. Conflict and Trash views show numeric count badges via `SidebarMenuBadge` (UX-60).
+11 sidebar views plus a page editor. Sidebar footer has: New Page button, Sync button with "last synced" relative time display (UX-76), theme toggle cycling auto/dark/light (UX-43), keyboard shortcuts button. Conflict and Trash views show numeric count badges via `SidebarMenuBadge` (UX-60).
 
 ### Journal
 
@@ -106,6 +106,10 @@ The default view — one page per day, created automatically.
 - Click to navigate to template page
 - Remove template status with confirmation dialog (UX-73) and toast
 - **Template toggle button**: LayoutTemplate icon button in PageHeaderMenu to toggle template status with tooltip (UX-74)
+
+### Graph
+
+- **Force-directed page relationship graph** (F-33): `GraphView` component with d3-force simulation. Nodes = pages (circles with truncated labels), edges = `[[links]]` between pages (from `block_links` table). Backend `list_page_links` command rolls up content-block links to parent pages via COALESCE, excludes deleted/non-page blocks, self-links, deduplicates. Zoom/pan via d3-zoom, node drag via d3-drag. Click node to navigate to page. Loading skeleton, error alert, empty state (Network icon). 4 Rust tests + 8 frontend tests.
 
 ### Page Editor
 
