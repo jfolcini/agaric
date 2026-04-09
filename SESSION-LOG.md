@@ -1,5 +1,37 @@
 # Session Log
 
+## Session 277 — Batch 12: UX-89, UX-85, UX-87, UX-78, F-23 (2026-04-09)
+
+**Commit:** `e083014` — `feat: batch 12 — TOC outline, image resize, tag colors, trash search, unfinished tasks` — 17 files, +2197/-153
+
+### Items resolved
+- **UX-89**: Table of contents / outline panel — `PageOutline` component in Sheet slide-out. `extractHeadings()` scans block content for markdown heading prefixes. Click-to-scroll. Integrated in PageHeader. 11 tests.
+- **UX-85**: Image resize controls — `ImageResizeToolbar` floating toolbar on image hover with 4 width presets (25/50/75/100%). Persisted via `setProperty('image_width')`. Keyboard/touch accessible. 5 tests.
+- **UX-87**: Tag colors — Color picker popover on each tag with 8 preset colors (`TAG_COLOR_PRESETS`). localStorage for fast rendering + `setProperty` for sync. Tag reference inline nodes show color tint. New `tag-colors.ts` module. 7 tests.
+- **UX-78**: Trash search — fully resolved. Frontend text filter on loaded items with debounced input (300ms). Filtered count, clear button, case-insensitive match. Multi-select integration preserved. 8 tests.
+- **F-23**: Unfinished tasks carry-over — `UnfinishedTasks` collapsible section in DailyView. Queries overdue TODO/DOING tasks via `queryByProperty`, groups by age (Yesterday, This Week, Older). localStorage collapse persistence. Only shown for today. 21 tests.
+
+### Files created
+- `src/components/PageOutline.tsx` — outline panel (110 lines)
+- `src/components/__tests__/PageOutline.test.tsx` — 11 tests
+- `src/components/journal/UnfinishedTasks.tsx` — unfinished tasks (318 lines)
+- `src/components/journal/__tests__/UnfinishedTasks.test.tsx` — 21 tests
+- `src/lib/tag-colors.ts` — localStorage tag color helpers (58 lines)
+
+### Files modified
+- `src/components/PageHeader.tsx` — outline button
+- `src/components/StaticBlock.tsx` — image resize toolbar + width state
+- `src/components/TagList.tsx` — color picker + color display
+- `src/components/TrashView.tsx` — filter input + debounced search
+- `src/components/journal/DailyView.tsx` — UnfinishedTasks integration
+- `src/editor/extensions/tag-ref.ts` — color tint on tag refs
+- `src/lib/i18n.ts` — 30 new i18n keys
+- 5 test files updated
+
+### Test counts
+- Frontend: 230 files, 5403 tests (was 5350)
+- Open REVIEW-LATER items: 23 (was 28)
+
 ## Session 276 — Batch 11: T-7 finish — remaining 6 Rust modules (2026-04-09)
 
 **Commit:** `5ed79d0` — `test(rust): T-7 finish — assertion messages for remaining 6 modules (~735)` — 6 files, +1885/-729

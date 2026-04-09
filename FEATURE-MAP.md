@@ -496,3 +496,15 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **Inline date editing in agenda** (F-22): Due date chips in AgendaResults wrapped in Popover → DateChipEditor. `DueDateChip` helper manages Popover state. AgendaView refreshes via `refreshKey` counter after edits.
 - **Tag rename** (F-29): Pencil button on each tag in TagList opens RenameDialog. `editBlock()` → materializer → `tags_cache` rebuild → resolve store auto-update. Duplicate name validation.
 - **Favorites/starred pages** (UX-58): Star toggle on each page in PageBrowser. Starred filter toggle in header with badge count. localStorage persistence via `starred-pages.ts`. Memoized via `starredRevision` counter.
+
+### Shared Components (session 277)
+- **PageOutline** (`src/components/PageOutline.tsx`): TOC/outline panel in Sheet slide-out. `extractHeadings()` scans block content for `# `/`## ` prefixes, returns `{ blockId, level, text }[]`. Click-to-scroll via `scrollIntoView`. Integrated in PageHeader via List icon button. 11 tests.
+- **ImageResizeToolbar** (`src/components/StaticBlock.tsx`): Floating toolbar on image hover with 4 width presets (Small 25%, Medium 50%, Large 75%, Full 100%). Width persisted via `setProperty('image_width')`. Keyboard/touch accessible (Enter/Space toggle). 5 tests.
+- **UnfinishedTasks** (`src/components/journal/UnfinishedTasks.tsx`): Collapsible section in DailyView showing overdue TODO/DOING tasks grouped by age (Yesterday, This Week, Older). Client-side query via `queryByProperty` + filter. localStorage collapse persistence. Only shown for today's date. 21 tests.
+
+### Lib Modules (session 277)
+- **tag-colors** (`src/lib/tag-colors.ts`): localStorage-backed tag color helpers — `TAG_COLOR_PRESETS` (8 colors), `getTagColors()`, `getTagColor()`, `setTagColor()`, `clearTagColor()`. Dual storage: localStorage for fast rendering + `setProperty`/`deleteProperty` for sync.
+
+### Feature Integrations (session 277)
+- **Tag colors** (UX-87): Color picker popover on each tag in TagList. 8 preset colors as button swatches with `aria-pressed`. Tag reference inline nodes (tag-ref.ts) show color tint. Fieldset-based accessible palette.
+- **Trash search** (UX-78): Frontend text filter on loaded TrashView items. Debounced input (300ms via `useDebouncedCallback`), filtered count, clear button, case-insensitive match. Multi-select integration preserved.
