@@ -966,7 +966,10 @@ mod tests {
         };
         let encoded = cursor.encode().unwrap();
         let decoded = Cursor::decode(&encoded).unwrap();
-        assert_eq!(cursor, decoded);
+        assert_eq!(
+            cursor, decoded,
+            "cursor with deleted_at must survive roundtrip"
+        );
     }
 
     #[test]
@@ -989,8 +992,15 @@ mod tests {
         let old_json = r#"{"id":"01HZ0000000000000000000001","position":3}"#;
         let encoded = URL_SAFE_NO_PAD.encode(old_json.as_bytes());
         let decoded = Cursor::decode(&encoded).unwrap();
-        assert_eq!(decoded.id, "01HZ0000000000000000000001");
-        assert_eq!(decoded.position, Some(3));
+        assert_eq!(
+            decoded.id, "01HZ0000000000000000000001",
+            "id must be preserved from old cursor"
+        );
+        assert_eq!(
+            decoded.position,
+            Some(3),
+            "position must be preserved from old cursor"
+        );
         assert_eq!(
             decoded.seq, None,
             "old cursor without seq field must default to None"
@@ -1028,7 +1038,7 @@ mod tests {
     #[test]
     fn page_request_defaults_to_limit_50() {
         let pr = PageRequest::new(None, None).unwrap();
-        assert!(pr.after.is_none());
+        assert!(pr.after.is_none(), "default request should have no cursor");
         assert_eq!(pr.limit, 50, "default limit must be 50");
     }
 
@@ -1089,8 +1099,14 @@ mod tests {
             resp.next_cursor.is_some(),
             "cursor must be provided when has_more"
         );
-        assert_eq!(resp.items[0].id, "CHILD001");
-        assert_eq!(resp.items[1].id, "CHILD002");
+        assert_eq!(
+            resp.items[0].id, "CHILD001",
+            "first item should be CHILD001"
+        );
+        assert_eq!(
+            resp.items[1].id, "CHILD002",
+            "second item should be CHILD002"
+        );
     }
 
     #[tokio::test]
@@ -1117,13 +1133,16 @@ mod tests {
         let p2 = PageRequest::new(r1.next_cursor, Some(2)).unwrap();
         let r2 = list_children(&pool, Some("PARENT01"), &p2).await.unwrap();
 
-        assert_eq!(r2.items.len(), 2);
-        assert!(r2.has_more);
+        assert_eq!(r2.items.len(), 2, "second page should return 2 items");
+        assert!(r2.has_more, "more items remain after second page");
         assert_eq!(
             r2.items[0].id, "CHILD003",
             "cursor must skip past first page"
         );
-        assert_eq!(r2.items[1].id, "CHILD004");
+        assert_eq!(
+            r2.items[1].id, "CHILD004",
+            "second page second item should be CHILD004"
+        );
     }
 
     #[tokio::test]
@@ -1169,7 +1188,10 @@ mod tests {
         assert_eq!(r3.items.len(), 1, "last page must contain remaining item");
         assert!(!r3.has_more, "last page must have has_more = false");
         assert!(r3.next_cursor.is_none(), "last page must have no cursor");
-        assert_eq!(r3.items[0].id, "CHILD005");
+        assert_eq!(
+            r3.items[0].id, "CHILD005",
+            "last page should contain CHILD005"
+        );
     }
 
     #[tokio::test]
@@ -1182,8 +1204,14 @@ mod tests {
         let resp = list_children(&pool, Some("PARENT01"), &page).await.unwrap();
 
         assert!(resp.items.is_empty(), "childless parent must return empty");
-        assert!(!resp.has_more);
-        assert!(resp.next_cursor.is_none());
+        assert!(
+            !resp.has_more,
+            "empty result should not indicate more pages"
+        );
+        assert!(
+            resp.next_cursor.is_none(),
+            "empty result should have no cursor"
+        );
     }
 
     #[tokio::test]
@@ -1210,8 +1238,14 @@ mod tests {
             2,
             "only top-level blocks (parent_id IS NULL)"
         );
-        assert_eq!(resp.items[0].id, "TOPLVL01");
-        assert_eq!(resp.items[1].id, "TOPLVL02");
+        assert_eq!(
+            resp.items[0].id, "TOPLVL01",
+            "first top-level block by position"
+        );
+        assert_eq!(
+            resp.items[1].id, "TOPLVL02",
+            "second top-level block by position"
+        );
     }
 
     #[tokio::test]
@@ -1252,8 +1286,11 @@ mod tests {
         let resp = list_children(&pool, Some("PARENT01"), &page).await.unwrap();
 
         assert_eq!(resp.items.len(), 2, "soft-deleted child must be excluded");
-        assert_eq!(resp.items[0].id, "CHILD001");
-        assert_eq!(resp.items[1].id, "CHILD003");
+        assert_eq!(resp.items[0].id, "CHILD001", "first alive child present");
+        assert_eq!(
+            resp.items[1].id, "CHILD003",
+            "second alive child present, CHILD002 excluded"
+        );
     }
 
     #[tokio::test]
@@ -1285,18 +1322,26 @@ mod tests {
         // Page 1: positioned children first
         let p1 = PageRequest::new(None, Some(2)).unwrap();
         let r1 = list_children(&pool, Some("PARENT01"), &p1).await.unwrap();
-        assert_eq!(r1.items.len(), 2);
-        assert!(r1.has_more);
+        assert_eq!(
+            r1.items.len(),
+            2,
+            "page 1 should return 2 positioned children"
+        );
+        assert!(r1.has_more, "page 1 should have more items");
         assert_eq!(r1.items[0].id, "CHILD001", "positioned children come first");
-        assert_eq!(r1.items[1].id, "CHILD002");
+        assert_eq!(r1.items[1].id, "CHILD002", "second positioned child");
 
         // Page 2: NULL-position children via cursor
         let p2 = PageRequest::new(r1.next_cursor, Some(2)).unwrap();
         let r2 = list_children(&pool, Some("PARENT01"), &p2).await.unwrap();
-        assert_eq!(r2.items.len(), 2);
-        assert!(!r2.has_more);
+        assert_eq!(
+            r2.items.len(),
+            2,
+            "page 2 should return 2 null-position items"
+        );
+        assert!(!r2.has_more, "page 2 should be the last page");
         assert_eq!(r2.items[0].id, "TAG00001", "NULL-position items come after");
-        assert_eq!(r2.items[1].id, "TAG00002");
+        assert_eq!(r2.items[1].id, "TAG00002", "second null-position item");
     }
 
     #[tokio::test]
@@ -1311,10 +1356,14 @@ mod tests {
         let page = PageRequest::new(None, Some(10)).unwrap();
         let resp = list_children(&pool, Some("PARENT01"), &page).await.unwrap();
 
-        assert_eq!(resp.items.len(), 3);
+        assert_eq!(
+            resp.items.len(),
+            3,
+            "all three same-position items returned"
+        );
         assert_eq!(resp.items[0].id, "CHILD_AA", "id ASC tiebreaker");
-        assert_eq!(resp.items[1].id, "CHILD_BB");
-        assert_eq!(resp.items[2].id, "CHILD_CC");
+        assert_eq!(resp.items[1].id, "CHILD_BB", "second by id tiebreaker");
+        assert_eq!(resp.items[2].id, "CHILD_CC", "third by id tiebreaker");
     }
 
     #[tokio::test]
@@ -1388,10 +1437,10 @@ mod tests {
         let r1 = list_by_type(&pool, "page", &PageRequest::new(None, Some(2)).unwrap())
             .await
             .unwrap();
-        assert_eq!(r1.items.len(), 2);
-        assert!(r1.has_more);
-        assert_eq!(r1.items[0].id, "PAGE0001");
-        assert_eq!(r1.items[1].id, "PAGE0002");
+        assert_eq!(r1.items.len(), 2, "page 1 should return 2 items");
+        assert!(r1.has_more, "page 1 should indicate more pages");
+        assert_eq!(r1.items[0].id, "PAGE0001", "page 1 first item");
+        assert_eq!(r1.items[1].id, "PAGE0002", "page 1 second item");
 
         let r2 = list_by_type(
             &pool,
@@ -1400,10 +1449,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(r2.items.len(), 2);
-        assert!(r2.has_more);
-        assert_eq!(r2.items[0].id, "PAGE0003");
-        assert_eq!(r2.items[1].id, "PAGE0004");
+        assert_eq!(r2.items.len(), 2, "page 2 should return 2 items");
+        assert!(r2.has_more, "page 2 should indicate more pages");
+        assert_eq!(r2.items[0].id, "PAGE0003", "page 2 first item");
+        assert_eq!(r2.items[1].id, "PAGE0004", "page 2 second item");
 
         let r3 = list_by_type(
             &pool,
@@ -1412,10 +1461,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(r3.items.len(), 1);
-        assert!(!r3.has_more);
-        assert!(r3.next_cursor.is_none());
-        assert_eq!(r3.items[0].id, "PAGE0005");
+        assert_eq!(r3.items.len(), 1, "last page should return 1 item");
+        assert!(!r3.has_more, "last page should not indicate more");
+        assert!(r3.next_cursor.is_none(), "last page should have no cursor");
+        assert_eq!(r3.items[0].id, "PAGE0005", "last page item");
     }
 
     #[tokio::test]
@@ -1431,8 +1480,11 @@ mod tests {
         let resp = list_by_type(&pool, "page", &page).await.unwrap();
 
         assert_eq!(resp.items.len(), 2, "soft-deleted block must be excluded");
-        assert_eq!(resp.items[0].id, "PAGE0001");
-        assert_eq!(resp.items[1].id, "PAGE0003");
+        assert_eq!(resp.items[0].id, "PAGE0001", "first alive page block");
+        assert_eq!(
+            resp.items[1].id, "PAGE0003",
+            "second alive page block, PAGE0002 excluded"
+        );
     }
 
     #[tokio::test]
@@ -1447,8 +1499,11 @@ mod tests {
             .unwrap();
 
         assert!(resp.items.is_empty(), "unknown type must return empty");
-        assert!(!resp.has_more);
-        assert!(resp.next_cursor.is_none());
+        assert!(!resp.has_more, "empty result should not indicate more");
+        assert!(
+            resp.next_cursor.is_none(),
+            "empty result should have no cursor"
+        );
     }
 
     // ====================================================================
@@ -1465,8 +1520,11 @@ mod tests {
         let resp = list_trash(&pool, &page).await.unwrap();
 
         assert!(resp.items.is_empty(), "no deleted blocks → empty trash");
-        assert!(!resp.has_more);
-        assert!(resp.next_cursor.is_none());
+        assert!(!resp.has_more, "empty trash should not indicate more");
+        assert!(
+            resp.next_cursor.is_none(),
+            "empty trash should have no cursor"
+        );
     }
 
     #[tokio::test]
@@ -1484,9 +1542,9 @@ mod tests {
         let page = PageRequest::new(None, Some(10)).unwrap();
         let resp = list_trash(&pool, &page).await.unwrap();
 
-        assert_eq!(resp.items.len(), 3);
+        assert_eq!(resp.items.len(), 3, "all deleted blocks should be returned");
         assert_eq!(resp.items[0].id, "TRASH002", "most recently deleted first");
-        assert_eq!(resp.items[1].id, "TRASH003");
+        assert_eq!(resp.items[1].id, "TRASH003", "second most recently deleted");
         assert_eq!(resp.items[2].id, "TRASH001", "earliest deleted last");
     }
 
@@ -1505,28 +1563,31 @@ mod tests {
         let r1 = list_trash(&pool, &PageRequest::new(None, Some(2)).unwrap())
             .await
             .unwrap();
-        assert_eq!(r1.items.len(), 2);
-        assert!(r1.has_more);
-        assert_eq!(r1.items[0].id, "TRASH005");
-        assert_eq!(r1.items[1].id, "TRASH004");
+        assert_eq!(r1.items.len(), 2, "trash page 1 should return 2 items");
+        assert!(r1.has_more, "trash page 1 should indicate more");
+        assert_eq!(r1.items[0].id, "TRASH005", "most recent trash item first");
+        assert_eq!(r1.items[1].id, "TRASH004", "second most recent trash item");
 
         // Page 2: TRASH003, TRASH002
         let r2 = list_trash(&pool, &PageRequest::new(r1.next_cursor, Some(2)).unwrap())
             .await
             .unwrap();
-        assert_eq!(r2.items.len(), 2);
-        assert!(r2.has_more);
-        assert_eq!(r2.items[0].id, "TRASH003");
-        assert_eq!(r2.items[1].id, "TRASH002");
+        assert_eq!(r2.items.len(), 2, "trash page 2 should return 2 items");
+        assert!(r2.has_more, "trash page 2 should indicate more");
+        assert_eq!(r2.items[0].id, "TRASH003", "trash page 2 first item");
+        assert_eq!(r2.items[1].id, "TRASH002", "trash page 2 second item");
 
         // Page 3 (last): TRASH001
         let r3 = list_trash(&pool, &PageRequest::new(r2.next_cursor, Some(2)).unwrap())
             .await
             .unwrap();
-        assert_eq!(r3.items.len(), 1);
-        assert!(!r3.has_more);
-        assert!(r3.next_cursor.is_none());
-        assert_eq!(r3.items[0].id, "TRASH001");
+        assert_eq!(r3.items.len(), 1, "trash last page should return 1 item");
+        assert!(!r3.has_more, "trash last page should not indicate more");
+        assert!(
+            r3.next_cursor.is_none(),
+            "trash last page should have no cursor"
+        );
+        assert_eq!(r3.items[0].id, "TRASH001", "oldest trash item last");
     }
 
     #[tokio::test]
@@ -1553,7 +1614,10 @@ mod tests {
             1,
             "conflict blocks must be excluded from trash"
         );
-        assert_eq!(resp.items[0].id, "NORMAL01");
+        assert_eq!(
+            resp.items[0].id, "NORMAL01",
+            "only non-conflict block in trash"
+        );
     }
 
     // ====================================================================
@@ -1586,8 +1650,14 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(r1.items[0].id, "CHILD001");
-        assert_eq!(r1.items[1].id, "CHILD002");
+        assert_eq!(
+            r1.items[0].id, "CHILD001",
+            "page 1 first item before insert"
+        );
+        assert_eq!(
+            r1.items[1].id, "CHILD002",
+            "page 1 second item before insert"
+        );
         let saved_cursor = r1.next_cursor.clone();
 
         // Insert before cursor (pos=3) and after (pos=100)
@@ -1624,14 +1694,26 @@ mod tests {
             !ids.contains(&"CHILD001"),
             "cursor must skip already-seen items"
         );
-        assert!(!ids.contains(&"CHILD002"));
+        assert!(
+            !ids.contains(&"CHILD002"),
+            "CHILD002 was already seen in page 1"
+        );
         assert!(
             !ids.contains(&"NEWCHILD"),
             "items before cursor position must be skipped"
         );
-        assert!(ids.contains(&"CHILD003"));
-        assert!(ids.contains(&"CHILD004"));
-        assert!(ids.contains(&"CHILD005"));
+        assert!(
+            ids.contains(&"CHILD003"),
+            "CHILD003 should appear after cursor"
+        );
+        assert!(
+            ids.contains(&"CHILD004"),
+            "CHILD004 should appear after cursor"
+        );
+        assert!(
+            ids.contains(&"CHILD005"),
+            "CHILD005 should appear after cursor"
+        );
         assert!(ids.contains(&"NEWCHLD2"), "items after cursor must appear");
     }
 
@@ -1655,8 +1737,8 @@ mod tests {
         let resp = list_by_tag(&pool, "TAG00001", &page).await.unwrap();
 
         assert_eq!(resp.items.len(), 2, "only tagged blocks must be returned");
-        assert_eq!(resp.items[0].id, "BLOCK001");
-        assert_eq!(resp.items[1].id, "BLOCK003");
+        assert_eq!(resp.items[0].id, "BLOCK001", "first tagged block");
+        assert_eq!(resp.items[1].id, "BLOCK003", "second tagged block");
     }
 
     #[tokio::test]
@@ -1673,10 +1755,10 @@ mod tests {
         let r1 = list_by_tag(&pool, "TAG00001", &PageRequest::new(None, Some(2)).unwrap())
             .await
             .unwrap();
-        assert_eq!(r1.items.len(), 2);
-        assert!(r1.has_more);
-        assert_eq!(r1.items[0].id, "BLOCK001");
-        assert_eq!(r1.items[1].id, "BLOCK002");
+        assert_eq!(r1.items.len(), 2, "tag page 1 should return 2 items");
+        assert!(r1.has_more, "tag page 1 should indicate more");
+        assert_eq!(r1.items[0].id, "BLOCK001", "tag page 1 first item");
+        assert_eq!(r1.items[1].id, "BLOCK002", "tag page 1 second item");
 
         let r2 = list_by_tag(
             &pool,
@@ -1685,10 +1767,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(r2.items.len(), 2);
-        assert!(r2.has_more);
-        assert_eq!(r2.items[0].id, "BLOCK003");
-        assert_eq!(r2.items[1].id, "BLOCK004");
+        assert_eq!(r2.items.len(), 2, "tag page 2 should return 2 items");
+        assert!(r2.has_more, "tag page 2 should indicate more");
+        assert_eq!(r2.items[0].id, "BLOCK003", "tag page 2 first item");
+        assert_eq!(r2.items[1].id, "BLOCK004", "tag page 2 second item");
 
         let r3 = list_by_tag(
             &pool,
@@ -1697,10 +1779,13 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(r3.items.len(), 1);
-        assert!(!r3.has_more);
-        assert!(r3.next_cursor.is_none());
-        assert_eq!(r3.items[0].id, "BLOCK005");
+        assert_eq!(r3.items.len(), 1, "tag last page should return 1 item");
+        assert!(!r3.has_more, "tag last page should not indicate more");
+        assert!(
+            r3.next_cursor.is_none(),
+            "tag last page should have no cursor"
+        );
+        assert_eq!(r3.items[0].id, "BLOCK005", "tag last page item");
     }
 
     #[tokio::test]
@@ -1719,7 +1804,10 @@ mod tests {
         let resp = list_by_tag(&pool, "TAG00001", &page).await.unwrap();
 
         assert_eq!(resp.items.len(), 1, "soft-deleted block must be excluded");
-        assert_eq!(resp.items[0].id, "BLOCK001");
+        assert_eq!(
+            resp.items[0].id, "BLOCK001",
+            "only alive tagged block returned"
+        );
     }
 
     #[tokio::test]
@@ -1732,7 +1820,7 @@ mod tests {
         let resp = list_by_tag(&pool, "NONEXISTENT_TAG", &page).await.unwrap();
 
         assert!(resp.items.is_empty(), "unknown tag must return empty");
-        assert!(!resp.has_more);
+        assert!(!resp.has_more, "empty tag result should not indicate more");
     }
 
     // ====================================================================
@@ -1767,8 +1855,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.items.len(), 2, "only blocks with 'todo' property");
-        assert_eq!(resp.items[0].id, "BLOCK001");
-        assert_eq!(resp.items[1].id, "BLOCK002");
+        assert_eq!(
+            resp.items[0].id, "BLOCK001",
+            "first block with todo property"
+        );
+        assert_eq!(
+            resp.items[1].id, "BLOCK002",
+            "second block with todo property"
+        );
     }
 
     #[tokio::test]
@@ -1787,7 +1881,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.items.len(), 1, "only block with todo=TODO");
-        assert_eq!(resp.items[0].id, "BLOCK001");
+        assert_eq!(resp.items[0].id, "BLOCK001", "block matching value filter");
     }
 
     #[tokio::test]
@@ -1809,10 +1903,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(r1.items.len(), 2);
-        assert!(r1.has_more);
-        assert_eq!(r1.items[0].id, "BLOCK001");
-        assert_eq!(r1.items[1].id, "BLOCK002");
+        assert_eq!(r1.items.len(), 2, "property page 1 should return 2 items");
+        assert!(r1.has_more, "property page 1 should indicate more");
+        assert_eq!(r1.items[0].id, "BLOCK001", "property page 1 first item");
+        assert_eq!(r1.items[1].id, "BLOCK002", "property page 1 second item");
 
         let r2 = query_by_property(
             &pool,
@@ -1823,10 +1917,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(r2.items.len(), 2);
-        assert!(r2.has_more);
-        assert_eq!(r2.items[0].id, "BLOCK003");
-        assert_eq!(r2.items[1].id, "BLOCK004");
+        assert_eq!(r2.items.len(), 2, "property page 2 should return 2 items");
+        assert!(r2.has_more, "property page 2 should indicate more");
+        assert_eq!(r2.items[0].id, "BLOCK003", "property page 2 first item");
+        assert_eq!(r2.items[1].id, "BLOCK004", "property page 2 second item");
 
         let r3 = query_by_property(
             &pool,
@@ -1837,10 +1931,13 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(r3.items.len(), 1);
-        assert!(!r3.has_more);
-        assert!(r3.next_cursor.is_none());
-        assert_eq!(r3.items[0].id, "BLOCK005");
+        assert_eq!(r3.items.len(), 1, "property last page should return 1 item");
+        assert!(!r3.has_more, "property last page should not indicate more");
+        assert!(
+            r3.next_cursor.is_none(),
+            "property last page should have no cursor"
+        );
+        assert_eq!(r3.items[0].id, "BLOCK005", "property last page item");
     }
 
     #[tokio::test]
@@ -1855,8 +1952,14 @@ mod tests {
             .unwrap();
 
         assert!(resp.items.is_empty(), "nonexistent key must return empty");
-        assert!(!resp.has_more);
-        assert!(resp.next_cursor.is_none());
+        assert!(
+            !resp.has_more,
+            "empty property result should not indicate more"
+        );
+        assert!(
+            resp.next_cursor.is_none(),
+            "empty property result should have no cursor"
+        );
     }
 
     #[tokio::test]
@@ -1876,7 +1979,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.items.len(), 1, "soft-deleted block must be excluded");
-        assert_eq!(resp.items[0].id, "BLOCK001");
+        assert_eq!(
+            resp.items[0].id, "BLOCK001",
+            "only alive block with property"
+        );
     }
 
     // ====================================================================
@@ -1899,12 +2005,18 @@ mod tests {
 
         let resp = list_agenda(&pool, "2025-01-15", None, &page).await.unwrap();
         assert_eq!(resp.items.len(), 2, "only blocks for Jan 15");
-        assert_eq!(resp.items[0].id, "BLOCK001");
-        assert_eq!(resp.items[1].id, "BLOCK002");
+        assert_eq!(
+            resp.items[0].id, "BLOCK001",
+            "first agenda block for Jan 15"
+        );
+        assert_eq!(
+            resp.items[1].id, "BLOCK002",
+            "second agenda block for Jan 15"
+        );
 
         let resp2 = list_agenda(&pool, "2025-01-16", None, &page).await.unwrap();
         assert_eq!(resp2.items.len(), 1, "only blocks for Jan 16");
-        assert_eq!(resp2.items[0].id, "BLOCK003");
+        assert_eq!(resp2.items[0].id, "BLOCK003", "agenda block for Jan 16");
     }
 
     #[tokio::test]
@@ -1918,7 +2030,7 @@ mod tests {
             resp.items.is_empty(),
             "date with no entries must return empty"
         );
-        assert!(!resp.has_more);
+        assert!(!resp.has_more, "empty agenda should not indicate more");
     }
 
     #[tokio::test]
@@ -1939,10 +2051,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(r1.items.len(), 2);
-        assert!(r1.has_more);
-        assert_eq!(r1.items[0].id, "BLOCK001");
-        assert_eq!(r1.items[1].id, "BLOCK002");
+        assert_eq!(r1.items.len(), 2, "agenda page 1 should return 2 items");
+        assert!(r1.has_more, "agenda page 1 should indicate more");
+        assert_eq!(r1.items[0].id, "BLOCK001", "agenda page 1 first item");
+        assert_eq!(r1.items[1].id, "BLOCK002", "agenda page 1 second item");
 
         let r2 = list_agenda(
             &pool,
@@ -1952,10 +2064,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(r2.items.len(), 2);
-        assert!(r2.has_more);
-        assert_eq!(r2.items[0].id, "BLOCK003");
-        assert_eq!(r2.items[1].id, "BLOCK004");
+        assert_eq!(r2.items.len(), 2, "agenda page 2 should return 2 items");
+        assert!(r2.has_more, "agenda page 2 should indicate more");
+        assert_eq!(r2.items[0].id, "BLOCK003", "agenda page 2 first item");
+        assert_eq!(r2.items[1].id, "BLOCK004", "agenda page 2 second item");
 
         let r3 = list_agenda(
             &pool,
@@ -1965,10 +2077,13 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(r3.items.len(), 1);
-        assert!(!r3.has_more);
-        assert!(r3.next_cursor.is_none());
-        assert_eq!(r3.items[0].id, "BLOCK005");
+        assert_eq!(r3.items.len(), 1, "agenda last page should return 1 item");
+        assert!(!r3.has_more, "agenda last page should not indicate more");
+        assert!(
+            r3.next_cursor.is_none(),
+            "agenda last page should have no cursor"
+        );
+        assert_eq!(r3.items[0].id, "BLOCK005", "agenda last page item");
     }
 
     #[tokio::test]
@@ -1993,8 +2108,11 @@ mod tests {
             2,
             "soft-deleted block must be excluded from agenda"
         );
-        assert_eq!(resp.items[0].id, "BLOCK001");
-        assert_eq!(resp.items[1].id, "BLOCK003");
+        assert_eq!(resp.items[0].id, "BLOCK001", "first alive agenda block");
+        assert_eq!(
+            resp.items[1].id, "BLOCK003",
+            "second alive agenda block, BLOCK002 excluded"
+        );
     }
 
     // ====================================================================
@@ -2126,10 +2244,13 @@ mod tests {
         let resp = list_backlinks(&pool, "TARGET01", &page).await.unwrap();
 
         assert_eq!(resp.items.len(), 2, "only linked blocks must be returned");
-        assert_eq!(resp.items[0].id, "SOURCE01");
-        assert_eq!(resp.items[1].id, "SOURCE02");
-        assert!(!resp.has_more);
-        assert!(resp.next_cursor.is_none());
+        assert_eq!(resp.items[0].id, "SOURCE01", "first backlink source");
+        assert_eq!(resp.items[1].id, "SOURCE02", "second backlink source");
+        assert!(!resp.has_more, "all backlinks fit in one page");
+        assert!(
+            resp.next_cursor.is_none(),
+            "single page should have no cursor"
+        );
     }
 
     #[tokio::test]
@@ -2147,10 +2268,10 @@ mod tests {
         let r1 = list_backlinks(&pool, "TARGET01", &PageRequest::new(None, Some(2)).unwrap())
             .await
             .unwrap();
-        assert_eq!(r1.items.len(), 2);
-        assert!(r1.has_more);
-        assert_eq!(r1.items[0].id, "SRC00001");
-        assert_eq!(r1.items[1].id, "SRC00002");
+        assert_eq!(r1.items.len(), 2, "backlinks page 1 should return 2 items");
+        assert!(r1.has_more, "backlinks page 1 should indicate more");
+        assert_eq!(r1.items[0].id, "SRC00001", "backlinks page 1 first item");
+        assert_eq!(r1.items[1].id, "SRC00002", "backlinks page 1 second item");
 
         // Page 2
         let r2 = list_backlinks(
@@ -2160,10 +2281,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(r2.items.len(), 2);
-        assert!(r2.has_more);
-        assert_eq!(r2.items[0].id, "SRC00003");
-        assert_eq!(r2.items[1].id, "SRC00004");
+        assert_eq!(r2.items.len(), 2, "backlinks page 2 should return 2 items");
+        assert!(r2.has_more, "backlinks page 2 should indicate more");
+        assert_eq!(r2.items[0].id, "SRC00003", "backlinks page 2 first item");
+        assert_eq!(r2.items[1].id, "SRC00004", "backlinks page 2 second item");
 
         // Page 3 (last)
         let r3 = list_backlinks(
@@ -2173,10 +2294,17 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(r3.items.len(), 1);
-        assert!(!r3.has_more);
-        assert!(r3.next_cursor.is_none());
-        assert_eq!(r3.items[0].id, "SRC00005");
+        assert_eq!(
+            r3.items.len(),
+            1,
+            "backlinks last page should return 1 item"
+        );
+        assert!(!r3.has_more, "backlinks last page should not indicate more");
+        assert!(
+            r3.next_cursor.is_none(),
+            "backlinks last page should have no cursor"
+        );
+        assert_eq!(r3.items[0].id, "SRC00005", "backlinks last page item");
     }
 
     #[tokio::test]
@@ -2202,8 +2330,8 @@ mod tests {
             2,
             "soft-deleted source block must be excluded"
         );
-        assert_eq!(resp.items[0].id, "SOURCE01");
-        assert_eq!(resp.items[1].id, "SOURCE03");
+        assert_eq!(resp.items[0].id, "SOURCE01", "first alive backlink source");
+        assert_eq!(resp.items[1].id, "SOURCE03", "second alive backlink source");
     }
 
     #[tokio::test]
@@ -2219,8 +2347,11 @@ mod tests {
             resp.items.is_empty(),
             "target with no links must return empty"
         );
-        assert!(!resp.has_more);
-        assert!(resp.next_cursor.is_none());
+        assert!(!resp.has_more, "empty backlinks should not indicate more");
+        assert!(
+            resp.next_cursor.is_none(),
+            "empty backlinks should have no cursor"
+        );
     }
 
     // ====================================================================
@@ -2271,10 +2402,16 @@ mod tests {
         assert_eq!(resp.items.len(), 2, "only ops for HIST_BLK");
         // Newest first (seq DESC)
         assert_eq!(resp.items[0].seq, 2, "newest op first");
-        assert_eq!(resp.items[0].op_type, "edit_block");
-        assert_eq!(resp.items[1].seq, 1);
-        assert_eq!(resp.items[1].op_type, "create_block");
-        assert!(!resp.has_more);
+        assert_eq!(
+            resp.items[0].op_type, "edit_block",
+            "newest op should be edit_block"
+        );
+        assert_eq!(resp.items[1].seq, 1, "oldest op seq should be 1");
+        assert_eq!(
+            resp.items[1].op_type, "create_block",
+            "oldest op should be create_block"
+        );
+        assert!(!resp.has_more, "all history fits in one page");
     }
 
     #[tokio::test]
@@ -2298,10 +2435,10 @@ mod tests {
         let r1 = list_block_history(&pool, "HIST_BLK", &PageRequest::new(None, Some(2)).unwrap())
             .await
             .unwrap();
-        assert_eq!(r1.items.len(), 2);
-        assert!(r1.has_more);
-        assert_eq!(r1.items[0].seq, 5);
-        assert_eq!(r1.items[1].seq, 4);
+        assert_eq!(r1.items.len(), 2, "history page 1 should return 2 items");
+        assert!(r1.has_more, "history page 1 should indicate more");
+        assert_eq!(r1.items[0].seq, 5, "history page 1 first seq");
+        assert_eq!(r1.items[1].seq, 4, "history page 1 second seq");
 
         // Page 2: seq 3, 2
         let r2 = list_block_history(
@@ -2311,10 +2448,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(r2.items.len(), 2);
-        assert!(r2.has_more);
-        assert_eq!(r2.items[0].seq, 3);
-        assert_eq!(r2.items[1].seq, 2);
+        assert_eq!(r2.items.len(), 2, "history page 2 should return 2 items");
+        assert!(r2.has_more, "history page 2 should indicate more");
+        assert_eq!(r2.items[0].seq, 3, "history page 2 first seq");
+        assert_eq!(r2.items[1].seq, 2, "history page 2 second seq");
 
         // Page 3 (last): seq 1
         let r3 = list_block_history(
@@ -2324,10 +2461,13 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(r3.items.len(), 1);
-        assert!(!r3.has_more);
-        assert!(r3.next_cursor.is_none());
-        assert_eq!(r3.items[0].seq, 1);
+        assert_eq!(r3.items.len(), 1, "history last page should return 1 item");
+        assert!(!r3.has_more, "history last page should not indicate more");
+        assert!(
+            r3.next_cursor.is_none(),
+            "history last page should have no cursor"
+        );
+        assert_eq!(r3.items[0].seq, 1, "history last page seq");
     }
 
     #[tokio::test]
@@ -2344,8 +2484,11 @@ mod tests {
             resp.items.is_empty(),
             "block with no history must return empty"
         );
-        assert!(!resp.has_more);
-        assert!(resp.next_cursor.is_none());
+        assert!(!resp.has_more, "empty history should not indicate more");
+        assert!(
+            resp.next_cursor.is_none(),
+            "empty history should have no cursor"
+        );
     }
 
     #[tokio::test]
@@ -2393,11 +2536,23 @@ mod tests {
             "all op types for the block must be returned"
         );
         let op_types: Vec<&str> = resp.items.iter().map(|e| e.op_type.as_str()).collect();
-        assert!(op_types.contains(&"create_block"));
-        assert!(op_types.contains(&"edit_block"));
-        assert!(op_types.contains(&"add_tag"));
-        assert!(op_types.contains(&"remove_tag"));
-        assert!(op_types.contains(&"move_block"));
+        assert!(
+            op_types.contains(&"create_block"),
+            "create_block op should appear"
+        );
+        assert!(
+            op_types.contains(&"edit_block"),
+            "edit_block op should appear"
+        );
+        assert!(op_types.contains(&"add_tag"), "add_tag op should appear");
+        assert!(
+            op_types.contains(&"remove_tag"),
+            "remove_tag op should appear"
+        );
+        assert!(
+            op_types.contains(&"move_block"),
+            "move_block op should appear"
+        );
     }
 
     // ====================================================================
@@ -2419,13 +2574,13 @@ mod tests {
         let resp = list_conflicts(&pool, &page).await.unwrap();
 
         assert_eq!(resp.items.len(), 2, "only conflict blocks");
-        assert_eq!(resp.items[0].id, "CONFLCT1");
-        assert_eq!(resp.items[1].id, "CONFLCT2");
+        assert_eq!(resp.items[0].id, "CONFLCT1", "first conflict block");
+        assert_eq!(resp.items[1].id, "CONFLCT2", "second conflict block");
         assert!(
             resp.items.iter().all(|b| b.is_conflict),
             "all returned blocks must be conflicts"
         );
-        assert!(!resp.has_more);
+        assert!(!resp.has_more, "all conflicts fit in one page");
     }
 
     #[tokio::test]
@@ -2447,7 +2602,7 @@ mod tests {
             1,
             "soft-deleted conflict must be excluded"
         );
-        assert_eq!(resp.items[0].id, "CONFLCT1");
+        assert_eq!(resp.items[0].id, "CONFLCT1", "only alive conflict block");
     }
 
     #[tokio::test]
@@ -2464,8 +2619,11 @@ mod tests {
             resp.items.is_empty(),
             "no conflict blocks must return empty"
         );
-        assert!(!resp.has_more);
-        assert!(resp.next_cursor.is_none());
+        assert!(!resp.has_more, "empty conflicts should not indicate more");
+        assert!(
+            resp.next_cursor.is_none(),
+            "empty conflicts should have no cursor"
+        );
     }
 
     #[tokio::test]
@@ -2482,28 +2640,35 @@ mod tests {
         let r1 = list_conflicts(&pool, &PageRequest::new(None, Some(2)).unwrap())
             .await
             .unwrap();
-        assert_eq!(r1.items.len(), 2);
-        assert!(r1.has_more);
-        assert_eq!(r1.items[0].id, "CONFLCT1");
-        assert_eq!(r1.items[1].id, "CONFLCT2");
+        assert_eq!(r1.items.len(), 2, "conflicts page 1 should return 2 items");
+        assert!(r1.has_more, "conflicts page 1 should indicate more");
+        assert_eq!(r1.items[0].id, "CONFLCT1", "conflicts page 1 first item");
+        assert_eq!(r1.items[1].id, "CONFLCT2", "conflicts page 1 second item");
 
         // Page 2
         let r2 = list_conflicts(&pool, &PageRequest::new(r1.next_cursor, Some(2)).unwrap())
             .await
             .unwrap();
-        assert_eq!(r2.items.len(), 2);
-        assert!(r2.has_more);
-        assert_eq!(r2.items[0].id, "CONFLCT3");
-        assert_eq!(r2.items[1].id, "CONFLCT4");
+        assert_eq!(r2.items.len(), 2, "conflicts page 2 should return 2 items");
+        assert!(r2.has_more, "conflicts page 2 should indicate more");
+        assert_eq!(r2.items[0].id, "CONFLCT3", "conflicts page 2 first item");
+        assert_eq!(r2.items[1].id, "CONFLCT4", "conflicts page 2 second item");
 
         // Page 3 (last)
         let r3 = list_conflicts(&pool, &PageRequest::new(r2.next_cursor, Some(2)).unwrap())
             .await
             .unwrap();
-        assert_eq!(r3.items.len(), 1);
-        assert!(!r3.has_more);
-        assert!(r3.next_cursor.is_none());
-        assert_eq!(r3.items[0].id, "CONFLCT5");
+        assert_eq!(
+            r3.items.len(),
+            1,
+            "conflicts last page should return 1 item"
+        );
+        assert!(!r3.has_more, "conflicts last page should not indicate more");
+        assert!(
+            r3.next_cursor.is_none(),
+            "conflicts last page should have no cursor"
+        );
+        assert_eq!(r3.items[0].id, "CONFLCT5", "conflicts last page item");
     }
 
     // ====================================================================
@@ -2606,10 +2771,26 @@ mod tests {
             "all 4 ops must be returned (2 devices × 2 seq values)"
         );
         // Ordered by (seq DESC, device_id DESC)
-        assert_eq!(all_entries[0], (2, "device-B".into()));
-        assert_eq!(all_entries[1], (2, "device-A".into()));
-        assert_eq!(all_entries[2], (1, "device-B".into()));
-        assert_eq!(all_entries[3], (1, "device-A".into()));
+        assert_eq!(
+            all_entries[0],
+            (2, "device-B".into()),
+            "first: seq=2, device-B"
+        );
+        assert_eq!(
+            all_entries[1],
+            (2, "device-A".into()),
+            "second: seq=2, device-A"
+        );
+        assert_eq!(
+            all_entries[2],
+            (1, "device-B".into()),
+            "third: seq=1, device-B"
+        );
+        assert_eq!(
+            all_entries[3],
+            (1, "device-A".into()),
+            "fourth: seq=1, device-A"
+        );
     }
 
     // ====================================================================
@@ -2670,7 +2851,10 @@ mod tests {
             1,
             "conflict blocks must be excluded from list_by_tag"
         );
-        assert_eq!(resp.items[0].id, "BLOCK001");
+        assert_eq!(
+            resp.items[0].id, "BLOCK001",
+            "only non-conflict tagged block"
+        );
     }
 
     // ====================================================================
@@ -2715,8 +2899,8 @@ mod tests {
 
         assert_eq!(r1.items.len(), 5, "page 1 must return 5 items");
         assert!(r1.has_more, "page 1 must have more items");
-        assert_eq!(r1.items[0].id, "CS_C001");
-        assert_eq!(r1.items[4].id, "CS_C005");
+        assert_eq!(r1.items[0].id, "CS_C001", "page 1 should start at C001");
+        assert_eq!(r1.items[4].id, "CS_C005", "page 1 should end at C005");
 
         // Soft-delete C03 (a block BEFORE the cursor position).
         // This was already returned in page 1, so it shouldn't affect page 2.

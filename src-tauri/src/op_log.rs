@@ -417,8 +417,14 @@ mod tests {
             record.parent_seqs.is_none(),
             "genesis op must have null parent_seqs"
         );
-        assert_eq!(record.op_type, "create_block");
-        assert_eq!(record.device_id, TEST_DEVICE);
+        assert_eq!(
+            record.op_type, "create_block",
+            "op_type should be create_block"
+        );
+        assert_eq!(
+            record.device_id, TEST_DEVICE,
+            "device_id should match test device"
+        );
         assert_eq!(record.hash.len(), 64, "hash must be 64 hex chars");
     }
 
@@ -434,7 +440,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(r1.seq, 1);
+        assert_eq!(r1.seq, 1, "first op should have seq 1");
 
         let p2 = OpPayload::EditBlock(EditBlockPayload {
             block_id: BlockId::test_id("BLK-PARENT"),
@@ -543,15 +549,35 @@ mod tests {
 
         // Read back from DB
         let fetched = get_op_by_seq(&pool, "dev-rt", 1).await.unwrap();
-        assert_eq!(fetched.payload, record.payload);
+        assert_eq!(
+            fetched.payload, record.payload,
+            "DB payload should match appended payload"
+        );
 
         // Deserialize the stored JSON back to the payload struct
         let deserialized: CreateBlockPayload = serde_json::from_str(&fetched.payload).unwrap();
-        assert_eq!(deserialized.block_id, "BLK-RT");
-        assert_eq!(deserialized.block_type, "heading");
-        assert_eq!(deserialized.parent_id, Some(BlockId::test_id("ROOT")));
-        assert_eq!(deserialized.position, Some(42));
-        assert_eq!(deserialized.content, "round-trip test");
+        assert_eq!(
+            deserialized.block_id, "BLK-RT",
+            "block_id should round-trip"
+        );
+        assert_eq!(
+            deserialized.block_type, "heading",
+            "block_type should round-trip"
+        );
+        assert_eq!(
+            deserialized.parent_id,
+            Some(BlockId::test_id("ROOT")),
+            "parent_id should round-trip"
+        );
+        assert_eq!(
+            deserialized.position,
+            Some(42),
+            "position should round-trip"
+        );
+        assert_eq!(
+            deserialized.content, "round-trip test",
+            "content should round-trip"
+        );
     }
 
     /// Fire 10 concurrent appends from the same device; all should succeed and
@@ -665,7 +691,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         let err = get_op_by_seq(&pool, "ghost-device", 999).await;
-        assert!(err.is_err());
+        assert!(err.is_err(), "missing record should return an error");
         let msg = err.unwrap_err().to_string();
         assert!(
             msg.contains("Not found"),
@@ -825,7 +851,11 @@ mod tests {
 
         // The stored payload must contain the uppercase form.
         let parsed: serde_json::Value = serde_json::from_str(&record.payload).unwrap();
-        assert_eq!(parsed["block_id"].as_str().unwrap(), upper_id);
+        assert_eq!(
+            parsed["block_id"].as_str().unwrap(),
+            upper_id,
+            "stored block_id should be uppercase"
+        );
     }
 
     /// Two ops with the same logical ULID (different case) must produce
@@ -868,7 +898,10 @@ mod tests {
         .unwrap();
 
         // The payloads should be identical (both uppercased).
-        assert_eq!(rec_lower.payload, rec_upper.payload);
+        assert_eq!(
+            rec_lower.payload, rec_upper.payload,
+            "payloads should be identical after normalization"
+        );
 
         // Hashes differ only because seq differs (1 vs 2), but the payload
         // portion of the hash input is identical.
@@ -1023,7 +1056,11 @@ mod tests {
             parent_seqs: None,
             ..make_test_op()
         };
-        assert_eq!(op.parsed_parent_seqs().unwrap(), None);
+        assert_eq!(
+            op.parsed_parent_seqs().unwrap(),
+            None,
+            "genesis op should have no parents"
+        );
     }
 
     #[test]
@@ -1034,7 +1071,8 @@ mod tests {
         };
         assert_eq!(
             op.parsed_parent_seqs().unwrap(),
-            Some(vec![("device1".to_string(), 1)])
+            Some(vec![("device1".to_string(), 1)]),
+            "should parse single parent entry"
         );
     }
 
@@ -1045,7 +1083,7 @@ mod tests {
             ..make_test_op()
         };
         let parents = op.parsed_parent_seqs().unwrap().unwrap();
-        assert_eq!(parents.len(), 2);
+        assert_eq!(parents.len(), 2, "should parse both parent entries");
     }
 
     #[test]
@@ -1054,7 +1092,10 @@ mod tests {
             parent_seqs: Some("not json".to_string()),
             ..make_test_op()
         };
-        assert!(op.parsed_parent_seqs().is_err());
+        assert!(
+            op.parsed_parent_seqs().is_err(),
+            "malformed JSON should return error"
+        );
     }
 
     // ── Canonical JSON ordering ─────────────────────────────────────────

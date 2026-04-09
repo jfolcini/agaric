@@ -578,9 +578,21 @@ mod tests {
         let (ts, count) = cascade_soft_delete(&pool, PARENT).await.unwrap();
 
         assert_eq!(count, 3, "parent + child + grandchild = 3");
-        assert_eq!(get_deleted_at(&pool, PARENT).await, Some(ts.clone()));
-        assert_eq!(get_deleted_at(&pool, CHILD).await, Some(ts.clone()));
-        assert_eq!(get_deleted_at(&pool, GRANDCHILD).await, Some(ts));
+        assert_eq!(
+            get_deleted_at(&pool, PARENT).await,
+            Some(ts.clone()),
+            "parent should have cascade timestamp"
+        );
+        assert_eq!(
+            get_deleted_at(&pool, CHILD).await,
+            Some(ts.clone()),
+            "child should have cascade timestamp"
+        );
+        assert_eq!(
+            get_deleted_at(&pool, GRANDCHILD).await,
+            Some(ts),
+            "grandchild should have cascade timestamp"
+        );
     }
 
     #[tokio::test]
@@ -615,7 +627,11 @@ mod tests {
         );
         assert_eq!(count, 1, "only the parent should be newly deleted");
 
-        assert_eq!(get_deleted_at(&pool, PARENT).await, Some(t2));
+        assert_eq!(
+            get_deleted_at(&pool, PARENT).await,
+            Some(t2),
+            "parent should have cascade timestamp"
+        );
         assert_eq!(
             get_deleted_at(&pool, CHILD).await,
             Some(t1),
@@ -636,7 +652,11 @@ mod tests {
         let (ts, count) = cascade_soft_delete(&pool, "LEAF01").await.unwrap();
 
         assert_eq!(count, 1, "leaf node has no descendants");
-        assert_eq!(get_deleted_at(&pool, "LEAF01").await, Some(ts));
+        assert_eq!(
+            get_deleted_at(&pool, "LEAF01").await,
+            Some(ts),
+            "leaf should have deletion timestamp"
+        );
     }
 
     #[tokio::test]
@@ -701,10 +721,18 @@ mod tests {
         let (ts, count) = cascade_soft_delete(&pool, "WROOT").await.unwrap();
         assert_eq!(count, 101, "root + 100 children");
 
-        assert_eq!(get_deleted_at(&pool, "WROOT").await, Some(ts.clone()));
+        assert_eq!(
+            get_deleted_at(&pool, "WROOT").await,
+            Some(ts.clone()),
+            "wide root should be deleted"
+        );
         for i in 0..100 {
             let id = format!("WC{i:03}");
-            assert_eq!(get_deleted_at(&pool, &id).await, Some(ts.clone()));
+            assert_eq!(
+                get_deleted_at(&pool, &id).await,
+                Some(ts.clone()),
+                "child {id} should share cascade timestamp"
+            );
         }
     }
 
@@ -772,9 +800,21 @@ mod tests {
         let restored = restore_block(&pool, PARENT, &ts).await.unwrap();
 
         assert_eq!(restored, 3, "parent + child + grandchild");
-        assert_eq!(get_deleted_at(&pool, PARENT).await, None);
-        assert_eq!(get_deleted_at(&pool, CHILD).await, None);
-        assert_eq!(get_deleted_at(&pool, GRANDCHILD).await, None);
+        assert_eq!(
+            get_deleted_at(&pool, PARENT).await,
+            None,
+            "parent should be restored"
+        );
+        assert_eq!(
+            get_deleted_at(&pool, CHILD).await,
+            None,
+            "child should be restored"
+        );
+        assert_eq!(
+            get_deleted_at(&pool, GRANDCHILD).await,
+            None,
+            "grandchild should be restored"
+        );
     }
 
     #[tokio::test]
@@ -809,8 +849,16 @@ mod tests {
         let restored = restore_block(&pool, PARENT, &t2).await.unwrap();
         assert_eq!(restored, 2, "parent + child restored");
 
-        assert_eq!(get_deleted_at(&pool, PARENT).await, None);
-        assert_eq!(get_deleted_at(&pool, CHILD).await, None);
+        assert_eq!(
+            get_deleted_at(&pool, PARENT).await,
+            None,
+            "parent should be restored"
+        );
+        assert_eq!(
+            get_deleted_at(&pool, CHILD).await,
+            None,
+            "child should be restored"
+        );
         assert_eq!(
             get_deleted_at(&pool, GRANDCHILD).await,
             Some(FIXED_DELETED_AT.to_string()),
@@ -902,8 +950,7 @@ mod tests {
         .unwrap();
 
         let count = purge_block(&pool, BLOCK_A).await.unwrap();
-        assert_eq!(count, 1);
-
+        assert_eq!(count, 1, "purged block should be removed");
         let tags: i64 = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM block_tags WHERE block_id = ?",
             BLOCK_A
@@ -1307,46 +1354,66 @@ mod tests {
 
     #[test]
     fn safe_path_accepts_simple_relative() {
-        assert!(super::is_safe_attachment_path("attachments/photo.png"));
+        assert!(
+            super::is_safe_attachment_path("attachments/photo.png"),
+            "simple relative path should be accepted"
+        );
     }
 
     #[test]
     fn safe_path_accepts_nested_relative() {
-        assert!(super::is_safe_attachment_path(
-            "attachments/2025/01/photo.png"
-        ));
+        assert!(
+            super::is_safe_attachment_path("attachments/2025/01/photo.png"),
+            "nested relative path should be accepted"
+        );
     }
 
     #[test]
     fn safe_path_accepts_filename_only() {
-        assert!(super::is_safe_attachment_path("photo.png"));
+        assert!(
+            super::is_safe_attachment_path("photo.png"),
+            "bare filename should be accepted"
+        );
     }
 
     #[test]
     fn safe_path_rejects_absolute_unix() {
-        assert!(!super::is_safe_attachment_path("/etc/passwd"));
+        assert!(
+            !super::is_safe_attachment_path("/etc/passwd"),
+            "absolute unix path should be rejected"
+        );
     }
 
     #[test]
     fn safe_path_rejects_absolute_tmp() {
-        assert!(!super::is_safe_attachment_path("/tmp/photo.png"));
+        assert!(
+            !super::is_safe_attachment_path("/tmp/photo.png"),
+            "absolute /tmp path should be rejected"
+        );
     }
 
     #[test]
     fn safe_path_rejects_parent_traversal() {
-        assert!(!super::is_safe_attachment_path("../../../etc/passwd"));
+        assert!(
+            !super::is_safe_attachment_path("../../../etc/passwd"),
+            "parent traversal should be rejected"
+        );
     }
 
     #[test]
     fn safe_path_rejects_embedded_parent_traversal() {
-        assert!(!super::is_safe_attachment_path(
-            "attachments/../../secret.txt"
-        ));
+        assert!(
+            !super::is_safe_attachment_path("attachments/../../secret.txt"),
+            "embedded parent traversal should be rejected"
+        );
     }
 
     #[test]
     fn safe_path_rejects_dot_dot_only() {
-        assert!(!super::is_safe_attachment_path(".."));
+        assert!(
+            !super::is_safe_attachment_path(".."),
+            "bare dot-dot should be rejected"
+        );
     }
 
     #[tokio::test]

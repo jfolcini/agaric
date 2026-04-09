@@ -5223,18 +5223,32 @@ mod tests {
         .unwrap();
 
         assert_eq!(resp.block_type, "content", "block_type should match input");
-        assert_eq!(resp.content, Some("hello world".into()));
+        assert_eq!(
+            resp.content,
+            Some("hello world".into()),
+            "content should match input"
+        );
         assert!(resp.parent_id.is_none(), "top-level block has no parent");
-        assert_eq!(resp.position, Some(1));
+        assert_eq!(resp.position, Some(1), "position should match input");
         assert!(resp.deleted_at.is_none(), "new block should not be deleted");
 
         // Verify persistence in DB via direct query
         let row = get_block_inner(&pool, resp.id.clone()).await.unwrap();
         assert_eq!(row.id, resp.id, "DB row should match response ID");
-        assert_eq!(row.block_type, "content");
-        assert_eq!(row.content, Some("hello world".into()));
-        assert_eq!(row.position, Some(1));
-        assert!(row.deleted_at.is_none());
+        assert_eq!(
+            row.block_type, "content",
+            "DB block_type should be persisted"
+        );
+        assert_eq!(
+            row.content,
+            Some("hello world".into()),
+            "DB content should be persisted"
+        );
+        assert_eq!(row.position, Some(1), "DB position should be persisted");
+        assert!(
+            row.deleted_at.is_none(),
+            "DB row should not be soft-deleted"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -5442,7 +5456,11 @@ mod tests {
             .await;
 
             assert!(resp.is_ok(), "block_type '{block_type}' should be accepted");
-            assert_eq!(resp.unwrap().block_type, *block_type);
+            assert_eq!(
+                resp.unwrap().block_type,
+                *block_type,
+                "returned block_type should match"
+            );
         }
     }
 
@@ -5488,7 +5506,11 @@ mod tests {
 
         // Also verify round-trip through DB
         let row = get_block_inner(&pool, resp.id).await.unwrap();
-        assert_eq!(row.content, Some(unicode_content.into()));
+        assert_eq!(
+            row.content,
+            Some(unicode_content.into()),
+            "DB should preserve unicode content"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -5606,7 +5628,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(edited.content, Some("updated".into()));
+        assert_eq!(
+            edited.content,
+            Some("updated".into()),
+            "edited content should reflect new value"
+        );
 
         // Verify in DB
         let row = sqlx::query!("SELECT content FROM blocks WHERE id = ?", created.id)
@@ -5832,7 +5858,11 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(row.content, Some("same text".into()));
+        assert_eq!(
+            row.content,
+            Some("same text".into()),
+            "DB content should remain unchanged"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -6092,7 +6122,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.purged_count, 1);
+        assert_eq!(
+            resp.purged_count, 1,
+            "single block should have purged_count=1"
+        );
 
         let exists = sqlx::query!(r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ?"#, "PURGE1")
             .fetch_optional(&pool)
@@ -6159,8 +6192,8 @@ mod tests {
             "should only return top-level blocks (parent_id IS NULL)"
         );
         let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
-        assert!(ids.contains(&"TOP1"));
-        assert!(ids.contains(&"TOP2"));
+        assert!(ids.contains(&"TOP1"), "TOP1 should be in results");
+        assert!(ids.contains(&"TOP2"), "TOP2 should be in results");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -6188,7 +6221,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(resp.items.len(), 1, "should filter to page type only");
-        assert_eq!(resp.items[0].id, "PAGE1");
+        assert_eq!(resp.items[0].id, "PAGE1", "only page block should match");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -6218,8 +6251,8 @@ mod tests {
 
         assert_eq!(resp.items.len(), 2, "should return only children of PAR");
         let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
-        assert!(ids.contains(&"CH1"));
-        assert!(ids.contains(&"CH2"));
+        assert!(ids.contains(&"CH1"), "CH1 should be in children results");
+        assert!(ids.contains(&"CH2"), "CH2 should be in children results");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -6257,7 +6290,10 @@ mod tests {
             1,
             "should return blocks tagged with TAG_FILTER"
         );
-        assert_eq!(resp.items[0].id, "TAGGED_BLK");
+        assert_eq!(
+            resp.items[0].id, "TAGGED_BLK",
+            "tagged block should be returned"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -6294,7 +6330,10 @@ mod tests {
             1,
             "trash should contain only deleted blocks"
         );
-        assert_eq!(resp.items[0].id, "DEAD");
+        assert_eq!(
+            resp.items[0].id, "DEAD",
+            "only deleted block should appear in trash"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -6493,9 +6532,13 @@ mod tests {
         insert_block(&pool, "BLK001", "content", "hello", None, Some(1)).await;
 
         let block = get_block_inner(&pool, "BLK001".into()).await.unwrap();
-        assert_eq!(block.id, "BLK001");
-        assert_eq!(block.block_type, "content");
-        assert_eq!(block.content, Some("hello".into()));
+        assert_eq!(block.id, "BLK001", "returned block ID should match");
+        assert_eq!(block.block_type, "content", "block_type should be content");
+        assert_eq!(
+            block.content,
+            Some("hello".into()),
+            "content should match inserted value"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -6524,7 +6567,10 @@ mod tests {
 
         // get_block should still return it (unlike list_blocks which excludes deleted)
         let block = get_block_inner(&pool, "DELBLK".into()).await.unwrap();
-        assert_eq!(block.id, "DELBLK");
+        assert_eq!(
+            block.id, "DELBLK",
+            "deleted block should still be retrievable"
+        );
         assert_eq!(
             block.deleted_at,
             Some(FIXED_TS.into()),
@@ -6565,9 +6611,19 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(resp.block_id, "MV_CHILD");
-        assert_eq!(resp.new_parent_id, Some("MV_PAR_B".into()));
-        assert_eq!(resp.new_position, 5);
+        assert_eq!(
+            resp.block_id, "MV_CHILD",
+            "block_id should match moved block"
+        );
+        assert_eq!(
+            resp.new_parent_id,
+            Some("MV_PAR_B".into()),
+            "new_parent_id should be parent B"
+        );
+        assert_eq!(
+            resp.new_position, 5,
+            "new_position should match requested value"
+        );
 
         // Verify DB state
         let row = sqlx::query!(
@@ -6617,12 +6673,18 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.block_id, "MV_ROOT_CHD");
+        assert_eq!(
+            resp.block_id, "MV_ROOT_CHD",
+            "block_id should match moved block"
+        );
         assert!(
             resp.new_parent_id.is_none(),
             "new_parent_id should be None for root move"
         );
-        assert_eq!(resp.new_position, 10);
+        assert_eq!(
+            resp.new_position, 10,
+            "new_position should match requested value"
+        );
 
         // Verify DB state
         let row = sqlx::query!(
@@ -6773,7 +6835,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.new_parent_id, Some("NC_C".into()));
+        assert_eq!(
+            resp.new_parent_id,
+            Some("NC_C".into()),
+            "block should be reparented to C"
+        );
     }
 
     // ======================================================================
@@ -6792,8 +6858,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.block_id, "AT_BLK");
-        assert_eq!(resp.tag_id, "AT_TAG");
+        assert_eq!(resp.block_id, "AT_BLK", "response block_id should match");
+        assert_eq!(resp.tag_id, "AT_TAG", "response tag_id should match");
 
         // Verify block_tags row
         let row = sqlx::query!(
@@ -6903,8 +6969,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.block_id, "RT_BLK");
-        assert_eq!(resp.tag_id, "RT_TAG");
+        assert_eq!(resp.block_id, "RT_BLK", "response block_id should match");
+        assert_eq!(resp.tag_id, "RT_TAG", "response tag_id should match");
 
         // Verify block_tags is empty
         let row = sqlx::query!(
@@ -7047,9 +7113,16 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.items.len(), 2);
-        assert_eq!(resp.items[0].id, "BL_SRC1");
-        assert_eq!(resp.items[1].id, "BL_SRC2");
+        assert_eq!(
+            resp.items.len(),
+            2,
+            "should return both linked source blocks"
+        );
+        assert_eq!(resp.items[0].id, "BL_SRC1", "first backlink should be SRC1");
+        assert_eq!(
+            resp.items[1].id, "BL_SRC2",
+            "second backlink should be SRC2"
+        );
     }
 
     // ======================================================================
@@ -7083,8 +7156,14 @@ mod tests {
 
         assert_eq!(resp.items.len(), 2, "create + edit = 2 ops");
         // Newest first (seq DESC)
-        assert_eq!(resp.items[0].op_type, "edit_block");
-        assert_eq!(resp.items[1].op_type, "create_block");
+        assert_eq!(
+            resp.items[0].op_type, "edit_block",
+            "newest op should be edit_block"
+        );
+        assert_eq!(
+            resp.items[1].op_type, "create_block",
+            "oldest op should be create_block"
+        );
     }
 
     // ======================================================================
@@ -7106,9 +7185,15 @@ mod tests {
 
         let resp = get_conflicts_inner(&pool, None, None).await.unwrap();
 
-        assert_eq!(resp.items.len(), 1);
-        assert_eq!(resp.items[0].id, "CF_CONF");
-        assert!(resp.items[0].is_conflict);
+        assert_eq!(resp.items.len(), 1, "only one conflict block should exist");
+        assert_eq!(
+            resp.items[0].id, "CF_CONF",
+            "conflict block ID should match"
+        );
+        assert!(
+            resp.items[0].is_conflict,
+            "conflict block should have is_conflict=true"
+        );
     }
 
     // ======================================================================
@@ -7128,8 +7213,14 @@ mod tests {
         let status = get_status_inner(&mat);
 
         // Fresh materializer — all counters at zero
-        assert_eq!(status.total_ops_dispatched, 0);
-        assert_eq!(status.total_background_dispatched, 0);
+        assert_eq!(
+            status.total_ops_dispatched, 0,
+            "fresh materializer should have zero ops"
+        );
+        assert_eq!(
+            status.total_background_dispatched, 0,
+            "fresh materializer should have zero background ops"
+        );
     }
 
     // ======================================================================
@@ -7188,8 +7279,12 @@ mod tests {
         let result = search_blocks_inner(&pool, "".into(), None, None)
             .await
             .unwrap();
-        assert_eq!(result.items.len(), 0);
-        assert!(!result.has_more);
+        assert_eq!(
+            result.items.len(),
+            0,
+            "empty query should return no results"
+        );
+        assert!(!result.has_more, "empty query should not have more results");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7198,8 +7293,15 @@ mod tests {
         let result = search_blocks_inner(&pool, "   ".into(), None, None)
             .await
             .unwrap();
-        assert_eq!(result.items.len(), 0);
-        assert!(!result.has_more);
+        assert_eq!(
+            result.items.len(),
+            0,
+            "whitespace query should return no results"
+        );
+        assert!(
+            !result.has_more,
+            "whitespace query should not have more results"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7219,8 +7321,8 @@ mod tests {
         let result = search_blocks_inner(&pool, "searchable".into(), None, None)
             .await
             .unwrap();
-        assert_eq!(result.items.len(), 1);
-        assert_eq!(result.items[0].id, "SRCH1");
+        assert_eq!(result.items.len(), 1, "should find one matching block");
+        assert_eq!(result.items[0].id, "SRCH1", "found block should be SRCH1");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7232,7 +7334,11 @@ mod tests {
         let result = search_blocks_inner(&pool, "cherry".into(), None, None)
             .await
             .unwrap();
-        assert_eq!(result.items.len(), 0);
+        assert_eq!(
+            result.items.len(),
+            0,
+            "unindexed term should return no results"
+        );
     }
 
     // ======================================================================
@@ -7271,8 +7377,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.items.is_empty());
-        assert!(!result.has_more);
+        assert!(
+            result.items.is_empty(),
+            "empty tag inputs should return no items"
+        );
+        assert!(
+            !result.has_more,
+            "empty tag inputs should not have more results"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7299,7 +7411,11 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(result.items.len(), 2);
+        assert_eq!(
+            result.items.len(),
+            2,
+            "OR mode should return both tagged blocks"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7327,8 +7443,15 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(result.items.len(), 1);
-        assert_eq!(result.items[0].id, "BLK_1");
+        assert_eq!(
+            result.items.len(),
+            1,
+            "AND mode should return only block with both tags"
+        );
+        assert_eq!(
+            result.items[0].id, "BLK_1",
+            "block with both tags should be BLK_1"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7359,7 +7482,11 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(result.items.len(), 2);
+        assert_eq!(
+            result.items.len(),
+            2,
+            "prefix query should match both work/ blocks"
+        );
     }
 
     // ======================================================================
@@ -7393,8 +7520,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.items.len(), 2, "both blocks with 'todo' property");
-        assert_eq!(result.items[0].id, "QP_B1");
-        assert_eq!(result.items[1].id, "QP_B2");
+        assert_eq!(
+            result.items[0].id, "QP_B1",
+            "first matching block should be QP_B1"
+        );
+        assert_eq!(
+            result.items[1].id, "QP_B2",
+            "second matching block should be QP_B2"
+        );
     }
 
     #[tokio::test]
@@ -7425,7 +7558,7 @@ mod tests {
                 .unwrap();
 
         assert_eq!(result.items.len(), 1, "only block with todo=TODO");
-        assert_eq!(result.items[0].id, "QP_A");
+        assert_eq!(result.items[0].id, "QP_A", "only TODO block should match");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7443,11 +7576,20 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(r1.items.len(), 2);
-        assert!(r1.has_more);
-        assert!(r1.next_cursor.is_some());
-        assert_eq!(r1.items[0].id, "QP_P01");
-        assert_eq!(r1.items[1].id, "QP_P02");
+        assert_eq!(r1.items.len(), 2, "first page should have 2 items");
+        assert!(r1.has_more, "first page should indicate more items");
+        assert!(
+            r1.next_cursor.is_some(),
+            "first page should provide a cursor"
+        );
+        assert_eq!(
+            r1.items[0].id, "QP_P01",
+            "first page item 1 should be QP_P01"
+        );
+        assert_eq!(
+            r1.items[1].id, "QP_P02",
+            "first page item 2 should be QP_P02"
+        );
 
         // Second page
         let r2 =
@@ -7455,10 +7597,16 @@ mod tests {
                 .await
                 .unwrap();
 
-        assert_eq!(r2.items.len(), 2);
-        assert!(r2.has_more);
-        assert_eq!(r2.items[0].id, "QP_P03");
-        assert_eq!(r2.items[1].id, "QP_P04");
+        assert_eq!(r2.items.len(), 2, "second page should have 2 items");
+        assert!(r2.has_more, "second page should indicate more items");
+        assert_eq!(
+            r2.items[0].id, "QP_P03",
+            "second page item 1 should be QP_P03"
+        );
+        assert_eq!(
+            r2.items[1].id, "QP_P04",
+            "second page item 2 should be QP_P04"
+        );
 
         // Third page: last item
         let r3 =
@@ -7466,10 +7614,10 @@ mod tests {
                 .await
                 .unwrap();
 
-        assert_eq!(r3.items.len(), 1);
-        assert!(!r3.has_more);
-        assert!(r3.next_cursor.is_none());
-        assert_eq!(r3.items[0].id, "QP_P05");
+        assert_eq!(r3.items.len(), 1, "last page should have 1 item");
+        assert!(!r3.has_more, "last page should not have more items");
+        assert!(r3.next_cursor.is_none(), "last page should have no cursor");
+        assert_eq!(r3.items[0].id, "QP_P05", "last page item should be QP_P05");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7549,7 +7697,10 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(filtered.items.len(), 1, "only one block matches 2025-06-15");
-        assert_eq!(filtered.items[0].id, b1.id);
+        assert_eq!(
+            filtered.items[0].id, b1.id,
+            "filtered block should match the June due date"
+        );
 
         mat.shutdown();
     }
@@ -7574,9 +7725,15 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].name, "work/email");
-        assert_eq!(result[1].name, "work/meeting");
+        assert_eq!(result.len(), 2, "should match both work/ tags");
+        assert_eq!(
+            result[0].name, "work/email",
+            "first tag should be work/email"
+        );
+        assert_eq!(
+            result[1].name, "work/meeting",
+            "second tag should be work/meeting"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7587,7 +7744,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.is_empty());
+        assert!(
+            result.is_empty(),
+            "nonexistent prefix should return no tags"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7610,7 +7770,7 @@ mod tests {
         let result = list_tags_by_prefix_inner(&pool, "alpha".into(), Some(2))
             .await
             .unwrap();
-        assert_eq!(result.len(), 2);
+        assert_eq!(result.len(), 2, "limit=2 should return exactly 2 tags");
     }
 
     // ======================================================================
@@ -7696,7 +7856,10 @@ mod tests {
         let resp = purge_block_inner(&pool, DEV, &mat, "PURGE_TWICE".into())
             .await
             .unwrap();
-        assert_eq!(resp.purged_count, 1);
+        assert_eq!(
+            resp.purged_count, 1,
+            "first purge should succeed with count=1"
+        );
 
         // Second purge should return NotFound (block is physically gone)
         let result = purge_block_inner(&pool, DEV, &mat, "PURGE_TWICE".into()).await;
@@ -7867,7 +8030,11 @@ mod tests {
         .unwrap();
 
         // With only 3 items and clamped limit=100, all 3 should be returned
-        assert_eq!(resp.items.len(), 3);
+        assert_eq!(
+            resp.items.len(),
+            3,
+            "clamped page_size should still return all items"
+        );
         assert!(!resp.has_more, "no more items should remain");
     }
 
@@ -7883,7 +8050,11 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(resp.items.len(), 1);
+        assert_eq!(
+            resp.items.len(),
+            1,
+            "default page_size should return the single block"
+        );
     }
 
     // ======================================================================
@@ -7930,11 +8101,27 @@ mod tests {
         // Verify via get_properties
         let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
         assert_eq!(props.len(), 1, "should have exactly one property");
-        assert_eq!(props[0].key, "importance");
-        assert_eq!(props[0].value_text, Some("high".into()));
-        assert!(props[0].value_num.is_none());
-        assert!(props[0].value_date.is_none());
-        assert!(props[0].value_ref.is_none());
+        assert_eq!(
+            props[0].key, "importance",
+            "property key should be 'importance'"
+        );
+        assert_eq!(
+            props[0].value_text,
+            Some("high".into()),
+            "property value_text should be 'high'"
+        );
+        assert!(
+            props[0].value_num.is_none(),
+            "value_num should be None for text property"
+        );
+        assert!(
+            props[0].value_date.is_none(),
+            "value_date should be None for text property"
+        );
+        assert!(
+            props[0].value_ref.is_none(),
+            "value_ref should be None for text property"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -8265,10 +8452,16 @@ mod tests {
         // b1 and b2 should have properties, b3 should be omitted
         assert!(result.contains_key(&b1.id), "b1 must be in result");
         assert!(result.contains_key(&b2.id), "b2 must be in result");
-        assert_eq!(result[&b1.id].len(), 1);
-        assert_eq!(result[&b1.id][0].key, "importance");
-        assert_eq!(result[&b2.id].len(), 1);
-        assert_eq!(result[&b2.id][0].key, "status");
+        assert_eq!(result[&b1.id].len(), 1, "b1 should have one property");
+        assert_eq!(
+            result[&b1.id][0].key, "importance",
+            "b1 property key should be 'importance'"
+        );
+        assert_eq!(result[&b2.id].len(), 1, "b2 should have one property");
+        assert_eq!(
+            result[&b2.id][0].key, "status",
+            "b2 property key should be 'status'"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -8405,19 +8598,31 @@ mod tests {
         assert_eq!(result.len(), 3, "must return all 3 blocks");
 
         let r1 = result.iter().find(|r| r.id == "BR01").unwrap();
-        assert_eq!(r1.title.as_deref(), Some("First block"));
-        assert_eq!(r1.block_type, "content");
-        assert!(!r1.deleted);
+        assert_eq!(
+            r1.title.as_deref(),
+            Some("First block"),
+            "r1 title should match content"
+        );
+        assert_eq!(r1.block_type, "content", "r1 block_type should be content");
+        assert!(!r1.deleted, "r1 should not be deleted");
 
         let r2 = result.iter().find(|r| r.id == "BR02").unwrap();
-        assert_eq!(r2.title.as_deref(), Some("My Page"));
-        assert_eq!(r2.block_type, "page");
-        assert!(!r2.deleted);
+        assert_eq!(
+            r2.title.as_deref(),
+            Some("My Page"),
+            "r2 title should match content"
+        );
+        assert_eq!(r2.block_type, "page", "r2 block_type should be page");
+        assert!(!r2.deleted, "r2 should not be deleted");
 
         let r3 = result.iter().find(|r| r.id == "BR03").unwrap();
-        assert_eq!(r3.title.as_deref(), Some("work"));
-        assert_eq!(r3.block_type, "tag");
-        assert!(!r3.deleted);
+        assert_eq!(
+            r3.title.as_deref(),
+            Some("work"),
+            "r3 title should match content"
+        );
+        assert_eq!(r3.block_type, "tag", "r3 block_type should be tag");
+        assert!(!r3.deleted, "r3 should not be deleted");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -8446,9 +8651,13 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.len(), 1);
+        assert_eq!(result.len(), 1, "should return the deleted block");
         assert!(result[0].deleted, "deleted blocks must have deleted=true");
-        assert_eq!(result[0].title.as_deref(), Some("deleted block"));
+        assert_eq!(
+            result[0].title.as_deref(),
+            Some("deleted block"),
+            "title should still be accessible"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -8461,7 +8670,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.len(), 1, "nonexistent IDs must be silently omitted");
-        assert_eq!(result[0].id, "BR_EXISTS");
+        assert_eq!(
+            result[0].id, "BR_EXISTS",
+            "existing block should be returned"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -8481,7 +8693,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result.len(),
+            1,
+            "null-content block should still be resolved"
+        );
         assert!(result[0].title.is_none(), "NULL content → None title");
     }
 
@@ -8494,9 +8710,13 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "BR_SINGLE");
-        assert_eq!(result[0].title.as_deref(), Some("Solo Page"));
+        assert_eq!(result.len(), 1, "single ID should return one result");
+        assert_eq!(result[0].id, "BR_SINGLE", "resolved block ID should match");
+        assert_eq!(
+            result[0].title.as_deref(),
+            Some("Solo Page"),
+            "resolved title should match content"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -8547,11 +8767,18 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(result.len(), 3);
+        assert_eq!(
+            result.len(),
+            3,
+            "all three mixed-type blocks should be resolved"
+        );
         let types: Vec<&str> = result.iter().map(|r| r.block_type.as_str()).collect();
-        assert!(types.contains(&"page"));
-        assert!(types.contains(&"tag"));
-        assert!(types.contains(&"content"));
+        assert!(types.contains(&"page"), "result should include page type");
+        assert!(types.contains(&"tag"), "result should include tag type");
+        assert!(
+            types.contains(&"content"),
+            "result should include content type"
+        );
     }
 
     // ======================================================================
@@ -8686,7 +8913,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.items.len(), 1, "should only have edit_block ops");
-        assert_eq!(result.items[0].op_type, "edit_block");
+        assert_eq!(
+            result.items[0].op_type, "edit_block",
+            "filtered op type should be edit_block"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -8844,7 +9074,11 @@ mod tests {
 
         // Verify block is now "modified"
         let before_undo = get_block_inner(&pool, created.id.clone()).await.unwrap();
-        assert_eq!(before_undo.content, Some("modified".into()));
+        assert_eq!(
+            before_undo.content,
+            Some("modified".into()),
+            "block should contain modified content before undo"
+        );
 
         // Get the edit op's seq
         let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
@@ -8864,9 +9098,18 @@ mod tests {
         .unwrap();
 
         assert_eq!(results.len(), 1, "should have one result");
-        assert_eq!(results[0].reversed_op.seq, edit_op.seq);
-        assert_eq!(results[0].new_op_type, "edit_block");
-        assert!(!results[0].is_redo);
+        assert_eq!(
+            results[0].reversed_op.seq, edit_op.seq,
+            "reversed op seq should match edit op"
+        );
+        assert_eq!(
+            results[0].new_op_type, "edit_block",
+            "new op type should be edit_block"
+        );
+        assert!(
+            !results[0].is_redo,
+            "single revert should not be flagged as redo"
+        );
 
         // Block should be back to "original"
         let after_undo = get_block_inner(&pool, created.id).await.unwrap();
@@ -8909,7 +9152,7 @@ mod tests {
         // Get both edit ops
         let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
         let edit_ops: Vec<_> = ops.iter().filter(|o| o.op_type == "edit_block").collect();
-        assert_eq!(edit_ops.len(), 2);
+        assert_eq!(edit_ops.len(), 2, "should have exactly two edit ops");
 
         let op_refs: Vec<OpRef> = edit_ops
             .iter()
@@ -9000,16 +9243,29 @@ mod tests {
 
         // Verify block is "edited"
         let before = get_block_inner(&pool, child_ids[0].clone()).await.unwrap();
-        assert_eq!(before.content, Some("edited".into()));
+        assert_eq!(
+            before.content,
+            Some("edited".into()),
+            "block should be edited before undo"
+        );
 
         // Undo most recent op (depth=0) — the edit
         let result = undo_page_op_inner(&pool, DEV, &mat, page_id.clone(), 0)
             .await
             .unwrap();
 
-        assert_eq!(result.reversed_op.device_id, DEV);
-        assert_eq!(result.new_op_type, "edit_block");
-        assert!(!result.is_redo);
+        assert_eq!(
+            result.reversed_op.device_id, DEV,
+            "reversed op device_id should match"
+        );
+        assert_eq!(
+            result.new_op_type, "edit_block",
+            "undo should produce edit_block op"
+        );
+        assert!(
+            !result.is_redo,
+            "undo operation should not be flagged as redo"
+        );
 
         // Block should be back to "child one"
         let after = get_block_inner(&pool, child_ids[0].clone()).await.unwrap();
@@ -9044,8 +9300,14 @@ mod tests {
             .unwrap();
 
         // The second most recent op is "edit1" (edit_block)
-        assert_eq!(result.new_op_type, "edit_block");
-        assert!(!result.is_redo);
+        assert_eq!(
+            result.new_op_type, "edit_block",
+            "depth-1 undo should reverse an edit_block"
+        );
+        assert!(
+            !result.is_redo,
+            "depth-1 undo should not be flagged as redo"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -9157,7 +9419,10 @@ mod tests {
             result.new_op_type, "add_attachment",
             "reversing delete_attachment should produce add_attachment"
         );
-        assert!(!result.is_redo);
+        assert!(
+            !result.is_redo,
+            "attachment undo should not be flagged as redo"
+        );
 
         // 5. Verify the attachment is restored (deleted_at cleared)
         let row = sqlx::query("SELECT deleted_at FROM attachments WHERE id = ?")
@@ -9194,7 +9459,11 @@ mod tests {
 
         // Verify it's undone
         let after_undo = get_block_inner(&pool, child_ids[0].clone()).await.unwrap();
-        assert_eq!(after_undo.content, Some("child one".into()));
+        assert_eq!(
+            after_undo.content,
+            Some("child one".into()),
+            "content should revert after undo"
+        );
 
         // Redo it
         let redo_result = redo_page_op_inner(
@@ -9208,7 +9477,10 @@ mod tests {
         .unwrap();
 
         assert!(redo_result.is_redo, "should be flagged as redo");
-        assert_eq!(redo_result.new_op_type, "edit_block");
+        assert_eq!(
+            redo_result.new_op_type, "edit_block",
+            "redo should produce edit_block op"
+        );
 
         // Block should be back to "edited"
         let after_redo = get_block_inner(&pool, child_ids[0].clone()).await.unwrap();
@@ -9260,13 +9532,17 @@ mod tests {
         mat.flush_background().await.unwrap();
 
         let after_edit = get_block_inner(&pool, child.id.clone()).await.unwrap();
-        assert_eq!(after_edit.content, Some("modified".into()));
+        assert_eq!(
+            after_edit.content,
+            Some("modified".into()),
+            "content should be modified after edit"
+        );
 
         // Undo the edit (depth=0 = most recent)
         let undo = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
             .await
             .unwrap();
-        assert!(!undo.is_redo);
+        assert!(!undo.is_redo, "undo should not be flagged as redo");
 
         let after_undo = get_block_inner(&pool, child.id.clone()).await.unwrap();
         assert_eq!(
@@ -9285,7 +9561,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(redo.is_redo);
+        assert!(redo.is_redo, "redo should be flagged as redo");
 
         let after_redo = get_block_inner(&pool, child.id.clone()).await.unwrap();
         assert_eq!(
@@ -9336,8 +9612,11 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].new_op_type, "delete_block");
+        assert_eq!(results.len(), 1, "should return one revert result");
+        assert_eq!(
+            results[0].new_op_type, "delete_block",
+            "reverting create should produce delete_block"
+        );
 
         // Verify the block is now soft-deleted
         let block = get_block_inner(&pool, created.id).await.unwrap();
@@ -9426,8 +9705,11 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].new_op_type, "restore_block");
+        assert_eq!(results.len(), 1, "should return one revert result");
+        assert_eq!(
+            results[0].new_op_type, "restore_block",
+            "reverting delete should produce restore_block"
+        );
 
         // Verify both are restored
         let p_after = get_block_inner(&pool, parent.id.clone()).await.unwrap();
@@ -9497,8 +9779,16 @@ mod tests {
 
         // Verify it's at P2, pos 7
         let before = get_block_inner(&pool, child.id.clone()).await.unwrap();
-        assert_eq!(before.parent_id.as_deref(), Some(p2.id.as_str()));
-        assert_eq!(before.position, Some(7));
+        assert_eq!(
+            before.parent_id.as_deref(),
+            Some(p2.id.as_str()),
+            "block should be under P2 after move"
+        );
+        assert_eq!(
+            before.position,
+            Some(7),
+            "block position should be 7 after move"
+        );
 
         // Get the move_block op
         let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
@@ -9733,7 +10023,11 @@ mod tests {
         // Verify it's "low"
         let props_before = get_properties_inner(&pool, block.id.clone()).await.unwrap();
         let p_before = props_before.iter().find(|p| p.key == "importance").unwrap();
-        assert_eq!(p_before.value_text.as_deref(), Some("low"));
+        assert_eq!(
+            p_before.value_text.as_deref(),
+            Some("low"),
+            "property value should be low before revert"
+        );
 
         // Get the second set_property op (the one that set "low")
         let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
@@ -10349,7 +10643,10 @@ mod tests {
             1,
             "empty page should have exactly 1 op (the create_block)"
         );
-        assert_eq!(result.items[0].op_type, "create_block");
+        assert_eq!(
+            result.items[0].op_type, "create_block",
+            "most recent op should be create_block"
+        );
     }
 
     // -- Group 4: Multi-step cycles (2 tests) --
@@ -10503,7 +10800,11 @@ mod tests {
 
         // Verify content is "from-device-B"
         let before = get_block_inner(&pool, block.id.clone()).await.unwrap();
-        assert_eq!(before.content, Some("from-device-B".into()));
+        assert_eq!(
+            before.content,
+            Some("from-device-B".into()),
+            "content should reflect device-B edit"
+        );
 
         // Get the create_block op from DEV
         let dev_ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
@@ -10786,7 +11087,11 @@ mod tests {
 
         // Verify moved
         let moved = get_block_inner(&pool, child.id.clone()).await.unwrap();
-        assert_eq!(moved.parent_id.as_deref(), Some(parent_b.id.as_str()));
+        assert_eq!(
+            moved.parent_id.as_deref(),
+            Some(parent_b.id.as_str()),
+            "block should be under parent_b after move"
+        );
 
         // Undo the move (depth=0)
         let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
@@ -10866,7 +11171,7 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(count_before, 1);
+        assert_eq!(count_before, 1, "tag should be applied before undo");
 
         // Undo the add_tag (depth=0)
         let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
@@ -10874,7 +11179,10 @@ mod tests {
             .unwrap();
         mat.flush_background().await.unwrap();
 
-        assert_eq!(result.new_op_type, "remove_tag");
+        assert_eq!(
+            result.new_op_type, "remove_tag",
+            "undoing add_tag should produce remove_tag"
+        );
 
         // Verify tag removed
         let count_after: i64 =
@@ -10936,9 +11244,12 @@ mod tests {
 
         // Verify property exists
         let props = get_properties_inner(&pool, child.id.clone()).await.unwrap();
-        assert!(props
-            .iter()
-            .any(|p| p.key == "importance" && p.value_text.as_deref() == Some("high")));
+        assert!(
+            props
+                .iter()
+                .any(|p| p.key == "importance" && p.value_text.as_deref() == Some("high")),
+            "importance property should be set to high"
+        );
 
         // Undo the set_property (depth=0) — should produce delete_property since it was the first set
         let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
@@ -10946,7 +11257,10 @@ mod tests {
             .unwrap();
         mat.flush_background().await.unwrap();
 
-        assert_eq!(result.new_op_type, "delete_property");
+        assert_eq!(
+            result.new_op_type, "delete_property",
+            "undoing first set_property should produce delete_property"
+        );
 
         // Verify property removed
         let props_after = get_properties_inner(&pool, child.id.clone()).await.unwrap();
@@ -11027,8 +11341,16 @@ mod tests {
         // Verify pre-undo state
         let a_before = get_block_inner(&pool, child_a.id.clone()).await.unwrap();
         let b_before = get_block_inner(&pool, child_b.id.clone()).await.unwrap();
-        assert_eq!(a_before.content, Some("A-edited".into()));
-        assert_eq!(b_before.content, Some("B-edited".into()));
+        assert_eq!(
+            a_before.content,
+            Some("A-edited".into()),
+            "child A should have edited content"
+        );
+        assert_eq!(
+            b_before.content,
+            Some("B-edited".into()),
+            "child B should have edited content"
+        );
 
         // Spawn concurrent undo from device-A (depth=0) and device-B (depth=0)
         // Both target the most recent op on the page, but since they run
@@ -11070,8 +11392,8 @@ mod tests {
             let rb = result_b.unwrap();
 
             // Both should be undo (not redo)
-            assert!(!ra.is_redo);
-            assert!(!rb.is_redo);
+            assert!(!ra.is_redo, "device-A undo should not be flagged as redo");
+            assert!(!rb.is_redo, "device-B undo should not be flagged as redo");
 
             // They should have different op refs (no duplicate ops)
             assert_ne!(
@@ -11446,8 +11768,14 @@ mod tests {
 
         // Each call generates a new passphrase (astronomically unlikely to collide)
         // Just verify both succeed
-        assert!(!info1.passphrase.is_empty());
-        assert!(!info2.passphrase.is_empty());
+        assert!(
+            !info1.passphrase.is_empty(),
+            "first passphrase should not be empty"
+        );
+        assert!(
+            !info2.passphrase.is_empty(),
+            "second passphrase should not be empty"
+        );
     }
 
     // ======================================================================
@@ -11497,7 +11825,10 @@ mod tests {
 
         // Start pairing
         start_pairing_inner(&pairing_state, "device-A").unwrap();
-        assert!(pairing_state.lock().unwrap().is_some());
+        assert!(
+            pairing_state.lock().unwrap().is_some(),
+            "pairing session should exist after start"
+        );
 
         // Cancel
         cancel_pairing_inner(&pairing_state).unwrap();
@@ -11530,11 +11861,17 @@ mod tests {
         assert!(result.is_ok(), "start_sync must succeed for a fresh peer");
 
         let info = result.unwrap();
-        assert_eq!(info.state, "complete");
-        assert_eq!(info.local_device_id, "device-local");
-        assert_eq!(info.remote_device_id, "peer-1");
-        assert_eq!(info.ops_received, 0);
-        assert_eq!(info.ops_sent, 0);
+        assert_eq!(info.state, "complete", "sync state should be complete");
+        assert_eq!(
+            info.local_device_id, "device-local",
+            "local device id should match"
+        );
+        assert_eq!(
+            info.remote_device_id, "peer-1",
+            "remote device id should match"
+        );
+        assert_eq!(info.ops_received, 0, "fresh sync should receive zero ops");
+        assert_eq!(info.ops_sent, 0, "fresh sync should send zero ops");
     }
 
     #[test]
@@ -11609,7 +11946,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.todo_state, Some("TODO".into()));
+        assert_eq!(
+            result.todo_state,
+            Some("TODO".into()),
+            "returned block should have TODO state"
+        );
 
         // Verify DB column
         let db_val: Option<String> =
@@ -11618,7 +11959,11 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(db_val, Some("TODO".into()));
+        assert_eq!(
+            db_val,
+            Some("TODO".into()),
+            "DB column should persist TODO state"
+        );
 
         mat.shutdown();
     }
@@ -11653,7 +11998,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.todo_state, None);
+        assert_eq!(
+            result.todo_state, None,
+            "todo_state should be cleared to None"
+        );
 
         // Verify DB column is NULL
         let db_val: Option<String> =
@@ -11662,7 +12010,7 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert!(db_val.is_none());
+        assert!(db_val.is_none(), "DB column should be NULL after clearing");
 
         mat.shutdown();
     }
@@ -11752,7 +12100,11 @@ mod tests {
                 .await
                 .unwrap();
 
-        assert_eq!(result.todo_state.as_deref(), Some("CANCELLED"));
+        assert_eq!(
+            result.todo_state.as_deref(),
+            Some("CANCELLED"),
+            "todo_state should be CANCELLED"
+        );
 
         mat.shutdown();
     }
@@ -11802,7 +12154,11 @@ mod tests {
         let result = set_priority_inner(&pool, DEV, &mat, block.id.clone(), Some("2".into()))
             .await
             .unwrap();
-        assert_eq!(result.priority, Some("2".into()));
+        assert_eq!(
+            result.priority,
+            Some("2".into()),
+            "priority should be set to 2"
+        );
 
         mat.flush_background().await.unwrap();
 
@@ -11810,7 +12166,7 @@ mod tests {
         let result = set_priority_inner(&pool, DEV, &mat, block.id.clone(), None)
             .await
             .unwrap();
-        assert_eq!(result.priority, None);
+        assert_eq!(result.priority, None, "priority should be cleared to None");
 
         mat.shutdown();
     }
@@ -11873,7 +12229,11 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(result.due_date, Some("2026-04-15".into()));
+        assert_eq!(
+            result.due_date,
+            Some("2026-04-15".into()),
+            "due_date should be set to 2026-04-15"
+        );
 
         mat.flush_background().await.unwrap();
 
@@ -11881,7 +12241,7 @@ mod tests {
         let result = set_due_date_inner(&pool, DEV, &mat, block.id.clone(), None)
             .await
             .unwrap();
-        assert_eq!(result.due_date, None);
+        assert_eq!(result.due_date, None, "due_date should be cleared to None");
 
         mat.shutdown();
     }
@@ -11956,7 +12316,11 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(result.todo_state, Some("DONE".into()));
+        assert_eq!(
+            result.todo_state,
+            Some("DONE".into()),
+            "todo_state should be DONE"
+        );
 
         // Verify blocks.todo_state column updated
         let db_val: Option<String> =
@@ -11965,7 +12329,11 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(db_val, Some("DONE".into()));
+        assert_eq!(
+            db_val,
+            Some("DONE".into()),
+            "DB column should persist DONE state"
+        );
 
         // Verify block_properties does NOT have a row for it
         let prop_count: i64 = sqlx::query_scalar(
@@ -12185,7 +12553,11 @@ mod tests {
         );
 
         let block = result.unwrap();
-        assert_eq!(block.due_date, Some("2025-01-15".into()));
+        assert_eq!(
+            block.due_date,
+            Some("2025-01-15".into()),
+            "due_date should match the set value"
+        );
 
         mat.shutdown();
     }
@@ -12202,9 +12574,12 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(def.key, "reviewer");
-        assert_eq!(def.value_type, "ref");
-        assert!(def.options.is_none());
+        assert_eq!(def.key, "reviewer", "property def key should be reviewer");
+        assert_eq!(
+            def.value_type, "ref",
+            "property def value_type should be ref"
+        );
+        assert!(def.options.is_none(), "ref type should have no options");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -12639,7 +13014,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(resp.items.len(), 1, "should return only due_date items");
-        assert_eq!(resp.items[0].id, "AG_DUE1");
+        assert_eq!(
+            resp.items[0].id, "AG_DUE1",
+            "returned item should be the due_date block"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -12688,7 +13066,10 @@ mod tests {
             1,
             "should return only scheduled_date items"
         );
-        assert_eq!(resp.items[0].id, "AG_SCHED2");
+        assert_eq!(
+            resp.items[0].id, "AG_SCHED2",
+            "returned item should be scheduled_date block"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -12746,9 +13127,9 @@ mod tests {
             "no source filter should return all agenda items"
         );
         let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
-        assert!(ids.contains(&"AG_ALL1"));
-        assert!(ids.contains(&"AG_ALL2"));
-        assert!(ids.contains(&"AG_ALL3"));
+        assert!(ids.contains(&"AG_ALL1"), "should include AG_ALL1");
+        assert!(ids.contains(&"AG_ALL2"), "should include AG_ALL2");
+        assert!(ids.contains(&"AG_ALL3"), "should include AG_ALL3");
     }
 
     // ======================================================================
@@ -12858,7 +13239,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(resp.items.len(), 1, "single-day range should return 1 item");
-        assert_eq!(resp.items[0].id, "RNG_SD1");
+        assert_eq!(
+            resp.items[0].id, "RNG_SD1",
+            "single-day match should be RNG_SD1"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -12973,7 +13357,10 @@ mod tests {
             1,
             "source filter should return only due_date items"
         );
-        assert_eq!(resp.items[0].id, "RNG_SRC1");
+        assert_eq!(
+            resp.items[0].id, "RNG_SRC1",
+            "filtered item should be the due_date block"
+        );
 
         // Without source filter — both items
         let resp = list_blocks_inner(
@@ -13056,8 +13443,16 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(result.get("2025-06-01"), Some(&2));
-        assert_eq!(result.get("2025-06-02"), Some(&1));
+        assert_eq!(
+            result.get("2025-06-01"),
+            Some(&2),
+            "June 1 should have 2 entries"
+        );
+        assert_eq!(
+            result.get("2025-06-02"),
+            Some(&1),
+            "June 2 should have 1 entry"
+        );
         assert_eq!(
             result.get("2025-06-03"),
             None,
@@ -13116,7 +13511,10 @@ mod tests {
         let result = count_agenda_batch_by_source_inner(&pool, vec![])
             .await
             .unwrap();
-        assert!(result.is_empty());
+        assert!(
+            result.is_empty(),
+            "empty date list should produce empty counts"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -13154,9 +13552,21 @@ mod tests {
             .unwrap();
 
         let day = result.get("2025-09-01").expect("date should be present");
-        assert_eq!(day.get("column:due_date"), Some(&1));
-        assert_eq!(day.get("column:scheduled_date"), Some(&1));
-        assert_eq!(day.get("property:deadline"), Some(&1));
+        assert_eq!(
+            day.get("column:due_date"),
+            Some(&1),
+            "should have 1 due_date entry"
+        );
+        assert_eq!(
+            day.get("column:scheduled_date"),
+            Some(&1),
+            "should have 1 scheduled_date entry"
+        );
+        assert_eq!(
+            day.get("property:deadline"),
+            Some(&1),
+            "should have 1 property:deadline entry"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -13191,7 +13601,11 @@ mod tests {
             .unwrap();
 
         let day = result.get("2025-09-02").expect("date should be present");
-        assert_eq!(day.get("column:due_date"), Some(&1));
+        assert_eq!(
+            day.get("column:due_date"),
+            Some(&1),
+            "only non-deleted block should be counted"
+        );
     }
 
     // ======================================================================
@@ -13247,8 +13661,16 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(result.get("BLB_TGT1"), Some(&2));
-        assert_eq!(result.get("BLB_TGT2"), Some(&1));
+        assert_eq!(
+            result.get("BLB_TGT1"),
+            Some(&2),
+            "BLB_TGT1 should have 2 backlinks"
+        );
+        assert_eq!(
+            result.get("BLB_TGT2"),
+            Some(&1),
+            "BLB_TGT2 should have 1 backlink"
+        );
         assert_eq!(
             result.get("NONEXISTENT"),
             None,
@@ -13369,7 +13791,11 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(result.scheduled_date, Some("2026-06-01".into()));
+        assert_eq!(
+            result.scheduled_date,
+            Some("2026-06-01".into()),
+            "scheduled_date should be set"
+        );
 
         mat.flush_background().await.unwrap();
 
@@ -13377,7 +13803,10 @@ mod tests {
         let result = set_scheduled_date_inner(&pool, DEV, &mat, block.id.clone(), None)
             .await
             .unwrap();
-        assert_eq!(result.scheduled_date, None);
+        assert_eq!(
+            result.scheduled_date, None,
+            "scheduled_date should be cleared to None"
+        );
 
         mat.shutdown();
     }
@@ -13488,7 +13917,11 @@ mod tests {
             row.is_some(),
             "agenda_cache should have the scheduled_date entry"
         );
-        assert_eq!(row.unwrap().source, "column:scheduled_date");
+        assert_eq!(
+            row.unwrap().source,
+            "column:scheduled_date",
+            "cache source should be column:scheduled_date"
+        );
 
         mat.shutdown();
     }
@@ -13708,13 +14141,23 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(inserted.len(), 2);
-        assert!(inserted.contains(&"Alpha".to_string()));
-        assert!(inserted.contains(&"Beta".to_string()));
+        assert_eq!(inserted.len(), 2, "should insert 2 aliases");
+        assert!(
+            inserted.contains(&"Alpha".to_string()),
+            "should contain Alpha"
+        );
+        assert!(
+            inserted.contains(&"Beta".to_string()),
+            "should contain Beta"
+        );
 
         // Verify persistence
         let aliases = get_page_aliases_inner(&pool, "page-1").await.unwrap();
-        assert_eq!(aliases, vec!["Alpha", "Beta"]);
+        assert_eq!(
+            aliases,
+            vec!["Alpha", "Beta"],
+            "persisted aliases should match"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -13737,10 +14180,14 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(inserted.len(), 3);
+        assert_eq!(inserted.len(), 3, "should insert 3 replacement aliases");
 
         let aliases = get_page_aliases_inner(&pool, "page-2").await.unwrap();
-        assert_eq!(aliases, vec!["New1", "New2", "New3"]);
+        assert_eq!(
+            aliases,
+            vec!["New1", "New2", "New3"],
+            "aliases should be fully replaced"
+        );
 
         // Old aliases should be gone
         let resolved = resolve_page_by_alias_inner(&pool, "Old1").await.unwrap();
@@ -13768,9 +14215,15 @@ mod tests {
         .unwrap();
 
         // "Valid" appears once, "Trimmed" appears once
-        assert_eq!(inserted.len(), 2);
-        assert!(inserted.contains(&"Valid".to_string()));
-        assert!(inserted.contains(&"Trimmed".to_string()));
+        assert_eq!(inserted.len(), 2, "should insert 2 unique aliases");
+        assert!(
+            inserted.contains(&"Valid".to_string()),
+            "should contain Valid"
+        );
+        assert!(
+            inserted.contains(&"Trimmed".to_string()),
+            "should contain Trimmed"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -13788,7 +14241,11 @@ mod tests {
         .unwrap();
 
         let aliases = get_page_aliases_inner(&pool, "page-4").await.unwrap();
-        assert_eq!(aliases, vec!["Alpha", "Mike", "Zulu"]);
+        assert_eq!(
+            aliases,
+            vec!["Alpha", "Mike", "Zulu"],
+            "aliases should be sorted alphabetically"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -13803,25 +14260,37 @@ mod tests {
 
         // Exact case
         let r1 = resolve_page_by_alias_inner(&pool, "MyAlias").await.unwrap();
-        assert!(r1.is_some());
+        assert!(r1.is_some(), "exact alias should resolve");
         let (pid, title) = r1.unwrap();
-        assert_eq!(pid, "page-5");
-        assert_eq!(title.as_deref(), Some("Page Five"));
+        assert_eq!(pid, "page-5", "resolved page id should match");
+        assert_eq!(
+            title.as_deref(),
+            Some("Page Five"),
+            "resolved page title should match"
+        );
 
         // Different case
         let r2 = resolve_page_by_alias_inner(&pool, "myalias").await.unwrap();
-        assert!(r2.is_some());
-        assert_eq!(r2.unwrap().0, "page-5");
+        assert!(r2.is_some(), "lowercase alias should resolve");
+        assert_eq!(
+            r2.unwrap().0,
+            "page-5",
+            "lowercase should resolve to same page"
+        );
 
         let r3 = resolve_page_by_alias_inner(&pool, "MYALIAS").await.unwrap();
-        assert!(r3.is_some());
-        assert_eq!(r3.unwrap().0, "page-5");
+        assert!(r3.is_some(), "uppercase alias should resolve");
+        assert_eq!(
+            r3.unwrap().0,
+            "page-5",
+            "uppercase should resolve to same page"
+        );
 
         // Non-existent alias
         let r4 = resolve_page_by_alias_inner(&pool, "NoSuchAlias")
             .await
             .unwrap();
-        assert!(r4.is_none());
+        assert!(r4.is_none(), "non-existent alias should return None");
     }
 
     // ====================================================================
@@ -13898,7 +14367,11 @@ mod tests {
 
         // Original block should be DONE
         let original = get_block_inner(&pool, block.id.clone()).await.unwrap();
-        assert_eq!(original.todo_state.as_deref(), Some("DONE"));
+        assert_eq!(
+            original.todo_state.as_deref(),
+            Some("DONE"),
+            "original block should be marked DONE"
+        );
 
         // Find the new sibling block (any block with todo_state=TODO that isn't original)
         let new_blocks: Vec<BlockRow> = sqlx::query_as!(
@@ -13916,9 +14389,21 @@ mod tests {
         assert_eq!(new_blocks.len(), 1, "should create exactly one new block");
         let new_block = &new_blocks[0];
 
-        assert_eq!(new_block.todo_state.as_deref(), Some("TODO"));
-        assert_eq!(new_block.content.as_deref(), Some("daily task"));
-        assert_eq!(new_block.due_date.as_deref(), Some("2025-06-16"));
+        assert_eq!(
+            new_block.todo_state.as_deref(),
+            Some("TODO"),
+            "new block should have TODO state"
+        );
+        assert_eq!(
+            new_block.content.as_deref(),
+            Some("daily task"),
+            "new block should copy original content"
+        );
+        assert_eq!(
+            new_block.due_date.as_deref(),
+            Some("2025-06-16"),
+            "new block due_date should advance by one day"
+        );
 
         // Check repeat property was copied
         let props = get_properties_inner(&pool, new_block.id.clone())
@@ -13929,7 +14414,11 @@ mod tests {
             repeat_prop.is_some(),
             "new block should have repeat property"
         );
-        assert_eq!(repeat_prop.unwrap().value_text.as_deref(), Some("daily"));
+        assert_eq!(
+            repeat_prop.unwrap().value_text.as_deref(),
+            Some("daily"),
+            "repeat property should be copied as daily"
+        );
 
         mat.shutdown();
     }
@@ -13989,8 +14478,12 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(new_blocks.len(), 1);
-        assert_eq!(new_blocks[0].due_date.as_deref(), Some("2025-06-22"));
+        assert_eq!(new_blocks.len(), 1, "should create one recurrence block");
+        assert_eq!(
+            new_blocks[0].due_date.as_deref(),
+            Some("2025-06-22"),
+            "weekly recurrence should advance by 7 days"
+        );
 
         mat.shutdown();
     }
@@ -14050,7 +14543,11 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(new_blocks.len(), 1);
+        assert_eq!(
+            new_blocks.len(),
+            1,
+            "monthly recurrence should create one block"
+        );
         assert_eq!(
             new_blocks[0].due_date.as_deref(),
             Some("2025-02-28"),
@@ -14114,7 +14611,11 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(new_blocks.len(), 1);
+        assert_eq!(
+            new_blocks.len(),
+            1,
+            "multi-day recurrence should create one block"
+        );
         assert_eq!(
             new_blocks[0].due_date.as_deref(),
             Some("2025-07-01"),
@@ -14230,8 +14731,16 @@ mod tests {
         let new_block = &new_blocks[0];
 
         // Verify the new block has both todo_state=TODO and repeat property set
-        assert_eq!(new_block.todo_state.as_deref(), Some("TODO"));
-        assert_eq!(new_block.content.as_deref(), Some("atomic recurrence test"));
+        assert_eq!(
+            new_block.todo_state.as_deref(),
+            Some("TODO"),
+            "recurrence block should have TODO state"
+        );
+        assert_eq!(
+            new_block.content.as_deref(),
+            Some("atomic recurrence test"),
+            "recurrence block should copy content"
+        );
 
         let props = get_properties_inner(&pool, new_block.id.clone())
             .await
@@ -14241,7 +14750,11 @@ mod tests {
             repeat_prop.is_some(),
             "new block should have repeat property"
         );
-        assert_eq!(repeat_prop.unwrap().value_text.as_deref(), Some("daily"));
+        assert_eq!(
+            repeat_prop.unwrap().value_text.as_deref(),
+            Some("daily"),
+            "repeat property should be daily"
+        );
 
         mat.shutdown();
     }
@@ -14568,7 +15081,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(new_blocks.len(), 1);
+        assert_eq!(new_blocks.len(), 1, "should create one recurrence sibling");
         let sibling = &new_blocks[0];
 
         // Check repeat-origin points to original block
@@ -14659,7 +15172,8 @@ mod tests {
         let origin1 = props1.iter().find(|p| p.key == "repeat-origin");
         assert_eq!(
             origin1.unwrap().value_ref.as_deref(),
-            Some(block.id.as_str())
+            Some(block.id.as_str()),
+            "first sibling repeat-origin should point to original"
         );
 
         let props2 = get_properties_inner(&pool, sibling2_id).await.unwrap();
@@ -14913,7 +15427,11 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(original.as_deref(), Some("DONE"));
+        assert_eq!(
+            original.as_deref(),
+            Some("DONE"),
+            "original block should remain DONE after recurrence"
+        );
 
         mat.shutdown();
     }
@@ -15340,8 +15858,14 @@ mod tests {
         assert_eq!(entries[0].projected_date, "2026-04-13", "first projection");
         assert_eq!(entries[1].projected_date, "2026-04-20", "second projection");
         assert_eq!(entries[2].projected_date, "2026-04-27", "third projection");
-        assert_eq!(entries[0].source, "due_date");
-        assert_eq!(entries[0].block.id, resp.id);
+        assert_eq!(
+            entries[0].source, "due_date",
+            "projection source should be due_date"
+        );
+        assert_eq!(
+            entries[0].block.id, resp.id,
+            "projected block id should match original"
+        );
 
         mat.shutdown();
     }
@@ -15415,8 +15939,14 @@ mod tests {
             2,
             "should stop at repeat-until date: {entries:?}"
         );
-        assert_eq!(entries[0].projected_date, "2026-04-13");
-        assert_eq!(entries[1].projected_date, "2026-04-20");
+        assert_eq!(
+            entries[0].projected_date, "2026-04-13",
+            "first projection before until date"
+        );
+        assert_eq!(
+            entries[1].projected_date, "2026-04-20",
+            "second projection before until date"
+        );
 
         mat.shutdown();
     }
@@ -15981,7 +16511,11 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(peer.last_address.as_deref(), Some("192.168.1.100:9090"));
+        assert_eq!(
+            peer.last_address.as_deref(),
+            Some("192.168.1.100:9090"),
+            "peer address should be updated"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -15990,7 +16524,10 @@ mod tests {
         peer_refs::upsert_peer_ref(&pool, "peer-1").await.unwrap();
 
         let result = set_peer_address_inner(&pool, "peer-1".into(), "not-an-address".into()).await;
-        assert!(matches!(result, Err(AppError::Validation(_))));
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "invalid address should return Validation error"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -15999,7 +16536,10 @@ mod tests {
 
         let result =
             set_peer_address_inner(&pool, "nonexistent".into(), "192.168.1.1:9090".into()).await;
-        assert!(matches!(result, Err(AppError::NotFound(_))));
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "unknown peer should return NotFound error"
+        );
     }
 
     // ======================================================================
@@ -16017,9 +16557,18 @@ mod tests {
                 .await
                 .unwrap();
 
-        assert_eq!(result.page_title, "TestPage");
-        assert_eq!(result.blocks_created, 4);
-        assert!(result.warnings.is_empty());
+        assert_eq!(
+            result.page_title, "TestPage",
+            "page title should match filename"
+        );
+        assert_eq!(
+            result.blocks_created, 4,
+            "should create 4 blocks from markdown"
+        );
+        assert!(
+            result.warnings.is_empty(),
+            "import should produce no warnings"
+        );
 
         mat.shutdown();
     }
@@ -16035,8 +16584,11 @@ mod tests {
                 .await
                 .unwrap();
 
-        assert_eq!(result.blocks_created, 1);
-        assert_eq!(result.properties_set, 2);
+        assert_eq!(
+            result.blocks_created, 1,
+            "should create 1 block with properties"
+        );
+        assert_eq!(result.properties_set, 2, "should set 2 properties");
 
         mat.shutdown();
     }
@@ -16051,8 +16603,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.blocks_created, 1);
-        assert_eq!(result.page_title, "Imported Page");
+        assert_eq!(
+            result.blocks_created, 1,
+            "should create 1 block after stripping refs"
+        );
+        assert_eq!(
+            result.page_title, "Imported Page",
+            "default page title should be used"
+        );
 
         mat.shutdown();
     }
@@ -16066,8 +16624,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.page_title, "Empty");
-        assert_eq!(result.blocks_created, 0);
+        assert_eq!(
+            result.page_title, "Empty",
+            "page title should derive from filename"
+        );
+        assert_eq!(
+            result.blocks_created, 0,
+            "empty content should create no blocks"
+        );
 
         mat.shutdown();
     }
@@ -16107,11 +16671,20 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(att.block_id, block.id);
-        assert_eq!(att.filename, "photo.png");
-        assert_eq!(att.mime_type, "image/png");
-        assert_eq!(att.size_bytes, 1024);
-        assert_eq!(att.fs_path, "/tmp/photo.png");
+        assert_eq!(att.block_id, block.id, "attachment block_id should match");
+        assert_eq!(
+            att.filename, "photo.png",
+            "attachment filename should match"
+        );
+        assert_eq!(
+            att.mime_type, "image/png",
+            "attachment mime_type should match"
+        );
+        assert_eq!(att.size_bytes, 1024, "attachment size should match");
+        assert_eq!(
+            att.fs_path, "/tmp/photo.png",
+            "attachment fs_path should match"
+        );
         assert!(!att.id.is_empty(), "attachment should have a generated ID");
         assert!(!att.created_at.is_empty(), "created_at should be set");
 
@@ -16125,9 +16698,9 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(db_row.id, att.id);
-        assert_eq!(db_row.block_id, block.id);
-        assert_eq!(db_row.filename, "photo.png");
+        assert_eq!(db_row.id, att.id, "DB row id should match returned id");
+        assert_eq!(db_row.block_id, block.id, "DB row block_id should match");
+        assert_eq!(db_row.filename, "photo.png", "DB row filename should match");
 
         mat.shutdown();
     }
@@ -16346,15 +16919,24 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(list_a.len(), 2, "block_a should have 2 attachments");
-        assert_eq!(list_a[0].filename, "a1.png");
-        assert_eq!(list_a[1].filename, "a2.pdf");
+        assert_eq!(
+            list_a[0].filename, "a1.png",
+            "first attachment should be a1.png"
+        );
+        assert_eq!(
+            list_a[1].filename, "a2.pdf",
+            "second attachment should be a2.pdf"
+        );
 
         // List for block_b — should get 1
         let list_b = list_attachments_inner(&pool, block_b.id.clone())
             .await
             .unwrap();
         assert_eq!(list_b.len(), 1, "block_b should have 1 attachment");
-        assert_eq!(list_b[0].filename, "b1.txt");
+        assert_eq!(
+            list_b[0].filename, "b1.txt",
+            "block_b attachment should be b1.txt"
+        );
 
         mat.shutdown();
     }
@@ -16377,7 +16959,10 @@ mod tests {
             .await
             .unwrap()
             .expect("draft should exist after save");
-        assert_eq!(d.content, "draft content");
+        assert_eq!(
+            d.content, "draft content",
+            "saved draft content should match"
+        );
 
         // Flush the draft (writes edit_block op + deletes draft row)
         flush_draft_inner(&pool, DEV, "01HZ000000000000000000DRF01".into())
@@ -16396,7 +16981,10 @@ mod tests {
         // An edit_block op should exist in the log
         let ops = crate::op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
         assert_eq!(ops.len(), 1, "flush must produce one op");
-        assert_eq!(ops[0].op_type, "edit_block");
+        assert_eq!(
+            ops[0].op_type, "edit_block",
+            "flushed op should be edit_block"
+        );
     }
 
     #[tokio::test]

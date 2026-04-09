@@ -446,12 +446,21 @@ mod tests {
     #[test]
     fn shift_date_default_mode_shifts_from_original() {
         // Default (+) mode: shift from the original date
-        assert_eq!(shift_date("2025-06-15", "daily"), Some("2025-06-16".into()));
+        assert_eq!(
+            shift_date("2025-06-15", "daily"),
+            Some("2025-06-16".into()),
+            "daily should shift by one day"
+        );
         assert_eq!(
             shift_date("2025-06-15", "weekly"),
-            Some("2025-06-22".into())
+            Some("2025-06-22".into()),
+            "weekly should shift by seven days"
         );
-        assert_eq!(shift_date("2025-06-15", "+3d"), Some("2025-06-18".into()));
+        assert_eq!(
+            shift_date("2025-06-15", "+3d"),
+            Some("2025-06-18".into()),
+            "+3d should shift by three days"
+        );
     }
 
     #[test]
@@ -537,11 +546,11 @@ mod tests {
 
     #[test]
     fn days_in_month_known_values() {
-        assert_eq!(days_in_month(2025, 1), 31); // January
-        assert_eq!(days_in_month(2025, 2), 28); // February (non-leap)
-        assert_eq!(days_in_month(2024, 2), 29); // February (leap)
-        assert_eq!(days_in_month(2025, 4), 30); // April
-        assert_eq!(days_in_month(2025, 12), 31); // December
+        assert_eq!(days_in_month(2025, 1), 31, "January has 31 days");
+        assert_eq!(days_in_month(2025, 2), 28, "February non-leap has 28 days");
+        assert_eq!(days_in_month(2024, 2), 29, "February leap year has 29 days");
+        assert_eq!(days_in_month(2025, 4), 30, "April has 30 days");
+        assert_eq!(days_in_month(2025, 12), 31, "December has 31 days");
     }
 
     #[test]
@@ -551,7 +560,8 @@ mod tests {
         let result = shift_date_once(base, "monthly").unwrap();
         assert_eq!(
             result,
-            chrono::NaiveDate::from_ymd_opt(2025, 2, 28).unwrap()
+            chrono::NaiveDate::from_ymd_opt(2025, 2, 28).unwrap(),
+            "Jan 31 + 1 month should clamp to Feb 28"
         );
     }
 
@@ -561,34 +571,51 @@ mod tests {
 
         assert_eq!(
             shift_date_once(base, "3d"),
-            Some(chrono::NaiveDate::from_ymd_opt(2025, 6, 18).unwrap())
+            Some(chrono::NaiveDate::from_ymd_opt(2025, 6, 18).unwrap()),
+            "3d should shift by three days"
         );
         assert_eq!(
             shift_date_once(base, "2w"),
-            Some(chrono::NaiveDate::from_ymd_opt(2025, 6, 29).unwrap())
+            Some(chrono::NaiveDate::from_ymd_opt(2025, 6, 29).unwrap()),
+            "2w should shift by two weeks"
         );
         assert_eq!(
             shift_date_once(base, "2m"),
-            Some(chrono::NaiveDate::from_ymd_opt(2025, 8, 15).unwrap())
+            Some(chrono::NaiveDate::from_ymd_opt(2025, 8, 15).unwrap()),
+            "2m should shift by two months"
         );
     }
 
     #[test]
     fn shift_date_returns_none_for_bad_input() {
-        assert_eq!(shift_date("not-a-date", "daily"), None);
-        assert_eq!(shift_date("2025-06-15", "xyz"), None);
-        assert_eq!(shift_date("2025-06-15", ""), None);
+        assert_eq!(
+            shift_date("not-a-date", "daily"),
+            None,
+            "invalid date should return None"
+        );
+        assert_eq!(
+            shift_date("2025-06-15", "xyz"),
+            None,
+            "unknown interval should return None"
+        );
+        assert_eq!(
+            shift_date("2025-06-15", ""),
+            None,
+            "empty rule should return None"
+        );
     }
 
     #[test]
     fn shift_date_monthly_from_string() {
         assert_eq!(
             shift_date("2025-01-31", "monthly"),
-            Some("2025-02-28".into())
+            Some("2025-02-28".into()),
+            "Jan 31 monthly should clamp to Feb 28"
         );
         assert_eq!(
             shift_date("2025-06-15", "monthly"),
-            Some("2025-07-15".into())
+            Some("2025-07-15".into()),
+            "Jun 15 monthly should yield Jul 15"
         );
     }
 }

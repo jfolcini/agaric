@@ -1776,36 +1776,81 @@ mod tests {
         // ULID "01ARZ3NDEKTSV4RRFFQ69G5FAV" - known ULID
         // First 10 chars: "01ARZ3NDEK" encode the timestamp
         let ms = ulid_to_ms("01ARZ3NDEKTSV4RRFFQ69G5FAV");
-        assert!(ms.is_some());
+        assert!(ms.is_some(), "valid ULID should return Some timestamp");
         // The exact value depends on the encoding; just verify it's reasonable
         let ms_val = ms.unwrap();
-        assert!(ms_val > 0);
+        assert!(ms_val > 0, "extracted timestamp should be positive");
     }
 
     #[test]
     fn ulid_to_ms_returns_none_for_short_string() {
-        assert!(ulid_to_ms("SHORT").is_none());
+        assert!(
+            ulid_to_ms("SHORT").is_none(),
+            "short string should return None"
+        );
     }
 
     #[test]
     fn crockford_decode_char_handles_all_valid_chars() {
-        assert_eq!(crockford_decode_char('0'), Some(0));
-        assert_eq!(crockford_decode_char('1'), Some(1));
-        assert_eq!(crockford_decode_char('A'), Some(10));
-        assert_eq!(crockford_decode_char('Z'), Some(31));
+        assert_eq!(
+            crockford_decode_char('0'),
+            Some(0),
+            "'0' should decode to 0"
+        );
+        assert_eq!(
+            crockford_decode_char('1'),
+            Some(1),
+            "'1' should decode to 1"
+        );
+        assert_eq!(
+            crockford_decode_char('A'),
+            Some(10),
+            "'A' should decode to 10"
+        );
+        assert_eq!(
+            crockford_decode_char('Z'),
+            Some(31),
+            "'Z' should decode to 31"
+        );
         // Case insensitive
-        assert_eq!(crockford_decode_char('a'), Some(10));
-        assert_eq!(crockford_decode_char('z'), Some(31));
+        assert_eq!(
+            crockford_decode_char('a'),
+            Some(10),
+            "lowercase 'a' should decode to 10"
+        );
+        assert_eq!(
+            crockford_decode_char('z'),
+            Some(31),
+            "lowercase 'z' should decode to 31"
+        );
         // Aliases
-        assert_eq!(crockford_decode_char('O'), Some(0));
-        assert_eq!(crockford_decode_char('I'), Some(1));
-        assert_eq!(crockford_decode_char('L'), Some(1));
+        assert_eq!(
+            crockford_decode_char('O'),
+            Some(0),
+            "'O' alias should decode to 0"
+        );
+        assert_eq!(
+            crockford_decode_char('I'),
+            Some(1),
+            "'I' alias should decode to 1"
+        );
+        assert_eq!(
+            crockford_decode_char('L'),
+            Some(1),
+            "'L' alias should decode to 1"
+        );
     }
 
     #[test]
     fn crockford_decode_char_returns_none_for_invalid() {
-        assert!(crockford_decode_char('U').is_none());
-        assert!(crockford_decode_char('!').is_none());
+        assert!(
+            crockford_decode_char('U').is_none(),
+            "'U' is not a valid Crockford char"
+        );
+        assert!(
+            crockford_decode_char('!').is_none(),
+            "'!' is not a valid Crockford char"
+        );
     }
 
     // ======================================================================
@@ -1825,8 +1870,14 @@ mod tests {
             value: "active".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.contains("SRC_A"));
-        assert!(!set.contains("SRC_B"));
+        assert!(
+            set.contains("SRC_A"),
+            "SRC_A with status=active should match Eq"
+        );
+        assert!(
+            !set.contains("SRC_B"),
+            "SRC_B with status=done should not match Eq"
+        );
     }
 
     #[tokio::test]
@@ -1841,7 +1892,7 @@ mod tests {
             value: "nonexistent".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.is_empty());
+        assert!(set.is_empty(), "no blocks should match nonexistent value");
     }
 
     #[tokio::test]
@@ -1857,8 +1908,14 @@ mod tests {
             value: "active".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(!set.contains("SRC_A"));
-        assert!(set.contains("SRC_B"));
+        assert!(
+            !set.contains("SRC_A"),
+            "SRC_A with status=active should not match Neq active"
+        );
+        assert!(
+            set.contains("SRC_B"),
+            "SRC_B with status=done should match Neq active"
+        );
     }
 
     #[tokio::test]
@@ -1874,8 +1931,8 @@ mod tests {
             value: "beta".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.contains("SRC_A"));
-        assert!(!set.contains("SRC_B"));
+        assert!(set.contains("SRC_A"), "alpha is less than beta");
+        assert!(!set.contains("SRC_B"), "beta is not less than beta");
     }
 
     #[tokio::test]
@@ -1891,8 +1948,8 @@ mod tests {
             value: "alpha".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(!set.contains("SRC_A"));
-        assert!(set.contains("SRC_B"));
+        assert!(!set.contains("SRC_A"), "alpha is not greater than alpha");
+        assert!(set.contains("SRC_B"), "beta is greater than alpha");
     }
 
     #[tokio::test]
@@ -1908,8 +1965,8 @@ mod tests {
             value: "alpha".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.contains("SRC_A"));
-        assert!(!set.contains("SRC_B"));
+        assert!(set.contains("SRC_A"), "alpha is <= alpha");
+        assert!(!set.contains("SRC_B"), "beta is not <= alpha");
     }
 
     #[tokio::test]
@@ -1925,8 +1982,8 @@ mod tests {
             value: "beta".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(!set.contains("SRC_A"));
-        assert!(set.contains("SRC_B"));
+        assert!(!set.contains("SRC_A"), "alpha is not >= beta");
+        assert!(set.contains("SRC_B"), "beta is >= beta");
     }
 
     // ======================================================================
@@ -1946,8 +2003,14 @@ mod tests {
             value: 1.0,
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.contains("SRC_A"));
-        assert!(!set.contains("SRC_B"));
+        assert!(
+            set.contains("SRC_A"),
+            "SRC_A with priority=1 should match Eq 1"
+        );
+        assert!(
+            !set.contains("SRC_B"),
+            "SRC_B with priority=2 should not match Eq 1"
+        );
     }
 
     #[tokio::test]
@@ -1963,8 +2026,8 @@ mod tests {
             value: 3.0,
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(!set.contains("SRC_A"));
-        assert!(set.contains("SRC_B"));
+        assert!(!set.contains("SRC_A"), "priority=1 is not > 3");
+        assert!(set.contains("SRC_B"), "priority=5 is > 3");
     }
 
     #[tokio::test]
@@ -1980,8 +2043,8 @@ mod tests {
             value: 3.0,
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.contains("SRC_A"));
-        assert!(!set.contains("SRC_B"));
+        assert!(set.contains("SRC_A"), "priority=1 is < 3");
+        assert!(!set.contains("SRC_B"), "priority=5 is not < 3");
     }
 
     #[tokio::test]
@@ -1996,7 +2059,7 @@ mod tests {
             value: 999.0,
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.is_empty());
+        assert!(set.is_empty(), "no blocks should match priority=999");
     }
 
     #[tokio::test]
@@ -2012,8 +2075,8 @@ mod tests {
             value: 1.0,
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(!set.contains("SRC_A"));
-        assert!(set.contains("SRC_B"));
+        assert!(!set.contains("SRC_A"), "priority=1 should not match Neq 1");
+        assert!(set.contains("SRC_B"), "priority=2 should match Neq 1");
     }
 
     #[tokio::test]
@@ -2029,8 +2092,8 @@ mod tests {
             value: 3.0,
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.contains("SRC_A"));
-        assert!(!set.contains("SRC_B"));
+        assert!(set.contains("SRC_A"), "priority=3 is <= 3");
+        assert!(!set.contains("SRC_B"), "priority=5 is not <= 3");
     }
 
     #[tokio::test]
@@ -2046,8 +2109,8 @@ mod tests {
             value: 5.0,
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(!set.contains("SRC_A"));
-        assert!(set.contains("SRC_B"));
+        assert!(!set.contains("SRC_A"), "priority=3 is not >= 5");
+        assert!(set.contains("SRC_B"), "priority=5 is >= 5");
     }
 
     // ======================================================================
@@ -2067,8 +2130,14 @@ mod tests {
             value: "2025-01-15".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.contains("SRC_A"));
-        assert!(!set.contains("SRC_B"));
+        assert!(
+            set.contains("SRC_A"),
+            "SRC_A due=2025-01-15 should match Eq"
+        );
+        assert!(
+            !set.contains("SRC_B"),
+            "SRC_B due=2025-02-20 should not match Eq"
+        );
     }
 
     #[tokio::test]
@@ -2084,8 +2153,8 @@ mod tests {
             value: "2025-02-01".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.contains("SRC_A"));
-        assert!(!set.contains("SRC_B"));
+        assert!(set.contains("SRC_A"), "2025-01-15 is < 2025-02-01");
+        assert!(!set.contains("SRC_B"), "2025-02-20 is not < 2025-02-01");
     }
 
     #[tokio::test]
@@ -2100,7 +2169,7 @@ mod tests {
             value: "2099-12-31".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.is_empty());
+        assert!(set.is_empty(), "no blocks should match far-future date");
     }
 
     // ======================================================================
@@ -2118,8 +2187,8 @@ mod tests {
             key: "status".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.contains("SRC_A"));
-        assert!(!set.contains("SRC_B"));
+        assert!(set.contains("SRC_A"), "SRC_A has status property set");
+        assert!(!set.contains("SRC_B"), "SRC_B has no status property");
     }
 
     #[tokio::test]
@@ -2131,7 +2200,7 @@ mod tests {
             key: "nonexistent".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.is_empty());
+        assert!(set.is_empty(), "no blocks have nonexistent property");
     }
 
     #[tokio::test]
@@ -2145,9 +2214,18 @@ mod tests {
             key: "status".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(!set.contains("SRC_A"));
-        assert!(set.contains("SRC_B"));
-        assert!(set.contains("SRC_C"));
+        assert!(
+            !set.contains("SRC_A"),
+            "SRC_A has status set, should not match IsEmpty"
+        );
+        assert!(
+            set.contains("SRC_B"),
+            "SRC_B lacks status, should match IsEmpty"
+        );
+        assert!(
+            set.contains("SRC_C"),
+            "SRC_C lacks status, should match IsEmpty"
+        );
     }
 
     // ======================================================================
@@ -2165,8 +2243,14 @@ mod tests {
             tag_id: "TAG_X".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.contains("SRC_A"));
-        assert!(!set.contains("SRC_B"));
+        assert!(
+            set.contains("SRC_A"),
+            "SRC_A tagged with TAG_X should match"
+        );
+        assert!(
+            !set.contains("SRC_B"),
+            "SRC_B without TAG_X should not match"
+        );
     }
 
     #[tokio::test]
@@ -2178,7 +2262,7 @@ mod tests {
             tag_id: "NONEXISTENT".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.is_empty());
+        assert!(set.is_empty(), "nonexistent tag should match no blocks");
     }
 
     #[tokio::test]
@@ -2198,9 +2282,15 @@ mod tests {
             prefix: "work/".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.contains("SRC_A"));
-        assert!(set.contains("SRC_B"));
-        assert!(!set.contains("SRC_C"));
+        assert!(
+            set.contains("SRC_A"),
+            "SRC_A tagged work/meeting should match prefix work/"
+        );
+        assert!(
+            set.contains("SRC_B"),
+            "SRC_B tagged work/email should match prefix work/"
+        );
+        assert!(!set.contains("SRC_C"), "SRC_C has no work/ tag");
     }
 
     #[tokio::test]
@@ -2212,7 +2302,7 @@ mod tests {
             prefix: "zzz_nonexistent/".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.is_empty());
+        assert!(set.is_empty(), "nonexistent prefix should match no blocks");
     }
 
     // ======================================================================
@@ -2230,8 +2320,14 @@ mod tests {
             query: "searchable".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.contains("SRC_A"));
-        assert!(!set.contains("SRC_B"));
+        assert!(
+            set.contains("SRC_A"),
+            "SRC_A contains 'searchable' in FTS index"
+        );
+        assert!(
+            !set.contains("SRC_B"),
+            "SRC_B does not contain 'searchable'"
+        );
     }
 
     #[tokio::test]
@@ -2244,7 +2340,7 @@ mod tests {
             query: "nonexistent".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.is_empty());
+        assert!(set.is_empty(), "nonexistent term should match no blocks");
     }
 
     #[tokio::test]
@@ -2254,7 +2350,7 @@ mod tests {
 
         let filter = BacklinkFilter::Contains { query: "".into() };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.is_empty());
+        assert!(set.is_empty(), "empty query should return no results");
     }
 
     // ======================================================================
@@ -2280,7 +2376,10 @@ mod tests {
             before: None,
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.contains(&recent_ulid));
+        assert!(
+            set.contains(&recent_ulid),
+            "recent block should be after 2020-01-01"
+        );
     }
 
     #[tokio::test]
@@ -2297,7 +2396,10 @@ mod tests {
             before: Some("2000-01-01".into()),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(!set.contains(&recent_ulid));
+        assert!(
+            !set.contains(&recent_ulid),
+            "recent block should not be before 2000-01-01"
+        );
     }
 
     #[tokio::test]
@@ -2313,7 +2415,10 @@ mod tests {
             before: Some("2099-12-31".into()),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.contains(&recent_ulid));
+        assert!(
+            set.contains(&recent_ulid),
+            "recent block should be within 2020-2099 range"
+        );
     }
 
     // ======================================================================
@@ -2329,9 +2434,9 @@ mod tests {
             block_type: "content".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.contains("SRC_A"));
-        assert!(set.contains("SRC_B"));
-        assert!(set.contains("SRC_C"));
+        assert!(set.contains("SRC_A"), "SRC_A is content type");
+        assert!(set.contains("SRC_B"), "SRC_B is content type");
+        assert!(set.contains("SRC_C"), "SRC_C is content type");
     }
 
     #[tokio::test]
@@ -2344,7 +2449,7 @@ mod tests {
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         // SRC_A, SRC_B, SRC_C are all "content" type
-        assert!(!set.contains("SRC_A"));
+        assert!(!set.contains("SRC_A"), "SRC_A is content, not tag type");
     }
 
     // ======================================================================
@@ -2375,8 +2480,11 @@ mod tests {
             ],
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.contains("SRC_A"));
-        assert!(!set.contains("SRC_B")); // status != "active"
+        assert!(
+            set.contains("SRC_A"),
+            "SRC_A matches both status and priority"
+        );
+        assert!(!set.contains("SRC_B"), "SRC_B has wrong status for And"); // status != "active"
     }
 
     #[tokio::test]
@@ -2401,8 +2509,8 @@ mod tests {
             ],
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.contains("SRC_A"));
-        assert!(set.contains("SRC_B"));
+        assert!(set.contains("SRC_A"), "SRC_A status=active matches Or");
+        assert!(set.contains("SRC_B"), "SRC_B status=done matches Or");
     }
 
     #[tokio::test]
@@ -2419,10 +2527,19 @@ mod tests {
             }),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(!set.contains("SRC_A"));
+        assert!(
+            !set.contains("SRC_A"),
+            "SRC_A has status=active, excluded by Not"
+        );
         // SRC_B, SRC_C, TARGET should all be in the not set
-        assert!(set.contains("SRC_B"));
-        assert!(set.contains("SRC_C"));
+        assert!(
+            set.contains("SRC_B"),
+            "SRC_B lacks status=active, included by Not"
+        );
+        assert!(
+            set.contains("SRC_C"),
+            "SRC_C lacks status=active, included by Not"
+        );
     }
 
     #[tokio::test]
@@ -2432,7 +2549,10 @@ mod tests {
 
         let filter = BacklinkFilter::And { filters: vec![] };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.is_empty());
+        assert!(
+            set.is_empty(),
+            "And with empty filters should return empty set"
+        );
     }
 
     #[tokio::test]
@@ -2442,7 +2562,10 @@ mod tests {
 
         let filter = BacklinkFilter::Or { filters: vec![] };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert!(set.is_empty());
+        assert!(
+            set.is_empty(),
+            "Or with empty filters should return empty set"
+        );
     }
 
     // ======================================================================
@@ -2484,9 +2607,15 @@ mod tests {
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         // Both SRC_A and SRC_B have status=active AND (HasTag(TAG_X) OR HasTagPrefix(work/))
-        assert!(set.contains("SRC_A"));
-        assert!(set.contains("SRC_B"));
-        assert!(!set.contains("SRC_C"));
+        assert!(set.contains("SRC_A"), "SRC_A has status=active and TAG_X");
+        assert!(
+            set.contains("SRC_B"),
+            "SRC_B has status=active and work/ tag"
+        );
+        assert!(
+            !set.contains("SRC_C"),
+            "SRC_C has no status or matching tags"
+        );
     }
 
     // ======================================================================
@@ -2509,13 +2638,13 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(resp.items.len(), 3);
-        assert_eq!(resp.total_count, 3);
-        assert_eq!(resp.filtered_count, 3);
+        assert_eq!(resp.items.len(), 3, "should return all 3 backlinks");
+        assert_eq!(resp.total_count, 3, "total count should be 3");
+        assert_eq!(resp.filtered_count, 3, "filtered count should be 3");
         // SRC_A < SRC_B < SRC_C lexicographically
-        assert_eq!(resp.items[0].id, "SRC_A");
-        assert_eq!(resp.items[1].id, "SRC_B");
-        assert_eq!(resp.items[2].id, "SRC_C");
+        assert_eq!(resp.items[0].id, "SRC_A", "first item in asc order");
+        assert_eq!(resp.items[1].id, "SRC_B", "second item in asc order");
+        assert_eq!(resp.items[2].id, "SRC_C", "third item in asc order");
     }
 
     #[tokio::test]
@@ -2534,10 +2663,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(resp.items.len(), 3);
-        assert_eq!(resp.items[0].id, "SRC_C");
-        assert_eq!(resp.items[1].id, "SRC_B");
-        assert_eq!(resp.items[2].id, "SRC_A");
+        assert_eq!(resp.items.len(), 3, "should return all 3 backlinks");
+        assert_eq!(resp.items[0].id, "SRC_C", "first item in desc order");
+        assert_eq!(resp.items[1].id, "SRC_B", "second item in desc order");
+        assert_eq!(resp.items[2].id, "SRC_A", "third item in desc order");
     }
 
     #[tokio::test]
@@ -2562,9 +2691,9 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(resp.items[0].id, "SRC_B"); // alice
-        assert_eq!(resp.items[1].id, "SRC_C"); // bob
-        assert_eq!(resp.items[2].id, "SRC_A"); // charlie
+        assert_eq!(resp.items[0].id, "SRC_B", "alice sorts first"); // alice
+        assert_eq!(resp.items[1].id, "SRC_C", "bob sorts second"); // bob
+        assert_eq!(resp.items[2].id, "SRC_A", "charlie sorts third"); // charlie
     }
 
     #[tokio::test]
@@ -2589,9 +2718,9 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(resp.items[0].id, "SRC_B"); // 1.0
-        assert_eq!(resp.items[1].id, "SRC_C"); // 2.0
-        assert_eq!(resp.items[2].id, "SRC_A"); // 3.0
+        assert_eq!(resp.items[0].id, "SRC_B", "priority=1 sorts first"); // 1.0
+        assert_eq!(resp.items[1].id, "SRC_C", "priority=2 sorts second"); // 2.0
+        assert_eq!(resp.items[2].id, "SRC_A", "priority=3 sorts third"); // 3.0
     }
 
     #[tokio::test]
@@ -2616,9 +2745,9 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(resp.items[0].id, "SRC_B"); // 2025-01-01
-        assert_eq!(resp.items[1].id, "SRC_C"); // 2025-02-01
-        assert_eq!(resp.items[2].id, "SRC_A"); // 2025-03-01
+        assert_eq!(resp.items[0].id, "SRC_B", "2025-01-01 sorts first"); // 2025-01-01
+        assert_eq!(resp.items[1].id, "SRC_C", "2025-02-01 sorts second"); // 2025-02-01
+        assert_eq!(resp.items[2].id, "SRC_A", "2025-03-01 sorts third"); // 2025-03-01
     }
 
     // ======================================================================
@@ -2635,11 +2764,17 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.items.len(), 2);
-        assert!(resp.has_more);
-        assert!(resp.next_cursor.is_some());
-        assert_eq!(resp.total_count, 3);
-        assert_eq!(resp.filtered_count, 3);
+        assert_eq!(resp.items.len(), 2, "should return exactly 2 items");
+        assert!(resp.has_more, "should indicate more pages available");
+        assert!(resp.next_cursor.is_some(), "should provide a next cursor");
+        assert_eq!(
+            resp.total_count, 3,
+            "total count should include all backlinks"
+        );
+        assert_eq!(
+            resp.filtered_count, 3,
+            "filtered count equals total when unfiltered"
+        );
     }
 
     #[tokio::test]
@@ -2652,19 +2787,26 @@ mod tests {
         let resp1 = eval_backlink_query(&pool, "TARGET", None, None, &page1)
             .await
             .unwrap();
-        assert_eq!(resp1.items.len(), 2);
-        assert!(resp1.has_more);
+        assert_eq!(resp1.items.len(), 2, "first page should have 2 items");
+        assert!(resp1.has_more, "first page should indicate more");
 
         // Second page
         let page2 = PageRequest::new(resp1.next_cursor, Some(2)).unwrap();
         let resp2 = eval_backlink_query(&pool, "TARGET", None, None, &page2)
             .await
             .unwrap();
-        assert_eq!(resp2.items.len(), 1);
-        assert!(!resp2.has_more);
-        assert!(resp2.next_cursor.is_none());
-        assert_eq!(resp2.total_count, 3);
-        assert_eq!(resp2.filtered_count, 3);
+        assert_eq!(
+            resp2.items.len(),
+            1,
+            "second page should have 1 remaining item"
+        );
+        assert!(!resp2.has_more, "second page should have no more");
+        assert!(resp2.next_cursor.is_none(), "no cursor when no more pages");
+        assert_eq!(resp2.total_count, 3, "total count unchanged across pages");
+        assert_eq!(
+            resp2.filtered_count, 3,
+            "filtered count unchanged across pages"
+        );
     }
 
     #[tokio::test]
@@ -2683,10 +2825,10 @@ mod tests {
         let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
             .await
             .unwrap();
-        assert_eq!(resp.total_count, 3);
-        assert_eq!(resp.filtered_count, 2);
-        assert_eq!(resp.items.len(), 1);
-        assert!(resp.has_more);
+        assert_eq!(resp.total_count, 3, "total includes all 3 backlinks");
+        assert_eq!(resp.filtered_count, 2, "only 2 have status property set");
+        assert_eq!(resp.items.len(), 1, "page limit is 1");
+        assert!(resp.has_more, "more filtered results remain");
     }
 
     // ======================================================================
@@ -2702,9 +2844,12 @@ mod tests {
         let resp = eval_backlink_query(&pool, "TARGET", Some(vec![]), None, &page)
             .await
             .unwrap();
-        assert_eq!(resp.total_count, 3);
-        assert_eq!(resp.filtered_count, 3);
-        assert_eq!(resp.items.len(), 3);
+        assert_eq!(resp.total_count, 3, "empty filters should not affect total");
+        assert_eq!(
+            resp.filtered_count, 3,
+            "empty filters should not reduce count"
+        );
+        assert_eq!(resp.items.len(), 3, "all backlinks should be returned");
     }
 
     #[tokio::test]
@@ -2716,9 +2861,12 @@ mod tests {
         let resp = eval_backlink_query(&pool, "TARGET", None, None, &page)
             .await
             .unwrap();
-        assert_eq!(resp.total_count, 3);
-        assert_eq!(resp.filtered_count, 3);
-        assert_eq!(resp.items.len(), 3);
+        assert_eq!(resp.total_count, 3, "None filters should not affect total");
+        assert_eq!(
+            resp.filtered_count, 3,
+            "None filters should not reduce count"
+        );
+        assert_eq!(resp.items.len(), 3, "all backlinks should be returned");
     }
 
     // ======================================================================
@@ -2734,11 +2882,14 @@ mod tests {
         let resp = eval_backlink_query(&pool, "LONELY", None, None, &page)
             .await
             .unwrap();
-        assert_eq!(resp.total_count, 0);
-        assert_eq!(resp.filtered_count, 0);
-        assert!(resp.items.is_empty());
-        assert!(!resp.has_more);
-        assert!(resp.next_cursor.is_none());
+        assert_eq!(resp.total_count, 0, "no backlinks should yield zero total");
+        assert_eq!(
+            resp.filtered_count, 0,
+            "no backlinks should yield zero filtered"
+        );
+        assert!(resp.items.is_empty(), "items should be empty");
+        assert!(!resp.has_more, "should not indicate more pages");
+        assert!(resp.next_cursor.is_none(), "should have no cursor");
     }
 
     // ======================================================================
@@ -2759,9 +2910,15 @@ mod tests {
         let resp = eval_backlink_query(&pool, "TARGET", None, None, &page)
             .await
             .unwrap();
-        assert_eq!(resp.total_count, 2);
-        assert_eq!(resp.filtered_count, 2);
-        assert!(resp.items.iter().all(|item| item.id != "SRC_A"));
+        assert_eq!(resp.total_count, 2, "deleted block excluded from total");
+        assert_eq!(
+            resp.filtered_count, 2,
+            "deleted block excluded from filtered"
+        );
+        assert!(
+            resp.items.iter().all(|item| item.id != "SRC_A"),
+            "SRC_A should be excluded (deleted)"
+        );
     }
 
     #[tokio::test]
@@ -2778,9 +2935,15 @@ mod tests {
         let resp = eval_backlink_query(&pool, "TARGET", None, None, &page)
             .await
             .unwrap();
-        assert_eq!(resp.total_count, 2);
-        assert_eq!(resp.filtered_count, 2);
-        assert!(resp.items.iter().all(|item| item.id != "SRC_B"));
+        assert_eq!(resp.total_count, 2, "conflict block excluded from total");
+        assert_eq!(
+            resp.filtered_count, 2,
+            "conflict block excluded from filtered"
+        );
+        assert!(
+            resp.items.iter().all(|item| item.id != "SRC_B"),
+            "SRC_B should be excluded (conflict)"
+        );
     }
 
     // ======================================================================
@@ -2798,14 +2961,18 @@ mod tests {
         insert_property(&pool, "BLK_B", "due", None, None, Some("2025-01-01")).await;
 
         let keys = list_property_keys(&pool).await.unwrap();
-        assert_eq!(keys, vec!["due", "priority", "status"]);
+        assert_eq!(
+            keys,
+            vec!["due", "priority", "status"],
+            "should return distinct sorted keys"
+        );
     }
 
     #[tokio::test]
     async fn list_property_keys_empty_when_no_properties() {
         let (pool, _dir) = test_pool().await;
         let keys = list_property_keys(&pool).await.unwrap();
-        assert!(keys.is_empty());
+        assert!(keys.is_empty(), "no properties should yield empty list");
     }
 
     // ======================================================================
@@ -2829,9 +2996,9 @@ mod tests {
         let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
             .await
             .unwrap();
-        assert_eq!(resp.total_count, 3);
-        assert_eq!(resp.filtered_count, 1);
-        assert_eq!(resp.items[0].id, "SRC_A");
+        assert_eq!(resp.total_count, 3, "base set has 3 backlinks");
+        assert_eq!(resp.filtered_count, 1, "only SRC_A matches status=active");
+        assert_eq!(resp.items[0].id, "SRC_A", "SRC_A should be the only result");
     }
 
     #[tokio::test]
@@ -2851,9 +3018,12 @@ mod tests {
         let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
             .await
             .unwrap();
-        assert_eq!(resp.total_count, 2);
-        assert_eq!(resp.filtered_count, 1);
-        assert_eq!(resp.items[0].id, "SRC_CONTENT");
+        assert_eq!(resp.total_count, 2, "base set has 2 backlinks");
+        assert_eq!(resp.filtered_count, 1, "only content type matches");
+        assert_eq!(
+            resp.items[0].id, "SRC_CONTENT",
+            "only content block returned"
+        );
     }
 
     #[tokio::test]
@@ -2883,9 +3053,12 @@ mod tests {
         let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
             .await
             .unwrap();
-        assert_eq!(resp.total_count, 3);
-        assert_eq!(resp.filtered_count, 1);
-        assert_eq!(resp.items[0].id, "SRC_A");
+        assert_eq!(resp.total_count, 3, "base set has 3 backlinks");
+        assert_eq!(resp.filtered_count, 1, "only SRC_A matches both filters");
+        assert_eq!(
+            resp.items[0].id, "SRC_A",
+            "SRC_A matches status=active AND priority<3"
+        );
     }
 
     // ======================================================================
@@ -2993,9 +3166,15 @@ mod tests {
             set_not_empty, set_is_set,
             "Not(PropertyIsEmpty) should equal PropertyIsSet"
         );
-        assert!(set_not_empty.contains("SRC_A"));
-        assert!(!set_not_empty.contains("SRC_B"));
-        assert!(!set_not_empty.contains("SRC_C"));
+        assert!(set_not_empty.contains("SRC_A"), "SRC_A has status set");
+        assert!(
+            !set_not_empty.contains("SRC_B"),
+            "SRC_B lacks status property"
+        );
+        assert!(
+            !set_not_empty.contains("SRC_C"),
+            "SRC_C lacks status property"
+        );
     }
 
     // ======================================================================
@@ -3263,8 +3442,8 @@ mod tests {
         let resp1 = eval_backlink_query(&pool, "TARGET", None, sort.clone(), &page1)
             .await
             .unwrap();
-        assert_eq!(resp1.items.len(), 2);
-        assert!(resp1.has_more);
+        assert_eq!(resp1.items.len(), 2, "first page should have 2 items");
+        assert!(resp1.has_more, "first page should indicate more");
         assert_eq!(resp1.items[0].id, "SRC_B", "alice first");
         assert_eq!(resp1.items[1].id, "SRC_C", "bob second");
 
@@ -3273,8 +3452,8 @@ mod tests {
         let resp2 = eval_backlink_query(&pool, "TARGET", None, sort, &page2)
             .await
             .unwrap();
-        assert_eq!(resp2.items.len(), 1);
-        assert!(!resp2.has_more);
+        assert_eq!(resp2.items.len(), 1, "second page should have 1 item");
+        assert!(!resp2.has_more, "second page should have no more");
         assert_eq!(resp2.items[0].id, "SRC_A", "charlie last");
     }
 
@@ -3285,20 +3464,27 @@ mod tests {
     #[test]
     fn parse_iso_date_only() {
         let ms = parse_iso_to_ms("2025-01-15");
-        assert!(ms.is_some());
+        assert!(ms.is_some(), "date-only string should parse successfully");
         // 2025-01-15 00:00:00 UTC
-        assert_eq!(ms.unwrap(), 1736899200000);
+        assert_eq!(
+            ms.unwrap(),
+            1736899200000,
+            "should equal midnight UTC millis"
+        );
     }
 
     #[test]
     fn parse_iso_full_datetime() {
         let ms = parse_iso_to_ms("2025-01-15T12:00:00Z");
-        assert!(ms.is_some());
+        assert!(ms.is_some(), "full datetime should parse successfully");
     }
 
     #[test]
     fn parse_iso_invalid_returns_none() {
-        assert!(parse_iso_to_ms("not-a-date").is_none());
+        assert!(
+            parse_iso_to_ms("not-a-date").is_none(),
+            "invalid string should return None"
+        );
     }
 
     // ======================================================================
@@ -3462,7 +3648,10 @@ mod tests {
     #[test]
     fn ms_to_ulid_prefix_zero() {
         let prefix = ms_to_ulid_prefix(0);
-        assert_eq!(prefix, "0000000000");
+        assert_eq!(
+            prefix, "0000000000",
+            "zero timestamp should encode to all zeros"
+        );
     }
 
     // ======================================================================
@@ -3825,8 +4014,8 @@ mod tests {
         let resp = eval_backlink_query(&pool, "TARGET", None, None, &page)
             .await
             .unwrap();
-        assert_eq!(resp.total_count, 3);
-        assert_eq!(resp.filtered_count, 3);
+        assert_eq!(resp.total_count, 3, "total count should be 3");
+        assert_eq!(resp.filtered_count, 3, "filtered count should be 3");
         assert_eq!(
             resp.total_count, resp.filtered_count,
             "with no filters, total_count == filtered_count"
@@ -3863,7 +4052,7 @@ mod tests {
         let result = resolve_root_pages(&pool, &FxHashSet::default())
             .await
             .unwrap();
-        assert!(result.is_empty());
+        assert!(result.is_empty(), "empty input should return empty map");
     }
 
     #[tokio::test]
@@ -3883,10 +4072,14 @@ mod tests {
         let mut ids = FxHashSet::default();
         ids.insert("BLK_A1".into());
         let result = resolve_root_pages(&pool, &ids).await.unwrap();
-        assert_eq!(result.len(), 1);
+        assert_eq!(result.len(), 1, "should resolve one block to its root page");
         let (root_id, root_title) = result.get("BLK_A1").unwrap();
-        assert_eq!(root_id, "PAGE_A");
-        assert_eq!(root_title.as_deref(), Some("Page A"));
+        assert_eq!(root_id, "PAGE_A", "root page should be PAGE_A");
+        assert_eq!(
+            root_title.as_deref(),
+            Some("Page A"),
+            "root title should be 'Page A'"
+        );
     }
 
     #[tokio::test]
@@ -3908,9 +4101,12 @@ mod tests {
         let mut ids = FxHashSet::default();
         ids.insert("DEEP".into());
         let result = resolve_root_pages(&pool, &ids).await.unwrap();
-        assert_eq!(result.len(), 1);
+        assert_eq!(result.len(), 1, "should resolve nested block to root");
         let (root_id, _) = result.get("DEEP").unwrap();
-        assert_eq!(root_id, "PAGE_A");
+        assert_eq!(
+            root_id, "PAGE_A",
+            "deeply nested block should resolve to PAGE_A"
+        );
     }
 
     #[tokio::test]
@@ -3941,10 +4137,10 @@ mod tests {
         let resp = eval_backlink_query_grouped(&pool, "LONELY", None, None, &page)
             .await
             .unwrap();
-        assert!(resp.groups.is_empty());
-        assert_eq!(resp.total_count, 0);
-        assert_eq!(resp.filtered_count, 0);
-        assert!(!resp.has_more);
+        assert!(resp.groups.is_empty(), "no backlinks means no groups");
+        assert_eq!(resp.total_count, 0, "total count should be 0");
+        assert_eq!(resp.filtered_count, 0, "filtered count should be 0");
+        assert!(!resp.has_more, "should not have more pages");
     }
 
     #[tokio::test]
@@ -3983,20 +4179,34 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.groups.len(), 2, "2 source pages");
-        assert_eq!(resp.total_count, 2);
-        assert_eq!(resp.filtered_count, 2);
-        assert!(!resp.has_more);
+        assert_eq!(resp.total_count, 2, "total count should be 2");
+        assert_eq!(resp.filtered_count, 2, "filtered count should be 2");
+        assert!(!resp.has_more, "all groups fit in one page");
 
         // Groups sorted alphabetically by page_title: "Page A" < "Page B"
-        assert_eq!(resp.groups[0].page_id, "PAGE_A");
-        assert_eq!(resp.groups[0].page_title.as_deref(), Some("Page A"));
-        assert_eq!(resp.groups[0].blocks.len(), 1);
-        assert_eq!(resp.groups[0].blocks[0].id, "BLK_A1");
+        assert_eq!(resp.groups[0].page_id, "PAGE_A", "first group is PAGE_A");
+        assert_eq!(
+            resp.groups[0].page_title.as_deref(),
+            Some("Page A"),
+            "first group title"
+        );
+        assert_eq!(resp.groups[0].blocks.len(), 1, "PAGE_A has 1 block");
+        assert_eq!(
+            resp.groups[0].blocks[0].id, "BLK_A1",
+            "PAGE_A block is BLK_A1"
+        );
 
-        assert_eq!(resp.groups[1].page_id, "PAGE_B");
-        assert_eq!(resp.groups[1].page_title.as_deref(), Some("Page B"));
-        assert_eq!(resp.groups[1].blocks.len(), 1);
-        assert_eq!(resp.groups[1].blocks[0].id, "BLK_B1");
+        assert_eq!(resp.groups[1].page_id, "PAGE_B", "second group is PAGE_B");
+        assert_eq!(
+            resp.groups[1].page_title.as_deref(),
+            Some("Page B"),
+            "second group title"
+        );
+        assert_eq!(resp.groups[1].blocks.len(), 1, "PAGE_B has 1 block");
+        assert_eq!(
+            resp.groups[1].blocks[0].id, "BLK_B1",
+            "PAGE_B block is BLK_B1"
+        );
     }
 
     #[tokio::test]
@@ -4026,20 +4236,20 @@ mod tests {
         let resp1 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page1)
             .await
             .unwrap();
-        assert_eq!(resp1.groups.len(), 2);
-        assert!(resp1.has_more);
-        assert!(resp1.next_cursor.is_some());
-        assert_eq!(resp1.total_count, 3);
-        assert_eq!(resp1.filtered_count, 3);
+        assert_eq!(resp1.groups.len(), 2, "first page should have 2 groups");
+        assert!(resp1.has_more, "more groups available");
+        assert!(resp1.next_cursor.is_some(), "cursor should be provided");
+        assert_eq!(resp1.total_count, 3, "total count across all pages");
+        assert_eq!(resp1.filtered_count, 3, "filtered count across all pages");
 
         // Second page via cursor
         let page2 = PageRequest::new(resp1.next_cursor, Some(2)).unwrap();
         let resp2 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page2)
             .await
             .unwrap();
-        assert_eq!(resp2.groups.len(), 1);
-        assert!(!resp2.has_more);
-        assert!(resp2.next_cursor.is_none());
+        assert_eq!(resp2.groups.len(), 1, "second page has 1 remaining group");
+        assert!(!resp2.has_more, "no more groups after second page");
+        assert!(resp2.next_cursor.is_none(), "no cursor on last page");
     }
 
     #[tokio::test]
@@ -4085,8 +4295,15 @@ mod tests {
             .unwrap();
         assert_eq!(resp.total_count, 2, "base set has 2 backlinks");
         assert_eq!(resp.filtered_count, 1, "only 1 matches the filter");
-        assert_eq!(resp.groups.len(), 1);
-        assert_eq!(resp.groups[0].page_id, "PAGE_A");
+        assert_eq!(
+            resp.groups.len(),
+            1,
+            "only one group should remain after filter"
+        );
+        assert_eq!(
+            resp.groups[0].page_id, "PAGE_A",
+            "PAGE_A group should match filter"
+        );
     }
 
     // ======================================================================
@@ -4134,7 +4351,10 @@ mod tests {
             .unwrap();
         assert_eq!(resp.total_count, 2, "base set has 2 backlinks");
         assert_eq!(resp.filtered_count, 1, "only backlinks from PAGE_A");
-        assert_eq!(resp.items[0].id, "BLK_A1");
+        assert_eq!(
+            resp.items[0].id, "BLK_A1",
+            "BLK_A1 is the matching backlink"
+        );
     }
 
     #[tokio::test]
@@ -4178,7 +4398,7 @@ mod tests {
             .unwrap();
         assert_eq!(resp.total_count, 2, "base set has 2 backlinks");
         assert_eq!(resp.filtered_count, 1, "backlinks from PAGE_A excluded");
-        assert_eq!(resp.items[0].id, "BLK_B1");
+        assert_eq!(resp.items[0].id, "BLK_B1", "BLK_B1 remains after exclusion");
     }
 
     #[tokio::test]
@@ -4344,10 +4564,10 @@ mod tests {
             state: "TODO".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert_eq!(set.len(), 2);
-        assert!(set.contains("BLK_1"));
-        assert!(set.contains("BLK_2"));
-        assert!(!set.contains("BLK_3"));
+        assert_eq!(set.len(), 2, "two blocks have TODO state");
+        assert!(set.contains("BLK_1"), "BLK_1 has TODO state");
+        assert!(set.contains("BLK_2"), "BLK_2 has TODO state");
+        assert!(!set.contains("BLK_3"), "BLK_3 has no TODO state");
     }
 
     #[tokio::test]
@@ -4370,10 +4590,10 @@ mod tests {
 
         let filter = BacklinkFilter::Priority { level: "2".into() };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert_eq!(set.len(), 2);
-        assert!(set.contains("BLK_1"));
-        assert!(set.contains("BLK_3"));
-        assert!(!set.contains("BLK_2"));
+        assert_eq!(set.len(), 2, "two blocks have priority 2");
+        assert!(set.contains("BLK_1"), "BLK_1 has priority 2");
+        assert!(set.contains("BLK_3"), "BLK_3 has priority 2");
+        assert!(!set.contains("BLK_2"), "BLK_2 does not have priority 2");
     }
 
     #[tokio::test]
@@ -4399,10 +4619,10 @@ mod tests {
             value: "2026-04-15".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert_eq!(set.len(), 2);
-        assert!(set.contains("BLK_1"));
-        assert!(set.contains("BLK_2"));
-        assert!(!set.contains("BLK_3"));
+        assert_eq!(set.len(), 2, "two blocks have due_date 2026-04-15");
+        assert!(set.contains("BLK_1"), "BLK_1 has matching due_date");
+        assert!(set.contains("BLK_2"), "BLK_2 has matching due_date");
+        assert!(!set.contains("BLK_3"), "BLK_3 has no due_date");
     }
 
     #[tokio::test]
@@ -4427,9 +4647,9 @@ mod tests {
             value: "2026-04-15".into(),
         };
         let set = resolve_filter(&pool, &filter, 0).await.unwrap();
-        assert_eq!(set.len(), 1);
-        assert!(set.contains("BLK_1"));
-        assert!(!set.contains("BLK_2"));
+        assert_eq!(set.len(), 1, "only one block has due_date < 2026-04-15");
+        assert!(set.contains("BLK_1"), "BLK_1 (04-10) is earlier");
+        assert!(!set.contains("BLK_2"), "BLK_2 (04-20) is not earlier");
     }
 
     #[tokio::test]
@@ -4441,8 +4661,14 @@ mod tests {
             value: "2026".into(),
         };
         let result = resolve_filter(&pool, &filter, 0).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::Validation(_)));
+        assert!(
+            result.is_err(),
+            "Contains op should be rejected for DueDate"
+        );
+        assert!(
+            matches!(result.unwrap_err(), AppError::Validation(_)),
+            "should return Validation error"
+        );
     }
 
     #[tokio::test]
@@ -4595,10 +4821,10 @@ mod tests {
         let resp = eval_unlinked_references(&pool, "PAGE1", &page)
             .await
             .unwrap();
-        assert!(resp.groups.is_empty());
-        assert_eq!(resp.total_count, 0);
-        assert_eq!(resp.filtered_count, 0);
-        assert!(!resp.has_more);
+        assert!(resp.groups.is_empty(), "no title means no unlinked refs");
+        assert_eq!(resp.total_count, 0, "total count should be 0");
+        assert_eq!(resp.filtered_count, 0, "filtered count should be 0");
+        assert!(!resp.has_more, "should not have more pages");
     }
 
     #[tokio::test]
@@ -4625,10 +4851,20 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.groups.len(), 1, "one source page group");
-        assert_eq!(resp.groups[0].page_id, "PAGE_B");
-        assert_eq!(resp.groups[0].page_title.as_deref(), Some("Page B"));
-        assert_eq!(resp.groups[0].blocks.len(), 1);
-        assert_eq!(resp.groups[0].blocks[0].id, "BLK_B1");
+        assert_eq!(
+            resp.groups[0].page_id, "PAGE_B",
+            "group should be from PAGE_B"
+        );
+        assert_eq!(
+            resp.groups[0].page_title.as_deref(),
+            Some("Page B"),
+            "group title should match"
+        );
+        assert_eq!(resp.groups[0].blocks.len(), 1, "one mentioning block");
+        assert_eq!(
+            resp.groups[0].blocks[0].id, "BLK_B1",
+            "BLK_B1 mentions the title"
+        );
     }
 
     #[tokio::test]
@@ -4719,9 +4955,12 @@ mod tests {
             1,
             "should find the mention despite special chars"
         );
-        assert_eq!(resp.groups[0].page_id, "PAGE_D");
-        assert_eq!(resp.groups[0].blocks.len(), 1);
-        assert_eq!(resp.groups[0].blocks[0].id, "BLK_D1");
+        assert_eq!(resp.groups[0].page_id, "PAGE_D", "group is from PAGE_D");
+        assert_eq!(resp.groups[0].blocks.len(), 1, "one mentioning block");
+        assert_eq!(
+            resp.groups[0].blocks[0].id, "BLK_D1",
+            "BLK_D1 mentions the special-char title"
+        );
     }
 
     #[tokio::test]
@@ -4754,30 +4993,33 @@ mod tests {
         let resp1 = eval_unlinked_references(&pool, "TARGET", &page1)
             .await
             .unwrap();
-        assert_eq!(resp1.groups.len(), 1);
-        assert!(resp1.has_more);
-        assert!(resp1.next_cursor.is_some());
-        assert_eq!(resp1.groups[0].page_id, "PAGE_A"); // alphabetically first
+        assert_eq!(resp1.groups.len(), 1, "first page has 1 group");
+        assert!(resp1.has_more, "first page should have more");
+        assert!(resp1.next_cursor.is_some(), "first page needs cursor");
+        assert_eq!(
+            resp1.groups[0].page_id, "PAGE_A",
+            "alphabetically first page"
+        ); // alphabetically first
 
         // Second page via cursor
         let page2 = PageRequest::new(resp1.next_cursor, Some(1)).unwrap();
         let resp2 = eval_unlinked_references(&pool, "TARGET", &page2)
             .await
             .unwrap();
-        assert_eq!(resp2.groups.len(), 1);
-        assert!(resp2.has_more);
-        assert!(resp2.next_cursor.is_some());
-        assert_eq!(resp2.groups[0].page_id, "PAGE_B");
+        assert_eq!(resp2.groups.len(), 1, "second page has 1 group");
+        assert!(resp2.has_more, "second page should have more");
+        assert!(resp2.next_cursor.is_some(), "second page needs cursor");
+        assert_eq!(resp2.groups[0].page_id, "PAGE_B", "second page is PAGE_B");
 
         // Third page via cursor
         let page3 = PageRequest::new(resp2.next_cursor, Some(1)).unwrap();
         let resp3 = eval_unlinked_references(&pool, "TARGET", &page3)
             .await
             .unwrap();
-        assert_eq!(resp3.groups.len(), 1);
-        assert!(!resp3.has_more);
-        assert!(resp3.next_cursor.is_none());
-        assert_eq!(resp3.groups[0].page_id, "PAGE_C");
+        assert_eq!(resp3.groups.len(), 1, "third page has 1 group");
+        assert!(!resp3.has_more, "third page is the last");
+        assert!(resp3.next_cursor.is_none(), "no cursor on last page");
+        assert_eq!(resp3.groups[0].page_id, "PAGE_C", "third page is PAGE_C");
     }
 
     #[tokio::test]
@@ -4815,9 +5057,16 @@ mod tests {
             .await
             .unwrap();
         // Only BLK_E1 should appear (BLK_E2 is linked)
-        assert_eq!(resp.groups.len(), 1);
-        assert_eq!(resp.groups[0].page_id, "PAGE_E");
-        assert_eq!(resp.groups[0].blocks.len(), 1);
-        assert_eq!(resp.groups[0].blocks[0].id, "BLK_E1");
+        assert_eq!(resp.groups.len(), 1, "one group for unlinked references");
+        assert_eq!(resp.groups[0].page_id, "PAGE_E", "group is from PAGE_E");
+        assert_eq!(
+            resp.groups[0].blocks.len(),
+            1,
+            "only unlinked block included"
+        );
+        assert_eq!(
+            resp.groups[0].blocks[0].id, "BLK_E1",
+            "BLK_E1 is unlinked mention"
+        );
     }
 }
