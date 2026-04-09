@@ -43,6 +43,9 @@ const LazyPdfViewerDialog = lazy(() =>
   import('./PdfViewerDialog').then((m) => ({ default: m.PdfViewerDialog })),
 )
 
+// Lazy-load MermaidDiagram to avoid bundling mermaid on initial load
+const LazyMermaidDiagram = lazy(() => import('./MermaidDiagram'))
+
 const lowlight = createLowlight(common)
 
 /** Callout type configuration: border color, icon, and label. */
@@ -445,24 +448,43 @@ export function renderRichContent(
     } else if (block.type === 'codeBlock') {
       const code = block.content?.[0]?.text ?? ''
       const language = block.attrs?.language ?? ''
-      let highlighted: string
-      try {
-        const tree = language ? lowlight.highlight(language, code) : lowlight.highlightAuto(code)
-        highlighted = toHtml(tree)
-      } catch {
-        highlighted = code
+      if (language === 'mermaid') {
+        elements.push(
+          <Suspense
+            key={`mermaid-${keyIdx++}`}
+            fallback={
+              <div
+                className="flex items-center gap-2 rounded-md bg-muted px-3 py-4 text-sm text-muted-foreground"
+                role="status"
+              >
+                <Spinner size="sm" />
+                <span>{i18n.t('mermaid.loading')}</span>
+              </div>
+            }
+          >
+            <LazyMermaidDiagram code={code} />
+          </Suspense>,
+        )
+      } else {
+        let highlighted: string
+        try {
+          const tree = language ? lowlight.highlight(language, code) : lowlight.highlightAuto(code)
+          highlighted = toHtml(tree)
+        } catch {
+          highlighted = code
+        }
+        elements.push(
+          <ScrollArea key={`code-${keyIdx++}`} className="bg-muted rounded-md text-sm font-mono">
+            <pre className="px-3 py-2">
+              <code
+                className={language ? `language-${language} hljs` : 'hljs'}
+                // biome-ignore lint/security/noDangerouslySetInnerHtml: lowlight output is safe
+                dangerouslySetInnerHTML={{ __html: highlighted }}
+              />
+            </pre>
+          </ScrollArea>,
+        )
       }
-      elements.push(
-        <ScrollArea key={`code-${keyIdx++}`} className="bg-muted rounded-md text-sm font-mono">
-          <pre className="px-3 py-2">
-            <code
-              className={language ? `language-${language} hljs` : 'hljs'}
-              // biome-ignore lint/security/noDangerouslySetInnerHtml: lowlight output is safe
-              dangerouslySetInnerHTML={{ __html: highlighted }}
-            />
-          </pre>
-        </ScrollArea>,
-      )
     } else if (block.type === 'blockquote') {
       const calloutType = block.attrs?.calloutType
       const calloutConfig = calloutType

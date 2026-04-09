@@ -1427,4 +1427,82 @@ describe('StaticBlock', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  // -- Mermaid code block rendering -------------------------------------------
+
+  describe('mermaid code block rendering', () => {
+    /** Helper: mock parse to return a codeBlock with language 'mermaid'. */
+    function mockMermaidCodeBlock(code: string) {
+      mockedParse.mockReturnValueOnce({
+        type: 'doc',
+        content: [
+          {
+            type: 'codeBlock',
+            attrs: { language: 'mermaid' },
+            content: [{ type: 'text', text: code }],
+          },
+        ],
+      } as ReturnType<typeof parse>)
+    }
+
+    it('renders MermaidDiagram (lazy placeholder) for mermaid code blocks', () => {
+      const mermaidCode = 'graph TD; A-->B;'
+      mockMermaidCodeBlock(mermaidCode)
+
+      const { container } = render(
+        <StaticBlock
+          blockId="B1"
+          content={`\`\`\`mermaid\n${mermaidCode}\n\`\`\``}
+          onFocus={vi.fn()}
+        />,
+      )
+
+      // Should not render syntax-highlighted code block
+      expect(container.querySelector('code.language-mermaid')).not.toBeInTheDocument()
+      // Should render the Suspense fallback (loading state) or the MermaidDiagram
+      const loadingOrDiagram =
+        container.querySelector('[data-testid="mermaid-loading"]') ??
+        container.querySelector('[data-testid="mermaid-diagram"]') ??
+        container.querySelector('[role="status"]')
+      expect(loadingOrDiagram).toBeInTheDocument()
+    })
+
+    it('renders normal syntax highlighting for non-mermaid code blocks', () => {
+      mockedParse.mockReturnValueOnce({
+        type: 'doc',
+        content: [
+          {
+            type: 'codeBlock',
+            attrs: { language: 'javascript' },
+            content: [{ type: 'text', text: 'const x = 1' }],
+          },
+        ],
+      } as ReturnType<typeof parse>)
+
+      const { container } = render(
+        <StaticBlock blockId="B1" content={'```javascript\nconst x = 1\n```'} onFocus={vi.fn()} />,
+      )
+
+      const code = container.querySelector('code.language-javascript')
+      expect(code).toBeInTheDocument()
+      expect(code?.textContent).toContain('const')
+    })
+
+    it('has no a11y violations for mermaid code block', async () => {
+      mockMermaidCodeBlock('graph TD; A-->B;')
+
+      const { container } = render(
+        <StaticBlock
+          blockId="B1"
+          content={'```mermaid\ngraph TD; A-->B;\n```'}
+          onFocus={vi.fn()}
+        />,
+      )
+
+      const results = await axe(container, {
+        rules: { 'nested-interactive': { enabled: false } },
+      })
+      expect(results).toHaveNoViolations()
+    })
+  })
 })

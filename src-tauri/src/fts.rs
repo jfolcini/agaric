@@ -490,23 +490,133 @@ pub async fn fts_optimize(pool: &SqlitePool) -> Result<(), AppError> {
 /// of the client-supplied page limit.  Prevents unbounded result sets.
 const MAX_SEARCH_RESULTS: i64 = 100;
 
+/// Token types produced by [`tokenize_query`].
+enum QueryToken {
+    /// A double-quoted phrase (content between matched quotes, without the
+    /// surrounding quote characters).
+    QuotedPhrase(String),
+    /// A single unquoted word (whitespace-delimited).
+    Word(String),
+}
+
+/// Tokenize a raw query string, respecting double-quoted phrases.
+///
+/// A `"` that appears at the start of a new token (i.e. after whitespace or at
+/// the beginning of the string) opens a quoted phrase that extends until the
+/// next `"`.  If no closing quote is found, the content is split on whitespace
+/// and emitted as individual [`QueryToken::Word`] tokens (graceful fallback for
+/// unmatched quotes).
+///
+/// Quotes that appear *inside* an unquoted word (e.g. `say"hello`) are kept as
+/// part of the word — they do **not** start a new quoted phrase.
+fn tokenize_query(input: &str) -> Vec<QueryToken> {
+    let mut tokens = Vec::new();
+    let mut chars = input.chars().peekable();
+
+    while let Some(&ch) = chars.peek() {
+        if ch.is_whitespace() {
+            chars.next();
+            continue;
+        }
+
+        if ch == '"' {
+            // Opening quote at token boundary — start a quoted phrase.
+            chars.next(); // consume opening "
+            let mut phrase = String::new();
+            let mut found_close = false;
+
+            while let Some(&inner) = chars.peek() {
+                if inner == '"' {
+                    chars.next(); // consume closing "
+                    found_close = true;
+                    break;
+                }
+                phrase.push(inner);
+                chars.next();
+            }
+
+            if found_close {
+                tokens.push(QueryToken::QuotedPhrase(phrase));
+            } else {
+                // Unmatched quote — treat contents as individual words.
+                for word in phrase.split_whitespace() {
+                    tokens.push(QueryToken::Word(word.to_string()));
+                }
+            }
+        } else {
+            // Unquoted word — read until whitespace.
+            let mut word = String::new();
+            while let Some(&wch) = chars.peek() {
+                if wch.is_whitespace() {
+                    break;
+                }
+                word.push(wch);
+                chars.next();
+            }
+            if !word.is_empty() {
+                tokens.push(QueryToken::Word(word));
+            }
+        }
+    }
+
+    tokens
+}
+
 /// Sanitize a raw user query for safe use in an FTS5 MATCH expression.
 ///
-/// Each whitespace-delimited token is wrapped in double quotes with any
-/// internal double quotes escaped by doubling (`"` → `""`).  This prevents
-/// FTS5 operators (`OR`, `AND`, `NOT`, `*`, `NEAR`, column filters, etc.)
-/// from being interpreted as query syntax while still allowing multi-term
-/// implicit-AND matching.
+/// Supports a subset of FTS5 search operators so that users can write
+/// queries like `"exact phrase"`, `NOT spam`, or `cats OR dogs`.
+///
+/// ## Rules
+///
+/// 1. **Quoted phrases** — matched `"..."` in the input are kept as a single
+///    FTS5 phrase token (internal `"` escaped by doubling).
+/// 2. **`NOT` operator** — preserved as the bare keyword when followed by at
+///    least one more token.
+/// 3. **`OR` / `AND` operators** — preserved as bare keywords when they appear
+///    between two other tokens.
+/// 4. **Everything else** — wrapped in `"..."` with internal `"` escaped.
+///
+/// Operator detection is case-insensitive (`not` → `NOT`, `or` → `OR`).
+///
+/// ## Safety
+///
+/// Every non-operator token is always double-quoted, preventing injection of
+/// FTS5 syntax such as `NEAR`, `*`, column filters (`col:`), or grouping
+/// parentheses.
 #[must_use]
 pub(crate) fn sanitize_fts_query(query: &str) -> String {
-    query
-        .split_whitespace()
-        .map(|term| {
-            let escaped = term.replace('"', "\"\"");
-            format!("\"{escaped}\"")
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    let tokens = tokenize_query(query);
+    let len = tokens.len();
+    let mut output_parts: Vec<String> = Vec::new();
+
+    for (i, token) in tokens.iter().enumerate() {
+        match token {
+            QueryToken::QuotedPhrase(phrase) => {
+                let escaped = phrase.replace('"', "\"\"");
+                output_parts.push(format!("\"{escaped}\""));
+            }
+            QueryToken::Word(word) => {
+                let upper = word.to_uppercase();
+                let is_operator = match upper.as_str() {
+                    // NOT requires a following token.
+                    "NOT" => i + 1 < len,
+                    // OR / AND require a preceding output and a following token.
+                    "OR" | "AND" => !output_parts.is_empty() && i + 1 < len,
+                    _ => false,
+                };
+
+                if is_operator {
+                    output_parts.push(upper);
+                } else {
+                    let escaped = word.replace('"', "\"\"");
+                    output_parts.push(format!("\"{escaped}\""));
+                }
+            }
+        }
+    }
+
+    output_parts.join(" ")
 }
 
 /// Row from the FTS5 search query (private; mapped to BlockRow for response).
@@ -545,9 +655,10 @@ struct FtsSearchRow {
 ///
 /// ## Query sanitization
 ///
-/// User input is sanitized before passing to FTS5 MATCH: each whitespace-
-/// delimited term is wrapped in double quotes with internal quotes escaped.
-/// This prevents FTS5 operators from being interpreted as query syntax.
+/// User input is sanitized via [`sanitize_fts_query`] before passing to FTS5
+/// MATCH.  Quoted phrases, `NOT`, `OR`, and `AND` operators are preserved;
+/// all other tokens are individually double-quoted to prevent injection of
+/// arbitrary FTS5 syntax.
 ///
 /// ## Known limitation: CJK tokenization
 ///
@@ -1644,15 +1755,20 @@ mod tests {
 
         let page = PageRequest::new(None, Some(50)).unwrap();
 
-        // "OR" should be treated as a literal word, not an FTS5 boolean operator.
+        // Bare "OR" with no surrounding terms is quoted as a literal word.
         let result = search_fts(&pool, "OR", &page).await;
         assert!(result.is_ok(), "OR as query should not crash");
 
-        // "NOT" should be treated as a literal word
+        // "NOT hello" is now preserved as the FTS5 NOT operator, which is a
+        // binary operator — standalone NOT is an FTS5 syntax error.  The
+        // search_fts error handler maps this to a Validation error.
         let not_result = search_fts(&pool, "NOT hello", &page).await;
-        assert!(not_result.is_ok(), "NOT as query should not crash");
+        assert!(
+            not_result.is_err(),
+            "standalone NOT should produce a validation error"
+        );
 
-        // NEAR() should be treated as a literal word
+        // NEAR() should be treated as a literal word (not a recognised operator)
         let near_result = search_fts(&pool, "NEAR(hello world)", &page).await;
         assert!(near_result.is_ok(), "NEAR() as query should not crash");
     }
@@ -1871,17 +1987,16 @@ mod tests {
     // ======================================================================
 
     #[test]
-    fn sanitize_simple_terms() {
+    fn sanitize_still_quotes_plain_terms() {
         assert_eq!(
             sanitize_fts_query("hello world"),
             "\"hello\" \"world\"",
-            "simple terms should be individually quoted"
+            "plain terms should be individually quoted (backward compat)"
         );
     }
 
     #[test]
-    fn sanitize_preserves_empty_after_trim() {
-        // split_whitespace on empty string yields no tokens
+    fn sanitize_empty_query() {
         assert_eq!(
             sanitize_fts_query(""),
             "",
@@ -1904,21 +2019,63 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_fts5_operators() {
+    fn sanitize_preserves_quoted_phrases() {
         assert_eq!(
-            sanitize_fts_query("hello OR world"),
-            "\"hello\" \"OR\" \"world\"",
-            "OR operator should be quoted as literal term"
-        );
-        assert_eq!(
-            sanitize_fts_query("NOT test"),
-            "\"NOT\" \"test\"",
-            "NOT operator should be quoted as literal term"
+            sanitize_fts_query("\"hello world\""),
+            "\"hello world\"",
+            "quoted phrase should be kept as a single token"
         );
     }
 
     #[test]
-    fn sanitize_special_chars() {
+    fn sanitize_preserves_not_operator() {
+        assert_eq!(
+            sanitize_fts_query("NOT spam"),
+            "NOT \"spam\"",
+            "NOT followed by a term should be preserved as operator"
+        );
+    }
+
+    #[test]
+    fn sanitize_preserves_or_operator() {
+        assert_eq!(
+            sanitize_fts_query("cats OR dogs"),
+            "\"cats\" OR \"dogs\"",
+            "OR between two terms should be preserved as operator"
+        );
+    }
+
+    #[test]
+    fn sanitize_mixed_operators_and_terms() {
+        assert_eq!(
+            sanitize_fts_query("\"exact match\" NOT spam OR dogs"),
+            "\"exact match\" NOT \"spam\" OR \"dogs\"",
+            "mixed quoted phrases, NOT, and OR should all be handled"
+        );
+    }
+
+    #[test]
+    fn sanitize_case_insensitive_operators() {
+        assert_eq!(
+            sanitize_fts_query("not spam or dogs"),
+            "NOT \"spam\" OR \"dogs\"",
+            "lowercase operators should be uppercased"
+        );
+        assert_eq!(
+            sanitize_fts_query("cats Or dogs"),
+            "\"cats\" OR \"dogs\"",
+            "mixed-case OR should be uppercased"
+        );
+        assert_eq!(
+            sanitize_fts_query("cats aNd dogs"),
+            "\"cats\" AND \"dogs\"",
+            "mixed-case AND should be uppercased"
+        );
+    }
+
+    #[test]
+    fn sanitize_prevents_injection() {
+        // Wildcards, parentheses, column filters, and NEAR are all quoted.
         assert_eq!(
             sanitize_fts_query("test*"),
             "\"test*\"",
@@ -1933,6 +2090,43 @@ mod tests {
             sanitize_fts_query("col:value"),
             "\"col:value\"",
             "column filter syntax should be quoted as literal"
+        );
+        assert_eq!(
+            sanitize_fts_query("NEAR(a b)"),
+            "\"NEAR(a\" \"b)\"",
+            "NEAR operator should be quoted as literal"
+        );
+    }
+
+    #[test]
+    fn sanitize_trailing_operator_quoted() {
+        // NOT at end without a following term → quoted as literal.
+        assert_eq!(
+            sanitize_fts_query("hello NOT"),
+            "\"hello\" \"NOT\"",
+            "trailing NOT without operand should be quoted"
+        );
+        // OR at end without a following term → quoted as literal.
+        assert_eq!(
+            sanitize_fts_query("hello OR"),
+            "\"hello\" \"OR\"",
+            "trailing OR without operand should be quoted"
+        );
+        // OR at start without a preceding term → quoted as literal.
+        assert_eq!(
+            sanitize_fts_query("OR hello"),
+            "\"OR\" \"hello\"",
+            "leading OR without left operand should be quoted"
+        );
+    }
+
+    #[test]
+    fn sanitize_unmatched_quote_fallback() {
+        // Unmatched opening quote — contents treated as individual words.
+        assert_eq!(
+            sanitize_fts_query("\"hello world"),
+            "\"hello\" \"world\"",
+            "unmatched quote should fall back to individual word quoting"
         );
     }
 

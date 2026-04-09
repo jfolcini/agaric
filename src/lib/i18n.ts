@@ -1351,6 +1351,11 @@ const resources = {
       'settings.fontSizeSmall': 'Small',
       'settings.fontSizeMedium': 'Medium',
       'settings.fontSizeLarge': 'Large',
+
+      // F-35: Mermaid diagrams
+      'mermaid.loading': 'Rendering diagram…',
+      'mermaid.error': 'Diagram error',
+      'mermaid.label': 'Mermaid diagram',
     },
   },
 }

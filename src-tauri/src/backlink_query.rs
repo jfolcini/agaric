@@ -3942,20 +3942,16 @@ mod tests {
             "SRC_A has 'AND hello world' containing both 'AND' and 'hello' literally"
         );
 
-        // Test 2: "NOT goodbye" should match SRC_B (both as literal text, not FTS5 NOT operator)
+        // Test 2: "NOT goodbye" is now a standalone FTS5 NOT operator (binary),
+        // which is a syntax error.  The sanitizer intentionally preserves NOT
+        // as an operator when followed by a term.
         let filters_not = vec![BacklinkFilter::Contains {
             query: "NOT goodbye".into(),
         }];
-        let resp = eval_backlink_query(&pool, "TARGET", Some(filters_not), None, &page)
-            .await
-            .unwrap();
-        assert_eq!(
-            resp.filtered_count, 1,
-            "'NOT goodbye' should match only SRC_B which contains both literal words"
-        );
-        assert_eq!(
-            resp.items[0].id, "SRC_B",
-            "SRC_B has 'hello NOT goodbye' containing both 'NOT' and 'goodbye' literally"
+        let resp = eval_backlink_query(&pool, "TARGET", Some(filters_not), None, &page).await;
+        assert!(
+            resp.is_err(),
+            "'NOT goodbye' as standalone NOT should produce an FTS5 syntax error"
         );
 
         // Test 3: "hello" should match all three (SRC_A, SRC_B, SRC_C)
