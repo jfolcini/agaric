@@ -56,7 +56,7 @@ The architecture is mature and robust. **Do not introduce significant architectu
 - **File:** `notes.db` in `~/.local/share/com.agaric.app/` (Linux) or app data dir (Android)
 - **WAL mode**, foreign keys ON on every connection
 - **Pool:** 2 writers + 4 readers (6 total)
-- **Migrations:** `src-tauri/migrations/` (21 files) — auto-run on pool init
+- **Migrations:** `src-tauri/migrations/` (22 files) — auto-run on pool init
 - **Schema:** 15 tables + 1 FTS5 virtual table (trigram tokenizer), 22 indexes, 2 triggers
 
 ## Frontend Architecture

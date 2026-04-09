@@ -41,7 +41,7 @@ src/
 │   ├── PageBrowser.test.tsx
 │   ├── EditableBlock.test.tsx
 │   ├── SearchPanel.test.tsx
-│   └── ... (17 component test files)
+│   └── ... (114 component test files)
 ├── editor/__tests__/             # Editor logic tests
 │   ├── markdown-serializer.test.ts        # Example-based
 │   ├── markdown-serializer.property.test.ts # fast-check

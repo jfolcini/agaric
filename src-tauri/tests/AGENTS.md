@@ -60,7 +60,7 @@ cargo bench               # all 7 benches
 ### Inline unit tests (every module)
 
 Every `src/<module>.rs` has a `#[cfg(test)] mod tests` block. Modules with inline tests:
-`cache`, `commands`, `dag`, `db`, `device`, `draft`, `error`, `fts`, `hash`, `materializer`, `merge`, `op`, `op_log`, `pagination`, `recovery`, `snapshot`, `soft_delete`, `tag_query`, `ulid`
+`backlink_query`, `cache`, `commands`, `dag`, `db`, `device`, `draft`, `error`, `fts`, `hash`, `import`, `materializer`, `merge`, `op`, `op_log`, `pagination`, `pairing`, `peer_refs`, `recovery`, `recurrence`, `reverse`, `snapshot`, `soft_delete`, `sync_cert`, `sync_daemon`, `sync_events`, `sync_net`, `sync_protocol`, `sync_scheduler`, `tag_inheritance`, `tag_query`, `ulid`, `word_diff`
 
 ### Cross-module integration tests
 
@@ -220,7 +220,7 @@ Tests every `*_inner` function's contract: inputs, outputs, error variants. Orga
 
 ### Where snapshots live
 
-`src/snapshots/` — 22 `.snap` files. Naming: `agaric_lib__<module>__tests__<test_name>.snap`.
+`src/snapshots/` — 25 `.snap` files. Naming: `agaric_lib__<module>__tests__<test_name>.snap`.
 
 ### Modules using snapshots
 
