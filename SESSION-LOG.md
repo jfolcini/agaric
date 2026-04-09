@@ -1,5 +1,35 @@
 # Session Log
 
+## Session 289 — Batch 22: F-24 (2026-04-09)
+
+**Commit:** `29f54a1` — `feat: F-24 visual query builder for inline queries` — 6 files, +824/-17
+
+### Items resolved
+- **F-24**: Visual query builder. New `QueryBuilderModal` component with 3 query types (tag/property/backlinks). Radio-style type selector, per-type form fields (tag prefix input, property key+operator Select+value, backlinks target ULID), "Show as table" checkbox, live expression preview via `<code>`. Parses `initialExpression` via `parseQueryExpression()` for editing existing queries. Uses Dialog, Select, Input, Label from design system. QueryResult integration: "Edit Query" pencil button in header (only shown when `blockId` provided). Opens modal with current expression. Save calls `editBlock()` to update block content, re-fetches results. Header restructured to avoid nested `<button>` elements (a11y). `StaticBlock` passes `blockId` to `QueryResult` for `{{query ...}}` blocks. 19 i18n keys. 14 QueryBuilderModal tests + 8 QueryResult integration tests.
+
+### Files created
+- `src/components/QueryBuilderModal.tsx` — visual query builder modal (260 lines)
+- `src/components/__tests__/QueryBuilderModal.test.tsx` — 14 tests
+
+### Files modified
+
+| Area | Change |
+|------|--------|
+| QueryResult.tsx | F-24: blockId prop, edit button, handleBuilderSave, modal rendering, header restructure |
+| StaticBlock.tsx | F-24: pass blockId to QueryResult for query blocks |
+| QueryResult.test.tsx | F-24: 8 new tests (show/hide button, modal open, save, error, a11y) |
+| i18n.ts | F-24: 19 new queryBuilder.* keys |
+
+### Review findings fixed
+- Hardcoded English text replaced with i18n key (`queryBuilder.backlinkTargetHelper`)
+- Operator-without-value logic fixed (operator only included when value is present)
+- Biome fixes: button type="button" in test mocks, import ordering, formatting
+
+### Test counts
+- Frontend: 240 files, 5674 tests (was 5652)
+- Rust: 1687 tests (unchanged)
+- Open REVIEW-LATER items: 4 (was 5)
+
 ## Session 288 — Batch 21: UX-83, UX-86 (2026-04-09)
 
 **Commit:** `ac2a488` — `feat: UX-83 monthly calendar grid + UX-86 keyboard shortcut customization` — 16 files, +1708/-308

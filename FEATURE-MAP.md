@@ -201,6 +201,8 @@ Insert `{{query ...}}` blocks to show live query results inline:
 
 Results display as collapsible panels with todo badges and click-to-navigate.
 
+**Visual query builder** (F-24): "Edit Query" pencil button on each inline query header opens `QueryBuilderModal`. 3 query types: tag (prefix input), property (key + operator Select + value), backlinks (target ULID). "Show as table" checkbox appends `table:true`. Expression preview shows generated syntax. Parses existing expression to pre-populate form. Save calls `editBlock()` to update block content. 14 modal tests + 8 integration tests.
+
 ---
 
 ## 3. Slash Commands
