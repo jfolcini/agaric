@@ -39,11 +39,11 @@ import type { MutableRefObject } from 'react'
 import { useCallback, useState } from 'react'
 import { toast } from 'sonner'
 import type { StoreApi } from 'zustand'
-import { guessMimeType } from '../components/BlockTree'
 import { serialize } from '../editor/markdown-serializer'
 import type { PickerItem } from '../editor/SuggestionList'
 import type { DocNode } from '../editor/types'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
+import { guessMimeType } from '../lib/file-utils'
 import { formatRepeatLabel } from '../lib/repeat-utils'
 import {
   addAttachment,

@@ -69,6 +69,7 @@ function defaultProps(overrides: Partial<HistoryListItemProps> = {}): HistoryLis
     onRowClick: vi.fn(),
     onToggleSelection: vi.fn(),
     onToggleDiff: vi.fn(),
+    onRestoreToHere: vi.fn(),
     ...overrides,
   }
 }
@@ -558,6 +559,36 @@ describe('HistoryListItem', () => {
       const svg = badge.querySelector('svg')
       expect(svg).toBeInTheDocument()
       expect(svg).toHaveClass('h-3', 'w-3', 'mr-1')
+    })
+  })
+
+  describe('restore to here button', () => {
+    it('renders restore button for reversible ops', () => {
+      renderInListbox(defaultProps())
+      expect(screen.getByRole('button', { name: /restore to this point/i })).toBeInTheDocument()
+    })
+
+    it('does not render restore button for non-reversible ops', () => {
+      renderInListbox(defaultProps({ isNonReversible: true }))
+      expect(
+        screen.queryByRole('button', { name: /restore to this point/i }),
+      ).not.toBeInTheDocument()
+    })
+
+    it('calls onRestoreToHere when clicked', async () => {
+      const user = userEvent.setup()
+      const onRestoreToHere = vi.fn()
+      renderInListbox(defaultProps({ onRestoreToHere }))
+      await user.click(screen.getByRole('button', { name: /restore to this point/i }))
+      expect(onRestoreToHere).toHaveBeenCalledWith(defaultProps().entry)
+    })
+
+    it('stops event propagation on click', async () => {
+      const user = userEvent.setup()
+      const onRowClick = vi.fn()
+      renderInListbox(defaultProps({ onRowClick }))
+      await user.click(screen.getByRole('button', { name: /restore to this point/i }))
+      expect(onRowClick).not.toHaveBeenCalled()
     })
   })
 })

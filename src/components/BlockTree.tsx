@@ -158,25 +158,7 @@ export function processCheckboxSyntax(content: string): {
   return { cleanContent: content, todoState: null }
 }
 
-/** Simple extension-based MIME type guesser for attachment uploads. */
-export function guessMimeType(filename: string): string {
-  const ext = filename.split('.').pop()?.toLowerCase() || ''
-  const mimeMap: Record<string, string> = {
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-    gif: 'image/gif',
-    svg: 'image/svg+xml',
-    webp: 'image/webp',
-    pdf: 'application/pdf',
-    txt: 'text/plain',
-    md: 'text/markdown',
-    json: 'application/json',
-    zip: 'application/zip',
-    tar: 'application/x-tar',
-  }
-  return mimeMap[ext] || 'application/octet-stream'
-}
+export { guessMimeType } from '../lib/file-utils'
 
 interface BlockTreeProps {
   /** Optional parent block ID -- when set, loads children of this block. */

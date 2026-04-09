@@ -4416,7 +4416,7 @@ describe('guessMimeType', () => {
 
   it('returns application/octet-stream for unknown extensions', () => {
     expect(guessMimeType('file.xyz')).toBe('application/octet-stream')
-    expect(guessMimeType('file.docx')).toBe('application/octet-stream')
+    expect(guessMimeType('file.rar')).toBe('application/octet-stream')
   })
 
   it('handles files with no extension', () => {

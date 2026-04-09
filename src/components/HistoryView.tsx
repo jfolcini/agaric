@@ -17,8 +17,9 @@ import { Button } from '@/components/ui/button'
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
+import { formatTimestamp } from '../lib/format'
 import type { HistoryEntry } from '../lib/tauri'
-import { listPageHistory, revertOps } from '../lib/tauri'
+import { listPageHistory, restorePageToOp, revertOps } from '../lib/tauri'
 import { CompactionCard } from './CompactionCard'
 import { EmptyState } from './EmptyState'
 import { HistoryFilterBar } from './HistoryFilterBar'
@@ -49,6 +50,9 @@ export function HistoryView(): React.ReactElement {
   const [reverting, setReverting] = useState(false)
   const [opTypeFilter, setOpTypeFilter] = useState<string | null>(null)
   const [confirmRevert, setConfirmRevert] = useState(false)
+  const [restoreTarget, setRestoreTarget] = useState<HistoryEntry | null>(null)
+  const [confirmRestore, setConfirmRestore] = useState(false)
+  const [restoring, setRestoring] = useState(false)
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
   const { expandedKeys, diffCache, loadingDiffs, handleToggleDiff } = useHistoryDiffToggle<string>(
     (entry) => entryKey(entry),
@@ -191,6 +195,34 @@ export function HistoryView(): React.ReactElement {
     setReverting(false)
     setConfirmRevert(false)
   }, [selected, entries, reload, setEntries, t])
+
+  const handleRestoreToHere = useCallback((entry: HistoryEntry) => {
+    setRestoreTarget(entry)
+    setConfirmRestore(true)
+  }, [])
+
+  const handleConfirmRestore = useCallback(async () => {
+    if (!restoreTarget) return
+    setRestoring(true)
+    try {
+      const result = await restorePageToOp({
+        pageId: '__all__',
+        targetDeviceId: restoreTarget.device_id,
+        targetSeq: restoreTarget.seq,
+      })
+      toast.success(t('history.restoreSuccess', { count: result.ops_reverted }))
+      if (result.non_reversible_skipped > 0) {
+        toast.warning(t('history.restoreSkipped', { count: result.non_reversible_skipped }))
+      }
+      setEntries([])
+      await reload()
+    } catch {
+      toast.error(t('history.restoreFailed'))
+    }
+    setRestoring(false)
+    setConfirmRestore(false)
+    setRestoreTarget(null)
+  }, [restoreTarget, reload, setEntries, t])
 
   // ── Keyboard navigation ──────────────────────────────────────────
 
@@ -336,6 +368,7 @@ export function HistoryView(): React.ReactElement {
                 onRowClick={handleRowClick}
                 onToggleSelection={toggleSelection}
                 onToggleDiff={handleToggleDiff}
+                onRestoreToHere={handleRestoreToHere}
               />
             )
           })}
@@ -364,6 +397,24 @@ export function HistoryView(): React.ReactElement {
         actionLabel="Revert"
         onAction={handleRevert}
         loading={reverting}
+      />
+
+      {/* Restore-to-here confirmation dialog */}
+      <ConfirmDialog
+        open={confirmRestore}
+        onOpenChange={(open) => {
+          setConfirmRestore(open)
+          if (!open) setRestoreTarget(null)
+        }}
+        title={t('history.restoreToTitle', {
+          timestamp: restoreTarget ? formatTimestamp(restoreTarget.created_at, 'full') : '',
+        })}
+        description={t('history.restoreToDescription')}
+        cancelLabel={t('history.cancelButton')}
+        actionLabel={t('history.restoreButton')}
+        actionVariant="destructive"
+        onAction={handleConfirmRestore}
+        loading={restoring}
       />
     </div>
   )

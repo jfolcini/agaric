@@ -95,6 +95,7 @@ export interface HistoryListItemProps {
   onRowClick: (index: number, e: React.MouseEvent) => void
   onToggleSelection: (index: number) => void
   onToggleDiff: (entry: HistoryEntry) => void
+  onRestoreToHere: (entry: HistoryEntry) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -113,6 +114,7 @@ export function HistoryListItem({
   onRowClick,
   onToggleSelection,
   onToggleDiff,
+  onRestoreToHere,
 }: HistoryListItemProps): React.ReactElement {
   const { t } = useTranslation()
   const preview = getPayloadPreview(entry)
@@ -205,6 +207,31 @@ export function HistoryListItem({
             <ChevronToggle isExpanded={isExpanded} loading={isLoadingDiff} size="md" />
             {t('history.diffButton')}
           </Button>
+        )}
+
+        {/* Restore to here button — only for reversible ops */}
+        {!isNonReversible && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="restore-to-here-btn shrink-0 px-2"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onRestoreToHere(entry)
+                  }}
+                  aria-label={t('history.restoreToHereLabel')}
+                >
+                  <RotateCcw className="h-3 w-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{t('history.restoreToHereTooltip')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         )}
 
         {/* Lock icon for non-reversible ops */}

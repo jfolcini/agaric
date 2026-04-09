@@ -9,9 +9,14 @@
 import { EditorContent } from '@tiptap/react'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
+import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
+import { cn } from '@/lib/utils'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { shouldSplitOnBlur } from '../editor/use-roving-editor'
+import { extractFileInfo } from '../lib/file-utils'
+import { addAttachment } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 import { usePageBlockStore } from '../stores/page-blocks'
 import { FormattingToolbar } from './FormattingToolbar'
@@ -236,6 +241,83 @@ function EditableBlockInner({
     [blockId, edit, splitBlock, setFocused, discardDraft],
   )
 
+  const { t } = useTranslation()
+  const [isDragOver, setIsDragOver] = useState(false)
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes('Files')) {
+      e.preventDefault()
+      e.stopPropagation()
+      setIsDragOver(true)
+    }
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragOver(false)
+    }
+  }, [])
+
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      setIsDragOver(false)
+      const files = Array.from(e.dataTransfer.files)
+      if (files.length === 0) return
+
+      for (const file of files) {
+        const info = extractFileInfo(file)
+        if (!info.fsPath) {
+          toast.error(t('blockTree.filePathReadFailed'))
+          continue
+        }
+        try {
+          await addAttachment({
+            blockId,
+            filename: info.filename,
+            mimeType: info.mimeType,
+            sizeBytes: info.sizeBytes,
+            fsPath: info.fsPath,
+          })
+          toast.success(t('blockTree.attachedFileMessage', { filename: info.filename }))
+        } catch {
+          toast.error(t('blockTree.attachFileFailed'))
+        }
+      }
+    },
+    [blockId, t],
+  )
+
+  const handlePaste = useCallback(
+    async (e: React.ClipboardEvent) => {
+      const files = Array.from(e.clipboardData.files)
+      if (files.length === 0) return // No files — let TipTap handle text paste
+
+      e.preventDefault()
+      for (const file of files) {
+        const info = extractFileInfo(file)
+        if (!info.fsPath) {
+          toast.error(t('blockTree.filePathReadFailed'))
+          continue
+        }
+        try {
+          await addAttachment({
+            blockId,
+            filename: info.filename,
+            mimeType: info.mimeType,
+            sizeBytes: info.sizeBytes,
+            fsPath: info.fsPath,
+          })
+          toast.success(t('blockTree.attachedFileMessage', { filename: info.filename }))
+        } catch {
+          toast.error(t('blockTree.attachFileFailed'))
+        }
+      }
+    },
+    [blockId, t],
+  )
+
   if (!isFocused) {
     return (
       <StaticBlock
@@ -258,10 +340,17 @@ function EditableBlockInner({
     <section
       ref={wrapperRef}
       id={`editor-${blockId}`}
-      className="block-editor rounded-md ring-1 ring-ring/30 bg-accent/[0.06] shadow-sm"
+      className={cn(
+        'block-editor rounded-md ring-1 ring-ring/30 bg-accent/[0.06] shadow-sm',
+        isDragOver && 'ring-2 ring-primary bg-primary/5',
+      )}
       data-testid="block-editor"
       data-block-id={blockId}
       onBlur={handleBlur}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      onPaste={handlePaste}
     >
       {rovingEditor.editor && (
         <FormattingToolbar

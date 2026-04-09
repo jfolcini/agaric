@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT MIN(created_at) FROM op_log",
+  "describe": {
+    "columns": [
+      {
+        "name": "MIN(created_at)",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "6668b3889000987e89d655df83f033971be6f95c01c324875018a97059278887"
+}

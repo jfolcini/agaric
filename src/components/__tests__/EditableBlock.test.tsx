@@ -60,6 +60,15 @@ vi.mock('../StaticBlock', () => ({
 const mockSaveDraft = vi.fn().mockResolvedValue(undefined)
 const mockDeleteDraft = vi.fn().mockResolvedValue(undefined)
 const mockFlushDraft = vi.fn().mockResolvedValue(undefined)
+const mockAddAttachment = vi.fn().mockResolvedValue({
+  id: 'ATT_1',
+  block_id: 'BLK_1',
+  filename: 'test.png',
+  mime_type: 'image/png',
+  size_bytes: 7,
+  fs_path: '/tmp/test.png',
+  created_at: '2024-01-01T00:00:00Z',
+})
 vi.mock('@/lib/tauri', async () => {
   const actual = await vi.importActual('@/lib/tauri')
   return {
@@ -67,10 +76,20 @@ vi.mock('@/lib/tauri', async () => {
     saveDraft: (...args: unknown[]) => mockSaveDraft(...args),
     deleteDraft: (...args: unknown[]) => mockDeleteDraft(...args),
     flushDraft: (...args: unknown[]) => mockFlushDraft(...args),
+    addAttachment: (...args: unknown[]) => mockAddAttachment(...args),
   }
 })
 
 // Mock block store — capture calls to setFocused (focus stays on global store)
+const mockToastSuccess = vi.fn()
+const mockToastError = vi.fn()
+vi.mock('sonner', () => ({
+  toast: {
+    success: (...args: unknown[]) => mockToastSuccess(...args),
+    error: (...args: unknown[]) => mockToastError(...args),
+  },
+}))
+
 const mockEdit = vi.fn()
 const mockSplitBlock = vi.fn()
 const mockSetFocused = vi.fn()
@@ -1405,6 +1424,207 @@ describe('EditableBlock', () => {
       unmount()
 
       expect(mockFlushDraft).toHaveBeenCalledWith('B1')
+    })
+  })
+
+  // ── F-27: Drag-and-drop and paste file attachments ─────────────────
+
+  describe('drag-and-drop and paste file attachments', () => {
+    function makeFileWithPath(name: string, type: string, path: string): File {
+      const file = new File(['content'], name, { type })
+      Object.defineProperty(file, 'path', { value: path, writable: false })
+      return file
+    }
+
+    it('shows drag-over styling when files are dragged over', () => {
+      const { container } = render(
+        <EditableBlock
+          blockId="BLK_1"
+          content="hello"
+          isFocused={true}
+          rovingEditor={makeRovingEditor() as never}
+        />,
+      )
+
+      const wrapper = container.querySelector('.block-editor') as HTMLElement
+      fireEvent.dragOver(wrapper, {
+        dataTransfer: { types: ['Files'], files: [] },
+      })
+
+      expect(wrapper.className).toContain('ring-2')
+      expect(wrapper.className).toContain('ring-primary')
+    })
+
+    it('removes drag-over styling on drag leave', () => {
+      const { container } = render(
+        <EditableBlock
+          blockId="BLK_1"
+          content="hello"
+          isFocused={true}
+          rovingEditor={makeRovingEditor() as never}
+        />,
+      )
+
+      const wrapper = container.querySelector('.block-editor') as HTMLElement
+      fireEvent.dragOver(wrapper, {
+        dataTransfer: { types: ['Files'], files: [] },
+      })
+      expect(wrapper.className).toContain('ring-2')
+
+      // Simulate drag leave — relatedTarget outside the wrapper
+      fireEvent.dragLeave(wrapper, { relatedTarget: document.body })
+
+      expect(wrapper.className).not.toContain('ring-2')
+    })
+
+    it('calls addAttachment on file drop', async () => {
+      const { container } = render(
+        <EditableBlock
+          blockId="BLK_1"
+          content="hello"
+          isFocused={true}
+          rovingEditor={makeRovingEditor() as never}
+        />,
+      )
+
+      const file = makeFileWithPath('test.png', 'image/png', '/tmp/test.png')
+      const wrapper = container.querySelector('.block-editor') as HTMLElement
+
+      await act(async () => {
+        fireEvent.drop(wrapper, {
+          dataTransfer: { files: [file], types: ['Files'] },
+        })
+      })
+
+      expect(mockAddAttachment).toHaveBeenCalledWith({
+        blockId: 'BLK_1',
+        filename: 'test.png',
+        mimeType: 'image/png',
+        sizeBytes: 7,
+        fsPath: '/tmp/test.png',
+      })
+    })
+
+    it('shows success toast after file drop', async () => {
+      const { container } = render(
+        <EditableBlock
+          blockId="BLK_1"
+          content="hello"
+          isFocused={true}
+          rovingEditor={makeRovingEditor() as never}
+        />,
+      )
+
+      const file = makeFileWithPath('test.png', 'image/png', '/tmp/test.png')
+      const wrapper = container.querySelector('.block-editor') as HTMLElement
+
+      await act(async () => {
+        fireEvent.drop(wrapper, {
+          dataTransfer: { files: [file], types: ['Files'] },
+        })
+      })
+
+      expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining('test.png'))
+    })
+
+    it('shows error toast when file path is missing', async () => {
+      const { container } = render(
+        <EditableBlock
+          blockId="BLK_1"
+          content="hello"
+          isFocused={true}
+          rovingEditor={makeRovingEditor() as never}
+        />,
+      )
+
+      // File without .path property (no Tauri path)
+      const file = new File(['content'], 'test.png', { type: 'image/png' })
+      const wrapper = container.querySelector('.block-editor') as HTMLElement
+
+      await act(async () => {
+        fireEvent.drop(wrapper, {
+          dataTransfer: { files: [file], types: ['Files'] },
+        })
+      })
+
+      expect(mockToastError).toHaveBeenCalled()
+      expect(mockAddAttachment).not.toHaveBeenCalled()
+    })
+
+    it('shows error toast on addAttachment failure', async () => {
+      mockAddAttachment.mockRejectedValueOnce(new Error('backend error'))
+
+      const { container } = render(
+        <EditableBlock
+          blockId="BLK_1"
+          content="hello"
+          isFocused={true}
+          rovingEditor={makeRovingEditor() as never}
+        />,
+      )
+
+      const file = makeFileWithPath('test.png', 'image/png', '/tmp/test.png')
+      const wrapper = container.querySelector('.block-editor') as HTMLElement
+
+      await act(async () => {
+        fireEvent.drop(wrapper, {
+          dataTransfer: { files: [file], types: ['Files'] },
+        })
+      })
+
+      expect(mockAddAttachment).toHaveBeenCalled()
+      expect(mockToastError).toHaveBeenCalled()
+    })
+
+    it('handles paste with image files', async () => {
+      const { container } = render(
+        <EditableBlock
+          blockId="BLK_1"
+          content="hello"
+          isFocused={true}
+          rovingEditor={makeRovingEditor() as never}
+        />,
+      )
+
+      const file = makeFileWithPath('screenshot.png', 'image/png', '/tmp/screenshot.png')
+      const wrapper = container.querySelector('.block-editor') as HTMLElement
+
+      await act(async () => {
+        fireEvent.paste(wrapper, {
+          clipboardData: { files: [file] },
+        })
+      })
+
+      expect(mockAddAttachment).toHaveBeenCalledWith({
+        blockId: 'BLK_1',
+        filename: 'screenshot.png',
+        mimeType: 'image/png',
+        sizeBytes: 7,
+        fsPath: '/tmp/screenshot.png',
+      })
+      expect(mockToastSuccess).toHaveBeenCalled()
+    })
+
+    it('ignores paste without files', async () => {
+      const { container } = render(
+        <EditableBlock
+          blockId="BLK_1"
+          content="hello"
+          isFocused={true}
+          rovingEditor={makeRovingEditor() as never}
+        />,
+      )
+
+      const wrapper = container.querySelector('.block-editor') as HTMLElement
+
+      await act(async () => {
+        fireEvent.paste(wrapper, {
+          clipboardData: { files: [] },
+        })
+      })
+
+      // No files in clipboard — addAttachment should NOT be called
+      expect(mockAddAttachment).not.toHaveBeenCalled()
     })
   })
 })

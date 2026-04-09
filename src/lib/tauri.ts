@@ -374,6 +374,19 @@ export function revertOps(params: {
   return invoke('revert_ops', { ops: params.ops })
 }
 
+/** Restore a page to its state at a specific operation (point-in-time restore). */
+export function restorePageToOp(params: {
+  pageId: string
+  targetDeviceId: string
+  targetSeq: number
+}): Promise<{ ops_reverted: number; non_reversible_skipped: number; results: unknown[] }> {
+  return invoke('restore_page_to_op', {
+    pageId: params.pageId,
+    targetDeviceId: params.targetDeviceId,
+    targetSeq: params.targetSeq,
+  })
+}
+
 /** Query blocks by property key and optional value, with cursor pagination. */
 export function queryByProperty(params: {
   key: string

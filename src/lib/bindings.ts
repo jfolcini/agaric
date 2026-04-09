@@ -805,6 +805,17 @@ async compactOpLogCmd(retentionDays: number) : Promise<Result<CompactionResult, 
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Tauri command: point-in-time restore. Delegates to [`restore_page_to_op_inner`].
+ */
+async restorePageToOp(pageId: string, targetDeviceId: string, targetSeq: number) : Promise<Result<RestoreToOpResult, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("restore_page_to_op", { pageId, targetDeviceId, targetSeq }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -965,6 +976,22 @@ export type ResolvedBlock = { id: string;
  */
 title: string | null; block_type: string; deleted: boolean }
 export type RestoreResponse = { block_id: string; restored_count: number }
+/**
+ * Result of a point-in-time restore operation.
+ */
+export type RestoreToOpResult = {
+/**
+ * Number of ops that were successfully reverted.
+ */
+ops_reverted: number;
+/**
+ * Number of non-reversible ops (purge_block, delete_attachment) skipped.
+ */
+non_reversible_skipped: number;
+/**
+ * Individual undo results for each reverted op.
+ */
+results: UndoResult[] }
 /**
  * Sort direction.
  */

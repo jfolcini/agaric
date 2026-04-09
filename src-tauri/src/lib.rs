@@ -176,6 +176,8 @@ pub fn run() {
         // Op log compaction (F-20)
         commands::get_compaction_status,
         commands::compact_op_log_cmd,
+        // Point-in-time restore (F-26)
+        commands::restore_page_to_op,
     ]);
 
     tauri::Builder::default()
@@ -394,6 +396,8 @@ mod specta_tests {
             // Op log compaction (F-20)
             crate::commands::get_compaction_status,
             crate::commands::compact_op_log_cmd,
+            // Point-in-time restore (F-26)
+            crate::commands::restore_page_to_op,
         ])
     }
 

@@ -31,6 +31,7 @@ vi.mock('sonner', () => ({
   toast: {
     error: vi.fn(),
     success: vi.fn(),
+    warning: vi.fn(),
   },
 }))
 
@@ -971,5 +972,141 @@ describe('HistoryView', () => {
     // device_id truncated to first 8 chars
     expect(screen.getByText('dev:ABCDEF12')).toBeInTheDocument()
     expect(screen.getByText('dev:XY987654')).toBeInTheDocument()
+  })
+
+  describe('restore to here', () => {
+    it('shows confirmation dialog when restore button is clicked', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z')],
+        next_cursor: null,
+        has_more: false,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      // Click restore button
+      const restoreBtn = screen.getByRole('button', { name: /Restore to this point/i })
+      await user.click(restoreBtn)
+
+      // Confirmation dialog should appear
+      expect(screen.getByText(/Restore to/)).toBeInTheDocument()
+    })
+
+    it('calls restorePageToOp on confirm', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [
+          makeHistoryEntry(
+            1,
+            'edit_block',
+            { to_text: 'item 1' },
+            '2025-01-15T12:00:00Z',
+            'DEVICE01',
+          ),
+        ],
+        next_cursor: null,
+        has_more: false,
+      }
+      mockedInvoke
+        .mockResolvedValueOnce(page) // initial load
+        .mockResolvedValueOnce({ ops_reverted: 1, non_reversible_skipped: 0, results: [] }) // restorePageToOp
+        .mockResolvedValueOnce(emptyPage) // reload
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      // Click restore button
+      await user.click(screen.getByRole('button', { name: /Restore to this point/i }))
+
+      // Click Restore in dialog
+      await user.click(screen.getByRole('button', { name: /^Restore$/ }))
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('restore_page_to_op', {
+          pageId: '__all__',
+          targetDeviceId: 'DEVICE01',
+          targetSeq: 1,
+        })
+      })
+    })
+
+    it('shows success toast after restore', async () => {
+      const user = userEvent.setup()
+      const mockedToastSuccess = vi.mocked(toast.success)
+      const page = {
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z')],
+        next_cursor: null,
+        has_more: false,
+      }
+      mockedInvoke
+        .mockResolvedValueOnce(page) // initial load
+        .mockResolvedValueOnce({ ops_reverted: 3, non_reversible_skipped: 0, results: [] }) // restorePageToOp
+        .mockResolvedValueOnce(emptyPage) // reload
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      await user.click(screen.getByRole('button', { name: /Restore to this point/i }))
+      await user.click(screen.getByRole('button', { name: /^Restore$/ }))
+
+      await waitFor(() => {
+        expect(mockedToastSuccess).toHaveBeenCalledWith('3 operations reverted successfully')
+      })
+    })
+
+    it('shows warning toast when non-reversible ops are skipped', async () => {
+      const user = userEvent.setup()
+      const mockedToastWarning = vi.mocked(toast.warning)
+      const page = {
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z')],
+        next_cursor: null,
+        has_more: false,
+      }
+      mockedInvoke
+        .mockResolvedValueOnce(page) // initial load
+        .mockResolvedValueOnce({ ops_reverted: 2, non_reversible_skipped: 1, results: [] }) // restorePageToOp
+        .mockResolvedValueOnce(emptyPage) // reload
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      await user.click(screen.getByRole('button', { name: /Restore to this point/i }))
+      await user.click(screen.getByRole('button', { name: /^Restore$/ }))
+
+      await waitFor(() => {
+        expect(mockedToastWarning).toHaveBeenCalledWith('1 non-reversible operations were skipped')
+      })
+    })
+
+    it('shows error toast on failure', async () => {
+      const user = userEvent.setup()
+      const mockedToastError = vi.mocked(toast.error)
+      const page = {
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z')],
+        next_cursor: null,
+        has_more: false,
+      }
+      mockedInvoke
+        .mockResolvedValueOnce(page) // initial load
+        .mockRejectedValueOnce(new Error('restore failed')) // restorePageToOp throws
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      await user.click(screen.getByRole('button', { name: /Restore to this point/i }))
+      await user.click(screen.getByRole('button', { name: /^Restore$/ }))
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith('Failed to restore — please try again')
+      })
+    })
   })
 })

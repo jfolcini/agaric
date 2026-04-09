@@ -1095,6 +1095,16 @@ const resources = {
       // History toasts + aria-labels
       'history.loadFailed': 'Failed to load history',
       'history.revertFailed': 'Failed to revert operations',
+      'history.restoreToHereLabel': 'Restore to this point',
+      'history.restoreToHereTooltip': 'Revert all operations after this point',
+      'history.restoreToTitle': 'Restore to {{timestamp}}?',
+      'history.restoreToDescription':
+        'This will revert all operations that occurred after this point. Non-reversible operations (purge) will be skipped. The original operations remain in history.',
+      'history.restoreSuccess': '{{count}} operations reverted successfully',
+      'history.restoreSkipped': '{{count}} non-reversible operations were skipped',
+      'history.restoreFailed': 'Failed to restore — please try again',
+      'history.cancelButton': 'Cancel',
+      'history.restoreButton': 'Restore',
       'history.revertedSuccessfully': 'Reverted successfully',
       'history.revertPanelFailed': 'Failed to revert',
       'history.loadDiffFailed': 'Failed to load diff',

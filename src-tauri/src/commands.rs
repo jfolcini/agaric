@@ -2669,6 +2669,88 @@ pub async fn revert_ops_inner(
     Ok(results)
 }
 
+/// Restore a page to its state at a specific operation (point-in-time restore).
+///
+/// Finds all ops that occurred AFTER the target op on blocks belonging to the
+/// given page (or all blocks if `page_id == "__all__"`), filters out non-reversible
+/// ops, and calls `revert_ops_inner()` with the remainder.
+pub async fn restore_page_to_op_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    page_id: String,
+    target_device_id: String,
+    target_seq: i64,
+) -> Result<RestoreToOpResult, AppError> {
+    // Fetch the target op's created_at timestamp
+    let target_record = op_log::get_op_by_seq(pool, &target_device_id, target_seq).await?;
+    let target_ts = &target_record.created_at;
+
+    // Query all ops after the target.
+    // NOTE: We intentionally do NOT filter by deleted_at IS NULL in the blocks subquery.
+    // We need to find ops on blocks that may have been deleted after the target point,
+    // since restoring to that point means un-deleting those blocks.
+    let ops_after: Vec<(String, i64, String)> = if page_id == "__all__" {
+        sqlx::query_as::<_, (String, i64, String)>(
+            "SELECT device_id, seq, op_type FROM op_log \
+             WHERE (created_at > ?1 OR (created_at = ?1 AND (seq > ?2 OR (seq = ?2 AND device_id > ?3)))) \
+             ORDER BY created_at DESC, seq DESC, device_id DESC",
+        )
+        .bind(target_ts)
+        .bind(target_seq)
+        .bind(&target_device_id)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query_as::<_, (String, i64, String)>(
+            "WITH RECURSIVE page_blocks(id) AS ( \
+               SELECT id FROM blocks WHERE id = ?1 \
+               UNION ALL \
+               SELECT b.id FROM blocks b JOIN page_blocks pb ON b.parent_id = pb.id \
+             ) \
+             SELECT o.device_id, o.seq, o.op_type FROM op_log o \
+             WHERE json_extract(o.payload, '$.block_id') IN (SELECT id FROM page_blocks) \
+             AND (o.created_at > ?2 OR (o.created_at = ?2 AND (o.seq > ?3 OR (o.seq = ?3 AND o.device_id > ?4)))) \
+             ORDER BY o.created_at DESC, o.seq DESC, o.device_id DESC",
+        )
+        .bind(&page_id)
+        .bind(target_ts)
+        .bind(target_seq)
+        .bind(&target_device_id)
+        .fetch_all(pool)
+        .await?
+    };
+
+    // Separate reversible from non-reversible ops
+    let non_reversible = ["purge_block", "delete_attachment"];
+    let mut reversible_ops = Vec::new();
+    let mut non_reversible_count: u64 = 0;
+
+    for (dev_id, seq, op_type) in &ops_after {
+        if non_reversible.contains(&op_type.as_str()) {
+            non_reversible_count += 1;
+        } else {
+            reversible_ops.push(OpRef {
+                device_id: dev_id.clone(),
+                seq: *seq,
+            });
+        }
+    }
+
+    // Revert the reversible ops using existing infrastructure
+    let results = if reversible_ops.is_empty() {
+        vec![]
+    } else {
+        revert_ops_inner(pool, device_id, materializer, reversible_ops).await?
+    };
+
+    Ok(RestoreToOpResult {
+        ops_reverted: results.len() as u64,
+        non_reversible_skipped: non_reversible_count,
+        results,
+    })
+}
+
 /// Undo the Nth most recent undoable op on a page.
 ///
 /// `undo_depth` is 0-based: 0 = most recent op, 1 = second most recent, etc.
@@ -4533,6 +4615,30 @@ pub async fn revert_ops(
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: point-in-time restore. Delegates to [`restore_page_to_op_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn restore_page_to_op(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    page_id: String,
+    target_device_id: String,
+    target_seq: i64,
+) -> Result<RestoreToOpResult, AppError> {
+    restore_page_to_op_inner(
+        &pool.0,
+        device_id.as_str(),
+        &materializer,
+        page_id,
+        target_device_id,
+        target_seq,
+    )
+    .await
+    .map_err(sanitize_internal_error)
+}
+
 /// Tauri command: undo page op. Delegates to [`undo_page_op_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
@@ -5096,6 +5202,17 @@ pub async fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
 // ---------------------------------------------------------------------------
 // Op log compaction (F-20)
 // ---------------------------------------------------------------------------
+
+/// Result of a point-in-time restore operation.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct RestoreToOpResult {
+    /// Number of ops that were successfully reverted.
+    pub ops_reverted: u64,
+    /// Number of non-reversible ops (purge_block, delete_attachment) skipped.
+    pub non_reversible_skipped: u64,
+    /// Individual undo results for each reverted op.
+    pub results: Vec<UndoResult>,
+}
 
 /// Statistics about the op log, returned by [`get_compaction_status`].
 #[derive(Debug, Clone, Serialize, serde::Deserialize, specta::Type)]
@@ -9701,6 +9818,449 @@ mod tests {
         assert!(
             matches!(result, Err(AppError::NonReversible { .. })),
             "should fail with NonReversible for purge_block, got: {result:?}"
+        );
+    }
+
+    // -- restore_page_to_op tests --
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn restore_page_to_op_reverts_ops_after_target() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a page with 3 blocks
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Test Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let b1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "first".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        let b2 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "second".into(),
+            Some(page.id.clone()),
+            Some(2),
+        )
+        .await
+        .unwrap();
+        let b3 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "third".into(),
+            Some(page.id.clone()),
+            Some(3),
+        )
+        .await
+        .unwrap();
+
+        // Edit each block
+        edit_block_inner(&pool, DEV, &mat, b1.id.clone(), "first-edited".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+        // Record the seq after b1 edit — this will be our restore target
+        let ops_after_b1 = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let target_op = ops_after_b1
+            .iter()
+            .rev()
+            .find(|o| o.op_type == "edit_block")
+            .unwrap();
+        let target_seq = target_op.seq;
+
+        edit_block_inner(&pool, DEV, &mat, b2.id.clone(), "second-edited".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+        edit_block_inner(&pool, DEV, &mat, b3.id.clone(), "third-edited".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Verify all blocks have edited content
+        assert_eq!(
+            get_block_inner(&pool, b2.id.clone()).await.unwrap().content,
+            Some("second-edited".into()),
+            "b2 should be edited before restore"
+        );
+        assert_eq!(
+            get_block_inner(&pool, b3.id.clone()).await.unwrap().content,
+            Some("third-edited".into()),
+            "b3 should be edited before restore"
+        );
+
+        // Restore to the point after b1 edit
+        let result = restore_page_to_op_inner(&pool, DEV, &mat, page.id, DEV.into(), target_seq)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        assert_eq!(
+            result.ops_reverted, 2,
+            "should revert exactly 2 ops (b2 and b3 edits)"
+        );
+        assert_eq!(
+            result.non_reversible_skipped, 0,
+            "no non-reversible ops to skip"
+        );
+
+        // b1 should still be "first-edited" (at or before the target)
+        assert_eq!(
+            get_block_inner(&pool, b1.id).await.unwrap().content,
+            Some("first-edited".into()),
+            "b1 should keep its edit (at/before target)"
+        );
+        // b2 and b3 should be back to original
+        assert_eq!(
+            get_block_inner(&pool, b2.id).await.unwrap().content,
+            Some("second".into()),
+            "b2 should revert to original"
+        );
+        assert_eq!(
+            get_block_inner(&pool, b3.id).await.unwrap().content,
+            Some("third".into()),
+            "b3 should revert to original"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn restore_page_to_op_skips_non_reversible() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let b1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "keep".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        // Record target
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let target_seq = ops.last().unwrap().seq;
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+        // Create another block, then purge it (non-reversible)
+        let b2 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "doomed".into(),
+            Some(page.id.clone()),
+            Some(2),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+        delete_block_inner(&pool, DEV, &mat, b2.id.clone())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+        purge_block_inner(&pool, DEV, &mat, b2.id).await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Also edit b1 (this IS reversible)
+        edit_block_inner(&pool, DEV, &mat, b1.id.clone(), "modified".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let result = restore_page_to_op_inner(&pool, DEV, &mat, page.id, DEV.into(), target_seq)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // b2 was purged — it's no longer in the blocks table, so the recursive
+        // CTE cannot discover its ops. Only b1's edit (on a live block) is found.
+        assert_eq!(
+            result.non_reversible_skipped, 0,
+            "purged block ops not discoverable via recursive CTE on blocks table"
+        );
+        assert_eq!(
+            result.ops_reverted, 1,
+            "should revert exactly 1 op (edit_block b1)"
+        );
+        assert_eq!(
+            get_block_inner(&pool, b1.id).await.unwrap().content,
+            Some("keep".into()),
+            "b1 should revert to original"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn restore_page_to_op_global_scope() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let page1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page 1".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+        let b1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "orig-1".into(),
+            Some(page1.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        let page2 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page 2".into(),
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+        let b2 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "orig-2".into(),
+            Some(page2.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let target_seq = ops.last().unwrap().seq;
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+        // Edit blocks on BOTH pages
+        edit_block_inner(&pool, DEV, &mat, b1.id.clone(), "changed-1".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+        edit_block_inner(&pool, DEV, &mat, b2.id.clone(), "changed-2".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Global restore
+        let result =
+            restore_page_to_op_inner(&pool, DEV, &mat, "__all__".into(), DEV.into(), target_seq)
+                .await
+                .unwrap();
+        mat.flush_background().await.unwrap();
+
+        assert_eq!(result.ops_reverted, 2, "should revert edits on both pages");
+        assert_eq!(
+            get_block_inner(&pool, b1.id).await.unwrap().content,
+            Some("orig-1".into()),
+            "b1 should revert"
+        );
+        assert_eq!(
+            get_block_inner(&pool, b2.id).await.unwrap().content,
+            Some("orig-2".into()),
+            "b2 should revert"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn restore_page_to_op_no_ops_after_target() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+        create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "block".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let target_seq = ops.last().unwrap().seq;
+
+        let result = restore_page_to_op_inner(&pool, DEV, &mat, page.id, DEV.into(), target_seq)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.ops_reverted, 0,
+            "no ops after target should mean zero reverts"
+        );
+        assert_eq!(
+            result.non_reversible_skipped, 0,
+            "no non-reversible ops to skip"
+        );
+        assert!(result.results.is_empty(), "results should be empty");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn restore_page_to_op_includes_nested_blocks() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create page → parent block → nested child block
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let parent = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "parent-orig".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        let child = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "child-orig".into(),
+            Some(parent.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        // Record target after initial setup
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let target_seq = ops.last().unwrap().seq;
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+        // Edit both the parent and the nested child
+        edit_block_inner(&pool, DEV, &mat, parent.id.clone(), "parent-edited".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+        edit_block_inner(&pool, DEV, &mat, child.id.clone(), "child-edited".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Verify both are edited
+        assert_eq!(
+            get_block_inner(&pool, parent.id.clone())
+                .await
+                .unwrap()
+                .content,
+            Some("parent-edited".into()),
+            "parent should be edited before restore"
+        );
+        assert_eq!(
+            get_block_inner(&pool, child.id.clone())
+                .await
+                .unwrap()
+                .content,
+            Some("child-edited".into()),
+            "child should be edited before restore"
+        );
+
+        // Page-scoped restore — must find nested child too
+        let result = restore_page_to_op_inner(&pool, DEV, &mat, page.id, DEV.into(), target_seq)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        assert_eq!(
+            result.ops_reverted, 2,
+            "should revert both parent and nested child edits"
+        );
+        assert_eq!(
+            get_block_inner(&pool, parent.id).await.unwrap().content,
+            Some("parent-orig".into()),
+            "parent should revert to original"
+        );
+        assert_eq!(
+            get_block_inner(&pool, child.id).await.unwrap().content,
+            Some("child-orig".into()),
+            "nested child should revert to original (recursive CTE)"
         );
     }
 
