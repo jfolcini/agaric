@@ -14,7 +14,7 @@ Anytype, faster than Logseq.
 2. [Data Model](#2-data-model)
 3. [Database](#3-database)
 4. [Operation Log](#4-operation-log)
-5. [Materializer (CQRS)](#5-materializer-cqrs)
+5. [Materializer (CQRS — hybrid model)](#5-materializer-cqrs--hybrid-model)
 6. [Content Format & Serializer](#6-content-format--serializer)
 7. [Editor Architecture](#7-editor-architecture)
 8. [Frontend Architecture](#8-frontend-architecture)
@@ -206,7 +206,7 @@ limited to PRAGMAs, FTS5 operations, and dynamic SQL (~11 queries).
 
 ```
 blocks              — id (ULID PK), block_type, content, parent_id, position,
-                      deleted_at, is_conflict, conflict_source,
+                      deleted_at, is_conflict, conflict_source, conflict_type,
                       todo_state, priority, due_date, scheduled_date
 block_tags          — (block_id, tag_id) composite PK
 block_properties    — (block_id, key) composite PK, value_text/value_num/value_date/value_ref
@@ -240,12 +240,13 @@ fts_blocks          — FTS5 virtual table (block_id UNINDEXED, stripped), trigr
 
 **Indexes:** Covering indexes on `blocks(parent_id, deleted_at)`,
 `blocks(block_type, deleted_at)`, `blocks(deleted_at, id)`, `block_tags(tag_id)`,
-`block_links(target_id)`, `block_properties(value_date)`, `op_log(created_at)`,
-`agenda_cache(date)`, `attachments(block_id)`, `op_log(json_extract(payload, '$.block_id'))`,
-`block_properties(key, block_id)`, `block_properties(key, value_text)`,
-`block_properties(key, value_num)`, `op_log(device_id, op_type)`,
-`blocks(todo_state)`, `blocks(due_date)`, `blocks(scheduled_date)`,
-`page_aliases(alias COLLATE NOCASE)`, `page_aliases(page_id)`.
+`block_links(target_id)`, `block_links(source_id)`, `block_properties(value_date)`,
+`op_log(created_at)`, `agenda_cache(date)`, `attachments(block_id)`,
+`op_log(json_extract(payload, '$.block_id'))`, `block_properties(key, block_id)`,
+`block_properties(key, value_text)`, `block_properties(key, value_num)`,
+`op_log(device_id, op_type)`, `blocks(todo_state)`, `blocks(due_date)`,
+`blocks(scheduled_date)`, `page_aliases(alias COLLATE NOCASE)`, `page_aliases(page_id)`,
+`block_tag_inherited(tag_id)`, `block_tag_inherited(inherited_from, tag_id)`.
 
 ---
 
@@ -346,15 +347,29 @@ The LCA algorithm walks `prev_edit` chains:
 
 ---
 
-## 5. Materializer (CQRS)
+## 5. Materializer (CQRS — hybrid model)
 
-Commands write ops to the log. The materializer asynchronously applies ops to derived state. This
-is the fundamental architectural split — commands never write to core tables directly.
+Local commands write ops to the log **and** apply them to core tables (`blocks`, `block_tags`,
+`block_properties`) in a single transaction. The materializer handles two distinct jobs:
+
+1. **Remote ops (foreground queue):** Ops received during sync arrive as raw `op_log` entries
+   without going through the command layer. The materializer applies them to core tables via
+   `ApplyOp`. Idempotent patterns (`INSERT OR IGNORE`) mean local ops that were already applied
+   by commands are harmless no-ops.
+2. **Cache maintenance (background queue):** Rebuilds derived caches (`tags_cache`,
+   `pages_cache`, `agenda_cache`, `block_links`, `block_tag_inherited`, FTS5) asynchronously
+   after both local and remote ops.
+
+This is a pragmatic hybrid — not pure CQRS. The dual-write avoids race conditions (atomic
+transaction), eliminates async latency on local edits, and lets the UI read core tables
+immediately. The materializer never duplicates local writes because its idempotent SQL patterns
+(`INSERT OR IGNORE`, `UPDATE ... WHERE`) make re-application a safe no-op.
 
 ### Queue architecture
 
-- **Foreground queue** (capacity 256): Op application to core tables (`blocks`, `block_tags`,
-  `block_properties`). Low latency for viewport responsiveness.
+- **Foreground queue** (capacity 256): Applies remote ops to core tables (`blocks`, `block_tags`,
+  `block_properties`). Also handles `BatchApplyOps` for sync. Low latency for viewport
+  responsiveness.
 - **Background queue** (capacity 1024): Cache rebuilds, FTS indexing, maintenance. Stale-while-
   revalidate — never blocks the UI.
 
@@ -381,20 +396,25 @@ tasks deduplicated by enum discriminant. `ApplyOp` and barrier tasks are never d
 
 ### Caches maintained
 
-| Cache | Rebuild trigger | Staleness threshold |
-|-------|----------------|-------------------|
-| `tags_cache` | create/delete/restore tag block, add/remove tag | 5s |
-| `pages_cache` | create/delete/restore/edit page block | 5s |
-| `agenda_cache` | set/delete property (value_date), set due/scheduled date, add/remove tag (date pattern) | 2s |
-| `block_links` | edit_block — regex parse `[[ULID]]`, diff against prior index | immediate |
-| `block_tag_inherited` | create/move/delete/restore/purge block, add/remove tag | immediate (transactional) + background rebuild |
+| Cache | Rebuild trigger |
+|-------|----------------|
+| `tags_cache` | create/delete/restore tag block, add/remove tag |
+| `pages_cache` | create/delete/restore/edit page block |
+| `agenda_cache` | set/delete property (value_date), set due/scheduled date, add/remove tag (date pattern) |
+| `block_links` | edit_block — regex parse `[[ULID]]`, diff against prior index |
+| `block_tag_inherited` | create/move/delete/restore/purge block, add/remove tag |
+
+Invalidation is **event-driven**, not TTL-based. Each command calls `dispatch_background()` which
+enqueues the relevant cache-rebuild tasks. There are no staleness timestamp checks — caches are
+rebuilt when the ops that affect them are processed.
 
 **`tags_cache` rebuild query:** Uses `LEFT JOIN` from `blocks` to capture zero-usage tags (newly
 created, never applied). A plain `GROUP BY block_tags.tag_id` would omit them.
 
-**Cache strategy:** Stale-while-revalidate. Caches are never rebuilt synchronously on the hot path
-or at boot. Return last computed value immediately, enqueue background rebuild if stale. Cold boot
-returns a loading sentinel; UI renders skeleton.
+**Cache strategy:** Event-driven invalidation. Commands enqueue cache-rebuild tasks via
+`dispatch_background()` after writing ops. Caches are never rebuilt synchronously on the hot
+path or at boot. Cold boot returns last computed values; the materializer rebuilds caches on
+first dispatch after boot.
 
 ### FTS5 maintenance
 
@@ -417,7 +437,8 @@ search degrades.
 ### Pagination
 
 All list queries use cursor-based (keyset) pagination. No offset pagination anywhere. No "fetch
-all and filter in Rust." Enforced from Phase 1. Zero exceptions.
+all and filter in Rust." Enforced from Phase 1. One intentional exception: `undo_page_op_inner`
+uses `LIMIT 1 OFFSET N` for undo-depth navigation (not a list query).
 
 ---
 
@@ -431,7 +452,7 @@ human-readable in any text tool.
 
 ```
 block_content  := (block_element | span)*
-block_element  := heading | code_block | blockquote | table
+block_element  := heading | code_block | blockquote | table | ordered_list | horizontal_rule
 heading        := '#'{1,6} ' ' span+              -- # H1 through ###### H6
 code_block     := '```' language? '\n' text '\n' '```'
 blockquote     := ('> ' span+ '\n')+               -- consecutive > lines
@@ -440,7 +461,9 @@ header_row     := '|' (cell '|')+
 separator      := '|' ('-'+  '|')+                 -- e.g. |---|---|
 data_row       := '|' (cell '|')+
 cell           := span*
-span           := plain_text | bold | italic | code_span | strikethrough | highlight | tag_ref | block_link | ext_link
+ordered_list   := (digit+ '. ' span+ '\n')+         -- 1. item, 2. item
+horizontal_rule:= '---'                              -- three hyphens on a line
+span           := plain_text | bold | italic | code_span | strikethrough | highlight | tag_ref | block_link | block_ref | ext_link
 bold           := '**' span+ '**'
 italic         := '*' span+ '*'
 code_span      := '`' plain_text '`'               -- no nesting inside code
@@ -448,6 +471,7 @@ strikethrough  := '~~' span+ '~~'
 highlight      := '==' span+ '=='
 tag_ref        := '#[' ULID ']'
 block_link     := '[[' ULID ']]'
+block_ref      := '((' ULID '))'
 ext_link       := '[' text '](' url ')'
 ULID           := [0-9A-Z]{26}                     -- Crockford base32, exactly 26 chars
 ```
@@ -464,7 +488,7 @@ stripping, export mapping, and a migration audit.
 
 ### Custom serializer
 
-Standalone TypeScript module (`src/editor/markdown-serializer.ts`, ~852 lines) with zero external
+Standalone TypeScript module (`src/editor/markdown-serializer.ts`, ~960 lines) with zero external
 dependencies. Converts between ProseMirror document nodes and the storage format.
 
 **Serialize (ProseMirror → Markdown):**
@@ -479,17 +503,20 @@ dependencies. Converts between ProseMirror document nodes and the storage format
 | `codeBlock` node | ` ``` language\n...\n``` ` |
 | `tag_ref` node | `#[{id}]` |
 | `block_link` node | `[[{id}]]` |
+| `block_ref` node | `(({id}))` |
 | `link` mark | `[text](url)` |
+| `orderedList` node | `1. item\n2. item\n...` |
+| `horizontalRule` node | `---` |
 | `hardBreak` | `\n` (triggers auto-split) |
 | `blockquote` node | `> ` prefix per line. Nested content serialized recursively. |
 | `table` node | Pipe-delimited rows: header row + `|---|` separator + data rows. Cells contain inline content. |
 | unknown node | stripped with warning |
 
-**Parse (Markdown → ProseMirror):** Hand-rolled single-pass parser. Regex for token ID only. Mark
-stack with unclosed-mark revert (becomes plain text, never errors). Blockquotes detected by `> `
-prefix on consecutive lines. Tables detected by consecutive `|`-prefixed lines; `|---|` separator
-rows are consumed but not emitted as content nodes. Node types: `BlockquoteNode`, `TableNode`,
-`TableRowNode`, `TableHeaderNode`, `TableCellNode`.
+**Parse (Markdown → ProseMirror):** Hand-rolled recursive descent parser. Regex for token ID only.
+Mark stack with unclosed-mark revert (becomes plain text, never errors). Blockquotes detected by
+`> ` prefix on consecutive lines — content parsed recursively. Tables detected by consecutive
+`|`-prefixed lines; `|---|` separator rows are consumed but not emitted as content nodes. Node
+types: `BlockquoteNode`, `TableNode`, `TableRowNode`, `TableHeaderNode`, `TableCellNode`.
 
 **Test suite:** 200+ unit tests, property-based tests (fast-check) for round-trip identity and
 idempotence. Mark coalescing avoids ambiguous sequences like `*a****b****c*`.
@@ -501,9 +528,10 @@ owned, trivially testable.
 ### FTS5 strip pass
 
 Before inserting into the FTS5 index, the materializer strips Markdown syntax:
-- Remove `**`, `*`, `` ` `` delimiters.
+- Remove `**`, `*`, `` ` ``, `~~`, `==` delimiters.
 - Replace `#[ULID]` → resolved tag name (enables tag-name search).
 - Replace `[[ULID]]` → resolved page title.
+- Replace `((ULID))` → resolved block content preview.
 
 Original Markdown preserved in `blocks.content`.
 
@@ -608,7 +636,8 @@ undo/redo via operation reversal.
 
 **Tier 1 — In-session (TipTap history):**
 - Ctrl+Z/Ctrl+Y inside the active editor instance (native ProseMirror history).
-- On blur/flush: op written, `clearHistory()` called. Session undo history is lost.
+- On mount of the next block: `clearHistory()` called, preventing undo from crossing block
+  boundaries. On blur/flush: op written to op log.
 
 **Tier 2 — Page-level (op reversal):**
 - Ctrl+Z/Ctrl+Y when focus is outside contentEditable (intercepted by `useUndoShortcuts`).
@@ -633,7 +662,7 @@ undo/redo via operation reversal.
 | `add_attachment` | `delete_attachment` |
 | `restore_block` | `delete_block` |
 | `purge_block` | **non-reversible** |
-| `delete_attachment` | **non-reversible** |
+| `delete_attachment` | **conditionally reversible** — `add_attachment` with original metadata if the op exists in the log; non-reversible otherwise |
 
 Prior-state lookups use the op log exclusively (not the materialised `blocks` table), ensuring
 consistency even if the materializer lags. Helper functions (`find_prior_text`,
@@ -690,7 +719,7 @@ with month-end clamping.
 | `useBootStore` | App initialization state machine | booting → recovering → ready \| error |
 | `useBlockStore` | Global focus/selection (singleton) | focusedBlockId, selectedBlockIds[], pendingFocusId, setFocused, toggleSelected, rangeSelect(id, visibleIds), selectAll(visibleIds), setSelected, clearSelected, consumePendingFocus |
 | `PageBlockStore` | Per-page block tree CRUD (per-instance via context) | blocks[], rootParentId, loading, load(), createBelow, edit, remove, splitBlock, reorder, moveToParent, indent, dedent, moveUp, moveDown |
-| `useNavigationStore` | Page routing and view state | currentView (View union: 11 views incl. templates), pageStack[], selectedBlockId, navigateToPage, goBack, replacePage |
+| `useNavigationStore` | Page routing and view state | currentView (View union: 13 views incl. templates, settings, graph, page-editor), pageStack[], selectedBlockId, navigateToPage, goBack, replacePage |
 | `useJournalStore` | Journal mode and date selection | mode (daily/weekly/monthly/agenda), currentDate, scrollToDate, scrollToPanel (JournalPanel: due/references/done), navigateToDate, goToDateAndScroll, goToDateAndPanel |
 | `useResolveStore` | Centralized ULID → title cache | cache Map, pagesList[], version counter, resolveTitle, resolveStatus |
 | `useUndoStore` | Page-level undo/redo state | pages Map (per-page: undoDepth, redoStack OpRef[], redoGroupSizes). Op grouping via isWithinUndoGroup (200ms window). undo, redo, canRedo, onNewAction, clearPage |
