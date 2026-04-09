@@ -9,7 +9,7 @@ Five test layers, each with distinct tools:
 | Unit | Vitest | Pure functions, serializers, tree utils |
 | Component | Vitest + @testing-library/react | React components in jsdom |
 | Accessibility | vitest-axe | axe-core audit on rendered components |
-| Property-based | fast-check | Generative fuzzing (markdown serializer) |
+| Property-based | fast-check | Generative fuzzing (markdown serializer, date utils) |
 | E2E | Playwright | Full app in Chromium against Vite dev server |
 
 Vitest runs in **jsdom** environment. No vitest globals — all imports are explicit (`import { describe, expect, it, vi } from 'vitest'`).
@@ -33,33 +33,49 @@ Coverage includes `src/**/*.{ts,tsx}`, excludes test files, `main.tsx`, and `tes
 
 ```
 src/
-├── __tests__/                    # Root-level store & smoke tests
+├── __tests__/                    # Root-level store & smoke tests + shared fixtures
 │   ├── smoke.test.ts
-│   └── boot-store.test.ts
-├── components/__tests__/         # Component tests (.test.tsx)
+│   ├── boot-store.test.ts
+│   └── fixtures/index.ts         # Shared fixture factories (makeBlock, makePage, etc.)
+├── components/__tests__/         # Component tests (.test.tsx) — 121 files
 │   ├── App.test.tsx
 │   ├── PageBrowser.test.tsx
 │   ├── EditableBlock.test.tsx
 │   ├── SearchPanel.test.tsx
-│   └── ... (114 component test files)
-├── editor/__tests__/             # Editor logic tests
+│   └── ...
+├── editor/__tests__/             # Editor logic tests — 17 files
 │   ├── markdown-serializer.test.ts        # Example-based
 │   ├── markdown-serializer.property.test.ts # fast-check
 │   ├── extensions.test.ts
 │   ├── use-block-keyboard.test.ts
 │   └── ...
-├── stores/__tests__/             # Zustand store tests
+├── stores/__tests__/             # Zustand store tests — 7 files
 │   ├── blocks.test.ts
-│   └── navigation.test.ts
-├── hooks/__tests__/              # Hook tests
-│   └── useViewportObserver.test.ts
-├── lib/__tests__/                # Utility & wrapper tests
+│   ├── page-blocks.test.ts
+│   ├── navigation.test.ts
+│   └── undo.test.ts
+├── hooks/__tests__/              # Hook tests — 43 files
+│   ├── useViewportObserver.test.ts
+│   ├── useBlockCollapse.test.ts
+│   ├── useBlockZoom.test.ts
+│   └── ...
+├── lib/__tests__/                # Utility & wrapper tests — 33 files
 │   ├── tauri.test.ts             # Invoke wrapper contract tests
 │   ├── tauri-mock.test.ts        # Mock layer tests
-│   └── tree-utils.test.ts
-e2e/
+│   ├── tree-utils.test.ts
+│   ├── date-utils.test.ts
+│   └── ...
+e2e/                              # 21 Playwright spec files
 ├── smoke.spec.ts                 # App load, nav items, no console errors
-└── editor-lifecycle.spec.ts      # CRUD blocks, navigation, deletion
+├── editor-lifecycle.spec.ts      # CRUD blocks, navigation, deletion
+├── undo-redo-blocks.spec.ts      # Page-level undo/redo flows
+├── graph-view.spec.ts            # Graph visualization
+├── properties-system.spec.ts     # Property CRUD and display
+├── query-blocks.spec.ts          # Inline query blocks
+├── templates.spec.ts             # Template lifecycle
+├── import-export.spec.ts         # Markdown import/export
+├── agenda-advanced.spec.ts       # Agenda filtering and navigation
+└── ...
 ```
 
 **Naming:** Vitest files use `.test.ts` / `.test.tsx`. Playwright files use `.spec.ts`. Property-based tests add `.property` before `.test` (e.g., `markdown-serializer.property.test.ts`).
@@ -104,6 +120,8 @@ const sidebar = within(document.querySelector('[data-slot="sidebar"]') as HTMLEl
 sidebar.getByText('Journal')
 ```
 
+**Scoped queries are mandatory when the same text/role appears multiple times** — e.g., the App component renders nav labels in both the sidebar and header. Use `within()` to target the correct subtree, or query by scoped role (row → cells within that row).
+
 ### User interaction
 
 Always use `userEvent` (not `fireEvent`) for user-initiated actions:
@@ -111,6 +129,8 @@ Always use `userEvent` (not `fireEvent`) for user-initiated actions:
 const user = userEvent.setup()
 await user.click(screen.getByRole('button', { name: /New Page/i }))
 ```
+
+**`userEvent.setup()` must be called before any DOM interaction**, including `element.focus()`. Moving `setup()` after focus or other DOM operations causes inconsistent behavior.
 
 Exception: `fireEvent` is used for non-user-initiated events like `blur`, or when you need to bypass debounce:
 ```tsx
@@ -162,11 +182,11 @@ it('has no a11y violations', async () => {
 
 Setup in `src/test-setup.ts` extends vitest matchers with `vitest-axe/matchers` and imports `vitest-axe/extend-expect`, making `toHaveNoViolations()` available globally.
 
-Components with multiple visual states (e.g., `EditableBlock` focused vs unfocused) get separate axe audits for each state.
+Components with multiple visual states (e.g., `EditableBlock` focused vs unfocused, `MonthlyDayCell` focused) get separate axe audits for each state.
 
 ## Property-Based Testing (fast-check)
 
-Used for the markdown serializer (`src/editor/__tests__/markdown-serializer.property.test.ts`). Each property runs 500 iterations by default.
+Used for the markdown serializer and date utilities. Each property runs 500 iterations by default.
 
 ### Arbitrary generators
 
@@ -294,17 +314,20 @@ expect(store.getState().pages.get('PAGE_1')?.undoDepth).toBe(0) // rolled back
 
 ### Configuration
 
-- **Test dir:** `e2e/`
+- **Test dir:** `e2e/` — 21 spec files
 - **Browser:** Chromium only
 - **Base URL:** `http://localhost:5173`
 - **Dev server:** auto-started via `npm run dev`, reused if already running
 - **Retries:** 2 on CI, 0 locally
 - **Workers:** 1 on CI, auto locally
 - **Tracing:** on first retry
+- **Global expect timeout:** 3000ms (set in `playwright.config.ts`, no per-assertion overrides needed)
 
 ### Mock backend
 
 E2E tests run against the **Vite dev server** (not the Tauri app). The browser mock (`src/lib/tauri-mock.ts`) auto-activates when `window.__TAURI_INTERNALS__` is absent, providing an in-memory store with seed data. State resets on page reload — tests use `page.reload()` to verify isolation.
+
+The mock has comprehensive command coverage including `list_page_links` (scans seed data for `[[ULID]]` links), `import_markdown` (heading parsing + block splitting), and template seed data with variable blocks.
 
 ### Patterns
 
@@ -322,7 +345,7 @@ test('creates a block via the input form', async ({ page }) => {
 })
 ```
 
-E2E tests verify full user flows: create, delete, navigate, persist across view switches, handle special characters. No page objects — tests are flat and direct.
+E2E tests verify full user flows: create, delete, navigate, persist across view switches, handle special characters. No page objects — tests are flat and direct. Use `data-testid` selectors (not CSS classes) for targeting elements.
 
 ### Undo/redo E2E helpers
 
@@ -384,6 +407,27 @@ vi.mock('../StaticBlock', () => ({
 }))
 ```
 
+### Radix Select mocking
+
+Radix UI Select doesn't work in jsdom (no layout engine). Mock with a native `<select>` that preserves the API contract:
+```tsx
+vi.mock('@/components/ui/select', () => ({
+  Select: ({ children, onValueChange, value }: any) =>
+    React.createElement('div', { 'data-testid': 'select-root' },
+      React.createElement('select', {
+        value,
+        onChange: (e: any) => onValueChange?.(e.target.value),
+      }, children)),
+  SelectTrigger: ({ children }: any) => React.createElement('span', null, children),
+  SelectValue: ({ placeholder }: any) => React.createElement('span', null, placeholder),
+  SelectContent: ({ children }: any) => children,
+  SelectItem: ({ value, children }: any) =>
+    React.createElement('option', { value }, children),
+}))
+```
+
+This pattern (used in BacklinkFilterBuilder, HistoryView, etc.) renders a real `<select>` so `userEvent.selectOptions()` works in tests.
+
 ### Toast mocking
 
 Components using `sonner` toast get it mocked:
@@ -421,13 +465,14 @@ RTL `cleanup()` is registered manually in `afterEach` since vitest globals are d
 
 ## Quality Standards
 
-1. **Determinism** — no random data in assertions, no date-dependent assertions without computing expected values
-2. **Isolation** — stores reset in `beforeEach`, `vi.clearAllMocks()` on every test, cleanup after `vi.useFakeTimers()` with `vi.useRealTimers()` in `afterEach`
-3. **No timing hacks** — use `waitFor` / `findBy*` instead of `sleep`. Debounce tests use `vi.useFakeTimers()` + `vi.advanceTimersByTime()`
-4. **Both paths** — every store action and component interaction tests success AND error responses
-5. **Backend contract** — tests verify exact `invoke` call signatures (command name, argument shape, null vs undefined)
-6. **Meaningful assertions** — `toHaveBeenCalledWith` with exact args, not just `toHaveBeenCalled`
-7. **Zero flaky tests** — Flaky tests are bugs. Tests must pass 100% of the time. Common causes and fixes:
+1. **Determinism** — No random data in assertions, no date-dependent assertions without computing expected values. Replace flaky conditional checks (`if (el) { expect(el)... }`) with deterministic queries (`getByTestId`, `getByRole`). If an element should exist, assert it unconditionally.
+2. **Isolation** — Stores reset in `beforeEach`, `vi.clearAllMocks()` on every test, cleanup after `vi.useFakeTimers()` with `vi.useRealTimers()` in `afterEach`. For tests using `localStorage`, add `localStorage.clear()` to `beforeEach`.
+3. **No timing hacks** — Use `waitFor` / `findBy*` instead of `sleep`. Debounce tests use `vi.useFakeTimers()` + `vi.advanceTimersByTime()`.
+4. **Both paths** — Every store action and component interaction tests success AND error responses.
+5. **Backend contract** — Tests verify exact `invoke` call signatures (command name, argument shape, null vs undefined).
+6. **Meaningful assertions** — `toHaveBeenCalledWith` with exact args, not just `toHaveBeenCalled`. Use `toHaveLength(N)` with exact counts, not `Array.isArray()` or `.length >= 1`. Use scoped row queries when verifying table/list contents (find the row, then check cells within it).
+7. **i18n in tests** — Use `t('key')` calls in test assertions, not hardcoded English strings. This ensures tests don't break when translations change, and validates that i18n keys are wired correctly. Test files that assert on visible text should import `t` from `i18n.ts`.
+8. **Zero flaky tests** — Flaky tests are bugs. Tests must pass 100% of the time. Common causes and fixes:
    - **Debounce races** — use `vi.useFakeTimers()` + `vi.advanceTimersByTime()` for debounced inputs. Never rely on real wall-clock timing.
    - **Render order** — use `waitFor` / `findBy*` for async state updates. Never assert synchronously after an async action.
    - **Store leaks** — always reset Zustand stores in `beforeEach`. Missing resets cause test-order-dependent failures.
@@ -469,10 +514,18 @@ RTL `cleanup()` is registered manually in `afterEach` since vitest globals are d
 
 17. **Component extraction requires regression verification** — When extracting hooks/components from a large file (e.g., BlockTree → useBlockCollapse, useBlockZoom, BlockListRenderer), each extracted piece needs its own test file. After extraction, run the full test suite to verify no regressions. The M-1 BlockTree refactor (1184→1028 lines) verified 262 tests across 8 extracted modules.
 
-## Known Test Coverage Gaps
+18. **`onPointerDown` vs `onClick` for timing-sensitive buttons** — When a button must fire before a focus/blur cycle (e.g., delete button in a gutter that disappears on blur), use `onPointerDown` (fires before focus changes) with an `onClick` fallback for keyboard accessibility. Session 195 fixed a bug where the delete button was unclickable because `onClick` fired after focus moved and re-render hid the button.
 
-Open items in `REVIEW-LATER.md` that represent known untested areas. Reference these when working on related features:
+19. **Capture-phase keydown on `parentElement`** — When the component's keydown handler must fire before ProseMirror's (e.g., Enter for block splitting), attach the listener to `parentElement` with `capture: true` + `stopPropagation()` when handled. Direct listeners on the editor element race with ProseMirror. Session 195 fixed Enter key handling this way.
 
-- **T-6:** 5 journal view components have zero test coverage (`DailyView`, `AgendaView`, `DaySection`, `WeeklyView`, `MonthlyView`); 3 test files missing axe audits; 86/104 component test files lack error path tests with `mockRejectedValue`
-- **B-7..B-13:** Editor lifecycle bugs with test implications — whitespace-click discards edits, Escape discards edits when editor DOM-unfocused, `handleBlur` naive newline check for split detection (false splits on code blocks), no rollback on optimistic edit failure, sync reload overwrites store during active editing, `unmount()` has no error boundary around `serialize()`, draft autosave race between save and discard
-- **B-15:** `BlockContextMenu` missing from `EDITOR_PORTAL_SELECTORS` — blur fires when clicking context menu
+20. **`shouldSplitOnBlur()` replaces naive newline check** — `handleBlur` must NOT use `content.includes('\n')` to decide whether to split — code blocks contain newlines that are NOT split boundaries. Use `shouldSplitOnBlur()` which checks for actual multi-paragraph structure. Session 242 (B-9) fixed false splits on code blocks.
+
+21. **Optimistic edits need rollback on failure** — `edit()` must capture `previousContent` before the update. If the backend `invoke` fails, roll back the store to `previousContent` and show an error toast. Session 242 (B-10) fixed lost content on transient backend errors.
+
+22. **Draft autosave race condition** — `saveDraft()` and `discardDraft()` can race when a user blurs the editor during an autosave cycle. Use a version counter: `saveDraft` captures the version before the async call; if the version has incremented (meaning `discardDraft` was called), the save is silently dropped. Session 242 (B-13) fixed this with a version counter pattern.
+
+23. **EDITOR_PORTAL_SELECTORS must include all overlays** — When adding new overlay elements that appear "inside" the editor area (context menus, pickers), their container class must be added to `EDITOR_PORTAL_SELECTORS` in `EditableBlock.tsx`. Otherwise, clicking the overlay triggers `handleBlur`, saving/splitting content prematurely. Session 242 (B-15) added `.block-context-menu`.
+
+24. **Radix Dialog vs AlertDialog for user input** — Use `Dialog` (not `AlertDialog`) when the modal needs user input (text fields, selects). `AlertDialog` traps focus in a way that makes `autoFocus` on input fields unreliable. `ConfirmDialog` uses `AlertDialog` (confirm/cancel only); input modals use `Dialog`. Session 192 migrated PairingDialog from AlertDialog to Dialog for this reason.
+
+25. **Guard `Array.isArray()` on IPC responses** — Some Tauri commands may return non-array values when the backend returns an unexpected type. When the component calls `.map()` on the result, a crash occurs. Add `Array.isArray(result)` guards before `.map()` calls on IPC responses. Session 198 fixed `PageHeader` crashing when `getPageAliases` returned a non-array.
