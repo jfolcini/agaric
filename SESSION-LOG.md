@@ -1,5 +1,46 @@
 # Session Log
 
+## Session 306 — Rust algorithms + defensive checks + frontend fixes: 9 items resolved (2026-04-09)
+
+**9 items resolved (35→26 open). 9 files changed, 11 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| B-32 | fts_bench.rs compilation error — search_fts signature drift | `benches/fts_bench.rs` |
+| B-35 | Race condition in undo store `performSingleUndo` | `src/stores/undo.ts` |
+| B-37 | Pool type mismatch in `list_tags_for_block` | `src-tauri/src/commands.rs` |
+| P-20 | Backlink query linear cursor scan → binary search | `src-tauri/src/backlink_query.rs` |
+| M-31 | Sync event handlers lack error boundaries | `src/hooks/useSyncEvents.ts` |
+| M-35 | DAG cycle detection O(n²) → HashSet O(n) | `src-tauri/src/dag.rs` |
+| M-36 | Recurrence month arithmetic overflow checks | `src-tauri/src/recurrence.rs` |
+| M-38 | PageBlockStoreProvider store in effect dependency | `src/stores/page-blocks.ts` |
+| M-40 | Tag inheritance recursive CTE depth limit (100) | `src-tauri/src/tag_inheritance.rs` |
+
+### Build subagents (3 parallel)
+1. **B-32 + B-37** — bench signature fix + ReadPool type fix
+2. **P-20 + M-35** — binary search for backlink pagination + HashSet cycle detection in DAG
+3. **M-36 + M-40** — checked arithmetic for recurrence + depth < 100 on all 11 recursive CTEs
+
+### Orchestrator direct fixes (while subagents built)
+- B-35: single `get()` snapshot in both `performSingleUndo` and `performSingleRedo` IIFEs
+- M-38: removed `store` from `useEffect` dependency array in `PageBlockStoreProvider`
+- M-31: wrapped 3 sync event handlers in try-catch with `logger.error`
+
+### Review verdicts
+- B-32 + B-37: APPROVE — signatures match, pattern consistent with all read commands
+- P-20 + M-35: APPROVE — binary search valid for ULID ordering, HashSet matches merge.rs patterns
+- M-36 + M-40: APPROVE — checked_mul/checked_add chain correct, all 11 CTEs updated exhaustively
+
+### Stats
+- 9 files changed (+450 / -112 lines)
+- 11 new tests (2 backlink pagination + 2 DAG cycle + 4 recurrence overflow + 1 tag depth + 2 existing updated)
+- 1721 Rust tests pass, 5968 frontend tests pass
+- All 20 prek hooks pass
+
+---
+
 ## Session 305 — Logging pipeline + perf + bug fixes: 9 REVIEW-LATER items resolved (2026-04-09)
 
 **9 items resolved (44→35 open). Logging pipeline fully functional. 15 files changed, 73 new tests.**
