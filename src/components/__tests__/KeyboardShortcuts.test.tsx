@@ -225,8 +225,17 @@ describe('KeyboardShortcuts', () => {
     localStorage.setItem('agaric-keyboard-shortcuts', JSON.stringify({ focusSearch: 'Ctrl + G' }))
     render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
 
-    // The custom binding should appear
-    const kbdElements = screen.getAllByText('G')
-    expect(kbdElements.length).toBeGreaterThanOrEqual(1)
+    // Find the row containing the "Focus search" description
+    const focusSearchLabel = screen.getByText('Focus search')
+    const row = focusSearchLabel.closest('tr') as HTMLElement
+    expect(row).toBeTruthy()
+
+    // Within that row, verify the custom keybinding keys are shown
+    const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
+    expect(kbdTexts).toContain('Ctrl')
+    expect(kbdTexts).toContain('G')
+
+    // The original default key 'F' should NOT appear in that row
+    expect(kbdTexts).not.toContain('F')
   })
 })

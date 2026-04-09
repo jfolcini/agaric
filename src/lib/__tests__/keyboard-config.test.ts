@@ -120,14 +120,28 @@ describe('keyboard-config', () => {
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
   })
 
-  it('findConflicts returns empty for defaults (Backspace has different conditions)', () => {
-    // Backspace appears twice in editing but with different conditions,
-    // however findConflicts checks by keys+category, so they will appear as a conflict.
-    // This is expected behavior since they share the same keys in the same category.
+  it('resetAllShortcuts is safe as no-op when localStorage is empty', () => {
+    // Ensure no custom overrides exist
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
+
+    // Should not throw and should return gracefully
+    expect(() => resetAllShortcuts()).not.toThrow()
+
+    // localStorage remains empty
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
+    // Shortcuts still return defaults
+    expect(getCustomOverrides()).toEqual({})
+  })
+
+  it('findConflicts returns known Backspace conflict for defaults (different conditions, same keys+category)', () => {
+    // Backspace appears twice in editing (deleteBlock & mergeWithPrevious) with different conditions,
+    // however findConflicts checks by keys+category, so they appear as a conflict.
     const conflicts = findConflicts()
-    // Backspace in editing is a known "conflict" with different conditions
-    // We just verify the function runs without error
-    expect(Array.isArray(conflicts)).toBe(true)
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]?.keys).toBe('Backspace')
+    expect(conflicts[0]?.category).toBe('keyboard.category.editing')
+    expect(conflicts[0]?.ids).toContain('deleteBlock')
+    expect(conflicts[0]?.ids).toContain('mergeWithPrevious')
   })
 
   it('findConflicts detects actual conflict when custom shortcut duplicates another', () => {
@@ -142,6 +156,20 @@ describe('keyboard-config', () => {
     expect(navConflict).toBeDefined()
     expect(navConflict?.keys).toBe(nextDefault?.keys)
     expect(navConflict?.category).toBe('keyboard.category.navigation')
+  })
+
+  it('findConflicts detects conflict when two shortcuts are both set to the same custom key', () => {
+    // Set two editing shortcuts to the same brand-new key combo
+    setCustomShortcut('indentBlock', 'Ctrl + Shift + X')
+    setCustomShortcut('dedentBlock', 'Ctrl + Shift + X')
+
+    const conflicts = findConflicts()
+    const editingConflict = conflicts.find(
+      (c) => c.ids.includes('indentBlock') && c.ids.includes('dedentBlock'),
+    )
+    expect(editingConflict).toBeDefined()
+    expect(editingConflict?.keys).toBe('Ctrl + Shift + X')
+    expect(editingConflict?.category).toBe('keyboard.category.editing')
   })
 
   it('handles localStorage.setItem throwing (setCustomShortcut)', () => {

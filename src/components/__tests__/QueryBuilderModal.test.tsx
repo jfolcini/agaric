@@ -15,6 +15,11 @@
  *  - Parses initialExpression to populate form (tag)
  *  - Parses initialExpression to populate form (property with operator)
  *  - Expression preview shows generated syntax
+ *  - Parses initialExpression to populate form (backlinks)
+ *  - Parses initialExpression with table:true flag
+ *  - Parses initialExpression with gte operator and value
+ *  - Parses initialExpression with property key only (no value or operator)
+ *  - Disables Insert button when property key is empty
  *  - a11y audit
  */
 
@@ -249,6 +254,56 @@ describe('QueryBuilderModal', () => {
     const preview = screen.getByTestId('expression-preview')
     expect(preview).toBeInTheDocument()
     expect(preview).toHaveTextContent('type:tag expr:test')
+  })
+
+  it('parses initialExpression to populate form (backlinks)', () => {
+    render(
+      <QueryBuilderModal {...defaultProps} initialExpression="type:backlinks target:01ABC123" />,
+    )
+
+    expect(screen.getByRole('radio', { name: /^Backlinks$/i })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    )
+    expect(screen.getByLabelText(/target page id/i)).toHaveValue('01ABC123')
+  })
+
+  it('parses initialExpression with table:true flag', () => {
+    render(
+      <QueryBuilderModal {...defaultProps} initialExpression="type:tag prefix:todo table:true" />,
+    )
+
+    expect(screen.getByLabelText(/show results as table/i)).toBeChecked()
+  })
+
+  it('parses initialExpression with gte operator and value', () => {
+    render(
+      <QueryBuilderModal
+        {...defaultProps}
+        initialExpression="type:property key:effort operator:gte value:5"
+      />,
+    )
+
+    expect(screen.getByRole('combobox', { name: /operator/i })).toHaveValue('gte')
+    expect(screen.getByLabelText(/^value$/i)).toHaveValue('5')
+  })
+
+  it('parses initialExpression with property key only (no value or operator)', () => {
+    render(<QueryBuilderModal {...defaultProps} initialExpression="type:property key:status" />)
+
+    expect(screen.getByLabelText(/property key/i)).toHaveValue('status')
+    expect(screen.getByLabelText(/^value$/i)).toHaveValue('')
+  })
+
+  it('disables Insert button when property key is empty', async () => {
+    const user = userEvent.setup()
+    render(<QueryBuilderModal {...defaultProps} />)
+
+    await user.click(screen.getByRole('radio', { name: /^Property$/i }))
+
+    // Key is empty, so the button should be disabled
+    const insertBtn = screen.getByRole('button', { name: /insert query/i })
+    expect(insertBtn).toBeDisabled()
   })
 
   it('has no a11y violations', async () => {

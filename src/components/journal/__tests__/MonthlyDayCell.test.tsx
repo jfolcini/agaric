@@ -81,6 +81,7 @@ describe('MonthlyDayCell', () => {
   })
 
   it('does NOT call onNavigateToDate for adjacent month', async () => {
+    const user = userEvent.setup()
     const onNavigateToDate = vi.fn()
     render(
       <MonthlyDayCell
@@ -93,30 +94,30 @@ describe('MonthlyDayCell', () => {
     // pointer-events-none prevents actual clicks, but we test the handler logic
     const cell = screen.getByRole('gridcell')
     // Force fire click even though pointer-events-none
-    cell.click()
+    await user.click(cell)
     expect(onNavigateToDate).not.toHaveBeenCalled()
   })
 
   it('keyboard: Enter triggers navigation for current month', async () => {
+    const user = userEvent.setup()
     const onNavigateToDate = vi.fn()
     render(<MonthlyDayCell {...defaultProps} onNavigateToDate={onNavigateToDate} />)
 
     const cell = screen.getByRole('gridcell')
     cell.focus()
 
-    const user = userEvent.setup()
     await user.keyboard('{Enter}')
     expect(onNavigateToDate).toHaveBeenCalledWith('2025-01-15')
   })
 
   it('keyboard: Space triggers navigation for current month', async () => {
+    const user = userEvent.setup()
     const onNavigateToDate = vi.fn()
     render(<MonthlyDayCell {...defaultProps} onNavigateToDate={onNavigateToDate} />)
 
     const cell = screen.getByRole('gridcell')
     cell.focus()
 
-    const user = userEvent.setup()
     await user.keyboard(' ')
     expect(onNavigateToDate).toHaveBeenCalledWith('2025-01-15')
   })
@@ -132,8 +133,9 @@ describe('MonthlyDayCell', () => {
     )
 
     // Should have dots rendered (small rounded-full elements)
+    // 1 dot per agendaCountsBySource entry + 1 dot for backlinkCount > 0 = 2
     const dots = container.querySelectorAll('.rounded-full.w-1\\.5')
-    expect(dots.length).toBeGreaterThanOrEqual(1)
+    expect(dots).toHaveLength(2)
   })
 
   it('shows total count badge when counts > 0', () => {

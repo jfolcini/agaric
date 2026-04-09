@@ -151,15 +151,39 @@ describe('KeyboardSettingsTab', () => {
     expect(screen.queryByPlaceholderText('Type new key binding...')).not.toBeInTheDocument()
   })
 
-  it('reset single shortcut calls resetShortcut', async () => {
+  it('reset single shortcut calls resetShortcut and updates UI', async () => {
     const user = userEvent.setup()
+
+    // After resetShortcut is called, getCurrentShortcuts should return the default (non-custom) binding
+    const shortcutsAfterReset = MOCK_SHORTCUTS.map((s) =>
+      s.id === 'indentBlock' ? { ...s, keys: 'Tab', isCustom: false } : s,
+    )
+    mockResetShortcut.mockImplementation(() => {
+      mockGetCurrentShortcuts.mockReturnValue(shortcutsAfterReset)
+    })
+
     render(<KeyboardSettingsTab />)
 
-    // indentBlock is customized (isCustom: true), so "Reset to default" link should appear
-    const resetButton = screen.getByText('Reset to default')
-    await user.click(resetButton)
+    // Before reset: "Customized" badge should be visible
+    expect(screen.getByText('Customized')).toBeInTheDocument()
+    // Before reset: "Reset to default" link should be visible
+    expect(screen.getByText('Reset to default')).toBeInTheDocument()
+
+    // Click reset
+    await user.click(screen.getByText('Reset to default'))
 
     expect(mockResetShortcut).toHaveBeenCalledWith('indentBlock')
+
+    // After reset: "Customized" badge should disappear
+    await waitFor(() => {
+      expect(screen.queryByText('Customized')).not.toBeInTheDocument()
+    })
+
+    // After reset: "Reset to default" link should also disappear
+    expect(screen.queryByText('Reset to default')).not.toBeInTheDocument()
+
+    // After reset: shortcut key display should revert to the default value
+    expect(screen.getByText('Tab')).toBeInTheDocument()
   })
 
   it('reset all with confirmation dialog', async () => {

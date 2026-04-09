@@ -147,11 +147,10 @@ describe('MonthlyView', () => {
   it('marks adjacent month cells with isCurrentMonth=false', () => {
     render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
 
-    // Jan 2025 with Monday start: Dec 30 should be in the grid but not current month
-    const dec30Cell = screen.queryByTestId('monthly-cell-2024-12-30')
-    if (dec30Cell) {
-      expect(dec30Cell).toHaveAttribute('data-is-current-month', 'false')
-    }
+    // Jan 2025 with Monday start: Dec 30 (Mon) is the first padding cell
+    const dec30Cell = screen.getByTestId('monthly-cell-2024-12-30')
+    expect(dec30Cell).toBeInTheDocument()
+    expect(dec30Cell).toHaveAttribute('data-is-current-month', 'false')
   })
 
   it('marks current month cells with isCurrentMonth=true', () => {
