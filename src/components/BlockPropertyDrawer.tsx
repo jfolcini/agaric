@@ -74,10 +74,14 @@ export function BlockPropertyDrawer({
         setDefinitions(Array.isArray(defs) ? defs : [])
       })
       .catch((err: unknown) => {
-        logger.error('BlockPropertyDrawer', 'Failed to load properties', {
-          blockId: blockId ?? '',
-          error: String(err),
-        })
+        logger.error(
+          'BlockPropertyDrawer',
+          'Failed to load properties',
+          {
+            blockId: blockId ?? '',
+          },
+          err,
+        )
         toast.error(t('property.loadFailed'))
       })
       .finally(() => setLoading(false))
@@ -107,10 +111,14 @@ export function BlockPropertyDrawer({
       const props = await getProperties(blockId)
       setProperties(Array.isArray(props) ? props : [])
     } catch (err) {
-      logger.warn('BlockPropertyDrawer', 'Failed to reload properties after ref save', {
-        blockId: blockId ?? '',
-        error: String(err),
-      })
+      logger.warn(
+        'BlockPropertyDrawer',
+        'Failed to reload properties after ref save',
+        {
+          blockId: blockId ?? '',
+        },
+        err,
+      )
     }
   }, [blockId])
 
@@ -129,11 +137,15 @@ export function BlockPropertyDrawer({
         }))
         announce(t('property.dateCleared'))
       } catch (err) {
-        logger.error('BlockPropertyDrawer', 'Failed to clear builtin date', {
-          blockId: blockId ?? '',
-          field,
-          error: String(err),
-        })
+        logger.error(
+          'BlockPropertyDrawer',
+          'Failed to clear builtin date',
+          {
+            blockId: blockId ?? '',
+            field,
+          },
+          err,
+        )
         toast.error(t('property.saveFailed'))
       }
     },
@@ -155,12 +167,16 @@ export function BlockPropertyDrawer({
         }))
         announce(t('property.dateUpdated'))
       } catch (err) {
-        logger.error('BlockPropertyDrawer', 'Failed to save builtin date', {
-          blockId: blockId ?? '',
-          field,
-          value,
-          error: String(err),
-        })
+        logger.error(
+          'BlockPropertyDrawer',
+          'Failed to save builtin date',
+          {
+            blockId: blockId ?? '',
+            field,
+            value,
+          },
+          err,
+        )
         toast.error(t('property.saveFailed'))
       }
     },
@@ -180,11 +196,15 @@ export function BlockPropertyDrawer({
         const updated = await getProperties(blockId)
         setProperties(Array.isArray(updated) ? updated : [])
       } catch (err) {
-        logger.error('BlockPropertyDrawer', 'Failed to add property from definition', {
-          blockId: blockId ?? '',
-          key: def.key,
-          error: String(err),
-        })
+        logger.error(
+          'BlockPropertyDrawer',
+          'Failed to add property from definition',
+          {
+            blockId: blockId ?? '',
+            key: def.key,
+          },
+          err,
+        )
         toast.error(t('property.saveFailed'))
       }
     },

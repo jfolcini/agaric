@@ -24,7 +24,7 @@ export function QrScanner({ onScan, onError }: QrScannerProps) {
     return () => {
       if (scannerInstanceRef.current) {
         scannerInstanceRef.current.stop().catch((err: unknown) => {
-          logger.warn('QrScanner', 'Failed to stop scanner on unmount', { error: String(err) })
+          logger.warn('QrScanner', 'Failed to stop scanner on unmount', undefined, err)
         })
         scannerInstanceRef.current = null
       }
@@ -48,9 +48,7 @@ export function QrScanner({ onScan, onError }: QrScannerProps) {
         { fps: 10, qrbox: { width: 250, height: 250 } },
         (decodedText) => {
           scanner.stop().catch((err: unknown) => {
-            logger.warn('QrScanner', 'Failed to stop scanner after successful scan', {
-              error: String(err),
-            })
+            logger.warn('QrScanner', 'Failed to stop scanner after successful scan', undefined, err)
           })
           scannerInstanceRef.current = null
           setScanning(false)

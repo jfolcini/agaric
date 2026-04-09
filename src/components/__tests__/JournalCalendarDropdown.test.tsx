@@ -310,7 +310,8 @@ describe('JournalCalendarDropdown', () => {
       expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
         'JournalCalendarDropdown',
         'Failed to load agenda counts for calendar',
-        expect.objectContaining({ error: expect.stringContaining('DB connection lost') }),
+        undefined,
+        expect.objectContaining({ message: 'DB connection lost' }),
       )
     })
   })
@@ -339,7 +340,8 @@ describe('JournalCalendarDropdown', () => {
       expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
         'JournalCalendarDropdown',
         'Failed to load agenda counts for calendar',
-        expect.objectContaining({ error: 'string error without Error wrapper' }),
+        undefined,
+        'string error without Error wrapper',
       )
     })
 

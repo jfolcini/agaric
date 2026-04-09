@@ -176,10 +176,14 @@ function App() {
       .then((drafts) => {
         for (const draft of drafts) {
           flushDraft(draft.block_id).catch((err: unknown) => {
-            logger.warn('App', 'Failed to flush orphaned draft during boot recovery', {
-              blockId: draft.block_id,
-              error: String(err),
-            })
+            logger.warn(
+              'App',
+              'Failed to flush orphaned draft during boot recovery',
+              {
+                blockId: draft.block_id,
+              },
+              err,
+            )
           })
         }
         if (drafts.length > 0) {
@@ -187,7 +191,7 @@ function App() {
         }
       })
       .catch((err: unknown) => {
-        logger.warn('App', 'Failed to list drafts during boot recovery', { error: String(err) })
+        logger.warn('App', 'Failed to list drafts during boot recovery', undefined, err)
       })
   }, [])
 
@@ -267,7 +271,7 @@ function App() {
             announce('New page created')
           })
           .catch((err: unknown) => {
-            logger.error('App', 'Failed to create page via shortcut', { error: String(err) })
+            logger.error('App', 'Failed to create page via shortcut', undefined, err)
             toast.error(t('error.createPageFailed'))
           })
       }
@@ -283,7 +287,7 @@ function App() {
       navigateToPage(resp.id, 'Untitled')
       announce('New page created')
     } catch (err) {
-      logger.error('App', 'Failed to create new page', { error: String(err) })
+      logger.error('App', 'Failed to create new page', undefined, err)
       toast.error(t('error.createPageFailed'))
     }
   }, [navigateToPage, t])

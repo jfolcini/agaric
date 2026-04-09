@@ -157,10 +157,14 @@ export function PropertyRowEditor({
       onDefUpdated?.(updatedDef)
       setEditOptionsOpen(false)
     } catch (err) {
-      logger.error('PropertyRowEditor', 'Failed to update select options', {
-        key: def?.key ?? '',
-        error: String(err),
-      })
+      logger.error(
+        'PropertyRowEditor',
+        'Failed to update select options',
+        {
+          key: def?.key ?? '',
+        },
+        err,
+      )
       toast.error(t('pageProperty.updateOptionsFailed'))
     }
   }, [def, editingOptions, onDefUpdated, t])
@@ -176,9 +180,7 @@ export function PropertyRowEditor({
     listBlocks({ blockType: 'page', limit: 500 })
       .then((res) => setRefPages(res.items))
       .catch((err: unknown) => {
-        logger.error('PropertyRowEditor', 'Failed to load pages for ref picker', {
-          error: String(err),
-        })
+        logger.error('PropertyRowEditor', 'Failed to load pages for ref picker', undefined, err)
         toast.error(t('pageProperty.loadPagesFailed'))
         setRefPages([])
       })
@@ -196,11 +198,15 @@ export function PropertyRowEditor({
         await setProperty({ blockId, key: prop.key, valueRef: page.id })
         onRefSaved?.()
       } catch (err) {
-        logger.error('PropertyRowEditor', 'Failed to save ref property', {
-          blockId,
-          key: prop.key,
-          error: String(err),
-        })
+        logger.error(
+          'PropertyRowEditor',
+          'Failed to save ref property',
+          {
+            blockId,
+            key: prop.key,
+          },
+          err,
+        )
         toast.error(t('pageProperty.saveFailed'))
       }
       setRefPickerOpen(false)

@@ -115,10 +115,14 @@ export function LinkedReferences({
         setHasMore(resp.has_more)
         setTotalCount(resp.total_count)
       } catch (err) {
-        logger.error('LinkedReferences', 'Failed to load grouped backlinks', {
-          pageId,
-          error: String(err),
-        })
+        logger.error(
+          'LinkedReferences',
+          'Failed to load grouped backlinks',
+          {
+            pageId,
+          },
+          err,
+        )
         toast.error(t('references.loadFailed'))
       } finally {
         setLoading(false)
@@ -132,7 +136,7 @@ export function LinkedReferences({
     listPropertyKeys()
       .then(setPropertyKeys)
       .catch((e) => {
-        logger.error('LinkedReferences', 'Failed to load property keys', { error: String(e) })
+        logger.error('LinkedReferences', 'Failed to load property keys', undefined, e)
         toast.error(t('references.loadPropertiesFailed'))
       })
   }, [t])
@@ -142,7 +146,7 @@ export function LinkedReferences({
     listTagsByPrefix({ prefix: '' })
       .then((result) => setTags((result ?? []).map((t) => ({ id: t.tag_id, name: t.name }))))
       .catch((e) => {
-        logger.error('LinkedReferences', 'Failed to load tags', { error: String(e) })
+        logger.error('LinkedReferences', 'Failed to load tags', undefined, e)
         toast.error(t('references.loadTagsFailed'))
       })
   }, [t])

@@ -93,7 +93,7 @@ export function useSyncEvents(): void {
         else cleanups.push(unlisten)
       })
       .catch((err: unknown) => {
-        logger.warn('useSyncEvents', 'Failed to listen to sync:progress', { error: String(err) })
+        logger.warn('useSyncEvents', 'Failed to listen to sync:progress', undefined, err)
       })
 
     // sync:complete
@@ -129,9 +129,7 @@ export function useSyncEvents(): void {
               }
             })
             .catch((err: unknown) => {
-              logger.warn('useSyncEvents', 'Failed to check conflicts after sync', {
-                error: String(err),
-              })
+              logger.warn('useSyncEvents', 'Failed to check conflicts after sync', undefined, err)
             })
         }
       } catch (err: unknown) {
@@ -143,7 +141,7 @@ export function useSyncEvents(): void {
         else cleanups.push(unlisten)
       })
       .catch((err: unknown) => {
-        logger.warn('useSyncEvents', 'Failed to listen to sync:complete', { error: String(err) })
+        logger.warn('useSyncEvents', 'Failed to listen to sync:complete', undefined, err)
       })
 
     // sync:error
@@ -161,7 +159,7 @@ export function useSyncEvents(): void {
         else cleanups.push(unlisten)
       })
       .catch((err: unknown) => {
-        logger.warn('useSyncEvents', 'Failed to listen to sync:error', { error: String(err) })
+        logger.warn('useSyncEvents', 'Failed to listen to sync:error', undefined, err)
       })
 
     return () => {

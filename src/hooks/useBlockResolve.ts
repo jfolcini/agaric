@@ -115,7 +115,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // Never reject — the TipTap Suggestion plugin has no error handling
       // for async items callbacks.  A rejection silently prevents the popup
       // from opening (H-10 / H-11).
-      logger.error('useBlockResolve', 'searchTags failed', { error: String(err) })
+      logger.error('useBlockResolve', 'searchTags failed', undefined, err)
       return []
     }
   }, [])
@@ -226,7 +226,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // Never reject — the TipTap Suggestion plugin has no error handling
       // for async items callbacks.  A rejection silently prevents the popup
       // from opening (H-10 / H-11).
-      logger.error('useBlockResolve', 'searchPages failed', { error: String(err) })
+      logger.error('useBlockResolve', 'searchPages failed', undefined, err)
       return []
     }
   }, [])
@@ -259,7 +259,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
       }
       return results
     } catch (err) {
-      logger.error('useBlockResolve', 'searchBlockRefs failed', { error: String(err) })
+      logger.error('useBlockResolve', 'searchBlockRefs failed', undefined, err)
       return []
     }
   }, [])

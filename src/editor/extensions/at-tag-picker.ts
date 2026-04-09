@@ -79,7 +79,8 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
               logger.warn(
                 'AtTagPicker',
                 'Failed to resolve tag via input rule, falling back to plain text',
-                { text: innerText, error: String(err) },
+                { text: innerText },
+                err,
               )
               editor.chain().focus().insertContentAt(insertPos, innerText).run()
             }
@@ -109,7 +110,7 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
                 editor.chain().focus().deleteRange(range).insertTagRef(newId).run()
               })
               .catch((err) => {
-                logger.error('AtTagPicker', 'Failed to create tag', { error: String(err) })
+                logger.error('AtTagPicker', 'Failed to create tag', undefined, err)
               })
           } else {
             editor.chain().focus().deleteRange(range).insertTagRef(item.id).run()

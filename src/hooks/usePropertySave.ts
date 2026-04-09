@@ -65,11 +65,15 @@ export function usePropertySave({
         }
       } catch (err) {
         if (logTag) {
-          logger.error(logTag, 'Failed to save property', {
-            blockId: blockId ?? '',
-            key,
-            error: String(err),
-          })
+          logger.error(
+            logTag,
+            'Failed to save property',
+            {
+              blockId: blockId ?? '',
+              key,
+            },
+            err,
+          )
         }
         toast.error(t(toasts?.saveFailed ?? 'property.saveFailed'))
       }
@@ -89,11 +93,15 @@ export function usePropertySave({
         }
       } catch (err) {
         if (logTag) {
-          logger.error(logTag, 'Failed to delete property', {
-            blockId: blockId ?? '',
-            key,
-            error: String(err),
-          })
+          logger.error(
+            logTag,
+            'Failed to delete property',
+            {
+              blockId: blockId ?? '',
+              key,
+            },
+            err,
+          )
         }
         toast.error(t(toasts?.deleteFailed ?? 'property.deleteFailed'))
       }

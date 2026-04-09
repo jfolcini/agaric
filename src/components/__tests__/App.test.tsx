@@ -980,7 +980,8 @@ describe('App', () => {
         expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
           'App',
           'Failed to list drafts during boot recovery',
-          expect.objectContaining({ error: expect.stringContaining('Draft table locked') }),
+          undefined,
+          expect.any(Error),
         )
       })
     })
@@ -1009,8 +1010,8 @@ describe('App', () => {
           'Failed to flush orphaned draft during boot recovery',
           expect.objectContaining({
             blockId: 'DRAFT_BLOCK_1',
-            error: expect.stringContaining('Write failed'),
           }),
+          expect.any(Error),
         )
       })
     })

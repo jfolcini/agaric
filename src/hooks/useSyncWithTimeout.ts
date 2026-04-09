@@ -28,7 +28,8 @@ export function useSyncWithTimeout(timeoutMs = 60_000) {
           logger.warn(
             'useSyncWithTimeout',
             'Sync timeout promise rejected (expected if sync completed first)',
-            { error: String(err) },
+            undefined,
+            err,
           )
         })
         await Promise.race([syncFn(), timeout])

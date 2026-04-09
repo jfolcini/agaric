@@ -296,10 +296,14 @@ export function BlockTree({
         useBlockStore.setState({ focusedBlockId: result.id })
       })
       .catch((err: unknown) => {
-        logger.error('BlockTree', 'Failed to auto-create first block', {
-          rootParentId: rootParentId ?? '',
-          error: String(err),
-        })
+        logger.error(
+          'BlockTree',
+          'Failed to auto-create first block',
+          {
+            rootParentId: rootParentId ?? '',
+          },
+          err,
+        )
         toast.error(t('blockTree.createFirstBlockFailed'))
       })
   }, [autoCreateFirstBlock, loading, blocks.length, rootParentId, t, pageStore])
@@ -332,15 +336,21 @@ export function BlockTree({
               }
             }
           } catch (err) {
-            logger.warn('BlockTree', 'Batch resolve failed for uncached block links', {
-              error: String(err),
-            })
+            logger.warn(
+              'BlockTree',
+              'Batch resolve failed for uncached block links',
+              undefined,
+              err,
+            )
           }
         }
       } catch (err) {
-        logger.warn('BlockTree', 'Failed to scan blocks for uncached link references', {
-          error: String(err),
-        })
+        logger.warn(
+          'BlockTree',
+          'Failed to scan blocks for uncached link references',
+          undefined,
+          err,
+        )
       }
     }
     resolveUncachedLinks()
@@ -373,9 +383,7 @@ export function BlockTree({
         setBlockProperties(mapped)
       })
       .catch((err: unknown) => {
-        logger.warn('BlockTree', 'Failed to load batch properties for blocks', {
-          error: String(err),
-        })
+        logger.warn('BlockTree', 'Failed to load batch properties for blocks', undefined, err)
       })
   }, [blocks])
 
@@ -401,10 +409,14 @@ export function BlockTree({
               if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
             })
             .catch((err: unknown) => {
-              logger.error('BlockTree', 'Failed to set task state from checkbox syntax', {
-                blockId,
-                error: String(err),
-              })
+              logger.error(
+                'BlockTree',
+                'Failed to set task state from checkbox syntax',
+                {
+                  blockId,
+                },
+                err,
+              )
               toast.error(t('blockTree.setTaskStateFailed'))
             })
           pageStore.setState((s) => ({
@@ -490,10 +502,14 @@ export function BlockTree({
             const parentBlock = await getBlock(targetBlock.parent_id)
             onNavigateToPage?.(targetBlock.parent_id, parentBlock.content ?? 'Untitled', targetId)
           } catch (err) {
-            logger.warn('BlockTree', 'Failed to fetch parent block title for navigation', {
-              parentId: targetBlock.parent_id,
-              error: String(err),
-            })
+            logger.warn(
+              'BlockTree',
+              'Failed to fetch parent block title for navigation',
+              {
+                parentId: targetBlock.parent_id,
+              },
+              err,
+            )
             onNavigateToPage?.(targetBlock.parent_id, 'Untitled', targetId)
           }
           return
@@ -504,10 +520,14 @@ export function BlockTree({
         setFocused(targetId)
         rovingEditorRef.current.mount(targetId, targetBlock.content ?? '')
       } catch (err) {
-        logger.error('BlockTree', 'Failed to navigate to block link target', {
-          targetId,
-          error: String(err),
-        })
+        logger.error(
+          'BlockTree',
+          'Failed to navigate to block link target',
+          {
+            targetId,
+          },
+          err,
+        )
         toast.error(t('blockTree.linkTargetNotFound'))
       }
     },
@@ -527,11 +547,15 @@ export function BlockTree({
       if (!focusedBlockId) return
       setProperty({ blockId: focusedBlockId, key: item.label, valueText: '' }).catch(
         (err: unknown) => {
-          logger.error('BlockTree', 'Failed to set property from slash command', {
-            blockId: focusedBlockId,
-            key: item.label,
-            error: String(err),
-          })
+          logger.error(
+            'BlockTree',
+            'Failed to set property from slash command',
+            {
+              blockId: focusedBlockId,
+              key: item.label,
+            },
+            err,
+          )
           toast.error(t('blockTree.setPropertyFailed'))
         },
       )
@@ -544,7 +568,7 @@ export function BlockTree({
   // ── Draft discard callback for Escape ────────────────────────────────
   const handleDiscardDraft = useCallback((blockId: string) => {
     deleteDraft(blockId).catch((err: unknown) => {
-      logger.warn('BlockTree', 'Failed to delete draft on discard', { blockId, error: String(err) })
+      logger.warn('BlockTree', 'Failed to delete draft on discard', { blockId }, err)
     })
   }, [])
 

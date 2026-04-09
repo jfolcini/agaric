@@ -86,7 +86,7 @@ export function PairingDialog({
       setPeers(peerList)
       setCountdown(PAIRING_TIMEOUT_SECONDS)
     } catch (err) {
-      logger.error('PairingDialog', 'Failed to initialize pairing', { error: String(err) })
+      logger.error('PairingDialog', 'Failed to initialize pairing', undefined, err)
       setError(`Failed to start pairing: ${String(err instanceof Error ? err.message : err)}`)
     }
     setLoading(false)
@@ -191,7 +191,7 @@ export function PairingDialog({
       toast.success(t('pairing.successMessage'))
       onOpenChange(false)
     } catch (err) {
-      logger.error('PairingDialog', 'Pairing failed', { error: String(err) })
+      logger.error('PairingDialog', 'Pairing failed', undefined, err)
       setError(`Pairing failed: ${String(err instanceof Error ? err.message : err)}`)
     }
     setPairLoading(false)
@@ -245,7 +245,7 @@ export function PairingDialog({
   const handleCancel = useCallback(() => {
     // Cancel any in-progress pairing session
     cancelPairing().catch((err) =>
-      logger.error('PairingDialog', 'Failed to cancel pairing', { error: String(err) }),
+      logger.error('PairingDialog', 'Failed to cancel pairing', undefined, err),
     )
     setPairingInfo(null)
     setWords(['', '', '', ''])
@@ -263,7 +263,7 @@ export function PairingDialog({
       setPeers((prev) => prev.filter((p) => p.peer_id !== peerId))
       setUnpairPeerId(null)
     } catch (err) {
-      logger.error('PairingDialog', 'Failed to unpair device', { error: String(err) })
+      logger.error('PairingDialog', 'Failed to unpair device', undefined, err)
       setError(`Failed to unpair device: ${String(err instanceof Error ? err.message : err)}`)
     }
   }, [])

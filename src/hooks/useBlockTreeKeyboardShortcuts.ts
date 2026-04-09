@@ -136,8 +136,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'D') {
         e.preventDefault()
         if (!focusedBlockId) return
-        datePickerCursorPos.current =
-          rovingEditor.editor?.state.selection.$anchor.pos ?? undefined
+        datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos ?? undefined
         setDatePickerMode('date')
         setDatePickerOpen(true)
       }

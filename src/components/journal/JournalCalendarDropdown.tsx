@@ -84,9 +84,12 @@ export function JournalCalendarDropdown({
         if (!cancelled) setAgendaBySource(data)
       })
       .catch((err: unknown) => {
-        logger.warn('JournalCalendarDropdown', 'Failed to load agenda counts for calendar', {
-          error: String(err),
-        })
+        logger.warn(
+          'JournalCalendarDropdown',
+          'Failed to load agenda counts for calendar',
+          undefined,
+          err,
+        )
       })
     return () => {
       cancelled = true

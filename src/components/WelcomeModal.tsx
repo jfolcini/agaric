@@ -120,9 +120,7 @@ export function WelcomeModal() {
       toast.success(t('welcome.samplePagesCreated'))
       handleDismiss()
     } catch (err) {
-      logger.error('WelcomeModal', 'Failed to create sample pages', {
-        error: String(err),
-      })
+      logger.error('WelcomeModal', 'Failed to create sample pages', undefined, err)
       toast.error(t('welcome.samplePagesFailed'))
     } finally {
       setCreating(false)

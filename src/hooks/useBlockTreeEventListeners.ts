@@ -97,11 +97,15 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
           blocks: s.blocks.map((b) => (b.id === focusedBlockId ? { ...b, priority } : b)),
         }))
       } catch (err) {
-        logger.error('BlockTree', 'Failed to set priority', {
-          blockId: focusedBlockId,
-          priority,
-          error: String(err),
-        })
+        logger.error(
+          'BlockTree',
+          'Failed to set priority',
+          {
+            blockId: focusedBlockId,
+            priority,
+          },
+          err,
+        )
         toast.error(t('blockTree.setPriorityFailed'))
       }
     }

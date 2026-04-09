@@ -32,7 +32,7 @@ export function useDraftAutosave(blockId: string | null, content: string) {
     timerRef.current = setTimeout(() => {
       if (versionRef.current !== capturedVersion) return // stale — discardDraft was called
       saveDraft(blockId, content).catch((err: unknown) => {
-        logger.warn('useDraftAutosave', 'saveDraft failed', { blockId, error: String(err) })
+        logger.warn('useDraftAutosave', 'saveDraft failed', { blockId }, err)
       })
     }, 2000)
 
@@ -40,10 +40,14 @@ export function useDraftAutosave(blockId: string | null, content: string) {
       if (timerRef.current) clearTimeout(timerRef.current)
       if (blockIdRef.current) {
         flushDraft(blockIdRef.current).catch((err: unknown) => {
-          logger.warn('useDraftAutosave', 'flushDraft failed', {
-            blockId: blockIdRef.current ?? '',
-            error: String(err),
-          })
+          logger.warn(
+            'useDraftAutosave',
+            'flushDraft failed',
+            {
+              blockId: blockIdRef.current ?? '',
+            },
+            err,
+          )
         })
       }
     }
@@ -55,10 +59,14 @@ export function useDraftAutosave(blockId: string | null, content: string) {
     if (timerRef.current) clearTimeout(timerRef.current)
     if (blockIdRef.current) {
       deleteDraft(blockIdRef.current).catch((err: unknown) => {
-        logger.warn('useDraftAutosave', 'deleteDraft failed during discard', {
-          blockId: blockIdRef.current ?? '',
-          error: String(err),
-        })
+        logger.warn(
+          'useDraftAutosave',
+          'deleteDraft failed during discard',
+          {
+            blockId: blockIdRef.current ?? '',
+          },
+          err,
+        )
       })
     }
   }

@@ -73,7 +73,7 @@ export function DeviceManagement(): React.ReactElement {
       })
       setPeers(peerList)
     } catch (err) {
-      logger.error('DeviceManagement', 'Failed to load device info', { error: String(err) })
+      logger.error('DeviceManagement', 'Failed to load device info', undefined, err)
       setError('Failed to load device info')
     }
     setLoading(false)
@@ -89,7 +89,7 @@ export function DeviceManagement(): React.ReactElement {
       setPeers((prev) => prev.filter((p) => p.peer_id !== peerId))
       setUnpairPeerId(null)
     } catch (err) {
-      logger.error('DeviceManagement', 'Failed to unpair device', { error: String(err) })
+      logger.error('DeviceManagement', 'Failed to unpair device', undefined, err)
       setError('Failed to unpair device')
     }
   }, [])
@@ -108,7 +108,7 @@ export function DeviceManagement(): React.ReactElement {
           message === 'Sync timed out'
             ? 'Sync took too long — check your connection and try again'
             : message
-        logger.error('DeviceManagement', 'Sync failed', { error: String(err) })
+        logger.error('DeviceManagement', 'Sync failed', undefined, err)
         setError(displayMessage)
       }
       setSyncingPeerId(null)
@@ -127,7 +127,7 @@ export function DeviceManagement(): React.ReactElement {
           await startSync(peer.peer_id)
         })
       } catch (err) {
-        logger.error('DeviceManagement', `Sync failed for ${peer.peer_id}`, { error: String(err) })
+        logger.error('DeviceManagement', `Sync failed for ${peer.peer_id}`, undefined, err)
         failures.push(peer.device_name || truncateId(peer.peer_id))
       }
       setSyncingPeerId(null)

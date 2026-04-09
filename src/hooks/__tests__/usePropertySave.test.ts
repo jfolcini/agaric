@@ -160,6 +160,7 @@ describe('usePropertySave handleSave', () => {
       'TestComponent',
       'Failed to save property',
       expect.objectContaining({ blockId: 'BLOCK_1', key: 'status' }),
+      expect.any(Error),
     )
   })
 
@@ -295,6 +296,7 @@ describe('usePropertySave handleDelete', () => {
       'TestComponent',
       'Failed to delete property',
       expect.objectContaining({ blockId: 'BLOCK_1', key: 'status' }),
+      expect.any(Error),
     )
   })
 

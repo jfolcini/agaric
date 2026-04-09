@@ -91,7 +91,8 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
               logger.warn(
                 'BlockLinkPicker',
                 'Failed to resolve block link via input rule, falling back to plain text',
-                { text: innerText, error: String(err) },
+                { text: innerText },
+                err,
               )
               // On error, re-insert as plain text so the user doesn't lose content
               editor.chain().focus().insertContentAt(insertPos, innerText).run()
@@ -122,9 +123,12 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
                 editor.chain().focus().deleteRange(range).insertBlockLink(newId).run()
               })
               .catch((err) => {
-                logger.error('BlockLinkPicker', 'Failed to create page for block link', {
-                  error: String(err),
-                })
+                logger.error(
+                  'BlockLinkPicker',
+                  'Failed to create page for block link',
+                  undefined,
+                  err,
+                )
               })
           } else {
             editor.chain().focus().deleteRange(range).insertBlockLink(item.id).run()
