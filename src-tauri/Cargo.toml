@@ -150,3 +150,27 @@ harness = false
 [[bench]]
 name = "property_bench"
 harness = false
+
+[[bench]]
+name = "compaction_bench"
+harness = false
+
+[[bench]]
+name = "alias_bench"
+harness = false
+
+[[bench]]
+name = "export_bench"
+harness = false
+
+[[bench]]
+name = "graph_bench"
+harness = false
+
+[[bench]]
+name = "attachment_bench"
+harness = false
+
+[[bench]]
+name = "property_def_bench"
+harness = false

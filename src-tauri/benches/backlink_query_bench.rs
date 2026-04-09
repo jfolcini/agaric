@@ -8,6 +8,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use agaric_lib::backlink_query::{
     eval_backlink_query, list_property_keys, BacklinkFilter, BacklinkSort, CompareOp, SortDir,
 };
+use agaric_lib::commands::{count_backlinks_batch_inner, list_unlinked_references_inner};
 use agaric_lib::db::init_pool;
 use agaric_lib::pagination::PageRequest;
 
@@ -574,6 +575,136 @@ fn bench_scale(c: &mut Criterion) {
 }
 
 // ===========================================================================
+// 7. count_backlinks_batch — batch backlink counting for multiple pages
+// ===========================================================================
+
+/// Seed N content blocks with links pointing to 10 target pages.
+async fn seed_backlinks_for_batch(pool: &SqlitePool, n: usize) {
+    let mut tx = pool.begin().await.unwrap();
+
+    // Create 10 target pages
+    for p in 0..10 {
+        let page_id = format!("PAGE{p:020}");
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', ?)")
+            .bind(&page_id)
+            .bind(format!("Page {p}"))
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+    }
+
+    // Create N source blocks, each linking to one of the 10 pages (round-robin)
+    for i in 0..n {
+        let src_id = format!("BSRC{i:019}");
+        let target_page = format!("PAGE{:020}", i % 10);
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id) \
+             VALUES (?, 'content', ?, ?)",
+        )
+        .bind(&src_id)
+        .bind(format!("Source block {i}"))
+        .bind(&target_page)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(&src_id)
+            .bind(&target_page)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+    }
+
+    tx.commit().await.unwrap();
+}
+
+fn bench_count_backlinks_batch(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("count_backlinks_batch");
+
+    for count in [100, 1_000, 10_000] {
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("batch_{count}")));
+        rt.block_on(seed_backlinks_for_batch(&pool, count));
+
+        let page_ids: Vec<String> = (0..10).map(|p| format!("PAGE{p:020}")).collect();
+
+        group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
+            b.to_async(&rt)
+                .iter(|| count_backlinks_batch_inner(&pool, page_ids.clone()));
+        });
+    }
+    group.finish();
+}
+
+// ===========================================================================
+// 8. list_unlinked_references — unlinked mention search
+// ===========================================================================
+
+/// Seed N content blocks; some contain the target page title as an unlinked mention.
+/// Also seeds FTS entries so the unlinked-references query can find them.
+async fn seed_unlinked_refs(pool: &SqlitePool, n: usize) {
+    let mut tx = pool.begin().await.unwrap();
+
+    // Target page whose title we search for as unlinked mentions
+    let page_id = "UNLINK_TARGET_0000000000";
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', 'Benchmark Topic')",
+    )
+    .bind(page_id)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+
+    for i in 0..n {
+        let src_id = format!("USRC{i:019}");
+        // Every 5th block mentions the page title text (20% mention rate)
+        let content = if i % 5 == 0 {
+            format!("This block mentions Benchmark Topic somewhere in block {i}")
+        } else {
+            format!("Unrelated content in block {i}")
+        };
+
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', ?)")
+            .bind(&src_id)
+            .bind(&content)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+
+        // FTS entry for content search
+        sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+            .bind(&src_id)
+            .bind(&content)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+    }
+
+    tx.commit().await.unwrap();
+}
+
+fn bench_list_unlinked_references(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("list_unlinked_references");
+
+    for count in [100, 1_000, 10_000] {
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("unlinked_{count}")));
+        rt.block_on(seed_unlinked_refs(&pool, count));
+
+        group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
+            b.to_async(&rt).iter(|| {
+                list_unlinked_references_inner(&pool, "UNLINK_TARGET_0000000000", None, Some(50))
+            });
+        });
+    }
+    group.finish();
+}
+
+// ===========================================================================
 // Criterion harness
 // ===========================================================================
 
@@ -589,6 +720,10 @@ criterion_group!(property_keys_benches, bench_list_property_keys,);
 
 criterion_group!(scale_benches, bench_scale,);
 
+criterion_group!(batch_benches, bench_count_backlinks_batch,);
+
+criterion_group!(unlinked_benches, bench_list_unlinked_references,);
+
 criterion_main!(
     eval_query_benches,
     filter_benches,
@@ -596,4 +731,6 @@ criterion_main!(
     pagination_benches,
     property_keys_benches,
     scale_benches,
+    batch_benches,
+    unlinked_benches,
 );

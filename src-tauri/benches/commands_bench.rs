@@ -7,7 +7,8 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 
 use agaric_lib::commands::{
     batch_resolve_inner, create_block_inner, edit_block_inner, get_batch_properties_inner,
-    list_blocks_inner, set_property_inner,
+    get_block_history_inner, get_block_inner, get_conflicts_inner, list_blocks_inner,
+    set_property_inner,
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
@@ -733,6 +734,133 @@ fn bench_list_blocks_at_scale(c: &mut Criterion) {
 }
 
 // ===========================================================================
+// get_block benchmarks
+// ===========================================================================
+
+/// Benchmark get_block_inner: look up a single block by ID at varying DB sizes.
+fn bench_get_block(c: &mut Criterion) {
+    let mut group = c.benchmark_group("get_block");
+
+    for db_size in [100, 1_000, 10_000] {
+        let rt = Runtime::new().unwrap();
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("get_block_{db_size}")));
+        let ids = rt.block_on(seed_blocks_bulk(&pool, db_size));
+        let target_id = ids[db_size / 2].clone(); // pick the middle block
+
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{db_size}_blocks")),
+            &db_size,
+            |b, _| {
+                b.to_async(&rt).iter(|| {
+                    let pool = pool.clone();
+                    let target_id = target_id.clone();
+                    async move { get_block_inner(&pool, target_id).await.unwrap() }
+                })
+            },
+        );
+    }
+    group.finish();
+}
+
+// ===========================================================================
+// get_block_history benchmarks
+// ===========================================================================
+
+/// Benchmark get_block_history_inner: fetch first page of history for a block
+/// that has been edited M times.
+fn bench_get_block_history(c: &mut Criterion) {
+    let mut group = c.benchmark_group("get_block_history");
+
+    for history_size in [10, 100, 1_000] {
+        let rt = Runtime::new().unwrap();
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("history_{history_size}")));
+        let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+
+        // Seed one block, then edit it `history_size` times to build history.
+        let block_id = rt.block_on(async {
+            let ids = seed_blocks(&pool, &materializer, 1).await;
+            let id = ids[0].clone();
+            for i in 0..history_size {
+                edit_block_inner(
+                    &pool,
+                    "dev-bench",
+                    &materializer,
+                    id.clone(),
+                    format!("History edit number {i} with padding content"),
+                )
+                .await
+                .unwrap();
+            }
+            id
+        });
+
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{history_size}_entries")),
+            &history_size,
+            |b, _| {
+                b.to_async(&rt).iter(|| {
+                    let pool = pool.clone();
+                    let block_id = block_id.clone();
+                    async move {
+                        get_block_history_inner(&pool, block_id, None, Some(50))
+                            .await
+                            .unwrap()
+                    }
+                })
+            },
+        );
+
+        rt.block_on(async { materializer.shutdown() });
+    }
+    group.finish();
+}
+
+// ===========================================================================
+// get_conflicts benchmarks
+// ===========================================================================
+
+/// Benchmark get_conflicts_inner: fetch first page of conflict blocks from a DB
+/// where 10% of rows are marked as conflicts.
+fn bench_get_conflicts(c: &mut Criterion) {
+    let mut group = c.benchmark_group("get_conflicts");
+
+    for db_size in [100, 1_000, 10_000] {
+        let rt = Runtime::new().unwrap();
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("conflicts_{db_size}")));
+        let ids = rt.block_on(seed_blocks_bulk(&pool, db_size));
+
+        // Mark 10% of blocks as conflicts via direct SQL.
+        rt.block_on(async {
+            let conflict_count = db_size / 10;
+            let mut tx = pool.begin().await.unwrap();
+            for id in ids.iter().take(conflict_count) {
+                sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await
+                    .unwrap();
+            }
+            tx.commit().await.unwrap();
+        });
+
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{db_size}_blocks")),
+            &db_size,
+            |b, _| {
+                b.to_async(&rt).iter(|| {
+                    let pool = pool.clone();
+                    async move { get_conflicts_inner(&pool, None, Some(50)).await.unwrap() }
+                })
+            },
+        );
+    }
+    group.finish();
+}
+
+// ===========================================================================
 // Harness
 // ===========================================================================
 
@@ -770,6 +898,13 @@ criterion_group!(
     bench_list_blocks_at_scale,
 );
 
+criterion_group!(
+    read_benches,
+    bench_get_block,
+    bench_get_block_history,
+    bench_get_conflicts,
+);
+
 criterion_main!(
     create_benches,
     edit_benches,
@@ -777,4 +912,5 @@ criterion_main!(
     resolve_benches,
     properties_benches,
     scale_benches,
+    read_benches,
 );

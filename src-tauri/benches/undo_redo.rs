@@ -9,9 +9,12 @@
 //!
 //! Manual only — never in CI or pre-commit (see AGENTS.md).
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use agaric_lib::commands::{revert_ops_inner, undo_page_op_inner};
+use agaric_lib::commands::{
+    compute_edit_diff_inner, redo_page_op_inner, restore_page_to_op_inner, revert_ops_inner,
+    undo_page_op_inner,
+};
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
 use agaric_lib::op::OpRef;
@@ -467,6 +470,289 @@ fn bench_revert_ops_batch_50(c: &mut Criterion) {
 }
 
 // ===========================================================================
+// Benchmark 6: restore_page_to_op_inner — restore to a mid-point
+// ===========================================================================
+
+/// Seed N/2 child blocks, edit each once → N total ops (N/2 creates + N/2 edits).
+/// Pick target_seq at the midpoint (the Nth op from the start = N/2).
+/// Each iteration uses a fresh DB because restore is destructive.
+fn bench_restore_page_to_op(c: &mut Criterion) {
+    let mut group = c.benchmark_group("restore_page_to_op");
+
+    for total_ops in [100, 500, 1000] {
+        let num_blocks = total_ops / 2;
+
+        group.bench_with_input(
+            BenchmarkId::from_parameter(total_ops),
+            &total_ops,
+            |b, _| {
+                let rt = Runtime::new().unwrap();
+                b.iter_custom(|iters| {
+                    let start = std::time::Instant::now();
+                    for _ in 0..iters {
+                        let dir = TempDir::new().unwrap();
+                        let pool = rt.block_on(fresh_pool(&dir, "restore"));
+                        let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+
+                        // Seed: num_blocks children × 1 edit each = 2*num_blocks ops + 1 page create
+                        let (_page_id, _last_seq) =
+                            rt.block_on(seed_flat_page(&pool, num_blocks, 1));
+
+                        // target_seq at midpoint: the Nth op (= num_blocks-th op, which is the
+                        // last create_block before edits start; seq is 1-based, page create is seq=1,
+                        // then creates are seq 2..num_blocks+1, edits are num_blocks+2..2*num_blocks+1)
+                        let target_seq = (num_blocks as i64) + 1; // last create_block seq
+
+                        let page_id = format!("PAGE{:020}", 0);
+                        rt.block_on(async {
+                            restore_page_to_op_inner(
+                                &pool,
+                                BENCH_DEVICE,
+                                &materializer,
+                                page_id,
+                                BENCH_DEVICE.to_string(),
+                                target_seq,
+                            )
+                            .await
+                            .unwrap()
+                        });
+
+                        rt.block_on(async { materializer.shutdown() });
+                    }
+                    start.elapsed()
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+// ===========================================================================
+// Benchmark 7: redo_page_op_inner — redo at various DB sizes
+// ===========================================================================
+
+/// Setup: create page + block, edit block, undo (so there's something to redo).
+/// Parameterize by total blocks in the DB (measures index pressure).
+/// Each iteration: undo then redo (to always have something to redo).
+fn bench_redo_page_op(c: &mut Criterion) {
+    let mut group = c.benchmark_group("redo_page_op");
+
+    for db_blocks in [100, 1000, 10_000] {
+        let rt = Runtime::new().unwrap();
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("redo_{db_blocks}")));
+        let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+
+        // Seed db_blocks children (0 extra edits) to create index pressure
+        let (page_id, _last_seq) = rt.block_on(seed_flat_page(&pool, db_blocks, 0));
+
+        // Create one extra block + edit it so we have an edit op to undo/redo
+        let target_block_id = format!("REDO_TARGET{:012}", 0);
+        rt.block_on(async {
+            let mut tx = pool.begin().await.unwrap();
+
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+                 VALUES (?, 'content', 'before', ?, ?)",
+            )
+            .bind(&target_block_id)
+            .bind(&page_id)
+            .bind(db_blocks as i64 + 1)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+
+            // create_block op
+            let create_seq = _last_seq + 1;
+            let create_json = format!(
+                r#"{{"block_id":"{target_block_id}","block_type":"content","parent_id":"{page_id}","position":{},"content":"before"}}"#,
+                db_blocks as i64 + 1
+            );
+            sqlx::query(
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
+                 VALUES (?, ?, 'fakehash', 'create_block', ?, '2025-01-15T13:00:00.000Z')",
+            )
+            .bind(BENCH_DEVICE)
+            .bind(create_seq)
+            .bind(&create_json)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+
+            // edit_block op
+            let edit_seq = create_seq + 1;
+            let edit_json = format!(
+                r#"{{"block_id":"{target_block_id}","to_text":"after","prev_edit":null}}"#
+            );
+            sqlx::query(
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
+                 VALUES (?, ?, 'fakehash', 'edit_block', ?, '2025-01-15T13:00:01.000Z')",
+            )
+            .bind(BENCH_DEVICE)
+            .bind(edit_seq)
+            .bind(&edit_json)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+
+            sqlx::query("UPDATE blocks SET content = 'after' WHERE id = ?")
+                .bind(&target_block_id)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+
+            tx.commit().await.unwrap();
+        });
+
+        group.bench_with_input(
+            BenchmarkId::from_parameter(db_blocks),
+            &db_blocks,
+            |b, _| {
+                b.to_async(&rt).iter(|| {
+                    let pool = pool.clone();
+                    let materializer_ref = &materializer;
+                    let page_id = page_id.clone();
+                    async move {
+                        // Undo the last edit so there's something to redo
+                        let undo_result =
+                            undo_page_op_inner(&pool, BENCH_DEVICE, materializer_ref, page_id, 0)
+                                .await
+                                .unwrap();
+
+                        // Redo
+                        redo_page_op_inner(
+                            &pool,
+                            BENCH_DEVICE,
+                            materializer_ref,
+                            undo_result.new_op_ref.device_id,
+                            undo_result.new_op_ref.seq,
+                        )
+                        .await
+                        .unwrap()
+                    }
+                })
+            },
+        );
+
+        rt.block_on(async { materializer.shutdown() });
+    }
+    group.finish();
+}
+
+// ===========================================================================
+// Benchmark 8: compute_edit_diff_inner — diff at various content sizes
+// ===========================================================================
+
+/// Seed a block, edit it with content of a given size, then benchmark
+/// compute_edit_diff_inner. Parameterize by content size: short (50),
+/// medium (500), long (5000) characters.
+fn bench_compute_edit_diff(c: &mut Criterion) {
+    let mut group = c.benchmark_group("compute_edit_diff");
+
+    for (label, size) in [("short_50", 50), ("medium_500", 500), ("long_5000", 5000)] {
+        let rt = Runtime::new().unwrap();
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("diff_{label}")));
+
+        let block_id = format!("DIFFBLK{:016}", 0);
+        let page_id = format!("DIFFPAGE{:016}", 0);
+
+        // Generate content strings of the specified size
+        let initial_content: String = "a".repeat(size);
+        // Change roughly half the content so the diff is non-trivial
+        let edited_content: String = "b".repeat(size / 2) + &"a".repeat(size - size / 2);
+
+        let edit_seq: i64 = rt.block_on(async {
+            let mut tx = pool.begin().await.unwrap();
+
+            // Create page block
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'page', 'Diff Page', 1)",
+            )
+            .bind(&page_id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+
+            // Create page op
+            let page_create_json = format!(
+                r#"{{"block_id":"{page_id}","block_type":"page","parent_id":null,"position":1,"content":"Diff Page"}}"#
+            );
+            sqlx::query(
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
+                 VALUES (?, 1, 'fakehash', 'create_block', ?, '2025-01-15T12:00:00.000Z')",
+            )
+            .bind(BENCH_DEVICE)
+            .bind(&page_create_json)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+
+            // Create child block
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+                 VALUES (?, 'content', ?, ?, 1)",
+            )
+            .bind(&block_id)
+            .bind(&initial_content)
+            .bind(&page_id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+
+            let create_json = format!(
+                r#"{{"block_id":"{block_id}","block_type":"content","parent_id":"{page_id}","position":1,"content":"{initial_content}"}}"#
+            );
+            sqlx::query(
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
+                 VALUES (?, 2, 'fakehash', 'create_block', ?, '2025-01-15T12:00:01.000Z')",
+            )
+            .bind(BENCH_DEVICE)
+            .bind(&create_json)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+
+            // Edit block op
+            let edit_json = format!(
+                r#"{{"block_id":"{block_id}","to_text":"{edited_content}","prev_edit":null}}"#
+            );
+            sqlx::query(
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
+                 VALUES (?, 3, 'fakehash', 'edit_block', ?, '2025-01-15T12:00:02.000Z')",
+            )
+            .bind(BENCH_DEVICE)
+            .bind(&edit_json)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+
+            sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
+                .bind(&edited_content)
+                .bind(&block_id)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+
+            tx.commit().await.unwrap();
+            3i64 // edit op is seq=3
+        });
+
+        group.bench_function(label, |b| {
+            b.to_async(&rt).iter(|| {
+                let pool = pool.clone();
+                async move {
+                    compute_edit_diff_inner(&pool, BENCH_DEVICE.to_string(), edit_seq)
+                        .await
+                        .unwrap()
+                }
+            })
+        });
+    }
+    group.finish();
+}
+
+// ===========================================================================
 // Harness
 // ===========================================================================
 
@@ -482,9 +768,18 @@ criterion_group!(undo_benches, bench_undo_page_op_various_depths,);
 
 criterion_group!(revert_benches, bench_revert_ops_batch_50,);
 
+criterion_group!(restore_benches, bench_restore_page_to_op,);
+
+criterion_group!(redo_benches, bench_redo_page_op,);
+
+criterion_group!(diff_benches, bench_compute_edit_diff,);
+
 criterion_main!(
     reverse_benches,
     page_history_benches,
     undo_benches,
     revert_benches,
+    restore_benches,
+    redo_benches,
+    diff_benches,
 );

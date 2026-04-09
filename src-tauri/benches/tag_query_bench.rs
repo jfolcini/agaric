@@ -1,5 +1,6 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
+use agaric_lib::commands::{list_tags_by_prefix_inner, list_tags_for_block_inner};
 use agaric_lib::db::init_pool;
 use agaric_lib::pagination::PageRequest;
 use agaric_lib::tag_inheritance::rebuild_all;
@@ -291,6 +292,128 @@ fn bench_cte_vs_materialized(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// 7. list_tags_by_prefix — autocomplete-style prefix search
+// ---------------------------------------------------------------------------
+
+/// Seed N tag blocks with tag_cache entries for prefix benchmarking.
+async fn seed_tags_for_prefix(pool: &SqlitePool, n: usize) {
+    let mut tx = pool.begin().await.unwrap();
+
+    for i in 0..n {
+        let tag_id = format!("TAG{i:020}");
+        let name = format!("bench-tag-{i:06}");
+
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'tag', ?)")
+            .bind(&tag_id)
+            .bind(&name)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "INSERT INTO tags_cache (tag_id, name, usage_count, updated_at) \
+             VALUES (?, ?, ?, '2025-01-01T00:00:00Z')",
+        )
+        .bind(&tag_id)
+        .bind(&name)
+        .bind(i as i64)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    }
+
+    tx.commit().await.unwrap();
+}
+
+fn bench_list_tags_by_prefix(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("list_tags_by_prefix");
+
+    for count in [100, 1_000, 10_000] {
+        let dir = TempDir::new().unwrap();
+        let pool = make_pool(&rt, &dir);
+        rt.block_on(seed_tags_for_prefix(&pool, count));
+
+        group.throughput(Throughput::Elements(count as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
+            b.to_async(&rt)
+                .iter(|| list_tags_by_prefix_inner(&pool, String::new(), Some(50)));
+        });
+    }
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
+// 8. list_tags_for_block — tags attached to a single block
+// ---------------------------------------------------------------------------
+
+/// Seed N blocks and attach 5 tags to one target block.
+async fn seed_blocks_with_tags_for_target(pool: &SqlitePool, n: usize) {
+    let mut tx = pool.begin().await.unwrap();
+
+    // Create the target block
+    let target_id = "TARGET_BLOCK_000000000000";
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', 'Target block')",
+    )
+    .bind(target_id)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+
+    // Create 5 tag blocks and attach them to the target
+    for t in 0..5 {
+        let tag_id = format!("TAGTGT{t:018}");
+        let name = format!("target-tag-{t}");
+
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'tag', ?)")
+            .bind(&tag_id)
+            .bind(&name)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(target_id)
+            .bind(&tag_id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+    }
+
+    // Create the remaining N-1 filler blocks (no tags on them)
+    for i in 1..n {
+        let id = format!("FILL{i:020}");
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', ?)")
+            .bind(&id)
+            .bind(format!("Filler block {i}"))
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+    }
+
+    tx.commit().await.unwrap();
+}
+
+fn bench_list_tags_for_block(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("list_tags_for_block");
+
+    for count in [100, 1_000, 10_000] {
+        let dir = TempDir::new().unwrap();
+        let pool = make_pool(&rt, &dir);
+        rt.block_on(seed_blocks_with_tags_for_target(&pool, count));
+
+        group.throughput(Throughput::Elements(count as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
+            b.to_async(&rt)
+                .iter(|| list_tags_for_block_inner(&pool, "TARGET_BLOCK_000000000000".to_string()));
+        });
+    }
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Criterion harness
 // ---------------------------------------------------------------------------
 
@@ -302,5 +425,7 @@ criterion_group!(
     bench_inheritance_wide_tree,
     bench_eval_tag_query_paginated,
     bench_cte_vs_materialized,
+    bench_list_tags_by_prefix,
+    bench_list_tags_for_block,
 );
 criterion_main!(benches);

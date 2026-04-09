@@ -10,8 +10,9 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use agaric_lib::commands::create_block_inner;
+use agaric_lib::commands::list_drafts_inner;
 use agaric_lib::db::init_pool;
-use agaric_lib::draft::{flush_draft, save_draft, save_draft_if_changed};
+use agaric_lib::draft::{delete_draft, flush_draft, save_draft, save_draft_if_changed};
 use agaric_lib::materializer::Materializer;
 
 use sqlx::SqlitePool;
@@ -257,6 +258,88 @@ fn bench_flush_draft_with_background_drafts(c: &mut Criterion) {
 }
 
 // ===========================================================================
+// delete_draft — remove a single draft row (parameterised by table size)
+// ===========================================================================
+
+fn bench_delete_draft(c: &mut Criterion) {
+    let sizes: &[usize] = &[100, 1000, 10_000];
+
+    let mut group = c.benchmark_group("delete_draft");
+    for &n in sizes {
+        let rt = Runtime::new().unwrap();
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("del_{n}")));
+        let mat = rt.block_on(async { Materializer::new(pool.clone()) });
+
+        // Seed N drafts (each backed by a real block)
+        let ids = rt.block_on(seed_drafts(&pool, &mat, n));
+
+        // We'll delete the last draft each iteration, re-inserting in setup
+        let target_id = ids.last().unwrap().clone();
+
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{n}_drafts")),
+            &n,
+            |b, _| {
+                b.to_async(&rt).iter_custom(|iters| {
+                    let pool = pool.clone();
+                    let target_id = target_id.clone();
+                    async move {
+                        let start = std::time::Instant::now();
+                        for _ in 0..iters {
+                            // Re-insert so there is something to delete
+                            save_draft(&pool, &target_id, "draft to delete")
+                                .await
+                                .unwrap();
+                            delete_draft(&pool, &target_id).await.unwrap();
+                        }
+                        start.elapsed()
+                    }
+                })
+            },
+        );
+
+        rt.block_on(async { mat.shutdown() });
+    }
+    group.finish();
+}
+
+// ===========================================================================
+// list_drafts — fetch all draft rows (parameterised by table size)
+// ===========================================================================
+
+fn bench_list_drafts(c: &mut Criterion) {
+    let sizes: &[usize] = &[100, 1000, 10_000];
+
+    let mut group = c.benchmark_group("list_drafts");
+    for &n in sizes {
+        let rt = Runtime::new().unwrap();
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("list_{n}")));
+        let mat = rt.block_on(async { Materializer::new(pool.clone()) });
+
+        // Seed N drafts
+        rt.block_on(seed_drafts(&pool, &mat, n));
+
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{n}_drafts")),
+            &n,
+            |b, _| {
+                b.to_async(&rt).iter(|| {
+                    let pool = pool.clone();
+                    async move {
+                        list_drafts_inner(&pool).await.unwrap();
+                    }
+                })
+            },
+        );
+
+        rt.block_on(async { mat.shutdown() });
+    }
+    group.finish();
+}
+
+// ===========================================================================
 // Harness
 // ===========================================================================
 
@@ -275,4 +358,6 @@ criterion_group!(
     bench_flush_draft_with_background_drafts,
 );
 
-criterion_main!(save_benches, flush_benches, scale_benches);
+criterion_group!(crud_benches, bench_delete_draft, bench_list_drafts,);
+
+criterion_main!(save_benches, flush_benches, scale_benches, crud_benches);

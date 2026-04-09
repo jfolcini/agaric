@@ -1590,7 +1590,7 @@ pub async fn list_backlinks_grouped_inner(
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `page_id` is empty
-pub(crate) async fn list_unlinked_references_inner(
+pub async fn list_unlinked_references_inner(
     pool: &SqlitePool,
     page_id: &str,
     cursor: Option<String>,
@@ -3438,7 +3438,7 @@ pub async fn list_projected_agenda_inner(
 /// # Errors
 ///
 /// - Database errors propagated from sqlx.
-pub(crate) async fn count_backlinks_batch_inner(
+pub async fn count_backlinks_batch_inner(
     pool: &SqlitePool,
     page_ids: Vec<String>,
 ) -> Result<HashMap<String, usize>, AppError> {
@@ -3607,7 +3607,7 @@ fn resolve_ulids_for_export(
 ///
 /// - [`AppError::Validation`] — `page_id` does not refer to a `page` block
 /// - [`AppError::NotFound`] — block not found
-pub(crate) async fn export_page_markdown_inner(
+pub async fn export_page_markdown_inner(
     pool: &SqlitePool,
     page_id: &str,
 ) -> Result<String, AppError> {
