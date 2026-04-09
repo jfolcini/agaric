@@ -1,5 +1,17 @@
 # Session Log
 
+## Session 284 — Batch 19: F-21 finish (2026-04-09)
+
+**Commit:** `083275b` — `feat: F-21 finish — search filter chips (page scope + tag filters)` — 9 files, +938/-86
+
+### Items resolved
+- **F-21**: Fully resolved. Backend: `parent_id` and `tag_ids` params on `search_blocks` + `search_fts()`. ALL-semantics tag filtering via COUNT(DISTINCT) subquery. 3 Rust tests. Frontend: filter chip bar in SearchPanel with page scope ("in: Page Name") and tag ("#tagName") chips. Popover-based pickers with autocomplete. Clear all link. 8 frontend tests.
+
+### Test counts
+- Frontend: 235 files, 5572 tests (was 5564)
+- Rust: 1682 tests (was 1679)
+- Open REVIEW-LATER items: 12 (was 13)
+
 ## Session 283 — Batch 18: F-35, F-21 partial (2026-04-09)
 
 **Commit:** `803e488` — `feat: batch 18 — Mermaid diagrams + search operator syntax` — 10 files, +1836/-119

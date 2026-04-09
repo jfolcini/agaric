@@ -553,3 +553,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 
 ### Search Operators (session 283)
 - **Operator-aware sanitize_fts_query** (F-21 partial): `QueryToken` enum + `tokenize_query()` state machine in `fts.rs`. Preserves `"quoted phrases"` as FTS5 phrase tokens, `NOT`/`OR`/`AND` as bare keywords (case-insensitive). Non-operator tokens safely quoted. NEAR/*/()/:/ injection prevented. 11 Rust tests.
+
+### Search Filter Chips (session 284)
+- **Backend filter params** (F-21): `search_blocks` command accepts `parent_id: Option<String>` and `tag_ids: Option<Vec<String>>`. `search_fts()` builds dynamic SQL with parent filter (`AND b.parent_id = ?`) and ALL-semantics tag filter (`COUNT(DISTINCT bt.tag_id) ... = ?`). Safe parameterized SQL. 3 Rust tests.
+- **Filter chip bar** (F-21): SearchPanel filter state (`filterPageId`, `filterTagIds`). Chip UI with `Badge variant="secondary"` for page scope ("in: Page Name") and tags ("#tagName"). Popover-based pickers with `listBlocks`/`listTagsByPrefix` autocomplete. Clear all link. Active filter indicator. 8 frontend tests.
