@@ -1,5 +1,54 @@
 # Session Log
 
+## Session 287 — Batch 20: F-26, F-27 (2026-04-09)
+
+**Commit:** `0600dc3` — `feat: F-26 point-in-time restore + F-27 drag-drop file attachments` — 20 files, +1373/-118
+
+### Items resolved
+- **F-26**: Point-in-time restore. Backend: `RestoreToOpResult` struct, `restore_page_to_op_inner()` with recursive CTE for nested block discovery, page-scoped + global (`__all__`) modes, non-reversible ops skipped. 5 Rust tests (happy path, non-reversible skip, global scope, no ops after target, nested blocks). Frontend: "Restore to here" button on HistoryListItem (tooltip, aria-label, hidden for non-reversible), ConfirmDialog with destructive variant, success/warning/error toasts. 9 frontend tests. Specta bindings regenerated.
+- **F-27**: Drag-and-drop + clipboard paste for file attachments. New `file-utils.ts` extracts `guessMimeType` from BlockTree (expanded with docx, xlsx, mp4, mov, mp3, wav, html, css, js) + `extractFileInfo` helper. EditableBlock: `onDrop`/`onDragOver`/`onDragLeave`/`onPaste` handlers on focused `<section>` with visual `ring-2` drag-over feedback. Paste distinguishes file vs text (returns early for text). 13 file-utils tests + 8 EditableBlock tests.
+
+### Files created
+- `src/lib/file-utils.ts` — shared MIME guesser + file info extractor (48 lines)
+- `src/lib/__tests__/file-utils.test.ts` — 13 tests
+
+### Files modified
+
+| Area | Change |
+|------|--------|
+| commands.rs | F-26: RestoreToOpResult struct, restore_page_to_op_inner() with recursive CTE, 5 tests |
+| lib.rs | F-26: register restore_page_to_op in invoke_handler + specta_builder |
+| .sqlx/ | F-26: 2 new query caches, 1 removed |
+| bindings.ts | F-26: auto-regenerated specta bindings |
+| tauri.ts | F-26: restorePageToOp() wrapper |
+| HistoryListItem.tsx | F-26: onRestoreToHere prop, RotateCcw button with tooltip |
+| HistoryView.tsx | F-26: restore handler, ConfirmDialog (destructive) |
+| EditableBlock.tsx | F-27: drop/paste handlers, isDragOver state, cn() conditional styling |
+| BlockTree.tsx | F-27: re-export guessMimeType from file-utils |
+| useBlockSlashCommands.ts | F-27: import guessMimeType from file-utils |
+| BlockTree.test.tsx | F-27: fix pre-existing test (file.docx → file.rar for unknown type) |
+| i18n.ts | F-26: 9 new i18n keys (history.restoreToHere*, restoreSuccess, etc.) |
+
+### Review findings fixed
+- F-26 backend: page-scoped query replaced with recursive CTE (review found it missed nested blocks)
+- F-26 backend: test assertion changed from `>=` to `assert_eq!` for exact counts
+- F-26 backend: added nested block test (reviewer flagged coverage gap)
+- F-27 frontend: simplified handlePaste fallback filename logic (reviewer flagged redundancy)
+
+### Test counts
+- Frontend: 236 files, 5602 tests (was 5572)
+- Rust: 1687 tests (was 1682)
+- Open REVIEW-LATER items: 7 (was 9)
+
+## Session 286 — Review + plan for F-26, F-27, UX-83, UX-86 (2026-04-09)
+
+**Commit:** `06dec4a` — `docs: add detailed implementation plans for F-26, F-27, UX-83, UX-86` — 1 file, +61/-16
+
+Prototyped all 4 items with parallel subagents; review found 8 test failures and critical issues (invalid Tailwind variant, stale useMemo, broken existing tests). Reverted all code changes and added step-by-step implementation plans to REVIEW-LATER.md.
+
+### Test/doc counts
+- Open REVIEW-LATER items: 9 (unchanged — plans added, not resolved)
+
 ## Session 285 — D-1, D-4, T-13 (2026-04-09)
 
 **Commit:** `ceef91e` — `docs: fix stale counts in AGENTS.md files` — 3 files, +4/-4

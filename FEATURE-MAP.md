@@ -96,6 +96,7 @@ The default view — one page per day, created automatically.
 - Word-level diff display for edit operations
 - Multi-select for batch revert (Ctrl+Click, Shift+Click, Ctrl+A)
 - Vim-style navigation (j/k, Space to toggle, Enter to revert)
+- **Point-in-time restore** (F-26): "Restore to here" button on each history entry. Reverts all ops after the target op (page-scoped with recursive CTE for nested blocks, or global `__all__`). Non-reversible ops (purge_block, delete_attachment) are skipped with warning toast. Confirmation dialog with destructive variant. Backend: `restore_page_to_op` command delegates to existing `revert_ops_inner()`. 5 Rust tests + 9 frontend tests.
 
 ### Templates
 
@@ -156,6 +157,7 @@ Markdown-based WYSIWYG editing:
 - **Draft autosave**: content auto-saved every 2s while editing; orphaned drafts recovered on boot
 - **Swipe-to-delete** (mobile): swipe left 80px to reveal delete button, 200px to auto-delete
 - **Sticky headers** in 6 views: SearchPanel, PageBrowser, PageHeader, HistoryView, ConflictList, AgendaView
+- **Drag-and-drop file attachments** (F-27): Drop files onto a focused block or paste images from clipboard to attach. `onDrop`/`onDragOver`/`onDragLeave`/`onPaste` handlers on the focused `<section>` wrapper. Visual `ring-2 ring-primary` drag-over feedback. Multiple files supported. Paste distinguishes file vs text (returns early for text, letting TipTap handle it). Shared `file-utils.ts` module with `guessMimeType()` (20+ MIME types) and `extractFileInfo()`. Tauri-specific `File.path` limitation documented — shows error toast if path unavailable. 13 file-utils tests + 8 EditableBlock tests.
 
 ### Inline References
 
@@ -478,6 +480,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **property-save-utils** (`src/lib/property-save-utils.ts`): Shared property management helpers. `NON_DELETABLE_PROPERTIES` (11 system-managed keys), `buildInitParams(blockId, def)` returns type-appropriate init params (number→0, date→today, text/select→'', ref→null), `handleSaveProperty()`, `handleDeleteProperty()`. Used by PagePropertyTable, BlockPropertyDrawer.
 - **logger** (`src/lib/logger.ts`): Structured frontend logging with dual-write (console + Tauri IPC bridge), stack capture at call site, cause chain extraction (3-level deep), and rate limiting (5 per 60s per module:message). Methods: `debug`, `info`, `warn`, `error`. Global error/unhandledrejection handlers in `main.tsx`. Used by 24+ production files.
 - **format-relative-time** (`src/lib/format-relative-time.ts`): `formatRelativeTime(isoString, t)` returns human-readable relative time ("just now", "Xm ago", "Xh ago", "Xd ago"). Uses i18n `t()` for all strings. Used by App sidebar sync status (UX-76).
+- **file-utils** (`src/lib/file-utils.ts`): `guessMimeType(filename)` maps 20+ file extensions to MIME types (images, documents, office, media, archives). `extractFileInfo(file)` extracts filename, mimeType, sizeBytes, and Tauri-specific `fsPath` from a `File` object. Used by EditableBlock (drag-drop/paste), useBlockSlashCommands (/attach command). Re-exported from BlockTree for backward compat. 13 tests.
 
 ### CSS Utilities
 - **`.touch-target`** (`src/index.css`): Tailwind `@utility` for `@media(pointer:coarse)` min-height 44px touch targets. Used across 19+ components.
