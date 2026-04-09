@@ -11,6 +11,7 @@
  * - Heading shortcut Ctrl+1-6
  */
 
+import type { MutableRefObject } from 'react'
 import { useEffect } from 'react'
 import { useBlockStore } from '../stores/blocks'
 import type { DatePickerMode } from './useBlockDatePicker'
@@ -27,8 +28,10 @@ export interface UseBlockTreeKeyboardShortcutsOptions {
   setFocused: (id: string | null) => void
   handleToggleTodo: (id: string) => void
   handleSlashCommand: (item: { id: string; label: string }) => void
-  rovingEditor: { editor: unknown }
-  datePickerCursorPos: React.MutableRefObject<number | undefined>
+  rovingEditor: {
+    editor: { state: { selection: { $anchor: { pos: number } } } } | null
+  }
+  datePickerCursorPos: MutableRefObject<number | undefined>
   setDatePickerMode: (mode: DatePickerMode) => void
   setDatePickerOpen: (open: boolean) => void
 }
@@ -134,8 +137,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
         e.preventDefault()
         if (!focusedBlockId) return
         datePickerCursorPos.current =
-          (rovingEditor.editor as { state: { selection: { $anchor: { pos: number } } } } | null)
-            ?.state.selection.$anchor.pos ?? undefined
+          rovingEditor.editor?.state.selection.$anchor.pos ?? undefined
         setDatePickerMode('date')
         setDatePickerOpen(true)
       }

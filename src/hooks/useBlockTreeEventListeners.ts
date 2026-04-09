@@ -13,6 +13,7 @@
  * - OPEN_BLOCK_PROPERTIES
  */
 
+import type { MutableRefObject } from 'react'
 import { useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 import type { StoreApi } from 'zustand'
@@ -33,7 +34,7 @@ export interface UseBlockTreeEventListenersOptions {
   rovingEditor: {
     editor: { state: { selection: { $anchor: { pos: number } } } } | null
   }
-  datePickerCursorPos: React.MutableRefObject<number | undefined>
+  datePickerCursorPos: MutableRefObject<number | undefined>
   setDatePickerMode: (mode: DatePickerMode) => void
   setDatePickerOpen: (open: boolean) => void
   pageStore: StoreApi<PageBlockState>

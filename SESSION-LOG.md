@@ -1,5 +1,55 @@
 # Session Log
 
+## Session 299 — Batch 30: MAINT component extraction (M-16/M-17/M-24/M-27) (2026-04-09)
+
+**Commit:** `4ab1a8a` — 28 files, +3695/-1217
+
+### Items resolved
+- **M-16**: BlockTree.tsx 1085→808 lines. Extracted `useBlockTreeKeyboardShortcuts` (7 keyboard shortcuts), `useBlockTreeEventListeners` (8 block events), `TemplatePicker` component, `processCheckboxSyntax` utility.
+- **M-17**: StaticBlock.tsx 846→237 lines (72% reduction). Extracted `RichContentRenderer` (renderRichContent + CALLOUT_CONFIG), `AttachmentRenderer`, `ImageResizeToolbar`, `attachment-utils` (getAssetUrl, formatSize).
+- **M-24**: QueryResult.tsx 452→238 lines (47% reduction). Extracted `useQueryExecution` (query dispatching, pagination, page title resolution), `useQuerySorting` (sort state + compareValues).
+- **M-27**: Extracted `FilterPill` UI primitive from duplicated Badge+X pattern. Applied to FilterPillRow and TagFilterPanel. Touch targets 44px both dimensions.
+
+### Files created
+- `src/hooks/useBlockTreeKeyboardShortcuts.ts` — 168 lines
+- `src/hooks/__tests__/useBlockTreeKeyboardShortcuts.test.ts` — 236 lines
+- `src/hooks/useBlockTreeEventListeners.ts` — 174 lines
+- `src/hooks/__tests__/useBlockTreeEventListeners.test.ts` — 230 lines
+- `src/components/block-tree/TemplatePicker.tsx` — 90 lines
+- `src/components/__tests__/TemplatePicker.test.tsx` — 137 lines
+- `src/lib/block-utils.ts` — 23 lines
+- `src/lib/__tests__/block-utils.test.ts` — 63 lines
+- `src/components/RichContentRenderer.tsx` — 454 lines
+- `src/components/__tests__/RichContentRenderer.test.tsx` — 424 lines
+- `src/components/AttachmentRenderer.tsx` — 128 lines
+- `src/components/__tests__/AttachmentRenderer.test.tsx` — 273 lines
+- `src/components/ImageResizeToolbar.tsx` — 66 lines
+- `src/components/__tests__/ImageResizeToolbar.test.tsx` — 90 lines
+- `src/lib/attachment-utils.ts` — 26 lines
+- `src/lib/__tests__/attachment-utils.test.ts` — 57 lines
+- `src/hooks/useQueryExecution.ts` — 222 lines
+- `src/hooks/__tests__/useQueryExecution.test.ts` — 295 lines
+- `src/hooks/useQuerySorting.ts` — 54 lines
+- `src/hooks/__tests__/useQuerySorting.test.ts` — 177 lines
+- `src/components/ui/filter-pill.tsx` — 62 lines
+- `src/components/__tests__/filter-pill.test.tsx` — 155 lines
+
+### Files modified
+
+| Area | Change |
+|------|--------|
+| `BlockTree.tsx` | 1085→808 lines. Imports extracted hooks/components, delegates keyboard/event handling. |
+| `StaticBlock.tsx` | 846→237 lines. Imports RichContentRenderer, AttachmentRenderer, ImageResizeToolbar. Re-exports for backward compat. |
+| `QueryResult.tsx` | 452→238 lines. Imports useQueryExecution, useQuerySorting. Re-exports for backward compat. |
+| `FilterPillRow.tsx` | Uses FilterPill component, removes inline Badge+X. |
+| `TagFilterPanel.tsx` | Uses FilterPill for selected tags section. |
+| `useBlockDatePicker.ts` | Exported `DatePickerMode` type (was internal). |
+
+### Stats
+- 258 test files, 5960 tests — all passing
+- 148 new tests across 12 test files
+- Net line reduction: ~1100 lines from 3 major components
+
 ## Session 298 — Batch 29: MAINT dedup + UX button sizing + P-6 audit (2026-04-09)
 
 **Commits:** `d77db7f` (M-19+UX-96) + `c6c8990` (M-20+M-28+M-29) — 22 files, +1918/-575
