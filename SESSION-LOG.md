@@ -1,5 +1,32 @@
 # Session Log
 
+## Session 294 — Batch 25: Test quality fixes (2026-04-09)
+
+**Commit:** `a79bfa6` — `test: T-18/T-19/T-20/T-22/T-23/T-27` — 6 files, +140/-23
+
+### Items resolved
+- **T-18**: MonthlyView.test.tsx — replaced flaky `if (dec30Cell) { expect(...) }` with deterministic `getByTestId` + `toBeInTheDocument()` assertion. Dec 30 is guaranteed to be a padding cell for Jan 2025 with Monday week start.
+- **T-19**: keyboard-config.test.ts — replaced weak `Array.isArray(conflicts)` with `toHaveLength(1)` + field verification (keys, category, IDs). Added new test for two custom shortcuts conflicting on same key combo.
+- **T-20**: QueryBuilderModal.test.tsx — 5 new edge case tests: backlinks initialExpression parsing, `table:true` flag parsing, `gte` operator + value, property key-only (no value), empty property key validation (disabled button).
+- **T-22**: MonthlyDayCell.test.tsx — 3 quality fixes: replaced `cell.click()` with `userEvent.click()`, exact dot count `toHaveLength(2)` instead of `toBeGreaterThanOrEqual(1)`, moved `userEvent.setup()` before `cell.focus()`.
+- **T-23**: KeyboardShortcuts.test.tsx — replaced `getAllByText('G').length >= 1` with scoped row query: finds focusSearch `<tr>`, verifies `Ctrl` and `G` in `<kbd>` elements, verifies default `F` is NOT present.
+- **T-27**: keyboard-config.test.ts — added `resetAllShortcuts` no-op test (empty localStorage). KeyboardSettingsTab.test.tsx — extended reset test to verify UI update: "Customized" badge disappears, "Reset to default" link disappears, default key `Tab` reappears.
+
+### Files modified
+
+| Area | Change |
+|------|--------|
+| MonthlyView.test.tsx | T-18: deterministic assertion replacing conditional |
+| keyboard-config.test.ts | T-19+T-27a: conflict verification + custom conflict test + reset no-op |
+| QueryBuilderModal.test.tsx | T-20: 5 new edge case tests |
+| MonthlyDayCell.test.tsx | T-22: userEvent, exact counts, setup ordering |
+| KeyboardShortcuts.test.tsx | T-23: scoped override assertion |
+| KeyboardSettingsTab.test.tsx | T-27b: UI state verification after reset |
+
+### Test counts
+- Frontend: 241 files, 5690 tests (was 5683)
+- Open REVIEW-LATER items: 37 (was 43)
+
 ## Session 293 — Batch 24: UX a11y + touch + semantic tokens (2026-04-09)
 
 **Commit:** `f5b861f` — `fix: UX-91/92/93/94/95/97/98/99/100/109` — 10 files, +93/-32
