@@ -1,5 +1,33 @@
 # Session Log
 
+## Session 300 — Batch 31: TEST + PERF (T-14, T-24, P-6 partial) (2026-04-09)
+
+**Commit:** `3c11b1c` — 7 files, +1455/-2
+
+### Items resolved
+- **T-14**: 10 integration tests for `restore_page_to_op` (5: happy path, __all__ target, nonexistent page error, invalid seq edge case, op log chain validation) and `list_page_links` (5: empty, rollup content→page, exclude deleted, exclude self-links, deduplication).
+- **T-24**: GraphView E2E spec with 5 Playwright tests (SVG with nodes, edges, click-to-navigate, data-testid, loading→render). Added `list_page_links` handler to tauri-mock (scans seed data for [[ULID]] links, deduplicates, validates pages).
+- **P-6 (partial, items 1-2)**: `agenda_bench.rs` (3 benchmarks: count_agenda_batch, count_agenda_batch_by_source, list_projected_agenda) + `property_bench.rs` (7 benchmarks: set/get/delete property, set_todo_state, set_priority, set_due_date, set_scheduled_date). All parameterized at 100/1K/10K. Visibility: count_agenda_batch_inner and count_agenda_batch_by_source_inner changed from pub(crate) to pub.
+
+### Files created
+- `e2e/graph-view.spec.ts` — 86 lines, 5 E2E tests
+- `src-tauri/benches/agenda_bench.rs` — 241 lines, 3 benchmarks
+- `src-tauri/benches/property_bench.rs` — 428 lines, 7 benchmarks
+
+### Files modified
+
+| Area | Change |
+|------|--------|
+| `command_integration_tests.rs` | +669 lines — 10 new integration tests (5 restore_page_to_op + 5 list_page_links) |
+| `commands.rs` | 2 visibility changes: pub(crate) → pub for agenda batch inners |
+| `Cargo.toml` | 2 new [[bench]] entries (agenda_bench, property_bench) |
+| `tauri-mock.ts` | +35 lines — list_page_links handler with seed data link scanning |
+
+### Stats
+- Frontend: 258 test files, 5960 tests — all passing
+- Rust: 1706 tests, all passing (1 skipped)
+- 10 new Criterion benchmarks across 2 bench files
+
 ## Session 299 — Batch 30: MAINT component extraction (M-16/M-17/M-24/M-27) (2026-04-09)
 
 **Commit:** `4ab1a8a` — 28 files, +3695/-1217
