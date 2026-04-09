@@ -1,5 +1,43 @@
 # Session Log
 
+## Session 307 — Frontend observability + UX + docs: 6 items resolved (2026-04-10)
+
+**6 items resolved (26→20 open). 18 files changed. Bonus: fixed pre-existing UnfinishedTasks timezone bug.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| M-37 | `block_ref` `as any` casts in markdown serializer | `src/editor/markdown-serializer.ts` |
+| M-43 | Document `pageBlockRegistry` race condition | `src/stores/page-blocks.ts` |
+| M-47 | 18 silent catch blocks across 9 files | 6 components + 3 hooks |
+| UX-115 | Touch target size-10 overrides (WCAG 2.5.5) | `FormattingToolbar.tsx`, `KeyboardSettingsTab.tsx` |
+| UX-116 | Hardcoded colors → semantic tokens | `PageBrowser.tsx`, `MermaidDiagram.tsx`, `index.css` |
+| D-5 | ARCHITECTURE.md runtime query count (~73, not ~11) | `ARCHITECTURE.md` |
+
+### Build subagents (5 parallel)
+1. **M-47 components** — added logger.warn to 10 catch blocks in 6 component files
+2. **M-47 hooks** — added logger.warn to 5 catch blocks in 3 hook files
+3. **UX-115** — removed 7 `[@media(pointer:coarse)]:size-10` overrides from 2 files
+4. **UX-116** — added `--color-star` token, replaced hardcoded `yellow-500`/`red-*` with semantic tokens
+5. **M-37** — imported `BlockRefNode` from `types.ts`, updated `tryConsumeToken` return type, removed 4 `as any`/`as unknown` casts
+
+### Orchestrator direct fixes
+- M-43: added 8-line JSDoc to `pageBlockRegistry` documenting race condition + React batching mitigation
+- D-5: audited runtime queries (73 across 11 files), updated ARCHITECTURE.md
+- Bonus: fixed UnfinishedTasks test timezone bug (UTC `toISOString` → local `toLocalDateStr`)
+
+### Review verdicts
+- M-47 hooks + M-37 + UX-116: APPROVE — correct logger signature, types properly imported, oklch values reasonable
+- M-47 components + UX-115: APPROVE — all 10 catch blocks logged, all 7 overrides removed, 44px touch targets verified
+
+### Stats
+- 18 files changed (+92 / -61 lines)
+- All 5974 frontend tests pass (including 6 previously broken UnfinishedTasks tests)
+- All 20 prek hooks pass
+
+---
+
 ## Session 306 — Rust algorithms + defensive checks + frontend fixes: 9 items resolved (2026-04-09)
 
 **9 items resolved (35→26 open). 9 files changed, 11 new tests.**
