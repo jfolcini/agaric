@@ -107,12 +107,29 @@ export interface TableNode {
   readonly content?: readonly TableRowNode[]
 }
 
+export interface ListItemNode {
+  readonly type: 'listItem'
+  readonly content?: readonly ParagraphNode[]
+}
+
+export interface OrderedListNode {
+  readonly type: 'orderedList'
+  readonly content?: readonly ListItemNode[]
+}
+
+export interface HorizontalRuleNode {
+  readonly type: 'horizontalRule'
+  readonly content?: undefined
+}
+
 export type BlockLevelNode =
   | ParagraphNode
   | HeadingNode
   | CodeBlockNode
   | BlockquoteNode
   | TableNode
+  | OrderedListNode
+  | HorizontalRuleNode
 
 export interface DocNode {
   readonly type: 'doc'
@@ -220,6 +237,20 @@ export function tableCell(...paragraphs: ParagraphNode[]): TableCellNode {
 export function doc(...blocks: BlockLevelNode[]): DocNode {
   if (blocks.length === 0) return { type: 'doc' }
   return { type: 'doc', content: blocks }
+}
+
+export function listItem(...paragraphs: ParagraphNode[]): ListItemNode {
+  if (paragraphs.length === 0) return { type: 'listItem' }
+  return { type: 'listItem', content: paragraphs }
+}
+
+export function orderedList(...items: ListItemNode[]): OrderedListNode {
+  if (items.length === 0) return { type: 'orderedList' }
+  return { type: 'orderedList', content: items }
+}
+
+export function horizontalRule(): HorizontalRuleNode {
+  return { type: 'horizontalRule' }
 }
 
 // -- PM position helpers ------------------------------------------------------

@@ -12,7 +12,7 @@ import {
   Plus,
   RefreshCw,
   Search,
-  Settings2,
+  Settings,
   Sun,
   Tag,
   Trash2,
@@ -31,6 +31,7 @@ import { PageBrowser } from './components/PageBrowser'
 import { PageEditor } from './components/PageEditor'
 import { PropertiesView } from './components/PropertiesView'
 import { SearchPanel } from './components/SearchPanel'
+import { SettingsView } from './components/SettingsView'
 import { StatusPanel } from './components/StatusPanel'
 import { TagFilterPanel } from './components/TagFilterPanel'
 import { TagList } from './components/TagList'
@@ -78,7 +79,7 @@ const NAV_ITEMS: { id: Exclude<View, 'page-editor'>; icon: React.ElementType; la
     { id: 'search', icon: Search, labelKey: 'sidebar.search' },
     { id: 'pages', icon: FileText, labelKey: 'sidebar.pages' },
     { id: 'tags', icon: Tag, labelKey: 'sidebar.tags' },
-    { id: 'properties', icon: Settings2, labelKey: 'sidebar.properties' },
+    { id: 'settings', icon: Settings, labelKey: 'sidebar.settings' },
     { id: 'trash', icon: Trash2, labelKey: 'sidebar.trash' },
     { id: 'status', icon: Activity, labelKey: 'sidebar.status' },
     { id: 'conflicts', icon: GitMerge, labelKey: 'sidebar.conflicts' },
@@ -510,6 +511,11 @@ function App() {
               {currentView === 'properties' && (
                 <FeatureErrorBoundary name="Properties">
                   <PropertiesView />
+                </FeatureErrorBoundary>
+              )}
+              {currentView === 'settings' && (
+                <FeatureErrorBoundary name="Settings">
+                  <SettingsView />
                 </FeatureErrorBoundary>
               )}
               {currentView === 'status' && (

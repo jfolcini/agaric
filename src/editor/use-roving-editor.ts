@@ -8,6 +8,7 @@
 
 import Blockquote from '@tiptap/extension-blockquote'
 import Bold from '@tiptap/extension-bold'
+import BulletList from '@tiptap/extension-bullet-list'
 import Code from '@tiptap/extension-code'
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
 import Document from '@tiptap/extension-document'
@@ -15,7 +16,10 @@ import HardBreak from '@tiptap/extension-hard-break'
 import Heading from '@tiptap/extension-heading'
 import Highlight from '@tiptap/extension-highlight'
 import History from '@tiptap/extension-history'
+import HorizontalRule from '@tiptap/extension-horizontal-rule'
 import Italic from '@tiptap/extension-italic'
+import ListItem from '@tiptap/extension-list-item'
+import OrderedList from '@tiptap/extension-ordered-list'
 import Paragraph from '@tiptap/extension-paragraph'
 import Placeholder from '@tiptap/extension-placeholder'
 import Strike from '@tiptap/extension-strike'
@@ -270,6 +274,10 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       StrikeWithShortcut,
       HighlightWithShortcut,
       Blockquote,
+      OrderedList,
+      BulletList,
+      ListItem,
+      HorizontalRule,
       Table.configure({ resizable: false }),
       TableRow,
       TableHeader,

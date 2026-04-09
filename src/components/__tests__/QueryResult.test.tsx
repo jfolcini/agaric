@@ -200,7 +200,7 @@ describe('QueryResult', () => {
     await screen.findByText(/Result/)
 
     // Click header to collapse
-    const header = screen.getByText('type:tag expr:test').closest('button') as HTMLElement
+    const header = screen.getByTitle('type:tag expr:test').closest('button') as HTMLElement
     await user.click(header)
 
     expect(screen.queryByText(/Result/)).not.toBeInTheDocument()
@@ -1004,5 +1004,224 @@ describe('QueryResult – error paths', () => {
     render(<QueryResult expression="type:tag expr:project" />)
 
     expect(await screen.findByText('Query failed')).toBeInTheDocument()
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Pagination tests                                                  */
+/* ------------------------------------------------------------------ */
+
+describe('QueryResult – pagination', () => {
+  it('load more button appears when has_more is true', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') {
+        return {
+          items: [makeBlock({ id: 'B1', content: 'First page item', parent_id: 'P1' })],
+          next_cursor: 'cursor1',
+          has_more: true,
+        }
+      }
+      if (cmd === 'batch_resolve') {
+        return [{ id: 'P1', title: 'Page', block_type: 'page', deleted: false }]
+      }
+      return null
+    })
+
+    render(<QueryResult expression="type:tag expr:project" />)
+
+    expect(await screen.findByText(/First page item/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /load more/i })).toBeInTheDocument()
+  })
+
+  it('load more button is hidden when has_more is false', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') {
+        return {
+          items: [makeBlock({ id: 'B1', content: 'Only page', parent_id: null })],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      return null
+    })
+
+    render(<QueryResult expression="type:tag expr:project" />)
+
+    expect(await screen.findByText(/Only page/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument()
+  })
+
+  it('clicking load more fetches next page and accumulates results', async () => {
+    let callCount = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') {
+        callCount++
+        if (callCount === 1) {
+          return {
+            items: [makeBlock({ id: 'B1', content: 'First page item', parent_id: null })],
+            next_cursor: 'cursor1',
+            has_more: true,
+          }
+        }
+        return {
+          items: [makeBlock({ id: 'B2', content: 'Second page item', parent_id: null })],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'batch_resolve') return []
+      return null
+    })
+
+    const user = userEvent.setup()
+    render(<QueryResult expression="type:tag expr:project" />)
+
+    expect(await screen.findByText(/First page item/)).toBeInTheDocument()
+
+    const loadMoreBtn = screen.getByRole('button', { name: /load more/i })
+    await user.click(loadMoreBtn)
+
+    expect(await screen.findByText(/Second page item/)).toBeInTheDocument()
+    // First page items are still visible
+    expect(screen.getByText(/First page item/)).toBeInTheDocument()
+    // Load more button is gone after last page
+    expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument()
+    // Count reflects all loaded items
+    expect(screen.getByText('2 results')).toBeInTheDocument()
+  })
+
+  it('axe a11y audit with load more button', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') {
+        return {
+          items: [
+            makeBlock({
+              id: 'B1',
+              content: 'Accessible item',
+              parent_id: null,
+              todo_state: 'TODO',
+            }),
+          ],
+          next_cursor: 'cursor1',
+          has_more: true,
+        }
+      }
+      return {}
+    })
+
+    const { container } = render(<QueryResult expression="type:tag expr:test" />)
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Query expression pills tests                                      */
+/* ------------------------------------------------------------------ */
+
+describe('QueryResult – expression pills', () => {
+  it('renders query expression as Badge pills', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      return null
+    })
+
+    render(<QueryResult expression="type:tag expr:project" />)
+
+    await waitFor(() => {
+      // Type badge (variant="default")
+      const typeBadge = screen.getByText('tag')
+      expect(typeBadge).toHaveAttribute('data-slot', 'badge')
+      expect(typeBadge).toHaveAttribute('data-variant', 'default')
+
+      // Param badge (variant="secondary")
+      const paramBadge = screen.getByText('expr: project')
+      expect(paramBadge).toHaveAttribute('data-slot', 'badge')
+      expect(paramBadge).toHaveAttribute('data-variant', 'secondary')
+    })
+  })
+
+  it('renders property filter pills for filtered queries', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_property') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      return null
+    })
+
+    render(<QueryResult expression="property:todo_state=TODO" />)
+
+    await waitFor(() => {
+      // Type badge for filtered
+      const typeBadge = screen.getByText('filtered')
+      expect(typeBadge).toHaveAttribute('data-slot', 'badge')
+      expect(typeBadge).toHaveAttribute('data-variant', 'default')
+
+      // Property filter badge
+      const filterBadge = screen.getByText('todo_state=TODO')
+      expect(filterBadge).toHaveAttribute('data-slot', 'badge')
+      expect(filterBadge).toHaveAttribute('data-variant', 'secondary')
+    })
+  })
+
+  it('renders tag filter pills', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      if (cmd === 'query_by_property') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      return null
+    })
+
+    render(<QueryResult expression="tag:project-x property:todo_state=TODO" />)
+
+    await waitFor(() => {
+      const tagBadge = screen.getByText('tag: project-x')
+      expect(tagBadge).toHaveAttribute('data-slot', 'badge')
+      expect(tagBadge).toHaveAttribute('data-variant', 'secondary')
+    })
+  })
+
+  it('raw expression is visible on hover via title attribute', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      return null
+    })
+
+    render(<QueryResult expression="type:tag expr:project" />)
+
+    await waitFor(() => {
+      const pillContainer = screen.getByTitle('type:tag expr:project')
+      expect(pillContainer).toBeInTheDocument()
+    })
+  })
+
+  it('axe a11y audit with expression pills', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') {
+        return {
+          items: [makeBlock({ id: 'B1', content: 'Item', parent_id: null, todo_state: 'TODO' })],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      return {}
+    })
+
+    const { container } = render(<QueryResult expression="type:tag expr:test" />)
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 })

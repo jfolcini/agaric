@@ -534,6 +534,41 @@ export function renderRichContent(
           </blockquote>,
         )
       }
+    } else if (block.type === 'orderedList') {
+      const olKey = `ol-${keyIdx++}`
+      const olItems: React.ReactNode[] = []
+      for (let ci = 0; ci < (block.content?.length ?? 0); ci++) {
+        const item = (
+          block.content as unknown as {
+            content?: { type: 'paragraph'; content?: readonly InlineNode[] }[]
+          }[]
+        )[ci]
+        const itemKey = `${olKey}-${ci}`
+        const liChildren: React.ReactNode[] = []
+        if (item?.content) {
+          for (const p of item.content) {
+            if (p.content) {
+              const prevLen = elements.length
+              renderInline(p.content as readonly InlineNode[])
+              liChildren.push(...elements.splice(prevLen))
+            }
+          }
+        }
+        olItems.push(<li key={itemKey}>{liChildren}</li>)
+      }
+      elements.push(
+        <ol key={olKey} className="list-decimal list-inside">
+          {olItems}
+        </ol>,
+      )
+    } else if (block.type === 'horizontalRule') {
+      elements.push(
+        <hr
+          key={`hr-${keyIdx++}`}
+          className="my-2 border-t border-border"
+          data-testid="horizontal-rule"
+        />,
+      )
     } else {
       // paragraph
       if (!block.content) continue

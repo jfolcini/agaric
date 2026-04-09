@@ -225,6 +225,10 @@ const resources = {
       // Slash commands — callouts
       'slash.calloutFailed': 'Failed to insert callout',
 
+      // Slash commands — ordered list & divider
+      'slash.numberedListFailed': 'Failed to insert numbered list',
+      'slash.dividerFailed': 'Failed to insert divider',
+
       // Callout labels
       'callout.info': 'Info',
       'callout.warning': 'Warning',
@@ -1305,6 +1309,21 @@ const resources = {
       'welcome.createSamplePages': 'Create sample pages',
       'welcome.samplePagesCreated': 'Sample pages created!',
       'welcome.samplePagesFailed': 'Failed to create sample pages',
+
+      // F-30: Settings view
+      'sidebar.settings': 'Settings',
+      'settings.tabGeneral': 'General',
+      'settings.tabProperties': 'Properties',
+      'settings.tabAppearance': 'Appearance',
+      'settings.tabSync': 'Sync & Devices',
+      'settings.themeLabel': 'Theme',
+      'settings.themeLight': 'Light',
+      'settings.themeDark': 'Dark',
+      'settings.themeSystem': 'System',
+      'settings.fontSizeLabel': 'Font Size',
+      'settings.fontSizeSmall': 'Small',
+      'settings.fontSizeMedium': 'Medium',
+      'settings.fontSizeLarge': 'Large',
     },
   },
 }

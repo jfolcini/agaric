@@ -17,7 +17,10 @@ import type {
   CodeBlockNode,
   DocNode,
   HeadingNode,
+  HorizontalRuleNode,
   InlineNode,
+  ListItemNode,
+  OrderedListNode,
   ParagraphNode,
   PMMark,
   TableNode,
@@ -296,6 +299,8 @@ function serializeBlockquote(node: BlockquoteNode): string {
       if (child.type === 'codeBlock') return serializeCodeBlock(child)
       if (child.type === 'blockquote') return serializeBlockquote(child)
       if (child.type === 'table') return serializeTable(child)
+      if (child.type === 'orderedList') return serializeOrderedList(child)
+      if (child.type === 'horizontalRule') return serializeHorizontalRule(child)
       return ''
     })
     .join('\n')
@@ -336,6 +341,23 @@ function serializeTable(node: TableNode): string {
   return [header, separator, ...dataRows].join('\n')
 }
 
+function serializeOrderedList(node: OrderedListNode): string {
+  if (!node.content || node.content.length === 0) return ''
+  return node.content
+    .map((item: ListItemNode, idx: number) => {
+      const inner =
+        item.content && item.content.length > 0
+          ? item.content.map((p) => serializeParagraph(p)).join('\n')
+          : ''
+      return `${idx + 1}. ${inner}`
+    })
+    .join('\n')
+}
+
+function serializeHorizontalRule(_node: HorizontalRuleNode): string {
+  return '---'
+}
+
 export function serialize(doc: DocNode): string {
   if (!doc.content || doc.content.length === 0) return ''
   return doc.content
@@ -345,6 +367,8 @@ export function serialize(doc: DocNode): string {
       if (node.type === 'codeBlock') return serializeCodeBlock(node)
       if (node.type === 'blockquote') return serializeBlockquote(node)
       if (node.type === 'table') return serializeTable(node)
+      if (node.type === 'orderedList') return serializeOrderedList(node)
+      if (node.type === 'horizontalRule') return serializeHorizontalRule(node)
       logger.warn(
         'serializer',
         `unknown top-level node type: "${(node as { type: string }).type}" — stripped`,
@@ -645,6 +669,39 @@ export function parse(markdown: string): DocNode {
       }
       if (rows.length > 0) {
         blocks.push({ type: 'table', content: rows })
+      }
+      continue
+    }
+
+    // Horizontal rule: --- (three or more hyphens on its own line)
+    if (/^-{3,}$/.test(line)) {
+      blocks.push({ type: 'horizontalRule' })
+      i++
+      continue
+    }
+
+    // Ordered list: 1. item, 2. item, etc.
+    const olMatch = line.match(/^(\d+)\. (.*)$/)
+    if (olMatch) {
+      const items: {
+        type: 'listItem'
+        content: { type: 'paragraph'; content?: InlineNode[] }[]
+      }[] = []
+      while (i < lines.length) {
+        const olLine = lines[i] as string
+        const itemMatch = olLine.match(/^(\d+)\. (.*)$/)
+        if (!itemMatch) break
+        const itemText = itemMatch[2] as string
+        const inlineContent = parseLine(itemText)
+        if (inlineContent.length === 0) {
+          items.push({ type: 'listItem', content: [{ type: 'paragraph' }] })
+        } else {
+          items.push({ type: 'listItem', content: [{ type: 'paragraph', content: inlineContent }] })
+        }
+        i++
+      }
+      if (items.length > 0) {
+        blocks.push({ type: 'orderedList', content: items })
       }
       continue
     }

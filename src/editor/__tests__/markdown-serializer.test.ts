@@ -13,7 +13,10 @@ import {
   hardBreak,
   heading,
   highlight,
+  horizontalRule,
   italic,
+  listItem,
+  orderedList,
   paragraph,
   strike,
   table,
@@ -1491,5 +1494,167 @@ describe('block_ref round-trip', () => {
     const result = parse('just ((some text)) here')
     const para = result.content?.[0]
     expect(para?.content?.some((c: any) => c.type === 'block_ref')).toBeFalsy()
+  })
+})
+
+// -- ordered list -------------------------------------------------------------
+
+describe('ordered list', () => {
+  describe('parse', () => {
+    it('parses 1. first\\n2. second produces ordered list', () => {
+      expect(parse('1. first\n2. second')).toEqual(
+        doc(orderedList(listItem(paragraph(text('first'))), listItem(paragraph(text('second'))))),
+      )
+    })
+
+    it('parses single item ordered list', () => {
+      expect(parse('1. only item')).toEqual(
+        doc(orderedList(listItem(paragraph(text('only item'))))),
+      )
+    })
+
+    it('parses ordered list with marks', () => {
+      expect(parse('1. **bold item**\n2. *italic item*')).toEqual(
+        doc(
+          orderedList(
+            listItem(paragraph(bold('bold item'))),
+            listItem(paragraph(italic('italic item'))),
+          ),
+        ),
+      )
+    })
+
+    it('ordered list followed by paragraph', () => {
+      expect(parse('1. item\nNormal text')).toEqual(
+        doc(orderedList(listItem(paragraph(text('item')))), paragraph(text('Normal text'))),
+      )
+    })
+
+    it('paragraph followed by ordered list', () => {
+      expect(parse('Before\n1. first\n2. second')).toEqual(
+        doc(
+          paragraph(text('Before')),
+          orderedList(listItem(paragraph(text('first'))), listItem(paragraph(text('second')))),
+        ),
+      )
+    })
+
+    it('parses three-item ordered list', () => {
+      expect(parse('1. a\n2. b\n3. c')).toEqual(
+        doc(
+          orderedList(
+            listItem(paragraph(text('a'))),
+            listItem(paragraph(text('b'))),
+            listItem(paragraph(text('c'))),
+          ),
+        ),
+      )
+    })
+  })
+
+  describe('serialize', () => {
+    it('serializes ordered list produces numbered items', () => {
+      expect(
+        serialize(
+          doc(orderedList(listItem(paragraph(text('first'))), listItem(paragraph(text('second'))))),
+        ),
+      ).toBe('1. first\n2. second')
+    })
+
+    it('serializes single-item ordered list', () => {
+      expect(serialize(doc(orderedList(listItem(paragraph(text('only'))))))).toBe('1. only')
+    })
+
+    it('serializes ordered list with marks', () => {
+      expect(
+        serialize(
+          doc(
+            orderedList(listItem(paragraph(bold('bold'))), listItem(paragraph(italic('italic')))),
+          ),
+        ),
+      ).toBe('1. **bold**\n2. *italic*')
+    })
+
+    it('serializes empty ordered list', () => {
+      expect(serialize(doc(orderedList()))).toBe('')
+    })
+  })
+
+  describe('round-trip', () => {
+    it('round-trip: two-item ordered list', () => {
+      const input = '1. first\n2. second'
+      expect(serialize(parse(input))).toBe(input)
+    })
+
+    it('round-trip: ordered list with marks', () => {
+      const input = '1. **bold**\n2. *italic*'
+      expect(serialize(parse(input))).toBe(input)
+    })
+
+    it('round-trip: single item ordered list', () => {
+      const input = '1. only'
+      expect(serialize(parse(input))).toBe(input)
+    })
+
+    it('round-trip: three items', () => {
+      const input = '1. a\n2. b\n3. c'
+      expect(serialize(parse(input))).toBe(input)
+    })
+  })
+})
+
+// -- horizontal rule ----------------------------------------------------------
+
+describe('horizontal rule', () => {
+  describe('parse', () => {
+    it('parses --- produces horizontal rule', () => {
+      expect(parse('---')).toEqual(doc(horizontalRule()))
+    })
+
+    it('parses ---- (four hyphens) as horizontal rule', () => {
+      expect(parse('----')).toEqual(doc(horizontalRule()))
+    })
+
+    it('parses ----- (five hyphens) as horizontal rule', () => {
+      expect(parse('-----')).toEqual(doc(horizontalRule()))
+    })
+
+    it('horizontal rule between paragraphs', () => {
+      expect(parse('Before\n---\nAfter')).toEqual(
+        doc(paragraph(text('Before')), horizontalRule(), paragraph(text('After'))),
+      )
+    })
+
+    it('does not parse -- (two hyphens) as horizontal rule', () => {
+      expect(parse('--')).toEqual(doc(paragraph(text('--'))))
+    })
+
+    it('does not parse --- with text after as horizontal rule', () => {
+      expect(parse('--- text')).toEqual(doc(paragraph(text('--- text'))))
+    })
+  })
+
+  describe('serialize', () => {
+    it('serializes horizontal rule produces ---', () => {
+      expect(serialize(doc(horizontalRule()))).toBe('---')
+    })
+
+    it('serializes horizontal rule with surrounding blocks', () => {
+      expect(
+        serialize(doc(paragraph(text('Before')), horizontalRule(), paragraph(text('After')))),
+      ).toBe('Before\n---\nAfter')
+    })
+  })
+
+  describe('round-trip', () => {
+    it('round-trip: standalone horizontal rule', () => {
+      const input = '---'
+      expect(serialize(parse(input))).toBe(input)
+    })
+
+    it('round-trip: horizontal rule between paragraphs', () => {
+      const input = 'Before\n---\nAfter'
+      expect(serialize(parse(input))).toBe(input)
+    })
   })
 })

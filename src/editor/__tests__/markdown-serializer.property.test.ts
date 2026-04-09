@@ -137,7 +137,7 @@ function extractText(doc: DocNode): string {
   if (!doc.content) return ''
   return doc.content
     .map((p) => {
-      if (!p.content) return ''
+      if (!('content' in p) || !p.content) return ''
       return p.content
         .map((n) => {
           if (n.type === 'text') return n.text
@@ -169,7 +169,8 @@ function normalizeDoc(doc: DocNode): DocNode {
   if (!doc.content) return doc
   const paragraphs = doc.content
     .map((p) => {
-      if (p.type !== 'paragraph' || !p.content || p.content.length === 0) return p
+      if (p.type !== 'paragraph' || !('content' in p) || !p.content || p.content.length === 0)
+        return p
       const merged: InlineNode[] = []
       for (const node of p.content) {
         const last = merged.length > 0 ? merged[merged.length - 1] : null
@@ -192,7 +193,7 @@ function normalizeDoc(doc: DocNode): DocNode {
     // no content at all, so they must be removed for structural equality.
     // e.g. "****" parses to an empty paragraph, serializes to "", and
     // re-parses as { type: 'doc' } with no content property.
-    .filter((p) => p.content && p.content.length > 0)
+    .filter((p) => 'content' in p && p.content && p.content.length > 0)
   if (paragraphs.length === 0) return { type: 'doc' }
   return { type: 'doc', content: paragraphs }
 }

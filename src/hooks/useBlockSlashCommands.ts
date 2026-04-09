@@ -20,7 +20,9 @@ import {
   LayoutTemplate,
   Lightbulb,
   Link2,
+  ListOrdered,
   MapPin,
+  Minus,
   Paperclip,
   Quote,
   Repeat,
@@ -161,6 +163,18 @@ export const SLASH_COMMANDS: PickerItem[] = [
     label: 'TABLE — Insert table (e.g. /table 4x6)',
     category: 'slashCommand.categories.structure',
     icon: Grid3x3,
+  },
+  {
+    id: 'numbered-list',
+    label: 'NUMBERED LIST — Insert ordered list',
+    category: 'slashCommand.categories.structure',
+    icon: ListOrdered,
+  },
+  {
+    id: 'divider',
+    label: 'DIVIDER — Insert horizontal rule',
+    category: 'slashCommand.categories.structure',
+    icon: Minus,
   },
   {
     id: 'query',
@@ -620,6 +634,46 @@ export function useBlockSlashCommands({
           cols = Number.parseInt(dimMatch[2] as string, 10)
         }
         rovingEditor.editor?.chain().focus().insertTable({ rows, cols, withHeaderRow: true }).run()
+        return
+      }
+
+      if (item.id === 'numbered-list') {
+        let currentContent = ''
+        if (rovingEditor.editor) {
+          const json = rovingEditor.editor.getJSON() as DocNode
+          currentContent = serialize(json)
+        } else {
+          const block = pageStore.getState().blocks.find((b) => b.id === focusedBlockId)
+          currentContent = block?.content ?? ''
+        }
+        const newContent = `1. ${currentContent}`
+        try {
+          await editBlock(focusedBlockId, newContent)
+          pageStore.setState((state) => ({
+            blocks: state.blocks.map((b) =>
+              b.id === focusedBlockId ? { ...b, content: newContent } : b,
+            ),
+          }))
+          rovingEditor.mount(focusedBlockId, newContent)
+        } catch {
+          toast.error(t('slash.numberedListFailed'))
+        }
+        return
+      }
+
+      if (item.id === 'divider') {
+        const newContent = '---'
+        try {
+          await editBlock(focusedBlockId, newContent)
+          pageStore.setState((state) => ({
+            blocks: state.blocks.map((b) =>
+              b.id === focusedBlockId ? { ...b, content: newContent } : b,
+            ),
+          }))
+          rovingEditor.mount(focusedBlockId, newContent)
+        } catch {
+          toast.error(t('slash.dividerFailed'))
+        }
         return
       }
 

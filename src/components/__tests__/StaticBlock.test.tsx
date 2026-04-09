@@ -1348,4 +1348,83 @@ describe('StaticBlock', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  // -- Ordered list rendering -------------------------------------------------
+
+  describe('ordered list rendering', () => {
+    it('renders ordered list as <ol> with <li> children', () => {
+      const { container } = render(
+        <StaticBlock blockId="B1" content={'1. first\n2. second'} onFocus={vi.fn()} />,
+      )
+      const ol = container.querySelector('ol')
+      expect(ol).toBeInTheDocument()
+      const items = ol?.querySelectorAll('li')
+      expect(items).toHaveLength(2)
+      expect(items?.[0]?.textContent).toBe('first')
+      expect(items?.[1]?.textContent).toBe('second')
+    })
+
+    it('renders ordered list with marks', () => {
+      const { container } = render(
+        <StaticBlock blockId="B1" content={'1. **bold item**\n2. *italic*'} onFocus={vi.fn()} />,
+      )
+      const ol = container.querySelector('ol')
+      expect(ol).toBeInTheDocument()
+      expect(ol?.querySelector('strong')?.textContent).toBe('bold item')
+      expect(ol?.querySelector('em')?.textContent).toBe('italic')
+    })
+
+    it('renders single-item ordered list', () => {
+      const { container } = render(
+        <StaticBlock blockId="B1" content={'1. only item'} onFocus={vi.fn()} />,
+      )
+      const ol = container.querySelector('ol')
+      expect(ol).toBeInTheDocument()
+      expect(ol?.querySelectorAll('li')).toHaveLength(1)
+    })
+
+    it('has no a11y violations for ordered list', async () => {
+      const { container } = render(
+        <StaticBlock blockId="B1" content={'1. first\n2. second'} onFocus={vi.fn()} />,
+      )
+      const results = await axe(container, {
+        rules: { 'nested-interactive': { enabled: false } },
+      })
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  // -- Horizontal rule rendering ----------------------------------------------
+
+  describe('horizontal rule rendering', () => {
+    it('renders horizontal rule as <hr>', () => {
+      const { container } = render(<StaticBlock blockId="B1" content={'---'} onFocus={vi.fn()} />)
+      const hr = container.querySelector('hr')
+      expect(hr).toBeInTheDocument()
+    })
+
+    it('renders horizontal rule with data-testid', () => {
+      render(<StaticBlock blockId="B1" content={'---'} onFocus={vi.fn()} />)
+      expect(screen.getByTestId('horizontal-rule')).toBeInTheDocument()
+    })
+
+    it('renders horizontal rule between text blocks', () => {
+      const { container } = render(
+        <StaticBlock blockId="B1" content={'Before\n---\nAfter'} onFocus={vi.fn()} />,
+      )
+      expect(container.querySelector('hr')).toBeInTheDocument()
+      expect(container.textContent).toContain('Before')
+      expect(container.textContent).toContain('After')
+    })
+
+    it('has no a11y violations for horizontal rule', async () => {
+      const { container } = render(
+        <StaticBlock blockId="B1" content={'Before\n---\nAfter'} onFocus={vi.fn()} />,
+      )
+      const results = await axe(container, {
+        rules: { 'nested-interactive': { enabled: false } },
+      })
+      expect(results).toHaveNoViolations()
+    })
+  })
 })
