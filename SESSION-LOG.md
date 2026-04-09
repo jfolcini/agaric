@@ -1,5 +1,47 @@
 # Session Log
 
+## Session 308 — Rust infra + editor refactor + frontend caching: 8 items resolved (2026-04-10)
+
+**8 items resolved (20→12 open). 13 files changed, 18 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| M-30 | Snapshot compaction wrapped in BEGIN IMMEDIATE transaction | `snapshot.rs` |
+| M-32 | `dispatch_background` errors logged at 16 sites | `commands.rs`, `recurrence.rs` |
+| M-33 | `sanitize_internal_error` design decision documented | `commands.rs` |
+| M-34 | Sync backoff ±10% jitter | `sync_scheduler.rs` |
+| P-17 | WAL autocheckpoint 1000→5000, journal_size_limit 50MB | `db.rs` |
+| M-42 | Extract `useEditorBlur` hook from EditableBlock (−69 lines) | `EditableBlock.tsx` → `useEditorBlur.ts` |
+| UX-113 | GraphView stale-while-revalidate cache (5min TTL) | `GraphView.tsx` |
+| UX-114 | Projected agenda cache (30s TTL) | `useDuePanelData.ts` |
+
+### Build subagents (4 parallel)
+1. **M-32 + M-33** — 16 dispatch_background logging + sanitize doc comment
+2. **M-30** — snapshot compaction transaction wrapping (inlined create_snapshot)
+3. **M-34 + P-17** — sync jitter via rand::Rng + WAL PRAGMA tuning
+4. **M-42** — useEditorBlur extraction (119 lines, 17 tests, EditableBlock 357→288)
+
+### Orchestrator direct fixes
+- UX-113: module-level `graphCache` with 5min TTL, `clearGraphCache()` for tests
+- UX-114: `projectedCache` Map with 30s TTL per date key, `clearProjectedCache()` for tests
+- Fixed DuePanel test cache isolation (added `clearProjectedCache()` to beforeEach)
+
+### Review verdicts
+- M-32 + M-33: APPROVE — all 16 sites converted, tracing pattern consistent
+- M-30: APPROVE — BEGIN IMMEDIATE correct, inlining necessary, early return commits tx
+- M-34 + P-17: APPROVE — jitter on retry time only (not stored base), 50MB cap correct
+- M-42: APPROVE — pure refactor, 17 tests cover all 5 guard steps, backward compat via re-export
+
+### Stats
+- 13 files changed (+1071 / -128 lines)
+- 18 new tests (17 useEditorBlur + 1 snapshot compaction)
+- 1723 Rust tests pass, 5974 frontend tests pass
+- All 20 prek hooks pass
+
+---
+
 ## Session 307 — Frontend observability + UX + docs: 6 items resolved (2026-04-10)
 
 **6 items resolved (26→20 open). 18 files changed. Bonus: fixed pre-existing UnfinishedTasks timezone bug.**
