@@ -525,7 +525,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **WelcomeModal** (`src/components/WelcomeModal.tsx`): First-run onboarding dialog. 3 feature highlights (blocks+pages, keyboard shortcuts, tags+properties). "Get Started" dismiss + optional sample page creation. localStorage-based show-once. 10 tests.
 
 ### Editor Features (session 278)
-- **Callout/admonition blocks** (F-34): Obsidian-compatible `> [!TYPE]` syntax in markdown serializer. 5 types: info (blue), warning (amber), tip (green), error (red), note (gray). Colored border + icon + label in StaticBlock. `/callout` slash command with 5 sub-commands. CALLOUT_CONFIG map in StaticBlock. 32 tests (23 serializer + 9 component).
+- **Callout/admonition blocks** (F-34): Obsidian-compatible `> [!TYPE]` syntax in markdown serializer. 5 types: info, warning, tip, error, note. Semantic color tokens (`--alert-{type}`, `--alert-{type}-foreground`, `--alert-{type}-border`) in `index.css` for light/dark themes (OKLCH). CALLOUT_CONFIG uses `border-alert-*-border`, `bg-alert-*`, `text-alert-*-foreground`. `/callout` slash command with 5 sub-commands. 32 tests (23 serializer + 9 component).
 
 ### Accessibility (session 278)
 - **Semantic block tree** (UX-48): BlockListRenderer uses `<ul>`/`<li>` instead of `<div>`. ARIA attributes: `aria-level` (1-based depth), `aria-setsize`/`aria-posinset` (sibling grouping), `aria-expanded` (collapse state). Flat ARIA tree pattern preserves dnd-kit + viewport observer compatibility. 8 tests.

@@ -1,5 +1,45 @@
 # Session Log
 
+## Session 293 — Batch 24: UX a11y + touch + semantic tokens (2026-04-09)
+
+**Commit:** `f5b861f` — `fix: UX-91/92/93/94/95/97/98/99/100/109` — 10 files, +93/-32
+
+### Items resolved
+- **UX-91**: HistoryView revert ConfirmDialog — replaced 4 hardcoded English strings with `t()` i18n calls. Added 3 keys: `history.revertTitle`, `history.revertDescription`, `history.revertButton`. Reuses existing `history.cancelButton`.
+- **UX-92**: MonthlyDayCell gridcell — added `focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none` for keyboard a11y. Added focused-state axe audit test.
+- **UX-93**: KeyboardSettingsTab reset button — replaced `text-blue-500` with `text-primary`, added `focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none active:underline rounded-sm`.
+- **UX-94**: QueryBuilderModal checkbox — added `[@media(pointer:coarse)]:size-6` for 24px touch target + `accent-primary`.
+- **UX-95**: GraphView SVG nodes — added invisible hit-area circle (`r=22`, transparent, `pointer-events: all`) before visible node circle for 44px touch targets.
+- **UX-97**: MonthlyDayCell — added `active:bg-accent/50` touch feedback alongside existing `hover:bg-accent/30`.
+- **UX-98**: MonthlyDayCell count badge — changed `text-[10px]` to `text-xs [@media(pointer:coarse)]:text-sm`.
+- **UX-99**: KeyboardSettingsTab "Customized" badge — replaced `text-blue-500` with `text-primary`.
+- **UX-100**: KeyboardSettingsTab input — removed `h-7` class that overrode built-in responsive touch sizing.
+- **UX-109**: StaticBlock CALLOUT_CONFIG — replaced hardcoded Tailwind colors (`border-blue-500`, `bg-blue-50`, etc.) with semantic tokens (`border-alert-info-border`, `bg-alert-info`, etc.). Added 9 new alert tokens (tip/error/note × bg/fg/border) in `index.css` for both light and dark themes using OKLCH values.
+- **UX-110**: Closed as false positive — ImageLightbox button already has visible text content `{t('lightbox.openExternal')}` alongside the icon; it is not icon-only.
+
+### Files modified
+
+| Area | Change |
+|------|--------|
+| HistoryView.tsx | UX-91: replaced hardcoded revert dialog strings with t() calls |
+| i18n.ts | UX-91: 3 new history.revert* keys |
+| MonthlyDayCell.tsx | UX-92/97/98: focus ring, active state, badge text size |
+| MonthlyDayCell.test.tsx | UX-92: focused-state axe audit test (+1 test) |
+| KeyboardSettingsTab.tsx | UX-93/99/100: reset button, badge color, input height |
+| QueryBuilderModal.tsx | UX-94: checkbox touch target sizing |
+| GraphView.tsx | UX-95: invisible 44px hit-area circle |
+| StaticBlock.tsx | UX-109: semantic callout color tokens |
+| StaticBlock.test.tsx | UX-109: updated 6 color assertions |
+| index.css | UX-109: 9 new alert tokens (tip/error/note), light + dark + registration |
+
+### Review findings fixed
+- Light theme alert tokens were missing after initial apply (race condition) — added manually
+- Biome formatting: GraphView hit-area chain formatted to match project style
+
+### Test counts
+- Frontend: 241 files, 5683 tests (was 5682)
+- Open REVIEW-LATER items: 43 (was 54)
+
 ## Session 290 — Batch 23: F-33 (2026-04-09)
 
 **Commit:** `42a2a50` — `feat: F-33 graph view — page relationship visualization` — 12 files, +797
