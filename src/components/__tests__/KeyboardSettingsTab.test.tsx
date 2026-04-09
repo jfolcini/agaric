@@ -18,6 +18,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 import type { ShortcutBinding } from '@/lib/keyboard-config'
 import { KeyboardSettingsTab } from '../KeyboardSettingsTab'
 
@@ -78,17 +79,17 @@ describe('KeyboardSettingsTab', () => {
   it('renders all categories', () => {
     render(<KeyboardSettingsTab />)
 
-    expect(screen.getByText('Navigation')).toBeInTheDocument()
-    expect(screen.getByText('Editing')).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.category.navigation'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.category.editing'))).toBeInTheDocument()
   })
 
   it('shows shortcut descriptions', () => {
     render(<KeyboardSettingsTab />)
 
-    expect(screen.getByText('Move to previous block')).toBeInTheDocument()
-    expect(screen.getByText('Move to next block')).toBeInTheDocument()
-    expect(screen.getByText('Save block and close editor')).toBeInTheDocument()
-    expect(screen.getByText('Indent block')).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.moveToPreviousBlock'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.moveToNextBlock'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.saveBlockAndClose'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.indentBlock'))).toBeInTheDocument()
   })
 
   it('shows kbd elements for shortcut keys', () => {

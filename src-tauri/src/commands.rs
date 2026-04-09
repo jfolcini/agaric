@@ -10311,6 +10311,282 @@ mod tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn restore_page_to_op_invalid_target_returns_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Use a seq that doesn't exist in the op log
+        let result = restore_page_to_op_inner(&pool, DEV, &mat, page.id, DEV.into(), 999_999).await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "restoring to a non-existent target_seq should return NotFound, got: {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn restore_page_to_op_verifies_reverse_ops_in_op_log() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a page with two content blocks
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let b1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "alpha".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        let b2 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "beta".into(),
+            Some(page.id.clone()),
+            Some(2),
+        )
+        .await
+        .unwrap();
+
+        // Record ops count and target after creates
+        let ops_before = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let target_seq = ops_before.last().unwrap().seq;
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+        // Edit both blocks (these will be reverted)
+        edit_block_inner(&pool, DEV, &mat, b1.id.clone(), "alpha-edited".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+        edit_block_inner(&pool, DEV, &mat, b2.id.clone(), "beta-edited".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let ops_before_restore = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let count_before = ops_before_restore.len();
+
+        // Restore to target — should revert both edits
+        let result = restore_page_to_op_inner(&pool, DEV, &mat, page.id, DEV.into(), target_seq)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        assert_eq!(result.ops_reverted, 2, "should revert exactly 2 edit ops");
+
+        // Fetch all ops after restore — should have 2 new reverse ops appended
+        let ops_after = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        assert_eq!(
+            ops_after.len(),
+            count_before + 2,
+            "should have appended exactly 2 reverse ops to the op log"
+        );
+
+        // Verify the reverse ops have correct op_type values
+        let reverse_ops = &ops_after[count_before..];
+        for rev_op in reverse_ops {
+            assert_eq!(
+                rev_op.op_type, "edit_block",
+                "reverse of edit_block should be edit_block, got: {}",
+                rev_op.op_type
+            );
+        }
+
+        // Verify hash chain integrity: each op's parent_seqs references the
+        // previous op's hash, and the hash is correctly computed.
+        for i in 1..ops_after.len() {
+            let prev = &ops_after[i - 1];
+            let curr = &ops_after[i];
+
+            // parent_seqs should reference the previous seq
+            let parent_seqs_parsed = curr.parsed_parent_seqs().unwrap();
+            assert!(
+                parent_seqs_parsed.is_some(),
+                "non-genesis op (seq {}) must have parent_seqs",
+                curr.seq
+            );
+            let parents = parent_seqs_parsed.unwrap();
+            assert_eq!(
+                parents.len(),
+                1,
+                "Phase 1 linear chain — exactly one parent expected"
+            );
+            assert_eq!(
+                parents[0],
+                (prev.device_id.clone(), prev.seq),
+                "parent_seqs should reference the immediately preceding op"
+            );
+
+            // Recompute the hash and verify it matches
+            let expected_hash = crate::hash::compute_op_hash(
+                &curr.device_id,
+                curr.seq,
+                curr.parent_seqs.as_deref(),
+                &curr.op_type,
+                &curr.payload,
+            );
+            assert_eq!(
+                curr.hash, expected_hash,
+                "hash for op seq {} should match recomputed value",
+                curr.seq
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn restore_page_to_op_skips_delete_attachment() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a page with a content block
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let child = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "child block".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        // Add an attachment BEFORE the target point (so it's part of baseline)
+        let att_id = "ATT_RESTORE_001";
+        let att_ts = now_rfc3339();
+        sqlx::query(
+            "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(att_id)
+        .bind(&child.id)
+        .bind("image/png")
+        .bind("photo.png")
+        .bind(1024_i64)
+        .bind("/tmp/photo.png")
+        .bind(&att_ts)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        op_log::append_local_op_at(
+            &pool,
+            DEV,
+            OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
+                attachment_id: att_id.into(),
+                block_id: BlockId::from_trusted(&child.id),
+                mime_type: "image/png".into(),
+                filename: "photo.png".into(),
+                size_bytes: 1024,
+                fs_path: "/tmp/photo.png".into(),
+            }),
+            att_ts.clone(),
+        )
+        .await
+        .unwrap();
+
+        // Record target seq AFTER the add_attachment
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let target_seq = ops.last().unwrap().seq;
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+        // Now delete the attachment AFTER the target (non-reversible op)
+        let del_ts = now_rfc3339();
+        op_log::append_local_op_at(
+            &pool,
+            DEV,
+            OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
+                attachment_id: att_id.into(),
+            }),
+            del_ts.clone(),
+        )
+        .await
+        .unwrap();
+
+        sqlx::query("DELETE FROM attachments WHERE id = ?")
+            .bind(att_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+        // Also edit the child block after target (this IS reversible)
+        edit_block_inner(&pool, DEV, &mat, child.id.clone(), "child edited".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Restore using global scope (__all__) so the delete_attachment op is
+        // discoverable — page-scoped queries filter by payload $.block_id which
+        // delete_attachment payloads lack (they use $.attachment_id instead).
+        let result =
+            restore_page_to_op_inner(&pool, DEV, &mat, "__all__".into(), DEV.into(), target_seq)
+                .await
+                .unwrap();
+        mat.flush_background().await.unwrap();
+
+        assert_eq!(
+            result.non_reversible_skipped, 1,
+            "should count exactly 1 non-reversible op (delete_attachment)"
+        );
+        assert_eq!(
+            result.ops_reverted, 1,
+            "should revert exactly 1 reversible op (edit_block)"
+        );
+        assert_eq!(
+            get_block_inner(&pool, child.id).await.unwrap().content,
+            Some("child block".into()),
+            "child block content should revert to original"
+        );
+    }
+
     // -- undo_page_op tests --
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -18566,10 +18842,173 @@ mod tests {
         mat.shutdown();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn list_page_links_empty_when_no_links() {
         let (pool, _dir) = test_pool().await;
         let links = list_page_links_inner(&pool).await.unwrap();
         assert!(links.is_empty(), "should return empty when no links exist");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_page_links_deduplicates_multiple_content_links() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create 2 pages
+        let p1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Source Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+        let p2 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Target Page".into(),
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Create 2 content blocks under p1, both linking to p2
+        let b1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            format!("first [[{}]]", p2.id),
+            Some(p1.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let b2 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            format!("second [[{}]]", p2.id),
+            Some(p1.id.clone()),
+            Some(2),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Insert block_links entries for both content blocks → p2
+        sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(&b1.id)
+            .bind(&p2.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(&b2.id)
+            .bind(&p2.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let links = list_page_links_inner(&pool).await.unwrap();
+
+        // Both b1 and b2 roll up to p1 → p2; DISTINCT should collapse to 1 edge
+        let p1_to_p2_count = links
+            .iter()
+            .filter(|l| l.source_id == p1.id && l.target_id == p2.id)
+            .count();
+        assert_eq!(
+            p1_to_p2_count, 1,
+            "DISTINCT should deduplicate multiple content blocks linking to the same target page"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_page_links_excludes_links_with_deleted_parent_page() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create 2 pages
+        let p1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Source Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+        let p2 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Target Page".into(),
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Create a content block under p1 that links to p2
+        let b1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            format!("link [[{}]]", p2.id),
+            Some(p1.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Insert block_links entry
+        sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(&b1.id)
+            .bind(&p2.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Verify link exists before deletion
+        let links_before = list_page_links_inner(&pool).await.unwrap();
+        let has_link = links_before
+            .iter()
+            .any(|l| l.source_id == p1.id && l.target_id == p2.id);
+        assert!(has_link, "link should exist before deleting source page");
+
+        // Soft-delete the SOURCE page (p1)
+        delete_block_inner(&pool, DEV, &mat, p1.id.clone())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let links_after = list_page_links_inner(&pool).await.unwrap();
+        let has_deleted_source = links_after.iter().any(|l| l.source_id == p1.id);
+        assert!(
+            !has_deleted_source,
+            "should not include links from a deleted parent page"
+        );
+
+        mat.shutdown();
     }
 }

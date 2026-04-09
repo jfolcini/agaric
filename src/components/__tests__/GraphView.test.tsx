@@ -12,6 +12,10 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
+import { drag } from 'd3-drag'
+import { forceSimulation } from 'd3-force'
+import { select } from 'd3-selection'
+import { zoom } from 'd3-zoom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { useNavigationStore } from '../../stores/navigation'
@@ -139,6 +143,59 @@ describe('GraphView', () => {
     const svg = screen.getByRole('img', { name: 'Page Relationships' })
     expect(svg).toBeInTheDocument()
     expect(svg.tagName).toBe('svg')
+  })
+
+  it('invokes d3 APIs to set up simulation, zoom, and drag', async () => {
+    const navigateToPage = vi.fn()
+    useNavigationStore.setState({
+      currentView: 'graph',
+      pageStack: [],
+      selectedBlockId: null,
+      navigateToPage,
+    })
+
+    const pagesResponse = {
+      items: [
+        { id: 'page-1', content: 'Page One', block_type: 'page' },
+        { id: 'page-2', content: 'Page Two', block_type: 'page' },
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    const linksResponse = [{ source_id: 'page-1', target_id: 'page-2' }]
+
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+      if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
+      return Promise.resolve(null)
+    })
+
+    render(<GraphView />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+    })
+
+    // d3-selection: select() is called for the SVG container
+    expect(select).toHaveBeenCalled()
+
+    // d3-force: forceSimulation() is called with the nodes data
+    expect(forceSimulation).toHaveBeenCalledTimes(1)
+    expect(forceSimulation).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'page-1', label: 'Page One' }),
+        expect.objectContaining({ id: 'page-2', label: 'Page Two' }),
+      ]),
+    )
+
+    // d3-zoom: zoom() is called for pan/zoom setup
+    expect(zoom).toHaveBeenCalledTimes(1)
+
+    // d3-drag: drag() is called for node drag behavior
+    expect(drag).toHaveBeenCalledTimes(1)
+
+    // navigateToPage from navigation store is set up correctly
+    expect(useNavigationStore.getState().navigateToPage).toBe(navigateToPage)
   })
 
   it('shows error state on fetch failure', async () => {

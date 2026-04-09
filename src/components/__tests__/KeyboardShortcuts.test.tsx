@@ -12,6 +12,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 import { KeyboardShortcuts } from '../KeyboardShortcuts'
 
 describe('KeyboardShortcuts', () => {
@@ -22,48 +23,46 @@ describe('KeyboardShortcuts', () => {
   it('renders sheet content when open', () => {
     render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
 
-    expect(screen.getByText('Quick Reference')).toBeInTheDocument()
-    expect(
-      screen.getByText('Available keyboard shortcuts and syntax reference for the editor.'),
-    ).toBeInTheDocument()
+    expect(screen.getByText(t('shortcuts.title'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.sheetDescription'))).toBeInTheDocument()
   })
 
   it('does not render sheet content when closed', () => {
     render(<KeyboardShortcuts open={false} onOpenChange={vi.fn()} />)
 
-    expect(screen.queryByText('Quick Reference')).not.toBeInTheDocument()
+    expect(screen.queryByText(t('shortcuts.title'))).not.toBeInTheDocument()
   })
 
   it('shows all shortcut entries', () => {
     render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
 
     // Verify category headers
-    expect(screen.getByText('Navigation')).toBeInTheDocument()
-    expect(screen.getByText('Editing')).toBeInTheDocument()
-    expect(screen.getByText('Pickers')).toBeInTheDocument()
-    expect(screen.getByText('Undo / Redo')).toBeInTheDocument()
-    expect(screen.getByText('History View')).toBeInTheDocument()
-    expect(screen.getByText('Global')).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.category.navigation'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.category.editing'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.category.pickers'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.category.undoRedo'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.category.historyView'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.category.global'))).toBeInTheDocument()
 
     // Verify all shortcuts are present
-    expect(screen.getByText('Move to previous block')).toBeInTheDocument()
-    expect(screen.getByText('Move to next block')).toBeInTheDocument()
-    expect(screen.getByText('Save block and close editor')).toBeInTheDocument()
-    expect(screen.getByText('Delete block')).toBeInTheDocument()
-    expect(screen.getByText('Merge with previous')).toBeInTheDocument()
-    expect(screen.getByText('Indent block')).toBeInTheDocument()
-    expect(screen.getByText('Dedent block')).toBeInTheDocument()
-    expect(screen.getByText('Tag picker')).toBeInTheDocument()
-    expect(screen.getByText('Block link picker')).toBeInTheDocument()
-    expect(screen.getAllByText('Slash command menu').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('Show keyboard shortcuts')).toBeInTheDocument()
-    expect(screen.getByText('Close overlays, cancel editing, clear selection')).toBeInTheDocument()
-    expect(screen.getByText('Toggle code block')).toBeInTheDocument()
-    expect(screen.getByText('Move block up')).toBeInTheDocument()
-    expect(screen.getByText('Move block down')).toBeInTheDocument()
-    expect(screen.getByText('Focus search')).toBeInTheDocument()
-    expect(screen.getByText('Create new page')).toBeInTheDocument()
-    expect(screen.getByText('Collapse / expand children')).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.moveToPreviousBlock'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.moveToNextBlock'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.saveBlockAndClose'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.deleteBlock'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.mergeWithPrevious'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.indentBlock'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.dedentBlock'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.tagPicker'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.blockLinkPicker'))).toBeInTheDocument()
+    expect(screen.getAllByText(t('keyboard.slashCommandMenu')).length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText(t('keyboard.showKeyboardShortcuts'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.closeOverlays'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.toggleCodeBlock'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.moveBlockUp'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.moveBlockDown'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.focusSearch'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.createNewPage'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.collapseExpandChildren'))).toBeInTheDocument()
 
     // Verify key labels (keys are now split into individual <kbd> elements)
     expect(screen.getAllByText('Enter').length).toBeGreaterThanOrEqual(1)
@@ -74,30 +73,30 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getAllByText('Escape').length).toBeGreaterThanOrEqual(1)
 
     // Verify conditions are rendered separately from keys
-    expect(screen.getAllByText('in editor').length).toBe(7)
-    expect(screen.getByText('at start')).toBeInTheDocument()
-    expect(screen.getByText('at end')).toBeInTheDocument()
+    expect(screen.getAllByText(t('keyboard.condition.inEditor')).length).toBe(7)
+    expect(screen.getByText(t('keyboard.condition.atStart'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.condition.atEnd'))).toBeInTheDocument()
   })
 
   it('renders syntax section with formatting entries', () => {
     render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
 
     // Verify the syntax section header
-    expect(screen.getByText('Syntax')).toBeInTheDocument()
+    expect(screen.getByText(t('shortcuts.syntaxSection'))).toBeInTheDocument()
 
     // Verify syntax descriptions
-    expect(screen.getByText('Bold')).toBeInTheDocument()
-    expect(screen.getByText('Italic')).toBeInTheDocument()
-    expect(screen.getByText('Inline code')).toBeInTheDocument()
-    expect(screen.getByText('Strikethrough')).toBeInTheDocument()
-    expect(screen.getByText('Highlight')).toBeInTheDocument()
-    expect(screen.getByText('Heading (1-6 levels)')).toBeInTheDocument()
-    expect(screen.getByText('Blockquote')).toBeInTheDocument()
-    expect(screen.getByText('Code block')).toBeInTheDocument()
-    expect(screen.getByText('TODO checkbox')).toBeInTheDocument()
-    expect(screen.getByText('DONE checkbox')).toBeInTheDocument()
-    expect(screen.getByText('Tag reference')).toBeInTheDocument()
-    expect(screen.getByText('Page link')).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.syntax.bold'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.syntax.italic'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.syntax.inlineCode'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.syntax.strikethrough'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.syntax.highlight'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.syntax.heading'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.syntax.blockquote'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.syntax.codeBlock'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.syntax.todoCheckbox'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.syntax.doneCheckbox'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.syntax.tagReference'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.syntax.pageLink'))).toBeInTheDocument()
 
     // Verify syntax entries are rendered in monospace code elements
     const syntaxTable = screen.getByTestId('syntax-table')
@@ -210,15 +209,15 @@ describe('KeyboardShortcuts', () => {
     const kbdTexts = Array.from(kbds).map((el) => el.textContent)
 
     for (const text of kbdTexts) {
-      expect(text).not.toContain('at start')
-      expect(text).not.toContain('at end')
-      expect(text).not.toContain('on empty block')
-      expect(text).not.toContain('in editor')
+      expect(text).not.toContain(t('keyboard.condition.atStart'))
+      expect(text).not.toContain(t('keyboard.condition.atEnd'))
+      expect(text).not.toContain(t('keyboard.condition.onEmptyBlock'))
+      expect(text).not.toContain(t('keyboard.condition.inEditor'))
     }
 
-    expect(screen.getByText('at start')).toBeInTheDocument()
-    expect(screen.getByText('at end')).toBeInTheDocument()
-    expect(screen.getAllByText('in editor')).toHaveLength(7)
+    expect(screen.getByText(t('keyboard.condition.atStart'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.condition.atEnd'))).toBeInTheDocument()
+    expect(screen.getAllByText(t('keyboard.condition.inEditor'))).toHaveLength(7)
   })
 
   it('shows customized shortcuts when localStorage has overrides', () => {
@@ -226,7 +225,7 @@ describe('KeyboardShortcuts', () => {
     render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
 
     // Find the row containing the "Focus search" description
-    const focusSearchLabel = screen.getByText('Focus search')
+    const focusSearchLabel = screen.getByText(t('keyboard.focusSearch'))
     const row = focusSearchLabel.closest('tr') as HTMLElement
     expect(row).toBeTruthy()
 

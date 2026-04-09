@@ -147,7 +147,7 @@
 - **F-33**: Graph view — page relationship visualization. Backend: new `list_page_links` command queries `block_links` joined with `blocks` to return page-to-page edges. Content block sources rolled up to parent page via `COALESCE`. LEFT JOIN validates parent page exists, is not deleted, and is page-type. Excludes self-links, deduplicates with DISTINCT. Uses `ReadPool`. 4 Rust tests. Frontend: new `GraphView` component with d3-force simulation (`forceLink`, `forceManyBody`, `forceCenter`, `forceCollide`). SVG rendering with circle nodes, text labels (truncated 20 chars), line edges. Zoom/pan via d3-zoom, node drag via d3-drag. Click-to-navigate via `navigateToPage`. Loading skeleton, error alert, empty state. New "Graph" sidebar view with Network icon. `d3-force`, `d3-drag`, `d3-selection`, `d3-zoom` added (all MIT). 8 frontend tests.
 
 ### Files created
-- `src/components/GraphView.tsx` — force-directed graph view (200 lines)
+- `src/components/GraphView.tsx` — force-directed graph view (225 lines)
 - `src/components/__tests__/GraphView.test.tsx` — 8 tests
 
 ### Files modified
@@ -179,10 +179,10 @@
 **Commit:** `29f54a1` — `feat: F-24 visual query builder for inline queries` — 6 files, +824/-17
 
 ### Items resolved
-- **F-24**: Visual query builder. New `QueryBuilderModal` component with 3 query types (tag/property/backlinks). Radio-style type selector, per-type form fields (tag prefix input, property key+operator Select+value, backlinks target ULID), "Show as table" checkbox, live expression preview via `<code>`. Parses `initialExpression` via `parseQueryExpression()` for editing existing queries. Uses Dialog, Select, Input, Label from design system. QueryResult integration: "Edit Query" pencil button in header (only shown when `blockId` provided). Opens modal with current expression. Save calls `editBlock()` to update block content, re-fetches results. Header restructured to avoid nested `<button>` elements (a11y). `StaticBlock` passes `blockId` to `QueryResult` for `{{query ...}}` blocks. 19 i18n keys. 14 QueryBuilderModal tests + 8 QueryResult integration tests.
+- **F-24**: Visual query builder. New `QueryBuilderModal` component with 3 query types (tag/property/backlinks). Radio-style type selector, per-type form fields (tag prefix input, property key+operator Select+value, backlinks target ULID), "Show as table" checkbox, live expression preview via `<code>`. Parses `initialExpression` via `parseQueryExpression()` for editing existing queries. Uses Dialog, Select, Input, Label from design system. QueryResult integration: "Edit Query" pencil button in header (only shown when `blockId` provided). Opens modal with current expression. Save calls `editBlock()` to update block content, re-fetches results. Header restructured to avoid nested `<button>` elements (a11y). `StaticBlock` passes `blockId` to `QueryResult` for `{{query ...}}` blocks. 23 i18n keys. 14 QueryBuilderModal tests + 8 QueryResult integration tests.
 
 ### Files created
-- `src/components/QueryBuilderModal.tsx` — visual query builder modal (260 lines)
+- `src/components/QueryBuilderModal.tsx` — visual query builder modal (262 lines)
 - `src/components/__tests__/QueryBuilderModal.test.tsx` — 14 tests
 
 ### Files modified
@@ -257,7 +257,7 @@
 - **F-27**: Drag-and-drop + clipboard paste for file attachments. New `file-utils.ts` extracts `guessMimeType` from BlockTree (expanded with docx, xlsx, mp4, mov, mp3, wav, html, css, js) + `extractFileInfo` helper. EditableBlock: `onDrop`/`onDragOver`/`onDragLeave`/`onPaste` handlers on focused `<section>` with visual `ring-2` drag-over feedback. Paste distinguishes file vs text (returns early for text). 13 file-utils tests + 8 EditableBlock tests.
 
 ### Files created
-- `src/lib/file-utils.ts` — shared MIME guesser + file info extractor (48 lines)
+- `src/lib/file-utils.ts` — shared MIME guesser + file info extractor (55 lines)
 - `src/lib/__tests__/file-utils.test.ts` — 13 tests
 
 ### Files modified

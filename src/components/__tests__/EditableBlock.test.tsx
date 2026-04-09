@@ -1626,5 +1626,144 @@ describe('EditableBlock', () => {
       // No files in clipboard — addAttachment should NOT be called
       expect(mockAddAttachment).not.toHaveBeenCalled()
     })
+
+    it('passes axe audit in drag-over state (ring-2 feedback)', async () => {
+      const { container } = render(
+        <EditableBlock
+          blockId="BLK_1"
+          content="hello"
+          isFocused={true}
+          rovingEditor={makeRovingEditor() as never}
+        />,
+      )
+
+      const wrapper = container.querySelector('.block-editor') as HTMLElement
+
+      // Trigger drag-over visual state
+      fireEvent.dragOver(wrapper, {
+        dataTransfer: { types: ['Files'], files: [] },
+      })
+
+      // Verify the drag-over styling is active before running axe
+      expect(wrapper.className).toContain('ring-2')
+
+      expect(await axe(container)).toHaveNoViolations()
+    })
+
+    it('calls addAttachment for each file in a multi-file drop', async () => {
+      mockAddAttachment
+        .mockResolvedValueOnce({
+          id: 'ATT_1',
+          block_id: 'BLK_1',
+          filename: 'photo.jpg',
+          mime_type: 'image/jpeg',
+          size_bytes: 7,
+          fs_path: '/tmp/photo.jpg',
+          created_at: '2024-01-01T00:00:00Z',
+        })
+        .mockResolvedValueOnce({
+          id: 'ATT_2',
+          block_id: 'BLK_1',
+          filename: 'notes.pdf',
+          mime_type: 'application/pdf',
+          size_bytes: 7,
+          fs_path: '/tmp/notes.pdf',
+          created_at: '2024-01-01T00:00:00Z',
+        })
+        .mockResolvedValueOnce({
+          id: 'ATT_3',
+          block_id: 'BLK_1',
+          filename: 'data.csv',
+          mime_type: 'text/csv',
+          size_bytes: 7,
+          fs_path: '/tmp/data.csv',
+          created_at: '2024-01-01T00:00:00Z',
+        })
+
+      const { container } = render(
+        <EditableBlock
+          blockId="BLK_1"
+          content="hello"
+          isFocused={true}
+          rovingEditor={makeRovingEditor() as never}
+        />,
+      )
+
+      const file1 = makeFileWithPath('photo.jpg', 'image/jpeg', '/tmp/photo.jpg')
+      const file2 = makeFileWithPath('notes.pdf', 'application/pdf', '/tmp/notes.pdf')
+      const file3 = makeFileWithPath('data.csv', 'text/csv', '/tmp/data.csv')
+      const wrapper = container.querySelector('.block-editor') as HTMLElement
+
+      await act(async () => {
+        fireEvent.drop(wrapper, {
+          dataTransfer: { files: [file1, file2, file3], types: ['Files'] },
+        })
+      })
+
+      expect(mockAddAttachment).toHaveBeenCalledTimes(3)
+      expect(mockAddAttachment).toHaveBeenCalledWith({
+        blockId: 'BLK_1',
+        filename: 'photo.jpg',
+        mimeType: 'image/jpeg',
+        sizeBytes: 7,
+        fsPath: '/tmp/photo.jpg',
+      })
+      expect(mockAddAttachment).toHaveBeenCalledWith({
+        blockId: 'BLK_1',
+        filename: 'notes.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 7,
+        fsPath: '/tmp/notes.pdf',
+      })
+      expect(mockAddAttachment).toHaveBeenCalledWith({
+        blockId: 'BLK_1',
+        filename: 'data.csv',
+        mimeType: 'text/csv',
+        sizeBytes: 7,
+        fsPath: '/tmp/data.csv',
+      })
+      expect(mockToastSuccess).toHaveBeenCalledTimes(3)
+    })
+
+    it('handles drop of file with special characters in name', async () => {
+      const specialName = 'café résumé (2).pdf'
+      mockAddAttachment.mockResolvedValueOnce({
+        id: 'ATT_SP',
+        block_id: 'BLK_1',
+        filename: specialName,
+        mime_type: 'application/pdf',
+        size_bytes: 7,
+        fs_path: `/tmp/${specialName}`,
+        created_at: '2024-01-01T00:00:00Z',
+      })
+
+      const { container } = render(
+        <EditableBlock
+          blockId="BLK_1"
+          content="hello"
+          isFocused={true}
+          rovingEditor={makeRovingEditor() as never}
+        />,
+      )
+
+      const file = makeFileWithPath(specialName, 'application/pdf', `/tmp/${specialName}`)
+      const wrapper = container.querySelector('.block-editor') as HTMLElement
+
+      await act(async () => {
+        fireEvent.drop(wrapper, {
+          dataTransfer: { files: [file], types: ['Files'] },
+        })
+      })
+
+      expect(mockAddAttachment).toHaveBeenCalledWith({
+        blockId: 'BLK_1',
+        filename: specialName,
+        mimeType: 'application/pdf',
+        sizeBytes: 7,
+        fsPath: `/tmp/${specialName}`,
+      })
+      expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining(specialName))
+      expect(mockToastError).not.toHaveBeenCalled()
+    })
   })
 })

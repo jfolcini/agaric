@@ -18,6 +18,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { format } from 'date-fns'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 import type { DayEntry } from '../../../lib/date-utils'
 import { useJournalStore } from '../../../stores/journal'
 
@@ -219,6 +220,77 @@ describe('MonthlyView', () => {
 
     const grid = screen.getByRole('grid')
     expect(grid).toBeInTheDocument()
-    expect(grid).toHaveAttribute('aria-label', 'Monthly calendar')
+    expect(grid).toHaveAttribute('aria-label', t('journal.monthlyCalendarLabel'))
+  })
+
+  // ── Edge-case: leap year vs non-leap year February ──────────────────
+  it.each([
+    { year: 2024, expectedDays: 29, label: 'leap year (29 days)' },
+    { year: 2025, expectedDays: 28, label: 'non-leap year (28 days)' },
+  ])('renders February $label correctly', ({ year, expectedDays }) => {
+    const febDate = new Date(year, 1, 10)
+    useJournalStore.setState({ currentDate: febDate })
+
+    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+
+    const cells = screen.getAllByRole('gridcell')
+    expect(cells.length % 7).toBe(0)
+    expect(cells.length).toBeGreaterThanOrEqual(expectedDays)
+
+    // Feb 28 must always exist
+    expect(screen.getByTestId(`monthly-cell-${year}-02-28`)).toBeInTheDocument()
+
+    // Feb 29 only exists in a leap year
+    if (expectedDays === 29) {
+      expect(screen.getByTestId(`monthly-cell-${year}-02-29`)).toBeInTheDocument()
+      expect(screen.getByTestId(`monthly-cell-${year}-02-29`)).toHaveAttribute(
+        'data-is-current-month',
+        'true',
+      )
+    } else {
+      expect(screen.queryByTestId(`monthly-cell-${year}-02-29`)).not.toBeInTheDocument()
+    }
+  })
+
+  // ── Edge-case: 6-row grid vs 5-row grid ─────────────────────────────
+  it.each([
+    {
+      label: '6-row grid (March 2025 starts on Saturday, 31 days)',
+      date: new Date(2025, 2, 15),
+      expectedCells: 42,
+    },
+    {
+      label: '5-row grid (January 2025 starts on Wednesday, 31 days)',
+      date: new Date(2025, 0, 15),
+      expectedCells: 35,
+    },
+  ])('renders $label with correct cell count', ({ date, expectedCells }) => {
+    mockWeekStart.weekStartsOn = 1
+    useJournalStore.setState({ currentDate: date })
+
+    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+
+    const cells = screen.getAllByRole('gridcell')
+    expect(cells).toHaveLength(expectedCells)
+    expect(cells.length / 7).toBe(expectedCells / 7)
+  })
+
+  // ── Edge-case: empty month (no agenda / backlink data) ──────────────
+  it('renders all cells with zero counts when no pages have data', () => {
+    mockBatchCounts.agendaCounts = {}
+    mockBatchCounts.agendaCountsBySource = {}
+    mockBatchCounts.backlinkCounts = {}
+
+    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+
+    const cells = screen.getAllByRole('gridcell')
+    expect(cells.length).toBeGreaterThan(0)
+    expect(cells.length % 7).toBe(0)
+
+    // Every cell should report zero counts
+    for (const cell of cells) {
+      expect(cell).toHaveAttribute('data-agenda-count', '0')
+      expect(cell).toHaveAttribute('data-backlink-count', '0')
+    }
   })
 })
