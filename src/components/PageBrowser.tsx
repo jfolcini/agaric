@@ -374,7 +374,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                 variant="ghost"
                 size="icon-xs"
                 aria-label={t('pageBrowser.deleteButton')}
-                className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
+                className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
                 disabled={deletingId === page.id}
                 onClick={(e) => {
                   e.stopPropagation()

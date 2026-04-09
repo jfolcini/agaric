@@ -82,13 +82,13 @@ describe('Button', () => {
 
   it('xs size includes coarse pointer height and padding overrides', () => {
     const btn = renderButton('xs')
-    expect(btn.className).toContain('[@media(pointer:coarse)]:h-9')
+    expect(btn.className).toContain('[@media(pointer:coarse)]:h-11')
     expect(btn.className).toContain('[@media(pointer:coarse)]:px-3')
   })
 
   it('sm size includes coarse pointer height override', () => {
     const btn = renderButton('sm')
-    expect(btn.className).toContain('[@media(pointer:coarse)]:h-10')
+    expect(btn.className).toContain('[@media(pointer:coarse)]:h-11')
   })
 
   it('lg size does NOT include coarse pointer override (already >=48px)', () => {
@@ -103,12 +103,12 @@ describe('Button', () => {
 
   it('icon-xs size includes coarse pointer size override', () => {
     const btn = renderButton('icon-xs')
-    expect(btn.className).toContain('[@media(pointer:coarse)]:size-10')
+    expect(btn.className).toContain('[@media(pointer:coarse)]:size-11')
   })
 
   it('icon-sm size includes coarse pointer size override', () => {
     const btn = renderButton('icon-sm')
-    expect(btn.className).toContain('[@media(pointer:coarse)]:size-10')
+    expect(btn.className).toContain('[@media(pointer:coarse)]:size-11')
   })
 
   it('icon-lg size does NOT include coarse pointer override (already >=48px)', () => {

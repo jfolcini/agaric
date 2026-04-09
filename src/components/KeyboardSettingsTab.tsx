@@ -161,6 +161,7 @@ export function KeyboardSettingsTab(): React.ReactElement {
                           <Button
                             variant="ghost"
                             size="icon-xs"
+                            className="[@media(pointer:coarse)]:size-10"
                             onClick={saveEdit}
                             disabled={!editValue.trim()}
                             aria-label={t('keyboard.settings.saveButton')}
@@ -170,6 +171,7 @@ export function KeyboardSettingsTab(): React.ReactElement {
                           <Button
                             variant="ghost"
                             size="icon-xs"
+                            className="[@media(pointer:coarse)]:size-10"
                             onClick={cancelEdit}
                             aria-label={t('keyboard.settings.cancelButton')}
                           >

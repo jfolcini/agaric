@@ -230,7 +230,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                         variant="ghost"
                         size="icon-xs"
                         aria-label={t('tagList.colorTagLabel')}
-                        className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground active:text-foreground active:scale-95"
+                        className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground active:text-foreground active:scale-95"
                       >
                         {color ? (
                           <span
@@ -280,7 +280,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                     variant="ghost"
                     size="icon-xs"
                     aria-label={t('tagList.renameTagLabel')}
-                    className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground active:text-foreground active:scale-95"
+                    className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground active:text-foreground active:scale-95"
                     onClick={() => setRenameTarget({ id: tag.tag_id, name: tag.name || 'Unnamed' })}
                   >
                     <Pencil className="h-3.5 w-3.5" />
@@ -289,7 +289,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                     variant="ghost"
                     size="icon-xs"
                     aria-label={t('tagList.deleteTagLabel')}
-                    className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
+                    className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
                     onClick={() => setDeleteTarget({ id: tag.tag_id, name: tag.name || 'Unnamed' })}
                   >
                     <Trash2 className="h-3.5 w-3.5" />

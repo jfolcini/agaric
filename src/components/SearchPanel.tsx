@@ -10,7 +10,7 @@
 
 import { Search, X } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
@@ -18,7 +18,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { CardButton } from '@/components/ui/card-button'
 import { Input } from '@/components/ui/input'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
@@ -31,6 +30,7 @@ import { useNavigationStore } from '../stores/navigation'
 import { EmptyState } from './EmptyState'
 import { PageLink } from './PageLink'
 import { ResultCard } from './ResultCard'
+import { SearchablePopover } from './SearchablePopover'
 
 /** Returns true if the text contains CJK codepoints. */
 function hasCJK(text: string): boolean {
@@ -67,9 +67,6 @@ export function SearchPanel(): React.ReactElement {
   const [tagSearch, setTagSearch] = useState('')
   const [tagSuggestions, setTagSuggestions] = useState<TagCacheRow[]>([])
   const [tagSearchLoading, setTagSearchLoading] = useState(false)
-
-  const pageSearchRef = useRef<HTMLInputElement>(null)
-  const tagSearchRef = useRef<HTMLInputElement>(null)
 
   const hasFilters = filterPageId !== null || filterTagIds.length > 0
 
@@ -329,78 +326,37 @@ export function SearchPanel(): React.ReactElement {
           </Badge>
         ))}
 
-        <Popover open={pagePopoverOpen} onOpenChange={setPagePopoverOpen}>
-          <PopoverTrigger asChild>
-            <Button variant="ghost" size="sm" disabled={filterPageId !== null}>
-              {t('search.addPage')}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-64 p-2" align="start">
-            <Input
-              ref={pageSearchRef}
-              value={pageSearch}
-              onChange={(e) => setPageSearch(e.target.value)}
-              placeholder={t('search.searchPages')}
-              aria-label={t('search.searchPages')}
-              className="mb-2"
-              autoFocus
-            />
-            {pageSearchLoading && <Spinner className="mx-auto my-2 text-muted-foreground" />}
-            {!pageSearchLoading && pageSuggestions.length === 0 && (
-              <p className="text-xs text-muted-foreground p-2">{t('search.noPagesFound')}</p>
-            )}
-            <ul className="max-h-48 overflow-y-auto space-y-1 list-none m-0 p-0">
-              {pageSuggestions.map((page) => (
-                <li key={page.id}>
-                  <button
-                    type="button"
-                    className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent truncate"
-                    onClick={() => handleSelectPage(page)}
-                  >
-                    {page.content ?? 'Untitled'}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </PopoverContent>
-        </Popover>
+        <SearchablePopover<BlockRow>
+          open={pagePopoverOpen}
+          onOpenChange={setPagePopoverOpen}
+          items={pageSuggestions}
+          isLoading={pageSearchLoading}
+          onSelect={handleSelectPage}
+          renderItem={(page) => page.content ?? 'Untitled'}
+          keyExtractor={(page) => page.id}
+          searchValue={pageSearch}
+          onSearchChange={setPageSearch}
+          searchPlaceholder={t('search.searchPages')}
+          emptyMessage={t('search.noPagesFound')}
+          triggerLabel={t('search.addPage')}
+          triggerDisabled={filterPageId !== null}
+        />
 
-        <Popover open={tagPopoverOpen} onOpenChange={setTagPopoverOpen}>
-          <PopoverTrigger asChild>
-            <Button variant="ghost" size="sm">
-              {t('search.addTag')}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-64 p-2" align="start">
-            <Input
-              ref={tagSearchRef}
-              value={tagSearch}
-              onChange={(e) => setTagSearch(e.target.value)}
-              placeholder={t('search.searchTags')}
-              aria-label={t('search.searchTags')}
-              className="mb-2"
-              autoFocus
-            />
-            {tagSearchLoading && <Spinner className="mx-auto my-2 text-muted-foreground" />}
-            {!tagSearchLoading && tagSuggestions.length === 0 && (
-              <p className="text-xs text-muted-foreground p-2">{t('search.noTagsFound')}</p>
-            )}
-            <ul className="max-h-48 overflow-y-auto space-y-1 list-none m-0 p-0">
-              {tagSuggestions.map((tag) => (
-                <li key={tag.tag_id}>
-                  <button
-                    type="button"
-                    className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent truncate"
-                    onClick={() => handleSelectTag(tag)}
-                    disabled={filterTagIds.includes(tag.tag_id)}
-                  >
-                    #{tag.name}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </PopoverContent>
-        </Popover>
+        <SearchablePopover<TagCacheRow>
+          open={tagPopoverOpen}
+          onOpenChange={setTagPopoverOpen}
+          items={tagSuggestions}
+          isLoading={tagSearchLoading}
+          onSelect={handleSelectTag}
+          renderItem={(tag) => `#${tag.name}`}
+          keyExtractor={(tag) => tag.tag_id}
+          searchValue={tagSearch}
+          onSearchChange={setTagSearch}
+          searchPlaceholder={t('search.searchTags')}
+          emptyMessage={t('search.noTagsFound')}
+          triggerLabel={t('search.addTag')}
+          isItemDisabled={(tag) => filterTagIds.includes(tag.tag_id)}
+        />
 
         {hasFilters && (
           <button
