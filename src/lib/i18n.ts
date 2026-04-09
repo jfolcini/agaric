@@ -80,6 +80,9 @@ const resources = {
       'journal.nextMonth': 'Next month',
       'journal.goToToday': 'Go to today',
       'journal.openCalendar': 'Open calendar picker',
+      'journal.monthlyCalendarLabel': 'Monthly calendar',
+      'journal.loadCountsFailed': 'Failed to load calendar counts',
+      'journal.loadCalendarFailed': 'Failed to load calendar',
 
       // Formatting toolbar
       'toolbar.bold': 'Bold',
@@ -1372,6 +1375,25 @@ const resources = {
       'settings.fontSizeSmall': 'Small',
       'settings.fontSizeMedium': 'Medium',
       'settings.fontSizeLarge': 'Large',
+
+      // UX-86: Keyboard settings
+      'settings.tabKeyboard': 'Keyboard',
+      'keyboard.settings.title': 'Keyboard Shortcuts',
+      'keyboard.settings.description':
+        'Customize keyboard shortcuts. Click the edit button to change a binding.',
+      'keyboard.settings.editShortcutFor': 'Edit shortcut for {{action}}',
+      'keyboard.settings.saveButton': 'Save',
+      'keyboard.settings.cancelButton': 'Cancel',
+      'keyboard.settings.resetButton': 'Reset to default',
+      'keyboard.settings.resetShortcutFor': 'Reset {{action}} to default',
+      'keyboard.settings.resetAllButton': 'Reset All to Defaults',
+      'keyboard.settings.resetAllConfirm':
+        'Reset all keyboard shortcuts to their default bindings?',
+      'keyboard.settings.resetAllTitle': 'Reset all shortcuts?',
+      'keyboard.settings.conflictWarning': 'Conflicts with: {{shortcuts}}',
+      'keyboard.settings.customized': 'Customized',
+      'keyboard.settings.typeNewBinding': 'Type new key binding...',
+      'keyboard.settings.emptyBinding': 'Key binding cannot be empty',
 
       // F-35: Mermaid diagrams
       'mermaid.loading': 'Rendering diagram…',

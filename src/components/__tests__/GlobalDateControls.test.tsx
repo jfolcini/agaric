@@ -111,7 +111,7 @@ describe('GlobalDateControls', () => {
 
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
-        expect.stringContaining('loadCalendarFailed'),
+        expect.stringContaining('Failed to load calendar'),
       )
     })
   })

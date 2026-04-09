@@ -23,17 +23,19 @@ import { type ThemePreference, useTheme } from '@/hooks/useTheme'
 import { cn } from '@/lib/utils'
 import { DeadlineWarningSection } from './DeadlineWarningSection'
 import { DeviceManagement } from './DeviceManagement'
+import { KeyboardSettingsTab } from './KeyboardSettingsTab'
 import { PropertyDefinitionsList } from './PropertyDefinitionsList'
 import { TaskStatesSection } from './TaskStatesSection'
 
-type SettingsTab = 'general' | 'properties' | 'appearance' | 'sync'
+type SettingsTab = 'general' | 'properties' | 'appearance' | 'keyboard' | 'sync'
 
-const TAB_IDS: SettingsTab[] = ['general', 'properties', 'appearance', 'sync']
+const TAB_IDS: SettingsTab[] = ['general', 'properties', 'appearance', 'keyboard', 'sync']
 
 const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
   general: 'settings.tabGeneral',
   properties: 'settings.tabProperties',
   appearance: 'settings.tabAppearance',
+  keyboard: 'settings.tabKeyboard',
   sync: 'settings.tabSync',
 }
 
@@ -193,6 +195,8 @@ export function SettingsView(): React.ReactElement {
             </div>
           </div>
         )}
+
+        {activeTab === 'keyboard' && <KeyboardSettingsTab />}
 
         {activeTab === 'sync' && <DeviceManagement />}
       </div>

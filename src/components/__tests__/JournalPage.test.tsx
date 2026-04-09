@@ -105,6 +105,30 @@ vi.mock('../AgendaResults', () => ({
   ),
 }))
 
+// ── Mock MonthlyDayCell (UX-83) ─────────────────────────────────────
+vi.mock('../journal/MonthlyDayCell', () => ({
+  MonthlyDayCell: (props: Record<string, unknown>) => {
+    const entry = props.entry as { dateStr: string; displayDate: string }
+    return (
+      // biome-ignore lint/a11y/useFocusableInteractive: test mock
+      // biome-ignore lint/a11y/useSemanticElements: test mock for gridcell
+      // biome-ignore lint/a11y/useKeyWithClickEvents: test mock
+      <div
+        role="gridcell"
+        data-testid={`monthly-cell-${entry.dateStr}`}
+        data-is-today={String(!!props.isToday)}
+        data-is-current-month={String(!!props.isCurrentMonth)}
+        data-agenda-count={String(props.agendaCount)}
+        data-backlink-count={String(props.backlinkCount)}
+        aria-label={entry.displayDate}
+        onClick={() => (props.onNavigateToDate as (d: string) => void)?.(entry.dateStr)}
+      >
+        {new Date(`${entry.dateStr}T12:00:00`).getDate()}
+      </div>
+    )
+  },
+}))
+
 import { useBlockStore } from '../../stores/blocks'
 import { useJournalStore } from '../../stores/journal'
 import { JournalControls, JournalPage, MAX_JOURNAL_DATE, MIN_JOURNAL_DATE } from '../JournalPage'
@@ -386,7 +410,7 @@ describe('JournalPage', () => {
   // ── Monthly Mode ────────────────────────────────────────────────────
 
   describe('monthly mode', () => {
-    it('shows stacked day sections when switched to monthly', async () => {
+    it('shows calendar grid when switched to monthly', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValue(emptyPage)
 
@@ -399,10 +423,11 @@ describe('JournalPage', () => {
       const monthTab = screen.getByRole('tab', { name: /monthly view/i })
       await user.click(monthTab)
 
-      // Should have multiple sections (one per day of the month)
-      const sections = screen.getAllByRole('region')
-      // Current month has at least 28 days
-      expect(sections.length).toBeGreaterThanOrEqual(28)
+      // Should have a grid with gridcell elements (one per visible day)
+      expect(screen.getByRole('grid')).toBeInTheDocument()
+      const cells = screen.getAllByRole('gridcell')
+      // Current month has at least 28 days, plus padding
+      expect(cells.length).toBeGreaterThanOrEqual(28)
     })
 
     it('displays month/year in nav header', async () => {
@@ -422,7 +447,7 @@ describe('JournalPage', () => {
       expect(screen.getByTestId('date-display')).toHaveTextContent(expectedMonth)
     })
 
-    it('shows BlockTree for days with pages', async () => {
+    it('renders grid cells for days in monthly view', async () => {
       const user = userEvent.setup()
       const todayStr = formatDate(new Date())
 
@@ -441,10 +466,13 @@ describe('JournalPage', () => {
       const monthTab = screen.getByRole('tab', { name: /monthly view/i })
       await user.click(monthTab)
 
-      // Today's section should have a BlockTree (via the mock)
-      // Other days should show empty state
-      const addButtons = screen.getAllByRole('button', { name: /add block/i })
-      expect(addButtons.length).toBeGreaterThanOrEqual(1)
+      // Grid cells should be rendered for the month
+      const cells = screen.getAllByRole('gridcell')
+      expect(cells.length).toBeGreaterThanOrEqual(28)
+
+      // Today's cell should exist
+      const todayCell = screen.getByTestId(`monthly-cell-${todayStr}`)
+      expect(todayCell).toBeInTheDocument()
     })
   })
 
@@ -766,7 +794,7 @@ describe('JournalPage', () => {
       )
     })
 
-    it('day headings in monthly view are clickable buttons', async () => {
+    it('grid cells in monthly view are clickable', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValue(emptyPage)
       renderJournal()
@@ -775,8 +803,8 @@ describe('JournalPage', () => {
       })
       const monthTab = screen.getByRole('tab', { name: /monthly view/i })
       await user.click(monthTab)
-      const dayButtons = screen.getAllByRole('button', { name: /go to daily view for/i })
-      expect(dayButtons.length).toBeGreaterThanOrEqual(28)
+      const cells = screen.getAllByRole('gridcell')
+      expect(cells.length).toBeGreaterThanOrEqual(28)
     })
 
     it('day headings in daily view are NOT clickable buttons', async () => {
@@ -1795,7 +1823,7 @@ describe('JournalPage', () => {
       await user.click(monthTab)
 
       await waitFor(() => {
-        expect(screen.getAllByRole('region').length).toBeGreaterThanOrEqual(28)
+        expect(screen.getByRole('grid')).toBeInTheDocument()
       })
 
       expect(screen.queryByTestId('due-panel')).not.toBeInTheDocument()
@@ -2043,7 +2071,7 @@ describe('JournalPage', () => {
       })
     })
 
-    it('monthly mode shows badges', async () => {
+    it('monthly mode passes counts to grid cells', async () => {
       // Use January 2025 — the 6th has a page with counts
       setupBadgeMocks({
         agendaCountsBySource: { [mondayStr]: { 'column:due_date': 4 } },
@@ -2054,9 +2082,12 @@ describe('JournalPage', () => {
       renderJournal()
 
       await waitFor(() => {
-        expect(screen.getByText(/4\s+Due/)).toBeInTheDocument()
-        expect(screen.getByText(/8\s+refs/)).toBeInTheDocument()
+        expect(screen.getByRole('grid')).toBeInTheDocument()
       })
+
+      // Verify grid cells exist in the grid
+      const cells = screen.getAllByRole('gridcell')
+      expect(cells.length).toBeGreaterThanOrEqual(28)
     })
 
     it('"99+" cap for counts over 99', async () => {

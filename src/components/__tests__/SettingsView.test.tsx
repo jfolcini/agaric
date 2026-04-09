@@ -38,6 +38,12 @@ vi.mock('../DeviceManagement', () => ({
   DeviceManagement: () => <div data-testid="device-management">Device Management</div>,
 }))
 
+vi.mock('../KeyboardSettingsTab', () => ({
+  KeyboardSettingsTab: () => (
+    <div data-testid="keyboard-settings-tab">Keyboard Settings Content</div>
+  ),
+}))
+
 vi.mock('sonner', () => ({
   toast: {
     error: vi.fn(),
@@ -101,15 +107,16 @@ beforeEach(() => {
 })
 
 describe('SettingsView', () => {
-  it('renders with 4 tabs', () => {
+  it('renders with 5 tabs', () => {
     render(<SettingsView />)
 
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(4)
+    expect(tabs).toHaveLength(5)
     expect(tabs[0]).toHaveTextContent('General')
     expect(tabs[1]).toHaveTextContent('Properties')
     expect(tabs[2]).toHaveTextContent('Appearance')
-    expect(tabs[3]).toHaveTextContent('Sync & Devices')
+    expect(tabs[3]).toHaveTextContent('Keyboard')
+    expect(tabs[4]).toHaveTextContent('Sync & Devices')
   })
 
   it('General tab shows task states section by default', () => {
@@ -248,5 +255,24 @@ describe('SettingsView', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+  })
+
+  it('renders Keyboard tab', () => {
+    render(<SettingsView />)
+
+    const keyboardTab = screen.getByRole('tab', { name: 'Keyboard' })
+    expect(keyboardTab).toBeInTheDocument()
+  })
+
+  it('shows KeyboardSettingsTab when keyboard tab is clicked', async () => {
+    const user = userEvent.setup()
+    render(<SettingsView />)
+
+    const keyboardTab = screen.getByRole('tab', { name: 'Keyboard' })
+    await user.click(keyboardTab)
+
+    expect(keyboardTab).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('keyboard-settings-tab')).toBeInTheDocument()
+    expect(screen.getByText('Keyboard Settings Content')).toBeInTheDocument()
   })
 })

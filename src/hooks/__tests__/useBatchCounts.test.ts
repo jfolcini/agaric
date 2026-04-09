@@ -103,7 +103,7 @@ describe('useBatchCounts', () => {
     renderHook(() => useBatchCounts([makeDayEntry('2025-01-06')]))
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('journal.loadCountsFailed')
+      expect(mockedToastError).toHaveBeenCalledWith(expect.stringContaining('calendar counts'))
     })
   })
 

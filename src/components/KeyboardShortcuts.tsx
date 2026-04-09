@@ -6,7 +6,7 @@
  */
 
 import { Keyboard } from 'lucide-react'
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -16,6 +16,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { getCurrentShortcuts } from '../lib/keyboard-config'
 
 interface ShortcutDef {
   keys: string
@@ -23,147 +24,20 @@ interface ShortcutDef {
   description: string
 }
 
-const SHORTCUT_GROUPS: { category: string; shortcuts: ShortcutDef[] }[] = [
-  {
-    category: 'keyboard.category.navigation',
-    shortcuts: [
-      {
-        keys: 'Arrow Up / Left',
-        condition: 'keyboard.condition.atStart',
-        description: 'keyboard.moveToPreviousBlock',
-      },
-      {
-        keys: 'Arrow Down / Right',
-        condition: 'keyboard.condition.atEnd',
-        description: 'keyboard.moveToNextBlock',
-      },
-    ],
-  },
-  {
-    category: 'keyboard.category.editing',
-    shortcuts: [
-      { keys: 'Enter', description: 'keyboard.saveBlockAndClose' },
-      {
-        keys: 'Backspace',
-        condition: 'keyboard.condition.onEmptyBlock',
-        description: 'keyboard.deleteBlock',
-      },
-      {
-        keys: 'Backspace',
-        condition: 'keyboard.condition.atStartOfBlock',
-        description: 'keyboard.mergeWithPrevious',
-      },
-      { keys: 'Ctrl + Shift + Arrow Right', description: 'keyboard.indentBlock' },
-      { keys: 'Ctrl + Shift + Arrow Left', description: 'keyboard.dedentBlock' },
-      {
-        keys: 'Ctrl + Enter',
-        description: 'keyboard.cycleTaskState',
-      },
-      { keys: 'Ctrl + .', description: 'keyboard.collapseExpandChildren' },
-      { keys: 'Ctrl + K', description: 'keyboard.insertOrEditLink' },
-      {
-        keys: 'Ctrl + Shift + C',
-        condition: 'keyboard.condition.inEditor',
-        description: 'keyboard.toggleCodeBlock',
-      },
-      {
-        keys: 'Ctrl + Shift + S',
-        condition: 'keyboard.condition.inEditor',
-        description: 'keyboard.toggleStrikethrough',
-      },
-      {
-        keys: 'Ctrl + Shift + H',
-        condition: 'keyboard.condition.inEditor',
-        description: 'keyboard.toggleHighlight',
-      },
-      { keys: 'Ctrl + Shift + Arrow Up', description: 'keyboard.moveBlockUp' },
-      { keys: 'Ctrl + Shift + Arrow Down', description: 'keyboard.moveBlockDown' },
-      {
-        keys: 'Shift + Enter',
-        condition: 'keyboard.condition.inEditor',
-        description: 'keyboard.insertLineBreak',
-      },
-    ],
-  },
-  {
-    category: 'keyboard.category.pickers',
-    shortcuts: [
-      { keys: '@', condition: 'keyboard.condition.inEditor', description: 'keyboard.tagPicker' },
-      {
-        keys: '[[',
-        condition: 'keyboard.condition.inEditor',
-        description: 'keyboard.blockLinkPicker',
-      },
-      {
-        keys: '/',
-        condition: 'keyboard.condition.inEditor',
-        description: 'keyboard.slashCommandMenu',
-      },
-    ],
-  },
-  {
-    category: 'keyboard.category.journal',
-    shortcuts: [
-      { keys: 'Alt + ←', description: 'keyboard.previousDayWeekMonth' },
-      { keys: 'Alt + →', description: 'keyboard.nextDayWeekMonth' },
-      { keys: 'Alt + T', description: 'keyboard.goToToday' },
-    ],
-  },
-  {
-    category: 'keyboard.category.blockSelection',
-    shortcuts: [
-      { keys: 'Ctrl + Click', description: 'keyboard.toggleBlockSelection' },
-      { keys: 'Shift + Click', description: 'keyboard.rangeSelectBlocks' },
-      {
-        keys: 'Ctrl + A',
-        condition: 'keyboard.condition.notEditing',
-        description: 'keyboard.selectAllBlocks',
-      },
-      {
-        keys: 'Escape',
-        condition: 'keyboard.condition.withSelection',
-        description: 'keyboard.clearSelection',
-      },
-    ],
-  },
-  {
-    category: 'keyboard.category.undoRedo',
-    shortcuts: [
-      {
-        keys: 'Ctrl + Z',
-        condition: 'keyboard.condition.outsideEditor',
-        description: 'keyboard.undoLastPageOp',
-      },
-      {
-        keys: 'Ctrl + Y',
-        condition: 'keyboard.condition.outsideEditor',
-        description: 'keyboard.redoLastUndoneOp',
-      },
-    ],
-  },
-  {
-    category: 'keyboard.category.historyView',
-    shortcuts: [
-      { keys: 'Space', description: 'keyboard.toggleSelection' },
-      { keys: 'Shift + Click', description: 'keyboard.rangeSelect' },
-      { keys: 'Ctrl + A', description: 'keyboard.selectAll' },
-      { keys: 'Enter', description: 'keyboard.revertSelected' },
-      { keys: 'Escape', description: 'keyboard.clearSelection' },
-      { keys: 'Arrow Up / Arrow Down', description: 'keyboard.navigateItems' },
-      { keys: 'j / k', description: 'keyboard.navigateItemsVim' },
-    ],
-  },
-  {
-    category: 'keyboard.category.global',
-    shortcuts: [
-      { keys: 'Ctrl + F', description: 'keyboard.focusSearch' },
-      { keys: 'Ctrl + B', description: 'keyboard.toggleSidebar' },
-      { keys: 'Ctrl + N', description: 'keyboard.createNewPage' },
-      { keys: '?', description: 'keyboard.showKeyboardShortcuts' },
-      { keys: 'Escape', description: 'keyboard.closeOverlays' },
-    ],
-  },
-]
+function buildShortcutGroups(): { category: string; shortcuts: ShortcutDef[] }[] {
+  const current = getCurrentShortcuts()
+  const groupMap = new Map<string, ShortcutDef[]>()
+  for (const s of current) {
+    const list = groupMap.get(s.category) ?? []
+    list.push({
+      keys: s.keys,
+      description: s.description,
+      ...(s.condition != null && { condition: s.condition }),
+    })
+    groupMap.set(s.category, list)
+  }
+  return Array.from(groupMap.entries()).map(([category, shortcuts]) => ({ category, shortcuts }))
+}
 
 interface SyntaxEntry {
   syntax: string
@@ -224,6 +98,9 @@ export function KeyboardShortcuts({
   const isControlled = controlledOpen !== undefined
   const open = isControlled ? controlledOpen : internalOpen
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rebuild from localStorage when sheet opens
+  const shortcutGroups = useMemo(() => buildShortcutGroups(), [open])
+
   const setOpen = useCallback(
     (value: boolean) => {
       if (isControlled) {
@@ -282,7 +159,7 @@ export function KeyboardShortcuts({
               </tr>
             </thead>
             <tbody>
-              {SHORTCUT_GROUPS.map((group) => (
+              {shortcutGroups.map((group) => (
                 <React.Fragment key={group.category}>
                   <tr>
                     <td

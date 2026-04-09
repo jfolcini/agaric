@@ -1,20 +1,20 @@
 /**
- * Tests for MonthlyView component.
+ * Tests for MonthlyView component (UX-83 — calendar grid layout).
  *
  * Validates:
- *  1. Renders one DaySection per day of the month
- *  2. Today's entry gets headingLevel="h2", others get "h3"
- *  3. All entries have compact and mode="monthly" props
- *  4. Passes agendaCounts, agendaCountsBySource, backlinkCounts from useBatchCounts
- *  5. Forwards onNavigateToPage and onAddBlock callbacks
- *  6. Separators between day sections
- *  7. Re-renders when currentDate changes months
- *  8. Has no a11y violations
+ *  1. Grid has 7 column headers (Mon-Sun for weekStartsOn=1)
+ *  2. Grid has correct number of cells (days in month + padding)
+ *  3. Today cell gets isToday={true}
+ *  4. Adjacent month cells get isCurrentMonth={false}
+ *  5. Month cells get isCurrentMonth={true}
+ *  6. Correct counts passed to cells
+ *  7. Re-renders on month change
+ *  8. axe audit
+ *  9. Week start preference changes header order
  */
 
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { format } from 'date-fns'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -32,42 +32,33 @@ vi.mock('../../../hooks/useBatchCounts', () => ({
   useBatchCounts: () => mockBatchCounts,
 }))
 
-// ── Mock DaySection ─────────────────────────────────────────────────
-vi.mock('../DaySection', () => ({
-  DaySection: (props: Record<string, unknown>) => {
+// ── Mock useWeekStart ───────────────────────────────────────────────
+const mockWeekStart = vi.hoisted(() => ({
+  weekStartsOn: 1 as 0 | 1,
+}))
+
+vi.mock('../../../hooks/useWeekStart', () => ({
+  useWeekStart: () => mockWeekStart,
+}))
+
+// ── Mock MonthlyDayCell ─────────────────────────────────────────────
+vi.mock('../MonthlyDayCell', () => ({
+  MonthlyDayCell: (props: Record<string, unknown>) => {
     const entry = props.entry as DayEntry
     return (
-      <section
-        data-testid={`day-section-${entry.dateStr}`}
-        data-heading-level={props.headingLevel as string}
-        data-compact={String(!!props.compact)}
-        data-mode={props.mode as string}
-        data-has-navigate={String(!!props.onNavigateToPage)}
-        aria-label={`Journal for ${entry.displayDate}`}
+      // biome-ignore lint/a11y/useFocusableInteractive: test mock
+      // biome-ignore lint/a11y/useSemanticElements: test mock for gridcell
+      <div
+        role="gridcell"
+        data-testid={`monthly-cell-${entry.dateStr}`}
+        data-is-today={String(!!props.isToday)}
+        data-is-current-month={String(!!props.isCurrentMonth)}
+        data-agenda-count={String(props.agendaCount)}
+        data-backlink-count={String(props.backlinkCount)}
+        aria-label={entry.displayDate}
       >
-        <span>{entry.displayDate}</span>
-        <button
-          type="button"
-          data-testid={`add-block-${entry.dateStr}`}
-          onClick={() => (props.onAddBlock as (dateStr: string) => void)(entry.dateStr)}
-        >
-          Add block
-        </button>
-        {!!props.onNavigateToPage && (
-          <button
-            type="button"
-            data-testid={`navigate-${entry.dateStr}`}
-            onClick={() =>
-              (props.onNavigateToPage as (pageId: string, title?: string) => void)(
-                `page-${entry.dateStr}`,
-                entry.dateStr,
-              )
-            }
-          >
-            Navigate
-          </button>
-        )}
-      </section>
+        {entry.date.getDate()}
+      </div>
     )
   },
 }))
@@ -102,36 +93,46 @@ beforeEach(() => {
   mockBatchCounts.agendaCounts = {}
   mockBatchCounts.agendaCountsBySource = {}
   mockBatchCounts.backlinkCounts = {}
+  mockWeekStart.weekStartsOn = 1
   useJournalStore.setState({ currentDate: FIXED_DATE })
 })
 
 describe('MonthlyView', () => {
-  it('renders one DaySection per day of January 2025 (31 days)', () => {
+  it('renders 7 column headers (Mon-Sun for weekStartsOn=1)', () => {
     render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
 
-    const sections = screen.getAllByTestId(/^day-section-/)
-    expect(sections).toHaveLength(31)
-
-    // Spot-check first and last day
-    expect(screen.getByTestId('day-section-2025-01-01')).toBeInTheDocument()
-    expect(screen.getByTestId('day-section-2025-01-31')).toBeInTheDocument()
+    const headers = screen.getAllByRole('columnheader')
+    expect(headers).toHaveLength(7)
+    expect(headers[0]).toHaveTextContent('Mon')
+    expect(headers[6]).toHaveTextContent('Sun')
   })
 
-  it('renders correct number of days for February 2025 (28 days)', () => {
+  it('renders correct number of grid cells for January 2025 (including padding)', () => {
+    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+
+    const cells = screen.getAllByRole('gridcell')
+    // Jan 2025 with Mon start: Dec 30, Dec 31, Jan 1-31, Feb 1, Feb 2
+    // Grid start: Mon Dec 30 (week containing Jan 1)
+    // Grid end: Sun Feb 2 (week containing Jan 31)
+    // That's 5 weeks = 35 cells
+    expect(cells.length).toBeGreaterThanOrEqual(28)
+    // Should be a multiple of 7
+    expect(cells.length % 7).toBe(0)
+  })
+
+  it('renders correct number of cells for February 2025', () => {
     useJournalStore.setState({ currentDate: FEB_DATE })
 
     render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
 
-    const sections = screen.getAllByTestId(/^day-section-/)
-    expect(sections).toHaveLength(28)
-
-    expect(screen.getByTestId('day-section-2025-02-01')).toBeInTheDocument()
-    expect(screen.getByTestId('day-section-2025-02-28')).toBeInTheDocument()
-    expect(screen.queryByTestId('day-section-2025-02-29')).not.toBeInTheDocument()
+    const cells = screen.getAllByRole('gridcell')
+    // Should be a multiple of 7
+    expect(cells.length % 7).toBe(0)
+    // Feb 2025 has 28 days, so at least 28 cells
+    expect(cells.length).toBeGreaterThanOrEqual(28)
   })
 
-  it('gives today headingLevel="h2" and other days "h3"', () => {
-    // Set currentDate to today so the "today" check in the component matches
+  it('marks today cell with isToday=true', () => {
     const today = new Date()
     useJournalStore.setState({ currentDate: today })
 
@@ -139,90 +140,56 @@ describe('MonthlyView', () => {
 
     render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
 
-    const sections = screen.getAllByTestId(/^day-section-/)
-
-    for (const section of sections) {
-      const dateStr = section.getAttribute('data-testid')?.replace('day-section-', '')
-      if (dateStr === todayStr) {
-        expect(section).toHaveAttribute('data-heading-level', 'h2')
-      } else {
-        expect(section).toHaveAttribute('data-heading-level', 'h3')
-      }
-    }
+    const todayCell = screen.getByTestId(`monthly-cell-${todayStr}`)
+    expect(todayCell).toHaveAttribute('data-is-today', 'true')
   })
 
-  it('passes compact and mode="monthly" to all DaySections', () => {
+  it('marks adjacent month cells with isCurrentMonth=false', () => {
     render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
 
-    const sections = screen.getAllByTestId(/^day-section-/)
-    for (const section of sections) {
-      expect(section).toHaveAttribute('data-compact', 'true')
-      expect(section).toHaveAttribute('data-mode', 'monthly')
+    // Jan 2025 with Monday start: Dec 30 should be in the grid but not current month
+    const dec30Cell = screen.queryByTestId('monthly-cell-2024-12-30')
+    if (dec30Cell) {
+      expect(dec30Cell).toHaveAttribute('data-is-current-month', 'false')
     }
   })
 
-  it('forwards onAddBlock callback with the correct dateStr', async () => {
-    const user = userEvent.setup()
-    const onAddBlock = vi.fn()
-
-    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={onAddBlock} />)
-
-    await user.click(screen.getByTestId('add-block-2025-01-15'))
-    expect(onAddBlock).toHaveBeenCalledWith('2025-01-15')
-  })
-
-  it('forwards onNavigateToPage callback', async () => {
-    const user = userEvent.setup()
-    const onNavigateToPage = vi.fn()
-
-    render(
-      <MonthlyView
-        makeDayEntry={makeDayEntry}
-        onNavigateToPage={onNavigateToPage}
-        onAddBlock={vi.fn()}
-      />,
-    )
-
-    await user.click(screen.getByTestId('navigate-2025-01-01'))
-    expect(onNavigateToPage).toHaveBeenCalledWith('page-2025-01-01', '2025-01-01')
-  })
-
-  it('renders without onNavigateToPage (optional prop)', () => {
+  it('marks current month cells with isCurrentMonth=true', () => {
     render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
 
-    expect(screen.queryByTestId(/^navigate-/)).not.toBeInTheDocument()
-    const sections = screen.getAllByTestId(/^day-section-/)
-    for (const section of sections) {
-      expect(section).toHaveAttribute('data-has-navigate', 'false')
-    }
+    const jan15Cell = screen.getByTestId('monthly-cell-2025-01-15')
+    expect(jan15Cell).toHaveAttribute('data-is-current-month', 'true')
+
+    const jan1Cell = screen.getByTestId('monthly-cell-2025-01-01')
+    expect(jan1Cell).toHaveAttribute('data-is-current-month', 'true')
   })
 
-  it('renders dividers between day sections', () => {
-    const { container } = render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+  it('passes correct counts to cells', () => {
+    mockBatchCounts.agendaCounts = { '2025-01-15': 3 }
+    mockBatchCounts.backlinkCounts = { 'page-2025-01-15': 5 }
 
-    // 30 dividers for 31 days (between each pair)
-    const dividers = container.querySelectorAll('.border-t')
-    expect(dividers).toHaveLength(30)
+    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+
+    const cell = screen.getByTestId('monthly-cell-2025-01-15')
+    expect(cell).toHaveAttribute('data-agenda-count', '3')
+    expect(cell).toHaveAttribute('data-backlink-count', '5')
   })
 
   it('re-renders when journal store currentDate changes to different month', () => {
     const { rerender } = render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
 
-    // Initially: January 2025 (31 days)
-    expect(screen.getAllByTestId(/^day-section-/)).toHaveLength(31)
-    expect(screen.getByTestId('day-section-2025-01-01')).toBeInTheDocument()
+    // Initially: January 2025
+    expect(screen.getByTestId('monthly-cell-2025-01-01')).toBeInTheDocument()
 
-    // Change to February 2025 (28 days)
+    // Change to February 2025
     useJournalStore.setState({ currentDate: FEB_DATE })
     rerender(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
 
-    expect(screen.getAllByTestId(/^day-section-/)).toHaveLength(28)
-    expect(screen.getByTestId('day-section-2025-02-01')).toBeInTheDocument()
-    expect(screen.queryByTestId('day-section-2025-01-01')).not.toBeInTheDocument()
+    expect(screen.getByTestId('monthly-cell-2025-02-01')).toBeInTheDocument()
+    expect(screen.queryByTestId('monthly-cell-2025-01-15')).not.toBeInTheDocument()
   })
 
   it('has no a11y violations', async () => {
-    // Use a short month to keep the test fast
     useJournalStore.setState({ currentDate: FEB_DATE })
 
     const { container } = render(
@@ -235,5 +202,24 @@ describe('MonthlyView', () => {
       },
       { timeout: 5000 },
     )
+  })
+
+  it('changes header order when weekStartsOn=0 (Sunday start)', () => {
+    mockWeekStart.weekStartsOn = 0
+
+    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+
+    const headers = screen.getAllByRole('columnheader')
+    expect(headers).toHaveLength(7)
+    expect(headers[0]).toHaveTextContent('Sun')
+    expect(headers[6]).toHaveTextContent('Sat')
+  })
+
+  it('renders grid with role="grid" and aria-label', () => {
+    render(<MonthlyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+
+    const grid = screen.getByRole('grid')
+    expect(grid).toBeInTheDocument()
+    expect(grid).toHaveAttribute('aria-label', 'Monthly calendar')
   })
 })

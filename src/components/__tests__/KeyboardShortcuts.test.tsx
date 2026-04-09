@@ -10,11 +10,15 @@
  */
 
 import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { KeyboardShortcuts } from '../KeyboardShortcuts'
 
 describe('KeyboardShortcuts', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
   it('renders sheet content when open', () => {
     render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
 
@@ -215,5 +219,14 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getByText('at start')).toBeInTheDocument()
     expect(screen.getByText('at end')).toBeInTheDocument()
     expect(screen.getAllByText('in editor')).toHaveLength(7)
+  })
+
+  it('shows customized shortcuts when localStorage has overrides', () => {
+    localStorage.setItem('agaric-keyboard-shortcuts', JSON.stringify({ focusSearch: 'Ctrl + G' }))
+    render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+    // The custom binding should appear
+    const kbdElements = screen.getAllByText('G')
+    expect(kbdElements.length).toBeGreaterThanOrEqual(1)
   })
 })

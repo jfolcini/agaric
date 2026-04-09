@@ -1,0 +1,366 @@
+/**
+ * Keyboard shortcut configuration with localStorage persistence (UX-86).
+ */
+
+const STORAGE_KEY = 'agaric-keyboard-shortcuts'
+
+export interface ShortcutBinding {
+  id: string
+  keys: string
+  category: string // i18n key
+  description: string // i18n key
+  condition?: string // i18n key
+}
+
+export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
+  // Navigation
+  {
+    id: 'prevBlock',
+    keys: 'Arrow Up / Left',
+    category: 'keyboard.category.navigation',
+    description: 'keyboard.moveToPreviousBlock',
+    condition: 'keyboard.condition.atStart',
+  },
+  {
+    id: 'nextBlock',
+    keys: 'Arrow Down / Right',
+    category: 'keyboard.category.navigation',
+    description: 'keyboard.moveToNextBlock',
+    condition: 'keyboard.condition.atEnd',
+  },
+
+  // Editing
+  {
+    id: 'saveBlock',
+    keys: 'Enter',
+    category: 'keyboard.category.editing',
+    description: 'keyboard.saveBlockAndClose',
+  },
+  {
+    id: 'deleteBlock',
+    keys: 'Backspace',
+    category: 'keyboard.category.editing',
+    description: 'keyboard.deleteBlock',
+    condition: 'keyboard.condition.onEmptyBlock',
+  },
+  {
+    id: 'mergeWithPrevious',
+    keys: 'Backspace',
+    category: 'keyboard.category.editing',
+    description: 'keyboard.mergeWithPrevious',
+    condition: 'keyboard.condition.atStartOfBlock',
+  },
+  {
+    id: 'indentBlock',
+    keys: 'Ctrl + Shift + Arrow Right',
+    category: 'keyboard.category.editing',
+    description: 'keyboard.indentBlock',
+  },
+  {
+    id: 'dedentBlock',
+    keys: 'Ctrl + Shift + Arrow Left',
+    category: 'keyboard.category.editing',
+    description: 'keyboard.dedentBlock',
+  },
+  {
+    id: 'cycleTaskState',
+    keys: 'Ctrl + Enter',
+    category: 'keyboard.category.editing',
+    description: 'keyboard.cycleTaskState',
+  },
+  {
+    id: 'collapseExpand',
+    keys: 'Ctrl + .',
+    category: 'keyboard.category.editing',
+    description: 'keyboard.collapseExpandChildren',
+  },
+  {
+    id: 'insertLink',
+    keys: 'Ctrl + K',
+    category: 'keyboard.category.editing',
+    description: 'keyboard.insertOrEditLink',
+  },
+  {
+    id: 'toggleCodeBlock',
+    keys: 'Ctrl + Shift + C',
+    category: 'keyboard.category.editing',
+    description: 'keyboard.toggleCodeBlock',
+    condition: 'keyboard.condition.inEditor',
+  },
+  {
+    id: 'toggleStrikethrough',
+    keys: 'Ctrl + Shift + S',
+    category: 'keyboard.category.editing',
+    description: 'keyboard.toggleStrikethrough',
+    condition: 'keyboard.condition.inEditor',
+  },
+  {
+    id: 'toggleHighlight',
+    keys: 'Ctrl + Shift + H',
+    category: 'keyboard.category.editing',
+    description: 'keyboard.toggleHighlight',
+    condition: 'keyboard.condition.inEditor',
+  },
+  {
+    id: 'moveBlockUp',
+    keys: 'Ctrl + Shift + Arrow Up',
+    category: 'keyboard.category.editing',
+    description: 'keyboard.moveBlockUp',
+  },
+  {
+    id: 'moveBlockDown',
+    keys: 'Ctrl + Shift + Arrow Down',
+    category: 'keyboard.category.editing',
+    description: 'keyboard.moveBlockDown',
+  },
+  {
+    id: 'insertLineBreak',
+    keys: 'Shift + Enter',
+    category: 'keyboard.category.editing',
+    description: 'keyboard.insertLineBreak',
+    condition: 'keyboard.condition.inEditor',
+  },
+
+  // Pickers
+  {
+    id: 'tagPicker',
+    keys: '@',
+    category: 'keyboard.category.pickers',
+    description: 'keyboard.tagPicker',
+    condition: 'keyboard.condition.inEditor',
+  },
+  {
+    id: 'blockLinkPicker',
+    keys: '[[',
+    category: 'keyboard.category.pickers',
+    description: 'keyboard.blockLinkPicker',
+    condition: 'keyboard.condition.inEditor',
+  },
+  {
+    id: 'slashCommand',
+    keys: '/',
+    category: 'keyboard.category.pickers',
+    description: 'keyboard.slashCommandMenu',
+    condition: 'keyboard.condition.inEditor',
+  },
+
+  // Journal
+  {
+    id: 'prevDayWeekMonth',
+    keys: 'Alt + ←',
+    category: 'keyboard.category.journal',
+    description: 'keyboard.previousDayWeekMonth',
+  },
+  {
+    id: 'nextDayWeekMonth',
+    keys: 'Alt + →',
+    category: 'keyboard.category.journal',
+    description: 'keyboard.nextDayWeekMonth',
+  },
+  {
+    id: 'goToToday',
+    keys: 'Alt + T',
+    category: 'keyboard.category.journal',
+    description: 'keyboard.goToToday',
+  },
+
+  // Block Selection
+  {
+    id: 'toggleBlockSelection',
+    keys: 'Ctrl + Click',
+    category: 'keyboard.category.blockSelection',
+    description: 'keyboard.toggleBlockSelection',
+  },
+  {
+    id: 'rangeSelectBlocks',
+    keys: 'Shift + Click',
+    category: 'keyboard.category.blockSelection',
+    description: 'keyboard.rangeSelectBlocks',
+  },
+  {
+    id: 'selectAllBlocks',
+    keys: 'Ctrl + A',
+    category: 'keyboard.category.blockSelection',
+    description: 'keyboard.selectAllBlocks',
+    condition: 'keyboard.condition.notEditing',
+  },
+  {
+    id: 'clearSelection',
+    keys: 'Escape',
+    category: 'keyboard.category.blockSelection',
+    description: 'keyboard.clearSelection',
+    condition: 'keyboard.condition.withSelection',
+  },
+
+  // Undo/Redo
+  {
+    id: 'undoLastPageOp',
+    keys: 'Ctrl + Z',
+    category: 'keyboard.category.undoRedo',
+    description: 'keyboard.undoLastPageOp',
+    condition: 'keyboard.condition.outsideEditor',
+  },
+  {
+    id: 'redoLastUndoneOp',
+    keys: 'Ctrl + Y',
+    category: 'keyboard.category.undoRedo',
+    description: 'keyboard.redoLastUndoneOp',
+    condition: 'keyboard.condition.outsideEditor',
+  },
+
+  // History View
+  {
+    id: 'histToggleSelection',
+    keys: 'Space',
+    category: 'keyboard.category.historyView',
+    description: 'keyboard.toggleSelection',
+  },
+  {
+    id: 'histRangeSelect',
+    keys: 'Shift + Click',
+    category: 'keyboard.category.historyView',
+    description: 'keyboard.rangeSelect',
+  },
+  {
+    id: 'histSelectAll',
+    keys: 'Ctrl + A',
+    category: 'keyboard.category.historyView',
+    description: 'keyboard.selectAll',
+  },
+  {
+    id: 'histRevertSelected',
+    keys: 'Enter',
+    category: 'keyboard.category.historyView',
+    description: 'keyboard.revertSelected',
+  },
+  {
+    id: 'histClearSelection',
+    keys: 'Escape',
+    category: 'keyboard.category.historyView',
+    description: 'keyboard.clearSelection',
+  },
+  {
+    id: 'histNavigateItems',
+    keys: 'Arrow Up / Arrow Down',
+    category: 'keyboard.category.historyView',
+    description: 'keyboard.navigateItems',
+  },
+  {
+    id: 'histNavigateVim',
+    keys: 'j / k',
+    category: 'keyboard.category.historyView',
+    description: 'keyboard.navigateItemsVim',
+  },
+
+  // Global
+  {
+    id: 'focusSearch',
+    keys: 'Ctrl + F',
+    category: 'keyboard.category.global',
+    description: 'keyboard.focusSearch',
+  },
+  {
+    id: 'toggleSidebar',
+    keys: 'Ctrl + B',
+    category: 'keyboard.category.global',
+    description: 'keyboard.toggleSidebar',
+  },
+  {
+    id: 'createNewPage',
+    keys: 'Ctrl + N',
+    category: 'keyboard.category.global',
+    description: 'keyboard.createNewPage',
+  },
+  {
+    id: 'showShortcuts',
+    keys: '?',
+    category: 'keyboard.category.global',
+    description: 'keyboard.showKeyboardShortcuts',
+  },
+  {
+    id: 'closeOverlays',
+    keys: 'Escape',
+    category: 'keyboard.category.global',
+    description: 'keyboard.closeOverlays',
+  },
+]
+
+export function getCustomOverrides(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return {}
+    return JSON.parse(raw) as Record<string, string>
+  } catch {
+    return {}
+  }
+}
+
+export function getShortcutKeys(id: string): string {
+  const overrides = getCustomOverrides()
+  if (overrides[id]) return overrides[id]
+  const def = DEFAULT_SHORTCUTS.find((s) => s.id === id)
+  return def?.keys ?? ''
+}
+
+export function getCurrentShortcuts(): (ShortcutBinding & { isCustom: boolean })[] {
+  const overrides = getCustomOverrides()
+  return DEFAULT_SHORTCUTS.map((s) => ({
+    ...s,
+    keys: overrides[s.id] ?? s.keys,
+    isCustom: s.id in overrides,
+  }))
+}
+
+export function setCustomShortcut(id: string, keys: string): void {
+  const overrides = getCustomOverrides()
+  const def = DEFAULT_SHORTCUTS.find((s) => s.id === id)
+  if (def && def.keys === keys) {
+    delete overrides[id]
+  } else {
+    overrides[id] = keys
+  }
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides))
+  } catch {
+    console.warn('Failed to save keyboard shortcut override')
+  }
+}
+
+export function resetShortcut(id: string): void {
+  const overrides = getCustomOverrides()
+  delete overrides[id]
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides))
+  } catch {
+    console.warn('Failed to reset keyboard shortcut')
+  }
+}
+
+export function resetAllShortcuts(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY)
+  } catch {
+    console.warn('Failed to reset all keyboard shortcuts')
+  }
+}
+
+export function findConflicts(): Array<{ ids: string[]; keys: string; category: string }> {
+  const current = getCurrentShortcuts()
+  const byKeyCat = new Map<string, string[]>()
+  for (const s of current) {
+    const key = `${s.keys}|${s.category}`
+    const existing = byKeyCat.get(key) ?? []
+    existing.push(s.id)
+    byKeyCat.set(key, existing)
+  }
+  const conflicts: Array<{ ids: string[]; keys: string; category: string }> = []
+  for (const [keyCat, ids] of byKeyCat) {
+    if (ids.length > 1) {
+      const parts = keyCat.split('|')
+      const keys = parts[0] ?? ''
+      const category = parts[1] ?? ''
+      conflicts.push({ ids, keys, category })
+    }
+  }
+  return conflicts
+}
