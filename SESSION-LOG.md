@@ -1,5 +1,18 @@
 # Session Log
 
+## Session 279 — Batch 14: F-28, F-30, F-25 partial (2026-04-09)
+
+**Commit:** `4d48678` — `feat: batch 14 — numbered lists, dividers, settings view, query pagination` — 18 files, +1439/-120
+
+### Items resolved
+- **F-28**: Numbered lists + dividers — TipTap OrderedList, BulletList, ListItem, HorizontalRule extensions. Markdown serializer parse/serialize. StaticBlock renders `<ol>`/`<li>` and `<hr>`. `/numbered-list` and `/divider` slash commands. 40 tests.
+- **F-30**: Settings view — tabbed SettingsView (General, Properties, Appearance, Sync & Devices). Theme toggle (light/dark/system) + font size selector. Replaces `properties` sidebar item. 9 tests.
+- **F-25** (partial): Query pagination + pill renderer — cursor-based load-more replacing hardcoded limit:50. QueryExpressionPills renders type/param badges. Remaining: date-range operators need backend. 9 tests.
+
+### Test counts
+- Frontend: 232 files, 5505 tests (was 5455)
+- Open REVIEW-LATER items: 17 (was 19)
+
 ## Session 278 — Batch 13: B-24, F-31, UX-48, F-34 (2026-04-09)
 
 **Commit:** `7e52297` — `feat: batch 13 — rovingEditor perf fix, onboarding, semantic tree, callout blocks` — 19 files, +1144/-138

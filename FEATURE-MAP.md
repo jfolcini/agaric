@@ -520,3 +520,14 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 
 ### Performance (session 278)
 - **rovingEditor ref stabilization** (B-24): Ref-based callback pattern across 5 consumer files (BlockTree, EditableBlock, useBlockKeyboardHandlers, useBlockDatePicker, useBlockDnD). Removes `rovingEditor` from 16 dependency arrays, preventing cascade re-renders of all EditableBlock instances.
+
+### Editor Features (session 279)
+- **Numbered lists** (F-28): TipTap `OrderedList`, `BulletList`, `ListItem` extensions. Markdown serializer parse (`1. item`) / serialize. StaticBlock renders `<ol class="list-decimal list-inside">` with `<li>`. `/numbered-list` slash command. 22 parse/serialize tests + 4 component tests.
+- **Divider blocks** (F-28): TipTap `HorizontalRule` extension. Markdown serializer parse (`---`) / serialize. StaticBlock renders `<hr>`. `/divider` slash command. `HorizontalRuleNode` type with `content?: undefined` for union compatibility. 10 parse/serialize tests + 4 component tests.
+
+### Views (session 279)
+- **SettingsView** (`src/components/SettingsView.tsx`): Tabbed settings replacing `properties` sidebar item. 4 tabs: General (TaskStatesSection, DeadlineWarningSection), Properties (PropertyDefinitionsList), Appearance (theme toggle light/dark/system + font size small/medium/large), Sync & Devices (DeviceManagement). Custom ARIA tab implementation. `'settings'` added to navigation ViewName union. 9 tests.
+
+### Query Improvements (session 279)
+- **Query pagination** (F-25): Cursor-based load-more in QueryResult replacing hardcoded `limit: 50`. `PAGE_SIZE` constant + `LoadMoreButton`. Accumulates results across pages, merges page titles.
+- **Query expression pills** (F-25): `QueryExpressionPills` component parses query expression into Badge-rendered pills (type badge + param/filter badges). Raw expression preserved as `title` tooltip. 9 tests.
