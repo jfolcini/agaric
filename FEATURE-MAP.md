@@ -543,3 +543,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 
 ### Toolbar Coverage (session 281)
 - **FormattingToolbar structure buttons** (UX-90): 3 new buttons — Ordered List (`ListOrdered`), Divider (`Minus`), Callout (`Info`) — dispatching block events (`INSERT_ORDERED_LIST`, `INSERT_DIVIDER`, `INSERT_CALLOUT`). 7 tests.
+
+### Query Date-Range Operators (session 282)
+- **Backend operator support** (F-25): `query_by_property` command accepts `operator: Option<String>` parameter. `pagination::query_by_property()` maps safe operator strings (eq/neq/lt/gt/lte/gte) to SQL operators via match statement. Dynamic SQL with bound parameters. 3 Rust tests.
+- **Frontend operator syntax** (F-25): `PropertyFilter.operator` field. `parseQueryExpression()` parses `property:key>value`, `property:key<=value` etc. `toCompareOp()` maps to `CompareOp` type. Relative dates resolved via `parseDate()`. `OPERATOR_SYMBOLS` maps to display symbols (≤, ≥, ≠). `QueryExpressionPills` renders operator symbols in pills. 18 frontend tests.

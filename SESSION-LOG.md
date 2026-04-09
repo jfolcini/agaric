@@ -1,5 +1,17 @@
 # Session Log
 
+## Session 282 — Batch 17: F-25 finish (2026-04-09)
+
+**Commit:** `e58425f` — `feat: F-25 finish — date-range operators for property queries` — 12 files, +542/-84
+
+### Items resolved
+- **F-25**: Fully resolved. Backend: `operator` parameter on `query_by_property` command + `pagination::query_by_property()` with safe operator mapping. Frontend: operator syntax parsing (`property:key>value`), relative date resolution via `parseDate`, readable operator symbols (≤, ≥, ≠) in pills. Backend: 3 tests. Frontend: 18 tests.
+
+### Test counts
+- Frontend: 234 files, 5555 tests (was 5537)
+- Rust: 1673 tests (was 1670)
+- Open REVIEW-LATER items: 14 (was 15)
+
 ## Session 281 — Batch 16: F-20, UX-90 (2026-04-09)
 
 **Commit:** `46d3a35` — `feat: batch 16 — op log compaction UI + toolbar surface coverage` — 14 files, +1052/-3
