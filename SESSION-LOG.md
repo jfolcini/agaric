@@ -1,5 +1,38 @@
 # Session Log
 
+## Session 301 — Batch 32: P-6 complete — 30 Criterion benchmarks (items 3-14) (2026-04-09)
+
+**Commit:** `78a26af` — 14 files, +2041/-9
+
+### Items resolved
+- **P-6 (items 3-14, fully resolved)**: 30 new Criterion benchmarks across 12 bench files (6 extended + 6 new). All parameterized at multiple scales. 6 additional visibility changes (pub(crate) → pub) in commands.rs. Combined with session 300's 10 benchmarks, P-6 is now complete: 40 benchmarks covering all 62 non-trivial Tauri commands.
+
+### Files created
+- `src-tauri/benches/alias_bench.rs` — 220 lines, 3 benchmarks (set/get/resolve aliases)
+- `src-tauri/benches/export_bench.rs` — 108 lines, 1 benchmark (export_page_markdown at 100/500/2000 blocks)
+- `src-tauri/benches/graph_bench.rs` — 118 lines, 1 benchmark (list_page_links at 100/1K/10K pages)
+- `src-tauri/benches/attachment_bench.rs` — 239 lines, 3 benchmarks (add/delete/list attachments)
+- `src-tauri/benches/compaction_bench.rs` — 146 lines, 2 benchmarks (get_compaction_status, compact_op_log at 1K/10K/100K ops)
+- `src-tauri/benches/property_def_bench.rs` — 244 lines, 4 benchmarks (create/list/update/delete property defs)
+
+### Files modified
+
+| Area | Change |
+|------|--------|
+| `tag_query_bench.rs` | +125 lines — 2 benchmarks (list_tags_by_prefix, list_tags_for_block) |
+| `backlink_query_bench.rs` | +140 lines — 2 benchmarks (count_backlinks_batch, list_unlinked_references) |
+| `commands_bench.rs` | +140 lines — 3 benchmarks (get_block, get_block_history, get_conflicts) |
+| `undo_redo.rs` | +314 lines — 3 benchmarks (restore_page_to_op, redo_page_op, compute_edit_diff) |
+| `sync_bench.rs` | +180 lines — 4 benchmarks (list/delete/update/set peer refs) |
+| `draft_bench.rs` | +93 lines — 2 benchmarks (delete_draft, list_drafts) |
+| `Cargo.toml` | +24 lines — 6 new [[bench]] entries |
+| `commands.rs` | 3 visibility changes: pub(crate) → pub |
+
+### Stats
+- Rust: 1706 tests, all passing
+- 22 bench files total (was 16), covering 62 of 72 commands (10 skipped as trivial/non-DB)
+- All new benches verified with `cargo check --bench`
+
 ## Session 300 — Batch 31: TEST + PERF (T-14, T-24, P-6 partial) (2026-04-09)
 
 **Commit:** `3c11b1c` — 7 files, +1455/-2
