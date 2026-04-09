@@ -47,6 +47,7 @@ vi.mock('lucide-react', () => ({
   LayoutTemplate: (props: Record<string, unknown>) => (
     <svg data-testid="layout-template-icon" {...props} />
   ),
+  List: (props: Record<string, unknown>) => <svg data-testid="list-icon" {...props} />,
   MapPin: () => <svg data-testid="map-pin-icon" />,
   MoreVertical: () => <svg data-testid="more-vertical-icon" />,
   Plus: () => <svg data-testid="plus-icon" />,
@@ -55,6 +56,7 @@ vi.mock('lucide-react', () => ({
   Undo2: () => <svg data-testid="undo2-icon" />,
   User: () => <svg data-testid="user-icon" />,
   X: () => <svg data-testid="x-icon" />,
+  XIcon: (props: Record<string, unknown>) => <svg data-testid="x-icon" {...props} />,
 }))
 
 // Mock sonner

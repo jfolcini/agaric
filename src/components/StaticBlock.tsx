@@ -13,16 +13,18 @@ import { toHtml } from 'hast-util-to-html'
 import { common, createLowlight } from 'lowlight'
 import { File, FileText, Image as ImageIcon } from 'lucide-react'
 import type React from 'react'
-import { lazy, memo, Suspense, useMemo, useRef, useState } from 'react'
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { parse } from '../editor/markdown-serializer'
 import type { BlockLevelNode, DocNode, InlineNode } from '../editor/types'
 import { useBlockAttachments } from '../hooks/useBlockAttachments'
 import i18n from '../lib/i18n'
 import { openUrl } from '../lib/open-url'
+import { getProperties, setProperty } from '../lib/tauri'
 import { cn } from '../lib/utils'
 import { ImageLightbox } from './ImageLightbox'
 import { QueryResult } from './QueryResult'
+import { Button } from './ui/button'
 import { ScrollArea } from './ui/scroll-area'
 import { Spinner } from './ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
@@ -68,6 +70,67 @@ function AttachmentMimeIcon({ mimeType }: { mimeType: string }): React.ReactElem
     return <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
   }
   return <File className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+}
+
+/** Width presets for image resize controls. */
+const IMAGE_WIDTH_PRESETS = [
+  { label: 'imageResize.small', value: '25' },
+  { label: 'imageResize.medium', value: '50' },
+  { label: 'imageResize.large', value: '75' },
+  { label: 'imageResize.full', value: '100' },
+] as const
+
+/** Floating toolbar for resizing images via width presets. */
+function ImageResizeToolbar({
+  blockId,
+  currentWidth,
+  onWidthChange,
+}: {
+  blockId: string
+  currentWidth: string
+  onWidthChange: (width: string) => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+
+  const handleClick = useCallback(
+    (value: string) => {
+      onWidthChange(value)
+      setProperty({
+        blockId,
+        key: 'image_width',
+        valueText: value,
+      }).catch(() => {
+        // Revert on failure — restore previous width
+        onWidthChange(currentWidth)
+      })
+    },
+    [blockId, currentWidth, onWidthChange],
+  )
+
+  return (
+    <div
+      className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 z-10 flex items-center gap-1 rounded-full bg-popover border border-border shadow-md px-2 py-1"
+      role="toolbar"
+      aria-label={t('imageResize.toolbar')}
+      data-testid="image-resize-toolbar"
+    >
+      {IMAGE_WIDTH_PRESETS.map((preset) => (
+        <Button
+          key={preset.value}
+          variant={currentWidth === preset.value ? 'secondary' : 'ghost'}
+          size="sm"
+          aria-label={t(preset.label)}
+          onClick={(e) => {
+            e.stopPropagation()
+            handleClick(preset.value)
+          }}
+          data-testid={`image-resize-${preset.value}`}
+        >
+          {`${preset.value}%`}
+        </Button>
+      ))}
+    </div>
+  )
 }
 
 export interface StaticBlockProps {
@@ -445,6 +508,34 @@ function StaticBlockInner({
     fsPath: string
   } | null>(null)
 
+  // Image resize state
+  const [imageWidth, setImageWidth] = useState('100')
+  const [imageHovered, setImageHovered] = useState(false)
+
+  // Only fetch image_width property when the block has image attachments
+  const hasImageAttachments =
+    !attachmentsLoading && attachments.some((a) => a.mime_type.startsWith('image/'))
+
+  // Load stored image_width property when image attachments are present
+  useEffect(() => {
+    if (!hasImageAttachments) return
+    let cancelled = false
+    getProperties(blockId)
+      .then((props) => {
+        if (cancelled) return
+        const widthProp = props.find((p) => p.key === 'image_width')
+        if (widthProp?.value_text) {
+          setImageWidth(widthProp.value_text)
+        }
+      })
+      .catch(() => {
+        // Ignore — use default width
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [blockId, hasImageAttachments])
+
   // Detect {{query ...}} blocks and render QueryResult instead of the text
   if (content?.startsWith('{{query ') && content.endsWith('}}')) {
     const expression = content.slice(8, -2).trim()
@@ -503,19 +594,50 @@ function StaticBlockInner({
               const url = getAssetUrl(att.fs_path)
               if (!url) return null
               return (
-                // biome-ignore lint/a11y/useKeyWithClickEvents: image open action is supplementary
-                <img
+                // biome-ignore lint/a11y/noStaticElementInteractions: hover/focus interaction for image resize toolbar
+                <div
                   key={att.id}
-                  src={url}
-                  alt={att.filename}
-                  loading="lazy"
-                  className="rounded-md cursor-pointer hover:opacity-90 transition-opacity"
-                  style={{ maxWidth: '100%', maxHeight: '400px', objectFit: 'contain' }}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setLightboxImage({ src: url, alt: att.filename, fsPath: att.fs_path })
+                  className="relative inline-block"
+                  style={{ maxWidth: `${imageWidth}%` }}
+                  data-testid="image-resize-wrapper"
+                  onMouseEnter={() => setImageHovered(true)}
+                  onMouseLeave={() => setImageHovered(false)}
+                  onClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      setImageHovered((prev) => !prev)
+                    }
                   }}
-                />
+                  // biome-ignore lint/a11y/noNoninteractiveTabindex: image container needs focus for keyboard resize access
+                  tabIndex={0}
+                  onFocus={() => setImageHovered(true)}
+                  onBlur={(e) => {
+                    if (!e.currentTarget.contains(e.relatedTarget)) {
+                      setImageHovered(false)
+                    }
+                  }}
+                >
+                  {imageHovered && (
+                    <ImageResizeToolbar
+                      blockId={blockId}
+                      currentWidth={imageWidth}
+                      onWidthChange={setImageWidth}
+                    />
+                  )}
+                  {/* biome-ignore lint/a11y/useKeyWithClickEvents: image open action is supplementary */}
+                  <img
+                    src={url}
+                    alt={att.filename}
+                    loading="lazy"
+                    className="rounded-md cursor-pointer hover:opacity-90 transition-opacity"
+                    style={{ maxWidth: '100%', maxHeight: '400px', objectFit: 'contain' }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setLightboxImage({ src: url, alt: att.filename, fsPath: att.fs_path })
+                    }}
+                  />
+                </div>
               )
             }
             return (

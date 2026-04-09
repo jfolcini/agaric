@@ -825,4 +825,167 @@ describe('TrashView', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  // ── Filter / search ─────────────────────────────────────────────────
+
+  it('renders filter input when items exist', async () => {
+    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')])
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    expect(screen.getByTestId('trash-filter-input')).toBeInTheDocument()
+  })
+
+  it('does not render filter input when trash is empty', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    render(<TrashView />)
+
+    await screen.findByText(/Nothing in trash/)
+    expect(screen.queryByTestId('trash-filter-input')).not.toBeInTheDocument()
+  })
+
+  it('typing filters items by content match', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([
+      makeBlock('B1', 'apple pie', '2025-01-15T00:00:00Z'),
+      makeBlock('B2', 'banana split', '2025-01-14T00:00:00Z'),
+      makeBlock('B3', 'cherry tart', '2025-01-13T00:00:00Z'),
+    ])
+
+    render(<TrashView />)
+
+    await screen.findByText('apple pie')
+    const input = screen.getByTestId('trash-filter-input')
+    await user.type(input, 'apple')
+
+    await waitFor(() => {
+      expect(screen.getByText('apple pie')).toBeInTheDocument()
+      expect(screen.queryByText('banana split')).not.toBeInTheDocument()
+      expect(screen.queryByText('cherry tart')).not.toBeInTheDocument()
+    })
+  })
+
+  it('empty filter shows all items', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([
+      makeBlock('B1', 'apple pie', '2025-01-15T00:00:00Z'),
+      makeBlock('B2', 'banana split', '2025-01-14T00:00:00Z'),
+    ])
+
+    render(<TrashView />)
+
+    await screen.findByText('apple pie')
+    const input = screen.getByTestId('trash-filter-input')
+
+    // Type then clear
+    await user.type(input, 'apple')
+    await waitFor(() => {
+      expect(screen.queryByText('banana split')).not.toBeInTheDocument()
+    })
+
+    await user.clear(input)
+    await waitFor(() => {
+      expect(screen.getByText('apple pie')).toBeInTheDocument()
+      expect(screen.getByText('banana split')).toBeInTheDocument()
+    })
+  })
+
+  it('no-match shows empty state with clear button', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([makeBlock('B1', 'apple pie', '2025-01-15T00:00:00Z')])
+
+    render(<TrashView />)
+
+    await screen.findByText('apple pie')
+    const input = screen.getByTestId('trash-filter-input')
+    await user.type(input, 'xyz')
+
+    await waitFor(() => {
+      expect(screen.getByText('No matching deleted items')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('trash-clear-filter-btn')).toBeInTheDocument()
+  })
+
+  it('clear button resets filter', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([makeBlock('B1', 'apple pie', '2025-01-15T00:00:00Z')])
+
+    render(<TrashView />)
+
+    await screen.findByText('apple pie')
+    const input = screen.getByTestId('trash-filter-input')
+    await user.type(input, 'xyz')
+
+    await waitFor(() => {
+      expect(screen.getByText('No matching deleted items')).toBeInTheDocument()
+    })
+
+    const clearBtn = screen.getByTestId('trash-clear-filter-btn')
+    await user.click(clearBtn)
+
+    await waitFor(() => {
+      expect(screen.getByText('apple pie')).toBeInTheDocument()
+    })
+    expect(input).toHaveValue('')
+  })
+
+  it('filtered count shows correctly', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([
+      makeBlock('B1', 'apple pie', '2025-01-15T00:00:00Z'),
+      makeBlock('B2', 'apple tart', '2025-01-14T00:00:00Z'),
+      makeBlock('B3', 'banana split', '2025-01-13T00:00:00Z'),
+    ])
+
+    render(<TrashView />)
+
+    await screen.findByText('apple pie')
+    const input = screen.getByTestId('trash-filter-input')
+    await user.type(input, 'apple')
+
+    await waitFor(() => {
+      const count = screen.getByTestId('trash-filter-count')
+      expect(count).toHaveTextContent('Showing 2 of 3 deleted items')
+    })
+  })
+
+  it('filter is case-insensitive', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([
+      makeBlock('B1', 'Apple Pie', '2025-01-15T00:00:00Z'),
+      makeBlock('B2', 'banana split', '2025-01-14T00:00:00Z'),
+    ])
+
+    render(<TrashView />)
+
+    await screen.findByText('Apple Pie')
+    const input = screen.getByTestId('trash-filter-input')
+    await user.type(input, 'apple')
+
+    await waitFor(() => {
+      expect(screen.getByText('Apple Pie')).toBeInTheDocument()
+      expect(screen.queryByText('banana split')).not.toBeInTheDocument()
+    })
+  })
+
+  it('has no a11y violations with filter input', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([
+      makeBlock('B1', 'apple pie', '2025-01-15T00:00:00Z'),
+      makeBlock('B2', 'banana split', '2025-01-14T00:00:00Z'),
+    ])
+
+    render(<TrashView />)
+
+    await screen.findByText('apple pie')
+    const input = screen.getByTestId('trash-filter-input')
+    await user.type(input, 'apple')
+
+    await waitFor(async () => {
+      const results = await axe(document.body)
+      expect(results).toHaveNoViolations()
+    })
+  })
 })

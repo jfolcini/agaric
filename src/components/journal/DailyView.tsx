@@ -3,8 +3,11 @@
  */
 
 import type React from 'react'
+import { useMemo } from 'react'
 import type { DayEntry } from '../../lib/date-utils'
+import { getTodayString } from '../../lib/date-utils'
 import { DaySection } from './DaySection'
+import { UnfinishedTasks } from './UnfinishedTasks'
 
 interface DailyViewProps {
   entry: DayEntry
@@ -17,8 +20,11 @@ export function DailyView({
   onNavigateToPage,
   onAddBlock,
 }: DailyViewProps): React.ReactElement {
+  const isToday = useMemo(() => entry.dateStr === getTodayString(), [entry.dateStr])
+
   return (
     <div key={entry.dateStr} className="space-y-4 animate-in fade-in-0 duration-150">
+      {isToday && <UnfinishedTasks onNavigateToPage={onNavigateToPage} />}
       <DaySection
         entry={entry}
         headingLevel="h2"

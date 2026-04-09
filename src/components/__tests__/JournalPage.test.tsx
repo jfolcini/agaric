@@ -187,8 +187,10 @@ describe('JournalPage', () => {
 
       // Daily mode: date heading is hidden (shown in header bar instead).
       // The only h2 may come from EmptyState; no date heading should exist.
+      // Filter out headings from UnfinishedTasks (F-23) empty state.
       const h2s = screen.queryAllByRole('heading', { level: 2 })
       for (const h2 of h2s) {
+        if (h2.textContent?.includes('unfinished')) continue
         expect(h2.textContent).toMatch(/No blocks/)
       }
     })

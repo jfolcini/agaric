@@ -3,10 +3,10 @@
  *
  * Shows existing tags and provides an inline form to create new ones.
  * Includes rename dialog, confirmation dialog for deletion, clickable
- * tag names, and toast error feedback.
+ * tag names, color picker popover, and toast error feedback.
  */
 
-import { Pencil, Plus, Tag, Trash2 } from 'lucide-react'
+import { Paintbrush, Pencil, Plus, Tag, Trash2, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -17,8 +17,23 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ListItem } from '@/components/ui/list-item'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  clearTagColor,
+  getTagColors,
+  setTagColor as setTagColorLocal,
+  TAG_COLOR_PRESETS,
+} from '@/lib/tag-colors'
+import { cn } from '@/lib/utils'
 import type { TagCacheRow } from '../lib/tauri'
-import { createBlock, deleteBlock, editBlock, listTagsByPrefix } from '../lib/tauri'
+import {
+  createBlock,
+  deleteBlock,
+  deleteProperty,
+  editBlock,
+  listTagsByPrefix,
+  setProperty,
+} from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
 import { ListViewState } from './ListViewState'
@@ -37,6 +52,8 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
   const [newTagName, setNewTagName] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [renameTarget, setRenameTarget] = useState<{ id: string; name: string } | null>(null)
+  const [tagColors, setTagColors] = useState<Record<string, string>>(getTagColors)
+  const [colorPickerOpen, setColorPickerOpen] = useState<string | null>(null)
 
   const loadTags = useCallback(async () => {
     setLoading(true)
@@ -119,6 +136,32 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
     [renameTarget, tags, t],
   )
 
+  const handleSetColor = useCallback(async (tagId: string, color: string) => {
+    setTagColorLocal(tagId, color)
+    setTagColors((prev) => ({ ...prev, [tagId]: color }))
+    setColorPickerOpen(null)
+    try {
+      await setProperty({ blockId: tagId, key: 'color', valueText: color })
+    } catch {
+      // localStorage already persisted — property sync is best-effort
+    }
+  }, [])
+
+  const handleClearColor = useCallback(async (tagId: string) => {
+    clearTagColor(tagId)
+    setTagColors((prev) => {
+      const next = { ...prev }
+      delete next[tagId]
+      return next
+    })
+    setColorPickerOpen(null)
+    try {
+      await deleteProperty(tagId, 'color')
+    } catch {
+      // localStorage already updated — property sync is best-effort
+    }
+  }, [])
+
   return (
     <div className="space-y-4">
       {/* Create tag form */}
@@ -153,44 +196,107 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       >
         {(items) => (
           <ul className="space-y-2">
-            {items.map((tag) => (
-              <ListItem key={tag.tag_id}>
-                <Tag className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <button
-                  type="button"
-                  className="cursor-pointer border-none bg-transparent p-0"
-                  onClick={() => onTagClick?.(tag.tag_id, tag.name || 'Unnamed')}
-                >
-                  <Badge
-                    variant="secondary"
-                    className="truncate max-w-[150px]"
-                    title={tag.name || 'Unnamed'}
+            {items.map((tag) => {
+              const color = tagColors[tag.tag_id]
+              return (
+                <ListItem key={tag.tag_id}>
+                  <Tag className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <button
+                    type="button"
+                    className="cursor-pointer border-none bg-transparent p-0"
+                    onClick={() => onTagClick?.(tag.tag_id, tag.name || 'Unnamed')}
                   >
-                    {tag.name || 'Unnamed'}
-                    <span className="ml-1.5 text-muted-foreground">{tag.usage_count}</span>
-                  </Badge>
-                </button>
-                <div className="flex-1" />
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={t('tagList.renameTagLabel')}
-                  className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground active:text-foreground active:scale-95"
-                  onClick={() => setRenameTarget({ id: tag.tag_id, name: tag.name || 'Unnamed' })}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={t('tagList.deleteTagLabel')}
-                  className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
-                  onClick={() => setDeleteTarget({ id: tag.tag_id, name: tag.name || 'Unnamed' })}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </ListItem>
-            ))}
+                    <Badge
+                      variant={color ? undefined : 'secondary'}
+                      className={cn('truncate max-w-[150px]', color && 'border-transparent')}
+                      style={color ? { backgroundColor: color, color: '#fff' } : undefined}
+                      title={tag.name || 'Unnamed'}
+                    >
+                      {tag.name || 'Unnamed'}
+                      <span
+                        className={cn('ml-1.5', color ? 'text-white/70' : 'text-muted-foreground')}
+                      >
+                        {tag.usage_count}
+                      </span>
+                    </Badge>
+                  </button>
+                  <div className="flex-1" />
+                  <Popover
+                    open={colorPickerOpen === tag.tag_id}
+                    onOpenChange={(open) => setColorPickerOpen(open ? tag.tag_id : null)}
+                  >
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={t('tagList.colorTagLabel')}
+                        className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground active:text-foreground active:scale-95"
+                      >
+                        {color ? (
+                          <span
+                            className="inline-block h-3.5 w-3.5 rounded-full border border-white/30"
+                            style={{ backgroundColor: color }}
+                          />
+                        ) : (
+                          <Paintbrush className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-3" align="start">
+                      <fieldset
+                        className="grid grid-cols-4 gap-2 border-0 p-0 m-0"
+                        aria-label={t('tagList.colorPaletteLabel')}
+                      >
+                        {TAG_COLOR_PRESETS.map((preset) => (
+                          <button
+                            key={preset.value}
+                            type="button"
+                            className={cn(
+                              'h-6 w-6 rounded-full border-2 transition-transform hover:scale-110 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                              color === preset.value
+                                ? 'border-foreground scale-110'
+                                : 'border-transparent',
+                            )}
+                            style={{ backgroundColor: preset.value }}
+                            aria-label={preset.name}
+                            aria-pressed={color === preset.value}
+                            onClick={() => handleSetColor(tag.tag_id, preset.value)}
+                          />
+                        ))}
+                      </fieldset>
+                      {color && (
+                        <button
+                          type="button"
+                          className="mt-2 flex w-full items-center justify-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                          onClick={() => handleClearColor(tag.tag_id)}
+                        >
+                          <X className="h-3 w-3" />
+                          {t('tagList.clearColor')}
+                        </button>
+                      )}
+                    </PopoverContent>
+                  </Popover>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={t('tagList.renameTagLabel')}
+                    className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground active:text-foreground active:scale-95"
+                    onClick={() => setRenameTarget({ id: tag.tag_id, name: tag.name || 'Unnamed' })}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={t('tagList.deleteTagLabel')}
+                    className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
+                    onClick={() => setDeleteTarget({ id: tag.tag_id, name: tag.name || 'Unnamed' })}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </ListItem>
+              )
+            })}
           </ul>
         )}
       </ListViewState>

@@ -12,7 +12,7 @@
  *  - a11y compliance
  */
 
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -41,6 +41,15 @@ vi.mock('../../editor/markdown-serializer', async (importOriginal) => {
   return { ...mod, parse: vi.fn(mod.parse) }
 })
 
+vi.mock('../../lib/tauri', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../lib/tauri')>()
+  return {
+    ...mod,
+    getProperties: vi.fn(() => Promise.resolve([])),
+    setProperty: vi.fn(() => Promise.resolve({})),
+  }
+})
+
 // Lazy-import after mocks are hoisted so we get the mocked version.
 const { useBlockAttachments } = await import('../../hooks/useBlockAttachments')
 const mockedUseBlockAttachments = vi.mocked(useBlockAttachments)
@@ -50,6 +59,10 @@ const mockedParse = vi.mocked(parse)
 
 const { invoke } = await import('@tauri-apps/api/core')
 const mockedInvoke = vi.mocked(invoke)
+
+const { getProperties, setProperty } = await import('../../lib/tauri')
+const mockedGetProperties = vi.mocked(getProperties)
+const mockedSetProperty = vi.mocked(setProperty)
 
 // Valid 26-char ULID-format test IDs (parser requires [0-9A-Z]{26}).
 const BLOCK_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
@@ -69,6 +82,9 @@ const REF_BLOCK_2 = '01PRZ3NDEKTSV4RRFFQ69G5FAV'
 describe('StaticBlock', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Restore default behavior for mocked tauri functions
+    mockedGetProperties.mockResolvedValue([])
+    mockedSetProperty.mockResolvedValue({} as never)
     mockedUseBlockAttachments.mockReturnValue({
       attachments: [],
       loading: false,
@@ -828,6 +844,124 @@ describe('StaticBlock', () => {
 
       const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  // -- Image resize controls (UX-85) ------------------------------------------
+
+  describe('image resize controls', () => {
+    function makeAttachment(overrides: Partial<AttachmentRow> = {}): AttachmentRow {
+      return {
+        id: 'att-resize-1',
+        block_id: 'B1',
+        filename: 'photo.png',
+        mime_type: 'image/png',
+        size_bytes: 1024,
+        fs_path: '/path/to/photo.png',
+        created_at: '2024-01-01T00:00:00Z',
+        ...overrides,
+      }
+    }
+
+    function renderWithImage(props: Partial<Parameters<typeof StaticBlock>[0]> = {}) {
+      ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+      mockedUseBlockAttachments.mockReturnValue({
+        attachments: [makeAttachment()],
+        loading: false,
+        handleAddAttachment: vi.fn(),
+        handleDeleteAttachment: vi.fn(),
+      })
+      return render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} {...props} />)
+    }
+
+    it('shows resize toolbar on image hover', async () => {
+      const user = userEvent.setup()
+      const { container } = renderWithImage()
+
+      // Toolbar should not be visible initially
+      expect(screen.queryByTestId('image-resize-toolbar')).not.toBeInTheDocument()
+
+      // Hover over the image wrapper
+      const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]') as Element
+      await user.hover(wrapper)
+
+      // Toolbar should appear
+      expect(screen.getByTestId('image-resize-toolbar')).toBeInTheDocument()
+
+      // All 4 buttons should be present
+      expect(screen.getByTestId('image-resize-25')).toBeInTheDocument()
+      expect(screen.getByTestId('image-resize-50')).toBeInTheDocument()
+      expect(screen.getByTestId('image-resize-75')).toBeInTheDocument()
+      expect(screen.getByTestId('image-resize-100')).toBeInTheDocument()
+    })
+
+    it('clicking Small calls setProperty with correct value', async () => {
+      const { container } = renderWithImage()
+
+      const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]') as Element
+      fireEvent.mouseEnter(wrapper)
+
+      const btn = screen.getByTestId('image-resize-25')
+      fireEvent.click(btn)
+
+      // setProperty should have been called with image_width = '25'
+      expect(mockedSetProperty).toHaveBeenCalledWith({
+        blockId: 'B1',
+        key: 'image_width',
+        valueText: '25',
+      })
+    })
+
+    it('applies stored width from properties', async () => {
+      ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+      mockedUseBlockAttachments.mockReturnValue({
+        attachments: [makeAttachment()],
+        loading: false,
+        handleAddAttachment: vi.fn(),
+        handleDeleteAttachment: vi.fn(),
+      })
+      // getProperties returns image_width = '50'
+      mockedGetProperties.mockResolvedValueOnce([
+        {
+          key: 'image_width',
+          value_text: '50',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+        },
+      ])
+
+      const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
+
+      // Wait for the effect to resolve
+      await vi.waitFor(() => {
+        const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]')
+        expect(wrapper).not.toBeNull()
+        expect((wrapper as HTMLElement).style.maxWidth).toBe('50%')
+      })
+    })
+
+    it('defaults to full width when no property is set', async () => {
+      const { container } = renderWithImage()
+
+      // Wait for effect
+      await vi.waitFor(() => {
+        const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]')
+        expect(wrapper).not.toBeNull()
+        expect((wrapper as HTMLElement).style.maxWidth).toBe('100%')
+      })
+    })
+
+    it('has no a11y violations with image resize controls visible', async () => {
+      const user = userEvent.setup()
+      const { container } = renderWithImage()
+
+      const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]') as Element
+      await user.hover(wrapper)
+
+      // Toolbar visible — run axe
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })

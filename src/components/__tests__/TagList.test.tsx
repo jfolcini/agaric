@@ -10,6 +10,7 @@
  *  - Clickable tag names (onTagClick callback)
  *  - Error feedback via toast on failed operations
  *  - Disabled state styling for Add Tag button
+ *  - Tag color picker (UX-87)
  *  - a11y compliance
  */
 
@@ -53,8 +54,14 @@ function findRenameButton(tagRow: HTMLElement): HTMLButtonElement {
   return within(tagRow).getByRole('button', { name: /rename tag/i })
 }
 
+/** Find the color button within a tag row via its aria-label. */
+function findColorButton(tagRow: HTMLElement): HTMLButtonElement {
+  return within(tagRow).getByRole('button', { name: /set tag color/i })
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.removeItem('tag-colors')
 })
 
 describe('TagList', () => {
@@ -610,6 +617,153 @@ describe('TagList', () => {
 
       // Should NOT have called create_block (only the initial list_blocks)
       expect(mockedInvoke).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  // UX-87: Tag color picker
+  describe('tag color picker (UX-87)', () => {
+    it('renders color button for each tag', async () => {
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'alpha'), makeTag('T2', 'beta')])
+
+      render(<TagList />)
+
+      const alpha = await screen.findByText('alpha')
+      const beta = screen.getByText('beta')
+      const alphaRow = alpha.closest('li') as HTMLElement
+      const betaRow = beta.closest('li') as HTMLElement
+
+      expect(findColorButton(alphaRow)).toBeInTheDocument()
+      expect(findColorButton(betaRow)).toBeInTheDocument()
+    })
+
+    it('clicking color button opens popover with palette', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'my-tag')])
+
+      render(<TagList />)
+
+      const tag = await screen.findByText('my-tag')
+      const tagRow = tag.closest('li') as HTMLElement
+      const colorBtn = findColorButton(tagRow)
+      await user.click(colorBtn)
+
+      // Should show color palette with radio buttons
+      const palette = await screen.findByRole('group', { name: /color palette/i })
+      expect(palette).toBeInTheDocument()
+
+      // Should have 8 color swatches
+      const swatches = within(palette).getAllByRole('button')
+      expect(swatches).toHaveLength(8)
+    })
+
+    it('selecting a color calls setProperty', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'color-tag')])
+
+      render(<TagList />)
+
+      const tag = await screen.findByText('color-tag')
+      const tagRow = tag.closest('li') as HTMLElement
+      const colorBtn = findColorButton(tagRow)
+      await user.click(colorBtn)
+
+      // Mock setProperty response
+      mockedInvoke.mockResolvedValueOnce({ id: 'T1', block_type: 'tag', content: 'color-tag' })
+
+      // Click the "red" swatch
+      const redSwatch = await screen.findByRole('button', { name: 'red' })
+      await user.click(redSwatch)
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+          blockId: 'T1',
+          key: 'color',
+          valueText: '#ef4444',
+          valueNum: null,
+          valueDate: null,
+          valueRef: null,
+        })
+      })
+    })
+
+    it('badge renders with custom background color', async () => {
+      // Pre-set color in localStorage
+      localStorage.setItem('tag-colors', JSON.stringify({ T1: '#3b82f6' }))
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'blue-tag')])
+
+      render(<TagList />)
+
+      const badge = await screen.findByText('blue-tag')
+      const badgeEl = badge.closest('[data-slot="badge"]') as HTMLElement
+      expect(badgeEl).toHaveStyle({ backgroundColor: '#3b82f6' })
+      expect(badgeEl).toHaveStyle({ color: '#fff' })
+    })
+
+    it('clear option removes color', async () => {
+      const user = userEvent.setup()
+      // Pre-set color in localStorage
+      localStorage.setItem('tag-colors', JSON.stringify({ T1: '#ef4444' }))
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'red-tag')])
+
+      render(<TagList />)
+
+      const tag = await screen.findByText('red-tag')
+      const tagRow = tag.closest('li') as HTMLElement
+      const colorBtn = findColorButton(tagRow)
+      await user.click(colorBtn)
+
+      // Mock deleteProperty response
+      mockedInvoke.mockResolvedValueOnce(undefined)
+
+      // Click clear button
+      const clearBtn = await screen.findByText(/clear color/i)
+      await user.click(clearBtn)
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('delete_property', {
+          blockId: 'T1',
+          key: 'color',
+        })
+      })
+
+      // Color should be removed from localStorage
+      const stored = JSON.parse(localStorage.getItem('tag-colors') ?? '{}')
+      expect(stored.T1).toBeUndefined()
+    })
+
+    it('clear option is hidden when no color is set', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'no-color')])
+
+      render(<TagList />)
+
+      const tag = await screen.findByText('no-color')
+      const tagRow = tag.closest('li') as HTMLElement
+      const colorBtn = findColorButton(tagRow)
+      await user.click(colorBtn)
+
+      // Wait for popover to appear
+      await screen.findByRole('group', { name: /color palette/i })
+
+      // Clear button should NOT be present
+      expect(screen.queryByText(/clear color/i)).not.toBeInTheDocument()
+    })
+
+    it('has no a11y violations with color picker open', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'a11y-tag', 2)])
+
+      const { container } = render(<TagList />)
+
+      const tag = await screen.findByText('a11y-tag')
+      const tagRow = tag.closest('li') as HTMLElement
+      const colorBtn = findColorButton(tagRow)
+      await user.click(colorBtn)
+
+      await screen.findByRole('group', { name: /color palette/i })
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
     })
   })
 })

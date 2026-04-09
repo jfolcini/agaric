@@ -7,7 +7,7 @@
  * Original location breadcrumbs via batchResolve.
  */
 
-import { RotateCcw, Trash2 } from 'lucide-react'
+import { RotateCcw, Search, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -17,8 +17,10 @@ import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { formatTimestamp } from '../lib/format'
 import type { BlockRow, ResolvedBlock } from '../lib/tauri'
@@ -41,6 +43,25 @@ export function TrashView(): React.ReactElement {
     loadMore,
     setItems: setBlocks,
   } = usePaginatedQuery(queryFn, { onError: t('trash.loadFailed') })
+
+  // ── Filter state ─────────────────────────────────────────────────
+  const [filterText, setFilterText] = useState('')
+  const [debouncedFilter, setDebouncedFilter] = useState('')
+  const debounced = useDebouncedCallback((value: string) => {
+    setDebouncedFilter(value)
+  }, 300)
+
+  const filteredBlocks = useMemo(() => {
+    if (!debouncedFilter) return blocks
+    const lower = debouncedFilter.toLowerCase()
+    return blocks.filter((b) => (b.content ?? '').toLowerCase().includes(lower))
+  }, [blocks, debouncedFilter])
+
+  const clearFilter = useCallback(() => {
+    setFilterText('')
+    setDebouncedFilter('')
+    debounced.cancel()
+  }, [debounced])
 
   const [confirmPurgeId, setConfirmPurgeId] = useState<string | null>(null)
 
@@ -88,7 +109,7 @@ export function TrashView(): React.ReactElement {
 
   const toggleSelection = useCallback(
     (index: number) => {
-      const block = blocks[index]
+      const block = filteredBlocks[index]
       if (!block) return
       setSelected((prev) => {
         const next = new Set(prev)
@@ -101,7 +122,7 @@ export function TrashView(): React.ReactElement {
       })
       setLastClickedIndex(index)
     },
-    [blocks],
+    [filteredBlocks],
   )
 
   const rangeSelect = useCallback(
@@ -112,23 +133,23 @@ export function TrashView(): React.ReactElement {
       setSelected((prev) => {
         const next = new Set(prev)
         for (let i = start; i <= end; i++) {
-          const block = blocks[i]
+          const block = filteredBlocks[i]
           if (block) next.add(block.id)
         }
         return next
       })
       setLastClickedIndex(toIndex)
     },
-    [blocks, lastClickedIndex],
+    [filteredBlocks, lastClickedIndex],
   )
 
   const selectAll = useCallback(() => {
     const next = new Set<string>()
-    for (const block of blocks) {
+    for (const block of filteredBlocks) {
       next.add(block.id)
     }
     setSelected(next)
-  }, [blocks])
+  }, [filteredBlocks])
 
   const clearSelection = useCallback(() => {
     setSelected(new Set())
@@ -289,6 +310,31 @@ export function TrashView(): React.ReactElement {
 
   return (
     <section className="trash-view space-y-4" aria-label={t('trash.regionLabel')}>
+      {/* Filter input */}
+      {blocks.length > 0 && (
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder={t('trash.filterPlaceholder')}
+            aria-label={t('trash.filterPlaceholder')}
+            value={filterText}
+            onChange={(e) => {
+              setFilterText(e.target.value)
+              debounced.schedule(e.target.value)
+            }}
+            className="pl-9"
+            data-testid="trash-filter-input"
+          />
+        </div>
+      )}
+
+      {/* Filtered count */}
+      {debouncedFilter && blocks.length > 0 && (
+        <p className="text-sm text-muted-foreground" data-testid="trash-filter-count">
+          {t('trash.showingCount', { filtered: filteredBlocks.length, total: blocks.length })}
+        </p>
+      )}
+
       {/* Selection toolbar */}
       {selected.size > 0 && (
         <BatchActionToolbar
@@ -317,105 +363,127 @@ export function TrashView(): React.ReactElement {
         skeleton={<LoadingSkeleton count={2} height="h-14" className="trash-view-loading" />}
         empty={<EmptyState icon={Trash2} message={t('trash.emptyMessage')} />}
       >
-        {(items) => (
-          // biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn
-          <div className="trash-view-list space-y-2" role="list" aria-label={t('trash.listLabel')}>
-            {items.map((block, index) => {
-              const isSelected = selected.has(block.id)
-              const parentLabel = getParentLabel(block)
-              return (
-                // biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn
-                <div
-                  key={block.id}
-                  role="listitem"
-                  className={cn(
-                    'trash-item flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded-lg border bg-card p-4 transition-colors cursor-pointer',
-                    isSelected
-                      ? 'bg-accent/50 border-accent'
-                      : 'hover:bg-accent/50 active:bg-accent/70',
-                  )}
-                  data-testid="trash-item"
-                  onClick={(e) => handleRowClick(index, e)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                      toggleSelection(index)
-                    }
-                  }}
+        {() =>
+          debouncedFilter && filteredBlocks.length === 0 ? (
+            <EmptyState
+              icon={Search}
+              message={t('trash.noMatchMessage')}
+              action={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-4"
+                  onClick={clearFilter}
+                  data-testid="trash-clear-filter-btn"
                 >
-                  <div className="trash-item-content flex min-w-0 items-center gap-3 flex-wrap">
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => toggleSelection(index)}
-                      onClick={(e) => e.stopPropagation()}
-                      className="h-4 w-4 shrink-0 rounded border-border [@media(pointer:coarse)]:h-6 [@media(pointer:coarse)]:w-6"
-                      aria-label={t('trash.selectItemLabel', {
-                        content: block.content ?? t('trash.emptyContent'),
-                      })}
-                      data-testid="trash-item-checkbox"
-                    />
-                    <Badge variant="secondary" className="trash-item-type shrink-0">
-                      {block.block_type}
-                    </Badge>
-                    <div className="flex flex-col min-w-0">
-                      <span className="trash-item-text text-sm truncate">
-                        {block.content ?? t('trash.emptyContent')}
-                      </span>
-                      <span className="trash-item-date text-xs text-muted-foreground">
-                        Deleted:{' '}
-                        {block.deleted_at ? formatTimestamp(block.deleted_at, 'relative') : ''}
-                      </span>
-                      {parentLabel && (
-                        <span
-                          className="trash-item-breadcrumb text-xs text-muted-foreground"
-                          data-testid="trash-item-breadcrumb"
-                        >
-                          {t('trash.fromPage', { page: parentLabel })}
+                  {t('trash.clearFilter')}
+                </Button>
+              }
+            />
+          ) : (
+            // biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn
+            <div
+              className="trash-view-list space-y-2"
+              role="list"
+              aria-label={t('trash.listLabel')}
+            >
+              {filteredBlocks.map((block, index) => {
+                const isSelected = selected.has(block.id)
+                const parentLabel = getParentLabel(block)
+                return (
+                  // biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn
+                  <div
+                    key={block.id}
+                    role="listitem"
+                    className={cn(
+                      'trash-item flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded-lg border bg-card p-4 transition-colors cursor-pointer',
+                      isSelected
+                        ? 'bg-accent/50 border-accent'
+                        : 'hover:bg-accent/50 active:bg-accent/70',
+                    )}
+                    data-testid="trash-item"
+                    onClick={(e) => handleRowClick(index, e)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        toggleSelection(index)
+                      }
+                    }}
+                  >
+                    <div className="trash-item-content flex min-w-0 items-center gap-3 flex-wrap">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleSelection(index)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="h-4 w-4 shrink-0 rounded border-border [@media(pointer:coarse)]:h-6 [@media(pointer:coarse)]:w-6"
+                        aria-label={t('trash.selectItemLabel', {
+                          content: block.content ?? t('trash.emptyContent'),
+                        })}
+                        data-testid="trash-item-checkbox"
+                      />
+                      <Badge variant="secondary" className="trash-item-type shrink-0">
+                        {block.block_type}
+                      </Badge>
+                      <div className="flex flex-col min-w-0">
+                        <span className="trash-item-text text-sm truncate">
+                          {block.content ?? t('trash.emptyContent')}
                         </span>
-                      )}
+                        <span className="trash-item-date text-xs text-muted-foreground">
+                          Deleted:{' '}
+                          {block.deleted_at ? formatTimestamp(block.deleted_at, 'relative') : ''}
+                        </span>
+                        {parentLabel && (
+                          <span
+                            className="trash-item-breadcrumb text-xs text-muted-foreground"
+                            data-testid="trash-item-breadcrumb"
+                          >
+                            {t('trash.fromPage', { page: parentLabel })}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation container prevents button clicks from toggling row selection */}
+                    <div
+                      className="trash-item-actions flex items-center gap-2"
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="trash-restore-btn [@media(pointer:coarse)]:h-10"
+                              data-testid="trash-restore-btn"
+                              onClick={() => handleRestore(block)}
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" />
+                              {t('trash.restoreButton')}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>{t('trash.restoreTooltip')}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="trash-purge-btn [@media(pointer:coarse)]:h-10"
+                        data-testid="trash-purge-btn"
+                        onClick={() => setConfirmPurgeId(block.id)}
+                      >
+                        {t('trash.purgeButton')}
+                      </Button>
                     </div>
                   </div>
-                  {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation container prevents button clicks from toggling row selection */}
-                  <div
-                    className="trash-item-actions flex items-center gap-2"
-                    onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => e.stopPropagation()}
-                  >
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="trash-restore-btn [@media(pointer:coarse)]:h-10"
-                            data-testid="trash-restore-btn"
-                            onClick={() => handleRestore(block)}
-                          >
-                            <RotateCcw className="h-3.5 w-3.5" />
-                            {t('trash.restoreButton')}
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>{t('trash.restoreTooltip')}</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      className="trash-purge-btn [@media(pointer:coarse)]:h-10"
-                      data-testid="trash-purge-btn"
-                      onClick={() => setConfirmPurgeId(block.id)}
-                    >
-                      {t('trash.purgeButton')}
-                    </Button>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
+                )
+              })}
+            </div>
+          )
+        }
       </ListViewState>
 
       {hasMore && (

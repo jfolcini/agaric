@@ -855,6 +855,10 @@ const resources = {
       'trash.batchPurgeDescription':
         'This action cannot be undone. {{count}} blocks will be permanently deleted.',
       'trash.regionLabel': 'Trash',
+      'trash.filterPlaceholder': 'Filter deleted items...',
+      'trash.showingCount': 'Showing {{filtered}} of {{total}} deleted items',
+      'trash.noMatchMessage': 'No matching deleted items',
+      'trash.clearFilter': 'Clear filter',
 
       // Device management
       'device.title': 'Device Management',
@@ -1113,6 +1117,9 @@ const resources = {
       'tagList.renameTagLabel': 'Rename tag',
       'tagList.renameInputLabel': 'New tag name',
       'tagList.newTagLabel': 'New tag name',
+      'tagList.colorTagLabel': 'Set tag color',
+      'tagList.colorPaletteLabel': 'Color palette',
+      'tagList.clearColor': 'Clear color',
 
       // Common (collapsible panels)
       'common.expand': 'Expand {{section}}',
@@ -1242,9 +1249,32 @@ const resources = {
       'metadata.blockCount_other': '{{count}} blocks',
       'metadata.created': 'Created {{date}}',
 
+      // UX-89: Page outline / table of contents
+      'pageHeader.openOutline': 'Open outline',
+      'outline.title': 'Outline',
+      'outline.empty': 'No headings found',
+      'outline.navLabel': 'Page outline',
+
       // UX-84: Image lightbox
       'lightbox.description': 'Fullscreen preview of {{filename}}',
       'lightbox.openExternal': 'Open externally',
+
+      // UX-85: Image resize controls
+      'imageResize.toolbar': 'Image size',
+      'imageResize.small': 'Small (25%)',
+      'imageResize.medium': 'Medium (50%)',
+      'imageResize.large': 'Large (75%)',
+      'imageResize.full': 'Full (100%)',
+
+      // F-23: Unfinished tasks carry-over
+      'unfinished.title': 'Unfinished Tasks',
+      'unfinished.sectionLabel': 'Unfinished tasks from previous days',
+      'unfinished.empty': 'No unfinished tasks — you\u2019re all caught up!',
+      'unfinished.yesterday': 'Yesterday',
+      'unfinished.thisWeek': 'This Week',
+      'unfinished.older': 'Older',
+      'unfinished.untitled': 'Untitled',
+      'unfinished.breadcrumbArrow': '\u2192',
 
       // UX-62: Code block language selector
       'toolbar.codeBlockLanguageTip': 'Code block language',

@@ -31,6 +31,7 @@ import { useResolveStore } from '../stores/resolve'
 import { useUndoStore } from '../stores/undo'
 import { PageAliasSection } from './PageAliasSection'
 import { PageHeaderMenu } from './PageHeaderMenu'
+import { PageOutline } from './PageOutline'
 import { PagePropertyTable } from './PagePropertyTable'
 import { PageTagSection } from './PageTagSection'
 import { PageTitleEditor } from './PageTitleEditor'
@@ -359,6 +360,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           onBlur={handleTitleBlur}
           onKeyDown={handleTitleKeyDown}
         />
+        <PageOutline />
         <PageHeaderMenu
           canRedo={canRedo}
           kebabOpen={kebabOpen}
