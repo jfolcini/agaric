@@ -76,11 +76,11 @@ export default function MermaidDiagram({ code }: MermaidDiagramProps): React.Rea
   if (error) {
     return (
       <div
-        className="rounded-md border border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/30 p-3"
+        className="rounded-md border border-alert-error-border bg-alert-error p-3"
         role="alert"
         data-testid="mermaid-error"
       >
-        <p className="text-sm font-semibold text-red-700 dark:text-red-400 mb-2">
+        <p className="text-sm font-semibold text-alert-error-foreground mb-2">
           {t('mermaid.error')}: {error}
         </p>
         <pre className={cn('text-xs font-mono bg-muted rounded p-2 overflow-x-auto')}>

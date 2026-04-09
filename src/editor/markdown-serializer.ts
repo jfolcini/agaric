@@ -14,6 +14,7 @@ import type {
   BlockLevelNode,
   BlockLinkNode,
   BlockquoteNode,
+  BlockRefNode,
   CodeBlockNode,
   DocNode,
   HeadingNode,
@@ -225,10 +226,10 @@ function serializeInlineNodes(nodes: readonly InlineNode[]): string {
       result += emitCloseAll(activeMarks)
       activeMarks.clear()
       result += `[[${child.attrs.id}]]`
-    } else if ((child as unknown as { type: string }).type === 'block_ref') {
+    } else if (child.type === 'block_ref') {
       result += emitCloseAll(activeMarks)
       activeMarks.clear()
-      result += `((${(child as unknown as { attrs: { id: string } }).attrs.id}))`
+      result += `((${child.attrs.id}))`
     } else if (child.type === 'hardBreak') {
       result += emitCloseAll(activeMarks)
       activeMarks.clear()
@@ -393,7 +394,7 @@ function remaining(s: Scanner): number {
   return s.src.length - s.pos
 }
 
-function tryConsumeToken(s: Scanner): TagRefNode | BlockLinkNode | null {
+function tryConsumeToken(s: Scanner): TagRefNode | BlockLinkNode | BlockRefNode | null {
   // Tag ref: #[ULID]
   if (peek(s) === '#' && peek(s, 1) === '[' && remaining(s) >= 29) {
     const candidate = s.src.slice(s.pos + 2, s.pos + 28)
@@ -425,7 +426,7 @@ function tryConsumeToken(s: Scanner): TagRefNode | BlockLinkNode | null {
       s.src[s.pos + 29] === ')'
     ) {
       s.pos += 30
-      return { type: 'block_ref' as any, attrs: { id: candidate } }
+      return { type: 'block_ref', attrs: { id: candidate } }
     }
   }
   return null
@@ -945,8 +946,8 @@ function nodeToPlainText(node: InlineNode): string {
       return `#[${node.attrs.id}]`
     case 'block_link':
       return `[[${node.attrs.id}]]`
-    case 'block_ref' as any:
-      return `((${(node as unknown as { attrs: { id: string } }).attrs.id}))`
+    case 'block_ref':
+      return `((${node.attrs.id}))`
     /* v8 ignore start -- hardBreak never appears during line parsing; default is type guard */
     case 'hardBreak':
       return '\n'

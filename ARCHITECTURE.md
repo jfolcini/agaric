@@ -195,8 +195,10 @@ SQLite in WAL mode. Database file at `~/.local/share/com.agaric.app/notes.db`.
 **Migrations:** Auto-run on pool init from `src-tauri/migrations/`. Versioned `.sql` files.
 
 **Compile-time validation:** All static SQL uses `sqlx::query!` / `query_as!` / `query_scalar!`.
-The `.sqlx/` offline cache (107 query files) is committed; CI fails if stale. Runtime queries are
-limited to PRAGMAs, FTS5 operations, and dynamic SQL (~11 queries).
+The `.sqlx/` offline cache (107 query files) is committed; CI fails if stale. Runtime queries
+(`sqlx::query()` without macro) total ~73 across 11 production files: snapshot ops (21),
+tag inheritance recursive CTEs (16), FTS5 dynamic queries (15), sync protocol (6), cache (6),
+recovery (3), drafts (2), PRAGMAs (1), and misc (3 in soft_delete, peer_refs, merge).
 
 ### Schema
 

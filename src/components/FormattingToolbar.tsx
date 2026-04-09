@@ -83,10 +83,7 @@ function ToolbarButtonGroup({
             aria-label={t(btn.label)}
             aria-pressed={btn.activeKey ? (state[btn.activeKey] as boolean) : undefined}
             disabled={btn.disabledWhenFalse ? !state[btn.disabledWhenFalse] : undefined}
-            className={cn(
-              '[@media(pointer:coarse)]:size-10',
-              btn.activeKey && (state[btn.activeKey] as boolean) && toolbarActiveClass,
-            )}
+            className={cn(btn.activeKey && (state[btn.activeKey] as boolean) && toolbarActiveClass)}
             onPointerDown={(e) => {
               e.preventDefault()
               btn.action()
@@ -192,10 +189,7 @@ export function FormattingToolbar({
                   size="icon-xs"
                   aria-label={t('toolbar.link')}
                   aria-pressed={state.link}
-                  className={cn(
-                    '[@media(pointer:coarse)]:size-10',
-                    state.link && toolbarActiveClass,
-                  )}
+                  className={cn(state.link && toolbarActiveClass)}
                   onPointerDown={(e) => {
                     e.preventDefault()
                     setLinkPopoverOpen((prev) => !prev)
@@ -229,10 +223,7 @@ export function FormattingToolbar({
                   size="icon-xs"
                   aria-label={t('toolbar.codeBlockLanguage')}
                   aria-pressed={state.codeBlock}
-                  className={cn(
-                    '[@media(pointer:coarse)]:size-10',
-                    state.codeBlock && toolbarActiveClass,
-                  )}
+                  className={cn(state.codeBlock && toolbarActiveClass)}
                   onPointerDown={(e) => {
                     e.preventDefault()
                     setCodeBlockPopoverOpen((prev) => !prev)
@@ -265,10 +256,7 @@ export function FormattingToolbar({
                   size="icon-xs"
                   aria-label={t('toolbar.headingLevel')}
                   aria-pressed={state.headingLevel > 0}
-                  className={cn(
-                    '[@media(pointer:coarse)]:size-10',
-                    state.headingLevel > 0 && toolbarActiveClass,
-                  )}
+                  className={cn(state.headingLevel > 0 && toolbarActiveClass)}
                   onPointerDown={(e) => {
                     e.preventDefault()
                     setHeadingPopoverOpen((prev) => !prev)
@@ -306,10 +294,7 @@ export function FormattingToolbar({
               size="icon-xs"
               aria-label={t('toolbar.cyclePriority')}
               aria-pressed={currentPriority != null}
-              className={cn(
-                '[@media(pointer:coarse)]:size-10',
-                currentPriority != null && toolbarActiveClass,
-              )}
+              className={cn(currentPriority != null && toolbarActiveClass)}
               onPointerDown={(e) => {
                 e.preventDefault()
                 dispatchBlockEvent('CYCLE_PRIORITY')

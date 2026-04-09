@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { formatTimestamp } from '../lib/format'
+import { logger } from '../lib/logger'
 import type { BlockRow, ResolvedBlock } from '../lib/tauri'
 import { batchResolve, listBlocks, purgeBlock, restoreBlock } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
@@ -97,8 +98,8 @@ export function TrashView(): React.ReactElement {
         }
         setParentMap(map)
       })
-      .catch(() => {
-        // Silently fail — breadcrumbs are non-critical
+      .catch((err) => {
+        logger.warn('TrashView', 'breadcrumb resolution failed', undefined, err)
       })
     return () => {
       cancelled = true

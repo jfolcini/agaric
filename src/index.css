@@ -94,6 +94,8 @@
   --color-indicator-scheduled-foreground: var(--indicator-scheduled-foreground);
   --color-indicator-repeat: var(--indicator-repeat);
   --color-indicator-repeat-foreground: var(--indicator-repeat-foreground);
+  /* Star/favourite */
+  --color-star: var(--star);
   /* Sync status */
   --color-sync-idle: var(--sync-idle);
   --color-sync-active: var(--sync-active);
@@ -201,6 +203,8 @@
   --indicator-scheduled-foreground: oklch(0.5 0.17 303);
   --indicator-repeat: oklch(0.94 0.03 272);
   --indicator-repeat-foreground: oklch(0.46 0.24 277);
+  /* Star/favourite */
+  --star: oklch(0.795 0.184 86.047);
   /* Sync status */
   --sync-idle: oklch(0.7 0.17 162);
   --sync-active: oklch(0.77 0.19 70);
@@ -323,6 +327,8 @@
   --indicator-scheduled-foreground: oklch(0.71 0.17 302);
   --indicator-repeat: oklch(0.22 0.03 279);
   --indicator-repeat-foreground: oklch(0.67 0.18 274);
+  /* Star/favourite */
+  --star: oklch(0.85 0.2 86.047);
   /* Sync status */
   --sync-idle: oklch(0.7 0.17 162);
   --sync-active: oklch(0.77 0.19 70);

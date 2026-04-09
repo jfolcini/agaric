@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
+import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, getBlock, listTagsByPrefix, queryByTags } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
@@ -141,8 +142,8 @@ export function TagFilterPanel(): React.ReactElement {
           })
         }
       })
-      .catch(() => {
-        // breadcrumbs are non-critical
+      .catch((err) => {
+        logger.warn('TagFilterPanel', 'breadcrumb resolution failed', undefined, err)
       })
   }, [results])
 

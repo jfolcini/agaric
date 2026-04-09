@@ -12,6 +12,7 @@ import type React from 'react'
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useBlockAttachments } from '../hooks/useBlockAttachments'
+import { logger } from '../lib/logger'
 import { openUrl } from '../lib/open-url'
 import { getProperties } from '../lib/tauri'
 import { cn } from '../lib/utils'
@@ -126,8 +127,8 @@ function StaticBlockInner({
           setImageWidth(widthProp.value_text)
         }
       })
-      .catch(() => {
-        // Ignore — use default width
+      .catch((err) => {
+        logger.warn('StaticBlock', 'image width property fetch failed', undefined, err)
       })
     return () => {
       cancelled = true

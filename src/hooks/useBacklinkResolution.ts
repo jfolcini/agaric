@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { logger } from '../lib/logger'
 import type { BacklinkGroup } from '../lib/tauri'
 import { batchResolve } from '../lib/tauri'
 
@@ -97,7 +98,8 @@ export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResol
         }
         setResolveVersion((v) => v + 1)
       })
-      .catch(() => {
+      .catch((err) => {
+        logger.warn('useBacklinkResolution', 'batch resolve failed', undefined, err)
         if (!cancelled) setResolveVersion((v) => v + 1)
       })
 

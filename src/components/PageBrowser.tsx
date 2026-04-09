@@ -345,7 +345,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                 aria-label={
                   isStarred(page.id) ? t('pageBrowser.unstarPage') : t('pageBrowser.starPage')
                 }
-                className="star-toggle shrink-0 h-6 w-6 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-yellow-500 data-[starred=true]:opacity-100 data-[starred=true]:text-yellow-500"
+                className="star-toggle shrink-0 h-6 w-6 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-star data-[starred=true]:opacity-100 data-[starred=true]:text-star"
                 data-starred={isStarred(page.id)}
                 onClick={(e) => {
                   e.stopPropagation()

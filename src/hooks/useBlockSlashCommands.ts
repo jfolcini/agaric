@@ -44,6 +44,7 @@ import type { PickerItem } from '../editor/SuggestionList'
 import type { DocNode } from '../editor/types'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { guessMimeType } from '../lib/file-utils'
+import { logger } from '../lib/logger'
 import { formatRepeatLabel } from '../lib/repeat-utils'
 import {
   addAttachment,
@@ -568,8 +569,8 @@ export function useBlockSlashCommands({
                   toast.warning(t('dependency.dependencyWarning'))
                 }
               })
-              .catch(() => {
-                // Silently ignore — dependency check is best-effort
+              .catch((err) => {
+                logger.warn('useBlockSlashCommands', 'dependency check failed', undefined, err)
               })
           }
         } catch {
@@ -998,8 +999,13 @@ export function useBlockSlashCommands({
                   toast.warning(t('dependency.dependencyWarning'))
                 }
               })
-              .catch(() => {
-                // Silently ignore — dependency check is best-effort
+              .catch((err) => {
+                logger.warn(
+                  'useBlockSlashCommands',
+                  'checkbox dependency check failed',
+                  undefined,
+                  err,
+                )
               })
           }
         })

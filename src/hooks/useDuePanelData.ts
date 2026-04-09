@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { formatDate, getTodayString } from '@/lib/date-utils'
+import { logger } from '../lib/logger'
 import type { BlockRow, ProjectedAgendaEntry } from '../lib/tauri'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../lib/tauri'
 
@@ -253,8 +254,8 @@ export function useDuePanelData({
           }
           setPageTitles(titleMap)
         }
-      } catch {
-        // Silently handle errors
+      } catch (err) {
+        logger.warn('useDuePanelData', 'block fetch failed', undefined, err)
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -293,7 +294,8 @@ export function useDuePanelData({
           }
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        logger.warn('useDuePanelData', 'projected agenda fetch failed', undefined, err)
         if (!stale) setProjectedEntries([])
         toast.error(t('duePanel.loadAgendaFailed'))
       })

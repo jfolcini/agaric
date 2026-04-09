@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
+import { logger } from '../lib/logger'
 import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
 import type { BlockRow, TagCacheRow } from '../lib/tauri'
 import { batchResolve, getBlock, listBlocks, listTagsByPrefix, searchBlocks } from '../lib/tauri'
@@ -115,8 +116,8 @@ export function SearchPanel(): React.ReactElement {
           })
         }
       })
-      .catch(() => {
-        // breadcrumbs are non-critical
+      .catch((err) => {
+        logger.warn('SearchPanel', 'breadcrumb resolution failed', undefined, err)
       })
   }, [results])
 
@@ -219,7 +220,10 @@ export function SearchPanel(): React.ReactElement {
           : res.items
         setPageSuggestions(filtered)
       })
-      .catch(() => setPageSuggestions([]))
+      .catch((err) => {
+        logger.warn('SearchPanel', 'page resolution failed', undefined, err)
+        setPageSuggestions([])
+      })
       .finally(() => setPageSearchLoading(false))
   }, [pagePopoverOpen, pageSearch])
 
@@ -229,7 +233,10 @@ export function SearchPanel(): React.ReactElement {
     setTagSearchLoading(true)
     listTagsByPrefix({ prefix: tagSearch, limit: 20 })
       .then((tags) => setTagSuggestions(tags))
-      .catch(() => setTagSuggestions([]))
+      .catch((err) => {
+        logger.warn('SearchPanel', 'tag resolution failed', undefined, err)
+        setTagSuggestions([])
+      })
       .finally(() => setTagSearchLoading(false))
   }, [tagPopoverOpen, tagSearch])
 

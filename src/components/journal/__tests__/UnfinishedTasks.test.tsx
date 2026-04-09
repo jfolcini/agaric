@@ -41,17 +41,24 @@ function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
   }
 }
 
-/** Returns YYYY-MM-DD for today. */
-function todayStr(): string {
-  const d = new Date()
-  return d.toISOString().slice(0, 10)
+/** Format a Date as YYYY-MM-DD in local time (matches component's toLocalDateStr). */
+function toLocalDateStr(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
-/** Returns YYYY-MM-DD for N days ago. */
+/** Returns YYYY-MM-DD for today in local time. */
+function todayStr(): string {
+  return toLocalDateStr(new Date())
+}
+
+/** Returns YYYY-MM-DD for N days ago in local time. */
 function daysAgo(n: number): string {
   const d = new Date()
   d.setDate(d.getDate() - n)
-  return d.toISOString().slice(0, 10)
+  return toLocalDateStr(d)
 }
 
 // Build test blocks with dates relative to today

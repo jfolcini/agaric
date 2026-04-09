@@ -20,6 +20,7 @@ import { useTranslation } from 'react-i18next'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { useBlockSwipeActions } from '../hooks/useBlockSwipeActions'
 import { useBlockTouchLongPress } from '../hooks/useBlockTouchLongPress'
+import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
 import { listAttachments, listBlocks, listPropertyDefs } from '../lib/tauri'
 import { cn } from '../lib/utils'
@@ -150,8 +151,8 @@ function SortableBlockInner({
       .then((rows) => {
         if (!stale) setAttachmentCount(rows.length)
       })
-      .catch(() => {
-        /* ignore — non-critical */
+      .catch((err) => {
+        logger.warn('SortableBlock', 'attachment count failed', undefined, err)
       })
     return () => {
       stale = true
@@ -232,7 +233,8 @@ function SortableBlockInner({
             .then((res) => {
               if (!stale) setRefPages(res.items)
             })
-            .catch(() => {
+            .catch((err) => {
+              logger.warn('SortableBlock', 'ref page resolution failed', undefined, err)
               if (!stale) setRefPages([])
             })
         } else {
@@ -240,7 +242,8 @@ function SortableBlockInner({
           setIsRefProp(false)
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        logger.warn('SortableBlock', 'property def resolution failed', undefined, err)
         if (stale) return
         setSelectOptions(null)
         setIsRefProp(false)

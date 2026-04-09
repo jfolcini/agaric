@@ -515,6 +515,13 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
  * Used by global hooks (useSyncEvents, useUndoShortcuts) that need to
  * reload specific pages without being inside a provider context.
  * Providers register on mount, unregister on unmount.
+ *
+ * **Race condition note:** A theoretical race exists if Provider A unmounts
+ * while Provider B mounts for the same `pageId` — A's cleanup could delete
+ * B's entry. In practice this is prevented by React's batched state updates:
+ * unmount effects for the old tree run before mount effects for the new tree
+ * within the same commit phase. The monthly view mounts up to 30 concurrent
+ * PageBlockStoreProviders (one per DaySection) without issues.
  */
 export const pageBlockRegistry = new Map<string, StoreApi<PageBlockState>>()
 
