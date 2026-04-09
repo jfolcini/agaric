@@ -1,5 +1,36 @@
 # Session Log
 
+## Session 274 — Batch 9: T-7 Rust assertion messages — 6 modules (2026-04-09)
+
+**Commit:** `e447851` — `test(rust): T-7 add assertion messages to 6 modules (~482 assertions)` — 6 files, +1746/-481
+
+### Items partially resolved
+- **T-7**: Added descriptive assertion messages to 6 Rust test modules:
+  - `snapshot.rs`: ~128 assertions (36 tests)
+  - `tag_query.rs`: 121 assertions (43 tests)
+  - `fts.rs`: ~95 assertions (70 tests)
+  - `merge.rs`: 56 assertions (43 tests)
+  - `cache.rs`: 53 assertions (86 tests)
+  - `reverse.rs`: 29 assertions (35 tests)
+  - **Total: ~482 assertions.** Remaining: 6 modules (~1224 assertions, dominated by commands.rs ~580).
+
+### Files changed
+
+| Area | Change |
+|------|--------|
+| snapshot.rs | ~128 assertion messages added (36 tests) |
+| fts.rs | ~95 assertion messages added (70 tests) |
+| tag_query.rs | 121 assertion messages added (43 tests) |
+| cache.rs | 53 assertion messages added (86 tests) |
+| merge.rs | 56 assertion messages added (43 tests) |
+| reverse.rs | 29 assertion messages added (35 tests) |
+
+### Test count
+- 1667 Rust tests pass (unchanged — messages only, no new tests)
+
+### REVIEW-LATER
+- 34 items (unchanged count, T-7 partially resolved)
+
 ## Session 273 — Batch 8: Rust perf + 3 UX features (2026-04-09)
 
 **Commit:** `3ed2fb7` — `feat: P-9/UX-61/UX-78/UX-84` — 16 files, +1456/-256
