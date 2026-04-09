@@ -1,5 +1,46 @@
 # Session Log
 
+## Session 305 — Logging pipeline + perf + bug fixes: 9 REVIEW-LATER items resolved (2026-04-09)
+
+**9 items resolved (44→35 open). Logging pipeline fully functional. 15 files changed, 73 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| B-36 | Missing `rootParentId` dependency in `useBlockDatePicker.handleDatePick` | `src/hooks/useBlockDatePicker.ts` |
+| B-38 | EnvFilter blocks ALL frontend logs from reaching log file | `src-tauri/src/lib.rs` |
+| B-39 | Logger `data` parameter never sent to backend log file | `src-tauri/src/commands.rs`, `src/lib/logger.ts`, `src/lib/tauri.ts`, `src/lib/bindings.ts` |
+| B-40 | Undo/redo store swallows all errors silently (3 catch blocks) | `src/stores/undo.ts` |
+| M-44 | No custom panic hook — panics bypass log file | `src-tauri/src/lib.rs` |
+| M-45 | No log file retention — daily rotation without cleanup | `src-tauri/src/lib.rs` |
+| M-48 | 5 raw `console.warn`/`console.error` calls bypass logger | `src/lib/keyboard-config.ts`, `src/components/GraphView.tsx` |
+| P-21 | DnD `measuring` object recreated every render in BlockTree | `src/components/BlockTree.tsx` |
+| P-22 | `richContent` useMemo defeated by `onNavigate` dependency | `src/components/StaticBlock.tsx` |
+
+### Build subagents (3 parallel)
+1. **Rust lib.rs** (B-38 + M-44 + M-45) — added `"frontend=info"` filter directive, custom panic hook, boot-time log retention (30-day cleanup with 6 tests)
+2. **B-39 full stack** — added `data` param to `log_frontend` Rust command + `bridgeToBackend` TS + `logFrontend` TS wrapper + bindings regen. `safeStringify` helper for circular reference protection.
+3. **Frontend catch blocks** (B-40 + M-48) — added `logger.error` to 3 undo store catch blocks, replaced 5 `console.warn`/`console.error` with structured logger calls
+
+### Orchestrator direct fixes (while subagents built)
+- B-36: added `rootParentId` to `useCallback` dependency array (1-line)
+- P-21: extracted DnD measuring config to module-level `DND_MEASURING` constant
+- P-22: removed `onNavigate` from `richContent` useMemo deps (ref pattern handles callback)
+
+### Review findings
+- **Rust lib.rs**: APPROVE — all correct, proper panic hook placement, retention edge cases covered
+- **B-39 full stack**: REQUEST CHANGES → fixed: added `safeStringify` to handle circular references gracefully (both `formatMessage` and `bridgeToBackend`), added circular reference test
+- **Frontend catch blocks**: APPROVE — minor observation: added `logger.error` assertion to GraphView error test
+
+### Stats
+- 15 files changed (+359 / -33 lines)
+- 73 new test assertions (6 Rust log retention + 5 logger data + 3 undo error + 4 keyboard-config + 1 GraphView + circular ref test)
+- 1712 Rust tests pass, 5968 frontend tests pass
+- All 20 prek hooks pass
+
+---
+
 ## Session 302 — Scalability review: benchmark-driven performance analysis (2026-04-09)
 
 **Analysis only — no code changes. 7 new REVIEW-LATER items added.**
