@@ -80,7 +80,9 @@ pub fn run() {
     let file_appender = tracing_appender::rolling::daily(&log_dir, "agaric.log");
     let (non_blocking, _log_guard) = tracing_appender::non_blocking(file_appender);
 
-    let env_filter = EnvFilter::from_default_env().add_directive("agaric=info".parse().unwrap());
+    let env_filter = EnvFilter::from_default_env()
+        .add_directive("agaric=info".parse().unwrap())
+        .add_directive("frontend=info".parse().unwrap());
 
     tracing_subscriber::registry()
         .with(env_filter)
@@ -91,6 +93,25 @@ pub fn run() {
                 .with_ansi(false),
         )
         .init();
+
+    // M-44: Install custom panic hook so panics are captured in the log file.
+    std::panic::set_hook(Box::new(|info| {
+        let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "unknown panic".to_string()
+        };
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_default();
+        tracing::error!(target: "agaric", panic = %payload, location = %location, "PANIC");
+    }));
+
+    // M-45: Clean up log files older than 30 days (best-effort, boot-time only).
+    cleanup_old_log_files(&log_dir, 30);
 
     let builder = Builder::<tauri::Wry>::new().commands(collect_commands![
         commands::create_block,
@@ -305,6 +326,38 @@ pub fn run() {
         });
 }
 
+/// Remove log files in `dir` matching `agaric.log.YYYY-MM-DD` that are older
+/// than `max_age_days`. Best-effort: any I/O or parse errors are silently
+/// ignored so a cleanup failure never blocks application startup.
+pub fn cleanup_old_log_files(dir: &std::path::Path, max_age_days: u32) {
+    let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(max_age_days as i64);
+
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+
+        // Match files like "agaric.log.2025-01-15"
+        let date_str = match name.strip_prefix("agaric.log.") {
+            Some(d) if d.len() == 10 => d,
+            _ => continue,
+        };
+
+        let file_date = match chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+
+        if file_date < cutoff {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 #[cfg(test)]
 mod specta_tests {
     use tauri_specta::{collect_commands, Builder};
@@ -473,5 +526,97 @@ mod specta_tests {
         let content = std::fs::read_to_string(out_path).expect("read generated bindings");
         std::fs::write(out_path, format!("// @ts-nocheck\n{content}"))
             .expect("write bindings with ts-nocheck header");
+    }
+}
+
+#[cfg(test)]
+mod log_retention_tests {
+    use super::cleanup_old_log_files;
+    use std::fs;
+
+    /// Helper: create a file with the given name inside `dir`.
+    fn touch(dir: &std::path::Path, name: &str) {
+        fs::write(dir.join(name), b"log data").unwrap();
+    }
+
+    #[test]
+    fn deletes_files_older_than_30_days() {
+        let tmp = tempfile::tempdir().unwrap();
+        // 60 days ago — should be deleted
+        let old_date = (chrono::Utc::now().date_naive() - chrono::Duration::days(60))
+            .format("%Y-%m-%d")
+            .to_string();
+        let old_name = format!("agaric.log.{old_date}");
+        touch(tmp.path(), &old_name);
+
+        cleanup_old_log_files(tmp.path(), 30);
+        assert!(
+            !tmp.path().join(&old_name).exists(),
+            "file older than 30 days should be deleted"
+        );
+    }
+
+    #[test]
+    fn keeps_recent_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        // 5 days ago — should be kept
+        let recent_date = (chrono::Utc::now().date_naive() - chrono::Duration::days(5))
+            .format("%Y-%m-%d")
+            .to_string();
+        let recent_name = format!("agaric.log.{recent_date}");
+        touch(tmp.path(), &recent_name);
+
+        cleanup_old_log_files(tmp.path(), 30);
+        assert!(
+            tmp.path().join(&recent_name).exists(),
+            "file younger than 30 days should be kept"
+        );
+    }
+
+    #[test]
+    fn keeps_todays_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let today = chrono::Utc::now()
+            .date_naive()
+            .format("%Y-%m-%d")
+            .to_string();
+        let today_name = format!("agaric.log.{today}");
+        touch(tmp.path(), &today_name);
+
+        cleanup_old_log_files(tmp.path(), 30);
+        assert!(
+            tmp.path().join(&today_name).exists(),
+            "today's log file should be kept"
+        );
+    }
+
+    #[test]
+    fn ignores_non_matching_filenames() {
+        let tmp = tempfile::tempdir().unwrap();
+        touch(tmp.path(), "other.log");
+        touch(tmp.path(), "agaric.log");
+        touch(tmp.path(), "agaric.log.not-a-date");
+        touch(tmp.path(), "agaric.log.2025-13-01"); // invalid month
+
+        cleanup_old_log_files(tmp.path(), 30);
+
+        assert!(tmp.path().join("other.log").exists());
+        assert!(tmp.path().join("agaric.log").exists());
+        assert!(tmp.path().join("agaric.log.not-a-date").exists());
+        assert!(tmp.path().join("agaric.log.2025-13-01").exists());
+    }
+
+    #[test]
+    fn handles_empty_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Should not panic or error
+        cleanup_old_log_files(tmp.path(), 30);
+    }
+
+    #[test]
+    fn handles_nonexistent_directory() {
+        let path = std::path::Path::new("/tmp/agaric-nonexistent-test-dir-42");
+        // Should not panic — silently returns
+        cleanup_old_log_files(path, 30);
     }
 }

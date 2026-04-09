@@ -68,6 +68,11 @@ export { processCheckboxSyntax } from '../lib/block-utils'
 
 export { guessMimeType } from '../lib/file-utils'
 
+/** Stable DnD measuring config — module-level to avoid re-creation per render. */
+const DND_MEASURING = {
+  droppable: { strategy: MeasuringStrategy.Always },
+} as const
+
 interface BlockTreeProps {
   /** Optional parent block ID -- when set, loads children of this block. */
   parentId?: string | undefined
@@ -697,9 +702,7 @@ export function BlockTree({
   }
 
   // DnD measuring config: always measure during drag for correct collision detection
-  const measuring = {
-    droppable: { strategy: MeasuringStrategy.Always },
-  }
+  const measuring = DND_MEASURING
 
   return (
     <>

@@ -18,8 +18,18 @@ import { select } from 'd3-selection'
 import { zoom } from 'd3-zoom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { logger } from '../../lib/logger'
 import { useNavigationStore } from '../../stores/navigation'
 import { GraphView } from '../GraphView'
+
+vi.mock('../../lib/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}))
 
 // Mock d3 modules to avoid SVG rendering issues in jsdom
 vi.mock('d3-force', () => ({
@@ -209,6 +219,12 @@ describe('GraphView', () => {
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('Failed to load graph data')
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      'GraphView',
+      'failed to load graph data',
+      undefined,
+      expect.any(Error),
+    )
   })
 
   it('has no a11y violations with empty state', async () => {

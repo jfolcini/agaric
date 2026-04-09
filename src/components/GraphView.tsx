@@ -23,6 +23,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { listBlocks, listPageLinks } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
+import { logger } from '../lib/logger'
 import { EmptyState } from './EmptyState'
 import { LoadingSkeleton } from './LoadingSkeleton'
 
@@ -76,7 +77,7 @@ export function GraphView(): React.ReactElement {
         setEdges(pageEdges)
       } catch (err) {
         if (!cancelled) {
-          console.error('[GraphView] Failed to load graph data', err)
+          logger.error('GraphView', 'failed to load graph data', undefined, err)
           setError(t('graph.loadFailed'))
         }
       } finally {

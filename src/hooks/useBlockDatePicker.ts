@@ -132,7 +132,7 @@ export function useBlockDatePicker({
         })
       }
     },
-    [datePickerMode, focusedBlockId],
+    [datePickerMode, focusedBlockId, rootParentId],
   )
 
   return {

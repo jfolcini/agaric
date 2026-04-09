@@ -2,6 +2,8 @@
  * Keyboard shortcut configuration with localStorage persistence (UX-86).
  */
 
+import { logger } from './logger'
+
 const STORAGE_KEY = 'agaric-keyboard-shortcuts'
 
 export interface ShortcutBinding {
@@ -291,7 +293,7 @@ export function getCustomOverrides(): Record<string, string> {
     if (!raw) return {}
     return JSON.parse(raw) as Record<string, string>
   } catch (e) {
-    console.warn('[keyboard-config] Failed to load custom shortcut overrides', e)
+    logger.warn('KeyboardConfig', 'failed to load custom shortcut overrides', undefined, e)
     return {}
   }
 }
@@ -323,7 +325,7 @@ export function setCustomShortcut(id: string, keys: string): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides))
   } catch {
-    console.warn('Failed to save keyboard shortcut override')
+    logger.warn('KeyboardConfig', 'failed to save keyboard shortcut override')
   }
 }
 
@@ -333,7 +335,7 @@ export function resetShortcut(id: string): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides))
   } catch {
-    console.warn('Failed to reset keyboard shortcut')
+    logger.warn('KeyboardConfig', 'failed to reset keyboard shortcut')
   }
 }
 
@@ -341,7 +343,7 @@ export function resetAllShortcuts(): void {
   try {
     localStorage.removeItem(STORAGE_KEY)
   } catch {
-    console.warn('Failed to reset all keyboard shortcuts')
+    logger.warn('KeyboardConfig', 'failed to reset all keyboard shortcuts')
   }
 }
 

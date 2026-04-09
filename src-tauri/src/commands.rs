@@ -5210,17 +5210,24 @@ pub async fn log_frontend(
     message: String,
     stack: Option<String>,
     context: Option<String>,
+    data: Option<String>,
 ) -> Result<(), AppError> {
     match level.as_str() {
         "error" => {
-            tracing::error!(target: "frontend", module = %module, stack = stack.as_deref().unwrap_or(""), context = context.as_deref().unwrap_or(""), "{message}")
+            tracing::error!(target: "frontend", module = %module, stack = stack.as_deref().unwrap_or(""), context = context.as_deref().unwrap_or(""), data = data.as_deref().unwrap_or(""), "{message}")
         }
         "warn" => {
-            tracing::warn!(target: "frontend", module = %module, stack = stack.as_deref().unwrap_or(""), context = context.as_deref().unwrap_or(""), "{message}")
+            tracing::warn!(target: "frontend", module = %module, stack = stack.as_deref().unwrap_or(""), context = context.as_deref().unwrap_or(""), data = data.as_deref().unwrap_or(""), "{message}")
         }
-        "info" => tracing::info!(target: "frontend", module = %module, "{message}"),
-        "debug" => tracing::debug!(target: "frontend", module = %module, "{message}"),
-        _ => tracing::info!(target: "frontend", module = %module, "{message}"),
+        "info" => {
+            tracing::info!(target: "frontend", module = %module, data = data.as_deref().unwrap_or(""), "{message}")
+        }
+        "debug" => {
+            tracing::debug!(target: "frontend", module = %module, data = data.as_deref().unwrap_or(""), "{message}")
+        }
+        _ => {
+            tracing::info!(target: "frontend", module = %module, data = data.as_deref().unwrap_or(""), "{message}")
+        }
     }
     Ok(())
 }
@@ -18415,6 +18422,7 @@ mod tests {
                 format!("test message at {level}"),
                 Some("fake stack".into()),
                 Some("fake context".into()),
+                Some(r#"{"blockId":"abc123"}"#.into()),
             )
             .await;
             assert!(
@@ -18432,11 +18440,12 @@ mod tests {
             "message without optionals".into(),
             None,
             None,
+            None,
         )
         .await;
         assert!(
             result.is_ok(),
-            "log_frontend should succeed without stack/context"
+            "log_frontend should succeed without stack/context/data"
         );
     }
 

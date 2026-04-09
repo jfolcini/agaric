@@ -27,6 +27,14 @@ function shouldLog(level: LogLevel): boolean {
   return LEVELS[level] >= LEVELS[minLevel]
 }
 
+function safeStringify(data: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(data)
+  } catch {
+    return '[unserializable]'
+  }
+}
+
 function formatMessage(
   level: LogLevel,
   module: string,
@@ -35,7 +43,7 @@ function formatMessage(
 ): string {
   const ts = new Date().toISOString()
   const base = `[${ts}] [${level.toUpperCase()}] [${module}] ${message}`
-  return data ? `${base} ${JSON.stringify(data)}` : base
+  return data ? `${base} ${safeStringify(data)}` : base
 }
 
 // ── Cause extraction ─────────────────────────────────────────────────────
@@ -127,10 +135,12 @@ function bridgeToBackend(
   message: string,
   stack?: string,
   context?: string,
+  data?: Record<string, unknown>,
 ) {
   try {
     if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
-      logFrontend(level, module, message, stack, context).catch(() => {})
+      const serializedData = data ? safeStringify(data) : undefined
+      logFrontend(level, module, message, stack, context, serializedData).catch(() => {})
     }
   } catch {
     // IPC unavailable — console-only fallback
@@ -167,7 +177,7 @@ export const logger = {
 
     // IPC bridge — fire and forget
     const context = causeChain.length > 0 ? JSON.stringify(causeChain) : undefined
-    bridgeToBackend('warn', module, message, stack, context)
+    bridgeToBackend('warn', module, message, stack, context, data)
   },
 
   error(module: string, message: string, data?: Record<string, unknown>, cause?: unknown) {
@@ -189,6 +199,6 @@ export const logger = {
 
     // IPC bridge — fire and forget
     const context = causeChain.length > 0 ? JSON.stringify(causeChain) : undefined
-    bridgeToBackend('error', module, message, stack, context)
+    bridgeToBackend('error', module, message, stack, context, data)
   },
 }

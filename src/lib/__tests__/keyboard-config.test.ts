@@ -10,6 +10,19 @@ import {
   setCustomShortcut,
 } from '../keyboard-config'
 
+vi.mock('../logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}))
+
+import { logger } from '../logger'
+
+const mockedLogger = vi.mocked(logger)
+
 const STORAGE_KEY = 'agaric-keyboard-shortcuts'
 
 beforeEach(() => {
@@ -173,38 +186,44 @@ describe('keyboard-config', () => {
   })
 
   it('handles localStorage.setItem throwing (setCustomShortcut)', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('QuotaExceeded')
     })
 
     // Should not throw
     expect(() => setCustomShortcut('prevBlock', 'Ctrl + P')).not.toThrow()
-    expect(warnSpy).toHaveBeenCalledWith('Failed to save keyboard shortcut override')
+    expect(mockedLogger.warn).toHaveBeenCalledWith(
+      'KeyboardConfig',
+      'failed to save keyboard shortcut override',
+    )
 
     vi.restoreAllMocks()
   })
 
   it('handles localStorage.setItem throwing (resetShortcut)', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('QuotaExceeded')
     })
 
     expect(() => resetShortcut('prevBlock')).not.toThrow()
-    expect(warnSpy).toHaveBeenCalledWith('Failed to reset keyboard shortcut')
+    expect(mockedLogger.warn).toHaveBeenCalledWith(
+      'KeyboardConfig',
+      'failed to reset keyboard shortcut',
+    )
 
     vi.restoreAllMocks()
   })
 
   it('handles localStorage.removeItem throwing (resetAllShortcuts)', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
       throw new Error('SecurityError')
     })
 
     expect(() => resetAllShortcuts()).not.toThrow()
-    expect(warnSpy).toHaveBeenCalledWith('Failed to reset all keyboard shortcuts')
+    expect(mockedLogger.warn).toHaveBeenCalledWith(
+      'KeyboardConfig',
+      'failed to reset all keyboard shortcuts',
+    )
 
     vi.restoreAllMocks()
   })

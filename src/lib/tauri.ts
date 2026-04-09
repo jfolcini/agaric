@@ -770,6 +770,7 @@ export async function logFrontend(
   message: string,
   stack?: string | null,
   context?: string | null,
+  data?: string | null,
 ): Promise<void> {
   await invoke('log_frontend', {
     level,
@@ -777,6 +778,7 @@ export async function logFrontend(
     message,
     stack: stack ?? null,
     context: context ?? null,
+    data: data ?? null,
   })
 }
 

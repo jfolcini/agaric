@@ -77,6 +77,7 @@ function StaticBlockInner({
   const resolveTagStatusRef = useRef(resolveTagStatus)
   resolveTagStatusRef.current = resolveTagStatus
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: onNavigate captured via ref — see comment above
   const richContent = useMemo(
     () =>
       content
@@ -88,7 +89,7 @@ function StaticBlockInner({
             resolveTagStatus: (id) => resolveTagStatusRef.current?.(id) ?? 'active',
           })
         : null,
-    [content, onNavigate],
+    [content],
   )
 
   const { attachments, loading: attachmentsLoading } = useBlockAttachments(blockId)

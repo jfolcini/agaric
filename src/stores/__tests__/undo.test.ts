@@ -7,11 +7,22 @@ vi.mock('@/lib/tauri', () => ({
   listPageHistory: vi.fn(),
 }))
 
+vi.mock('@/lib/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}))
+
+import { logger } from '@/lib/logger'
 import { listPageHistory, redoPageOp, undoPageOp } from '@/lib/tauri'
 
 const mockedUndoPageOp = vi.mocked(undoPageOp)
 const mockedRedoPageOp = vi.mocked(redoPageOp)
 const mockedListPageHistory = vi.mocked(listPageHistory)
+const mockedLogger = vi.mocked(logger)
 
 /** Helper — build a mock UndoResult. */
 function makeUndoResult(
@@ -117,6 +128,20 @@ describe('useUndoStore', () => {
       const pageState = useUndoStore.getState().pages.get('page1')
       expect(pageState?.undoDepth).toBe(0)
       expect(pageState?.redoStack).toEqual([])
+    })
+
+    it('logs error via logger.error when undo fails', async () => {
+      const err = new Error('no undoable ops')
+      mockedUndoPageOp.mockRejectedValueOnce(err)
+
+      await useUndoStore.getState().undo('page1')
+
+      expect(mockedLogger.error).toHaveBeenCalledWith(
+        'UndoStore',
+        'undo operation failed',
+        { pageId: 'page1' },
+        err,
+      )
     })
 
     it('does not change state on backend error after previous undo', async () => {
@@ -228,6 +253,22 @@ describe('useUndoStore', () => {
       const pageState = useUndoStore.getState().pages.get('page1')
       expect(pageState?.undoDepth).toBe(1)
       expect(pageState?.redoStack).toHaveLength(1)
+    })
+
+    it('logs error via logger.error when redo fails', async () => {
+      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+      await useUndoStore.getState().undo('page1')
+
+      const err = new Error('redo failed')
+      mockedRedoPageOp.mockRejectedValueOnce(err)
+      await useUndoStore.getState().redo('page1')
+
+      expect(mockedLogger.error).toHaveBeenCalledWith(
+        'UndoStore',
+        'redo operation failed',
+        { pageId: 'page1' },
+        err,
+      )
     })
   })
 
@@ -490,6 +531,21 @@ describe('batch undo', () => {
     expect(result).not.toBeNull()
     expect(mockedUndoPageOp).toHaveBeenCalledTimes(1)
     expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(1)
+  })
+
+  it('logs error via logger.error when history fetch fails', async () => {
+    const err = new Error('network error')
+    mockedListPageHistory.mockRejectedValueOnce(err)
+    mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 5, newSeq: 6 }))
+
+    await useUndoStore.getState().undo('page1')
+
+    expect(mockedLogger.error).toHaveBeenCalledWith(
+      'UndoStore',
+      'history fetch failed',
+      { pageId: 'page1' },
+      err,
+    )
   })
 
   it('skips undo_/redo_ ops when determining groups', async () => {

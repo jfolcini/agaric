@@ -15,11 +15,13 @@ const mockLogFrontend = vi.fn<
     message: string,
     stack?: string,
     context?: string,
+    data?: string,
   ) => Promise<void>
 >(() => Promise.resolve())
 
 vi.mock('../tauri', () => ({
-  logFrontend: (...args: [string, string, string, string?, string?]) => mockLogFrontend(...args),
+  logFrontend: (...args: [string, string, string, string?, string?, string?]) =>
+    mockLogFrontend(...args),
 }))
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -188,6 +190,7 @@ describe('dual-write IPC bridge', () => {
       'timeout',
       expect.any(String), // stack trace
       undefined, // no cause context
+      undefined, // no data
     )
   })
 
@@ -201,6 +204,7 @@ describe('dual-write IPC bridge', () => {
       'write failed',
       expect.any(String),
       undefined,
+      undefined, // no data
     )
   })
 
@@ -229,6 +233,60 @@ describe('dual-write IPC bridge', () => {
     mockLogFrontend.mockRejectedValueOnce(new Error('IPC failed'))
     // Should not throw
     expect(() => logger.error('M', 'msg')).not.toThrow()
+  })
+
+  it('warn sends serialized data to logFrontend when data is provided', () => {
+    enableTauri()
+    const data = { blockId: 'abc123', targetId: 'xyz789' }
+    logger.warn('Move', 'block move failed', data)
+    expect(mockLogFrontend).toHaveBeenCalledTimes(1)
+    const dataArg = mockLogFrontend.mock.calls[0]?.[5]
+    expect(dataArg).toBe(JSON.stringify(data))
+  })
+
+  it('error sends serialized data to logFrontend when data is provided', () => {
+    enableTauri()
+    const data = { pageId: 'page1', error: 'timeout' }
+    logger.error('DB', 'query failed', data)
+    expect(mockLogFrontend).toHaveBeenCalledTimes(1)
+    const dataArg = mockLogFrontend.mock.calls[0]?.[5]
+    expect(dataArg).toBe(JSON.stringify(data))
+  })
+
+  it('sends undefined data when no data dict is provided', () => {
+    enableTauri()
+    logger.warn('Sync', 'no data')
+    expect(mockLogFrontend).toHaveBeenCalledTimes(1)
+    const dataArg = mockLogFrontend.mock.calls[0]?.[5]
+    expect(dataArg).toBeUndefined()
+  })
+
+  it('sends both data and cause context when both are provided', () => {
+    enableTauri()
+    const data = { blockId: 'b1' }
+    const err = new Error('root cause')
+    logger.error('M', 'combined', data, err)
+    expect(mockLogFrontend).toHaveBeenCalledTimes(1)
+    // context (cause chain) should be present
+    const context = mockLogFrontend.mock.calls[0]?.[4]
+    expect(context).toBeDefined()
+    const parsed = JSON.parse(context ?? '[]')
+    expect(parsed[0].message).toBe('root cause')
+    // data should be serialized
+    const dataArg = mockLogFrontend.mock.calls[0]?.[5]
+    expect(dataArg).toBe(JSON.stringify(data))
+  })
+
+  it('handles circular references in data gracefully', () => {
+    enableTauri()
+    // biome-ignore lint/suspicious/noExplicitAny: test needs circular ref
+    const circular: any = { a: 1 }
+    circular.self = circular
+    expect(() => logger.error('M', 'msg', circular)).not.toThrow()
+    expect(mockLogFrontend).toHaveBeenCalledTimes(1)
+    // data should fall back to '[unserializable]' marker
+    const dataArg = mockLogFrontend.mock.calls[0]?.[5]
+    expect(dataArg).toBe('[unserializable]')
   })
 })
 

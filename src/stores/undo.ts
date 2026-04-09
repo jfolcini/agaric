@@ -12,6 +12,7 @@
  */
 
 import { create } from 'zustand'
+import { logger } from '../lib/logger'
 import type { OpRef, UndoResult } from '../lib/tauri'
 import { listPageHistory, redoPageOp, undoPageOp } from '../lib/tauri'
 
@@ -138,7 +139,8 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       })
 
       return result
-    } catch {
+    } catch (err) {
+      logger.error('UndoStore', 'undo operation failed', { pageId }, err)
       // On error: roll back the optimistic increment
       set((state) => {
         const newPages = new Map(state.pages)
@@ -190,7 +192,8 @@ export const useUndoStore = create<UndoStore>((set, get) => {
 
       // On success: state already updated optimistically
       return result
-    } catch {
+    } catch (err) {
+      logger.error('UndoStore', 'redo operation failed', { pageId }, err)
       // On error: roll back the optimistic update
       set((state) => {
         const newPages = new Map(state.pages)
@@ -253,7 +256,8 @@ export const useUndoStore = create<UndoStore>((set, get) => {
           groupSize++
           lastUndoneIndex++
         }
-      } catch {
+      } catch (err) {
+        logger.error('UndoStore', 'history fetch failed', { pageId }, err)
         // History fetch failed — graceful fallback, just the single undo
       }
 
