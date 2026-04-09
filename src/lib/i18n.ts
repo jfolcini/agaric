@@ -319,6 +319,11 @@ const resources = {
       'agenda.groupNone': 'None',
       'agenda.breadcrumbArrow': '\u2192',
 
+      // Task dependencies (F-37)
+      'dependency.blockedBy': 'Blocked by: {{title}}',
+      'dependency.blockedByUnresolved': 'Blocked by another task',
+      'dependency.dependencyWarning': 'This task has dependencies that may not be complete',
+
       // Date Chip Editor (F-22)
       'dateChip.editDate': 'Edit date',
       'dateChip.placeholder': 'today, +3d, Apr 15',

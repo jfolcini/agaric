@@ -11,7 +11,7 @@
 
 import { CheckCircle2, Circle, Clock } from 'lucide-react'
 import type React from 'react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { EmptyState } from '@/components/EmptyState'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
@@ -29,9 +29,10 @@ import {
 } from '../lib/agenda-sort'
 import type { NavigateToPageFn } from '../lib/block-events'
 import { priorityColor } from '../lib/priority-color'
-import type { BlockRow } from '../lib/tauri'
+import type { BlockRow, PropertyRow } from '../lib/tauri'
 import { BlockListItem } from './BlockListItem'
 import { DateChipEditor } from './DateChipEditor'
+import { DependencyIndicator } from './DependencyIndicator'
 import { LoadMoreButton } from './LoadMoreButton'
 
 export interface AgendaResultsProps {
@@ -172,6 +173,9 @@ export function AgendaResults({
       untitledLabel: t('agenda.untitled'),
     })
 
+  // Shared cache for block properties — avoids redundant IPC calls across renders
+  const propertiesCacheRef = useRef<Map<string, PropertyRow[]>>(new Map())
+
   // ── Loading state (initial load, no blocks yet) ────────────────────
   if (loading && blocks.length === 0) {
     return (
@@ -235,6 +239,9 @@ export function AgendaResults({
 
             {/* Due date chip — clickable with inline date editor */}
             <DueDateChip block={block} onDateChanged={onDateChanged} />
+
+            {/* Dependency indicator — shows Link2 icon when blocked_by property exists */}
+            <DependencyIndicator blockId={block.id} propertiesCache={propertiesCacheRef} />
           </>
         }
         pageId={block.parent_id}

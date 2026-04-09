@@ -49,6 +49,7 @@ import {
   addAttachment,
   deleteProperty,
   editBlock,
+  getProperties,
   listPropertyKeys,
   setPriority as setPriorityCmd,
   setProperty,
@@ -556,6 +557,21 @@ export function useBlockSlashCommands({
               b.id === focusedBlockId ? { ...b, todo_state: state } : b,
             ),
           }))
+          // F-37: warn when completing a task that has unresolved dependencies
+          if (state === 'DONE') {
+            getProperties(focusedBlockId)
+              .then((props) => {
+                const hasBlockedBy = props.some(
+                  (p) => p.key === 'blocked_by' && p.value_ref != null,
+                )
+                if (hasBlockedBy) {
+                  toast.warning(t('dependency.dependencyWarning'))
+                }
+              })
+              .catch(() => {
+                // Silently ignore — dependency check is best-effort
+              })
+          }
         } catch {
           toast.error(t('blockTree.setTaskStateFailed'))
         }
@@ -971,6 +987,21 @@ export function useBlockSlashCommands({
       setTodoStateCmd(focusedBlockId, state)
         .then(() => {
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
+          // F-37: warn when completing a task that has unresolved dependencies
+          if (state === 'DONE') {
+            getProperties(focusedBlockId)
+              .then((props) => {
+                const hasBlockedBy = props.some(
+                  (p) => p.key === 'blocked_by' && p.value_ref != null,
+                )
+                if (hasBlockedBy) {
+                  toast.warning(t('dependency.dependencyWarning'))
+                }
+              })
+              .catch(() => {
+                // Silently ignore — dependency check is best-effort
+              })
+          }
         })
         .catch(() => toast.error(t('blockTree.setTaskStateFailed')))
       pageStore.setState((s) => ({

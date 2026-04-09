@@ -12,7 +12,7 @@
  *  8. A11y audit passes (axe)
  */
 
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -22,6 +22,15 @@ vi.mock('lucide-react', () => ({
   Clock: (props: Record<string, unknown>) => <svg data-testid="icon-doing" {...props} />,
   CheckCircle2: (props: Record<string, unknown>) => <svg data-testid="icon-done" {...props} />,
   Loader2: (props: Record<string, unknown>) => <svg data-testid="loader-spinner" {...props} />,
+  Link2: (props: Record<string, unknown>) => <svg data-testid="icon-link2" {...props} />,
+}))
+
+const mockGetProperties = vi.fn().mockResolvedValue([])
+const mockBatchResolve = vi.fn().mockResolvedValue([])
+
+vi.mock('../../lib/tauri', () => ({
+  getProperties: (...args: unknown[]) => mockGetProperties(...args),
+  batchResolve: (...args: unknown[]) => mockBatchResolve(...args),
 }))
 
 vi.mock('@/components/ui/button', () => ({
@@ -74,6 +83,9 @@ function defaultProps(overrides: Partial<AgendaResultsProps> = {}): AgendaResult
 
 describe('AgendaResults', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
+    mockGetProperties.mockResolvedValue([])
+    mockBatchResolve.mockResolvedValue([])
     useNavigationStore.setState({
       currentView: 'journal',
       pageStack: [],
@@ -419,5 +431,44 @@ describe('AgendaResults', () => {
     expect(navState.pageStack).toHaveLength(1)
     expect(navState.pageStack[0]?.pageId).toBe('PAGE1')
     expect(navState.pageStack[0]?.title).toBe('My Project Page')
+  })
+
+  // 15. Dependency indicator renders in metadata when block has blocked_by property
+  it('renders dependency indicator when block has blocked_by property', async () => {
+    mockGetProperties.mockResolvedValue([
+      {
+        key: 'blocked_by',
+        value_text: null,
+        value_num: null,
+        value_date: null,
+        value_ref: 'BLOCKER1',
+      },
+    ])
+    mockBatchResolve.mockResolvedValue([
+      { id: 'BLOCKER1', content: 'Blocking task', block_type: 'block', deleted: false },
+    ])
+
+    const blocks = [makeBlock({ id: 'B1', content: 'Blocked task' })]
+    render(<AgendaResults {...defaultProps({ blocks })} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('dependency-indicator')).toBeInTheDocument()
+    })
+
+    expect(screen.getByTestId('icon-link2')).toBeInTheDocument()
+  })
+
+  // 16. No dependency indicator when block has no blocked_by property
+  it('does not render dependency indicator when block has no blocked_by property', async () => {
+    mockGetProperties.mockResolvedValue([])
+
+    const blocks = [makeBlock({ id: 'B1', content: 'Normal task' })]
+    render(<AgendaResults {...defaultProps({ blocks })} />)
+
+    await waitFor(() => {
+      expect(mockGetProperties).toHaveBeenCalledWith('B1')
+    })
+
+    expect(screen.queryByTestId('dependency-indicator')).not.toBeInTheDocument()
   })
 })
