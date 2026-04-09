@@ -1,5 +1,49 @@
 # Session Log
 
+## Session 298 — Batch 29: MAINT dedup + UX button sizing + P-6 audit (2026-04-09)
+
+**Commits:** `d77db7f` (M-19+UX-96) + `c6c8990` (M-20+M-28+M-29) — 22 files, +1918/-575
+
+### Items resolved
+- **M-19**: Extracted `SearchablePopover<T>` from SearchPanel.tsx. Generic popover with search, loading, empty state. Replaced 2 identical page/tag picker blocks. 14 new tests with axe audits. SearchPanel −44 lines.
+- **M-20**: Extracted 5 toolbar config arrays to `lib/toolbar-config.ts` (factory functions), `CodeLanguageSelector.tsx` and `HeadingLevelSelector.tsx`. FormattingToolbar reduced from 638 to ~313 lines. 27 new config tests.
+- **M-28**: Extracted `usePropertySave` hook (save/delete with toast + logging). Replaces identical patterns in BlockPropertyDrawer + PagePropertyTable. 16 new tests.
+- **M-29**: Extracted `useDateInput` hook (parseDate → preview → blur-save). Replaces identical patterns in BlockPropertyDrawer, PropertyRowEditor, DateChipEditor. 20 new tests.
+- **UX-96**: Bumped button `sm`/`xs`/`icon-xs`/`icon-sm` to 44px on coarse pointer (WCAG 2.5.8). Opt-down overrides in FormattingToolbar and KeyboardSettingsTab tight layouts. Removed redundant overrides from TagList and PageBrowser.
+- **P-6**: Benchmark coverage audit added — 40 of 72 Tauri commands lack Criterion benchmarks.
+
+### Files created
+- `src/components/SearchablePopover.tsx` — generic searchable popover (105 lines)
+- `src/components/__tests__/SearchablePopover.test.tsx` — 14 tests
+- `src/lib/toolbar-config.ts` — toolbar config arrays + constants (240 lines)
+- `src/lib/__tests__/toolbar-config.test.ts` — 27 tests
+- `src/components/CodeLanguageSelector.tsx` — code language popover (69 lines)
+- `src/components/HeadingLevelSelector.tsx` — heading level popover (63 lines)
+- `src/hooks/usePropertySave.ts` — property save/delete hook (105 lines)
+- `src/hooks/__tests__/usePropertySave.test.ts` — 16 tests
+- `src/hooks/useDateInput.ts` — date input hook (91 lines)
+- `src/hooks/__tests__/useDateInput.test.ts` — 20 tests
+
+### Files modified
+
+| Area | Change |
+|------|--------|
+| SearchPanel.tsx | M-19: use SearchablePopover, −44 lines |
+| FormattingToolbar.tsx | M-20+UX-96: import from toolbar-config, opt-down overrides |
+| BlockPropertyDrawer.tsx | M-28+M-29: usePropertySave + useDateInput |
+| PagePropertyTable.tsx | M-28: usePropertySave |
+| PropertyRowEditor.tsx | M-29: useDateInput |
+| DateChipEditor.tsx | M-29: useDateInput |
+| button.tsx | UX-96: h-11/size-11 for sm/xs/icon-sm/icon-xs |
+| button.test.tsx | UX-96: updated 4 assertions |
+| KeyboardSettingsTab.tsx | UX-96: opt-down overrides |
+| TagList.tsx | UX-96: removed redundant overrides |
+| PageBrowser.tsx | UX-96: removed redundant override |
+
+### Test counts
+- Frontend: 247 files, 5812 tests (was 5735)
+- Open REVIEW-LATER items: 10 (was 14, +1 P-6 added)
+
 ## Session 297 — Batch 28: Rust + frontend test quality (2026-04-09)
 
 **Commit:** `924baa9` — `test: T-15/T-16/T-17/T-21/T-25/T-26/T-28` — 7 files, +772/-65
