@@ -14,7 +14,7 @@
 
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Clock, GripVertical, Trash2 } from 'lucide-react'
+import { Trash2 } from 'lucide-react'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
@@ -25,10 +25,11 @@ import { listAttachments, listBlocks, listPropertyDefs } from '../lib/tauri'
 import { cn } from '../lib/utils'
 import { AttachmentList } from './AttachmentList'
 import { BlockContextMenu } from './BlockContextMenu'
+import { BlockGutterControls } from './BlockGutterControls'
 import { BlockInlineControls } from './BlockInlineControls'
 import { BlockPropertyEditor } from './BlockPropertyEditor'
 import { EditableBlock } from './EditableBlock'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
+import { TooltipProvider } from './ui/tooltip'
 
 /** Pixels of left padding per depth level. */
 export const INDENT_WIDTH = 24
@@ -326,71 +327,20 @@ function SortableBlockInner({
             />
           )}
 
-          {/* ── Narrow gutter — grip + delete only ─────────────────── */}
+          {/* ── Narrow gutter — grip + history + delete ────────────── */}
           <div
             className={cn(
               GUTTER_WIDTH,
               'relative z-10 flex-shrink-0 flex items-center gap-1 justify-end [@media(pointer:coarse)]:w-0 [@media(pointer:coarse)]:overflow-hidden',
             )}
           >
-            {/* Drag handle — far left */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  className="drag-handle flex-shrink-0 cursor-grab p-0.5 text-muted-foreground hover:text-foreground opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring active:scale-95 touch-target"
-                  data-testid="drag-handle"
-                  aria-label={t('block.reorder')}
-                  {...attributes}
-                  {...listeners}
-                >
-                  <GripVertical className="h-4 w-4" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={4}>
-                {t('block.reorderTip')}
-              </TooltipContent>
-            </Tooltip>
-
-            {/* History — between grip and delete */}
-            {onShowHistory && (
-              <button
-                type="button"
-                aria-label={t('block.history')}
-                className="flex-shrink-0 p-0.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-sm opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring active:scale-95 touch-target"
-                onClick={() => onShowHistory(blockId)}
-              >
-                <Clock className="h-4 w-4" />
-              </button>
-            )}
-
-            {/* Delete — next to grip */}
-            {onDelete && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    className="delete-handle flex-shrink-0 p-0.5 text-muted-foreground hover:text-destructive rounded-sm hover:bg-destructive/10 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring active:scale-95 touch-target"
-                    aria-label={t('block.delete')}
-                    onPointerDown={(e) => {
-                      e.stopPropagation()
-                      e.preventDefault()
-                      onDelete(blockId)
-                    }}
-                    onClick={(e) => {
-                      // Fallback for keyboard activation (Enter/Space fires click, not pointerDown)
-                      e.stopPropagation()
-                      onDelete(blockId)
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" sideOffset={4}>
-                  {t('block.delete')}
-                </TooltipContent>
-              </Tooltip>
-            )}
+            <BlockGutterControls
+              blockId={blockId}
+              onDelete={onDelete}
+              onShowHistory={onShowHistory}
+              dragAttributes={attributes}
+              dragListeners={listeners}
+            />
           </div>
 
           {/* ── Inline controls — chevron, checkbox, priority ─────── */}

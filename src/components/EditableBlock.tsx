@@ -7,6 +7,7 @@
  */
 
 import { EditorContent } from '@tiptap/react'
+import type { TFunction } from 'i18next'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
@@ -58,6 +59,32 @@ function persistUnmount(
     }
   }
   return changed
+}
+
+/**
+ * Shared attachment-processing loop used by both handleDrop and handlePaste.
+ * Extracts file info, calls addAttachment, and shows success/error toasts.
+ */
+async function processFileAttachments(files: File[], blockId: string, t: TFunction): Promise<void> {
+  for (const file of files) {
+    const info = extractFileInfo(file)
+    if (!info.fsPath) {
+      toast.error(t('blockTree.filePathReadFailed'))
+      continue
+    }
+    try {
+      await addAttachment({
+        blockId,
+        filename: info.filename,
+        mimeType: info.mimeType,
+        sizeBytes: info.sizeBytes,
+        fsPath: info.fsPath,
+      })
+      toast.success(t('blockTree.attachedFileMessage', { filename: info.filename }))
+    } catch {
+      toast.error(t('blockTree.attachFileFailed'))
+    }
+  }
 }
 
 interface EditableBlockProps {
@@ -265,26 +292,7 @@ function EditableBlockInner({
       setIsDragOver(false)
       const files = Array.from(e.dataTransfer.files)
       if (files.length === 0) return
-
-      for (const file of files) {
-        const info = extractFileInfo(file)
-        if (!info.fsPath) {
-          toast.error(t('blockTree.filePathReadFailed'))
-          continue
-        }
-        try {
-          await addAttachment({
-            blockId,
-            filename: info.filename,
-            mimeType: info.mimeType,
-            sizeBytes: info.sizeBytes,
-            fsPath: info.fsPath,
-          })
-          toast.success(t('blockTree.attachedFileMessage', { filename: info.filename }))
-        } catch {
-          toast.error(t('blockTree.attachFileFailed'))
-        }
-      }
+      await processFileAttachments(files, blockId, t)
     },
     [blockId, t],
   )
@@ -293,27 +301,8 @@ function EditableBlockInner({
     async (e: React.ClipboardEvent) => {
       const files = Array.from(e.clipboardData.files)
       if (files.length === 0) return // No files — let TipTap handle text paste
-
       e.preventDefault()
-      for (const file of files) {
-        const info = extractFileInfo(file)
-        if (!info.fsPath) {
-          toast.error(t('blockTree.filePathReadFailed'))
-          continue
-        }
-        try {
-          await addAttachment({
-            blockId,
-            filename: info.filename,
-            mimeType: info.mimeType,
-            sizeBytes: info.sizeBytes,
-            fsPath: info.fsPath,
-          })
-          toast.success(t('blockTree.attachedFileMessage', { filename: info.filename }))
-        } catch {
-          toast.error(t('blockTree.attachFileFailed'))
-        }
-      }
+      await processFileAttachments(files, blockId, t)
     },
     [blockId, t],
   )

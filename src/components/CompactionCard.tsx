@@ -12,11 +12,11 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { CollapsiblePanelHeader } from '@/components/CollapsiblePanelHeader'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import type { CompactionStatus } from '@/lib/tauri'
-import { getCompactionStatus } from '@/lib/tauri'
-import { CompactionConfirmDialog } from './CompactionConfirmDialog'
+import { compactOpLog, getCompactionStatus } from '@/lib/tauri'
 
 export function CompactionCard(): React.ReactElement {
   const { t } = useTranslation()
@@ -24,6 +24,7 @@ export function CompactionCard(): React.ReactElement {
   const [status, setStatus] = useState<CompactionStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [compacting, setCompacting] = useState(false)
 
   const fetchStatus = useCallback(async () => {
     setLoading(true)
@@ -40,6 +41,21 @@ export function CompactionCard(): React.ReactElement {
   useEffect(() => {
     void fetchStatus()
   }, [fetchStatus])
+
+  const handleCompact = useCallback(async () => {
+    if (status == null) return
+    setCompacting(true)
+    try {
+      const result = await compactOpLog(status.retention_days)
+      toast.success(t('compaction.success', { count: result.ops_deleted }))
+      setConfirmOpen(false)
+      void fetchStatus()
+    } catch {
+      toast.error(t('compaction.failed'))
+    } finally {
+      setCompacting(false)
+    }
+  }, [status, fetchStatus, t])
 
   const formattedDate =
     status?.oldest_op_date != null ? new Date(status.oldest_op_date).toLocaleDateString() : null
@@ -91,12 +107,19 @@ export function CompactionCard(): React.ReactElement {
                 {t('compaction.compactNow')}
               </Button>
 
-              <CompactionConfirmDialog
+              <ConfirmDialog
                 open={confirmOpen}
                 onOpenChange={setConfirmOpen}
-                eligibleOps={status.eligible_ops}
-                retentionDays={status.retention_days}
-                onCompacted={fetchStatus}
+                title={t('compaction.confirmTitle')}
+                description={t('compaction.confirmDescription', {
+                  count: status.eligible_ops,
+                  days: status.retention_days,
+                })}
+                cancelLabel={t('compaction.cancel')}
+                actionLabel={t('compaction.compactButton')}
+                actionVariant="destructive"
+                onAction={handleCompact}
+                loading={compacting}
               />
             </>
           ) : null}

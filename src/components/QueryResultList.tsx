@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
+import { handleBlockNavigation, resolveBlockDisplay } from '../lib/query-result-utils'
 import type { BlockRow } from '../lib/tauri'
-import { truncateContent } from '../lib/text-utils'
 import { cn } from '../lib/utils'
 import { PageLink } from './PageLink'
 import { StatusBadge } from './ui/status-badge'
@@ -31,7 +31,7 @@ export function QueryResultList({
     onSelect: (idx) => {
       onItemSelect?.(idx)
       const block = results[idx]
-      if (block?.parent_id && onNavigate) onNavigate(block.parent_id)
+      if (block) handleBlockNavigation(block, onNavigate)
     },
   })
 
@@ -49,7 +49,7 @@ export function QueryResultList({
       }}
     >
       {results.map((block, index) => {
-        const pageTitle = block.parent_id ? pageTitles.get(block.parent_id) : undefined
+        const { title, pageTitle } = resolveBlockDisplay(block, pageTitles, resolveBlockTitle)
         return (
           <div
             key={block.id}
@@ -61,16 +61,12 @@ export function QueryResultList({
             tabIndex={-1}
             onClick={(e) => {
               e.stopPropagation()
-              if (block.parent_id && onNavigate) {
-                onNavigate(block.parent_id)
-              }
+              handleBlockNavigation(block, onNavigate)
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.stopPropagation()
-                if (block.parent_id && onNavigate) {
-                  onNavigate(block.parent_id)
-                }
+                handleBlockNavigation(block, onNavigate)
               }
             }}
           >
@@ -93,11 +89,7 @@ export function QueryResultList({
                   {block.todo_state}
                 </StatusBadge>
               )}
-              <span className="flex-1 truncate">
-                {resolveBlockTitle
-                  ? resolveBlockTitle(block.id) || truncateContent(block.content, 80)
-                  : truncateContent(block.content, 80)}
-              </span>
+              <span className="flex-1 truncate">{title}</span>
               {pageTitle && block.parent_id && (
                 <span className="shrink-0 text-[10px] text-muted-foreground/60 truncate max-w-[120px]">
                   <PageLink pageId={block.parent_id} title={pageTitle} />

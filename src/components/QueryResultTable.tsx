@@ -1,8 +1,8 @@
 import { ArrowDown, ArrowUp } from 'lucide-react'
 import type React from 'react'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { handleBlockNavigation, resolveBlockDisplay } from '../lib/query-result-utils'
 import type { BlockRow } from '../lib/tauri'
-import { truncateContent } from '../lib/text-utils'
 import { PageLink } from './PageLink'
 
 /** Column definition for table mode. */
@@ -73,7 +73,7 @@ export function QueryResultTable({
         </thead>
         <tbody className="divide-y divide-muted-foreground/10">
           {results.map((block) => {
-            const pageTitle = block.parent_id ? pageTitles.get(block.parent_id) : undefined
+            const { title, pageTitle } = resolveBlockDisplay(block, pageTitles, resolveBlockTitle)
             return (
               <tr key={block.id} className="hover:bg-muted/40 transition-colors">
                 {columns.map((col) => (
@@ -84,14 +84,10 @@ export function QueryResultTable({
                         className="text-left hover:underline truncate max-w-[300px] block"
                         onClick={(e) => {
                           e.stopPropagation()
-                          if (block.parent_id && onNavigate) {
-                            onNavigate(block.parent_id)
-                          }
+                          handleBlockNavigation(block, onNavigate)
                         }}
                       >
-                        {resolveBlockTitle
-                          ? resolveBlockTitle(block.id) || truncateContent(block.content, 80)
-                          : truncateContent(block.content, 80)}
+                        {title}
                       </button>
                     ) : (
                       <span>{(block[col.key as keyof BlockRow] as string) ?? ''}</span>

@@ -9,7 +9,6 @@
  * fetching, filtering, and passing down blocks.
  */
 
-import { CheckCircle2, Circle, Clock } from 'lucide-react'
 import type React from 'react'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -17,6 +16,7 @@ import { EmptyState } from '@/components/EmptyState'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { StatusIcon } from '@/components/ui/status-icon'
 import { formatCompactDate, getTodayString } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
@@ -68,34 +68,6 @@ function dueDateColor(dateStr: string): string {
   if (dateStr < todayStr) return 'bg-destructive/10 text-destructive'
   if (dateStr === todayStr) return 'bg-status-pending text-status-pending-foreground'
   return 'bg-muted text-muted-foreground'
-}
-
-/** Return the appropriate status icon component for a todo_state. */
-function StatusIcon({ state }: { state: string | null }): React.ReactElement {
-  if (state === 'DOING')
-    return (
-      <Clock
-        className="h-4 w-4 shrink-0 text-task-doing"
-        aria-hidden="true"
-        data-testid="icon-doing"
-      />
-    )
-  if (state === 'DONE')
-    return (
-      <CheckCircle2
-        className="h-4 w-4 shrink-0 text-task-done"
-        aria-hidden="true"
-        data-testid="icon-done"
-      />
-    )
-  // Default: TODO or unknown
-  return (
-    <Circle
-      className="h-4 w-4 shrink-0 text-muted-foreground"
-      aria-hidden="true"
-      data-testid="icon-todo"
-    />
-  )
 }
 
 // ── Due date chip with popover ─────────────────────────────────────────

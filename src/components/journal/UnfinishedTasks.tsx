@@ -6,13 +6,13 @@
  * "This Week", "Older".
  */
 
-import { Circle, Clock } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CollapsiblePanelHeader } from '@/components/CollapsiblePanelHeader'
 import { EmptyState } from '@/components/EmptyState'
 import { Badge } from '@/components/ui/badge'
+import { StatusIcon } from '@/components/ui/status-icon'
 import { formatCompactDate, getTodayString } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../../hooks/useBlockNavigation'
@@ -109,25 +109,6 @@ function writeCollapsedState(collapsed: boolean): void {
   } catch {
     // Silently ignore storage errors
   }
-}
-
-/** Return the appropriate status icon for a todo_state. */
-function StatusIcon({ state }: { state: string | null }): React.ReactElement {
-  if (state === 'DOING')
-    return (
-      <Clock
-        className="h-4 w-4 shrink-0 text-task-doing"
-        aria-hidden="true"
-        data-testid="icon-doing"
-      />
-    )
-  return (
-    <Circle
-      className="h-4 w-4 shrink-0 text-muted-foreground"
-      aria-hidden="true"
-      data-testid="icon-todo"
-    />
-  )
 }
 
 // ── Component ──────────────────────────────────────────────────────────
@@ -272,7 +253,7 @@ export function UnfinishedTasks({ onNavigateToPage }: UnfinishedTasksProps): Rea
                         content={block.content}
                         metadata={
                           <>
-                            <StatusIcon state={block.todo_state} />
+                            <StatusIcon state={block.todo_state} showDone={false} />
                             {block.priority && (
                               <span
                                 className={cn(
