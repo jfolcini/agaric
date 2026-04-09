@@ -1,5 +1,49 @@
 # Session Log
 
+## Session 288 — Batch 21: UX-83, UX-86 (2026-04-09)
+
+**Commit:** `ac2a488` — `feat: UX-83 monthly calendar grid + UX-86 keyboard shortcut customization` — 16 files, +1708/-308
+
+### Items resolved
+- **UX-83**: Monthly view calendar grid. Replaced vertical DaySection list with 7-column CSS Grid calendar. New `MonthlyDayCell` component (today highlight circle, colored count dots via `getSourceColor`, adjacent month opacity/pointer-events-none, click-to-navigate, keyboard Enter/Space, ARIA grid pattern with gridcell/grid/row/columnheader roles, `[@media(pointer:coarse)]:min-h-[44px]` touch targets). `MonthlyView` rewritten with `useWeekStart` for configurable week start, padding days via `startOfWeek`/`endOfWeek`, day-of-week headers, `gap-0.5` grid spacing. Updated 5 JournalPage monthly-mode tests (mocked MonthlyDayCell, switched assertions to gridcell roles). Fixed 2 pre-existing missing i18n keys (`journal.loadCountsFailed`, `journal.loadCalendarFailed`). 14 MonthlyDayCell + 11 MonthlyView tests.
+- **UX-86**: Keyboard shortcut customization. New `keyboard-config.ts` module with 40 `DEFAULT_SHORTCUTS` mirroring KeyboardShortcuts.tsx, localStorage persistence (`getCustomOverrides`/`setCustomShortcut`/`resetShortcut`/`resetAllShortcuts`/`getCurrentShortcuts`/`findConflicts`). New `KeyboardSettingsTab` component with grouped shortcut list, inline edit (pencil → input → save/cancel), conflict warnings showing which shortcuts conflict, Reset All with ConfirmDialog, format validation (reject empty). New "Keyboard" tab in SettingsView. `KeyboardShortcuts.tsx` updated to read from `getCurrentShortcuts()` via `useMemo([open])` for dynamic refresh when sheet opens. 19 keyboard-config + 13 KeyboardSettingsTab + 1 KeyboardShortcuts custom override tests.
+
+### Files created
+- `src/components/journal/MonthlyDayCell.tsx` — compact calendar grid cell (101 lines)
+- `src/components/journal/__tests__/MonthlyDayCell.test.tsx` — 14 tests
+- `src/lib/keyboard-config.ts` — shortcut config with localStorage persistence (366 lines)
+- `src/lib/__tests__/keyboard-config.test.ts` — 19 tests
+- `src/components/KeyboardSettingsTab.tsx` — settings tab for shortcut customization (267 lines)
+- `src/components/__tests__/KeyboardSettingsTab.test.tsx` — 13 tests
+
+### Files modified
+
+| Area | Change |
+|------|--------|
+| MonthlyView.tsx | UX-83: complete rewrite — CSS Grid with useWeekStart, padding days, day headers |
+| MonthlyView.test.tsx | UX-83: rewrite — mock MonthlyDayCell, test grid structure, week start |
+| JournalPage.test.tsx | UX-83: update 5 monthly tests — mock MonthlyDayCell, assert gridcell roles |
+| KeyboardShortcuts.tsx | UX-86: replace static SHORTCUT_GROUPS with dynamic buildShortcutGroups() |
+| KeyboardShortcuts.test.tsx | UX-86: add localStorage cleanup + custom override test |
+| SettingsView.tsx | UX-86: add 'keyboard' tab |
+| SettingsView.test.tsx | UX-86: update tab count 4→5, add keyboard tab tests |
+| i18n.ts | UX-83+86: 17 new keys (monthlyCalendarLabel, loadCountsFailed, loadCalendarFailed, settings.tabKeyboard, keyboard.settings.*) |
+| useBatchCounts.test.ts | Fix test expecting raw i18n key → translated string |
+| GlobalDateControls.test.tsx | Fix test expecting raw i18n key → translated string |
+
+### Review findings fixed
+- UX-83: MonthlyDayCell test wrapper changed from `<table>` to `<div role="grid">` (semantic ARIA)
+- UX-83: Fixed 2 pre-existing missing i18n keys exposed by new grid component
+- UX-86A: Added `aria-label` with action description to reset button
+- UX-86B: Added `beforeEach(() => localStorage.clear())` for test isolation
+- UX-86B: Removed manual localStorage cleanup in favor of beforeEach
+- Multiple biome lint fixes: non-null assertions → optional chaining, unused imports/variables, ARIA semantic element suppression
+
+### Test counts
+- Frontend: 239 files, 5652 tests (was 5602)
+- Rust: 1687 tests (unchanged)
+- Open REVIEW-LATER items: 5 (was 7)
+
 ## Session 287 — Batch 20: F-26, F-27 (2026-04-09)
 
 **Commit:** `0600dc3` — `feat: F-26 point-in-time restore + F-27 drag-drop file attachments` — 20 files, +1373/-118

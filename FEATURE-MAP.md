@@ -16,7 +16,7 @@ The default view — one page per day, created automatically.
 |------|-------------|
 | **Daily** | Single day with prev/next navigation and "today" button |
 | **Weekly** | Mon–Sun grid, each day as a collapsible section with per-source colored pills |
-| **Monthly** | Calendar grid with per-source colored pills; click a day to switch to daily |
+| **Monthly** | 7-column CSS Grid calendar with compact day cells; click a day to switch to daily |
 | **Agenda** | Tasks grouped by date (Overdue / Today / Tomorrow / future) with configurable sort and group controls |
 
 - Floating calendar picker for jumping to any date, with per-source colored dots (blue=page, orange=due, green=scheduled, purple=property)
@@ -256,6 +256,8 @@ Type `/` in the editor to access the command palette. Commands are grouped by ca
 | | Enter | Revert selected |
 | | j/k | Vim-style navigation |
 
+**Keyboard shortcut customization** (UX-86): All 40 shortcuts are configurable via Settings → Keyboard tab. `keyboard-config.ts` stores custom overrides in localStorage, merges with defaults. `KeyboardSettingsTab` component provides inline editing (pencil → input → save/cancel), conflict detection showing which shortcuts conflict, per-shortcut reset, and "Reset All to Defaults" with ConfirmDialog. `KeyboardShortcuts.tsx` help panel dynamically reads from `getCurrentShortcuts()` via `useMemo([open])` so it shows current (possibly customized) bindings when opened. 19 config + 13 settings tab + 1 dynamic panel tests.
+
 ---
 
 ## 5. Properties
@@ -481,6 +483,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **logger** (`src/lib/logger.ts`): Structured frontend logging with dual-write (console + Tauri IPC bridge), stack capture at call site, cause chain extraction (3-level deep), and rate limiting (5 per 60s per module:message). Methods: `debug`, `info`, `warn`, `error`. Global error/unhandledrejection handlers in `main.tsx`. Used by 24+ production files.
 - **format-relative-time** (`src/lib/format-relative-time.ts`): `formatRelativeTime(isoString, t)` returns human-readable relative time ("just now", "Xm ago", "Xh ago", "Xd ago"). Uses i18n `t()` for all strings. Used by App sidebar sync status (UX-76).
 - **file-utils** (`src/lib/file-utils.ts`): `guessMimeType(filename)` maps 20+ file extensions to MIME types (images, documents, office, media, archives). `extractFileInfo(file)` extracts filename, mimeType, sizeBytes, and Tauri-specific `fsPath` from a `File` object. Used by EditableBlock (drag-drop/paste), useBlockSlashCommands (/attach command). Re-exported from BlockTree for backward compat. 13 tests.
+- **keyboard-config** (`src/lib/keyboard-config.ts`): Keyboard shortcut configuration with localStorage persistence. `DEFAULT_SHORTCUTS` (40 entries across 8 categories), `getCustomOverrides()`, `setCustomShortcut()`, `resetShortcut()`, `resetAllShortcuts()`, `getCurrentShortcuts()` (merges defaults with overrides, marks `isCustom`), `findConflicts()` (same keys in same category). Used by KeyboardSettingsTab, KeyboardShortcuts. 19 tests.
 
 ### CSS Utilities
 - **`.touch-target`** (`src/index.css`): Tailwind `@utility` for `@media(pointer:coarse)` min-height 44px touch targets. Used across 19+ components.
