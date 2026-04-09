@@ -1,5 +1,38 @@
 # Session Log
 
+## Session 309 — Logger cause refactor: M-46 resolved (2026-04-10)
+
+**1 item resolved (12→11 open). 25 source files + 4 test files changed. 72 call sites refactored.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| M-46 | Logger cause parameter — refactor all 72 call sites | 25 source files across stores, components, hooks, editor extensions |
+
+### Build subagents (4 parallel + 1 followup)
+1. **page-blocks.ts** — 10 sites (largest single file)
+2. **PageHeader + DeviceManagement + PairingDialog + QrScanner** — 16 sites
+3. **App + BlockTree + LinkedReferences + at-tag-picker** — 7 sites
+4. **useBlockResolve + useDraftAutosave + useSyncEvents** — 10 sites
+5. **Followup** — remaining 34 sites discovered by review across 13 additional files
+
+### Orchestrator fixes
+- Fixed 6 sites missed by initial grep (PageHeader 3, LinkedReferences 1, App 2)
+- Updated 2 test assertions in App.test.tsx for new logger pattern
+- Review caught 34 additional sites in files not in original scope
+
+### Review verdict
+- Initial review: REQUEST CHANGES (95% complete, 11 remaining sites)
+- After followup subagent: all 72 sites converted, zero `error: String(err)` remaining
+
+### Stats
+- 25 source files + 4 test files changed (+335 / -205 lines)
+- All 5985 frontend tests pass
+- All 20 prek hooks pass
+
+---
+
 ## Session 308 — Rust infra + editor refactor + frontend caching: 8 items resolved (2026-04-10)
 
 **8 items resolved (20→12 open). 13 files changed, 18 new tests.**
