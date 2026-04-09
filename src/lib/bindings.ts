@@ -174,9 +174,9 @@ async getStatus() : Promise<Result<StatusInfo, { kind: string; message: string }
 /**
  * Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`].
  */
-async searchBlocks(query: string, cursor: string | null, limit: number | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
+async searchBlocks(query: string, cursor: string | null, limit: number | null, parentId: string | null, tagIds: string[] | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("search_blocks", { query, cursor, limit }) };
+    return { status: "ok", data: await TAURI_INVOKE("search_blocks", { query, cursor, limit, parentId, tagIds }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

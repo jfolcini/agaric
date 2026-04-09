@@ -115,6 +115,8 @@ describe('SearchPanel', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
         query: 'test',
+        parentId: null,
+        tagIds: null,
         cursor: null,
         limit: 50,
       })
@@ -145,6 +147,8 @@ describe('SearchPanel', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
         query: 'query',
+        parentId: null,
+        tagIds: null,
         cursor: null,
         limit: 50,
       })
@@ -210,6 +214,8 @@ describe('SearchPanel', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
         query: 'result',
+        parentId: null,
+        tagIds: null,
         cursor: 'cursor_abc',
         limit: 50,
       })
@@ -249,6 +255,8 @@ describe('SearchPanel', () => {
 
     expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
       query: 'debounce',
+      parentId: null,
+      tagIds: null,
       cursor: null,
       limit: 50,
     })
@@ -532,6 +540,8 @@ describe('SearchPanel', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
         query: longQuery,
+        parentId: null,
+        tagIds: null,
         cursor: null,
         limit: 50,
       })
@@ -553,6 +563,8 @@ describe('SearchPanel', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
         query: '<script>alert("xss")</script>',
+        parentId: null,
+        tagIds: null,
         cursor: null,
         limit: 50,
       })
@@ -594,6 +606,8 @@ describe('SearchPanel', () => {
     expect(mockedInvoke).toHaveBeenCalledTimes(1)
     expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
       query: 'hello',
+      parentId: null,
+      tagIds: null,
       cursor: null,
       limit: 50,
     })
@@ -1148,6 +1162,276 @@ describe('SearchPanel', () => {
 
       expect(options[0]).not.toHaveClass('bg-accent')
       expect(options[1]).toHaveClass('bg-accent')
+    })
+  })
+
+  // =========================================================================
+  // Filter chip bar tests (F-21)
+  // =========================================================================
+
+  describe('filter chip bar', () => {
+    it('renders filter chip bar with + Page and + Tag buttons', () => {
+      render(<SearchPanel />)
+
+      expect(screen.getByTestId('filter-chip-bar')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '+ Page' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '+ Tag' })).toBeInTheDocument()
+    })
+
+    it('shows "in: Page Name" chip after selecting a page filter', async () => {
+      const user = userEvent.setup()
+
+      // Mock list_blocks to return pages for the page picker
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makeSearchResult({
+            id: 'PAGE1',
+            block_type: 'page',
+            content: 'My Notes',
+          }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<SearchPanel />)
+
+      // Click "+ Page" to open the page picker popover
+      await user.click(screen.getByRole('button', { name: '+ Page' }))
+
+      // Wait for pages to load and click the page
+      await waitFor(() => {
+        expect(screen.getByText('My Notes')).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByText('My Notes'))
+
+      // Should show the page filter chip
+      await waitFor(() => {
+        expect(screen.getByText('in: My Notes')).toBeInTheDocument()
+      })
+    })
+
+    it('shows "#tagName" chip after selecting a tag filter', async () => {
+      const user = userEvent.setup()
+
+      // Mock list_tags_by_prefix for tag picker
+      mockedInvoke.mockResolvedValueOnce([
+        { tag_id: 'TAG1', name: 'important', usage_count: 5, updated_at: '2024-01-01' },
+        { tag_id: 'TAG2', name: 'urgent', usage_count: 3, updated_at: '2024-01-01' },
+      ])
+
+      render(<SearchPanel />)
+
+      // Click "+ Tag" to open the tag picker popover
+      await user.click(screen.getByRole('button', { name: '+ Tag' }))
+
+      // Wait for tags to load
+      await waitFor(() => {
+        expect(screen.getByText('#important')).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByText('#important'))
+
+      // Should show the tag filter chip
+      await waitFor(() => {
+        expect(screen.getByText('#important')).toBeInTheDocument()
+      })
+    })
+
+    it('removes page chip when clicking X', async () => {
+      const user = userEvent.setup()
+
+      // Mock list_blocks for page picker
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makeSearchResult({
+            id: 'PAGE1',
+            block_type: 'page',
+            content: 'Test Page',
+          }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<SearchPanel />)
+
+      // Add a page filter
+      await user.click(screen.getByRole('button', { name: '+ Page' }))
+      await waitFor(() => {
+        expect(screen.getByText('Test Page')).toBeInTheDocument()
+      })
+      await user.click(screen.getByText('Test Page'))
+
+      await waitFor(() => {
+        expect(screen.getByText('in: Test Page')).toBeInTheDocument()
+      })
+
+      // Remove the page filter
+      await user.click(screen.getByRole('button', { name: 'Remove page filter' }))
+
+      await waitFor(() => {
+        expect(screen.queryByText('in: Test Page')).not.toBeInTheDocument()
+      })
+    })
+
+    it('removes tag chip when clicking X', async () => {
+      const user = userEvent.setup()
+
+      // Mock list_tags_by_prefix for tag picker
+      mockedInvoke.mockResolvedValueOnce([
+        { tag_id: 'TAG1', name: 'work', usage_count: 5, updated_at: '2024-01-01' },
+      ])
+
+      render(<SearchPanel />)
+
+      // Add a tag filter
+      await user.click(screen.getByRole('button', { name: '+ Tag' }))
+      await waitFor(() => {
+        expect(screen.getByText('#work')).toBeInTheDocument()
+      })
+      await user.click(screen.getByText('#work'))
+
+      await waitFor(() => {
+        expect(screen.getByText('#work')).toBeInTheDocument()
+      })
+
+      // Remove the tag filter
+      await user.click(screen.getByRole('button', { name: 'Remove tag work' }))
+
+      await waitFor(() => {
+        expect(screen.queryByText('#work')).not.toBeInTheDocument()
+      })
+    })
+
+    it('shows and uses Clear all to remove all filters', async () => {
+      const user = userEvent.setup()
+
+      // Mock list_blocks for page picker
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makeSearchResult({
+            id: 'PAGE1',
+            block_type: 'page',
+            content: 'My Page',
+          }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<SearchPanel />)
+
+      // Clear all should not be visible initially
+      expect(screen.queryByText('Clear all')).not.toBeInTheDocument()
+
+      // Add a page filter
+      await user.click(screen.getByRole('button', { name: '+ Page' }))
+      await waitFor(() => {
+        expect(screen.getByText('My Page')).toBeInTheDocument()
+      })
+      await user.click(screen.getByText('My Page'))
+
+      await waitFor(() => {
+        expect(screen.getByText('in: My Page')).toBeInTheDocument()
+      })
+
+      // Clear all should be visible now
+      expect(screen.getByText('Clear all')).toBeInTheDocument()
+
+      // Click Clear all
+      await user.click(screen.getByText('Clear all'))
+
+      // All chips removed
+      await waitFor(() => {
+        expect(screen.queryByText('in: My Page')).not.toBeInTheDocument()
+        expect(screen.queryByText('Clear all')).not.toBeInTheDocument()
+      })
+    })
+
+    it('passes filters to searchBlocks invoke', async () => {
+      const user = userEvent.setup()
+
+      // Mock list_blocks for page picker
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makeSearchResult({
+            id: 'PAGE1',
+            block_type: 'page',
+            content: 'Filtered Page',
+          }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<SearchPanel />)
+
+      // Add a page filter
+      await user.click(screen.getByRole('button', { name: '+ Page' }))
+      await waitFor(() => {
+        expect(screen.getByText('Filtered Page')).toBeInTheDocument()
+      })
+      await user.click(screen.getByText('Filtered Page'))
+
+      await waitFor(() => {
+        expect(screen.getByText('in: Filtered Page')).toBeInTheDocument()
+      })
+
+      // Mock search_blocks response
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makeSearchResult({ content: 'filtered result' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      // Search with filter active
+      const input = screen.getByPlaceholderText('Search blocks...')
+      typeAndSubmit(input, 'test')
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
+          query: 'test',
+          parentId: 'PAGE1',
+          tagIds: null,
+          cursor: null,
+          limit: 50,
+        })
+      })
+    })
+
+    it('has no a11y violations with filters active', async () => {
+      const user = userEvent.setup()
+
+      // Mock list_blocks for page picker
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makeSearchResult({
+            id: 'PAGE1',
+            block_type: 'page',
+            content: 'A11y Page',
+          }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      const { container } = render(<SearchPanel />)
+
+      // Add a page filter
+      await user.click(screen.getByRole('button', { name: '+ Page' }))
+      await waitFor(() => {
+        expect(screen.getByText('A11y Page')).toBeInTheDocument()
+      })
+      await user.click(screen.getByText('A11y Page'))
+
+      await waitFor(() => {
+        expect(screen.getByText('in: A11y Page')).toBeInTheDocument()
+      })
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
     })
   })
 })

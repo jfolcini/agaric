@@ -206,11 +206,15 @@ export function getConflicts(params?: {
 /** Full-text search across all blocks, paginated by relevance. */
 export function searchBlocks(params?: {
   query: string
+  parentId?: string | undefined
+  tagIds?: string[] | undefined
   cursor?: string | undefined
   limit?: number | undefined
 }): Promise<PageResponse<BlockRow>> {
   return invoke('search_blocks', {
     query: params?.query ?? '',
+    parentId: params?.parentId ?? null,
+    tagIds: params?.tagIds ?? null,
     cursor: params?.cursor ?? null,
     limit: params?.limit ?? null,
   })

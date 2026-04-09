@@ -1430,6 +1430,8 @@ pub async fn search_blocks_inner(
     query: String,
     cursor: Option<String>,
     limit: Option<i64>,
+    parent_id: Option<String>,
+    tag_ids: Option<Vec<String>>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     if query.trim().is_empty() {
         return Ok(PageResponse {
@@ -1439,7 +1441,14 @@ pub async fn search_blocks_inner(
         });
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
-    fts::search_fts(pool, &query, &page).await
+    fts::search_fts(
+        pool,
+        &query,
+        &page,
+        parent_id.as_deref(),
+        tag_ids.as_deref(),
+    )
+    .await
 }
 
 /// Query blocks by boolean tag expression.
@@ -4170,8 +4179,10 @@ pub async fn search_blocks(
     query: String,
     cursor: Option<String>,
     limit: Option<i64>,
+    parent_id: Option<String>,
+    tag_ids: Option<Vec<String>>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    search_blocks_inner(&pool.0, query, cursor, limit)
+    search_blocks_inner(&pool.0, query, cursor, limit, parent_id, tag_ids)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -7420,7 +7431,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn search_blocks_inner_empty_query_returns_empty() {
         let (pool, _dir) = test_pool().await;
-        let result = search_blocks_inner(&pool, "".into(), None, None)
+        let result = search_blocks_inner(&pool, "".into(), None, None, None, None)
             .await
             .unwrap();
         assert_eq!(
@@ -7434,7 +7445,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn search_blocks_inner_whitespace_query_returns_empty() {
         let (pool, _dir) = test_pool().await;
-        let result = search_blocks_inner(&pool, "   ".into(), None, None)
+        let result = search_blocks_inner(&pool, "   ".into(), None, None, None, None)
             .await
             .unwrap();
         assert_eq!(
@@ -7462,7 +7473,7 @@ mod tests {
         .await;
         crate::fts::rebuild_fts_index(&pool).await.unwrap();
 
-        let result = search_blocks_inner(&pool, "searchable".into(), None, None)
+        let result = search_blocks_inner(&pool, "searchable".into(), None, None, None, None)
             .await
             .unwrap();
         assert_eq!(result.items.len(), 1, "should find one matching block");
@@ -7475,13 +7486,199 @@ mod tests {
         insert_block(&pool, "SRCH2", "content", "apple banana", None, Some(0)).await;
         crate::fts::rebuild_fts_index(&pool).await.unwrap();
 
-        let result = search_blocks_inner(&pool, "cherry".into(), None, None)
+        let result = search_blocks_inner(&pool, "cherry".into(), None, None, None, None)
             .await
             .unwrap();
         assert_eq!(
             result.items.len(),
             0,
             "unindexed term should return no results"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn search_blocks_with_parent_id_filter() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create a page block as parent
+        insert_block(&pool, "PAGE_A", "page", "Page A", None, Some(1)).await;
+
+        // Two content blocks: one under PAGE_A, one root-level
+        insert_block(
+            &pool,
+            "BLK_UNDER_PAGE",
+            "content",
+            "searchable under page",
+            Some("PAGE_A"),
+            Some(1),
+        )
+        .await;
+        insert_block(
+            &pool,
+            "BLK_ROOT",
+            "content",
+            "searchable at root",
+            None,
+            Some(2),
+        )
+        .await;
+
+        crate::fts::rebuild_fts_index(&pool).await.unwrap();
+
+        // Without filter — both should appear
+        let all = search_blocks_inner(&pool, "searchable".into(), None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(all.items.len(), 2, "no filter: should find both blocks");
+
+        // With parent_id filter — only block under PAGE_A
+        let filtered = search_blocks_inner(
+            &pool,
+            "searchable".into(),
+            None,
+            None,
+            Some("PAGE_A".into()),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            filtered.items.len(),
+            1,
+            "parent_id filter: should find one block"
+        );
+        assert_eq!(filtered.items[0].id, "BLK_UNDER_PAGE");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn search_blocks_with_tag_filter() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create tag blocks
+        insert_block(&pool, "TAG_X", "tag", "tagx", None, Some(1)).await;
+        insert_block(&pool, "TAG_Y", "tag", "tagy", None, Some(2)).await;
+
+        // Create content blocks
+        insert_block(
+            &pool,
+            "BLK_XY",
+            "content",
+            "findme both tags",
+            None,
+            Some(1),
+        )
+        .await;
+        insert_block(&pool, "BLK_X", "content", "findme one tag", None, Some(2)).await;
+        insert_block(
+            &pool,
+            "BLK_NONE",
+            "content",
+            "findme no tags",
+            None,
+            Some(3),
+        )
+        .await;
+
+        // Associate tags
+        insert_tag_assoc(&pool, "BLK_XY", "TAG_X").await;
+        insert_tag_assoc(&pool, "BLK_XY", "TAG_Y").await;
+        insert_tag_assoc(&pool, "BLK_X", "TAG_X").await;
+
+        crate::fts::rebuild_fts_index(&pool).await.unwrap();
+
+        // Without tag filter — all three
+        let all = search_blocks_inner(&pool, "findme".into(), None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            all.items.len(),
+            3,
+            "no tag filter: should find all 3 blocks"
+        );
+
+        // Filter by TAG_X only — BLK_XY and BLK_X
+        let tag_x = search_blocks_inner(
+            &pool,
+            "findme".into(),
+            None,
+            None,
+            None,
+            Some(vec!["TAG_X".into()]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(tag_x.items.len(), 2, "TAG_X filter: should find 2 blocks");
+        let ids: Vec<&str> = tag_x.items.iter().map(|b| b.id.as_str()).collect();
+        assert!(
+            ids.contains(&"BLK_XY"),
+            "TAG_X filter should include BLK_XY"
+        );
+        assert!(ids.contains(&"BLK_X"), "TAG_X filter should include BLK_X");
+
+        // Filter by both TAG_X and TAG_Y (ALL semantics) — only BLK_XY
+        let tag_xy = search_blocks_inner(
+            &pool,
+            "findme".into(),
+            None,
+            None,
+            None,
+            Some(vec!["TAG_X".into(), "TAG_Y".into()]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            tag_xy.items.len(),
+            1,
+            "TAG_X+TAG_Y filter: should find 1 block"
+        );
+        assert_eq!(tag_xy.items[0].id, "BLK_XY");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn search_blocks_without_filters() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create blocks
+        insert_block(
+            &pool,
+            "BLK_NF1",
+            "content",
+            "universal search term",
+            None,
+            Some(1),
+        )
+        .await;
+        insert_block(
+            &pool,
+            "BLK_NF2",
+            "content",
+            "universal search term too",
+            None,
+            Some(2),
+        )
+        .await;
+
+        crate::fts::rebuild_fts_index(&pool).await.unwrap();
+
+        // No filters (backward compatible) — all matching results returned
+        let result = search_blocks_inner(&pool, "universal".into(), None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            result.items.len(),
+            2,
+            "no filters: should find all matching blocks"
+        );
+
+        // Empty tag_ids vec should be treated the same as None
+        let result_empty_tags =
+            search_blocks_inner(&pool, "universal".into(), None, None, None, Some(vec![]))
+                .await
+                .unwrap();
+        assert_eq!(
+            result_empty_tags.items.len(),
+            2,
+            "empty tag_ids: should find all matching blocks"
         );
     }
 

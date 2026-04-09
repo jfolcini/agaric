@@ -1444,7 +1444,7 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
     settle_bg_tasks(&mat).await;
 
     // Search for the original term — must find it
-    let results = search_blocks_inner(&pool, "quantum".into(), None, None)
+    let results = search_blocks_inner(&pool, "quantum".into(), None, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -1470,7 +1470,7 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
     settle_bg_tasks(&mat).await;
 
     // Search for the OLD term — must NOT find it
-    let old_results = search_blocks_inner(&pool, "quantum".into(), None, None)
+    let old_results = search_blocks_inner(&pool, "quantum".into(), None, None, None, None)
         .await
         .unwrap();
     assert!(
@@ -1479,7 +1479,7 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
     );
 
     // Search for the NEW term — must find it
-    let new_results = search_blocks_inner(&pool, "classical".into(), None, None)
+    let new_results = search_blocks_inner(&pool, "classical".into(), None, None, None, None)
         .await
         .unwrap();
     assert_eq!(

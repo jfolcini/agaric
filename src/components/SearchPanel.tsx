@@ -8,23 +8,25 @@
  *  - CJK limitation notice (p3-t6)
  */
 
-import { Search } from 'lucide-react'
+import { Search, X } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { CardButton } from '@/components/ui/card-button'
 import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
-import type { BlockRow } from '../lib/tauri'
-import { batchResolve, getBlock, searchBlocks } from '../lib/tauri'
+import type { BlockRow, TagCacheRow } from '../lib/tauri'
+import { batchResolve, getBlock, listBlocks, listTagsByPrefix, searchBlocks } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
 import { EmptyState } from './EmptyState'
 import { PageLink } from './PageLink'
@@ -48,14 +50,44 @@ export function SearchPanel(): React.ReactElement {
   const [recentPages, setRecentPages] = useState<RecentPage[]>([])
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
 
+  // Filter state
+  const [filterPageId, setFilterPageId] = useState<string | null>(null)
+  const [filterPageTitle, setFilterPageTitle] = useState<string | null>(null)
+  const [filterTagIds, setFilterTagIds] = useState<string[]>([])
+  const [filterTagNames, setFilterTagNames] = useState<string[]>([])
+
+  // Page picker state
+  const [pagePopoverOpen, setPagePopoverOpen] = useState(false)
+  const [pageSearch, setPageSearch] = useState('')
+  const [pageSuggestions, setPageSuggestions] = useState<BlockRow[]>([])
+  const [pageSearchLoading, setPageSearchLoading] = useState(false)
+
+  // Tag picker state
+  const [tagPopoverOpen, setTagPopoverOpen] = useState(false)
+  const [tagSearch, setTagSearch] = useState('')
+  const [tagSuggestions, setTagSuggestions] = useState<TagCacheRow[]>([])
+  const [tagSearchLoading, setTagSearchLoading] = useState(false)
+
+  const pageSearchRef = useRef<HTMLInputElement>(null)
+  const tagSearchRef = useRef<HTMLInputElement>(null)
+
+  const hasFilters = filterPageId !== null || filterTagIds.length > 0
+
   // Load recent pages from localStorage on mount
   useEffect(() => {
     setRecentPages(getRecentPages())
   }, [])
 
   const queryFn = useCallback(
-    (cursor?: string) => searchBlocks({ query: debouncedQuery, cursor, limit: 50 }),
-    [debouncedQuery],
+    (cursor?: string) =>
+      searchBlocks({
+        query: debouncedQuery,
+        parentId: filterPageId ?? undefined,
+        tagIds: filterTagIds.length > 0 ? filterTagIds : undefined,
+        cursor,
+        limit: 50,
+      }),
+    [debouncedQuery, filterPageId, filterTagIds],
   )
 
   const {
@@ -177,6 +209,65 @@ export function SearchPanel(): React.ReactElement {
     [navigateToPage],
   )
 
+  // Page picker: search pages on input change
+  useEffect(() => {
+    if (!pagePopoverOpen) return
+    setPageSearchLoading(true)
+    listBlocks({ blockType: 'page', limit: 20 })
+      .then((res) => {
+        const filtered = pageSearch
+          ? res.items.filter((b) =>
+              (b.content ?? '').toLowerCase().includes(pageSearch.toLowerCase()),
+            )
+          : res.items
+        setPageSuggestions(filtered)
+      })
+      .catch(() => setPageSuggestions([]))
+      .finally(() => setPageSearchLoading(false))
+  }, [pagePopoverOpen, pageSearch])
+
+  // Tag picker: search tags on input change
+  useEffect(() => {
+    if (!tagPopoverOpen) return
+    setTagSearchLoading(true)
+    listTagsByPrefix({ prefix: tagSearch, limit: 20 })
+      .then((tags) => setTagSuggestions(tags))
+      .catch(() => setTagSuggestions([]))
+      .finally(() => setTagSearchLoading(false))
+  }, [tagPopoverOpen, tagSearch])
+
+  function handleSelectPage(page: BlockRow) {
+    setFilterPageId(page.id)
+    setFilterPageTitle(page.content ?? 'Untitled')
+    setPagePopoverOpen(false)
+    setPageSearch('')
+  }
+
+  function handleRemovePageFilter() {
+    setFilterPageId(null)
+    setFilterPageTitle(null)
+  }
+
+  function handleSelectTag(tag: TagCacheRow) {
+    if (filterTagIds.includes(tag.tag_id)) return
+    setFilterTagIds((prev) => [...prev, tag.tag_id])
+    setFilterTagNames((prev) => [...prev, tag.name])
+    setTagPopoverOpen(false)
+    setTagSearch('')
+  }
+
+  function handleRemoveTag(index: number) {
+    setFilterTagIds((prev) => prev.filter((_, i) => i !== index))
+    setFilterTagNames((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  function handleClearAllFilters() {
+    setFilterPageId(null)
+    setFilterPageTitle(null)
+    setFilterTagIds([])
+    setFilterTagNames([])
+  }
+
   return (
     <div className="search-panel space-y-4">
       {/* biome-ignore lint/a11y/useSemanticElements: jsdom doesn't support <search> element */}
@@ -198,6 +289,129 @@ export function SearchPanel(): React.ReactElement {
         </Button>
         {(typing || searchLoading) && <Spinner className="text-muted-foreground" />}
       </form>
+
+      {/* Filter chip bar */}
+      {/* biome-ignore lint/a11y/useSemanticElements: fieldset is for forms, not filter chip groups */}
+      <div
+        className={cn(
+          'flex flex-wrap items-center gap-2',
+          hasFilters && 'rounded-lg border border-primary/30 bg-primary/5 p-2',
+        )}
+        data-testid="filter-chip-bar"
+        role="group"
+        aria-label={t('search.filtersActive')}
+      >
+        {filterPageId && filterPageTitle && (
+          <Badge variant="secondary" className="gap-1">
+            {t('search.inPage', { name: filterPageTitle })}
+            <button
+              type="button"
+              onClick={handleRemovePageFilter}
+              className="ml-0.5 rounded-full hover:bg-muted-foreground/20 p-0.5"
+              aria-label={t('search.removePageFilter')}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </Badge>
+        )}
+
+        {filterTagNames.map((name, index) => (
+          <Badge key={filterTagIds[index]} variant="secondary" className="gap-1">
+            #{name}
+            <button
+              type="button"
+              onClick={() => handleRemoveTag(index)}
+              className="ml-0.5 rounded-full hover:bg-muted-foreground/20 p-0.5"
+              aria-label={t('search.removeTagFilter', { name })}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </Badge>
+        ))}
+
+        <Popover open={pagePopoverOpen} onOpenChange={setPagePopoverOpen}>
+          <PopoverTrigger asChild>
+            <Button variant="ghost" size="sm" disabled={filterPageId !== null}>
+              {t('search.addPage')}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-64 p-2" align="start">
+            <Input
+              ref={pageSearchRef}
+              value={pageSearch}
+              onChange={(e) => setPageSearch(e.target.value)}
+              placeholder={t('search.searchPages')}
+              aria-label={t('search.searchPages')}
+              className="mb-2"
+              autoFocus
+            />
+            {pageSearchLoading && <Spinner className="mx-auto my-2 text-muted-foreground" />}
+            {!pageSearchLoading && pageSuggestions.length === 0 && (
+              <p className="text-xs text-muted-foreground p-2">{t('search.noPagesFound')}</p>
+            )}
+            <ul className="max-h-48 overflow-y-auto space-y-1 list-none m-0 p-0">
+              {pageSuggestions.map((page) => (
+                <li key={page.id}>
+                  <button
+                    type="button"
+                    className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent truncate"
+                    onClick={() => handleSelectPage(page)}
+                  >
+                    {page.content ?? 'Untitled'}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </PopoverContent>
+        </Popover>
+
+        <Popover open={tagPopoverOpen} onOpenChange={setTagPopoverOpen}>
+          <PopoverTrigger asChild>
+            <Button variant="ghost" size="sm">
+              {t('search.addTag')}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-64 p-2" align="start">
+            <Input
+              ref={tagSearchRef}
+              value={tagSearch}
+              onChange={(e) => setTagSearch(e.target.value)}
+              placeholder={t('search.searchTags')}
+              aria-label={t('search.searchTags')}
+              className="mb-2"
+              autoFocus
+            />
+            {tagSearchLoading && <Spinner className="mx-auto my-2 text-muted-foreground" />}
+            {!tagSearchLoading && tagSuggestions.length === 0 && (
+              <p className="text-xs text-muted-foreground p-2">{t('search.noTagsFound')}</p>
+            )}
+            <ul className="max-h-48 overflow-y-auto space-y-1 list-none m-0 p-0">
+              {tagSuggestions.map((tag) => (
+                <li key={tag.tag_id}>
+                  <button
+                    type="button"
+                    className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent truncate"
+                    onClick={() => handleSelectTag(tag)}
+                    disabled={filterTagIds.includes(tag.tag_id)}
+                  >
+                    #{tag.name}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </PopoverContent>
+        </Popover>
+
+        {hasFilters && (
+          <button
+            type="button"
+            onClick={handleClearAllFilters}
+            className="text-xs text-muted-foreground hover:text-foreground underline ml-1"
+          >
+            {t('search.clearAll')}
+          </button>
+        )}
+      </div>
 
       {hasCJK(query) && (
         <div className="rounded-lg border border-alert-info-border bg-alert-info p-3 text-sm text-alert-info-foreground">

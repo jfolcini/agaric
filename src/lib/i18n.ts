@@ -979,6 +979,17 @@ const resources = {
       'search.loadingMessage': 'Loading...',
       'search.loadMoreButton': 'Load more',
       'search.resultsCount': '{{count}} results found',
+      'search.addPage': '+ Page',
+      'search.addTag': '+ Tag',
+      'search.clearAll': 'Clear all',
+      'search.inPage': 'in: {{name}}',
+      'search.removePageFilter': 'Remove page filter',
+      'search.removeTagFilter': 'Remove tag {{name}}',
+      'search.searchPages': 'Search pages...',
+      'search.searchTags': 'Search tags...',
+      'search.noPagesFound': 'No pages found',
+      'search.noTagsFound': 'No tags found',
+      'search.filtersActive': 'Filters active',
 
       // Status panel (additions)
       'status.foregroundQueueTooltip':

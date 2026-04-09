@@ -429,6 +429,8 @@ describe('searchBlocks', () => {
       query: 'hello',
       cursor: null,
       limit: null,
+      parentId: null,
+      tagIds: null,
     })
     expect(result).toEqual(emptyPage)
   })
@@ -461,6 +463,8 @@ describe('searchBlocks', () => {
       query: 'found',
       cursor: 'cursor123',
       limit: 25,
+      parentId: null,
+      tagIds: null,
     })
     expect(result).toEqual(pageResp)
   })
@@ -474,6 +478,8 @@ describe('searchBlocks', () => {
       query: '',
       cursor: null,
       limit: null,
+      parentId: null,
+      tagIds: null,
     })
   })
 })
