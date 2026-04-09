@@ -1,5 +1,17 @@
 # Session Log
 
+## Session 285 — D-1, D-4, T-13 (2026-04-09)
+
+**Commit:** `ceef91e` — `docs: fix stale counts in AGENTS.md files` — 3 files, +4/-4
+
+### Items resolved
+- **D-1**: AGENTS.md migration count 21 → 22. Fully resolved.
+- **D-4**: Rust AGENTS.md snapshot count 22 → 25.
+- **T-13**: Rust AGENTS.md inline test modules 19 → 33, frontend component test files 17 → 114.
+
+### Test/doc counts
+- Open REVIEW-LATER items: 9 (was 12)
+
 ## Session 284 — Batch 19: F-21 finish (2026-04-09)
 
 **Commit:** `083275b` — `feat: F-21 finish — search filter chips (page scope + tag filters)` — 9 files, +938/-86
