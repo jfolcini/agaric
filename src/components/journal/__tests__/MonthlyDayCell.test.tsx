@@ -191,4 +191,26 @@ describe('MonthlyDayCell', () => {
       { timeout: 5000 },
     )
   })
+
+  it('has no a11y violations when gridcell is focused', async () => {
+    const { container } = render(
+      // biome-ignore lint/a11y/useSemanticElements: test wrapper for ARIA grid context
+      <div role="grid">
+        {/* biome-ignore lint/a11y/useFocusableInteractive: test wrapper */}
+        {/* biome-ignore lint/a11y/useSemanticElements: test wrapper */}
+        <div role="row">
+          <MonthlyDayCell {...defaultProps} />
+        </div>
+      </div>,
+    )
+    const cell = screen.getByRole('gridcell')
+    cell.focus()
+    await waitFor(
+      async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
+  })
 })

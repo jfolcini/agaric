@@ -391,10 +391,10 @@ export function HistoryView(): React.ReactElement {
       <ConfirmDialog
         open={confirmRevert}
         onOpenChange={setConfirmRevert}
-        title={`Revert ${selected.size} operations?`}
-        description={`This will create ${selected.size} new operations that reverse the selected changes. The original operations remain in history.`}
-        cancelLabel="Cancel"
-        actionLabel="Revert"
+        title={t('history.revertTitle', { count: selected.size })}
+        description={t('history.revertDescription', { count: selected.size })}
+        cancelLabel={t('history.cancelButton')}
+        actionLabel={t('history.revertButton')}
         onAction={handleRevert}
         loading={reverting}
       />

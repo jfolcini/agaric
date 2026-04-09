@@ -74,6 +74,15 @@
   --color-alert-warning: var(--alert-warning);
   --color-alert-warning-foreground: var(--alert-warning-foreground);
   --color-alert-warning-border: var(--alert-warning-border);
+  --color-alert-tip: var(--alert-tip);
+  --color-alert-tip-foreground: var(--alert-tip-foreground);
+  --color-alert-tip-border: var(--alert-tip-border);
+  --color-alert-error: var(--alert-error);
+  --color-alert-error-foreground: var(--alert-error-foreground);
+  --color-alert-error-border: var(--alert-error-border);
+  --color-alert-note: var(--alert-note);
+  --color-alert-note-foreground: var(--alert-note-foreground);
+  --color-alert-note-border: var(--alert-note-border);
   /* Task checkbox state colors */
   --color-task-done: var(--task-done);
   --color-task-doing: var(--task-doing);
@@ -172,6 +181,15 @@
   --alert-warning: oklch(0.99 0.03 102);
   --alert-warning-foreground: oklch(0.55 0.14 66);
   --alert-warning-border: oklch(0.95 0.13 102);
+  --alert-tip: oklch(0.97 0.02 142);
+  --alert-tip-foreground: oklch(0.42 0.17 152);
+  --alert-tip-border: oklch(0.88 0.08 142);
+  --alert-error: oklch(0.97 0.02 25);
+  --alert-error-foreground: oklch(0.45 0.2 25);
+  --alert-error-border: oklch(0.88 0.08 25);
+  --alert-note: oklch(0.96 0 0);
+  --alert-note-foreground: oklch(0.45 0 0);
+  --alert-note-border: oklch(0.85 0 0);
   /* Task checkbox state colors */
   --task-done: oklch(0.55 0.18 149);
   --task-doing: oklch(0.62 0.21 260);
@@ -285,6 +303,15 @@
   --alert-warning: oklch(0.32 0.06 58);
   --alert-warning-foreground: oklch(0.95 0.13 102);
   --alert-warning-border: oklch(0.55 0.14 66);
+  --alert-tip: oklch(0.28 0.07 152);
+  --alert-tip-foreground: oklch(0.88 0.08 142);
+  --alert-tip-border: oklch(0.42 0.17 152);
+  --alert-error: oklch(0.28 0.07 25);
+  --alert-error-foreground: oklch(0.88 0.08 25);
+  --alert-error-border: oklch(0.45 0.2 25);
+  --alert-note: oklch(0.25 0 0);
+  --alert-note-foreground: oklch(0.85 0 0);
+  --alert-note-border: oklch(0.45 0 0);
   /* Task checkbox state colors */
   --task-done: oklch(0.55 0.18 149);
   --task-doing: oklch(0.62 0.21 260);

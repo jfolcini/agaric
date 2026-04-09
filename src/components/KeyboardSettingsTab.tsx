@@ -146,7 +146,7 @@ export function KeyboardSettingsTab(): React.ReactElement {
                             value={editValue}
                             onChange={(e) => setEditValue(e.target.value)}
                             placeholder={t('keyboard.settings.typeNewBinding')}
-                            className="h-7 text-xs"
+                            className="text-xs"
                             autoFocus
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') {
@@ -180,7 +180,7 @@ export function KeyboardSettingsTab(): React.ReactElement {
                         <span className="inline-flex flex-wrap items-center gap-1">
                           {renderKeys(shortcut.keys)}
                           {shortcut.isCustom && (
-                            <span className="text-xs text-blue-500 ml-1">
+                            <span className="text-xs text-primary ml-1">
                               {t('keyboard.settings.customized')}
                             </span>
                           )}
@@ -215,7 +215,7 @@ export function KeyboardSettingsTab(): React.ReactElement {
                       {shortcut.isCustom && !isEditing && (
                         <button
                           type="button"
-                          className="text-xs text-blue-500 hover:underline"
+                          className="text-xs text-primary hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none active:underline rounded-sm"
                           onClick={() => handleReset(shortcut.id)}
                           aria-label={t('keyboard.settings.resetShortcutFor', {
                             action: t(shortcut.description),

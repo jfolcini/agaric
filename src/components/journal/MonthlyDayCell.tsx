@@ -50,8 +50,8 @@ export function MonthlyDayCell({
       aria-label={fullDate}
       tabIndex={isCurrentMonth ? 0 : -1}
       className={cn(
-        'relative bg-background p-1.5 min-h-[80px] [@media(pointer:coarse)]:min-h-[44px] transition-colors',
-        isCurrentMonth && 'cursor-pointer hover:bg-accent/30',
+        'relative bg-background p-1.5 min-h-[80px] [@media(pointer:coarse)]:min-h-[44px] transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+        isCurrentMonth && 'cursor-pointer hover:bg-accent/30 active:bg-accent/50',
         !isCurrentMonth && 'opacity-40 pointer-events-none',
       )}
       onClick={handleClick}
@@ -92,7 +92,7 @@ export function MonthlyDayCell({
 
       {/* Total count badge */}
       {totalCount > 0 && (
-        <span className="absolute bottom-1 right-1.5 text-[10px] text-muted-foreground">
+        <span className="absolute bottom-1 right-1.5 text-xs [@media(pointer:coarse)]:text-sm text-muted-foreground">
           {totalCount}
         </span>
       )}

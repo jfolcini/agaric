@@ -1139,6 +1139,10 @@ const resources = {
       'history.restoreFailed': 'Failed to restore — please try again',
       'history.cancelButton': 'Cancel',
       'history.restoreButton': 'Restore',
+      'history.revertTitle': 'Revert {{count}} operations?',
+      'history.revertDescription':
+        'This will create {{count}} new operations that reverse the selected changes. The original operations remain in history.',
+      'history.revertButton': 'Revert',
       'history.revertedSuccessfully': 'Reverted successfully',
       'history.revertPanelFailed': 'Failed to revert',
       'history.loadDiffFailed': 'Failed to load diff',

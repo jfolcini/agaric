@@ -140,6 +140,14 @@ export function GraphView(): React.ReactElement {
       .attr('class', 'node')
       .style('cursor', 'pointer')
 
+    // Hit-area circle for touch targets (44px diameter = 22px radius)
+    node
+      .append('circle')
+      .attr('r', 22)
+      .attr('fill', 'transparent')
+      .style('pointer-events', 'all')
+      .attr('class', 'hit-area')
+
     // Node circles
     node.append('circle').attr('r', 6).attr('fill', 'var(--primary)')
 

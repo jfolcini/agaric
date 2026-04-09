@@ -227,7 +227,7 @@ export function QueryBuilderModal({
             id="qb-show-table"
             checked={showAsTable}
             onChange={(e) => setShowAsTable(e.target.checked)}
-            className="size-4 rounded border"
+            className="size-4 [@media(pointer:coarse)]:size-6 rounded border accent-primary"
           />
           <Label htmlFor="qb-show-table" muted={false}>
             {t('queryBuilder.showAsTable')}

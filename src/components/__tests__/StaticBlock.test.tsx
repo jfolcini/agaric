@@ -1273,35 +1273,35 @@ describe('StaticBlock', () => {
       const callout = screen.getByTestId('callout-block')
       expect(callout).toBeInTheDocument()
       expect(callout).toHaveAttribute('data-callout-type', 'info')
-      expect(callout.className).toContain('border-blue-500')
+      expect(callout.className).toContain('border-alert-info-border')
     })
 
     it('renders warning callout', () => {
       render(<StaticBlock blockId="B1" content="> [!WARNING] be careful" onFocus={vi.fn()} />)
       const callout = screen.getByTestId('callout-block')
       expect(callout).toHaveAttribute('data-callout-type', 'warning')
-      expect(callout.className).toContain('border-amber-500')
+      expect(callout.className).toContain('border-alert-warning-border')
     })
 
     it('renders tip callout', () => {
       render(<StaticBlock blockId="B1" content="> [!TIP] helpful hint" onFocus={vi.fn()} />)
       const callout = screen.getByTestId('callout-block')
       expect(callout).toHaveAttribute('data-callout-type', 'tip')
-      expect(callout.className).toContain('border-green-500')
+      expect(callout.className).toContain('border-alert-tip-border')
     })
 
     it('renders error callout', () => {
       render(<StaticBlock blockId="B1" content="> [!ERROR] something broke" onFocus={vi.fn()} />)
       const callout = screen.getByTestId('callout-block')
       expect(callout).toHaveAttribute('data-callout-type', 'error')
-      expect(callout.className).toContain('border-red-500')
+      expect(callout.className).toContain('border-alert-error-border')
     })
 
     it('renders note callout', () => {
       render(<StaticBlock blockId="B1" content="> [!NOTE] take note" onFocus={vi.fn()} />)
       const callout = screen.getByTestId('callout-block')
       expect(callout).toHaveAttribute('data-callout-type', 'note')
-      expect(callout.className).toContain('border-gray-500')
+      expect(callout.className).toContain('border-alert-note-border')
     })
 
     it('renders type label in callout header', () => {
@@ -1335,7 +1335,7 @@ describe('StaticBlock', () => {
       const callout = screen.getByTestId('callout-block')
       expect(callout).toHaveAttribute('data-callout-type', 'custom')
       // Falls back to note config (gray border)
-      expect(callout.className).toContain('border-gray-500')
+      expect(callout.className).toContain('border-alert-note-border')
     })
 
     it('has no a11y violations for callout blocks', async () => {
