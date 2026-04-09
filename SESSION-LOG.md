@@ -1,5 +1,35 @@
 # Session Log
 
+## Session 297 — Batch 28: Rust + frontend test quality (2026-04-09)
+
+**Commit:** `924baa9` — `test: T-15/T-16/T-17/T-21/T-25/T-26/T-28` — 7 files, +772/-65
+
+### Items resolved
+- **T-15**: GraphView.test.tsx — added d3 mock call count assertions: `forceSimulation` called once with correct nodes, `select`/`zoom`/`drag` called, `navigateToPage` store setup verified. 1 new test.
+- **T-16**: commands.rs — 3 new `restore_page_to_op` tests: invalid target returns NotFound, reverse ops verified in op log with hash chain integrity, `delete_attachment` skipped as non-reversible.
+- **T-17**: commands.rs — 2 new `list_page_links` tests: deduplication of multiple content links, exclusion of deleted parent page. Fixed tokio attribute on `list_page_links_empty_when_no_links`.
+- **T-21**: Replaced hardcoded English strings with `t()` calls in KeyboardSettingsTab.test.tsx (6 strings), KeyboardShortcuts.test.tsx (~30 strings), MonthlyView.test.tsx (1 string).
+- **T-25**: EditableBlock.test.tsx — 3 new tests: drag-over axe audit, multi-file drop (3 files), special character filename (`café résumé (2).pdf`).
+- **T-26**: MonthlyView.test.tsx — 5 new calendar edge case tests via `it.each`: leap/non-leap February, 6-row (42 cells) vs 5-row (35 cells) grid, empty month.
+- **T-28**: Fixed 4 session log numerical inaccuracies: file-utils.ts 48→55 lines, QueryBuilderModal.tsx 260→262 lines, 19→23 i18n keys, GraphView.tsx 200→225 lines.
+
+### Files modified
+
+| Area | Change |
+|------|--------|
+| commands.rs | T-16: 3 new restore tests + T-17: 2 new link tests + tokio fix |
+| GraphView.test.tsx | T-15: d3 mock call count assertions |
+| KeyboardSettingsTab.test.tsx | T-21: i18n t() calls |
+| KeyboardShortcuts.test.tsx | T-21: i18n t() calls |
+| MonthlyView.test.tsx | T-21: i18n + T-26: 5 calendar edge cases |
+| EditableBlock.test.tsx | T-25: 3 DnD edge case tests |
+| SESSION-LOG.md | T-28: numerical fixes |
+
+### Test counts
+- Frontend: 243 files, 5735 tests (was 5726)
+- Rust: 1696 tests (was 1691)
+- Open REVIEW-LATER items: 14 (was 21)
+
 ## Session 296 — Batch 27: UX a11y + responsive + cleanup (2026-04-09)
 
 **Commit:** `8bb92da` — `fix: UX-101/102/103/104/105/106/107/108/111/112` — 6 files, +83/-35
