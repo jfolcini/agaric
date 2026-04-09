@@ -1,5 +1,46 @@
 # Session Log
 
+## Session 302 — Scalability review: benchmark-driven performance analysis (2026-04-09)
+
+**Analysis only — no code changes. 7 new REVIEW-LATER items added.**
+
+### Benchmark results at scale
+
+| Operation | 100 | 1K | 10K | 100K | Verdict |
+|-----------|-----|-----|------|------|---------|
+| get_block (PK lookup) | 23µs | 23µs | 23µs | 23µs | Excellent — O(1) |
+| get_properties | 23µs | 23µs | 23µs | 23µs | Excellent — O(1) |
+| list_blocks (paginated) | 222µs | 284µs | 982µs | 11.8ms | Good — cursor pagination |
+| count_agenda_batch (7 dates) | 42µs | 108µs | 1.3ms | ~13ms | Good — linear |
+| export_page_markdown (2K blocks) | — | — | — | 1.4ms | Good — per-page |
+| count_backlinks_batch (10 pages) | 78µs | 628µs | 6.2ms | ~62ms | Concerning |
+| list_page_links (graph) | 0.8ms | 7ms | 128ms | ~1.3s | **Problem — superlinear** |
+| list_projected_agenda | 0.6ms | 6.2ms | 62ms | ~620ms | **Problem — linear but steep** |
+| create_block | — | — | — | 36ms | Marginal — per-keypress |
+| compact_op_log | — | — | — | 393ms @ 100K ops | Acceptable — maintenance |
+
+### Analysis subagents (3 parallel)
+1. **Write path analysis** — traced create_block: 6 SQL queries + hash + materializer dispatch. Tag inheritance is ~3-5ms (not 15ms as initially estimated). Lazy hash computation rejected (breaks sync integrity).
+2. **Graph + agenda analysis** — list_page_links superlinear due to 3 JOINs + DISTINCT. list_projected_agenda does O(n×m) in-memory projection. Frontend caching opportunities in both.
+3. **Read path + FTS analysis** — batch_resolve excellent (single json_each query). FTS bench broken (signature drift). Covering index for list_children blocked by IFNULL() in ORDER BY.
+
+### Validation subagent
+Validated 9 proposals: 4 VALID, 2 NEEDS_APPROVAL, 1 PARTIALLY VALID, 1 INVALID (lazy hashing), 1 ALREADY_EXISTS (batch ops). Rejected proposals documented.
+
+### Items added to REVIEW-LATER
+- **B-32**: fts_bench compile error (S cost, L risk)
+- **P-15**: list_page_links superlinear scaling (M cost, M risk)
+- **P-16**: list_projected_agenda scaling — needs architectural approval (L cost, H risk)
+- **P-17**: WAL autocheckpoint tuning 1000→5000 (S cost, L risk)
+- **P-18**: list_children covering index + IFNULL refactor (M cost, M risk)
+- **UX-113**: GraphView frontend caching (S cost, L risk)
+- **UX-114**: Agenda date prefetching (S cost, L risk)
+
+### Rejected proposals (not added)
+- **Lazy hash chain computation** — INVALID: breaks sync protocol integrity verification (`sync_protocol.rs` verifies hashes upfront via `verify_op_record`)
+- **Batch op log appends** — ALREADY EXISTS: `MaterializeTask::BatchApplyOps` in materializer already supports batch ops for sync
+- **Materialized backlink count cache** — NEEDS_APPROVAL: requires new table + materializer task per AGENTS.md architectural stability rules (deferred to P-16 pattern)
+
 ## Session 301 — Batch 32: P-6 complete — 30 Criterion benchmarks (items 3-14) (2026-04-09)
 
 **Commit:** `78a26af` — 14 files, +2041/-9
