@@ -1,5 +1,19 @@
 # Session Log
 
+## Session 278 — Batch 13: B-24, F-31, UX-48, F-34 (2026-04-09)
+
+**Commit:** `7e52297` — `feat: batch 13 — rovingEditor perf fix, onboarding, semantic tree, callout blocks` — 19 files, +1144/-138
+
+### Items resolved
+- **B-24**: rovingEditor ref stabilization — ref-based callback pattern across 5 consumer files (16 dependency arrays). Prevents cascade re-renders. All `biome-ignore` suppressions unnecessary (biome didn't flag).
+- **F-31**: First-run onboarding — WelcomeModal with 3 feature highlights, "Get Started" dismiss, sample page creation. localStorage + boot state. 10 tests.
+- **UX-48**: Semantic block tree — BlockListRenderer div→ul/li with aria-level, aria-setsize, aria-posinset, aria-expanded. Flat ARIA pattern preserves dnd-kit. 8 tests.
+- **F-34**: Callout/admonition blocks — Obsidian `> [!INFO]` syntax. 5 types (info/warning/tip/error/note) with colored borders, icons, labels. Serializer roundtrip. `/callout` + 5 sub-commands. 32 tests.
+
+### Test counts
+- Frontend: 231 files, 5455 tests (was 5403)
+- Open REVIEW-LATER items: 19 (was 23)
+
 ## Session 277 — Batch 12: UX-89, UX-85, UX-87, UX-78, F-23 (2026-04-09)
 
 **Commit:** `e083014` — `feat: batch 12 — TOC outline, image resize, tag colors, trash search, unfinished tasks` — 17 files, +2197/-153

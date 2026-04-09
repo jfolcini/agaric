@@ -508,3 +508,15 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 ### Feature Integrations (session 277)
 - **Tag colors** (UX-87): Color picker popover on each tag in TagList. 8 preset colors as button swatches with `aria-pressed`. Tag reference inline nodes (tag-ref.ts) show color tint. Fieldset-based accessible palette.
 - **Trash search** (UX-78): Frontend text filter on loaded TrashView items. Debounced input (300ms via `useDebouncedCallback`), filtered count, clear button, case-insensitive match. Multi-select integration preserved.
+
+### Components (session 278)
+- **WelcomeModal** (`src/components/WelcomeModal.tsx`): First-run onboarding dialog. 3 feature highlights (blocks+pages, keyboard shortcuts, tags+properties). "Get Started" dismiss + optional sample page creation. localStorage-based show-once. 10 tests.
+
+### Editor Features (session 278)
+- **Callout/admonition blocks** (F-34): Obsidian-compatible `> [!TYPE]` syntax in markdown serializer. 5 types: info (blue), warning (amber), tip (green), error (red), note (gray). Colored border + icon + label in StaticBlock. `/callout` slash command with 5 sub-commands. CALLOUT_CONFIG map in StaticBlock. 32 tests (23 serializer + 9 component).
+
+### Accessibility (session 278)
+- **Semantic block tree** (UX-48): BlockListRenderer uses `<ul>`/`<li>` instead of `<div>`. ARIA attributes: `aria-level` (1-based depth), `aria-setsize`/`aria-posinset` (sibling grouping), `aria-expanded` (collapse state). Flat ARIA tree pattern preserves dnd-kit + viewport observer compatibility. 8 tests.
+
+### Performance (session 278)
+- **rovingEditor ref stabilization** (B-24): Ref-based callback pattern across 5 consumer files (BlockTree, EditableBlock, useBlockKeyboardHandlers, useBlockDatePicker, useBlockDnD). Removes `rovingEditor` from 16 dependency arrays, preventing cascade re-renders of all EditableBlock instances.
