@@ -29,6 +29,7 @@ const resources = {
       'sidebar.conflicts': 'Conflicts',
       'sidebar.history': 'History',
       'sidebar.templates': 'Templates',
+      'sidebar.graph': 'Graph',
       'sidebar.collapse': 'Collapse',
       'sidebar.toggleSidebar': 'Toggle Sidebar',
       'sidebar.newPageTooltip': 'New Page (Ctrl+N)',
@@ -420,6 +421,11 @@ const resources = {
       'templates.navigateLabel': 'Open template {{name}}',
       'templates.removeTemplateLabel': 'Remove template status from {{name}}',
       'templates.noResults': 'No templates match your search.',
+
+      // F-33: Graph view
+      'graph.noPages': 'No pages to visualize',
+      'graph.loadFailed': 'Failed to load graph data',
+      'graph.title': 'Page Relationships',
 
       'pageHeader.exportMarkdown': 'Export as Markdown',
       'pageHeader.deletePage': 'Delete page',

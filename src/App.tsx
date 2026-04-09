@@ -9,6 +9,7 @@ import {
   Keyboard,
   LayoutTemplate,
   Moon,
+  Network,
   Plus,
   RefreshCw,
   Search,
@@ -24,6 +25,7 @@ import { toast } from 'sonner'
 import { BootGate } from './components/BootGate'
 import { ConflictList } from './components/ConflictList'
 import { FeatureErrorBoundary } from './components/FeatureErrorBoundary'
+import { GraphView } from './components/GraphView'
 import { HistoryView } from './components/HistoryView'
 import { GlobalDateControls, JournalControls, JournalPage } from './components/JournalPage'
 import { KeyboardShortcuts } from './components/KeyboardShortcuts'
@@ -85,6 +87,7 @@ const NAV_ITEMS: { id: Exclude<View, 'page-editor'>; icon: React.ElementType; la
     { id: 'conflicts', icon: GitMerge, labelKey: 'sidebar.conflicts' },
     { id: 'history', icon: History, labelKey: 'sidebar.history' },
     { id: 'templates', icon: LayoutTemplate, labelKey: 'sidebar.templates' },
+    { id: 'graph', icon: Network, labelKey: 'sidebar.graph' },
   ]
 
 function CollapseButton() {
@@ -536,6 +539,11 @@ function App() {
               {currentView === 'templates' && (
                 <FeatureErrorBoundary name="Templates">
                   <TemplatesView />
+                </FeatureErrorBoundary>
+              )}
+              {currentView === 'graph' && (
+                <FeatureErrorBoundary name="Graph">
+                  <GraphView />
                 </FeatureErrorBoundary>
               )}
               {currentView === 'page-editor' && activePage && (

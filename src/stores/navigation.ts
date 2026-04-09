@@ -19,6 +19,7 @@ export type View =
   | 'history'
   | 'templates'
   | 'settings'
+  | 'graph'
   | 'page-editor'
 
 interface PageEntry {

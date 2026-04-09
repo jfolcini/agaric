@@ -714,6 +714,17 @@ async listAttachments(blockId: string) : Promise<Result<AttachmentRow[], { kind:
 }
 },
 /**
+ * Tauri command: list all page-to-page links for graph visualization.
+ */
+async listPageLinks() : Promise<Result<PageLink[], { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_page_links") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: save a draft for a block. Delegates to [`draft::save_draft`].
  */
 async saveDraft(blockId: string, content: string) : Promise<Result<null, { kind: string; message: string }>> {
@@ -915,6 +926,10 @@ export type MoveResponse = { block_id: string; new_parent_id: string | null; new
  * Reference to a specific op in the log.
  */
 export type OpRef = { device_id: string; seq: number }
+/**
+ * A link between two pages (for graph visualization).
+ */
+export type PageLink = { source_id: string; target_id: string }
 /**
  * Paginated response.
  *

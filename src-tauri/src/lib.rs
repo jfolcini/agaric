@@ -165,6 +165,8 @@ pub fn run() {
         commands::add_attachment,
         commands::delete_attachment,
         commands::list_attachments,
+        // Graph visualization (F-33)
+        commands::list_page_links,
         // Draft autosave (F-17)
         commands::save_draft,
         commands::flush_draft,
@@ -385,6 +387,8 @@ mod specta_tests {
             crate::commands::add_attachment,
             crate::commands::delete_attachment,
             crate::commands::list_attachments,
+            // Graph visualization (F-33)
+            crate::commands::list_page_links,
             // Draft autosave (F-17)
             crate::commands::save_draft,
             crate::commands::flush_draft,

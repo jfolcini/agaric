@@ -3968,6 +3968,36 @@ pub async fn list_attachments_inner(
     Ok(rows)
 }
 
+/// List all links between pages (for graph view).
+///
+/// Returns edges where both source and target are non-deleted page blocks.
+/// Block-level links (where source is a content block) are rolled up to
+/// their parent page.
+pub async fn list_page_links_inner(pool: &SqlitePool) -> Result<Vec<PageLink>, AppError> {
+    // For each block_link, find the parent page of the source block.
+    // The target in block_links is already a page (since [[links]] point to pages).
+    // The source might be a content block under a page — we need the page ancestor.
+    //
+    // Simple approach: join source_id to blocks to get parent_id (the page),
+    // then filter both sides to be page-type blocks that aren't deleted.
+    let links = sqlx::query_as!(
+        PageLink,
+        r#"SELECT DISTINCT
+            COALESCE(sb.parent_id, bl.source_id) AS "source_id!",
+            bl.target_id AS target_id
+         FROM block_links bl
+         JOIN blocks sb ON sb.id = bl.source_id AND sb.deleted_at IS NULL
+         JOIN blocks tb ON tb.id = bl.target_id AND tb.deleted_at IS NULL AND tb.block_type = 'page'
+         LEFT JOIN blocks pb ON pb.id = sb.parent_id
+         WHERE COALESCE(sb.parent_id, bl.source_id) != bl.target_id
+         AND (sb.parent_id IS NULL OR (pb.deleted_at IS NULL AND pb.block_type = 'page'))"#
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(links)
+}
+
 // ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
@@ -5064,6 +5094,16 @@ pub async fn list_attachments(
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: list all page-to-page links for graph visualization.
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_page_links(pool: State<'_, ReadPool>) -> Result<Vec<PageLink>, AppError> {
+    list_page_links_inner(&pool.0)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
 // ---------------------------------------------------------------------------
 // Draft autosave commands (F-17)
 // ---------------------------------------------------------------------------
@@ -5202,6 +5242,13 @@ pub async fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
 // ---------------------------------------------------------------------------
 // Op log compaction (F-20)
 // ---------------------------------------------------------------------------
+
+/// A link between two pages (for graph visualization).
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct PageLink {
+    pub source_id: String,
+    pub target_id: String,
+}
 
 /// Result of a point-in-time restore operation.
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -18332,5 +18379,197 @@ mod tests {
         assert_eq!(total, 2, "both recent ops should remain");
 
         mat.shutdown();
+    }
+
+    // ======================================================================
+    // list_page_links (F-33)
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_page_links_returns_edges_between_pages() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create 2 pages
+        let p1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page One".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+        let p2 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page Two".into(),
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Create a content block under p1 that links to p2
+        let b1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            format!("see [[{}]]", p2.id),
+            Some(p1.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Insert block_links entry manually (content block b1 → page p2)
+        sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(&b1.id)
+            .bind(&p2.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let links = list_page_links_inner(&pool).await.unwrap();
+
+        // Should have at least one link: p1 → p2 (rolled up from b1 → p2)
+        let p1_to_p2 = links
+            .iter()
+            .find(|l| l.source_id == p1.id && l.target_id == p2.id);
+        assert!(
+            p1_to_p2.is_some(),
+            "should find link from page 1 to page 2 (rolled up from content block)"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_page_links_excludes_deleted_pages() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let p1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page One".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+        let p2 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page Two".into(),
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let b1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            format!("link [[{}]]", p2.id),
+            Some(p1.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Insert block_links entry manually
+        sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(&b1.id)
+            .bind(&p2.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Delete p2
+        delete_block_inner(&pool, DEV, &mat, p2.id.clone())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let links = list_page_links_inner(&pool).await.unwrap();
+        let has_deleted = links.iter().any(|l| l.target_id == p2.id);
+        assert!(!has_deleted, "should not include links to deleted pages");
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_page_links_excludes_self_links() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let p1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Create a block under p1 that links back to p1 itself
+        let b1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            format!("self [[{}]]", p1.id),
+            Some(p1.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Insert self-referential block_links entry
+        sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(&b1.id)
+            .bind(&p1.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let links = list_page_links_inner(&pool).await.unwrap();
+        let self_link = links.iter().find(|l| l.source_id == l.target_id);
+        assert!(
+            self_link.is_none(),
+            "should not include self-referential links"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test]
+    async fn list_page_links_empty_when_no_links() {
+        let (pool, _dir) = test_pool().await;
+        let links = list_page_links_inner(&pool).await.unwrap();
+        assert!(links.is_empty(), "should return empty when no links exist");
     }
 }
