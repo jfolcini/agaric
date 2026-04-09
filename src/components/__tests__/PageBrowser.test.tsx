@@ -94,6 +94,7 @@ function findTrashButton(row: HTMLElement): HTMLButtonElement {
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.removeItem('page-browser-sort')
+  localStorage.removeItem('starred-pages')
 })
 
 describe('PageBrowser', () => {
@@ -1274,6 +1275,196 @@ describe('PageBrowser', () => {
       })
 
       const { container } = render(<PageBrowser />)
+
+      await waitFor(async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      })
+    })
+  })
+
+  describe('starred pages', () => {
+    it('renders star icon on each page', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Page One' }),
+          makePage({ id: 'P2', content: 'Page Two' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('Page One')
+
+      const starButtons = screen.getAllByRole('button', { name: /star page/i })
+      expect(starButtons).toHaveLength(2)
+    })
+
+    it('clicking star toggles starred state', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'Starrable Page' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('Starrable Page')
+
+      // Initially unstarred
+      const starBtn = screen.getByRole('button', { name: /star page/i })
+      expect(starBtn).toBeInTheDocument()
+
+      // Click to star
+      await user.click(starBtn)
+
+      // Should now show "Unstar page" aria-label
+      expect(screen.getByRole('button', { name: /unstar page/i })).toBeInTheDocument()
+      expect(localStorage.getItem('starred-pages')).toBe(JSON.stringify(['P1']))
+
+      // Click to unstar
+      await user.click(screen.getByRole('button', { name: /unstar page/i }))
+
+      // Should be back to "Star page"
+      expect(screen.getByRole('button', { name: /star page/i })).toBeInTheDocument()
+      expect(localStorage.getItem('starred-pages')).toBe(JSON.stringify([]))
+    })
+
+    it('starred filter shows only starred pages', async () => {
+      const user = userEvent.setup()
+      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Starred Page' }),
+          makePage({ id: 'P2', content: 'Normal Page' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('Starred Page')
+      expect(screen.getByText('Normal Page')).toBeInTheDocument()
+
+      // Click the starred filter toggle
+      const filterBtn = screen.getByRole('button', { name: /show starred pages/i })
+      await user.click(filterBtn)
+
+      // Only starred page should be visible
+      expect(screen.getByText('Starred Page')).toBeInTheDocument()
+      expect(screen.queryByText('Normal Page')).not.toBeInTheDocument()
+    })
+
+    it('starred filter toggle shows "Show all" when active', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'A Page' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('A Page')
+
+      const filterBtn = screen.getByRole('button', { name: /show starred pages/i })
+      await user.click(filterBtn)
+
+      expect(screen.getByRole('button', { name: /show all pages/i })).toBeInTheDocument()
+    })
+
+    it('filter badge shows count of starred pages', async () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['P1', 'P2']))
+
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Page One' }),
+          makePage({ id: 'P2', content: 'Page Two' }),
+          makePage({ id: 'P3', content: 'Page Three' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      const { container } = render(<PageBrowser />)
+
+      await screen.findByText('Page One')
+
+      const badge = container.querySelector('.starred-count')
+      expect(badge).toBeInTheDocument()
+      expect(badge?.textContent).toBe('2')
+    })
+
+    it('no badge shown when no pages are starred', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'Page One' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      const { container } = render(<PageBrowser />)
+
+      await screen.findByText('Page One')
+
+      const badge = container.querySelector('.starred-count')
+      expect(badge).not.toBeInTheDocument()
+    })
+
+    it('shows empty state when starred filter active but no starred pages', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'Page One' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('Page One')
+
+      // Activate starred filter
+      const filterBtn = screen.getByRole('button', { name: /show starred pages/i })
+      await user.click(filterBtn)
+
+      // Should show empty state
+      expect(screen.getByText('No starred pages')).toBeInTheDocument()
+    })
+
+    it('starred filter has aria-pressed attribute', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'Page One' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('Page One')
+
+      const filterBtn = screen.getByRole('button', { name: /show starred pages/i })
+      expect(filterBtn).toHaveAttribute('aria-pressed', 'false')
+    })
+
+    it('star buttons pass a11y audit', async () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Starred Page' }),
+          makePage({ id: 'P2', content: 'Normal Page' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      const { container } = render(<PageBrowser />)
+
+      await screen.findByText('Starred Page')
 
       await waitFor(async () => {
         const results = await axe(container)

@@ -6,7 +6,7 @@
  * Includes delete with confirmation dialog and toast error feedback.
  */
 
-import { Download, FileText, Plus, Search, Trash2 } from 'lucide-react'
+import { Download, FileText, Plus, Search, Star, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -15,6 +15,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { HighlightMatch } from '@/components/HighlightMatch'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { PageTreeItem } from '@/components/PageTreeItem'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -27,6 +28,7 @@ import {
 import { Spinner } from '@/components/ui/spinner'
 import { buildPageTree } from '@/lib/page-tree'
 import { getRecentPages } from '@/lib/recent-pages'
+import { getStarredPages, isStarred, toggleStarred } from '@/lib/starred-pages'
 import { usePageDelete } from '../hooks/usePageDelete'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { downloadBlob, exportGraphAsZip } from '../lib/export-graph'
@@ -84,6 +86,8 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const [newPageName, setNewPageName] = useState('')
   const [filterText, setFilterText] = useState('')
   const [sortOption, setSortOption] = useState<SortOption>(readSortPreference)
+  const [showStarredOnly, setShowStarredOnly] = useState(false)
+  const [starredRevision, setStarredRevision] = useState(0)
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
   const [exporting, setExporting] = useState(false)
   const formRef = useRef<HTMLFormElement>(null)
@@ -156,11 +160,28 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     writeSortPreference(value)
   }, [])
 
+  const handleToggleStar = useCallback((pageId: string) => {
+    toggleStarred(pageId)
+    setStarredRevision((r) => r + 1)
+  }, [])
+
+  const starredCount = useMemo(() => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+    starredRevision // subscribe to revision changes
+    return getStarredPages().length
+  }, [starredRevision])
+
   const filteredPages = useMemo(() => {
     let result = pages
     if (filterText.trim()) {
       const lower = filterText.toLowerCase()
       result = result.filter((p) => (p.content ?? '').toLowerCase().includes(lower))
+    }
+    if (showStarredOnly) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+      starredRevision // subscribe to revision changes
+      const starred = getStarredPages()
+      result = result.filter((p) => starred.includes(p.id))
     }
 
     const sorted = [...result]
@@ -181,9 +202,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       })
     }
     return sorted
-  }, [pages, filterText, sortOption])
+  }, [pages, filterText, sortOption, showStarredOnly, starredRevision])
 
-  const isFiltering = filterText.trim().length > 0
+  const isFiltering = filterText.trim().length > 0 || showStarredOnly
 
   return (
     <div className="page-browser space-y-4">
@@ -239,6 +260,24 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                 <SelectItem value="created">{t('pageBrowser.sortCreated')}</SelectItem>
               </SelectContent>
             </Select>
+            <Button
+              variant={showStarredOnly ? 'default' : 'ghost'}
+              size="icon"
+              onClick={() => setShowStarredOnly((prev) => !prev)}
+              aria-label={showStarredOnly ? t('pageBrowser.showAll') : t('pageBrowser.showStarred')}
+              aria-pressed={showStarredOnly}
+              className="relative shrink-0"
+            >
+              <Star className="h-4 w-4" fill={showStarredOnly ? 'currentColor' : 'none'} />
+              {starredCount > 0 && (
+                <Badge
+                  variant="secondary"
+                  className="starred-count absolute -top-1.5 -right-1.5 h-4 min-w-[1rem] px-1 text-[10px]"
+                >
+                  {starredCount}
+                </Badge>
+              )}
+            </Button>
           </div>
         )}
       </div>
@@ -271,7 +310,14 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       {/* biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn */}
       <div className="page-browser-list space-y-1" role="list">
         {isFiltering && filteredPages.length === 0 ? (
-          <EmptyState icon={Search} message={t('pageBrowser.noMatches')} />
+          <EmptyState
+            icon={showStarredOnly ? Star : Search}
+            message={
+              showStarredOnly && !filterText.trim()
+                ? t('pageBrowser.noStarredPages')
+                : t('pageBrowser.noMatches')
+            }
+          />
         ) : filteredPages.some((p) => p.content?.includes('/')) ? (
           buildPageTree(filteredPages).map((node) => (
             <PageTreeItem
@@ -293,6 +339,21 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
               role="listitem"
               className="group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50"
             >
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={
+                  isStarred(page.id) ? t('pageBrowser.unstarPage') : t('pageBrowser.starPage')
+                }
+                className="star-toggle shrink-0 h-6 w-6 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-yellow-500 data-[starred=true]:opacity-100 data-[starred=true]:text-yellow-500"
+                data-starred={isStarred(page.id)}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleToggleStar(page.id)
+                }}
+              >
+                <Star className="h-3.5 w-3.5" fill={isStarred(page.id) ? 'currentColor' : 'none'} />
+              </Button>
               <button
                 type="button"
                 className="page-browser-item flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"

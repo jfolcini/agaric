@@ -24,6 +24,8 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
   const [agendaHasMore, setAgendaHasMore] = useState(false)
   const [agendaCursor, setAgendaCursor] = useState<string | null>(null)
   const [agendaPageTitles, setAgendaPageTitles] = useState<Map<string, string>>(new Map())
+  // Counter to force re-fetch after inline date edits (F-22)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   // ── Agenda sort/group state (persisted in localStorage) ─────────────
   const {
@@ -34,6 +36,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
   } = useAgendaPreferences()
 
   // ── Agenda filter execution ────────────────────────────────────────
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey forces re-fetch after inline date edits
   useEffect(() => {
     let cancelled = false
     setAgendaLoading(true)
@@ -73,7 +76,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
     return () => {
       cancelled = true
     }
-  }, [agendaFilters])
+  }, [agendaFilters, refreshKey])
 
   /** Load the next page of agenda results (used for default unfiltered view). */
   const loadMoreAgenda = useCallback(async () => {
@@ -113,6 +116,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
         pageTitles={agendaPageTitles}
         groupBy={agendaGroupBy}
         sortBy={agendaSortBy}
+        onDateChanged={() => setRefreshKey((k) => k + 1)}
       />
     </div>
   )

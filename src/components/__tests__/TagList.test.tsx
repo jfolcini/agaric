@@ -5,6 +5,7 @@
  *  - Initial render loads tags
  *  - Creating a tag via the form
  *  - Deleting a tag (with confirmation dialog)
+ *  - Renaming a tag (via rename dialog)
  *  - Empty state
  *  - Clickable tag names (onTagClick callback)
  *  - Error feedback via toast on failed operations
@@ -29,6 +30,7 @@ vi.mock('sonner', () => ({
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
+const mockedToastSuccess = vi.mocked(toast.success)
 
 const emptyPage: never[] = []
 
@@ -44,6 +46,11 @@ function makeTag(id: string, name: string, usageCount = 0) {
 /** Find the trash (delete) button within a tag row via its aria-label. */
 function findTrashButton(tagRow: HTMLElement): HTMLButtonElement {
   return within(tagRow).getByRole('button', { name: /delete tag/i })
+}
+
+/** Find the rename button within a tag row via its aria-label. */
+function findRenameButton(tagRow: HTMLElement): HTMLButtonElement {
+  return within(tagRow).getByRole('button', { name: /rename tag/i })
 }
 
 beforeEach(() => {
@@ -235,6 +242,169 @@ describe('TagList', () => {
       await waitFor(() => {
         expect(screen.queryByText('to-delete')).not.toBeInTheDocument()
       })
+    })
+  })
+
+  // UX #2: Tag rename dialog
+  describe('rename dialog', () => {
+    it('renders rename button for each tag', async () => {
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'alpha'), makeTag('T2', 'beta')])
+
+      render(<TagList />)
+
+      const alpha = await screen.findByText('alpha')
+      const beta = screen.getByText('beta')
+      const alphaRow = alpha.closest('li') as HTMLElement
+      const betaRow = beta.closest('li') as HTMLElement
+
+      expect(findRenameButton(alphaRow)).toBeInTheDocument()
+      expect(findRenameButton(betaRow)).toBeInTheDocument()
+    })
+
+    it('clicking rename opens the rename dialog', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'my-tag')])
+
+      render(<TagList />)
+
+      const tag = await screen.findByText('my-tag')
+      const tagRow = tag.closest('li') as HTMLElement
+      const renameBtn = findRenameButton(tagRow)
+      await user.click(renameBtn)
+
+      // The RenameDialog should open with an input pre-filled
+      expect(await screen.findByDisplayValue('my-tag')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Save/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument()
+    })
+
+    it('submitting new name calls editBlock', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'old-name')])
+
+      render(<TagList />)
+
+      const tag = await screen.findByText('old-name')
+      const tagRow = tag.closest('li') as HTMLElement
+      await user.click(findRenameButton(tagRow))
+
+      // Clear and type new name
+      const input = await screen.findByDisplayValue('old-name')
+      await user.clear(input)
+      await user.type(input, 'new-name')
+
+      // Mock editBlock response
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'T1',
+        block_type: 'tag',
+        content: 'new-name',
+      })
+
+      await user.click(screen.getByRole('button', { name: /Save/i }))
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+          blockId: 'T1',
+          toText: 'new-name',
+        })
+      })
+
+      // Tag list should show updated name
+      expect(await screen.findByText('new-name')).toBeInTheDocument()
+    })
+
+    it('empty name validation prevents submission', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'keep-name')])
+
+      render(<TagList />)
+
+      const tag = await screen.findByText('keep-name')
+      const tagRow = tag.closest('li') as HTMLElement
+      await user.click(findRenameButton(tagRow))
+
+      const input = await screen.findByDisplayValue('keep-name')
+      await user.clear(input)
+
+      // Save button should be disabled when input is empty
+      const saveBtn = screen.getByRole('button', { name: /Save/i })
+      expect(saveBtn).toBeDisabled()
+    })
+
+    it('shows success toast after rename', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'before')])
+
+      render(<TagList />)
+
+      const tag = await screen.findByText('before')
+      const tagRow = tag.closest('li') as HTMLElement
+      await user.click(findRenameButton(tagRow))
+
+      const input = await screen.findByDisplayValue('before')
+      await user.clear(input)
+      await user.type(input, 'after')
+
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'T1',
+        block_type: 'tag',
+        content: 'after',
+      })
+
+      await user.click(screen.getByRole('button', { name: /Save/i }))
+
+      await waitFor(() => {
+        expect(mockedToastSuccess).toHaveBeenCalledWith('Tag renamed successfully.')
+      })
+    })
+
+    it('shows error toast when rename fails', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'fail-rename')])
+
+      render(<TagList />)
+
+      const tag = await screen.findByText('fail-rename')
+      const tagRow = tag.closest('li') as HTMLElement
+      await user.click(findRenameButton(tagRow))
+
+      const input = await screen.findByDisplayValue('fail-rename')
+      await user.clear(input)
+      await user.type(input, 'new-fail-name')
+
+      mockedInvoke.mockRejectedValueOnce(new Error('Rename failed'))
+
+      await user.click(screen.getByRole('button', { name: /Save/i }))
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(
+          expect.stringContaining('Failed to rename tag'),
+        )
+      })
+    })
+
+    it('prevents renaming to an existing tag name', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'first-tag'), makeTag('T2', 'second-tag')])
+
+      render(<TagList />)
+
+      const tag = await screen.findByText('first-tag')
+      const tagRow = tag.closest('li') as HTMLElement
+      await user.click(findRenameButton(tagRow))
+
+      const input = await screen.findByDisplayValue('first-tag')
+      await user.clear(input)
+      await user.type(input, 'second-tag')
+
+      await user.click(screen.getByRole('button', { name: /Save/i }))
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith('A tag with that name already exists.')
+      })
+
+      // editBlock should not have been called (only the initial list call)
+      expect(mockedInvoke).toHaveBeenCalledTimes(1)
     })
   })
 

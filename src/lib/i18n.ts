@@ -303,6 +303,19 @@ const resources = {
       'agenda.groupPriority': 'Priority',
       'agenda.groupState': 'State',
       'agenda.groupNone': 'None',
+      'agenda.breadcrumbArrow': '\u2192',
+
+      // Date Chip Editor (F-22)
+      'dateChip.editDate': 'Edit date',
+      'dateChip.placeholder': 'today, +3d, Apr 15',
+      'dateChip.inputLabel': 'Type a date',
+      'dateChip.today': 'Today',
+      'dateChip.tomorrow': 'Tomorrow',
+      'dateChip.nextWeek': 'Next Week',
+      'dateChip.clear': 'Clear',
+      'dateChip.dateUpdated': 'Date updated',
+      'dateChip.dateCleared': 'Date cleared',
+      'dateChip.updateFailed': 'Failed to update date',
 
       // Agenda Filter
       'agendaFilter.status': 'Status',
@@ -429,6 +442,11 @@ const resources = {
       'pageBrowser.sortRecent': 'Recent',
       'pageBrowser.sortAlphabetical': 'Alphabetical',
       'pageBrowser.sortCreated': 'Created',
+      'pageBrowser.starPage': 'Star page',
+      'pageBrowser.unstarPage': 'Unstar page',
+      'pageBrowser.showStarred': 'Show starred pages',
+      'pageBrowser.showAll': 'Show all pages',
+      'pageBrowser.noStarredPages': 'No starred pages',
 
       // Due Panel
       'duePanel.headerOne': '1 Due',
@@ -521,6 +539,12 @@ const resources = {
       'tags.loadFailed': 'Failed to load tags',
       'tags.nameTooLong': 'Tag name must be under 100 characters',
       'tags.deleteWarning': 'Blocks using this tag will lose the reference.',
+      'tags.duplicateName': 'A tag with that name already exists.',
+      'tags.renameSuccess': 'Tag renamed successfully.',
+      'tags.renameFailed': 'Failed to rename tag',
+      'tags.renameTitle': 'Rename tag',
+      'tags.renameDescription': 'Enter a new name for this tag.',
+      'tags.renamePlaceholder': 'Tag name',
       'tagList.empty': 'No tags yet. Create one above to organize your blocks.',
 
       // Shortcuts / Quick Reference
@@ -1086,6 +1110,8 @@ const resources = {
       'pdfViewer.nextPageLabel': 'Next page',
       'block.editLabel': 'Edit block',
       'tagList.deleteTagLabel': 'Delete tag',
+      'tagList.renameTagLabel': 'Rename tag',
+      'tagList.renameInputLabel': 'New tag name',
       'tagList.newTagLabel': 'New tag name',
 
       // Common (collapsible panels)

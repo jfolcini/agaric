@@ -1,7 +1,9 @@
 /**
- * RenameDialog — modal for renaming a paired device (#422).
+ * RenameDialog — reusable modal for renaming an entity.
  *
  * Uses Dialog (not AlertDialog) because the modal contains a form input.
+ * Originally built for device renaming (#422), now generic via optional
+ * title / description / placeholder / ariaLabel props.
  */
 
 import type React from 'react'
@@ -23,6 +25,10 @@ interface RenameDialogProps {
   onOpenChange: (open: boolean) => void
   onConfirm: (name: string) => void
   currentName: string
+  title?: string
+  description?: string
+  placeholder?: string
+  ariaLabel?: string
   className?: string
 }
 
@@ -31,6 +37,10 @@ export function RenameDialog({
   onOpenChange,
   onConfirm,
   currentName,
+  title,
+  description,
+  placeholder,
+  ariaLabel,
   className,
 }: RenameDialogProps): React.ReactElement {
   const { t } = useTranslation()
@@ -50,8 +60,8 @@ export function RenameDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={className}>
         <DialogHeader>
-          <DialogTitle>Rename device</DialogTitle>
-          <DialogDescription>Enter a name for this device.</DialogDescription>
+          <DialogTitle>{title ?? 'Rename device'}</DialogTitle>
+          <DialogDescription>{description ?? 'Enter a name for this device.'}</DialogDescription>
         </DialogHeader>
         <form
           onSubmit={(e) => {
@@ -62,8 +72,8 @@ export function RenameDialog({
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Device name"
-            aria-label={t('device.deviceNameLabel')}
+            placeholder={placeholder ?? 'Device name'}
+            aria-label={ariaLabel ?? t('device.deviceNameLabel')}
             autoFocus
           />
         </form>

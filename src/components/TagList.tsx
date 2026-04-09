@@ -1,23 +1,24 @@
 /**
- * TagList — lists all tag blocks with create capability.
+ * TagList — lists all tag blocks with create, rename & delete capability.
  *
  * Shows existing tags and provides an inline form to create new ones.
- * Includes confirmation dialog for deletion, clickable tag names,
- * and toast error feedback.
+ * Includes rename dialog, confirmation dialog for deletion, clickable
+ * tag names, and toast error feedback.
  */
 
-import { Plus, Tag, Trash2 } from 'lucide-react'
+import { Pencil, Plus, Tag, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { RenameDialog } from '@/components/RenameDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ListItem } from '@/components/ui/list-item'
 import type { TagCacheRow } from '../lib/tauri'
-import { createBlock, deleteBlock, listTagsByPrefix } from '../lib/tauri'
+import { createBlock, deleteBlock, editBlock, listTagsByPrefix } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
 import { ListViewState } from './ListViewState'
@@ -35,6 +36,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
   const [isCreating, setIsCreating] = useState(false)
   const [newTagName, setNewTagName] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
+  const [renameTarget, setRenameTarget] = useState<{ id: string; name: string } | null>(null)
 
   const loadTags = useCallback(async () => {
     setLoading(true)
@@ -94,6 +96,29 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
     }
   }, [deleteTarget, handleDeleteTag])
 
+  const handleRenameTag = useCallback(
+    async (newName: string) => {
+      if (!renameTarget) return
+      const trimmed = newName.trim()
+      if (!trimmed) return
+      if (tags.some((tag) => tag.tag_id !== renameTarget.id && tag.name === trimmed)) {
+        toast.error(t('tags.duplicateName'))
+        return
+      }
+      try {
+        await editBlock(renameTarget.id, trimmed)
+        setTags((prev) =>
+          prev.map((tag) => (tag.tag_id === renameTarget.id ? { ...tag, name: trimmed } : tag)),
+        )
+        useResolveStore.getState().set(renameTarget.id, trimmed, false)
+        toast.success(t('tags.renameSuccess'))
+      } catch (error) {
+        toast.error(`${t('tags.renameFailed')}: ${String(error)}`)
+      }
+    },
+    [renameTarget, tags, t],
+  )
+
   return (
     <div className="space-y-4">
       {/* Create tag form */}
@@ -149,6 +174,15 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                 <Button
                   variant="ghost"
                   size="icon-xs"
+                  aria-label={t('tagList.renameTagLabel')}
+                  className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground active:text-foreground active:scale-95"
+                  onClick={() => setRenameTarget({ id: tag.tag_id, name: tag.name || 'Unnamed' })}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
                   aria-label={t('tagList.deleteTagLabel')}
                   className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
                   onClick={() => setDeleteTarget({ id: tag.tag_id, name: tag.name || 'Unnamed' })}
@@ -160,6 +194,20 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
           </ul>
         )}
       </ListViewState>
+
+      {/* Rename dialog */}
+      <RenameDialog
+        open={renameTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setRenameTarget(null)
+        }}
+        currentName={renameTarget?.name ?? ''}
+        title={t('tags.renameTitle')}
+        description={t('tags.renameDescription')}
+        placeholder={t('tags.renamePlaceholder')}
+        ariaLabel={t('tagList.renameInputLabel')}
+        onConfirm={handleRenameTag}
+      />
 
       {/* Delete confirmation dialog */}
       <ConfirmDialog

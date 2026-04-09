@@ -11,10 +11,12 @@
 
 import { CheckCircle2, Circle, Clock } from 'lucide-react'
 import type React from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { EmptyState } from '@/components/EmptyState'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { formatCompactDate, getTodayString } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
@@ -29,6 +31,7 @@ import type { NavigateToPageFn } from '../lib/block-events'
 import { priorityColor } from '../lib/priority-color'
 import type { BlockRow } from '../lib/tauri'
 import { BlockListItem } from './BlockListItem'
+import { DateChipEditor } from './DateChipEditor'
 import { LoadMoreButton } from './LoadMoreButton'
 
 export interface AgendaResultsProps {
@@ -52,6 +55,8 @@ export interface AgendaResultsProps {
   groupBy?: ('date' | 'priority' | 'state' | 'none') | undefined
   /** Primary sort key. Default: 'date'. */
   sortBy?: AgendaSortBy | undefined
+  /** Callback fired when a date is changed inline (e.g. to refresh blocks). */
+  onDateChanged?: (() => void) | undefined
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -92,6 +97,57 @@ function StatusIcon({ state }: { state: string | null }): React.ReactElement {
   )
 }
 
+// ── Due date chip with popover ─────────────────────────────────────────
+
+/** Inline editable due date chip — wraps the date in a Popover + DateChipEditor. */
+function DueDateChip({
+  block,
+  onDateChanged,
+}: {
+  block: BlockRow
+  onDateChanged?: (() => void) | undefined
+}): React.ReactElement | null {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+
+  if (!block.due_date) return null
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            'agenda-results-due inline-flex items-center rounded-full px-2 py-0.5 text-xs [@media(pointer:coarse)]:text-sm font-medium cursor-pointer hover:ring-1 hover:ring-ring',
+            dueDateColor(block.due_date),
+          )}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+          aria-label={t('dateChip.editDate')}
+        >
+          {formatCompactDate(block.due_date)}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-64"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+      >
+        <DateChipEditor
+          blockId={block.id}
+          dateType="due"
+          currentDate={block.due_date}
+          onSuccess={() => {
+            setOpen(false)
+            onDateChanged?.()
+          }}
+        />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 // ── Component ──────────────────────────────────────────────────────────
 
 export function AgendaResults({
@@ -105,6 +161,7 @@ export function AgendaResults({
   pageTitles,
   groupBy,
   sortBy = 'date',
+  onDateChanged,
 }: AgendaResultsProps): React.ReactElement {
   const { t } = useTranslation()
 
@@ -176,17 +233,8 @@ export function AgendaResults({
               </span>
             )}
 
-            {/* Due date chip */}
-            {block.due_date && (
-              <span
-                className={cn(
-                  'agenda-results-due inline-flex items-center rounded-full px-2 py-0.5 text-xs [@media(pointer:coarse)]:text-sm font-medium',
-                  dueDateColor(block.due_date),
-                )}
-              >
-                {formatCompactDate(block.due_date)}
-              </span>
-            )}
+            {/* Due date chip — clickable with inline date editor */}
+            <DueDateChip block={block} onDateChanged={onDateChanged} />
           </>
         }
         pageId={block.parent_id}
