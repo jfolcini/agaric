@@ -281,6 +281,45 @@ impl SyncServer {
                                             return;
                                         }
                                     };
+
+                                    // ── Extract peer certificate hash (B-33) ──
+                                    let peer_cert_hash = {
+                                        let (_, server_conn) = tls_stream.get_ref();
+                                        server_conn
+                                            .peer_certificates()
+                                            .and_then(|certs| certs.first())
+                                            .map(|cert| {
+                                                let hash = Sha256::digest(cert.as_ref());
+                                                hash.iter()
+                                                    .map(|b| format!("{b:02x}"))
+                                                    .collect::<String>()
+                                            })
+                                    };
+
+                                    // ── Extract peer certificate CN (B-34) ──
+                                    let peer_cert_cn = {
+                                        let (_, server_conn) = tls_stream.get_ref();
+                                        server_conn
+                                            .peer_certificates()
+                                            .and_then(|certs| certs.first())
+                                            .and_then(|cert| {
+                                                use x509_parser::prelude::*;
+                                                X509Certificate::from_der(cert.as_ref())
+                                                    .ok()
+                                                    .and_then(|(_, parsed)| {
+                                                        parsed
+                                                            .subject()
+                                                            .iter_common_name()
+                                                            .next()
+                                                            .and_then(|attr| attr.as_str().ok())
+                                                            .and_then(|cn| {
+                                                                cn.strip_prefix("agaric-")
+                                                            })
+                                                            .map(String::from)
+                                                    })
+                                            })
+                                    };
+
                                     let ws_stream =
                                         match tokio_tungstenite::accept_async(tls_stream).await {
                                             Ok(s) => s,
@@ -291,7 +330,8 @@ impl SyncServer {
                                         };
                                     let conn = SyncConnection {
                                         inner: InnerStream::Server(ws_stream),
-                                        peer_cert_hash_val: None,
+                                        peer_cert_hash_val: peer_cert_hash,
+                                        peer_cert_cn_val: peer_cert_cn,
                                     };
                                     on_conn(conn);
                                 });
@@ -329,6 +369,10 @@ impl SyncServer {
 }
 
 /// Build a `rustls::ServerConfig` from a [`SyncCert`].
+///
+/// Uses a custom `AllowAnyCert` client-cert verifier so the server
+/// *requests* the client's certificate (mTLS) but does not mandate it.
+/// Hash / CN verification happens after the handshake in the responder path.
 fn build_server_tls_config(cert: &SyncCert) -> Result<rustls::ServerConfig, AppError> {
     let cert_der = pem_to_der(&cert.cert_pem)?;
     let key_der = pem_to_der(&cert.key_pem)?;
@@ -339,9 +383,79 @@ fn build_server_tls_config(cert: &SyncCert) -> Result<rustls::ServerConfig, AppE
     ));
 
     rustls::ServerConfig::builder()
-        .with_no_client_auth()
+        .with_client_cert_verifier(Arc::new(AllowAnyCert))
         .with_single_cert(certs, key)
         .map_err(|e| sync_err(format!("server TLS config: {e}")))
+}
+
+// ---------------------------------------------------------------------------
+// AllowAnyCert — permissive client-certificate verifier for mTLS
+// ---------------------------------------------------------------------------
+
+/// A `ClientCertVerifier` that accepts **any** client certificate without
+/// validation against a CA.  Client auth is *offered* but not *mandatory*,
+/// so unauthenticated (pairing) connections still succeed.
+///
+/// The actual hash / CN checks are performed after the TLS handshake in the
+/// responder path (`handle_incoming_sync`).
+#[derive(Debug)]
+struct AllowAnyCert;
+
+impl rustls::server::danger::ClientCertVerifier for AllowAnyCert {
+    fn offer_client_auth(&self) -> bool {
+        true
+    }
+
+    fn client_auth_mandatory(&self) -> bool {
+        false // allow anonymous connections (pairing)
+    }
+
+    fn root_hint_subjects(&self) -> &[rustls::DistinguishedName] {
+        &[] // no CA hints — self-signed certs
+    }
+
+    fn verify_client_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::server::danger::ClientCertVerified, rustls::Error> {
+        Ok(rustls::server::danger::ClientCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
 }
 
 // =========================================================================
@@ -355,9 +469,12 @@ fn build_server_tls_config(cert: &SyncCert) -> Result<rustls::ServerConfig, AppE
 ///   match (reconnection / pinning mode).  If `None`, any certificate is
 ///   accepted (initial pairing) and the hash is available via
 ///   [`SyncConnection::peer_cert_hash`].
+/// * `local_cert` – the local device's TLS certificate, sent to the server
+///   during the handshake so the responder can verify our identity (mTLS).
 pub async fn connect_to_peer(
     addr: &str,
     expected_cert_hash: Option<&str>,
+    local_cert: &SyncCert,
 ) -> Result<SyncConnection, AppError> {
     let observed_hash = Arc::new(std::sync::Mutex::new(None::<String>));
 
@@ -366,10 +483,19 @@ pub async fn connect_to_peer(
         observed_hash: observed_hash.clone(),
     };
 
+    // Prepare client certificate chain + private key for mTLS
+    let cert_der = pem_to_der(&local_cert.cert_pem)?;
+    let key_der = pem_to_der(&local_cert.key_pem)?;
+    let certs = vec![rustls::pki_types::CertificateDer::from(cert_der)];
+    let key = rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
+        key_der,
+    ));
+
     let client_config = rustls::ClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(verifier))
-        .with_no_client_auth();
+        .with_client_auth_cert(certs, key)
+        .map_err(|e| sync_err(format!("client TLS config: {e}")))?;
 
     let connector = tokio_tungstenite::Connector::Rustls(Arc::new(client_config));
 
@@ -387,6 +513,7 @@ pub async fn connect_to_peer(
     Ok(SyncConnection {
         inner: InnerStream::Client(ws_stream),
         peer_cert_hash_val: peer_hash,
+        peer_cert_cn_val: None, // CN verification is server-side only
     })
 }
 
@@ -509,6 +636,9 @@ enum InnerStream {
 pub struct SyncConnection {
     inner: InnerStream,
     peer_cert_hash_val: Option<String>,
+    /// Device ID extracted from the peer's TLS certificate CN (`agaric-{id}`).
+    /// Populated on server-side connections only (responder path).
+    peer_cert_cn_val: Option<String>,
 }
 
 impl SyncConnection {
@@ -567,6 +697,16 @@ impl SyncConnection {
     /// connections only).
     pub fn peer_cert_hash(&self) -> Option<String> {
         self.peer_cert_hash_val.clone()
+    }
+
+    /// Get the device ID extracted from the remote peer's TLS certificate CN.
+    ///
+    /// For server-side connections the CN is parsed from the client cert after
+    /// the TLS handshake (`agaric-{device_id}` → `{device_id}`).
+    /// Returns `None` for client-side connections or when no client cert was
+    /// presented.
+    pub fn peer_cert_cn(&self) -> Option<&str> {
+        self.peer_cert_cn_val.as_deref()
     }
 
     /// Close the connection gracefully.
@@ -924,6 +1064,7 @@ mod tests {
     async fn tls_roundtrip_json_exchange() {
         install_crypto_provider();
         let cert = generate_self_signed_cert("test-device").unwrap();
+        let client_cert = generate_self_signed_cert("client-device").unwrap();
 
         // Start server
         let (server, port) = SyncServer::start(&cert, |mut conn| {
@@ -938,7 +1079,7 @@ mod tests {
         .unwrap();
 
         // Connect client (no cert pinning)
-        let mut client = connect_to_peer(&format!("127.0.0.1:{port}"), None)
+        let mut client = connect_to_peer(&format!("127.0.0.1:{port}"), None, &client_cert)
             .await
             .unwrap();
 
@@ -964,12 +1105,18 @@ mod tests {
     async fn cert_pinning_correct_hash_succeeds() {
         install_crypto_provider();
         let cert = generate_self_signed_cert("pin-test").unwrap();
+        let client_cert = generate_self_signed_cert("client-pin-test").unwrap();
         let expected_hash = cert.cert_hash.clone();
 
         let (server, port) = SyncServer::start(&cert, |_conn| {}).await.unwrap();
 
         // Connect with correct hash
-        let conn = connect_to_peer(&format!("127.0.0.1:{port}"), Some(&expected_hash)).await;
+        let conn = connect_to_peer(
+            &format!("127.0.0.1:{port}"),
+            Some(&expected_hash),
+            &client_cert,
+        )
+        .await;
         assert!(
             conn.is_ok(),
             "connection with correct cert hash should succeed"
@@ -991,12 +1138,14 @@ mod tests {
     async fn cert_pinning_wrong_hash_fails() {
         install_crypto_provider();
         let cert = generate_self_signed_cert("pin-fail").unwrap();
+        let client_cert = generate_self_signed_cert("client-pin-fail").unwrap();
 
         let (server, port) = SyncServer::start(&cert, |_conn| {}).await.unwrap();
 
         // Connect with wrong hash
         let wrong_hash = "0000000000000000000000000000000000000000000000000000000000000000";
-        let result = connect_to_peer(&format!("127.0.0.1:{port}"), Some(wrong_hash)).await;
+        let result =
+            connect_to_peer(&format!("127.0.0.1:{port}"), Some(wrong_hash), &client_cert).await;
         assert!(
             result.is_err(),
             "connection with wrong cert hash should fail"
@@ -1022,8 +1171,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn connection_refused_returns_error() {
         install_crypto_provider();
+        let client_cert = generate_self_signed_cert("conn-refused").unwrap();
         // Use a port that's almost certainly not listening
-        let result = connect_to_peer("127.0.0.1:1", None).await;
+        let result = connect_to_peer("127.0.0.1:1", None, &client_cert).await;
         assert!(result.is_err(), "connection to closed port should fail");
     }
 
@@ -1031,6 +1181,7 @@ mod tests {
     async fn binary_message_roundtrip() {
         install_crypto_provider();
         let cert = generate_self_signed_cert("binary-test").unwrap();
+        let client_cert = generate_self_signed_cert("client-binary-test").unwrap();
 
         let (server, port) = SyncServer::start(&cert, |mut conn| {
             tokio::spawn(async move {
@@ -1042,7 +1193,7 @@ mod tests {
         .await
         .unwrap();
 
-        let mut client = connect_to_peer(&format!("127.0.0.1:{port}"), None)
+        let mut client = connect_to_peer(&format!("127.0.0.1:{port}"), None, &client_cert)
             .await
             .unwrap();
 
@@ -1060,10 +1211,11 @@ mod tests {
     async fn peer_cert_hash_populated_on_client() {
         install_crypto_provider();
         let cert = generate_self_signed_cert("hash-capture").unwrap();
+        let client_cert = generate_self_signed_cert("client-hash-capture").unwrap();
 
         let (server, port) = SyncServer::start(&cert, |_conn| {}).await.unwrap();
 
-        let conn = connect_to_peer(&format!("127.0.0.1:{port}"), None)
+        let conn = connect_to_peer(&format!("127.0.0.1:{port}"), None, &client_cert)
             .await
             .unwrap();
         let hash = conn.peer_cert_hash();
@@ -1180,6 +1332,128 @@ mod tests {
         assert!(
             err_msg.contains("failed to parse certificate"),
             "error should mention parse failure, got: {err_msg}"
+        );
+    }
+
+    // -- 9. mTLS peer certificate extraction (B-33 / B-34) ----------------
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn mtls_server_extracts_peer_cert_hash() {
+        install_crypto_provider();
+        let server_cert = generate_self_signed_cert("server-device").unwrap();
+        let client_cert = generate_self_signed_cert("client-device").unwrap();
+        let expected_client_hash = client_cert.cert_hash.clone();
+
+        let (hash_tx, hash_rx) = tokio::sync::oneshot::channel::<Option<String>>();
+        let hash_tx = std::sync::Mutex::new(Some(hash_tx));
+
+        let (server, port) = SyncServer::start(&server_cert, move |conn| {
+            if let Some(tx) = hash_tx.lock().unwrap().take() {
+                let _ = tx.send(conn.peer_cert_hash());
+            }
+        })
+        .await
+        .unwrap();
+
+        // Connect client with its cert (mTLS)
+        let conn = connect_to_peer(&format!("127.0.0.1:{port}"), None, &client_cert)
+            .await
+            .unwrap();
+
+        // Wait for server to receive the connection and extract the hash
+        let server_observed_hash = tokio::time::timeout(std::time::Duration::from_secs(5), hash_rx)
+            .await
+            .expect("timeout waiting for server")
+            .expect("channel closed");
+
+        assert_eq!(
+            server_observed_hash.as_deref(),
+            Some(expected_client_hash.as_str()),
+            "server should extract the client's cert hash via mTLS"
+        );
+
+        conn.close().await.ok();
+        server.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn mtls_server_extracts_peer_cert_cn() {
+        install_crypto_provider();
+        let server_cert = generate_self_signed_cert("server-device").unwrap();
+        let client_cert = generate_self_signed_cert("my-client-id").unwrap();
+
+        let (cn_tx, cn_rx) = tokio::sync::oneshot::channel::<Option<String>>();
+        let cn_tx = std::sync::Mutex::new(Some(cn_tx));
+
+        let (server, port) = SyncServer::start(&server_cert, move |conn| {
+            if let Some(tx) = cn_tx.lock().unwrap().take() {
+                let _ = tx.send(conn.peer_cert_cn().map(String::from));
+            }
+        })
+        .await
+        .unwrap();
+
+        let conn = connect_to_peer(&format!("127.0.0.1:{port}"), None, &client_cert)
+            .await
+            .unwrap();
+
+        let server_observed_cn = tokio::time::timeout(std::time::Duration::from_secs(5), cn_rx)
+            .await
+            .expect("timeout waiting for server")
+            .expect("channel closed");
+
+        assert_eq!(
+            server_observed_cn.as_deref(),
+            Some("my-client-id"),
+            "server should extract device ID from client cert CN (agaric-my-client-id → my-client-id)"
+        );
+
+        conn.close().await.ok();
+        server.shutdown().await;
+    }
+
+    // -- 10. AllowAnyCert verifier tests -----------------------------------
+
+    #[test]
+    fn allow_any_cert_offers_but_does_not_mandate_client_auth() {
+        let verifier = AllowAnyCert;
+        assert!(
+            rustls::server::danger::ClientCertVerifier::offer_client_auth(&verifier),
+            "AllowAnyCert must offer client auth"
+        );
+        assert!(
+            !rustls::server::danger::ClientCertVerifier::client_auth_mandatory(&verifier),
+            "AllowAnyCert must NOT mandate client auth (pairing connections)"
+        );
+    }
+
+    #[test]
+    fn allow_any_cert_root_hints_empty() {
+        let verifier = AllowAnyCert;
+        assert!(
+            rustls::server::danger::ClientCertVerifier::root_hint_subjects(&verifier).is_empty(),
+            "AllowAnyCert should return empty root hints (self-signed certs)"
+        );
+    }
+
+    #[test]
+    fn allow_any_cert_accepts_any_certificate() {
+        install_crypto_provider();
+        let cert = generate_self_signed_cert("any-cert-test").unwrap();
+        let cert_der = pem_to_der(&cert.cert_pem).unwrap();
+        let ee = rustls::pki_types::CertificateDer::from(cert_der);
+        let now = rustls::pki_types::UnixTime::now();
+
+        let verifier = AllowAnyCert;
+        let result = rustls::server::danger::ClientCertVerifier::verify_client_cert(
+            &verifier,
+            &ee,
+            &[],
+            now,
+        );
+        assert!(
+            result.is_ok(),
+            "AllowAnyCert must accept any valid certificate"
         );
     }
 }

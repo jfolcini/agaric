@@ -263,6 +263,7 @@ async fn daemon_loop(
                                     &peer,
                                     &refs,
                                     &cancel,
+                                    &cert,
                                 )
                                 .await;
                             }
@@ -288,6 +289,7 @@ async fn daemon_loop(
                             dp,
                             &refs,
                             &cancel,
+                            &cert,
                         )
                         .await;
                     } else if let Some(ref addr) = peer_ref.last_address {
@@ -307,6 +309,7 @@ async fn daemon_loop(
                                 &fallback_peer,
                                 &refs,
                                 &cancel,
+                                &cert,
                             )
                             .await;
                         }
@@ -342,6 +345,7 @@ async fn daemon_loop(
                             dp,
                             &refs,
                             &cancel,
+                            &cert,
                         )
                         .await;
                     } else if let Some(ref addr) = refs_by_id.get(pid.as_str()).and_then(|r| r.last_address.clone()) {
@@ -361,6 +365,7 @@ async fn daemon_loop(
                                 &fallback_peer,
                                 &refs,
                                 &cancel,
+                                &cert,
                             )
                             .await;
                         }
@@ -405,6 +410,7 @@ async fn try_sync_with_peer(
     peer: &DiscoveredPeer,
     peer_refs: &[PeerRef],
     cancel: &AtomicBool,
+    cert: &SyncCert,
 ) {
     let peer_id = &peer.device_id;
 
@@ -443,7 +449,7 @@ async fn try_sync_with_peer(
     });
 
     // 6. Connect to peer with optional cert pinning (#278: reconnect with backoff)
-    let mut conn = match sync_net::connect_to_peer(&addr, cert_hash.as_deref()).await {
+    let mut conn = match sync_net::connect_to_peer(&addr, cert_hash.as_deref(), cert).await {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!(peer_id, error = %e, "failed to connect to peer");
@@ -468,6 +474,20 @@ async fn try_sync_with_peer(
             // Save the peer's address for future direct connections
             if let Err(e) = peer_refs::update_last_address(pool, peer_id, &addr).await {
                 tracing::warn!("failed to save peer address: {e}");
+            }
+            // TOFU: Store observed cert hash if none was stored (initiator side)
+            if cert_hash.is_none() {
+                if let Some(ref observed) = conn.peer_cert_hash() {
+                    if let Err(e) =
+                        peer_refs::upsert_peer_ref_with_cert(pool, peer_id, observed).await
+                    {
+                        tracing::warn!(
+                            peer_id,
+                            error = %e,
+                            "failed to store peer cert hash (TOFU)"
+                        );
+                    }
+                }
             }
             let session = orch.session();
             event_sink.on_sync_event(SyncEvent::Complete {
@@ -557,8 +577,53 @@ async fn run_sync_session(
 }
 
 // ---------------------------------------------------------------------------
-// handle_incoming_sync — responder-mode sync session (#615)
+// verify_peer_cert — B-33 / B-34 cert verification helpers
 // ---------------------------------------------------------------------------
+
+/// Result of verifying the peer's TLS certificate against its claimed identity.
+#[derive(Debug, PartialEq)]
+pub(crate) enum CertVerifyResult {
+    /// Certificate checks pass (or are skipped when no cert is presented).
+    Ok,
+    /// B-34: HeadExchange device_id doesn't match the TLS certificate CN.
+    CnMismatch { remote_id: String, cert_cn: String },
+    /// B-33: TLS certificate hash doesn't match the stored cert_hash.
+    HashMismatch { remote_id: String },
+}
+
+/// Verify the peer's TLS certificate CN matches the claimed device ID (B-34)
+/// and the certificate hash matches what was stored during pairing (B-33).
+///
+/// Extracted as a pure function so it can be unit-tested without TLS.
+pub(crate) fn verify_peer_cert(
+    remote_id: &str,
+    cert_cn: Option<&str>,
+    observed_hash: Option<&str>,
+    stored_hash: Option<&str>,
+) -> CertVerifyResult {
+    // B-34: Verify device ID matches TLS certificate CN
+    if let Some(cn) = cert_cn {
+        if cn != remote_id {
+            return CertVerifyResult::CnMismatch {
+                remote_id: remote_id.to_string(),
+                cert_cn: cn.to_string(),
+            };
+        }
+    }
+
+    // B-33: Verify TLS certificate hash matches stored cert_hash
+    if let Some(stored) = stored_hash {
+        if let Some(observed) = observed_hash {
+            if stored != observed {
+                return CertVerifyResult::HashMismatch {
+                    remote_id: remote_id.to_string(),
+                };
+            }
+        }
+    }
+
+    CertVerifyResult::Ok
+}
 
 /// Drive a complete responder-side sync session over an incoming connection.
 ///
@@ -621,6 +686,65 @@ async fn handle_incoming_sync(
             .await?;
             let _ = conn.close().await;
             return Ok(());
+        }
+
+        // B-34: Verify device ID matches TLS certificate CN
+        // B-33: Verify TLS certificate hash matches stored cert_hash
+        let stored_hash = peer_refs::get_peer_ref(&pool_ref, &remote_id)
+            .await?
+            .and_then(|pr| pr.cert_hash);
+        match verify_peer_cert(
+            &remote_id,
+            conn.peer_cert_cn(),
+            conn.peer_cert_hash().as_deref(),
+            stored_hash.as_deref(),
+        ) {
+            CertVerifyResult::Ok => {
+                // TOFU: Store cert hash on first authenticated connection
+                // (trust-on-first-use, same model as SSH known_hosts)
+                if stored_hash.is_none() {
+                    if let Some(ref observed) = conn.peer_cert_hash() {
+                        if let Err(e) =
+                            peer_refs::upsert_peer_ref_with_cert(&pool_ref, &remote_id, observed)
+                                .await
+                        {
+                            tracing::warn!(
+                                peer_id = %remote_id,
+                                error = %e,
+                                "failed to store peer cert hash (TOFU)"
+                            );
+                        }
+                    }
+                }
+            }
+            CertVerifyResult::CnMismatch {
+                ref remote_id,
+                ref cert_cn,
+            } => {
+                tracing::warn!(
+                    peer_id = %remote_id,
+                    cert_cn = %cert_cn,
+                    "rejecting sync: HeadExchange device_id does not match TLS certificate CN"
+                );
+                conn.send_json(&SyncMessage::Error {
+                    message: "device ID does not match certificate".into(),
+                })
+                .await?;
+                let _ = conn.close().await;
+                return Ok(());
+            }
+            CertVerifyResult::HashMismatch { ref remote_id } => {
+                tracing::warn!(
+                    peer_id = %remote_id,
+                    "rejecting sync: TLS certificate hash mismatch"
+                );
+                conn.send_json(&SyncMessage::Error {
+                    message: "certificate hash mismatch".into(),
+                })
+                .await?;
+                let _ = conn.close().await;
+                return Ok(());
+            }
         }
 
         match scheduler.try_lock_peer(&remote_id) {
@@ -1016,6 +1140,153 @@ mod tests {
         assert!(
             !discovered.contains_key("STALE_PEER"),
             "stale peer must be removed"
+        );
+    }
+
+    // ── B-33: responder rejects cert hash mismatch ─────────────────────
+
+    #[test]
+    fn b33_cert_hash_mismatch_rejected() {
+        let result = verify_peer_cert(
+            "device-A",
+            Some("device-A"), // CN matches
+            Some("aaaa"),     // observed hash
+            Some("bbbb"),     // stored hash — MISMATCH
+        );
+        assert_eq!(
+            result,
+            CertVerifyResult::HashMismatch {
+                remote_id: "device-A".into()
+            },
+            "B-33: mismatched cert hash must be rejected"
+        );
+    }
+
+    #[test]
+    fn b33_cert_hash_match_accepted() {
+        let result = verify_peer_cert(
+            "device-A",
+            Some("device-A"), // CN matches
+            Some("aaaa"),     // observed hash
+            Some("aaaa"),     // stored hash — MATCH
+        );
+        assert_eq!(
+            result,
+            CertVerifyResult::Ok,
+            "B-33: matching cert hash must be accepted"
+        );
+    }
+
+    #[test]
+    fn b33_no_stored_hash_accepted() {
+        // No stored hash (not yet paired with cert) — skip hash check
+        let result = verify_peer_cert(
+            "device-A",
+            Some("device-A"),
+            Some("aaaa"),
+            None, // no stored hash
+        );
+        assert_eq!(
+            result,
+            CertVerifyResult::Ok,
+            "B-33: no stored hash means hash check is skipped"
+        );
+    }
+
+    #[test]
+    fn b33_no_observed_hash_accepted() {
+        // No observed hash (anonymous/pairing connection) — skip hash check
+        let result = verify_peer_cert(
+            "device-A",
+            None,         // no cert CN (anonymous)
+            None,         // no observed hash
+            Some("aaaa"), // stored hash exists
+        );
+        assert_eq!(
+            result,
+            CertVerifyResult::Ok,
+            "B-33: no observed hash means hash check is skipped"
+        );
+    }
+
+    // ── B-34: responder rejects CN mismatch ────────────────────────────
+
+    #[test]
+    fn b34_cn_mismatch_rejected() {
+        let result = verify_peer_cert(
+            "device-A",
+            Some("device-B"), // CN does NOT match claimed device_id
+            Some("aaaa"),
+            Some("aaaa"),
+        );
+        assert_eq!(
+            result,
+            CertVerifyResult::CnMismatch {
+                remote_id: "device-A".into(),
+                cert_cn: "device-B".into(),
+            },
+            "B-34: CN mismatch must be rejected"
+        );
+    }
+
+    #[test]
+    fn b34_cn_match_accepted() {
+        let result = verify_peer_cert(
+            "device-A",
+            Some("device-A"), // CN matches claimed device_id
+            Some("aaaa"),
+            Some("aaaa"),
+        );
+        assert_eq!(
+            result,
+            CertVerifyResult::Ok,
+            "B-34: matching CN must be accepted"
+        );
+    }
+
+    #[test]
+    fn b34_no_cert_cn_accepted() {
+        // No client cert presented (anonymous/pairing) — skip CN check
+        let result = verify_peer_cert(
+            "device-A", None, // no cert CN
+            None, None,
+        );
+        assert_eq!(
+            result,
+            CertVerifyResult::Ok,
+            "B-34: no cert CN means CN check is skipped"
+        );
+    }
+
+    // ── Happy path: both CN and hash match ─────────────────────────────
+
+    #[test]
+    fn happy_path_cn_and_hash_match() {
+        let result = verify_peer_cert(
+            "device-X",
+            Some("device-X"), // CN matches
+            Some("deadbeef"), // observed hash
+            Some("deadbeef"), // stored hash matches
+        );
+        assert_eq!(
+            result,
+            CertVerifyResult::Ok,
+            "happy path: matching CN + hash must be accepted"
+        );
+    }
+
+    #[test]
+    fn b34_cn_checked_before_b33_hash() {
+        // Both CN mismatch and hash mismatch — CN should be checked first
+        let result = verify_peer_cert(
+            "device-A",
+            Some("device-B"), // CN mismatch
+            Some("aaaa"),     // observed hash
+            Some("bbbb"),     // stored hash mismatch
+        );
+        assert!(
+            matches!(result, CertVerifyResult::CnMismatch { .. }),
+            "B-34 CN check must run before B-33 hash check"
         );
     }
 }
