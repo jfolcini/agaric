@@ -3074,7 +3074,7 @@ pub fn cancel_sync_inner(cancel_flag: &AtomicBool) -> Result<(), AppError> {
 /// # Errors
 ///
 /// - [`AppError::Validation`] — any date fails `YYYY-MM-DD` validation
-pub(crate) async fn count_agenda_batch_inner(
+pub async fn count_agenda_batch_inner(
     pool: &SqlitePool,
     dates: Vec<String>,
 ) -> Result<HashMap<String, usize>, AppError> {
@@ -3119,7 +3119,7 @@ pub(crate) async fn count_agenda_batch_inner(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — any date fails `YYYY-MM-DD` validation
-pub(crate) async fn count_agenda_batch_by_source_inner(
+pub async fn count_agenda_batch_by_source_inner(
     pool: &SqlitePool,
     dates: Vec<String>,
 ) -> Result<HashMap<String, HashMap<String, usize>>, AppError> {

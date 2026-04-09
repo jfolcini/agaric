@@ -142,3 +142,11 @@ harness = false
 [[bench]]
 name = "tag_query_bench"
 harness = false
+
+[[bench]]
+name = "agenda_bench"
+harness = false
+
+[[bench]]
+name = "property_bench"
+harness = false

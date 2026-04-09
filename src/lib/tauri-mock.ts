@@ -1500,6 +1500,41 @@ export function setupMock(): void {
       case 'set_peer_address':
         return null
 
+      // -----------------------------------------------------------------------
+      // Page links for graph view (F-33)
+      // -----------------------------------------------------------------------
+
+      case 'list_page_links': {
+        // Scan all non-deleted blocks for [[ULID]] page link tokens and
+        // return page-to-page edges (source = parent page, target = linked page).
+        const LINK_RE_PL = /\[\[([0-9A-Z]{26})\]\]/g
+        const linkSet = new Set<string>()
+        const pageLinks: Array<{ source_id: string; target_id: string }> = []
+        for (const b of blocks.values()) {
+          if (b.deleted_at) continue
+          const parentId = b.parent_id as string | null
+          if (!parentId) continue
+          // Only consider blocks whose parent is a page
+          const parentBlock = blocks.get(parentId)
+          if (!parentBlock || parentBlock.block_type !== 'page') continue
+          const content = (b.content as string) ?? ''
+          for (const m of content.matchAll(LINK_RE_PL)) {
+            const targetPageId = m[1] as string
+            // Ensure target is an existing non-deleted page
+            const targetBlock = blocks.get(targetPageId)
+            if (!targetBlock || targetBlock.block_type !== 'page' || targetBlock.deleted_at)
+              continue
+            // Deduplicate edges
+            const key = `${parentId}→${targetPageId}`
+            if (!linkSet.has(key)) {
+              linkSet.add(key)
+              pageLinks.push({ source_id: parentId, target_id: targetPageId })
+            }
+          }
+        }
+        return pageLinks
+      }
+
       default:
         return null
     }
