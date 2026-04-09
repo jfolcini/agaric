@@ -760,42 +760,48 @@ mod tests {
     async fn strip_plain_text_unchanged() {
         let (pool, _dir) = test_pool().await;
         let result = strip_for_fts("hello world", &pool).await.unwrap();
-        assert_eq!(result, "hello world");
+        assert_eq!(
+            result, "hello world",
+            "plain text should pass through unchanged"
+        );
     }
 
     #[tokio::test]
     async fn strip_bold() {
         let (pool, _dir) = test_pool().await;
         let result = strip_for_fts("**hello**", &pool).await.unwrap();
-        assert_eq!(result, "hello");
+        assert_eq!(result, "hello", "bold markers should be stripped");
     }
 
     #[tokio::test]
     async fn strip_italic() {
         let (pool, _dir) = test_pool().await;
         let result = strip_for_fts("*hello*", &pool).await.unwrap();
-        assert_eq!(result, "hello");
+        assert_eq!(result, "hello", "italic markers should be stripped");
     }
 
     #[tokio::test]
     async fn strip_code() {
         let (pool, _dir) = test_pool().await;
         let result = strip_for_fts("`hello`", &pool).await.unwrap();
-        assert_eq!(result, "hello");
+        assert_eq!(result, "hello", "inline code backticks should be stripped");
     }
 
     #[tokio::test]
     async fn strip_strikethrough() {
         let (pool, _dir) = test_pool().await;
         let result = strip_for_fts("~~deleted~~", &pool).await.unwrap();
-        assert_eq!(result, "deleted");
+        assert_eq!(
+            result, "deleted",
+            "strikethrough markers should be stripped"
+        );
     }
 
     #[tokio::test]
     async fn strip_highlight() {
         let (pool, _dir) = test_pool().await;
         let result = strip_for_fts("==important==", &pool).await.unwrap();
-        assert_eq!(result, "important");
+        assert_eq!(result, "important", "highlight markers should be stripped");
     }
 
     #[tokio::test]
@@ -804,7 +810,10 @@ mod tests {
         let result = strip_for_fts("**bold** and *italic* and `code`", &pool)
             .await
             .unwrap();
-        assert_eq!(result, "bold and italic and code");
+        assert_eq!(
+            result, "bold and italic and code",
+            "mixed bold/italic/code formatting should be stripped"
+        );
     }
 
     #[tokio::test]
@@ -813,7 +822,10 @@ mod tests {
         let result = strip_for_fts("**bold** and ~~deleted~~ and ==highlighted==", &pool)
             .await
             .unwrap();
-        assert_eq!(result, "bold and deleted and highlighted");
+        assert_eq!(
+            result, "bold and deleted and highlighted",
+            "mixed bold/strikethrough/highlight formatting should be stripped"
+        );
     }
 
     #[tokio::test]
@@ -823,7 +835,10 @@ mod tests {
 
         let input = format!("task #[{TAG_ULID}]");
         let result = strip_for_fts(&input, &pool).await.unwrap();
-        assert_eq!(result, "task urgent");
+        assert_eq!(
+            result, "task urgent",
+            "tag reference should resolve to tag name"
+        );
     }
 
     #[tokio::test]
@@ -833,7 +848,10 @@ mod tests {
 
         let input = format!("see [[{PAGE_ULID}]]");
         let result = strip_for_fts(&input, &pool).await.unwrap();
-        assert_eq!(result, "see My Page");
+        assert_eq!(
+            result, "see My Page",
+            "page link should resolve to page title"
+        );
     }
 
     #[tokio::test]
@@ -841,7 +859,10 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let input = format!("task #[{UNKNOWN_ULID}]");
         let result = strip_for_fts(&input, &pool).await.unwrap();
-        assert_eq!(result, "task ");
+        assert_eq!(
+            result, "task ",
+            "unknown tag reference should resolve to empty string"
+        );
     }
 
     #[tokio::test]
@@ -849,7 +870,10 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let input = format!("see [[{UNKNOWN_ULID}]]");
         let result = strip_for_fts(&input, &pool).await.unwrap();
-        assert_eq!(result, "see ");
+        assert_eq!(
+            result, "see ",
+            "unknown page link should resolve to empty string"
+        );
     }
 
     #[tokio::test]
@@ -858,7 +882,10 @@ mod tests {
         // **bold *italic*** — bold outer stripped first, then italic
         let result = strip_for_fts("**bold *italic***", &pool).await.unwrap();
         // After bold strip: "bold *italic*", after italic strip: "bold italic"
-        assert_eq!(result, "bold italic");
+        assert_eq!(
+            result, "bold italic",
+            "nested bold/italic should be fully stripped"
+        );
     }
 
     #[tokio::test]
@@ -871,7 +898,10 @@ mod tests {
 
         let input = format!("task #[{tag_id}] and #[{tag_id}] see [[{page_id}]] and [[{page_id}]]");
         let result = strip_for_fts(&input, &pool).await.unwrap();
-        assert_eq!(result, "task urgent and urgent see My Page and My Page");
+        assert_eq!(
+            result, "task urgent and urgent see My Page and My Page",
+            "multiple duplicate refs should all be resolved"
+        );
     }
 
     // ======================================================================
@@ -887,7 +917,10 @@ mod tests {
 
         let input = format!("**bold** #[{TAG_ULID}] see [[{PAGE_ULID}]]");
         let result = strip_for_fts_with_maps(&input, &tag_names, &page_titles);
-        assert_eq!(result, "bold urgent see My Page");
+        assert_eq!(
+            result, "bold urgent see My Page",
+            "should strip bold and resolve tag/page refs via maps"
+        );
     }
 
     #[test]
@@ -897,7 +930,10 @@ mod tests {
 
         let input = format!("#[{UNKNOWN_ULID}] and [[{UNKNOWN_ULID}]]");
         let result = strip_for_fts_with_maps(&input, &tag_names, &page_titles);
-        assert_eq!(result, " and ");
+        assert_eq!(
+            result, " and ",
+            "unknown refs should resolve to empty strings via maps"
+        );
     }
 
     // ======================================================================
@@ -920,8 +956,15 @@ mod tests {
 
         let page = PageRequest::new(None, Some(50)).unwrap();
         let results = search_fts(&pool, "wonderful", &page).await.unwrap();
-        assert_eq!(results.items.len(), 1);
-        assert_eq!(results.items[0].id, BLOCK_A);
+        assert_eq!(
+            results.items.len(),
+            1,
+            "search should return exactly 1 indexed block"
+        );
+        assert_eq!(
+            results.items[0].id, BLOCK_A,
+            "search result should be the indexed block"
+        );
     }
 
     #[tokio::test]
@@ -950,12 +993,23 @@ mod tests {
 
         // Old content should NOT be found
         let old_results = search_fts(&pool, "original", &page).await.unwrap();
-        assert_eq!(old_results.items.len(), 0);
+        assert_eq!(
+            old_results.items.len(),
+            0,
+            "old content should not be found after edit"
+        );
 
         // New content should be found
         let new_results = search_fts(&pool, "different", &page).await.unwrap();
-        assert_eq!(new_results.items.len(), 1);
-        assert_eq!(new_results.items[0].id, BLOCK_A);
+        assert_eq!(
+            new_results.items.len(),
+            1,
+            "new content should be found after edit"
+        );
+        assert_eq!(
+            new_results.items[0].id, BLOCK_A,
+            "edited block should match new content"
+        );
     }
 
     #[tokio::test]
@@ -970,7 +1024,11 @@ mod tests {
 
         let page = PageRequest::new(None, Some(50)).unwrap();
         let results = search_fts(&pool, "searchable", &page).await.unwrap();
-        assert_eq!(results.items.len(), 0);
+        assert_eq!(
+            results.items.len(),
+            0,
+            "deleted block should be removed from FTS index"
+        );
     }
 
     #[tokio::test]
@@ -978,7 +1036,10 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         // Should not error for a block that doesn't exist
         let result = update_fts_for_block(&pool, "NONEXISTENT00000000000000").await;
-        assert!(result.is_ok());
+        assert!(
+            result.is_ok(),
+            "updating FTS for nonexistent block should not error"
+        );
     }
 
     #[tokio::test]
@@ -992,7 +1053,11 @@ mod tests {
 
         let page = PageRequest::new(None, Some(50)).unwrap();
         let results = search_fts(&pool, "conflict", &page).await.unwrap();
-        assert_eq!(results.items.len(), 0);
+        assert_eq!(
+            results.items.len(),
+            0,
+            "conflict block should be removed from FTS index"
+        );
     }
 
     #[tokio::test]
@@ -1009,7 +1074,7 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(count, 0);
+        assert_eq!(count, 0, "null-content block should not be indexed in FTS");
     }
 
     // ======================================================================
@@ -1034,14 +1099,21 @@ mod tests {
 
         let page = PageRequest::new(None, Some(50)).unwrap();
         let results = search_fts(&pool, "removable", &page).await.unwrap();
-        assert_eq!(results.items.len(), 0);
+        assert_eq!(
+            results.items.len(),
+            0,
+            "removed block should not appear in search results"
+        );
     }
 
     #[tokio::test]
     async fn remove_fts_nonexistent_is_noop() {
         let (pool, _dir) = test_pool().await;
         let result = remove_fts_for_block(&pool, "NONEXISTENT00000000000000").await;
-        assert!(result.is_ok());
+        assert!(
+            result.is_ok(),
+            "removing nonexistent block from FTS should not error"
+        );
     }
 
     // ======================================================================
@@ -1060,16 +1132,16 @@ mod tests {
         let page = PageRequest::new(None, Some(50)).unwrap();
 
         let a = search_fts(&pool, "alpha", &page).await.unwrap();
-        assert_eq!(a.items.len(), 1);
-        assert_eq!(a.items[0].id, BLOCK_A);
+        assert_eq!(a.items.len(), 1, "rebuild should index alpha block");
+        assert_eq!(a.items[0].id, BLOCK_A, "alpha search should return BLOCK_A");
 
         let b = search_fts(&pool, "beta", &page).await.unwrap();
-        assert_eq!(b.items.len(), 1);
-        assert_eq!(b.items[0].id, BLOCK_B);
+        assert_eq!(b.items.len(), 1, "rebuild should index beta block");
+        assert_eq!(b.items[0].id, BLOCK_B, "beta search should return BLOCK_B");
 
         let g = search_fts(&pool, "gamma", &page).await.unwrap();
-        assert_eq!(g.items.len(), 1);
-        assert_eq!(g.items[0].id, BLOCK_C);
+        assert_eq!(g.items.len(), 1, "rebuild should index gamma block");
+        assert_eq!(g.items[0].id, BLOCK_C, "gamma search should return BLOCK_C");
     }
 
     #[tokio::test]
@@ -1083,10 +1155,18 @@ mod tests {
 
         let page = PageRequest::new(None, Some(50)).unwrap();
         let deleted_results = search_fts(&pool, "deleted", &page).await.unwrap();
-        assert_eq!(deleted_results.items.len(), 0);
+        assert_eq!(
+            deleted_results.items.len(),
+            0,
+            "deleted block should be excluded from rebuild"
+        );
 
         let visible_results = search_fts(&pool, "visible", &page).await.unwrap();
-        assert_eq!(visible_results.items.len(), 1);
+        assert_eq!(
+            visible_results.items.len(),
+            1,
+            "visible block should be indexed after rebuild"
+        );
     }
 
     #[tokio::test]
@@ -1100,7 +1180,11 @@ mod tests {
 
         let page = PageRequest::new(None, Some(50)).unwrap();
         let conflict_results = search_fts(&pool, "conflicting", &page).await.unwrap();
-        assert_eq!(conflict_results.items.len(), 0);
+        assert_eq!(
+            conflict_results.items.len(),
+            0,
+            "conflict block should be excluded from rebuild"
+        );
     }
 
     #[tokio::test]
@@ -1130,7 +1214,11 @@ mod tests {
 
         let page = PageRequest::new(None, Some(50)).unwrap();
         let results = search_fts(&pool, "first", &page).await.unwrap();
-        assert_eq!(results.items.len(), 0);
+        assert_eq!(
+            results.items.len(),
+            0,
+            "stale FTS entry should be cleared after rebuild"
+        );
     }
 
     #[tokio::test]
@@ -1156,8 +1244,15 @@ mod tests {
 
         // Should find the content block by "task" (unique to it)
         let task_results = search_fts(&pool, "task", &page).await.unwrap();
-        assert_eq!(task_results.items.len(), 1);
-        assert_eq!(task_results.items[0].id, BLOCK_A);
+        assert_eq!(
+            task_results.items.len(),
+            1,
+            "rebuild should resolve tag/page refs for search"
+        );
+        assert_eq!(
+            task_results.items[0].id, BLOCK_A,
+            "task search should return the content block"
+        );
     }
 
     // ======================================================================
@@ -1202,7 +1297,11 @@ mod tests {
         // Search should still work
         let page = PageRequest::new(None, Some(50)).unwrap();
         let results = search_fts(&pool, "optimize", &page).await.unwrap();
-        assert_eq!(results.items.len(), 3);
+        assert_eq!(
+            results.items.len(),
+            3,
+            "search should still work after FTS optimize"
+        );
     }
 
     // ======================================================================
@@ -1243,8 +1342,15 @@ mod tests {
 
         let page = PageRequest::new(None, Some(50)).unwrap();
         let results = search_fts(&pool, "alpha", &page).await.unwrap();
-        assert_eq!(results.items.len(), 1);
-        assert_eq!(results.items[0].id, BLOCK_A);
+        assert_eq!(
+            results.items.len(),
+            1,
+            "search should find exactly one matching block"
+        );
+        assert_eq!(
+            results.items[0].id, BLOCK_A,
+            "search should return the correct block"
+        );
     }
 
     #[tokio::test]
@@ -1255,9 +1361,19 @@ mod tests {
 
         let page = PageRequest::new(None, Some(50)).unwrap();
         let results = search_fts(&pool, "nonexistent", &page).await.unwrap();
-        assert_eq!(results.items.len(), 0);
-        assert!(!results.has_more);
-        assert!(results.next_cursor.is_none());
+        assert_eq!(
+            results.items.len(),
+            0,
+            "search for nonexistent term should return no results"
+        );
+        assert!(
+            !results.has_more,
+            "no-results response should not indicate more pages"
+        );
+        assert!(
+            results.next_cursor.is_none(),
+            "no-results response should have no cursor"
+        );
     }
 
     #[tokio::test]
@@ -1268,8 +1384,15 @@ mod tests {
 
         let page = PageRequest::new(None, Some(50)).unwrap();
         let results = search_fts(&pool, "", &page).await.unwrap();
-        assert_eq!(results.items.len(), 0);
-        assert!(!results.has_more);
+        assert_eq!(
+            results.items.len(),
+            0,
+            "empty query should return no results"
+        );
+        assert!(
+            !results.has_more,
+            "empty query should not indicate more pages"
+        );
     }
 
     #[tokio::test]
@@ -1280,8 +1403,15 @@ mod tests {
 
         let page = PageRequest::new(None, Some(50)).unwrap();
         let results = search_fts(&pool, "   ", &page).await.unwrap();
-        assert_eq!(results.items.len(), 0);
-        assert!(!results.has_more);
+        assert_eq!(
+            results.items.len(),
+            0,
+            "whitespace-only query should return no results"
+        );
+        assert!(
+            !results.has_more,
+            "whitespace-only query should not indicate more pages"
+        );
     }
 
     #[tokio::test]
@@ -1305,8 +1435,15 @@ mod tests {
         let page = PageRequest::new(None, Some(50)).unwrap();
         let results = search_fts(&pool, "visible", &page).await.unwrap();
         // Only BLOCK_A should appear (BLOCK_B is deleted)
-        assert_eq!(results.items.len(), 1);
-        assert_eq!(results.items[0].id, BLOCK_A);
+        assert_eq!(
+            results.items.len(),
+            1,
+            "only non-deleted block should appear in search"
+        );
+        assert_eq!(
+            results.items[0].id, BLOCK_A,
+            "search result should be the non-deleted block"
+        );
     }
 
     #[tokio::test]
@@ -1355,15 +1492,25 @@ mod tests {
         // First page with limit 2
         let page1 = PageRequest::new(None, Some(2)).unwrap();
         let results1 = search_fts(&pool, "pagination", &page1).await.unwrap();
-        assert_eq!(results1.items.len(), 2);
-        assert!(results1.has_more);
-        assert!(results1.next_cursor.is_some());
+        assert_eq!(results1.items.len(), 2, "first page should return 2 items");
+        assert!(results1.has_more, "first page should indicate more results");
+        assert!(
+            results1.next_cursor.is_some(),
+            "first page should have a next cursor"
+        );
 
         // Second page using cursor
         let page2 = PageRequest::new(results1.next_cursor, Some(2)).unwrap();
         let results2 = search_fts(&pool, "pagination", &page2).await.unwrap();
-        assert_eq!(results2.items.len(), 2);
-        assert!(!results2.has_more);
+        assert_eq!(
+            results2.items.len(),
+            2,
+            "second page should return remaining 2 items"
+        );
+        assert!(
+            !results2.has_more,
+            "second page should not indicate more results"
+        );
 
         // Verify no duplicates across pages
         let all_ids: Vec<&str> = results1
@@ -1425,12 +1572,23 @@ mod tests {
 
         // Both blocks match "programming"
         let both = search_fts(&pool, "programming", &page).await.unwrap();
-        assert_eq!(both.items.len(), 2);
+        assert_eq!(
+            both.items.len(),
+            2,
+            "both blocks should match 'programming'"
+        );
 
         // Only BLOCK_A matches "rust"
         let rust_only = search_fts(&pool, "rust", &page).await.unwrap();
-        assert_eq!(rust_only.items.len(), 1);
-        assert_eq!(rust_only.items[0].id, BLOCK_A);
+        assert_eq!(
+            rust_only.items.len(),
+            1,
+            "only one block should match 'rust'"
+        );
+        assert_eq!(
+            rust_only.items[0].id, BLOCK_A,
+            "rust search should return BLOCK_A"
+        );
     }
 
     // ======================================================================
@@ -1557,7 +1715,7 @@ mod tests {
     async fn strip_escaped_asterisk() {
         let (pool, _dir) = test_pool().await;
         let result = strip_for_fts(r"use \*args", &pool).await.unwrap();
-        assert_eq!(result, "use *args");
+        assert_eq!(result, "use *args", "escaped asterisk should be unescaped");
     }
 
     #[tokio::test]
@@ -1567,7 +1725,10 @@ mod tests {
         // so it passes through to the unescape step.
         // Paired `\`...\`` would be consumed by CODE_RE first (known limitation).
         let result = strip_for_fts("it costs 5\\` USD", &pool).await.unwrap();
-        assert_eq!(result, "it costs 5` USD");
+        assert_eq!(
+            result, "it costs 5` USD",
+            "escaped backtick should be unescaped"
+        );
     }
 
     #[tokio::test]
@@ -1576,7 +1737,10 @@ mod tests {
         let result = strip_for_fts("**bold *nested*** rest", &pool)
             .await
             .unwrap();
-        assert_eq!(result, "bold nested rest");
+        assert_eq!(
+            result, "bold nested rest",
+            "complex nested bold/italic should be fully stripped"
+        );
     }
 
     #[tokio::test]
@@ -1586,7 +1750,10 @@ mod tests {
 
         let input = format!("**bold** and `code` with #[{TAG_ULID}]");
         let result = strip_for_fts(&input, &pool).await.unwrap();
-        assert_eq!(result, "bold and code with urgent");
+        assert_eq!(
+            result, "bold and code with urgent",
+            "mixed formatting and tag ref should be stripped/resolved"
+        );
     }
 
     #[test]
@@ -1597,7 +1764,10 @@ mod tests {
         // Verify the sync batch path handles markdown + unescape.
         // Use a single \* (unpaired) so ITALIC_RE doesn't consume it.
         let result = strip_for_fts_with_maps(r"**bold** `code` \*args", &tag_names, &page_titles);
-        assert_eq!(result, "bold code *args");
+        assert_eq!(
+            result, "bold code *args",
+            "sync strip should handle formatting and unescape"
+        );
     }
 
     #[test]
@@ -1610,7 +1780,10 @@ mod tests {
             &tag_names,
             &page_titles,
         );
-        assert_eq!(result, "bold and deleted and highlighted");
+        assert_eq!(
+            result, "bold and deleted and highlighted",
+            "sync strip should handle strikethrough and highlight"
+        );
     }
 
     // ======================================================================
@@ -1653,7 +1826,10 @@ mod tests {
             1,
             "deleted block should be excluded by JOIN filter"
         );
-        assert_eq!(results.items[0].id, BLOCK_A);
+        assert_eq!(
+            results.items[0].id, BLOCK_A,
+            "non-deleted block should be the search result"
+        );
     }
 
     // ======================================================================
@@ -1679,8 +1855,15 @@ mod tests {
         let results = search_fts(&pool, "capped", &page).await.unwrap();
 
         // Should still find the result (not broken by capping)
-        assert_eq!(results.items.len(), 1);
-        assert_eq!(results.items[0].id, BLOCK_A);
+        assert_eq!(
+            results.items.len(),
+            1,
+            "capped limit should still find matching block"
+        );
+        assert_eq!(
+            results.items[0].id, BLOCK_A,
+            "capped search should return the correct block"
+        );
     }
 
     // ======================================================================
@@ -1689,35 +1872,68 @@ mod tests {
 
     #[test]
     fn sanitize_simple_terms() {
-        assert_eq!(sanitize_fts_query("hello world"), "\"hello\" \"world\"");
+        assert_eq!(
+            sanitize_fts_query("hello world"),
+            "\"hello\" \"world\"",
+            "simple terms should be individually quoted"
+        );
     }
 
     #[test]
     fn sanitize_preserves_empty_after_trim() {
         // split_whitespace on empty string yields no tokens
-        assert_eq!(sanitize_fts_query(""), "");
-        assert_eq!(sanitize_fts_query("   "), "");
+        assert_eq!(
+            sanitize_fts_query(""),
+            "",
+            "empty string should produce empty output"
+        );
+        assert_eq!(
+            sanitize_fts_query("   "),
+            "",
+            "whitespace-only string should produce empty output"
+        );
     }
 
     #[test]
     fn sanitize_escapes_internal_quotes() {
-        assert_eq!(sanitize_fts_query("say\"hello"), "\"say\"\"hello\"");
+        assert_eq!(
+            sanitize_fts_query("say\"hello"),
+            "\"say\"\"hello\"",
+            "internal double quotes should be escaped by doubling"
+        );
     }
 
     #[test]
     fn sanitize_fts5_operators() {
         assert_eq!(
             sanitize_fts_query("hello OR world"),
-            "\"hello\" \"OR\" \"world\""
+            "\"hello\" \"OR\" \"world\"",
+            "OR operator should be quoted as literal term"
         );
-        assert_eq!(sanitize_fts_query("NOT test"), "\"NOT\" \"test\"");
+        assert_eq!(
+            sanitize_fts_query("NOT test"),
+            "\"NOT\" \"test\"",
+            "NOT operator should be quoted as literal term"
+        );
     }
 
     #[test]
     fn sanitize_special_chars() {
-        assert_eq!(sanitize_fts_query("test*"), "\"test*\"");
-        assert_eq!(sanitize_fts_query("(group)"), "\"(group)\"");
-        assert_eq!(sanitize_fts_query("col:value"), "\"col:value\"");
+        assert_eq!(
+            sanitize_fts_query("test*"),
+            "\"test*\"",
+            "wildcard should be quoted as literal"
+        );
+        assert_eq!(
+            sanitize_fts_query("(group)"),
+            "\"(group)\"",
+            "parentheses should be quoted as literal"
+        );
+        assert_eq!(
+            sanitize_fts_query("col:value"),
+            "\"col:value\"",
+            "column filter syntax should be quoted as literal"
+        );
     }
 
     // ======================================================================
@@ -1823,9 +2039,12 @@ mod tests {
         // First page: limit 1
         let page1 = PageRequest::new(None, Some(1)).unwrap();
         let result1 = search_fts(&pool, "apple", &page1).await.unwrap();
-        assert_eq!(result1.items.len(), 1);
-        assert!(result1.has_more);
-        assert!(result1.next_cursor.is_some());
+        assert_eq!(result1.items.len(), 1, "first page should return 1 item");
+        assert!(result1.has_more, "first page should indicate more results");
+        assert!(
+            result1.next_cursor.is_some(),
+            "first page should have a next cursor"
+        );
 
         // Decode the cursor and verify rank is present
         let cursor_str = result1.next_cursor.clone().unwrap();
@@ -1844,7 +2063,7 @@ mod tests {
         // Second page using the cursor
         let page2 = PageRequest::new(result1.next_cursor, Some(1)).unwrap();
         let result2 = search_fts(&pool, "apple", &page2).await.unwrap();
-        assert_eq!(result2.items.len(), 1);
+        assert_eq!(result2.items.len(), 1, "second page should return 1 item");
 
         // Verify no duplicate between page 1 and page 2
         assert_ne!(
@@ -1855,8 +2074,11 @@ mod tests {
         // Third page
         let page3 = PageRequest::new(result2.next_cursor, Some(1)).unwrap();
         let result3 = search_fts(&pool, "apple", &page3).await.unwrap();
-        assert_eq!(result3.items.len(), 1);
-        assert!(!result3.has_more);
+        assert_eq!(result3.items.len(), 1, "third page should return 1 item");
+        assert!(
+            !result3.has_more,
+            "third page should not indicate more results"
+        );
 
         // Collect all IDs and verify completeness
         let all_ids: Vec<&str> = vec![
@@ -2295,16 +2517,25 @@ mod tests {
         let page = PageRequest::new(None, Some(50)).unwrap();
 
         let a = search_fts(&pool, "alpha", &page).await.unwrap();
-        assert_eq!(a.items.len(), 1);
-        assert_eq!(a.items[0].id, BLOCK_A);
+        assert_eq!(a.items.len(), 1, "split rebuild should index alpha block");
+        assert_eq!(
+            a.items[0].id, BLOCK_A,
+            "alpha search should return BLOCK_A after split rebuild"
+        );
 
         let b = search_fts(&pool, "beta", &page).await.unwrap();
-        assert_eq!(b.items.len(), 1);
-        assert_eq!(b.items[0].id, BLOCK_B);
+        assert_eq!(b.items.len(), 1, "split rebuild should index beta block");
+        assert_eq!(
+            b.items[0].id, BLOCK_B,
+            "beta search should return BLOCK_B after split rebuild"
+        );
 
         let g = search_fts(&pool, "gamma", &page).await.unwrap();
-        assert_eq!(g.items.len(), 1);
-        assert_eq!(g.items[0].id, BLOCK_C);
+        assert_eq!(g.items.len(), 1, "split rebuild should index gamma block");
+        assert_eq!(
+            g.items[0].id, BLOCK_C,
+            "gamma search should return BLOCK_C after split rebuild"
+        );
     }
 
     #[tokio::test]
@@ -2318,10 +2549,18 @@ mod tests {
 
         let page = PageRequest::new(None, Some(50)).unwrap();
         let deleted_results = search_fts(&pool, "deleted", &page).await.unwrap();
-        assert_eq!(deleted_results.items.len(), 0);
+        assert_eq!(
+            deleted_results.items.len(),
+            0,
+            "deleted block should be excluded from split rebuild"
+        );
 
         let visible_results = search_fts(&pool, "visible", &page).await.unwrap();
-        assert_eq!(visible_results.items.len(), 1);
+        assert_eq!(
+            visible_results.items.len(),
+            1,
+            "visible block should be indexed after split rebuild"
+        );
     }
 
     #[tokio::test]
@@ -2346,8 +2585,15 @@ mod tests {
 
         // Should find the content block by "task"
         let task_results = search_fts(&pool, "task", &page).await.unwrap();
-        assert_eq!(task_results.items.len(), 1);
-        assert_eq!(task_results.items[0].id, BLOCK_A);
+        assert_eq!(
+            task_results.items.len(),
+            1,
+            "split rebuild should resolve refs for search"
+        );
+        assert_eq!(
+            task_results.items[0].id, BLOCK_A,
+            "task search should return content block after split rebuild"
+        );
     }
 
     #[tokio::test]
@@ -2362,6 +2608,10 @@ mod tests {
 
         let page = PageRequest::new(None, Some(50)).unwrap();
         let results = search_fts(&pool, "first", &page).await.unwrap();
-        assert_eq!(results.items.len(), 0);
+        assert_eq!(
+            results.items.len(),
+            0,
+            "stale FTS entry should be cleared after split rebuild"
+        );
     }
 }

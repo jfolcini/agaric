@@ -807,7 +807,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(rows.len(), 1);
+        assert_eq!(rows.len(), 1, "exactly one tag should be in cache");
         assert_eq!(
             (&rows[0].tag_id, rows[0].usage_count),
             (&"TAG01".to_string(), 0),
@@ -821,7 +821,11 @@ mod tests {
 
         insert_block(&pool, "TAG01", "tag", "first").await;
         rebuild_tags_cache(&pool).await.unwrap();
-        assert_eq!(count_rows(&pool, "tags_cache").await, 1);
+        assert_eq!(
+            count_rows(&pool, "tags_cache").await,
+            1,
+            "baseline: one tag in cache before delete"
+        );
 
         soft_delete_block(&pool, "TAG01").await;
         rebuild_tags_cache(&pool).await.unwrap();
@@ -885,9 +889,12 @@ mod tests {
             "consecutive rebuilds must produce identical results"
         );
         for (a, b) in first.iter().zip(second.iter()) {
-            assert_eq!(a.tag_id, b.tag_id);
-            assert_eq!(a.name, b.name);
-            assert_eq!(a.usage_count, b.usage_count);
+            assert_eq!(a.tag_id, b.tag_id, "tag_id must be stable across rebuilds");
+            assert_eq!(a.name, b.name, "tag name must be stable across rebuilds");
+            assert_eq!(
+                a.usage_count, b.usage_count,
+                "usage_count must be stable across rebuilds"
+            );
         }
     }
 
@@ -914,10 +921,12 @@ mod tests {
         assert_eq!(
             (rows[0].page_id.as_str(), rows[0].title.as_str()),
             ("PAGE01", "My First Page"),
+            "first page must match expected id and title"
         );
         assert_eq!(
             (rows[1].page_id.as_str(), rows[1].title.as_str()),
             ("PAGE02", "My Second Page"),
+            "second page must match expected id and title"
         );
     }
 
@@ -944,7 +953,11 @@ mod tests {
 
         insert_block(&pool, "PAGE01", "page", "Will be deleted").await;
         rebuild_pages_cache(&pool).await.unwrap();
-        assert_eq!(count_rows(&pool, "pages_cache").await, 1);
+        assert_eq!(
+            count_rows(&pool, "pages_cache").await,
+            1,
+            "baseline: one page in cache before delete"
+        );
 
         soft_delete_block(&pool, "PAGE01").await;
         rebuild_pages_cache(&pool).await.unwrap();
@@ -997,8 +1010,14 @@ mod tests {
             "consecutive rebuilds must produce identical results"
         );
         for (a, b) in first.iter().zip(second.iter()) {
-            assert_eq!(a.page_id, b.page_id);
-            assert_eq!(a.title, b.title);
+            assert_eq!(
+                a.page_id, b.page_id,
+                "page_id must be stable across rebuilds"
+            );
+            assert_eq!(
+                a.title, b.title,
+                "page title must be stable across rebuilds"
+            );
         }
     }
 
@@ -1020,13 +1039,20 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows.len(),
+            1,
+            "exactly one agenda entry should exist from date property"
+        );
         assert_eq!(
             rows[0].date.as_str(),
             "2025-01-15",
             "date must match property value"
         );
-        assert_eq!(rows[0].block_id, "BLK01");
+        assert_eq!(
+            rows[0].block_id, "BLK01",
+            "block_id must match source block"
+        );
         assert_eq!(
             rows[0].source.as_str(),
             "property:due",
@@ -1049,13 +1075,20 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows.len(),
+            1,
+            "exactly one agenda entry should exist from date tag"
+        );
         assert_eq!(
             rows[0].date.as_str(),
             "2025-03-20",
             "date must be extracted from tag content"
         );
-        assert_eq!(rows[0].block_id, "BLK01");
+        assert_eq!(
+            rows[0].block_id, "BLK01",
+            "block_id must match tagged block"
+        );
         assert_eq!(
             rows[0].source.as_str(),
             "tag:DTAG1",
@@ -1159,7 +1192,11 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         let exact = "date/2025-03-20"; // 15 chars
-        assert_eq!(exact.len(), 15);
+        assert_eq!(
+            exact.len(),
+            15,
+            "test precondition: exact date tag must be 15 chars"
+        );
 
         insert_block(&pool, "DTAG1", "tag", exact).await;
         insert_block(&pool, "BLK01", "content", "event").await;
@@ -1179,7 +1216,11 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         let short = "date/2025-3-20"; // 14 chars
-        assert_eq!(short.len(), 14);
+        assert_eq!(
+            short.len(),
+            14,
+            "test precondition: short date tag must be 14 chars"
+        );
 
         insert_block(&pool, "DTAG1", "tag", short).await;
         insert_block(&pool, "BLK01", "content", "event").await;
@@ -1199,7 +1240,11 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         let long = "date/2025-03-20X"; // 16 chars
-        assert_eq!(long.len(), 16);
+        assert_eq!(
+            long.len(),
+            16,
+            "test precondition: long date tag must be 16 chars"
+        );
 
         insert_block(&pool, "DTAG1", "tag", long).await;
         insert_block(&pool, "BLK01", "content", "event").await;
@@ -1220,7 +1265,11 @@ mod tests {
 
         // 15 chars but not a valid date pattern — e.g. "date/ABCDEFGHIJ"
         let fake = "date/ABCDEFGHIJ";
-        assert_eq!(fake.len(), 15);
+        assert_eq!(
+            fake.len(),
+            15,
+            "test precondition: fake date tag must be 15 chars"
+        );
 
         insert_block(&pool, "DTAG1", "tag", fake).await;
         insert_block(&pool, "BLK01", "content", "note").await;
@@ -1241,7 +1290,11 @@ mod tests {
 
         // 15 chars, starts with date/, but uses dots instead of dashes
         let bad_sep = "date/2025.03.20";
-        assert_eq!(bad_sep.len(), 15);
+        assert_eq!(
+            bad_sep.len(),
+            15,
+            "test precondition: bad-separator date tag must be 15 chars"
+        );
 
         insert_block(&pool, "DTAG1", "tag", bad_sep).await;
         insert_block(&pool, "BLK01", "content", "note").await;
@@ -1295,8 +1348,16 @@ mod tests {
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-        assert_eq!(rows[0], ("2025-08-01".to_string(), "BLK01".to_string()));
-        assert_eq!(rows[1], ("2025-09-15".to_string(), "BLK02".to_string()));
+        assert_eq!(
+            rows[0],
+            ("2025-08-01".to_string(), "BLK01".to_string()),
+            "first entry must be BLK01 on 2025-08-01"
+        );
+        assert_eq!(
+            rows[1],
+            ("2025-09-15".to_string(), "BLK02".to_string()),
+            "second entry must be BLK02 on 2025-09-15"
+        );
     }
 
     #[tokio::test]
@@ -1397,8 +1458,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(rows.len(), 2, "both link targets must be indexed");
-        assert_eq!(rows[0].target_id, "01HZ00000000000000000000AB");
-        assert_eq!(rows[1].target_id, "01HZ00000000000000000000CD");
+        assert_eq!(
+            rows[0].target_id, "01HZ00000000000000000000AB",
+            "first target must be AB"
+        );
+        assert_eq!(
+            rows[1].target_id, "01HZ00000000000000000000CD",
+            "second target must be CD"
+        );
     }
 
     #[tokio::test]
@@ -1445,8 +1512,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(rows.len(), 2, "diff: A kept, B removed, C added");
-        assert_eq!(rows[0].target_id, "01HZ00000000000000000000AB");
-        assert_eq!(rows[1].target_id, "01HZ00000000000000000000EF");
+        assert_eq!(
+            rows[0].target_id, "01HZ00000000000000000000AB",
+            "target A must be kept after diff"
+        );
+        assert_eq!(
+            rows[1].target_id, "01HZ00000000000000000000EF",
+            "target C must be added after diff"
+        );
     }
 
     #[tokio::test]
@@ -1465,7 +1538,11 @@ mod tests {
         reindex_block_links(&pool, "01HZ0000000000000000000SRC")
             .await
             .unwrap();
-        assert_eq!(count_rows(&pool, "block_links").await, 1);
+        assert_eq!(
+            count_rows(&pool, "block_links").await,
+            1,
+            "baseline: one link before soft-delete"
+        );
 
         soft_delete_block(&pool, "01HZ0000000000000000000SRC").await;
         reindex_block_links(&pool, "01HZ0000000000000000000SRC")
@@ -1645,8 +1722,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(rows.len(), 2, "adjacent links must both be parsed");
-        assert_eq!(rows[0].target_id, "01HZ00000000000000000000AB");
-        assert_eq!(rows[1].target_id, "01HZ00000000000000000000CD");
+        assert_eq!(
+            rows[0].target_id, "01HZ00000000000000000000AB",
+            "first adjacent target must be AB"
+        );
+        assert_eq!(
+            rows[1].target_id, "01HZ00000000000000000000CD",
+            "second adjacent target must be CD"
+        );
     }
 
     #[tokio::test]
@@ -1690,10 +1773,26 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(count_rows(&pool, "tags_cache").await, 0);
-        assert_eq!(count_rows(&pool, "pages_cache").await, 0);
-        assert_eq!(count_rows(&pool, "agenda_cache").await, 0);
-        assert_eq!(count_rows(&pool, "block_links").await, 0);
+        assert_eq!(
+            count_rows(&pool, "tags_cache").await,
+            0,
+            "tags_cache must be empty on empty tables"
+        );
+        assert_eq!(
+            count_rows(&pool, "pages_cache").await,
+            0,
+            "pages_cache must be empty on empty tables"
+        );
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            0,
+            "agenda_cache must be empty on empty tables"
+        );
+        assert_eq!(
+            count_rows(&pool, "block_links").await,
+            0,
+            "block_links must be empty on empty tables"
+        );
     }
 
     #[tokio::test]
@@ -1901,7 +2000,10 @@ mod tests {
             "agenda_cache should contain one entry for the block with due_date"
         );
         assert_eq!(rows[0].date, "2026-06-15", "date should match due_date");
-        assert_eq!(rows[0].block_id, "BLK_DUE1");
+        assert_eq!(
+            rows[0].block_id, "BLK_DUE1",
+            "block_id must match the due_date block"
+        );
         assert_eq!(
             rows[0].source, "column:due_date",
             "source should be column:due_date"
@@ -1969,7 +2071,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(rows.len(), 1, "(( )) block ref must be tracked");
-        assert_eq!(rows[0].target_id, "01HZ00000000000000000000AB");
+        assert_eq!(
+            rows[0].target_id, "01HZ00000000000000000000AB",
+            "block ref target must match"
+        );
     }
 
     /// Content containing both `[[ULID]]` page links and `((ULID))` block
@@ -2017,8 +2122,14 @@ mod tests {
             2,
             "both [[ ]] and (( )) targets must be tracked"
         );
-        assert_eq!(rows[0].target_id, "01HZ00000000000000000000AB");
-        assert_eq!(rows[1].target_id, "01HZ00000000000000000000CD");
+        assert_eq!(
+            rows[0].target_id, "01HZ00000000000000000000AB",
+            "page link target must be AB"
+        );
+        assert_eq!(
+            rows[1].target_id, "01HZ00000000000000000000CD",
+            "block ref target must be CD"
+        );
     }
 
     // ====================================================================
@@ -2096,7 +2207,11 @@ mod tests {
 
         insert_block(&pool, "TAG01", "tag", "first").await;
         rebuild_tags_cache_split(&pool, &pool).await.unwrap();
-        assert_eq!(count_rows(&pool, "tags_cache").await, 1);
+        assert_eq!(
+            count_rows(&pool, "tags_cache").await,
+            1,
+            "baseline: one tag in cache before delete"
+        );
 
         soft_delete_block(&pool, "TAG01").await;
         rebuild_tags_cache_split(&pool, &pool).await.unwrap();
@@ -2127,10 +2242,12 @@ mod tests {
         assert_eq!(
             (rows[0].page_id.as_str(), rows[0].title.as_str()),
             ("PAGE01", "My First Page"),
+            "first page must match expected id and title"
         );
         assert_eq!(
             (rows[1].page_id.as_str(), rows[1].title.as_str()),
             ("PAGE02", "My Second Page"),
+            "second page must match expected id and title"
         );
     }
 
@@ -2174,7 +2291,11 @@ mod tests {
 
         insert_block(&pool, "PAGE01", "page", "Will be deleted").await;
         rebuild_pages_cache_split(&pool, &pool).await.unwrap();
-        assert_eq!(count_rows(&pool, "pages_cache").await, 1);
+        assert_eq!(
+            count_rows(&pool, "pages_cache").await,
+            1,
+            "baseline: one page in cache before delete"
+        );
 
         soft_delete_block(&pool, "PAGE01").await;
         rebuild_pages_cache_split(&pool, &pool).await.unwrap();
@@ -2200,10 +2321,25 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].date.as_str(), "2025-01-15");
-        assert_eq!(rows[0].block_id, "BLK01");
-        assert_eq!(rows[0].source.as_str(), "property:due");
+        assert_eq!(
+            rows.len(),
+            1,
+            "exactly one agenda entry should exist from date property"
+        );
+        assert_eq!(
+            rows[0].date.as_str(),
+            "2025-01-15",
+            "split date must match property value"
+        );
+        assert_eq!(
+            rows[0].block_id, "BLK01",
+            "split block_id must match source block"
+        );
+        assert_eq!(
+            rows[0].source.as_str(),
+            "property:due",
+            "split source must be property:due"
+        );
     }
 
     #[tokio::test]
@@ -2221,10 +2357,25 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].date.as_str(), "2025-03-20");
-        assert_eq!(rows[0].block_id, "BLK01");
-        assert_eq!(rows[0].source.as_str(), "tag:DTAG1");
+        assert_eq!(
+            rows.len(),
+            1,
+            "exactly one agenda entry should exist from date tag"
+        );
+        assert_eq!(
+            rows[0].date.as_str(),
+            "2025-03-20",
+            "split date must be extracted from tag content"
+        );
+        assert_eq!(
+            rows[0].block_id, "BLK01",
+            "split block_id must match tagged block"
+        );
+        assert_eq!(
+            rows[0].source.as_str(),
+            "tag:DTAG1",
+            "split source must be tag:DTAG1"
+        );
     }
 
     #[tokio::test]
@@ -2310,8 +2461,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(rows.len(), 2, "both link targets must be indexed");
-        assert_eq!(rows[0].target_id, "01HZ00000000000000000000AB");
-        assert_eq!(rows[1].target_id, "01HZ00000000000000000000CD");
+        assert_eq!(
+            rows[0].target_id, "01HZ00000000000000000000AB",
+            "split first target must be AB"
+        );
+        assert_eq!(
+            rows[1].target_id, "01HZ00000000000000000000CD",
+            "split second target must be CD"
+        );
     }
 
     #[tokio::test]
@@ -2358,8 +2515,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(rows.len(), 2, "diff: A kept, B removed, C added");
-        assert_eq!(rows[0].target_id, "01HZ00000000000000000000AB");
-        assert_eq!(rows[1].target_id, "01HZ00000000000000000000EF");
+        assert_eq!(
+            rows[0].target_id, "01HZ00000000000000000000AB",
+            "split target A must be kept after diff"
+        );
+        assert_eq!(
+            rows[1].target_id, "01HZ00000000000000000000EF",
+            "split target C must be added after diff"
+        );
     }
 
     #[tokio::test]
@@ -2378,7 +2541,11 @@ mod tests {
         reindex_block_links_split(&pool, &pool, "01HZ0000000000000000000SRC")
             .await
             .unwrap();
-        assert_eq!(count_rows(&pool, "block_links").await, 1);
+        assert_eq!(
+            count_rows(&pool, "block_links").await,
+            1,
+            "split baseline: one link before soft-delete"
+        );
 
         soft_delete_block(&pool, "01HZ0000000000000000000SRC").await;
         reindex_block_links_split(&pool, &pool, "01HZ0000000000000000000SRC")

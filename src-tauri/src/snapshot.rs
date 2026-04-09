@@ -663,35 +663,91 @@ mod tests {
         let encoded = encode_snapshot(&data).unwrap();
         let decoded = decode_snapshot(&encoded).unwrap();
 
-        assert_eq!(decoded.schema_version, SCHEMA_VERSION);
-        assert_eq!(decoded.snapshot_device_id, "device-A");
-        assert_eq!(decoded.up_to_hash, "abc123");
-        assert_eq!(decoded.up_to_seqs.len(), 2);
-        assert_eq!(decoded.up_to_seqs["device-A"], 5);
-        assert_eq!(decoded.up_to_seqs["device-B"], 3);
+        assert_eq!(
+            decoded.schema_version, SCHEMA_VERSION,
+            "schema version must survive round-trip"
+        );
+        assert_eq!(
+            decoded.snapshot_device_id, "device-A",
+            "snapshot device id must survive round-trip"
+        );
+        assert_eq!(
+            decoded.up_to_hash, "abc123",
+            "up_to_hash must survive round-trip"
+        );
+        assert_eq!(
+            decoded.up_to_seqs.len(),
+            2,
+            "up_to_seqs should contain both devices"
+        );
+        assert_eq!(
+            decoded.up_to_seqs["device-A"], 5,
+            "device-A seq must survive round-trip"
+        );
+        assert_eq!(
+            decoded.up_to_seqs["device-B"], 3,
+            "device-B seq must survive round-trip"
+        );
 
-        assert_eq!(decoded.tables.blocks.len(), 1);
-        assert_eq!(decoded.tables.blocks[0].id, "block-1");
+        assert_eq!(
+            decoded.tables.blocks.len(),
+            1,
+            "blocks table should have exactly one entry"
+        );
+        assert_eq!(
+            decoded.tables.blocks[0].id, "block-1",
+            "block id must survive round-trip"
+        );
         assert_eq!(
             decoded.tables.blocks[0].content.as_deref(),
-            Some("hello world")
+            Some("hello world"),
+            "block content must survive round-trip"
         );
 
-        assert_eq!(decoded.tables.block_tags.len(), 1);
-        assert_eq!(decoded.tables.block_tags[0].tag_id, "tag-1");
+        assert_eq!(
+            decoded.tables.block_tags.len(),
+            1,
+            "block_tags table should have exactly one entry"
+        );
+        assert_eq!(
+            decoded.tables.block_tags[0].tag_id, "tag-1",
+            "tag id must survive round-trip"
+        );
 
-        assert_eq!(decoded.tables.block_properties.len(), 1);
-        assert_eq!(decoded.tables.block_properties[0].key, "due");
+        assert_eq!(
+            decoded.tables.block_properties.len(),
+            1,
+            "block_properties table should have exactly one entry"
+        );
+        assert_eq!(
+            decoded.tables.block_properties[0].key, "due",
+            "property key must survive round-trip"
+        );
         assert_eq!(
             decoded.tables.block_properties[0].value_date.as_deref(),
-            Some("2025-01-15")
+            Some("2025-01-15"),
+            "property value_date must survive round-trip"
         );
 
-        assert_eq!(decoded.tables.block_links.len(), 1);
-        assert_eq!(decoded.tables.block_links[0].source_id, "block-1");
+        assert_eq!(
+            decoded.tables.block_links.len(),
+            1,
+            "block_links table should have exactly one entry"
+        );
+        assert_eq!(
+            decoded.tables.block_links[0].source_id, "block-1",
+            "link source_id must survive round-trip"
+        );
 
-        assert_eq!(decoded.tables.attachments.len(), 1);
-        assert_eq!(decoded.tables.attachments[0].filename, "photo.png");
+        assert_eq!(
+            decoded.tables.attachments.len(),
+            1,
+            "attachments table should have exactly one entry"
+        );
+        assert_eq!(
+            decoded.tables.attachments[0].filename, "photo.png",
+            "attachment filename must survive round-trip"
+        );
     }
 
     // =======================================================================
@@ -755,12 +811,35 @@ mod tests {
         let encoded = encode_snapshot(&data).unwrap();
         let decoded = decode_snapshot(&encoded).unwrap();
 
-        assert_eq!(decoded.tables.blocks.len(), 0);
-        assert_eq!(decoded.tables.block_tags.len(), 0);
-        assert_eq!(decoded.tables.block_properties.len(), 0);
-        assert_eq!(decoded.tables.block_links.len(), 0);
-        assert_eq!(decoded.tables.attachments.len(), 0);
-        assert!(decoded.up_to_seqs.is_empty());
+        assert_eq!(
+            decoded.tables.blocks.len(),
+            0,
+            "empty snapshot should have no blocks"
+        );
+        assert_eq!(
+            decoded.tables.block_tags.len(),
+            0,
+            "empty snapshot should have no block_tags"
+        );
+        assert_eq!(
+            decoded.tables.block_properties.len(),
+            0,
+            "empty snapshot should have no block_properties"
+        );
+        assert_eq!(
+            decoded.tables.block_links.len(),
+            0,
+            "empty snapshot should have no block_links"
+        );
+        assert_eq!(
+            decoded.tables.attachments.len(),
+            0,
+            "empty snapshot should have no attachments"
+        );
+        assert!(
+            decoded.up_to_seqs.is_empty(),
+            "empty snapshot should have no device seqs"
+        );
     }
 
     // =======================================================================
@@ -777,7 +856,7 @@ mod tests {
         insert_op_at(&pool, device_id, "block-1", "2025-01-01T00:00:00Z").await;
 
         let snapshot_id = create_snapshot(&pool, device_id).await.unwrap();
-        assert!(!snapshot_id.is_empty());
+        assert!(!snapshot_id.is_empty(), "snapshot id should not be empty");
 
         // Read back from log_snapshots
         let row = sqlx::query!(
@@ -789,14 +868,28 @@ mod tests {
         .unwrap();
         let (id, data) = (row.id, row.data);
 
-        assert_eq!(id, snapshot_id);
+        assert_eq!(id, snapshot_id, "fetched snapshot id must match created id");
 
         // Decode and verify
         let decoded = decode_snapshot(&data).unwrap();
-        assert_eq!(decoded.snapshot_device_id, device_id);
-        assert_eq!(decoded.tables.blocks.len(), 1);
-        assert_eq!(decoded.tables.blocks[0].id, "block-1");
-        assert_eq!(decoded.tables.blocks[0].content.as_deref(), Some("hello"));
+        assert_eq!(
+            decoded.snapshot_device_id, device_id,
+            "snapshot device id must match"
+        );
+        assert_eq!(
+            decoded.tables.blocks.len(),
+            1,
+            "snapshot should contain exactly one block"
+        );
+        assert_eq!(
+            decoded.tables.blocks[0].id, "block-1",
+            "snapshot block id must match inserted block"
+        );
+        assert_eq!(
+            decoded.tables.blocks[0].content.as_deref(),
+            Some("hello"),
+            "snapshot block content must match inserted value"
+        );
     }
 
     // =======================================================================
@@ -821,7 +914,10 @@ mod tests {
                 .await
                 .unwrap();
 
-        assert_eq!(status, "complete");
+        assert_eq!(
+            status, "complete",
+            "snapshot status should be 'complete' after creation"
+        );
 
         // No pending rows should remain
         let pending_count: i64 =
@@ -830,7 +926,10 @@ mod tests {
                 .await
                 .unwrap();
 
-        assert_eq!(pending_count, 0);
+        assert_eq!(
+            pending_count, 0,
+            "no pending snapshots should remain after creation"
+        );
     }
 
     // =======================================================================
@@ -884,7 +983,10 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(id, "block-orig");
+        assert_eq!(
+            id, "block-orig",
+            "only the original block should remain after apply"
+        );
 
         // Op log should be wiped
         let op_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
@@ -894,8 +996,15 @@ mod tests {
         assert_eq!(op_count, 0, "op_log should be empty after apply");
 
         // Returned data should match
-        assert_eq!(restored.tables.blocks.len(), 1);
-        assert_eq!(restored.tables.blocks[0].id, "block-orig");
+        assert_eq!(
+            restored.tables.blocks.len(),
+            1,
+            "restored data should contain exactly one block"
+        );
+        assert_eq!(
+            restored.tables.blocks[0].id, "block-orig",
+            "restored block id must be the original"
+        );
     }
 
     // =======================================================================
@@ -942,22 +1051,36 @@ mod tests {
 
         let restored = apply_snapshot(&pool, &simple_encoded).await.unwrap();
 
-        assert_eq!(restored.tables.blocks.len(), 1);
-        assert_eq!(restored.tables.blocks[0].id, "blk-A");
+        assert_eq!(
+            restored.tables.blocks.len(),
+            1,
+            "restored snapshot should contain one block"
+        );
+        assert_eq!(
+            restored.tables.blocks[0].id, "blk-A",
+            "restored block id must match snapshot data"
+        );
 
         // Verify DB state
         let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count, 1);
+        assert_eq!(
+            count, 1,
+            "database should contain exactly one block after apply"
+        );
 
         let content: Option<String> =
             sqlx::query_scalar!("SELECT content FROM blocks WHERE id = 'blk-A'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(content.as_deref(), Some("applied content"));
+        assert_eq!(
+            content.as_deref(),
+            Some("applied content"),
+            "block content in database must match snapshot data"
+        );
 
         // Suppress unused variable warning
         let _ = encoded;
@@ -988,7 +1111,10 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(snap_count, 0);
+        assert_eq!(
+            snap_count, 0,
+            "no snapshots should be created when compaction is a no-op"
+        );
     }
 
     // =======================================================================
@@ -1016,7 +1142,10 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(snap_count, 1);
+        assert_eq!(
+            snap_count, 1,
+            "compaction should create exactly one complete snapshot"
+        );
 
         // Old ops should be purged
         let op_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
@@ -1048,7 +1177,10 @@ mod tests {
         let result = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
             .await
             .unwrap();
-        assert!(result.is_some());
+        assert!(
+            result.is_some(),
+            "compaction should occur when old ops exist"
+        );
 
         // Only the recent op should remain
         let op_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
@@ -1063,7 +1195,10 @@ mod tests {
             .await
             .unwrap();
         // The recent op's timestamp should NOT be the old one
-        assert!(!created_at.starts_with("2024-01-01"));
+        assert!(
+            !created_at.starts_with("2024-01-01"),
+            "remaining op should not have the old timestamp"
+        );
     }
 
     // =======================================================================
@@ -1075,7 +1210,10 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         let result = get_latest_snapshot(&pool).await.unwrap();
-        assert!(result.is_none());
+        assert!(
+            result.is_none(),
+            "should return None when no snapshots exist"
+        );
     }
 
     // =======================================================================
@@ -1103,12 +1241,22 @@ mod tests {
 
         // get_latest_snapshot should return the second (most recent by ULID order)
         let (latest_id, latest_data) = get_latest_snapshot(&pool).await.unwrap().unwrap();
-        assert_eq!(latest_id, snap2_id);
-        assert_ne!(latest_id, snap1_id);
+        assert_eq!(
+            latest_id, snap2_id,
+            "latest snapshot should be the second one created"
+        );
+        assert_ne!(
+            latest_id, snap1_id,
+            "latest snapshot should not be the first one"
+        );
 
         // Decode and verify it has the updated content
         let decoded = decode_snapshot(&latest_data).unwrap();
-        assert_eq!(decoded.tables.blocks[0].content.as_deref(), Some("v2"));
+        assert_eq!(
+            decoded.tables.blocks[0].content.as_deref(),
+            Some("v2"),
+            "latest snapshot should contain updated block content"
+        );
     }
 
     // =======================================================================
@@ -1211,18 +1359,42 @@ mod tests {
         let decoded = decode_snapshot(&encoded).unwrap();
 
         let props = &decoded.tables.block_properties;
-        assert_eq!(props.len(), 7);
+        assert_eq!(props.len(), 7, "should have all 7 property variants");
 
         // Helper: find property by key
         let find =
             |key: &str| -> &BlockPropertySnapshot { props.iter().find(|p| p.key == key).unwrap() };
 
-        assert_eq!(find("none").value_num, None);
-        assert_eq!(find("normal").value_num, Some(42.5));
-        assert_eq!(find("zero").value_num, Some(0.0));
-        assert_eq!(find("negative").value_num, Some(-1.0e10));
-        assert_eq!(find("inf").value_num, Some(f64::INFINITY));
-        assert_eq!(find("neg_inf").value_num, Some(f64::NEG_INFINITY));
+        assert_eq!(
+            find("none").value_num,
+            None,
+            "None value_num must survive CBOR round-trip"
+        );
+        assert_eq!(
+            find("normal").value_num,
+            Some(42.5),
+            "normal f64 must survive CBOR round-trip"
+        );
+        assert_eq!(
+            find("zero").value_num,
+            Some(0.0),
+            "zero f64 must survive CBOR round-trip"
+        );
+        assert_eq!(
+            find("negative").value_num,
+            Some(-1.0e10),
+            "negative f64 must survive CBOR round-trip"
+        );
+        assert_eq!(
+            find("inf").value_num,
+            Some(f64::INFINITY),
+            "positive infinity must survive CBOR round-trip"
+        );
+        assert_eq!(
+            find("neg_inf").value_num,
+            Some(f64::NEG_INFINITY),
+            "negative infinity must survive CBOR round-trip"
+        );
 
         // NaN != NaN, so we must check with is_nan()
         let nan_val = find("nan").value_num;
@@ -1293,7 +1465,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(dev, "device-B");
+        assert_eq!(dev, "device-B", "remaining op should belong to device-B");
 
         // The snapshot should capture the multi-device frontier
         let (_, snap_data) = get_latest_snapshot(&pool).await.unwrap().unwrap();
@@ -1442,42 +1614,71 @@ mod tests {
         let restored = apply_snapshot(&pool, &encoded).await.unwrap();
 
         // Verify all tables populated
-        assert_eq!(restored.tables.blocks.len(), 3);
-        assert_eq!(restored.tables.block_tags.len(), 1);
-        assert_eq!(restored.tables.block_properties.len(), 1);
-        assert_eq!(restored.tables.block_links.len(), 1);
-        assert_eq!(restored.tables.attachments.len(), 1);
+        assert_eq!(
+            restored.tables.blocks.len(),
+            3,
+            "restored snapshot should have 3 blocks"
+        );
+        assert_eq!(
+            restored.tables.block_tags.len(),
+            1,
+            "restored snapshot should have 1 block_tag"
+        );
+        assert_eq!(
+            restored.tables.block_properties.len(),
+            1,
+            "restored snapshot should have 1 block_property"
+        );
+        assert_eq!(
+            restored.tables.block_links.len(),
+            1,
+            "restored snapshot should have 1 block_link"
+        );
+        assert_eq!(
+            restored.tables.attachments.len(),
+            1,
+            "restored snapshot should have 1 attachment"
+        );
 
         // Verify DB state for each table
         let blk_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(blk_count, 3);
+        assert_eq!(blk_count, 3, "database should have 3 blocks after apply");
 
         let tag_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_tags")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(tag_count, 1);
+        assert_eq!(tag_count, 1, "database should have 1 block_tag after apply");
 
         let prop_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_properties")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(prop_count, 1);
+        assert_eq!(
+            prop_count, 1,
+            "database should have 1 block_property after apply"
+        );
 
         let link_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_links")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(link_count, 1);
+        assert_eq!(
+            link_count, 1,
+            "database should have 1 block_link after apply"
+        );
 
         let att_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM attachments")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(att_count, 1);
+        assert_eq!(
+            att_count, 1,
+            "database should have 1 attachment after apply"
+        );
 
         // Verify specific content
         let tag_id: String =
@@ -1485,7 +1686,10 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(tag_id, "tag-urgent");
+        assert_eq!(
+            tag_id, "tag-urgent",
+            "block_tag tag_id must match snapshot data"
+        );
 
         let due: Option<String> = sqlx::query_scalar!(
             "SELECT value_date FROM block_properties WHERE block_id = 'blk-child'"
@@ -1493,7 +1697,11 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(due.as_deref(), Some("2025-06-01"));
+        assert_eq!(
+            due.as_deref(),
+            Some("2025-06-01"),
+            "block_property value_date must match snapshot data"
+        );
     }
 
     // =======================================================================
@@ -1522,7 +1730,10 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(snap_count_1, 1);
+        assert_eq!(
+            snap_count_1, 1,
+            "first compaction should produce exactly one snapshot"
+        );
 
         // Second compaction — no old ops remain, should be no-op
         let second = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
@@ -1539,11 +1750,11 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(snap_count_2, 1);
+        assert_eq!(
+            snap_count_2, 1,
+            "second compaction should not create additional snapshots"
+        );
     }
-
-    // =======================================================================
-    // 20. compact_op_log_timestamp_format_consistency (F03)
     // =======================================================================
 
     /// Verify that the cutoff timestamp uses a consistent format for comparison
@@ -1605,7 +1816,10 @@ mod tests {
 
         // get_latest_snapshot returns only the most recent
         let (latest_id, _) = get_latest_snapshot(&pool).await.unwrap().unwrap();
-        assert_eq!(latest_id, snap3);
+        assert_eq!(
+            latest_id, snap3,
+            "get_latest_snapshot must return the most recent snapshot"
+        );
     }
 
     // =======================================================================
@@ -1633,15 +1847,39 @@ mod tests {
         let encoded = encode_snapshot(&data).unwrap();
         let decoded = decode_snapshot(&encoded).unwrap();
 
-        assert_eq!(decoded.schema_version, SCHEMA_VERSION);
-        assert_eq!(decoded.snapshot_device_id, "dev-empty");
-        assert_eq!(decoded.up_to_hash, "empty-hash");
+        assert_eq!(
+            decoded.schema_version, SCHEMA_VERSION,
+            "schema version must survive empty snapshot round-trip"
+        );
+        assert_eq!(
+            decoded.snapshot_device_id, "dev-empty",
+            "device id must survive empty snapshot round-trip"
+        );
+        assert_eq!(
+            decoded.up_to_hash, "empty-hash",
+            "up_to_hash must survive empty snapshot round-trip"
+        );
         assert!(decoded.up_to_seqs.is_empty(), "up_to_seqs should be empty");
-        assert!(decoded.tables.blocks.is_empty());
-        assert!(decoded.tables.block_tags.is_empty());
-        assert!(decoded.tables.block_properties.is_empty());
-        assert!(decoded.tables.block_links.is_empty());
-        assert!(decoded.tables.attachments.is_empty());
+        assert!(
+            decoded.tables.blocks.is_empty(),
+            "blocks should be empty in empty snapshot"
+        );
+        assert!(
+            decoded.tables.block_tags.is_empty(),
+            "block_tags should be empty in empty snapshot"
+        );
+        assert!(
+            decoded.tables.block_properties.is_empty(),
+            "block_properties should be empty in empty snapshot"
+        );
+        assert!(
+            decoded.tables.block_links.is_empty(),
+            "block_links should be empty in empty snapshot"
+        );
+        assert!(
+            decoded.tables.attachments.is_empty(),
+            "attachments should be empty in empty snapshot"
+        );
     }
 
     // =======================================================================
@@ -1653,7 +1891,10 @@ mod tests {
     #[test]
     fn large_text_field_round_trip() {
         let large_content = "x".repeat(15_000); // 15KB
-        assert!(large_content.len() > 10_000);
+        assert!(
+            large_content.len() > 10_000,
+            "test content must exceed 10KB"
+        );
 
         let mut up_to_seqs = BTreeMap::new();
         up_to_seqs.insert("dev".to_string(), 1);
@@ -1695,12 +1936,21 @@ mod tests {
         let encoded = encode_snapshot(&data).unwrap();
         let decoded = decode_snapshot(&encoded).unwrap();
 
-        assert_eq!(decoded.tables.blocks.len(), 1);
+        assert_eq!(
+            decoded.tables.blocks.len(),
+            1,
+            "large content snapshot should have one block"
+        );
         assert_eq!(
             decoded.tables.blocks[0].content.as_deref(),
-            Some(large_content.as_str())
+            Some(large_content.as_str()),
+            "large block content must survive compression round-trip"
         );
-        assert_eq!(decoded.tables.block_properties.len(), 1);
+        assert_eq!(
+            decoded.tables.block_properties.len(),
+            1,
+            "large content snapshot should have one property"
+        );
         assert_eq!(
             decoded.tables.block_properties[0]
                 .value_text
@@ -1708,6 +1958,7 @@ mod tests {
                 .unwrap()
                 .len(),
             12_000,
+            "large property value_text length must survive round-trip"
         );
     }
 
@@ -1770,10 +2021,22 @@ mod tests {
         );
 
         let prop = &decoded.tables.block_properties[0];
-        assert!(prop.value_text.is_none());
-        assert!(prop.value_num.is_none());
-        assert!(prop.value_date.is_none());
-        assert!(prop.value_ref.is_none());
+        assert!(
+            prop.value_text.is_none(),
+            "property value_text should be None"
+        );
+        assert!(
+            prop.value_num.is_none(),
+            "property value_num should be None"
+        );
+        assert!(
+            prop.value_date.is_none(),
+            "property value_date should be None"
+        );
+        assert!(
+            prop.value_ref.is_none(),
+            "property value_ref should be None"
+        );
     }
 
     // =======================================================================
@@ -1793,62 +2056,126 @@ mod tests {
         let re_decoded = decode_snapshot(&re_encoded).unwrap();
 
         // Verify all top-level fields
-        assert_eq!(decoded.schema_version, re_decoded.schema_version);
-        assert_eq!(decoded.snapshot_device_id, re_decoded.snapshot_device_id);
-        assert_eq!(decoded.up_to_hash, re_decoded.up_to_hash);
-        assert_eq!(decoded.up_to_seqs, re_decoded.up_to_seqs);
+        assert_eq!(
+            decoded.schema_version, re_decoded.schema_version,
+            "schema version must be idempotent across re-encode"
+        );
+        assert_eq!(
+            decoded.snapshot_device_id, re_decoded.snapshot_device_id,
+            "device id must be idempotent across re-encode"
+        );
+        assert_eq!(
+            decoded.up_to_hash, re_decoded.up_to_hash,
+            "up_to_hash must be idempotent across re-encode"
+        );
+        assert_eq!(
+            decoded.up_to_seqs, re_decoded.up_to_seqs,
+            "up_to_seqs must be idempotent across re-encode"
+        );
 
         // Verify table lengths
-        assert_eq!(decoded.tables.blocks.len(), re_decoded.tables.blocks.len());
+        assert_eq!(
+            decoded.tables.blocks.len(),
+            re_decoded.tables.blocks.len(),
+            "blocks count must be idempotent across re-encode"
+        );
         assert_eq!(
             decoded.tables.block_tags.len(),
-            re_decoded.tables.block_tags.len()
+            re_decoded.tables.block_tags.len(),
+            "block_tags count must be idempotent across re-encode"
         );
         assert_eq!(
             decoded.tables.block_properties.len(),
-            re_decoded.tables.block_properties.len()
+            re_decoded.tables.block_properties.len(),
+            "block_properties count must be idempotent across re-encode"
         );
         assert_eq!(
             decoded.tables.block_links.len(),
-            re_decoded.tables.block_links.len()
+            re_decoded.tables.block_links.len(),
+            "block_links count must be idempotent across re-encode"
         );
         assert_eq!(
             decoded.tables.attachments.len(),
-            re_decoded.tables.attachments.len()
+            re_decoded.tables.attachments.len(),
+            "attachments count must be idempotent across re-encode"
         );
 
         // Verify individual fields in blocks
-        for (a, b) in decoded
+        for (i, (a, b)) in decoded
             .tables
             .blocks
             .iter()
             .zip(re_decoded.tables.blocks.iter())
+            .enumerate()
         {
-            assert_eq!(a.id, b.id);
-            assert_eq!(a.block_type, b.block_type);
-            assert_eq!(a.content, b.content);
-            assert_eq!(a.parent_id, b.parent_id);
-            assert_eq!(a.position, b.position);
-            assert_eq!(a.deleted_at, b.deleted_at);
-            assert_eq!(a.is_conflict, b.is_conflict);
-            assert_eq!(a.conflict_source, b.conflict_source);
+            assert_eq!(a.id, b.id, "block id must match at index {i}");
+            assert_eq!(
+                a.block_type, b.block_type,
+                "block_type must match at index {i}"
+            );
+            assert_eq!(
+                a.content, b.content,
+                "block content must match at index {i}"
+            );
+            assert_eq!(
+                a.parent_id, b.parent_id,
+                "block parent_id must match at index {i}"
+            );
+            assert_eq!(
+                a.position, b.position,
+                "block position must match at index {i}"
+            );
+            assert_eq!(
+                a.deleted_at, b.deleted_at,
+                "block deleted_at must match at index {i}"
+            );
+            assert_eq!(
+                a.is_conflict, b.is_conflict,
+                "block is_conflict must match at index {i}"
+            );
+            assert_eq!(
+                a.conflict_source, b.conflict_source,
+                "block conflict_source must match at index {i}"
+            );
         }
 
         // Verify attachments round-trip
-        for (a, b) in decoded
+        for (i, (a, b)) in decoded
             .tables
             .attachments
             .iter()
             .zip(re_decoded.tables.attachments.iter())
+            .enumerate()
         {
-            assert_eq!(a.id, b.id);
-            assert_eq!(a.block_id, b.block_id);
-            assert_eq!(a.mime_type, b.mime_type);
-            assert_eq!(a.filename, b.filename);
-            assert_eq!(a.size_bytes, b.size_bytes);
-            assert_eq!(a.fs_path, b.fs_path);
-            assert_eq!(a.created_at, b.created_at);
-            assert_eq!(a.deleted_at, b.deleted_at);
+            assert_eq!(a.id, b.id, "attachment id must match at index {i}");
+            assert_eq!(
+                a.block_id, b.block_id,
+                "attachment block_id must match at index {i}"
+            );
+            assert_eq!(
+                a.mime_type, b.mime_type,
+                "attachment mime_type must match at index {i}"
+            );
+            assert_eq!(
+                a.filename, b.filename,
+                "attachment filename must match at index {i}"
+            );
+            assert_eq!(
+                a.size_bytes, b.size_bytes,
+                "attachment size_bytes must match at index {i}"
+            );
+            assert_eq!(
+                a.fs_path, b.fs_path,
+                "attachment fs_path must match at index {i}"
+            );
+            assert_eq!(
+                a.created_at, b.created_at,
+                "attachment created_at must match at index {i}"
+            );
+            assert_eq!(
+                a.deleted_at, b.deleted_at,
+                "attachment deleted_at must match at index {i}"
+            );
         }
     }
 
@@ -1931,19 +2258,32 @@ mod tests {
             1,
             "should capture block_tags"
         );
-        assert_eq!(decoded.tables.block_tags[0].block_id, "blk-1");
-        assert_eq!(decoded.tables.block_tags[0].tag_id, "tag-1");
+        assert_eq!(
+            decoded.tables.block_tags[0].block_id, "blk-1",
+            "captured block_tag block_id must match"
+        );
+        assert_eq!(
+            decoded.tables.block_tags[0].tag_id, "tag-1",
+            "captured block_tag tag_id must match"
+        );
 
         assert_eq!(
             decoded.tables.block_properties.len(),
             1,
             "should capture block_properties"
         );
-        assert_eq!(decoded.tables.block_properties[0].block_id, "blk-1");
-        assert_eq!(decoded.tables.block_properties[0].key, "status");
+        assert_eq!(
+            decoded.tables.block_properties[0].block_id, "blk-1",
+            "captured property block_id must match"
+        );
+        assert_eq!(
+            decoded.tables.block_properties[0].key, "status",
+            "captured property key must match"
+        );
         assert_eq!(
             decoded.tables.block_properties[0].value_text.as_deref(),
-            Some("active")
+            Some("active"),
+            "captured property value_text must match"
         );
 
         assert_eq!(
@@ -1951,16 +2291,28 @@ mod tests {
             1,
             "should capture block_links"
         );
-        assert_eq!(decoded.tables.block_links[0].source_id, "blk-1");
-        assert_eq!(decoded.tables.block_links[0].target_id, "blk-2");
+        assert_eq!(
+            decoded.tables.block_links[0].source_id, "blk-1",
+            "captured link source_id must match"
+        );
+        assert_eq!(
+            decoded.tables.block_links[0].target_id, "blk-2",
+            "captured link target_id must match"
+        );
 
         assert_eq!(
             decoded.tables.attachments.len(),
             1,
             "should capture attachments"
         );
-        assert_eq!(decoded.tables.attachments[0].filename, "photo.png");
-        assert_eq!(decoded.tables.attachments[0].block_id, "blk-1");
+        assert_eq!(
+            decoded.tables.attachments[0].filename, "photo.png",
+            "captured attachment filename must match"
+        );
+        assert_eq!(
+            decoded.tables.attachments[0].block_id, "blk-1",
+            "captured attachment block_id must match"
+        );
     }
 
     // =======================================================================
@@ -2294,10 +2646,17 @@ mod tests {
 
         // Decode using the real decode_snapshot (which now accepts v1..=v2)
         let decoded = decode_snapshot(&compressed).unwrap();
-        assert_eq!(decoded.schema_version, 1);
-        assert_eq!(decoded.tables.blocks.len(), 1);
+        assert_eq!(
+            decoded.schema_version, 1,
+            "v1 snapshot schema version must be preserved"
+        );
+        assert_eq!(
+            decoded.tables.blocks.len(),
+            1,
+            "v1 snapshot should have one block"
+        );
         let b = &decoded.tables.blocks[0];
-        assert_eq!(b.id, "b1");
+        assert_eq!(b.id, "b1", "v1 block id must be preserved");
         assert!(
             b.todo_state.is_none(),
             "v1 data should default todo_state to None"
@@ -2347,11 +2706,26 @@ mod tests {
         let encoded = encode_snapshot(&data).unwrap();
         let decoded = decode_snapshot(&encoded).unwrap();
 
-        assert_eq!(decoded.schema_version, SCHEMA_VERSION);
+        assert_eq!(
+            decoded.schema_version, SCHEMA_VERSION,
+            "v2 schema version must be preserved"
+        );
         let b = &decoded.tables.blocks[0];
-        assert_eq!(b.todo_state, Some("TODO".to_string()));
-        assert_eq!(b.priority, Some("2".to_string()));
-        assert_eq!(b.due_date, Some("2026-04-15".to_string()));
+        assert_eq!(
+            b.todo_state,
+            Some("TODO".to_string()),
+            "todo_state must survive v2 round-trip"
+        );
+        assert_eq!(
+            b.priority,
+            Some("2".to_string()),
+            "priority must survive v2 round-trip"
+        );
+        assert_eq!(
+            b.due_date,
+            Some("2026-04-15".to_string()),
+            "due_date must survive v2 round-trip"
+        );
     }
 
     #[test]

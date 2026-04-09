@@ -1078,7 +1078,10 @@ mod tests {
         let rev1 = compute_reverse(&pool, TEST_DEVICE, edit.seq).await.unwrap();
         match &rev1 {
             OpPayload::EditBlock(p) => {
-                assert_eq!(p.to_text, "original");
+                assert_eq!(
+                    p.to_text, "original",
+                    "reverse of edit should restore original text"
+                );
             }
             other => panic!("Expected EditBlock, got {:?}", other),
         }
@@ -1092,7 +1095,10 @@ mod tests {
             .unwrap();
         match &rev2 {
             OpPayload::EditBlock(p) => {
-                assert_eq!(p.to_text, "modified");
+                assert_eq!(
+                    p.to_text, "modified",
+                    "re-reverse should restore modified text"
+                );
             }
             other => panic!("Expected EditBlock, got {:?}", other),
         }
@@ -1136,8 +1142,15 @@ mod tests {
             .unwrap();
         match &rev1 {
             OpPayload::MoveBlock(p) => {
-                assert_eq!(p.new_parent_id, Some(BlockId::test_id("PAGE1")));
-                assert_eq!(p.new_position, 0);
+                assert_eq!(
+                    p.new_parent_id,
+                    Some(BlockId::test_id("PAGE1")),
+                    "reverse should restore original parent"
+                );
+                assert_eq!(
+                    p.new_position, 0,
+                    "reverse should restore original position"
+                );
             }
             other => panic!("Expected MoveBlock, got {:?}", other),
         }
@@ -1151,8 +1164,15 @@ mod tests {
             .unwrap();
         match &rev2 {
             OpPayload::MoveBlock(p) => {
-                assert_eq!(p.new_parent_id, Some(BlockId::test_id("PAGE2")));
-                assert_eq!(p.new_position, 5);
+                assert_eq!(
+                    p.new_parent_id,
+                    Some(BlockId::test_id("PAGE2")),
+                    "re-reverse should restore moved parent"
+                );
+                assert_eq!(
+                    p.new_position, 5,
+                    "re-reverse should restore moved position"
+                );
             }
             other => panic!("Expected MoveBlock, got {:?}", other),
         }
@@ -1184,7 +1204,10 @@ mod tests {
             .unwrap();
         match &rev1 {
             OpPayload::DeleteBlock(p) => {
-                assert_eq!(p.block_id, "BLK_UC3");
+                assert_eq!(
+                    p.block_id, "BLK_UC3",
+                    "reverse of create should target correct block_id"
+                );
             }
             other => panic!("Expected DeleteBlock, got {:?}", other),
         }
@@ -1198,7 +1221,10 @@ mod tests {
             .unwrap();
         match &rev2 {
             OpPayload::RestoreBlock(p) => {
-                assert_eq!(p.block_id, "BLK_UC3");
+                assert_eq!(
+                    p.block_id, "BLK_UC3",
+                    "reverse of delete should target correct block_id"
+                );
                 assert_eq!(
                     p.deleted_at_ref, "2025-01-15T12:01:00+00:00",
                     "deleted_at_ref should match the delete op's created_at"
@@ -1216,7 +1242,10 @@ mod tests {
             .unwrap();
         match &rev3 {
             OpPayload::DeleteBlock(p) => {
-                assert_eq!(p.block_id, "BLK_UC3");
+                assert_eq!(
+                    p.block_id, "BLK_UC3",
+                    "re-reverse of restore should target correct block_id"
+                );
             }
             other => panic!("Expected DeleteBlock, got {:?}", other),
         }
@@ -1247,8 +1276,8 @@ mod tests {
         let rev1 = compute_reverse(&pool, TEST_DEVICE, set1.seq).await.unwrap();
         match &rev1 {
             OpPayload::DeleteProperty(p) => {
-                assert_eq!(p.block_id, "BLK_PN");
-                assert_eq!(p.key, "score");
+                assert_eq!(p.block_id, "BLK_PN", "block_id mismatch");
+                assert_eq!(p.key, "score", "key mismatch");
             }
             other => panic!("Expected DeleteProperty, got {:?}", other),
         }
@@ -1272,8 +1301,8 @@ mod tests {
         let rev2 = compute_reverse(&pool, TEST_DEVICE, set2.seq).await.unwrap();
         match &rev2 {
             OpPayload::SetProperty(p) => {
-                assert_eq!(p.block_id, "BLK_PN");
-                assert_eq!(p.key, "score");
+                assert_eq!(p.block_id, "BLK_PN", "block_id mismatch");
+                assert_eq!(p.key, "score", "key mismatch");
                 assert_eq!(p.value_num, Some(42.0), "should restore prior value_num");
                 assert_eq!(p.value_text, None, "other value fields should be None");
                 assert_eq!(p.value_date, None, "other value fields should be None");
@@ -1308,8 +1337,8 @@ mod tests {
         let rev1 = compute_reverse(&pool, TEST_DEVICE, set1.seq).await.unwrap();
         match &rev1 {
             OpPayload::DeleteProperty(p) => {
-                assert_eq!(p.block_id, "BLK_PD");
-                assert_eq!(p.key, "due-date");
+                assert_eq!(p.block_id, "BLK_PD", "block_id mismatch");
+                assert_eq!(p.key, "due-date", "key mismatch");
             }
             other => panic!("Expected DeleteProperty, got {:?}", other),
         }
@@ -1333,8 +1362,8 @@ mod tests {
         let rev2 = compute_reverse(&pool, TEST_DEVICE, set2.seq).await.unwrap();
         match &rev2 {
             OpPayload::SetProperty(p) => {
-                assert_eq!(p.block_id, "BLK_PD");
-                assert_eq!(p.key, "due-date");
+                assert_eq!(p.block_id, "BLK_PD", "block_id mismatch");
+                assert_eq!(p.key, "due-date", "key mismatch");
                 assert_eq!(
                     p.value_date,
                     Some("2025-06-15".into()),
@@ -1511,12 +1540,12 @@ mod tests {
 
         match &reverse {
             OpPayload::AddAttachment(p) => {
-                assert_eq!(p.attachment_id, "ATT_001");
-                assert_eq!(p.block_id, "BLK_ATT");
-                assert_eq!(p.mime_type, "image/png");
-                assert_eq!(p.filename, "photo.png");
-                assert_eq!(p.size_bytes, 2048);
-                assert_eq!(p.fs_path, "/data/photo.png");
+                assert_eq!(p.attachment_id, "ATT_001", "attachment_id mismatch");
+                assert_eq!(p.block_id, "BLK_ATT", "block_id mismatch");
+                assert_eq!(p.mime_type, "image/png", "mime_type mismatch");
+                assert_eq!(p.filename, "photo.png", "filename mismatch");
+                assert_eq!(p.size_bytes, 2048, "size_bytes mismatch");
+                assert_eq!(p.fs_path, "/data/photo.png", "fs_path mismatch");
             }
             other => panic!("Expected AddAttachment, got {:?}", other),
         }
@@ -1580,12 +1609,12 @@ mod tests {
             .unwrap();
         match &rev2 {
             OpPayload::AddAttachment(p) => {
-                assert_eq!(p.attachment_id, "ATT_RT");
-                assert_eq!(p.block_id, "BLK_RT");
-                assert_eq!(p.mime_type, "application/pdf");
-                assert_eq!(p.filename, "doc.pdf");
-                assert_eq!(p.size_bytes, 4096);
-                assert_eq!(p.fs_path, "/data/doc.pdf");
+                assert_eq!(p.attachment_id, "ATT_RT", "attachment_id mismatch");
+                assert_eq!(p.block_id, "BLK_RT", "block_id mismatch");
+                assert_eq!(p.mime_type, "application/pdf", "mime_type mismatch");
+                assert_eq!(p.filename, "doc.pdf", "filename mismatch");
+                assert_eq!(p.size_bytes, 4096, "size_bytes mismatch");
+                assert_eq!(p.fs_path, "/data/doc.pdf", "fs_path mismatch");
             }
             other => panic!("Expected AddAttachment, got {:?}", other),
         }

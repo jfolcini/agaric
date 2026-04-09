@@ -530,7 +530,10 @@ mod tests {
 
         match result {
             MergeResult::Clean(merged) => {
-                assert_eq!(merged, "hello\nbeautiful\nworld\ntoday\n");
+                assert_eq!(
+                    merged, "hello\nbeautiful\nworld\ntoday\n",
+                    "clean merge should combine non-overlapping edits"
+                );
             }
             MergeResult::Conflict { .. } => panic!("expected clean merge, got conflict"),
         }
@@ -579,9 +582,12 @@ mod tests {
                 theirs,
                 ancestor,
             } => {
-                assert_eq!(ours, "goodbye world");
-                assert_eq!(theirs, "hello universe");
-                assert_eq!(ancestor, "hello world");
+                assert_eq!(ours, "goodbye world", "ours should be device-A's edit");
+                assert_eq!(theirs, "hello universe", "theirs should be device-B's edit");
+                assert_eq!(
+                    ancestor, "hello world",
+                    "ancestor should be original create content"
+                );
             }
             MergeResult::Clean(_) => panic!("expected conflict, got clean merge"),
         }
@@ -624,7 +630,10 @@ mod tests {
 
         match result {
             MergeResult::Clean(merged) => {
-                assert_eq!(merged, "hello\nuniverse\n");
+                assert_eq!(
+                    merged, "hello\nuniverse\n",
+                    "identical edits should merge cleanly to the shared text"
+                );
             }
             MergeResult::Conflict { .. } => panic!("expected clean merge for identical edits"),
         }
@@ -707,15 +716,34 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(record.op_type, "create_block");
-        assert_eq!(record.device_id, DEV_A);
+        assert_eq!(
+            record.op_type, "create_block",
+            "conflict copy op should be create_block"
+        );
+        assert_eq!(
+            record.device_id, DEV_A,
+            "conflict copy op should belong to the local device"
+        );
 
         // Parse the payload to get the new block_id
         let payload: CreateBlockPayload = serde_json::from_str(&record.payload).unwrap();
-        assert_eq!(payload.block_type, "content");
-        assert_eq!(payload.content, "conflicting text");
-        assert_eq!(payload.position, Some(6)); // original position (5) + 1
-        assert!(payload.parent_id.is_none()); // matches original
+        assert_eq!(
+            payload.block_type, "content",
+            "conflict copy should inherit block_type from original"
+        );
+        assert_eq!(
+            payload.content, "conflicting text",
+            "conflict copy should contain the conflict content"
+        );
+        assert_eq!(
+            payload.position,
+            Some(6),
+            "conflict copy position should be original + 1"
+        ); // original position (5) + 1
+        assert!(
+            payload.parent_id.is_none(),
+            "conflict copy parent_id should match original (none)"
+        ); // matches original
 
         // Verify the block in the blocks table
         let block_id_str = payload.block_id.as_str();
@@ -751,7 +779,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(row.conflict_type, Some("Property".to_owned()));
+        assert_eq!(
+            row.conflict_type,
+            Some("Property".to_owned()),
+            "conflict_type should be stored as Property"
+        );
     }
 
     #[tokio::test]
@@ -776,8 +808,16 @@ mod tests {
             .unwrap();
 
         let payload: CreateBlockPayload = serde_json::from_str(&record.payload).unwrap();
-        assert_eq!(payload.parent_id, Some(BlockId::test_id("PARENT")));
-        assert_eq!(payload.position, Some(4)); // 3 + 1
+        assert_eq!(
+            payload.parent_id,
+            Some(BlockId::test_id("PARENT")),
+            "conflict copy should preserve parent_id from original"
+        );
+        assert_eq!(
+            payload.position,
+            Some(4),
+            "conflict copy position should be original (3) + 1"
+        ); // 3 + 1
     }
 
     #[tokio::test]
@@ -785,7 +825,10 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         let err = create_conflict_copy(&pool, DEV_A, "NONEXISTENT", "text", "Text").await;
-        assert!(err.is_err());
+        assert!(
+            err.is_err(),
+            "create_conflict_copy should fail for nonexistent block"
+        );
         let msg = err.unwrap_err().to_string();
         assert!(
             msg.contains("Not found"),
@@ -833,9 +876,13 @@ mod tests {
         let op_b = make_prop_record(DEV_B, 1, FIXED_TS_LATER, "B1", "priority", "high");
 
         let result = resolve_property_conflict(&op_a, &op_b).unwrap();
-        assert_eq!(result.winner_device, DEV_B);
-        assert_eq!(result.winner_seq, 1);
-        assert_eq!(result.winner_value.value_text, Some("high".into()));
+        assert_eq!(result.winner_device, DEV_B, "later timestamp should win");
+        assert_eq!(result.winner_seq, 1, "winner seq should match op_b");
+        assert_eq!(
+            result.winner_value.value_text,
+            Some("high".into()),
+            "winner value should be op_b's value"
+        );
     }
 
     #[test]
@@ -844,8 +891,15 @@ mod tests {
         let op_b = make_prop_record(DEV_B, 1, FIXED_TS, "B1", "priority", "high");
 
         let result = resolve_property_conflict(&op_a, &op_b).unwrap();
-        assert_eq!(result.winner_device, DEV_A);
-        assert_eq!(result.winner_value.value_text, Some("low".into()));
+        assert_eq!(
+            result.winner_device, DEV_A,
+            "earlier timestamp should lose, op_a has later ts"
+        );
+        assert_eq!(
+            result.winner_value.value_text,
+            Some("low".into()),
+            "winner value should be op_a's value"
+        );
     }
 
     #[test]
@@ -859,7 +913,7 @@ mod tests {
             result.winner_device, DEV_B,
             "device-B should win the tiebreaker (B > A)"
         );
-        assert_eq!(result.winner_seq, 2);
+        assert_eq!(result.winner_seq, 2, "winner seq should match op_b's seq");
     }
 
     #[test]
@@ -870,8 +924,11 @@ mod tests {
 
         let result = resolve_property_conflict(&op_a, &op_b).unwrap();
         // With the seq tiebreaker, the op with the higher seq (op_b, seq=2) wins.
-        assert_eq!(result.winner_device, DEV_A);
-        assert_eq!(result.winner_seq, 2);
+        assert_eq!(
+            result.winner_device, DEV_A,
+            "same device should win when higher seq breaks tie"
+        );
+        assert_eq!(result.winner_seq, 2, "higher seq should be the winner");
     }
 
     #[test]
@@ -904,7 +961,7 @@ mod tests {
         let op_b = make_prop_record(DEV_B, 1, FIXED_TS, "B1", "priority", "high");
 
         let err = resolve_property_conflict(&op_a, &op_b);
-        assert!(err.is_err());
+        assert!(err.is_err(), "should reject non-set_property op_a");
         let msg = err.unwrap_err().to_string();
         assert!(
             msg.contains("set_property"),
@@ -926,7 +983,7 @@ mod tests {
         };
 
         let err = resolve_property_conflict(&op_a, &op_b);
-        assert!(err.is_err());
+        assert!(err.is_err(), "should reject non-set_property op_b");
     }
 
     #[test]
@@ -943,7 +1000,7 @@ mod tests {
         };
 
         let err = resolve_property_conflict(&op_a, &op_b);
-        assert!(err.is_err());
+        assert!(err.is_err(), "should reject malformed JSON payload");
     }
 
     // =====================================================================
@@ -1015,16 +1072,29 @@ mod tests {
 
         match result {
             MergeOutcome::Merged(record) => {
-                assert_eq!(record.op_type, "edit_block");
-                assert_eq!(record.device_id, DEV_A);
+                assert_eq!(
+                    record.op_type, "edit_block",
+                    "merge op should be edit_block"
+                );
+                assert_eq!(
+                    record.device_id, DEV_A,
+                    "merge op should belong to local device"
+                );
 
                 // Verify parent_seqs contains both heads
                 let parent_seqs = record.parsed_parent_seqs().unwrap().unwrap();
-                assert_eq!(parent_seqs.len(), 2);
+                assert_eq!(
+                    parent_seqs.len(),
+                    2,
+                    "merge op should have two parent entries"
+                );
 
                 // Check merged content
                 let payload: EditBlockPayload = serde_json::from_str(&record.payload).unwrap();
-                assert_eq!(payload.to_text, "LINE1\nline2\nLINE3\n");
+                assert_eq!(
+                    payload.to_text, "LINE1\nline2\nLINE3\n",
+                    "merged content should combine both non-overlapping edits"
+                );
             }
             other => panic!("expected Merged, got: {:?}", other),
         }
@@ -1076,13 +1146,22 @@ mod tests {
                     original_kept_ours,
                     "original should now retain ours content (F01+F02)"
                 );
-                assert_eq!(conflict_block_op.op_type, "create_block");
+                assert_eq!(
+                    conflict_block_op.op_type, "create_block",
+                    "conflict copy op should be create_block"
+                );
 
                 // The conflict copy should have "theirs" content
                 let payload: CreateBlockPayload =
                     serde_json::from_str(&conflict_block_op.payload).unwrap();
-                assert_eq!(payload.content, "hello universe");
-                assert_eq!(payload.block_type, "content");
+                assert_eq!(
+                    payload.content, "hello universe",
+                    "conflict copy should contain theirs content"
+                );
+                assert_eq!(
+                    payload.block_type, "content",
+                    "conflict copy should inherit block_type"
+                );
 
                 // Verify the merge op on the original block kept "ours" content
                 // The merge op is the latest op for DEV_A — it was appended after
@@ -1107,8 +1186,15 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-                assert!(row.is_conflict);
-                assert_eq!(row.conflict_source, Some("B1".to_owned()));
+                assert!(
+                    row.is_conflict,
+                    "conflict copy block should have is_conflict set"
+                );
+                assert_eq!(
+                    row.conflict_source,
+                    Some("B1".to_owned()),
+                    "conflict_source should point to original block"
+                );
             }
             other => panic!("expected ConflictCopy, got: {:?}", other),
         }
@@ -1152,7 +1238,10 @@ mod tests {
 
         match result {
             MergeResult::Clean(merged) => {
-                assert_eq!(merged, "top\nmiddle\nbottom\n");
+                assert_eq!(
+                    merged, "top\nmiddle\nbottom\n",
+                    "additions at different ends should merge cleanly"
+                );
             }
             MergeResult::Conflict { .. } => panic!("expected clean merge"),
         }
@@ -1204,8 +1293,15 @@ mod tests {
         };
 
         let result = resolve_property_conflict(&op_a, &op_b).unwrap();
-        assert_eq!(result.winner_device, DEV_B);
-        assert_eq!(result.winner_value.value_num, Some(99.0));
+        assert_eq!(
+            result.winner_device, DEV_B,
+            "later timestamp should win for numeric values"
+        );
+        assert_eq!(
+            result.winner_value.value_num,
+            Some(99.0),
+            "winner should have the numeric value from op_b"
+        );
     }
 
     // =====================================================================
@@ -1247,15 +1343,12 @@ mod tests {
         // (both inserted at the same position in the empty file).
         match result {
             MergeResult::Conflict { ancestor, .. } => {
-                assert_eq!(ancestor, "");
-            }
-            MergeResult::Clean(merged) => {
-                // Some merge tools resolve this cleanly; either outcome is acceptable.
-                assert!(
-                    merged.contains("hello") && merged.contains("world"),
-                    "merged should contain both additions: {merged}"
+                assert_eq!(
+                    ancestor, "",
+                    "ancestor should be empty for empty-content block"
                 );
             }
+            MergeResult::Clean(_) => panic!("expected Conflict for edits from empty ancestor"),
         }
     }
 
@@ -1296,7 +1389,10 @@ mod tests {
 
         match result {
             MergeResult::Clean(merged) => {
-                assert_eq!(merged, "中文\nEnglish\n🐍 Python\n");
+                assert_eq!(
+                    merged, "中文\nEnglish\n🐍 Python\n",
+                    "unicode content should merge cleanly across non-overlapping lines"
+                );
             }
             MergeResult::Conflict { .. } => panic!("expected clean merge for unicode content"),
         }
@@ -1315,7 +1411,10 @@ mod tests {
             .unwrap();
 
         let payload: CreateBlockPayload = serde_json::from_str(&record.payload).unwrap();
-        assert_eq!(payload.block_type, "tag");
+        assert_eq!(
+            payload.block_type, "tag",
+            "conflict copy should inherit block_type from original tag"
+        );
         assert!(
             payload.position.is_none(),
             "position should remain None when original position is NULL"
@@ -1442,10 +1541,22 @@ mod tests {
 
         // Verify winner is selected and all values are None
         let result = resolve_property_conflict(&op_a, &op_b).unwrap();
-        assert!(result.winner_value.value_text.is_none());
-        assert!(result.winner_value.value_num.is_none());
-        assert!(result.winner_value.value_date.is_none());
-        assert!(result.winner_value.value_ref.is_none());
+        assert!(
+            result.winner_value.value_text.is_none(),
+            "winner value_text should be none for all-null values"
+        );
+        assert!(
+            result.winner_value.value_num.is_none(),
+            "winner value_num should be none for all-null values"
+        );
+        assert!(
+            result.winner_value.value_date.is_none(),
+            "winner value_date should be none for all-null values"
+        );
+        assert!(
+            result.winner_value.value_ref.is_none(),
+            "winner value_ref should be none for all-null values"
+        );
 
         // Commutativity
         let result_ab = resolve_property_conflict(&op_a, &op_b).unwrap();
@@ -1471,7 +1582,11 @@ mod tests {
             result_ab.winner_value.value_text, result_ba.winner_value.value_text,
             "identical ops must produce the same winner value regardless of arg order"
         );
-        assert_eq!(result_ab.winner_value.value_text, Some("medium".into()));
+        assert_eq!(
+            result_ab.winner_value.value_text,
+            Some("medium".into()),
+            "identical ops should always resolve to the same value"
+        );
     }
 
     /// F10 (fast-forward): One head is a direct ancestor of the other.
@@ -1582,8 +1697,14 @@ mod tests {
                     ancestor, "root content\n",
                     "ancestor must come from create_block via fallback walk"
                 );
-                assert_eq!(ours, "root content\nedited by A\n");
-                assert_eq!(theirs, "root content\nedited by B\n");
+                assert_eq!(
+                    ours, "root content\nedited by A\n",
+                    "ours should be device-A's edit in fallback conflict"
+                );
+                assert_eq!(
+                    theirs, "root content\nedited by B\n",
+                    "theirs should be device-B's edit in fallback conflict"
+                );
             }
         }
     }
@@ -1626,7 +1747,10 @@ mod tests {
         // by both sides identically, which resolves as clean.
         match result {
             MergeResult::Clean(merged) => {
-                assert_eq!(merged, "changed");
+                assert_eq!(
+                    merged, "changed",
+                    "identical single-line edits should merge to the shared text"
+                );
             }
             MergeResult::Conflict { ours, theirs, .. } => {
                 // Even if diffy reports conflict, both sides are the same
@@ -1715,8 +1839,14 @@ mod tests {
                 theirs,
             } => {
                 assert_eq!(ancestor, "", "ancestor should be empty");
-                assert_eq!(ours, "line A1\nline A2\n");
-                assert_eq!(theirs, "line B1\nline B2\n");
+                assert_eq!(
+                    ours, "line A1\nline A2\n",
+                    "ours should be device-A's multiline addition"
+                );
+                assert_eq!(
+                    theirs, "line B1\nline B2\n",
+                    "theirs should be device-B's multiline addition"
+                );
             }
             MergeResult::Clean(merged) => {
                 // Some merge tools may resolve this cleanly
@@ -1737,13 +1867,27 @@ mod tests {
 
         let result = resolve_property_conflict(&op_a, &op_b).unwrap();
         // B has later timestamp, so B wins
-        assert_eq!(result.winner_device, DEV_B);
-        assert_eq!(result.winner_value.value_text, Some("done".into()));
+        assert_eq!(
+            result.winner_device, DEV_B,
+            "later timestamp should win even with identical values"
+        );
+        assert_eq!(
+            result.winner_value.value_text,
+            Some("done".into()),
+            "winner value should be the shared value"
+        );
 
         // Commutativity: swap args, same winner
         let result_ba = resolve_property_conflict(&op_b, &op_a).unwrap();
-        assert_eq!(result_ba.winner_device, DEV_B);
-        assert_eq!(result_ba.winner_value.value_text, Some("done".into()));
+        assert_eq!(
+            result_ba.winner_device, DEV_B,
+            "commutativity: swapped args should still pick device-B"
+        );
+        assert_eq!(
+            result_ba.winner_value.value_text,
+            Some("done".into()),
+            "commutativity: swapped args should still return the shared value"
+        );
     }
 
     /// Property conflict where both sides set the same value with the same timestamp.
@@ -1761,7 +1905,10 @@ mod tests {
             "must be commutative even with identical values"
         );
         // device-B > device-A lexicographically
-        assert_eq!(result_ab.winner_device, DEV_B);
+        assert_eq!(
+            result_ab.winner_device, DEV_B,
+            "device-B should win via lexicographic tiebreaker"
+        );
     }
 
     // =====================================================================

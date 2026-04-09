@@ -550,10 +550,19 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.len(), 2);
-        assert!(result.contains("BLK_1"));
-        assert!(result.contains("BLK_2"));
-        assert!(!result.contains("BLK_3"));
+        assert_eq!(result.len(), 2, "tag query should match exactly 2 blocks");
+        assert!(
+            result.contains("BLK_1"),
+            "result should contain BLK_1 tagged with TAG_A"
+        );
+        assert!(
+            result.contains("BLK_2"),
+            "result should contain BLK_2 tagged with TAG_A"
+        );
+        assert!(
+            !result.contains("BLK_3"),
+            "result should not contain untagged BLK_3"
+        );
     }
 
     #[tokio::test]
@@ -573,8 +582,15 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.len(), 1);
-        assert!(result.contains("BLK_1"));
+        assert_eq!(
+            result.len(),
+            1,
+            "deleted block should be excluded from results"
+        );
+        assert!(
+            result.contains("BLK_1"),
+            "non-deleted block should remain in results"
+        );
     }
 
     #[tokio::test]
@@ -594,8 +610,15 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.len(), 1);
-        assert!(result.contains("BLK_1"));
+        assert_eq!(
+            result.len(),
+            1,
+            "conflict block should be excluded from results"
+        );
+        assert!(
+            result.contains("BLK_1"),
+            "non-conflict block should remain in results"
+        );
     }
 
     #[tokio::test]
@@ -607,7 +630,7 @@ mod tests {
                 .await
                 .unwrap();
 
-        assert!(result.is_empty());
+        assert!(result.is_empty(), "unknown tag should return empty set");
     }
 
     // ======================================================================
@@ -642,10 +665,19 @@ mod tests {
                 .await
                 .unwrap();
 
-        assert_eq!(result.len(), 2);
-        assert!(result.contains("BLK_1"));
-        assert!(result.contains("BLK_2"));
-        assert!(!result.contains("BLK_3"));
+        assert_eq!(result.len(), 2, "prefix 'work/' should match 2 blocks");
+        assert!(
+            result.contains("BLK_1"),
+            "result should contain BLK_1 tagged with work/meeting"
+        );
+        assert!(
+            result.contains("BLK_2"),
+            "result should contain BLK_2 tagged with work/email"
+        );
+        assert!(
+            !result.contains("BLK_3"),
+            "result should not contain BLK_3 tagged with personal"
+        );
     }
 
     #[tokio::test]
@@ -659,7 +691,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.is_empty());
+        assert!(
+            result.is_empty(),
+            "non-matching prefix should return empty set"
+        );
     }
 
     #[tokio::test]
@@ -683,8 +718,15 @@ mod tests {
                 .unwrap();
 
         // Should be deduplicated (union, not multi-set)
-        assert_eq!(result.len(), 1);
-        assert!(result.contains("BLK_1"));
+        assert_eq!(
+            result.len(),
+            1,
+            "duplicate block ids should be deduplicated"
+        );
+        assert!(
+            result.contains("BLK_1"),
+            "result should contain the shared block"
+        );
     }
 
     // ======================================================================
@@ -713,8 +755,15 @@ mod tests {
         ]);
         let result: FxHashSet<String> = resolve_expr(&pool, &expr, false).await.unwrap();
 
-        assert_eq!(result.len(), 1);
-        assert!(result.contains("BLK_1"));
+        assert_eq!(
+            result.len(),
+            1,
+            "AND intersection should match exactly 1 block"
+        );
+        assert!(
+            result.contains("BLK_1"),
+            "result should contain block tagged with both A and B"
+        );
     }
 
     #[tokio::test]
@@ -724,7 +773,10 @@ mod tests {
         let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::And(vec![]), false)
             .await
             .unwrap();
-        assert!(result.is_empty());
+        assert!(
+            result.is_empty(),
+            "AND with empty operands should return empty set"
+        );
     }
 
     #[tokio::test]
@@ -746,7 +798,10 @@ mod tests {
         ]);
         let result: FxHashSet<String> = resolve_expr(&pool, &expr, false).await.unwrap();
 
-        assert!(result.is_empty());
+        assert!(
+            result.is_empty(),
+            "AND of disjoint tags should return empty set"
+        );
     }
 
     // ======================================================================
@@ -772,9 +827,15 @@ mod tests {
         ]);
         let result: FxHashSet<String> = resolve_expr(&pool, &expr, false).await.unwrap();
 
-        assert_eq!(result.len(), 2);
-        assert!(result.contains("BLK_1"));
-        assert!(result.contains("BLK_2"));
+        assert_eq!(result.len(), 2, "OR union should match 2 blocks");
+        assert!(
+            result.contains("BLK_1"),
+            "OR result should contain BLK_1 tagged with A"
+        );
+        assert!(
+            result.contains("BLK_2"),
+            "OR result should contain BLK_2 tagged with B"
+        );
     }
 
     #[tokio::test]
@@ -784,7 +845,10 @@ mod tests {
         let result: FxHashSet<String> = resolve_expr(&pool, &TagExpr::Or(vec![]), false)
             .await
             .unwrap();
-        assert!(result.is_empty());
+        assert!(
+            result.is_empty(),
+            "OR with empty operands should return empty set"
+        );
     }
 
     #[tokio::test]
@@ -805,8 +869,11 @@ mod tests {
         ]);
         let result: FxHashSet<String> = resolve_expr(&pool, &expr, false).await.unwrap();
 
-        assert_eq!(result.len(), 1);
-        assert!(result.contains("BLK_1"));
+        assert_eq!(result.len(), 1, "OR should deduplicate shared blocks");
+        assert!(
+            result.contains("BLK_1"),
+            "result should contain the shared block"
+        );
     }
 
     // ======================================================================
@@ -827,9 +894,18 @@ mod tests {
         let result: FxHashSet<String> = resolve_expr(&pool, &expr, false).await.unwrap();
 
         // BLK_2 and TAG_A itself should be in the complement (everything not tagged A)
-        assert!(result.contains("BLK_2"));
-        assert!(result.contains("TAG_A")); // tag block itself is not tagged with TAG_A
-        assert!(!result.contains("BLK_1"));
+        assert!(
+            result.contains("BLK_2"),
+            "untagged block should be in NOT complement"
+        );
+        assert!(
+            result.contains("TAG_A"),
+            "tag block itself should be in NOT complement"
+        );
+        assert!(
+            !result.contains("BLK_1"),
+            "tagged block should be excluded from NOT complement"
+        );
     }
 
     #[tokio::test]
@@ -847,7 +923,10 @@ mod tests {
         let result: FxHashSet<String> = resolve_expr(&pool, &expr, false).await.unwrap();
 
         // BLK_2 is deleted, should not appear in universal set
-        assert!(!result.contains("BLK_2"));
+        assert!(
+            !result.contains("BLK_2"),
+            "deleted block should not appear in NOT universal set"
+        );
     }
 
     // ======================================================================
@@ -886,10 +965,19 @@ mod tests {
         ]);
         let result: FxHashSet<String> = resolve_expr(&pool, &expr, false).await.unwrap();
 
-        assert_eq!(result.len(), 2);
-        assert!(result.contains("BLK_1"));
-        assert!(result.contains("BLK_2"));
-        assert!(!result.contains("BLK_3"));
+        assert_eq!(result.len(), 2, "AND(A, OR(B,C)) should match 2 blocks");
+        assert!(
+            result.contains("BLK_1"),
+            "BLK_1 with A+B should match AND(A, OR(B,C))"
+        );
+        assert!(
+            result.contains("BLK_2"),
+            "BLK_2 with A+C should match AND(A, OR(B,C))"
+        );
+        assert!(
+            !result.contains("BLK_3"),
+            "BLK_3 with only A should not match AND(A, OR(B,C))"
+        );
     }
 
     // ======================================================================
@@ -915,29 +1003,51 @@ mod tests {
         let page1 = PageRequest::new(None, Some(2)).unwrap();
         let resp1 = eval_tag_query(&pool, &expr, &page1, false).await.unwrap();
 
-        assert_eq!(resp1.items.len(), 2);
-        assert_eq!(resp1.items[0].id, "BLK_A");
-        assert_eq!(resp1.items[1].id, "BLK_B");
-        assert!(resp1.has_more);
-        assert!(resp1.next_cursor.is_some());
+        assert_eq!(resp1.items.len(), 2, "page 1 should return 2 items");
+        assert_eq!(
+            resp1.items[0].id, "BLK_A",
+            "page 1 first item should be BLK_A"
+        );
+        assert_eq!(
+            resp1.items[1].id, "BLK_B",
+            "page 1 second item should be BLK_B"
+        );
+        assert!(resp1.has_more, "page 1 should indicate more pages");
+        assert!(
+            resp1.next_cursor.is_some(),
+            "page 1 should provide a next cursor"
+        );
 
         // Page 2: continue from cursor
         let page2 = PageRequest::new(resp1.next_cursor, Some(2)).unwrap();
         let resp2 = eval_tag_query(&pool, &expr, &page2, false).await.unwrap();
 
-        assert_eq!(resp2.items.len(), 2);
-        assert_eq!(resp2.items[0].id, "BLK_C");
-        assert_eq!(resp2.items[1].id, "BLK_D");
-        assert!(resp2.has_more);
+        assert_eq!(resp2.items.len(), 2, "page 2 should return 2 items");
+        assert_eq!(
+            resp2.items[0].id, "BLK_C",
+            "page 2 first item should be BLK_C"
+        );
+        assert_eq!(
+            resp2.items[1].id, "BLK_D",
+            "page 2 second item should be BLK_D"
+        );
+        assert!(resp2.has_more, "page 2 should indicate more pages");
 
         // Page 3: last page
         let page3 = PageRequest::new(resp2.next_cursor, Some(2)).unwrap();
         let resp3 = eval_tag_query(&pool, &expr, &page3, false).await.unwrap();
 
-        assert_eq!(resp3.items.len(), 1);
-        assert_eq!(resp3.items[0].id, "BLK_E");
-        assert!(!resp3.has_more);
-        assert!(resp3.next_cursor.is_none());
+        assert_eq!(
+            resp3.items.len(),
+            1,
+            "page 3 should return 1 remaining item"
+        );
+        assert_eq!(resp3.items[0].id, "BLK_E", "page 3 should contain BLK_E");
+        assert!(!resp3.has_more, "last page should not indicate more pages");
+        assert!(
+            resp3.next_cursor.is_none(),
+            "last page should have no next cursor"
+        );
     }
 
     #[tokio::test]
@@ -948,9 +1058,18 @@ mod tests {
         let page = PageRequest::new(None, Some(10)).unwrap();
         let resp = eval_tag_query(&pool, &expr, &page, false).await.unwrap();
 
-        assert!(resp.items.is_empty());
-        assert!(!resp.has_more);
-        assert!(resp.next_cursor.is_none());
+        assert!(
+            resp.items.is_empty(),
+            "nonexistent tag should return empty items"
+        );
+        assert!(
+            !resp.has_more,
+            "empty result should not indicate more pages"
+        );
+        assert!(
+            resp.next_cursor.is_none(),
+            "empty result should have no cursor"
+        );
     }
 
     #[tokio::test]
@@ -965,13 +1084,27 @@ mod tests {
         let page = PageRequest::new(None, Some(10)).unwrap();
         let resp = eval_tag_query(&pool, &expr, &page, false).await.unwrap();
 
-        assert_eq!(resp.items.len(), 1);
+        assert_eq!(
+            resp.items.len(),
+            1,
+            "query should return exactly 1 block row"
+        );
         let row = &resp.items[0];
-        assert_eq!(row.id, "BLK_1");
-        assert_eq!(row.block_type, "content");
-        assert_eq!(row.content, Some("hello world".into()));
-        assert!(row.deleted_at.is_none());
-        assert!(!row.is_conflict);
+        assert_eq!(row.id, "BLK_1", "returned row should have correct id");
+        assert_eq!(
+            row.block_type, "content",
+            "returned row should have correct block_type"
+        );
+        assert_eq!(
+            row.content,
+            Some("hello world".into()),
+            "returned row should have correct content"
+        );
+        assert!(
+            row.deleted_at.is_none(),
+            "returned row should not be deleted"
+        );
+        assert!(!row.is_conflict, "returned row should not be a conflict");
     }
 
     #[tokio::test]
@@ -997,8 +1130,14 @@ mod tests {
         let page = PageRequest::new(Some(cursor), Some(10)).unwrap();
         let resp = eval_tag_query(&pool, &expr, &page, false).await.unwrap();
 
-        assert!(resp.items.is_empty());
-        assert!(!resp.has_more);
+        assert!(
+            resp.items.is_empty(),
+            "cursor past all ids should return empty items"
+        );
+        assert!(
+            !resp.has_more,
+            "cursor past all ids should not indicate more pages"
+        );
     }
 
     // ======================================================================
@@ -1019,14 +1158,26 @@ mod tests {
 
         let result = list_tags_by_prefix(&pool, "work/", None).await.unwrap();
 
-        assert_eq!(result.len(), 2);
+        assert_eq!(result.len(), 2, "prefix 'work/' should match 2 tags");
         // Ordered by name
-        assert_eq!(result[0].name, "work/email");
-        assert_eq!(result[0].tag_id, "TAG_WE");
-        assert_eq!(result[0].usage_count, 3);
-        assert_eq!(result[1].name, "work/meeting");
-        assert_eq!(result[1].tag_id, "TAG_WM");
-        assert_eq!(result[1].usage_count, 5);
+        assert_eq!(
+            result[0].name, "work/email",
+            "first tag should be work/email (alphabetical)"
+        );
+        assert_eq!(result[0].tag_id, "TAG_WE", "first tag_id should be TAG_WE");
+        assert_eq!(
+            result[0].usage_count, 3,
+            "first tag usage_count should be 3"
+        );
+        assert_eq!(
+            result[1].name, "work/meeting",
+            "second tag should be work/meeting"
+        );
+        assert_eq!(result[1].tag_id, "TAG_WM", "second tag_id should be TAG_WM");
+        assert_eq!(
+            result[1].usage_count, 5,
+            "second tag usage_count should be 5"
+        );
     }
 
     #[tokio::test]
@@ -1041,9 +1192,12 @@ mod tests {
 
         let result = list_tags_by_prefix(&pool, "", None).await.unwrap();
 
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].name, "alpha");
-        assert_eq!(result[1].name, "beta");
+        assert_eq!(result.len(), 2, "empty prefix should return all tags");
+        assert_eq!(
+            result[0].name, "alpha",
+            "first tag should be alpha (alphabetical)"
+        );
+        assert_eq!(result[1].name, "beta", "second tag should be beta");
     }
 
     #[tokio::test]
@@ -1055,7 +1209,10 @@ mod tests {
 
         let result = list_tags_by_prefix(&pool, "zzz", None).await.unwrap();
 
-        assert!(result.is_empty());
+        assert!(
+            result.is_empty(),
+            "non-matching prefix should return empty list"
+        );
     }
 
     // ======================================================================
@@ -1064,27 +1221,47 @@ mod tests {
 
     #[test]
     fn escape_like_leaves_plain_text_unchanged() {
-        assert_eq!(escape_like("work/meeting"), "work/meeting");
+        assert_eq!(
+            escape_like("work/meeting"),
+            "work/meeting",
+            "plain text should pass through unchanged"
+        );
     }
 
     #[test]
     fn escape_like_escapes_percent() {
-        assert_eq!(escape_like("100%"), "100\\%");
+        assert_eq!(
+            escape_like("100%"),
+            "100\\%",
+            "percent should be backslash-escaped"
+        );
     }
 
     #[test]
     fn escape_like_escapes_underscore() {
-        assert_eq!(escape_like("a_b"), "a\\_b");
+        assert_eq!(
+            escape_like("a_b"),
+            "a\\_b",
+            "underscore should be backslash-escaped"
+        );
     }
 
     #[test]
     fn escape_like_escapes_backslash() {
-        assert_eq!(escape_like("a\\b"), "a\\\\b");
+        assert_eq!(
+            escape_like("a\\b"),
+            "a\\\\b",
+            "backslash should be double-escaped"
+        );
     }
 
     #[test]
     fn escape_like_escapes_all_special_chars() {
-        assert_eq!(escape_like("%_\\"), "\\%\\_\\\\");
+        assert_eq!(
+            escape_like("%_\\"),
+            "\\%\\_\\\\",
+            "all special chars should be escaped together"
+        );
     }
 
     #[tokio::test]
@@ -1103,8 +1280,15 @@ mod tests {
 
         // Prefix "100%" should match only the tag with literal '%'
         let result = list_tags_by_prefix(&pool, "100%", None).await.unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].name, "100%_done");
+        assert_eq!(
+            result.len(),
+            1,
+            "literal '100%%' prefix should match exactly 1 tag"
+        );
+        assert_eq!(
+            result[0].name, "100%_done",
+            "matched tag should be '100%%_done'"
+        );
     }
 
     // ======================================================================
@@ -1124,10 +1308,10 @@ mod tests {
 
         let result = list_tags_for_block(&pool, "BLK_1").await.unwrap();
 
-        assert_eq!(result.len(), 2);
+        assert_eq!(result.len(), 2, "block should have 2 associated tags");
         // Ordered by tag_id
-        assert_eq!(result[0], "TAG_A");
-        assert_eq!(result[1], "TAG_B");
+        assert_eq!(result[0], "TAG_A", "first tag_id should be TAG_A");
+        assert_eq!(result[1], "TAG_B", "second tag_id should be TAG_B");
     }
 
     #[tokio::test]
@@ -1138,7 +1322,10 @@ mod tests {
 
         let result = list_tags_for_block(&pool, "BLK_1").await.unwrap();
 
-        assert!(result.is_empty());
+        assert!(
+            result.is_empty(),
+            "block with no tags should return empty list"
+        );
     }
 
     #[tokio::test]
@@ -1147,7 +1334,10 @@ mod tests {
 
         let result = list_tags_for_block(&pool, "DOES_NOT_EXIST").await.unwrap();
 
-        assert!(result.is_empty());
+        assert!(
+            result.is_empty(),
+            "nonexistent block should return empty list"
+        );
     }
 
     #[tokio::test]
@@ -1177,8 +1367,14 @@ mod tests {
             1,
             "should match only the tag with literal '%'"
         );
-        assert!(result.contains("BLK_1"));
-        assert!(!result.contains("BLK_2"));
+        assert!(
+            result.contains("BLK_1"),
+            "block tagged with literal '%' tag should match"
+        );
+        assert!(
+            !result.contains("BLK_2"),
+            "block tagged with non-literal-percent tag should not match"
+        );
     }
 
     // ======================================================================
@@ -1311,20 +1507,46 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result_inherited.contains("PAGE_A"));
-        assert!(result_inherited.contains("CHILD_1"));
-        assert!(result_inherited.contains("CHILD_2"));
-        assert_eq!(result_inherited.len(), 3);
+        assert!(
+            result_inherited.contains("PAGE_A"),
+            "inherited result should contain tagged page"
+        );
+        assert!(
+            result_inherited.contains("CHILD_1"),
+            "inherited result should contain child 1"
+        );
+        assert!(
+            result_inherited.contains("CHILD_2"),
+            "inherited result should contain child 2"
+        );
+        assert_eq!(
+            result_inherited.len(),
+            3,
+            "inherited result should contain page + 2 children"
+        );
 
         // With inheritance=false, only the page appears.
         let result_direct = resolve_expr(&pool, &TagExpr::Tag("TAG_T1".into()), false)
             .await
             .unwrap();
 
-        assert!(result_direct.contains("PAGE_A"));
-        assert!(!result_direct.contains("CHILD_1"));
-        assert!(!result_direct.contains("CHILD_2"));
-        assert_eq!(result_direct.len(), 1);
+        assert!(
+            result_direct.contains("PAGE_A"),
+            "direct result should contain tagged page"
+        );
+        assert!(
+            !result_direct.contains("CHILD_1"),
+            "direct result should not contain child 1"
+        );
+        assert!(
+            !result_direct.contains("CHILD_2"),
+            "direct result should not contain child 2"
+        );
+        assert_eq!(
+            result_direct.len(),
+            1,
+            "direct result should contain only the tagged page"
+        );
     }
 
     #[tokio::test]
@@ -1345,10 +1567,23 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.contains("PAGE_B"));
-        assert!(result.contains("CHILD_B1"));
-        assert!(result.contains("GRAND_B1"));
-        assert_eq!(result.len(), 3);
+        assert!(
+            result.contains("PAGE_B"),
+            "multi-level inheritance should include page"
+        );
+        assert!(
+            result.contains("CHILD_B1"),
+            "multi-level inheritance should include child"
+        );
+        assert!(
+            result.contains("GRAND_B1"),
+            "multi-level inheritance should include grandchild"
+        );
+        assert_eq!(
+            result.len(),
+            3,
+            "multi-level inheritance should match 3 blocks"
+        );
     }
 
     #[tokio::test]
@@ -1369,11 +1604,27 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.contains("PAGE_C1"));
-        assert!(result.contains("CHILD_C1"));
-        assert!(!result.contains("PAGE_C2"));
-        assert!(!result.contains("CHILD_C2"));
-        assert_eq!(result.len(), 2);
+        assert!(
+            result.contains("PAGE_C1"),
+            "tagged page should be in result"
+        );
+        assert!(
+            result.contains("CHILD_C1"),
+            "child of tagged page should be in result"
+        );
+        assert!(
+            !result.contains("PAGE_C2"),
+            "untagged sibling page should not be in result"
+        );
+        assert!(
+            !result.contains("CHILD_C2"),
+            "child of untagged page should not be in result"
+        );
+        assert_eq!(
+            result.len(),
+            2,
+            "inheritance should not cross to sibling subtrees"
+        );
     }
 
     #[tokio::test]
@@ -1395,18 +1646,38 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result_inherited.contains("PAGE_D"));
-        assert!(result_inherited.contains("CHILD_D1"));
-        assert_eq!(result_inherited.len(), 2);
+        assert!(
+            result_inherited.contains("PAGE_D"),
+            "prefix inherited should include tagged page"
+        );
+        assert!(
+            result_inherited.contains("CHILD_D1"),
+            "prefix inherited should include child"
+        );
+        assert_eq!(
+            result_inherited.len(),
+            2,
+            "prefix inherited should match page + child"
+        );
 
         // Without inheritance, only the directly tagged block.
         let result_direct = resolve_expr(&pool, &TagExpr::Prefix("work/".into()), false)
             .await
             .unwrap();
 
-        assert!(result_direct.contains("PAGE_D"));
-        assert!(!result_direct.contains("CHILD_D1"));
-        assert_eq!(result_direct.len(), 1);
+        assert!(
+            result_direct.contains("PAGE_D"),
+            "prefix direct should include tagged page"
+        );
+        assert!(
+            !result_direct.contains("CHILD_D1"),
+            "prefix direct should not include child"
+        );
+        assert_eq!(
+            result_direct.len(),
+            1,
+            "prefix direct should match only the tagged page"
+        );
     }
 
     #[tokio::test]
@@ -1436,26 +1707,53 @@ mod tests {
         // Page 1: limit 2 (with inheritance)
         let page1 = PageRequest::new(None, Some(2)).unwrap();
         let resp1 = eval_tag_query(&pool, &expr, &page1, true).await.unwrap();
-        assert_eq!(resp1.items.len(), 2);
-        assert!(resp1.has_more);
-        assert!(resp1.next_cursor.is_some());
+        assert_eq!(
+            resp1.items.len(),
+            2,
+            "inherited page 1 should return 2 items"
+        );
+        assert!(
+            resp1.has_more,
+            "inherited page 1 should indicate more pages"
+        );
+        assert!(
+            resp1.next_cursor.is_some(),
+            "inherited page 1 should provide next cursor"
+        );
 
         // Page 2: continue from cursor
         let page2 = PageRequest::new(resp1.next_cursor, Some(2)).unwrap();
         let resp2 = eval_tag_query(&pool, &expr, &page2, true).await.unwrap();
-        assert_eq!(resp2.items.len(), 2);
-        assert!(resp2.has_more);
+        assert_eq!(
+            resp2.items.len(),
+            2,
+            "inherited page 2 should return 2 items"
+        );
+        assert!(
+            resp2.has_more,
+            "inherited page 2 should indicate more pages"
+        );
 
         // Page 3: last page (1 remaining)
         let page3 = PageRequest::new(resp2.next_cursor, Some(2)).unwrap();
         let resp3 = eval_tag_query(&pool, &expr, &page3, true).await.unwrap();
-        assert_eq!(resp3.items.len(), 1);
-        assert!(!resp3.has_more);
-        assert!(resp3.next_cursor.is_none());
+        assert_eq!(
+            resp3.items.len(),
+            1,
+            "inherited page 3 should return 1 remaining item"
+        );
+        assert!(
+            !resp3.has_more,
+            "inherited last page should not indicate more"
+        );
+        assert!(
+            resp3.next_cursor.is_none(),
+            "inherited last page should have no cursor"
+        );
 
         // Total items across all pages = 5 (PAGE_PG + 4 children)
         let total = resp1.items.len() + resp2.items.len() + resp3.items.len();
-        assert_eq!(total, 5);
+        assert_eq!(total, 5, "total items across all pages should be 5");
     }
 
     // ======================================================================
