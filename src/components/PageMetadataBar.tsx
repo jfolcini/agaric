@@ -7,8 +7,7 @@
 
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronToggle } from '@/components/ui/chevron-toggle'
-import { cn } from '@/lib/utils'
+import { CollapsiblePanelHeader } from '@/components/CollapsiblePanelHeader'
 import { ulidToDate } from '../lib/format'
 import type { FlatBlock } from '../lib/tree-utils'
 
@@ -53,21 +52,9 @@ export function PageMetadataBar({ blocks, pageId }: PageMetadataBarProps) {
 
   return (
     <div className="page-metadata-bar">
-      <button
-        type="button"
-        onClick={handleToggle}
-        className={cn(
-          'flex items-center gap-1 rounded-md px-2 py-1',
-          'text-xs text-muted-foreground',
-          'hover:bg-accent/50 active:bg-accent/70 transition-colors',
-          'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
-        )}
-        aria-expanded={!collapsed}
-        aria-label={t('metadata.toggleLabel')}
-      >
-        <ChevronToggle isExpanded={!collapsed} size="sm" />
-        <span>{t('metadata.label')}</span>
-      </button>
+      <CollapsiblePanelHeader isCollapsed={collapsed} onToggle={handleToggle}>
+        {t('metadata.label')}
+      </CollapsiblePanelHeader>
 
       {!collapsed && (
         <div className="px-2 py-1 text-xs text-muted-foreground" data-testid="metadata-content">

@@ -290,7 +290,8 @@ export function getCustomOverrides(): Record<string, string> {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return {}
     return JSON.parse(raw) as Record<string, string>
-  } catch {
+  } catch (e) {
+    console.warn('[keyboard-config] Failed to load custom shortcut overrides', e)
     return {}
   }
 }

@@ -136,10 +136,10 @@ export function KeyboardSettingsTab(): React.ReactElement {
                 return (
                   <div
                     key={shortcut.id}
-                    className="flex items-center gap-2 py-2 px-2 rounded hover:bg-accent/50"
+                    className="flex flex-col sm:flex-row sm:items-center gap-2 py-2 px-2 rounded hover:bg-accent/50"
                   >
                     {/* Keys column */}
-                    <div className="w-56 shrink-0">
+                    <div className="w-full sm:w-56 sm:shrink-0">
                       {isEditing ? (
                         <div className="flex items-center gap-1">
                           <Input
@@ -189,7 +189,7 @@ export function KeyboardSettingsTab(): React.ReactElement {
                     </div>
 
                     {/* Description column */}
-                    <div className="flex-1 text-sm text-muted-foreground">
+                    <div className="w-full sm:flex-1 text-sm text-muted-foreground">
                       {t(shortcut.description)}
                       {shortcut.condition && (
                         <small className="text-xs text-muted-foreground ml-1">

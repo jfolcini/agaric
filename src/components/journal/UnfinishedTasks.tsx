@@ -61,6 +61,9 @@ function classifyAge(dateStr: string, todayStr: string): 'yesterday' | 'thisWeek
   weekAgo.setDate(today.getDate() - 7)
   const weekAgoStr = toLocalDateStr(weekAgo)
 
+  // String comparison is valid because toLocalDateStr() guarantees YYYY-MM-DD format,
+  // which is lexicographically sortable. All inputs to classifyAge() come from
+  // toLocalDateStr() or the backend (which also uses YYYY-MM-DD).
   if (dateStr > weekAgoStr && dateStr < todayStr) return 'thisWeek'
 
   return 'older'

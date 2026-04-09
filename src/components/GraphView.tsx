@@ -74,8 +74,9 @@ export function GraphView(): React.ReactElement {
 
         setNodes(pageNodes)
         setEdges(pageEdges)
-      } catch (_err) {
+      } catch (err) {
         if (!cancelled) {
+          console.error('[GraphView] Failed to load graph data', err)
           setError(t('graph.loadFailed'))
         }
       } finally {
@@ -138,6 +139,8 @@ export function GraphView(): React.ReactElement {
       .data(simNodes)
       .join('g')
       .attr('class', 'node')
+      .attr('tabindex', '0')
+      .attr('role', 'button')
       .style('cursor', 'pointer')
 
     // Hit-area circle for touch targets (44px diameter = 22px radius)
@@ -158,13 +161,46 @@ export function GraphView(): React.ReactElement {
       .attr('dx', 10)
       .attr('dy', 4)
       .attr('fill', 'var(--foreground)')
-      .attr('font-size', '10px')
+      .attr('font-size', '12px')
       .style('pointer-events', 'none')
       .style('user-select', 'none')
 
     // Click handler — navigate to page
     node.on('click', (_event, d) => {
       navigateToPage(d.id, d.label)
+    })
+
+    // Keyboard handler — Enter/Space navigates to page (UX-102)
+    node.on('keydown', (event, d) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        navigateToPage(d.id, d.label)
+      }
+    })
+
+    // Focus ring for keyboard navigation (UX-102)
+    node.on('focus', function () {
+      select(this)
+        .select('circle:nth-child(2)')
+        .attr('stroke', 'var(--ring)')
+        .attr('stroke-width', 2)
+    })
+    node.on('blur', function () {
+      select(this).select('circle:nth-child(2)').attr('stroke', null).attr('stroke-width', null)
+    })
+
+    // Hover/active feedback (UX-103)
+    node.on('mouseenter', function () {
+      select(this).select('circle:nth-child(2)').attr('r', 8)
+    })
+    node.on('mouseleave', function () {
+      select(this).select('circle:nth-child(2)').attr('r', 6)
+    })
+    node.on('pointerdown', function () {
+      select(this).select('circle:nth-child(2)').attr('r', 5)
+    })
+    node.on('pointerup', function () {
+      select(this).select('circle:nth-child(2)').attr('r', 8)
     })
 
     // Drag behavior
@@ -194,6 +230,27 @@ export function GraphView(): React.ReactElement {
       })
 
     svgSel.call(zoomBehavior)
+
+    // Respect prefers-reduced-motion (UX-104)
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (prefersReducedMotion) {
+      sim.alphaDecay(1)
+      sim.tick(300)
+
+      // Render final static layout once
+      link
+        .attr('x1', (d) => (d.source as GraphNode).x ?? 0)
+        .attr('y1', (d) => (d.source as GraphNode).y ?? 0)
+        .attr('x2', (d) => (d.target as GraphNode).x ?? 0)
+        .attr('y2', (d) => (d.target as GraphNode).y ?? 0)
+
+      node.attr('transform', (d) => `translate(${d.x ?? 0},${d.y ?? 0})`)
+
+      sim.stop()
+      return () => {
+        sim.stop()
+      }
+    }
 
     // Tick handler — update positions
     sim.on('tick', () => {

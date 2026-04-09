@@ -78,7 +78,7 @@ describe('PageMetadataBar', () => {
     it('is collapsed by default and shows toggle button', () => {
       render(<PageMetadataBar blocks={[]} pageId={TEST_ULID} />)
 
-      const button = screen.getByRole('button', { name: /toggle page metadata/i })
+      const button = screen.getByRole('button', { name: /(expand|collapse) info/i })
       expect(button).toBeInTheDocument()
       expect(button).toHaveAttribute('aria-expanded', 'false')
       expect(screen.queryByTestId('metadata-content')).not.toBeInTheDocument()
@@ -90,7 +90,7 @@ describe('PageMetadataBar', () => {
 
       render(<PageMetadataBar blocks={blocks} pageId={TEST_ULID} />)
 
-      const button = screen.getByRole('button', { name: /toggle page metadata/i })
+      const button = screen.getByRole('button', { name: /(expand|collapse) info/i })
       await user.click(button)
 
       expect(button).toHaveAttribute('aria-expanded', 'true')
@@ -104,7 +104,7 @@ describe('PageMetadataBar', () => {
 
       render(<PageMetadataBar blocks={blocks} pageId={TEST_ULID} />)
 
-      await user.click(screen.getByRole('button', { name: /toggle page metadata/i }))
+      await user.click(screen.getByRole('button', { name: /(expand|collapse) info/i }))
 
       const content = screen.getByTestId('metadata-content')
       expect(content.textContent).toContain('5 words')
@@ -116,7 +116,7 @@ describe('PageMetadataBar', () => {
 
       render(<PageMetadataBar blocks={blocks} pageId={TEST_ULID} />)
 
-      await user.click(screen.getByRole('button', { name: /toggle page metadata/i }))
+      await user.click(screen.getByRole('button', { name: /(expand|collapse) info/i }))
 
       const content = screen.getByTestId('metadata-content')
       expect(content.textContent).toContain('1 word')
@@ -128,7 +128,7 @@ describe('PageMetadataBar', () => {
 
       render(<PageMetadataBar blocks={blocks} pageId={TEST_ULID} />)
 
-      await user.click(screen.getByRole('button', { name: /toggle page metadata/i }))
+      await user.click(screen.getByRole('button', { name: /(expand|collapse) info/i }))
 
       const content = screen.getByTestId('metadata-content')
       expect(content.textContent).toContain('3 blocks')
@@ -140,7 +140,7 @@ describe('PageMetadataBar', () => {
 
       render(<PageMetadataBar blocks={blocks} pageId={TEST_ULID} />)
 
-      await user.click(screen.getByRole('button', { name: /toggle page metadata/i }))
+      await user.click(screen.getByRole('button', { name: /(expand|collapse) info/i }))
 
       const content = screen.getByTestId('metadata-content')
       expect(content.textContent).toContain('1 block')
@@ -153,7 +153,7 @@ describe('PageMetadataBar', () => {
 
       render(<PageMetadataBar blocks={[makeBlock('1', 'hi')]} pageId={TEST_ULID} />)
 
-      await user.click(screen.getByRole('button', { name: /toggle page metadata/i }))
+      await user.click(screen.getByRole('button', { name: /(expand|collapse) info/i }))
 
       const content = screen.getByTestId('metadata-content')
       // The ULID 01ARZ3NDEK... decodes to 2016-07-30T23:54:10.259Z (UTC).
@@ -168,7 +168,7 @@ describe('PageMetadataBar', () => {
 
       render(<PageMetadataBar blocks={[]} pageId={TEST_ULID} />)
 
-      await user.click(screen.getByRole('button', { name: /toggle page metadata/i }))
+      await user.click(screen.getByRole('button', { name: /(expand|collapse) info/i }))
 
       const content = screen.getByTestId('metadata-content')
       expect(content.textContent).toContain('0 words')
@@ -181,7 +181,7 @@ describe('PageMetadataBar', () => {
 
       render(<PageMetadataBar blocks={blocks} pageId={TEST_ULID} />)
 
-      await user.click(screen.getByRole('button', { name: /toggle page metadata/i }))
+      await user.click(screen.getByRole('button', { name: /(expand|collapse) info/i }))
 
       const content = screen.getByTestId('metadata-content')
       expect(content.textContent).toContain('1 word')
@@ -193,7 +193,7 @@ describe('PageMetadataBar', () => {
 
       render(<PageMetadataBar blocks={[makeBlock('1', 'hi')]} pageId="short" />)
 
-      await user.click(screen.getByRole('button', { name: /toggle page metadata/i }))
+      await user.click(screen.getByRole('button', { name: /(expand|collapse) info/i }))
 
       const content = screen.getByTestId('metadata-content')
       expect(content.textContent).not.toContain('Created')
@@ -204,7 +204,7 @@ describe('PageMetadataBar', () => {
 
       render(<PageMetadataBar blocks={[]} pageId={TEST_ULID} />)
 
-      const button = screen.getByRole('button', { name: /toggle page metadata/i })
+      const button = screen.getByRole('button', { name: /(expand|collapse) info/i })
 
       // Expand
       await user.click(button)
@@ -230,7 +230,7 @@ describe('PageMetadataBar', () => {
       const blocks = [makeBlock('1', 'hello world')]
       const { container } = render(<PageMetadataBar blocks={blocks} pageId={TEST_ULID} />)
 
-      await user.click(screen.getByRole('button', { name: /toggle page metadata/i }))
+      await user.click(screen.getByRole('button', { name: /(expand|collapse) info/i }))
 
       await waitFor(async () => {
         const results = await axe(container)
