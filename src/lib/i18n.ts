@@ -498,6 +498,31 @@ const resources = {
       // Query
       'query.noResults': 'No results',
 
+      // F-24: Query builder
+      'queryBuilder.title': 'Build Query',
+      'queryBuilder.description': 'Create an inline query to embed in your page.',
+      'queryBuilder.typeLabel': 'Query type',
+      'queryBuilder.type.tag': 'Tag',
+      'queryBuilder.type.property': 'Property',
+      'queryBuilder.type.backlinks': 'Backlinks',
+      'queryBuilder.tagPrefix': 'Tag prefix',
+      'queryBuilder.tagPrefixPlaceholder': 'e.g. work, project/active',
+      'queryBuilder.propertyKey': 'Property key',
+      'queryBuilder.propertyKeyPlaceholder': 'e.g. priority, due_date',
+      'queryBuilder.propertyOperator': 'Operator',
+      'queryBuilder.propertyValue': 'Value',
+      'queryBuilder.propertyValuePlaceholder': 'e.g. 1, 2025-04-01',
+      'queryBuilder.backlinkTarget': 'Target page ID',
+      'queryBuilder.backlinkTargetPlaceholder': 'Enter page ULID',
+      'queryBuilder.backlinkTargetHelper': 'Enter the ID of the page to show backlinks for',
+      'queryBuilder.showAsTable': 'Show results as table',
+      'queryBuilder.preview': 'Preview',
+      'queryBuilder.insertButton': 'Insert Query',
+      'queryBuilder.updateButton': 'Update Query',
+      'queryBuilder.cancelButton': 'Cancel',
+      'queryBuilder.editButton': 'Edit query',
+      'queryBuilder.saveFailed': 'Failed to update query',
+
       // Search
       'search.minCharsHint': 'Search requires at least 3 characters',
       'search.parentPage': 'in: {{title}}',

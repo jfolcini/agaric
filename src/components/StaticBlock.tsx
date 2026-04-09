@@ -697,6 +697,7 @@ function StaticBlockInner({
       >
         <QueryResult
           expression={expression}
+          blockId={blockId}
           onNavigate={onNavigate ? (pageId) => onNavigate(pageId) : undefined}
           resolveBlockTitle={resolveBlockTitle}
         />

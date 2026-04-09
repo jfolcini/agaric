@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { makeBlock } from '../../__tests__/fixtures'
@@ -8,6 +9,35 @@ import { useNavigationStore } from '../../stores/navigation'
 import { buildFilters, detectColumns, parseQueryExpression, QueryResult } from '../QueryResult'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
+vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
+vi.mock('../QueryBuilderModal', () => ({
+  QueryBuilderModal: ({
+    open,
+    onOpenChange,
+    initialExpression,
+    onSave,
+  }: {
+    open: boolean
+    onOpenChange: (open: boolean) => void
+    initialExpression?: string
+    onSave: (expression: string) => void
+  }) =>
+    open ? (
+      <div data-testid="query-builder-modal">
+        <span data-testid="modal-initial-expression">{initialExpression}</span>
+        <button
+          type="button"
+          data-testid="modal-save-button"
+          onClick={() => onSave('type:tag expr:updated')}
+        >
+          Save
+        </button>
+        <button type="button" data-testid="modal-cancel-button" onClick={() => onOpenChange(false)}>
+          Cancel
+        </button>
+      </div>
+    ) : null,
+}))
 const mockedInvoke = vi.mocked(invoke)
 
 beforeEach(() => {
@@ -1375,6 +1405,187 @@ describe('QueryResult – operator syntax', () => {
     await waitFor(() => {
       const pill = screen.getByText('status ≠ done')
       expect(pill).toHaveAttribute('data-slot', 'badge')
+    })
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Edit Query button + QueryBuilderModal integration tests           */
+/* ------------------------------------------------------------------ */
+
+describe('QueryResult – Edit Query button', () => {
+  const mockedToastError = vi.mocked(toast.error)
+
+  function mockEmptyTagResults() {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      return null
+    })
+  }
+
+  function mockTagResultsWithBlock() {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') {
+        return {
+          items: [makeBlock({ id: 'B1', content: 'Result item', parent_id: 'P1' })],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'batch_resolve') {
+        return [{ id: 'P1', title: 'Page', block_type: 'page', deleted: false }]
+      }
+      if (cmd === 'edit_block') {
+        return makeBlock({ id: 'BLOCK1', content: '{{query type:tag expr:updated}}' })
+      }
+      return null
+    })
+  }
+
+  it('shows edit button when blockId is provided', async () => {
+    mockEmptyTagResults()
+
+    render(<QueryResult expression="type:tag expr:project" blockId="BLOCK1" />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Edit query' })).toBeInTheDocument()
+    })
+  })
+
+  it('does not show edit button when blockId is not provided', async () => {
+    mockEmptyTagResults()
+
+    render(<QueryResult expression="type:tag expr:project" />)
+
+    await waitFor(() => {
+      expect(screen.getByText('0 results')).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('button', { name: 'Edit query' })).not.toBeInTheDocument()
+  })
+
+  it('opens QueryBuilderModal when edit button clicked', async () => {
+    mockEmptyTagResults()
+
+    const user = userEvent.setup()
+    render(<QueryResult expression="type:tag expr:project" blockId="BLOCK1" />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Edit query' })).toBeInTheDocument()
+    })
+
+    // Modal should not be open initially
+    expect(screen.queryByTestId('query-builder-modal')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Edit query' }))
+
+    // Modal should now be open with the initial expression
+    expect(screen.getByTestId('query-builder-modal')).toBeInTheDocument()
+    expect(screen.getByTestId('modal-initial-expression')).toHaveTextContent(
+      'type:tag expr:project',
+    )
+  })
+
+  it('does not toggle collapse when edit button is clicked', async () => {
+    mockTagResultsWithBlock()
+
+    const user = userEvent.setup()
+    render(<QueryResult expression="type:tag expr:project" blockId="BLOCK1" />)
+
+    // Wait for results to render
+    expect(await screen.findByText(/Result item/)).toBeInTheDocument()
+
+    // Click the edit button
+    await user.click(screen.getByRole('button', { name: 'Edit query' }))
+
+    // Results should still be visible (not collapsed)
+    expect(screen.getByText(/Result item/)).toBeInTheDocument()
+  })
+
+  it('calls editBlock when saving from modal', async () => {
+    mockTagResultsWithBlock()
+
+    const user = userEvent.setup()
+    render(<QueryResult expression="type:tag expr:project" blockId="BLOCK1" />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Edit query' })).toBeInTheDocument()
+    })
+
+    // Open the modal
+    await user.click(screen.getByRole('button', { name: 'Edit query' }))
+    expect(screen.getByTestId('query-builder-modal')).toBeInTheDocument()
+
+    // Click save
+    await user.click(screen.getByTestId('modal-save-button'))
+
+    // Verify editBlock was called with correct arguments
+    expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+      blockId: 'BLOCK1',
+      toText: '{{query type:tag expr:updated}}',
+    })
+
+    // Modal should close after save
+    await waitFor(() => {
+      expect(screen.queryByTestId('query-builder-modal')).not.toBeInTheDocument()
+    })
+  })
+
+  it('shows toast error when editBlock fails', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      if (cmd === 'edit_block') {
+        throw new Error('Backend error')
+      }
+      return null
+    })
+
+    const user = userEvent.setup()
+    render(<QueryResult expression="type:tag expr:project" blockId="BLOCK1" />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Edit query' })).toBeInTheDocument()
+    })
+
+    // Open modal and save
+    await user.click(screen.getByRole('button', { name: 'Edit query' }))
+    await user.click(screen.getByTestId('modal-save-button'))
+
+    // Toast error should be shown
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to update query')
+    })
+
+    // Modal should remain open on error
+    expect(screen.getByTestId('query-builder-modal')).toBeInTheDocument()
+  })
+
+  it('does not render modal when blockId is not provided', async () => {
+    mockEmptyTagResults()
+
+    render(<QueryResult expression="type:tag expr:project" />)
+
+    await waitFor(() => {
+      expect(screen.getByText('0 results')).toBeInTheDocument()
+    })
+
+    // Modal element should not exist in DOM at all
+    expect(screen.queryByTestId('query-builder-modal')).not.toBeInTheDocument()
+  })
+
+  it('axe a11y with edit button', async () => {
+    mockEmptyTagResults()
+
+    const { container } = render(
+      <QueryResult expression="type:tag expr:project" blockId="BLOCK1" />,
+    )
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
     })
   })
 })

@@ -1,16 +1,19 @@
-import { Search } from 'lucide-react'
+import { Pencil, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Spinner } from '@/components/ui/spinner'
 import { parseDate } from '../lib/parse-date'
 import { OPERATOR_SYMBOLS, parseQueryExpression } from '../lib/query-utils'
 import type { BlockRow } from '../lib/tauri'
-import { batchResolve, listBlocks, queryByProperty, queryByTags } from '../lib/tauri'
+import { batchResolve, editBlock, listBlocks, queryByProperty, queryByTags } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
 import { LoadMoreButton } from './LoadMoreButton'
+import { QueryBuilderModal } from './QueryBuilderModal'
 import { QueryResultList } from './QueryResultList'
 import { QueryResultTable } from './QueryResultTable'
 
@@ -110,6 +113,8 @@ function QueryExpressionPills({ expression }: { expression: string }): React.Rea
 export interface QueryResultProps {
   /** The raw query expression, e.g. "type:tag expr:project" */
   expression: string
+  /** When provided, enables the "Edit Query" button that opens the visual builder. */
+  blockId?: string | undefined
   /** Navigate to a block's parent page */
   onNavigate?: ((pageId: string) => void) | undefined
   /** Resolve block title by ID */
@@ -118,6 +123,7 @@ export interface QueryResultProps {
 
 export function QueryResult({
   expression,
+  blockId,
   onNavigate,
   resolveBlockTitle,
 }: QueryResultProps): React.ReactElement {
@@ -132,6 +138,7 @@ export function QueryResult({
   const [cursor, setCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [builderOpen, setBuilderOpen] = useState(false)
 
   const { params } = parseQueryExpression(expression)
   const tableMode = params.table === 'true'
@@ -337,27 +344,57 @@ export function QueryResult({
     }
   }, [cursor, loadingMore, fetchResults])
 
+  const handleBuilderSave = useCallback(
+    async (newExpression: string) => {
+      if (!blockId) return
+      try {
+        await editBlock(blockId, `{{query ${newExpression}}}`)
+        setBuilderOpen(false)
+        fetchResults()
+      } catch {
+        toast.error(t('queryBuilder.saveFailed'))
+      }
+    },
+    [blockId, fetchResults, t],
+  )
+
   return (
     <div
       className="query-result my-1 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 text-sm"
       data-testid="query-result"
     >
       {/* Header */}
-      <button
-        type="button"
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-muted-foreground hover:bg-muted/40 transition-colors"
-        onClick={(e) => {
-          e.stopPropagation()
-          setCollapsed(!collapsed)
-        }}
-      >
-        <Search className="h-3 w-3 shrink-0" />
-        <QueryExpressionPills expression={expression} />
-        <span className="shrink-0 tabular-nums">
-          {loading ? '...' : `${results.length} result${results.length !== 1 ? 's' : ''}`}
-        </span>
-        <ChevronToggle isExpanded={!collapsed} />
-      </button>
+      <div className="flex w-full items-center gap-0 text-xs font-medium text-muted-foreground">
+        <button
+          type="button"
+          className="flex flex-1 items-center gap-2 px-3 py-2 text-left hover:bg-muted/40 transition-colors"
+          onClick={(e) => {
+            e.stopPropagation()
+            setCollapsed(!collapsed)
+          }}
+        >
+          <Search className="h-3 w-3 shrink-0" />
+          <QueryExpressionPills expression={expression} />
+          <span className="shrink-0 tabular-nums">
+            {loading ? '...' : `${results.length} result${results.length !== 1 ? 's' : ''}`}
+          </span>
+          <ChevronToggle isExpanded={!collapsed} />
+        </button>
+        {blockId && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="shrink-0 px-1.5"
+            onClick={(e) => {
+              e.stopPropagation()
+              setBuilderOpen(true)
+            }}
+            aria-label={t('queryBuilder.editButton')}
+          >
+            <Pencil className="h-3 w-3" />
+          </Button>
+        )}
+      </div>
 
       {/* Results */}
       {!collapsed && (
@@ -400,6 +437,15 @@ export function QueryResult({
             />
           )}
         </div>
+      )}
+
+      {blockId && (
+        <QueryBuilderModal
+          open={builderOpen}
+          onOpenChange={setBuilderOpen}
+          initialExpression={expression}
+          onSave={handleBuilderSave}
+        />
       )}
     </div>
   )
