@@ -32,6 +32,7 @@ describe('loadTemplatePages', () => {
       key: 'template',
       valueText: 'true',
       valueDate: null,
+      operator: null,
       cursor: null,
       limit: 100,
     })

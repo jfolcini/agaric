@@ -161,6 +161,7 @@ describe('executeAgendaFilters', () => {
         key: 'todo_state',
         valueText: 'TODO',
         valueDate: null,
+        operator: null,
         cursor: null,
         limit: 500,
       })
@@ -196,6 +197,7 @@ describe('executeAgendaFilters', () => {
         key: 'priority',
         valueText: '1',
         valueDate: null,
+        operator: null,
         cursor: null,
         limit: 500,
       })
@@ -387,6 +389,7 @@ describe('executeAgendaFilters', () => {
         key: 'completed_at',
         valueText: null,
         valueDate: '2025-03-15',
+        operator: null,
         cursor: null,
         limit: 500,
       })
@@ -424,6 +427,7 @@ describe('executeAgendaFilters', () => {
         key: 'created_at',
         valueText: null,
         valueDate: '2025-03-15',
+        operator: null,
         cursor: null,
         limit: 500,
       })

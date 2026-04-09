@@ -51,7 +51,7 @@ describe('parseQueryExpression', () => {
     expect(parseQueryExpression('property:todo_state=TODO')).toEqual({
       type: 'filtered',
       params: {},
-      propertyFilters: [{ key: 'todo_state', value: 'TODO' }],
+      propertyFilters: [{ key: 'todo_state', value: 'TODO', operator: 'eq' }],
       tagFilters: [],
     })
   })
@@ -62,8 +62,8 @@ describe('parseQueryExpression', () => {
       type: 'filtered',
       params: {},
       propertyFilters: [
-        { key: 'todo_state', value: 'TODO' },
-        { key: 'priority', value: '1' },
+        { key: 'todo_state', value: 'TODO', operator: 'eq' },
+        { key: 'priority', value: '1', operator: 'eq' },
       ],
       tagFilters: [],
     })
@@ -83,7 +83,7 @@ describe('parseQueryExpression', () => {
     expect(result).toEqual({
       type: 'filtered',
       params: {},
-      propertyFilters: [{ key: 'todo_state', value: 'TODO' }],
+      propertyFilters: [{ key: 'todo_state', value: 'TODO', operator: 'eq' }],
       tagFilters: ['project-x'],
     })
   })
@@ -93,7 +93,7 @@ describe('parseQueryExpression', () => {
     expect(result).toEqual({
       type: 'filtered',
       params: { table: 'true' },
-      propertyFilters: [{ key: 'todo_state', value: 'TODO' }],
+      propertyFilters: [{ key: 'todo_state', value: 'TODO', operator: 'eq' }],
       tagFilters: [],
     })
   })
@@ -710,6 +710,7 @@ describe('QueryResult – multi-filter (filtered)', () => {
       key: 'todo_state',
       valueText: 'TODO',
       valueDate: null,
+      operator: 'eq',
       cursor: null,
       limit: 200,
     })
@@ -1163,7 +1164,7 @@ describe('QueryResult – expression pills', () => {
       expect(typeBadge).toHaveAttribute('data-variant', 'default')
 
       // Property filter badge
-      const filterBadge = screen.getByText('todo_state=TODO')
+      const filterBadge = screen.getByText('todo_state = TODO')
       expect(filterBadge).toHaveAttribute('data-slot', 'badge')
       expect(filterBadge).toHaveAttribute('data-variant', 'secondary')
     })
@@ -1222,6 +1223,158 @@ describe('QueryResult – expression pills', () => {
     await waitFor(async () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Operator syntax + relative date tests                             */
+/* ------------------------------------------------------------------ */
+
+describe('QueryResult – operator syntax', () => {
+  it('passes operator "gt" to query_by_property for property:due_date>today', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_property') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      return null
+    })
+
+    render(<QueryResult expression="property:due_date>today" />)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'query_by_property',
+        expect.objectContaining({
+          key: 'due_date',
+          operator: 'gt',
+        }),
+      )
+    })
+
+    // Verify "today" was resolved to an ISO date string
+    const call = mockedInvoke.mock.calls.find((c) => c[0] === 'query_by_property')
+    const args = call?.[1] as Record<string, unknown>
+    expect(args.valueDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(args.valueText).toBeNull()
+  })
+
+  it('passes operator "lte" to query_by_property for property:due_date<=2025-12-31', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_property') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      return null
+    })
+
+    render(<QueryResult expression="property:due_date<=2025-12-31" />)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'query_by_property',
+        expect.objectContaining({
+          key: 'due_date',
+          operator: 'lte',
+          valueDate: '2025-12-31',
+        }),
+      )
+    })
+  })
+
+  it('backward compatible: property:key=value still works with operator "eq"', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_property') {
+        return {
+          items: [
+            makeBlock({ id: 'B1', content: 'Eq result', parent_id: null, todo_state: 'TODO' }),
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'batch_resolve') return []
+      return null
+    })
+
+    render(<QueryResult expression="property:todo_state=TODO" />)
+
+    expect(await screen.findByText(/Eq result/)).toBeInTheDocument()
+
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'query_by_property',
+      expect.objectContaining({
+        key: 'todo_state',
+        valueText: 'TODO',
+        operator: 'eq',
+      }),
+    )
+  })
+
+  it('resolves relative date "today" to ISO date string', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_property') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      return null
+    })
+
+    render(<QueryResult expression="property:due_date>today" />)
+
+    await waitFor(() => {
+      const call = mockedInvoke.mock.calls.find((c) => c[0] === 'query_by_property')
+      expect(call).toBeDefined()
+      const args = call?.[1] as Record<string, unknown>
+      // "today" should be resolved to an ISO date (YYYY-MM-DD)
+      expect(args.valueDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+      expect(args.valueText).toBeNull()
+    })
+  })
+
+  it('pills display operator symbol for gt', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_property') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      return null
+    })
+
+    render(<QueryResult expression="property:due_date>today" />)
+
+    await waitFor(() => {
+      const pill = screen.getByText('due_date > today')
+      expect(pill).toHaveAttribute('data-slot', 'badge')
+    })
+  })
+
+  it('pills display ≤ symbol for lte operator', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_property') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      return null
+    })
+
+    render(<QueryResult expression="property:due_date<=2025-12-31" />)
+
+    await waitFor(() => {
+      const pill = screen.getByText('due_date ≤ 2025-12-31')
+      expect(pill).toHaveAttribute('data-slot', 'badge')
+    })
+  })
+
+  it('pills display ≠ symbol for neq operator', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_property') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      return null
+    })
+
+    render(<QueryResult expression="property:status!=done" />)
+
+    await waitFor(() => {
+      const pill = screen.getByText('status ≠ done')
+      expect(pill).toHaveAttribute('data-slot', 'badge')
     })
   })
 })

@@ -1005,6 +1005,7 @@ describe('queryByProperty', () => {
       key: 'status',
       valueText: 'done',
       valueDate: null,
+      operator: null,
       cursor: 'cur1',
       limit: 10,
     })
@@ -1020,6 +1021,7 @@ describe('queryByProperty', () => {
       key: 'status',
       valueText: null,
       valueDate: null,
+      operator: null,
       cursor: null,
       limit: null,
     })

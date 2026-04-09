@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildFilters, parseQueryExpression } from '../query-utils'
+import { buildFilters, OPERATOR_SYMBOLS, parseQueryExpression } from '../query-utils'
 
 describe('parseQueryExpression', () => {
   it('parses tag query', () => {
@@ -42,7 +42,7 @@ describe('parseQueryExpression', () => {
     expect(parseQueryExpression('property:todo_state=TODO')).toEqual({
       type: 'filtered',
       params: {},
-      propertyFilters: [{ key: 'todo_state', value: 'TODO' }],
+      propertyFilters: [{ key: 'todo_state', value: 'TODO', operator: 'eq' }],
       tagFilters: [],
     })
   })
@@ -53,8 +53,8 @@ describe('parseQueryExpression', () => {
       type: 'filtered',
       params: {},
       propertyFilters: [
-        { key: 'todo_state', value: 'TODO' },
-        { key: 'priority', value: '1' },
+        { key: 'todo_state', value: 'TODO', operator: 'eq' },
+        { key: 'priority', value: '1', operator: 'eq' },
       ],
       tagFilters: [],
     })
@@ -74,7 +74,7 @@ describe('parseQueryExpression', () => {
     expect(result).toEqual({
       type: 'filtered',
       params: {},
-      propertyFilters: [{ key: 'todo_state', value: 'TODO' }],
+      propertyFilters: [{ key: 'todo_state', value: 'TODO', operator: 'eq' }],
       tagFilters: ['project-x'],
     })
   })
@@ -84,7 +84,7 @@ describe('parseQueryExpression', () => {
     expect(result).toEqual({
       type: 'filtered',
       params: { table: 'true' },
-      propertyFilters: [{ key: 'todo_state', value: 'TODO' }],
+      propertyFilters: [{ key: 'todo_state', value: 'TODO', operator: 'eq' }],
       tagFilters: [],
     })
   })
@@ -114,7 +114,7 @@ describe('parseQueryExpression', () => {
 
   it('handles property shorthand with equals in value', () => {
     const result = parseQueryExpression('property:key=val=ue')
-    expect(result.propertyFilters).toEqual([{ key: 'key', value: 'val=ue' }])
+    expect(result.propertyFilters).toEqual([{ key: 'key', value: 'val=ue', operator: 'eq' }])
   })
 
   it('ignores tag shorthand with empty rest', () => {
@@ -129,6 +129,54 @@ describe('parseQueryExpression', () => {
     const result = parseQueryExpression('tag:alpha tag:beta')
     expect(result.tagFilters).toEqual(['alpha', 'beta'])
     expect(result.type).toBe('filtered')
+  })
+
+  // --- Operator parsing tests ---
+
+  it('parses property:key>value with operator gt', () => {
+    const result = parseQueryExpression('property:due_date>2025-01-01')
+    expect(result.propertyFilters).toEqual([
+      { key: 'due_date', value: '2025-01-01', operator: 'gt' },
+    ])
+  })
+
+  it('parses property:key<value with operator lt', () => {
+    const result = parseQueryExpression('property:due_date<2025-12-31')
+    expect(result.propertyFilters).toEqual([
+      { key: 'due_date', value: '2025-12-31', operator: 'lt' },
+    ])
+  })
+
+  it('parses property:key>=value with operator gte (longer match first)', () => {
+    const result = parseQueryExpression('property:due_date>=2025-06-01')
+    expect(result.propertyFilters).toEqual([
+      { key: 'due_date', value: '2025-06-01', operator: 'gte' },
+    ])
+  })
+
+  it('parses property:key<=value with operator lte (longer match first)', () => {
+    const result = parseQueryExpression('property:due_date<=2025-12-31')
+    expect(result.propertyFilters).toEqual([
+      { key: 'due_date', value: '2025-12-31', operator: 'lte' },
+    ])
+  })
+
+  it('parses property:key!=value with operator neq', () => {
+    const result = parseQueryExpression('property:status!=done')
+    expect(result.propertyFilters).toEqual([{ key: 'status', value: 'done', operator: 'neq' }])
+  })
+
+  it('parses property:key=value with operator eq (backward compat)', () => {
+    const result = parseQueryExpression('property:key=value')
+    expect(result.propertyFilters).toEqual([{ key: 'key', value: 'value', operator: 'eq' }])
+  })
+
+  it('handles mixed operators in multi-filter query', () => {
+    const result = parseQueryExpression('property:due_date>2025-01-01 property:priority=1')
+    expect(result.propertyFilters).toEqual([
+      { key: 'due_date', value: '2025-01-01', operator: 'gt' },
+      { key: 'priority', value: '1', operator: 'eq' },
+    ])
   })
 })
 
@@ -189,5 +237,31 @@ describe('buildFilters', () => {
     const filters = buildFilters([{ key: 'status', value: 'active' }], ['tag1'])
     expect(filters[0]?.type).toBe('PropertyText')
     expect(filters[1]?.type).toBe('HasTagPrefix')
+  })
+
+  it('maps due_date with gt operator to DueDate Gt filter', () => {
+    const filters = buildFilters([{ key: 'due_date', value: '2025-06-01', operator: 'gt' }], [])
+    expect(filters).toEqual([{ type: 'DueDate', op: 'Gt', value: '2025-06-01' }])
+  })
+
+  it('maps custom property with lte operator to PropertyText Lte filter', () => {
+    const filters = buildFilters([{ key: 'score', value: '100', operator: 'lte' }], [])
+    expect(filters).toEqual([{ type: 'PropertyText', key: 'score', op: 'Lte', value: '100' }])
+  })
+
+  it('defaults to Eq when operator is undefined', () => {
+    const filters = buildFilters([{ key: 'due_date', value: '2025-01-01' }], [])
+    expect(filters).toEqual([{ type: 'DueDate', op: 'Eq', value: '2025-01-01' }])
+  })
+})
+
+describe('OPERATOR_SYMBOLS', () => {
+  it('maps all operator names to display symbols', () => {
+    expect(OPERATOR_SYMBOLS.eq).toBe('=')
+    expect(OPERATOR_SYMBOLS.neq).toBe('≠')
+    expect(OPERATOR_SYMBOLS.lt).toBe('<')
+    expect(OPERATOR_SYMBOLS.gt).toBe('>')
+    expect(OPERATOR_SYMBOLS.lte).toBe('≤')
+    expect(OPERATOR_SYMBOLS.gte).toBe('≥')
   })
 })

@@ -3525,23 +3525,30 @@ async fn query_by_property_happy_path() {
     settle(&mat).await;
 
     // Query all blocks with 'todo' property (any value)
-    let result = query_by_property_inner(&pool, "todo".into(), None, None, None, None)
+    let result = query_by_property_inner(&pool, "todo".into(), None, None, None, None, None)
         .await
         .unwrap();
 
     assert_eq!(result.items.len(), 2, "two blocks have 'todo' property");
 
     // Query with value filter: only TODO
-    let filtered =
-        query_by_property_inner(&pool, "todo".into(), Some("TODO".into()), None, None, None)
-            .await
-            .unwrap();
+    let filtered = query_by_property_inner(
+        &pool,
+        "todo".into(),
+        Some("TODO".into()),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(filtered.items.len(), 1, "only one block has todo=TODO");
     assert_eq!(filtered.items[0].id, b1.id);
 
     // Query nonexistent key: empty
-    let empty = query_by_property_inner(&pool, "nonexistent".into(), None, None, None, None)
+    let empty = query_by_property_inner(&pool, "nonexistent".into(), None, None, None, None, None)
         .await
         .unwrap();
 
@@ -6946,6 +6953,7 @@ async fn query_by_property_finds_reserved_key_in_blocks_column() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -7043,6 +7051,7 @@ async fn set_todo_state_then_query_by_property_returns_match() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -7089,6 +7098,7 @@ async fn set_due_date_then_query_by_property_returns_match() {
         &pool,
         "due_date".into(),
         Some("2026-06-01".into()),
+        None,
         None,
         None,
         None,

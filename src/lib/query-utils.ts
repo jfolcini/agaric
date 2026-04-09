@@ -1,9 +1,30 @@
-import type { BacklinkFilter } from './tauri'
+import type { BacklinkFilter, CompareOp } from './tauri'
 
 /** Parsed property filter from shorthand syntax (property:key=value). */
 export interface PropertyFilter {
   key: string
   value: string
+  operator?: 'eq' | 'neq' | 'lt' | 'gt' | 'lte' | 'gte' | undefined // default: 'eq'
+}
+
+/** Map operator symbol to PropertyFilter operator name. */
+const OPERATOR_MAP: Record<string, PropertyFilter['operator']> = {
+  '>=': 'gte',
+  '<=': 'lte',
+  '!=': 'neq',
+  '>': 'gt',
+  '<': 'lt',
+  '=': 'eq',
+}
+
+/** Map PropertyFilter operator name to display symbol. */
+export const OPERATOR_SYMBOLS: Record<string, string> = {
+  eq: '=',
+  neq: '≠',
+  lt: '<',
+  gt: '>',
+  lte: '≤',
+  gte: '≥',
 }
 
 /** Parse a query expression string into structured params.
@@ -32,10 +53,16 @@ export function parseQueryExpression(expr: string): {
       const prefix = part.slice(0, colonIdx)
       const rest = part.slice(colonIdx + 1)
 
-      if (prefix === 'property' && rest.includes('=')) {
-        // Shorthand: property:key=value
-        const eqIdx = rest.indexOf('=')
-        propertyFilters.push({ key: rest.slice(0, eqIdx), value: rest.slice(eqIdx + 1) })
+      if (prefix === 'property' && /[><=!]/.test(rest)) {
+        // Shorthand: property:key{op}value  (>=, <=, != matched before >, <, =)
+        const opMatch = rest.match(/^(\w+)(>=|<=|!=|>|<|=)(.+)$/)
+        if (opMatch) {
+          propertyFilters.push({
+            key: opMatch[1] as string,
+            value: opMatch[3] as string,
+            operator: OPERATOR_MAP[opMatch[2] as string],
+          })
+        }
       } else if (prefix === 'tag' && rest !== '') {
         // Shorthand: tag:prefix
         tagFilters.push(rest)
@@ -54,6 +81,24 @@ export function parseQueryExpression(expr: string): {
   return { type: explicitType ?? 'unknown', params, propertyFilters, tagFilters }
 }
 
+/** Map PropertyFilter operator to Rust CompareOp variant. */
+function toCompareOp(op: PropertyFilter['operator']): CompareOp {
+  switch (op) {
+    case 'neq':
+      return 'Neq'
+    case 'lt':
+      return 'Lt'
+    case 'gt':
+      return 'Gt'
+    case 'lte':
+      return 'Lte'
+    case 'gte':
+      return 'Gte'
+    default:
+      return 'Eq'
+  }
+}
+
 /** Build BacklinkFilter objects from parsed shorthand filters.
  *
  * Maps known fixed-field keys (todo_state, priority, due_date) to their
@@ -67,14 +112,15 @@ export function buildFilters(
   const filters: BacklinkFilter[] = []
 
   for (const pf of propertyFilters) {
+    const op = toCompareOp(pf.operator)
     if (pf.key === 'todo_state') {
       filters.push({ type: 'TodoState', state: pf.value })
     } else if (pf.key === 'priority') {
       filters.push({ type: 'Priority', level: pf.value })
     } else if (pf.key === 'due_date') {
-      filters.push({ type: 'DueDate', op: 'Eq', value: pf.value })
+      filters.push({ type: 'DueDate', op, value: pf.value })
     } else {
-      filters.push({ type: 'PropertyText', key: pf.key, op: 'Eq', value: pf.value })
+      filters.push({ type: 'PropertyText', key: pf.key, op, value: pf.value })
     }
   }
 

@@ -1495,6 +1495,7 @@ pub async fn query_by_property_inner(
     key: String,
     value_text: Option<String>,
     value_date: Option<String>,
+    operator: Option<String>,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
@@ -1504,11 +1505,13 @@ pub async fn query_by_property_inner(
         ));
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
+    let op = operator.as_deref().unwrap_or("eq");
     pagination::query_by_property(
         pool,
         &key,
         value_text.as_deref(),
         value_date.as_deref(),
+        op,
         &page,
     )
     .await
@@ -4208,12 +4211,15 @@ pub async fn query_by_property(
     key: String,
     value_text: Option<String>,
     value_date: Option<String>,
+    operator: Option<String>,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    query_by_property_inner(&pool.0, key, value_text, value_date, cursor, limit)
-        .await
-        .map_err(sanitize_internal_error)
+    query_by_property_inner(
+        &pool.0, key, value_text, value_date, operator, cursor, limit,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: list tags matching a name prefix. Delegates to [`list_tags_by_prefix_inner`].
@@ -7653,7 +7659,7 @@ mod tests {
         insert_property(&pool, "QP_B1", "todo", "TODO").await;
         insert_property(&pool, "QP_B2", "todo", "DONE").await;
 
-        let result = query_by_property_inner(&pool, "todo".into(), None, None, None, None)
+        let result = query_by_property_inner(&pool, "todo".into(), None, None, None, None, None)
             .await
             .unwrap();
 
@@ -7672,7 +7678,7 @@ mod tests {
     async fn query_by_property_empty_key_returns_validation_error() {
         let (pool, _dir) = test_pool().await;
 
-        let result = query_by_property_inner(&pool, "".into(), None, None, None, None).await;
+        let result = query_by_property_inner(&pool, "".into(), None, None, None, None, None).await;
 
         assert!(
             matches!(result, Err(AppError::Validation(_))),
@@ -7690,10 +7696,17 @@ mod tests {
         insert_property(&pool, "QP_A", "todo", "TODO").await;
         insert_property(&pool, "QP_B", "todo", "DONE").await;
 
-        let result =
-            query_by_property_inner(&pool, "todo".into(), Some("TODO".into()), None, None, None)
-                .await
-                .unwrap();
+        let result = query_by_property_inner(
+            &pool,
+            "todo".into(),
+            Some("TODO".into()),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.items.len(), 1, "only block with todo=TODO");
         assert_eq!(result.items[0].id, "QP_A", "only TODO block should match");
@@ -7710,7 +7723,7 @@ mod tests {
         }
 
         // First page: limit 2
-        let r1 = query_by_property_inner(&pool, "status".into(), None, None, None, Some(2))
+        let r1 = query_by_property_inner(&pool, "status".into(), None, None, None, None, Some(2))
             .await
             .unwrap();
 
@@ -7730,10 +7743,17 @@ mod tests {
         );
 
         // Second page
-        let r2 =
-            query_by_property_inner(&pool, "status".into(), None, None, r1.next_cursor, Some(2))
-                .await
-                .unwrap();
+        let r2 = query_by_property_inner(
+            &pool,
+            "status".into(),
+            None,
+            None,
+            None,
+            r1.next_cursor,
+            Some(2),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(r2.items.len(), 2, "second page should have 2 items");
         assert!(r2.has_more, "second page should indicate more items");
@@ -7747,10 +7767,17 @@ mod tests {
         );
 
         // Third page: last item
-        let r3 =
-            query_by_property_inner(&pool, "status".into(), None, None, r2.next_cursor, Some(2))
-                .await
-                .unwrap();
+        let r3 = query_by_property_inner(
+            &pool,
+            "status".into(),
+            None,
+            None,
+            None,
+            r2.next_cursor,
+            Some(2),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(r3.items.len(), 1, "last page should have 1 item");
         assert!(!r3.has_more, "last page should not have more items");
@@ -7771,7 +7798,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = query_by_property_inner(&pool, "todo".into(), None, None, None, None)
+        let result = query_by_property_inner(&pool, "todo".into(), None, None, None, None, None)
             .await
             .unwrap();
 
@@ -7818,7 +7845,7 @@ mod tests {
             .unwrap();
 
         // Query all blocks with due_date (no value filter)
-        let all = query_by_property_inner(&pool, "due_date".into(), None, None, None, None)
+        let all = query_by_property_inner(&pool, "due_date".into(), None, None, None, None, None)
             .await
             .unwrap();
         assert_eq!(all.items.len(), 2, "both blocks have due_date");
@@ -7831,6 +7858,7 @@ mod tests {
             Some("2025-06-15".into()),
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -7841,6 +7869,121 @@ mod tests {
         );
 
         mat.shutdown();
+    }
+
+    /// Helper: insert a property with a date value.
+    async fn insert_property_date(pool: &SqlitePool, block_id: &str, key: &str, value_date: &str) {
+        sqlx::query("INSERT INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)")
+            .bind(block_id)
+            .bind(key)
+            .bind(value_date)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn query_by_property_with_gt_operator() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "OP_GT1", "content", "early", None, Some(1)).await;
+        insert_block(&pool, "OP_GT2", "content", "middle", None, Some(2)).await;
+        insert_block(&pool, "OP_GT3", "content", "late", None, Some(3)).await;
+
+        insert_property_date(&pool, "OP_GT1", "deadline", "2025-01-01").await;
+        insert_property_date(&pool, "OP_GT2", "deadline", "2025-06-15").await;
+        insert_property_date(&pool, "OP_GT3", "deadline", "2025-12-31").await;
+
+        // Query blocks with deadline > "2025-06-01"
+        let result = query_by_property_inner(
+            &pool,
+            "deadline".into(),
+            None,
+            Some("2025-06-01".into()),
+            Some("gt".into()),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result.items.len(),
+            2,
+            "gt operator should return blocks with deadline after 2025-06-01"
+        );
+        assert_eq!(result.items[0].id, "OP_GT2", "first match is OP_GT2");
+        assert_eq!(result.items[1].id, "OP_GT3", "second match is OP_GT3");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn query_by_property_with_lt_operator() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "OP_LT1", "content", "early", None, Some(1)).await;
+        insert_block(&pool, "OP_LT2", "content", "middle", None, Some(2)).await;
+        insert_block(&pool, "OP_LT3", "content", "late", None, Some(3)).await;
+
+        insert_property_date(&pool, "OP_LT1", "deadline", "2025-01-01").await;
+        insert_property_date(&pool, "OP_LT2", "deadline", "2025-06-15").await;
+        insert_property_date(&pool, "OP_LT3", "deadline", "2025-12-31").await;
+
+        // Query blocks with deadline < "2025-06-15"
+        let result = query_by_property_inner(
+            &pool,
+            "deadline".into(),
+            None,
+            Some("2025-06-15".into()),
+            Some("lt".into()),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result.items.len(),
+            1,
+            "lt operator should return blocks with deadline before 2025-06-15"
+        );
+        assert_eq!(
+            result.items[0].id, "OP_LT1",
+            "only OP_LT1 is before the cutoff"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn query_by_property_defaults_to_eq() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "OP_EQ1", "content", "exact", None, Some(1)).await;
+        insert_block(&pool, "OP_EQ2", "content", "other", None, Some(2)).await;
+
+        insert_property(&pool, "OP_EQ1", "status", "active").await;
+        insert_property(&pool, "OP_EQ2", "status", "inactive").await;
+
+        // None operator should default to equality
+        let result = query_by_property_inner(
+            &pool,
+            "status".into(),
+            Some("active".into()),
+            None,
+            None, // operator = None → defaults to "eq"
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result.items.len(),
+            1,
+            "None operator must default to equality"
+        );
+        assert_eq!(
+            result.items[0].id, "OP_EQ1",
+            "only the 'active' block matches"
+        );
     }
 
     // ======================================================================

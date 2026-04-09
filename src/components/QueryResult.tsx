@@ -5,7 +5,8 @@ import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Spinner } from '@/components/ui/spinner'
-import { parseQueryExpression } from '../lib/query-utils'
+import { parseDate } from '../lib/parse-date'
+import { OPERATOR_SYMBOLS, parseQueryExpression } from '../lib/query-utils'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, listBlocks, queryByProperty, queryByTags } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
@@ -15,7 +16,7 @@ import { QueryResultTable } from './QueryResultTable'
 
 export type { PropertyFilter } from '../lib/query-utils'
 // Re-export extracted utilities so existing consumers don't break
-export { buildFilters, parseQueryExpression } from '../lib/query-utils'
+export { buildFilters, OPERATOR_SYMBOLS, parseQueryExpression } from '../lib/query-utils'
 
 /** Column definition for table mode. */
 interface TableColumn {
@@ -79,9 +80,10 @@ function QueryExpressionPills({ expression }: { expression: string }): React.Rea
   }
 
   for (const pf of parsed.propertyFilters) {
+    const opSymbol = OPERATOR_SYMBOLS[pf.operator ?? 'eq'] ?? '='
     pills.push(
       <Badge key={`prop-${pf.key}`} variant="secondary">
-        {pf.key}={pf.value}
+        {pf.key} {opSymbol} {pf.value}
       </Badge>,
     )
   }
@@ -212,10 +214,13 @@ export function QueryResult({
           const queryPromises: Promise<BlockRow[]>[] = []
 
           for (const pf of propertyFilters) {
+            const resolvedDate = parseDate(pf.value)
+            const op = pf.operator ?? 'eq'
             queryPromises.push(
               queryByProperty({
                 key: pf.key,
-                valueText: pf.value,
+                ...(resolvedDate ? { valueDate: resolvedDate } : { valueText: pf.value }),
+                operator: op,
                 limit: 200,
               }).then((resp) => resp.items),
             )

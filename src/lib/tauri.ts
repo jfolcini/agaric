@@ -375,6 +375,7 @@ export function queryByProperty(params: {
   key: string
   valueText?: string | undefined
   valueDate?: string | undefined
+  operator?: string | undefined // 'eq', 'neq', 'lt', 'gt', 'lte', 'gte'
   cursor?: string | undefined
   limit?: number | undefined
 }): Promise<PageResponse<BlockRow>> {
@@ -382,6 +383,7 @@ export function queryByProperty(params: {
     key: params.key,
     valueText: params.valueText ?? null,
     valueDate: params.valueDate ?? null,
+    operator: params.operator ?? null,
     cursor: params.cursor ?? null,
     limit: params.limit ?? null,
   })
