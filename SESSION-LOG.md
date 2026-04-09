@@ -1,5 +1,36 @@
 # Session Log
 
+## Session 296 — Batch 27: UX a11y + responsive + cleanup (2026-04-09)
+
+**Commit:** `8bb92da` — `fix: UX-101/102/103/104/105/106/107/108/111/112` — 6 files, +83/-35
+
+### Items resolved
+- **UX-101**: KeyboardSettingsTab — responsive layout with `flex-col sm:flex-row`, `w-full sm:w-56`.
+- **UX-102**: GraphView — keyboard-navigable SVG nodes: `tabindex="0"`, `role="button"`, Enter/Space handler, focus ring via d3 stroke.
+- **UX-103**: GraphView — hover/active feedback: radius 6→8 on hover, 5 on press, 8 on release.
+- **UX-104**: GraphView — respects `prefers-reduced-motion`: alphaDecay(1), tick(300), render once, stop.
+- **UX-105**: GraphView — node label font-size 10px→12px.
+- **UX-106**: keyboard-config — added `console.warn` in `getCustomOverrides()` catch block.
+- **UX-107**: Closed as-is — amber is the established warning color pattern.
+- **UX-108**: GraphView — added `console.error('[GraphView] Failed to load graph data', err)` in catch.
+- **UX-111**: PageMetadataBar — replaced custom ChevronToggle collapse with `CollapsiblePanelHeader`.
+- **UX-112**: UnfinishedTasks — documented YYYY-MM-DD string comparison invariant.
+
+### Files modified
+
+| Area | Change |
+|------|--------|
+| GraphView.tsx | UX-102/103/104/105/108: keyboard nav, hover/press, reduced-motion, labels, error log |
+| KeyboardSettingsTab.tsx | UX-101: responsive flex layout |
+| PageMetadataBar.tsx | UX-111: CollapsiblePanelHeader refactor |
+| PageMetadataBar.test.tsx | UX-111: updated 12 selector patterns |
+| keyboard-config.ts | UX-106: console.warn in catch |
+| UnfinishedTasks.tsx | UX-112: invariant documentation comment |
+
+### Test counts
+- Frontend: 243 files, 5726 tests (unchanged)
+- Open REVIEW-LATER items: 21 (was 31)
+
 ## Session 295 — Batch 26: MAINT dedup/cleanup (2026-04-09)
 
 **Commit:** `ba51a19` — `refactor: M-18/M-21/M-22/M-23/M-25/M-26` — 16 files, +801/-372
