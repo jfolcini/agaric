@@ -535,3 +535,11 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 ### Task Dependencies (session 280)
 - **DependencyIndicator** (`src/components/DependencyIndicator.tsx`): Shows Link2 icon + tooltip when a block has a `blocked_by` ref property. Lazy-loads properties with shared `useRef<Map>` cache. Resolves blocking task title via `batchResolve`. Integrated in AgendaResults metadata slot. 8 tests.
 - **DONE warning** (F-37): When setting a task to DONE (via slash command or checkbox), checks for `blocked_by` property and shows `toast.warning` if dependencies exist.
+
+### Op Log Compaction (session 281)
+- **Backend commands** (F-20): `get_compaction_status` (total ops, oldest op date, eligible ops, retention days) and `compact_op_log_cmd` (wraps `compact_op_log()` with `BEGIN IMMEDIATE` transaction). `CompactionStatus` and `CompactionResult` specta types. 3 Rust tests.
+- **CompactionCard** (`src/components/CompactionCard.tsx`): Collapsible card in HistoryView header showing op log stats. Archive icon, stat grid (total/oldest/eligible), "Compact Now" button (destructive, disabled when 0 eligible). 14 frontend tests.
+- **CompactionConfirmDialog** (`src/components/CompactionConfirmDialog.tsx`): Destructive action confirmation using `ConfirmDialog`. Shows op count and retention days in warning text.
+
+### Toolbar Coverage (session 281)
+- **FormattingToolbar structure buttons** (UX-90): 3 new buttons — Ordered List (`ListOrdered`), Divider (`Minus`), Callout (`Info`) — dispatching block events (`INSERT_ORDERED_LIST`, `INSERT_DIVIDER`, `INSERT_CALLOUT`). 7 tests.

@@ -1,5 +1,18 @@
 # Session Log
 
+## Session 281 — Batch 16: F-20, UX-90 (2026-04-09)
+
+**Commit:** `46d3a35` — `feat: batch 16 — op log compaction UI + toolbar surface coverage` — 14 files, +1052/-3
+
+### Items resolved
+- **F-20**: Op Log Compaction UI — 2 new Tauri commands (`get_compaction_status`, `compact_op_log_cmd`) with `BEGIN IMMEDIATE` transaction. `CompactionCard` in HistoryView header shows stats. `CompactionConfirmDialog` for destructive confirmation. Backend: 3 tests. Frontend: 14 tests. Specta bindings regenerated.
+- **UX-90**: Surface coverage — 3 new FormattingToolbar buttons (Ordered List, Divider, Callout) dispatching block events. 3 new block event constants. 7 tests.
+
+### Test counts
+- Frontend: 234 files, 5537 tests (was 5515)
+- Rust: 1670 tests (was 1667)
+- Open REVIEW-LATER items: 15 (was 17)
+
 ## Session 280 — Batch 15: F-37 (2026-04-09)
 
 **Commit:** `15f593f` — `feat: F-37 — task dependency indicator + DONE warning` — 6 files, +422/-3
