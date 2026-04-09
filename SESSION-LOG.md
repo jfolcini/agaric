@@ -1,5 +1,18 @@
 # Session Log
 
+## Session 283 — Batch 18: F-35, F-21 partial (2026-04-09)
+
+**Commit:** `803e488` — `feat: batch 18 — Mermaid diagrams + search operator syntax` — 10 files, +1836/-119
+
+### Items resolved
+- **F-35**: Mermaid diagram blocks — lazy-loaded `MermaidDiagram` component via `React.lazy` + `Suspense`. Detects `language: 'mermaid'` code blocks in StaticBlock. Dark/light theme, error fallback with raw code. `mermaid` npm package added, `Unlicense` added to license-checker allowlist. 9 tests.
+- **F-21** (partial): Search operator syntax — `sanitize_fts_query()` rewritten with `QueryToken` enum + `tokenize_query()` state machine. Preserves `"quoted phrases"`, `NOT`/`OR`/`AND` operators. Injection prevention (NEAR/*/():). 11 Rust tests. Remaining: frontend filter chips + backend filter params.
+
+### Test counts
+- Frontend: 235 files, 5564 tests (was 5555)
+- Rust: 1679 tests (was 1673)
+- Open REVIEW-LATER items: 13 (was 14)
+
 ## Session 282 — Batch 17: F-25 finish (2026-04-09)
 
 **Commit:** `e58425f` — `feat: F-25 finish — date-range operators for property queries` — 12 files, +542/-84

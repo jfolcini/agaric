@@ -547,3 +547,9 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 ### Query Date-Range Operators (session 282)
 - **Backend operator support** (F-25): `query_by_property` command accepts `operator: Option<String>` parameter. `pagination::query_by_property()` maps safe operator strings (eq/neq/lt/gt/lte/gte) to SQL operators via match statement. Dynamic SQL with bound parameters. 3 Rust tests.
 - **Frontend operator syntax** (F-25): `PropertyFilter.operator` field. `parseQueryExpression()` parses `property:key>value`, `property:key<=value` etc. `toCompareOp()` maps to `CompareOp` type. Relative dates resolved via `parseDate()`. `OPERATOR_SYMBOLS` maps to display symbols (≤, ≥, ≠). `QueryExpressionPills` renders operator symbols in pills. 18 frontend tests.
+
+### Mermaid Diagrams (session 283)
+- **MermaidDiagram** (`src/components/MermaidDiagram.tsx`): Lazy-loaded via `React.lazy` + `Suspense`. Renders `mermaid.render()` SVG output from code block content. Dark/light theme detection. Error state with raw code fallback. Unique render IDs via `useId()`. Integrated in StaticBlock for `language: 'mermaid'` code blocks. 9 tests.
+
+### Search Operators (session 283)
+- **Operator-aware sanitize_fts_query** (F-21 partial): `QueryToken` enum + `tokenize_query()` state machine in `fts.rs`. Preserves `"quoted phrases"` as FTS5 phrase tokens, `NOT`/`OR`/`AND` as bare keywords (case-insensitive). Non-operator tokens safely quoted. NEAR/*/()/:/ injection prevented. 11 Rust tests.
