@@ -1,5 +1,37 @@
 # Session Log
 
+## Session 275 — Batch 10: F-22, F-29, UX-58, UX-80, P-13 (2026-04-09)
+
+**Commit:** `da4669f` — `feat: batch 10 — inline date editing, tag rename, starred pages, typography tokens` — 13 files, +1171/-26
+
+### Items resolved
+- **F-22**: Inline date editing in agenda — new `DateChipEditor` component with natural language input (parseDate), quick options (Today/Tomorrow/Next Week/Clear), Popover integration in `AgendaResults`. `DueDateChip` wrapper manages Popover state. `AgendaView` refresh via `refreshKey` counter. 11 tests.
+- **F-29**: Tag rename — Pencil button on each tag in `TagList` opens `RenameDialog` (reused from device rename). `editBlock()` triggers materializer → `tags_cache` rebuild → resolve store auto-update. Duplicate name validation, optimistic local state. 7 tests.
+- **UX-58**: Favorites/starred pages — Star toggle on each page in `PageBrowser` with `localStorage` persistence (`starred-pages.ts`). Starred filter toggle in header with badge count. Memoized via `starredRevision` counter. 13 unit + 8 component tests.
+- **UX-80**: Typography scale tokens — 7 font-size (`--text-xs` through `--text-3xl`), 3 line-height (`--leading-tight/normal/relaxed`), 3 letter-spacing CSS custom properties. 7 `@utility` classes pairing font-size + line-height. Responsive heading overrides for mobile.
+- **P-13**: Already resolved — agenda cache rebuild already uses incremental diff-based approach (compute desired state, diff against current, apply INSERT/DELETE/UPDATE). REVIEW-LATER description was stale.
+
+### Files created
+- `src/components/DateChipEditor.tsx` — inline date editor (164 lines)
+- `src/components/__tests__/DateChipEditor.test.tsx` — 11 tests
+- `src/lib/starred-pages.ts` — localStorage helpers (38 lines)
+- `src/lib/__tests__/starred-pages.test.ts` — 13 tests
+
+### Files modified
+- `src/components/AgendaResults.tsx` — `DueDateChip` with Popover + DateChipEditor
+- `src/components/journal/AgendaView.tsx` — refreshKey for re-fetch after inline edits
+- `src/components/PageBrowser.tsx` — star toggle + starred filter
+- `src/components/RenameDialog.tsx` — made generic (optional title/description/placeholder/ariaLabel)
+- `src/components/TagList.tsx` — rename button + RenameDialog integration
+- `src/components/__tests__/PageBrowser.test.tsx` — 8 starred tests
+- `src/components/__tests__/TagList.test.tsx` — 7 rename tests
+- `src/index.css` — typography scale tokens + utilities + responsive overrides
+- `src/lib/i18n.ts` — 26 new i18n keys
+
+### Test counts
+- Frontend: 228 files, 5350 tests (was 5310)
+- Open REVIEW-LATER items: 29 (was 34)
+
 ## Session 274 — Batch 9: T-7 Rust assertion messages — 6 modules (2026-04-09)
 
 **Commit:** `e447851` — `test(rust): T-7 add assertion messages to 6 modules (~482 assertions)` — 6 files, +1746/-481

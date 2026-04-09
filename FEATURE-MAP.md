@@ -483,3 +483,16 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **`.touch-target`** (`src/index.css`): Tailwind `@utility` for `@media(pointer:coarse)` min-height 44px touch targets. Used across 19+ components.
 - **`.block-children-enter`** (`src/index.css`): CSS keyframe animation (150ms ease-out opacity+translateY) applied to block children on expand. Respects `prefers-reduced-motion`. Used by BlockListRenderer (UX-79).
 - **Animation/transition tokens** (UX-81): 8 CSS custom properties (`--duration-fast` 100ms through `--duration-slower` 500ms, `--ease-out`, `--ease-in-out`, `--ease-spring`) with matching Tailwind `@utility` classes (`duration-fast`, `duration-normal`, `duration-moderate`, `duration-slow`, `duration-slower`, `ease-smooth`, `ease-smooth-in-out`, `ease-spring`). Keyframe animations reference tokens. `prefers-reduced-motion` sets all durations to 0ms.
+- **Typography scale tokens** (UX-80): 13 CSS custom properties — 7 font-size (`--text-xs` 0.75rem through `--text-3xl` 1.875rem), 3 line-height (`--leading-tight` 1.25, `--leading-normal` 1.5, `--leading-relaxed` 1.625), 3 letter-spacing (`--tracking-tight`, `--tracking-normal`, `--tracking-wide`). 7 `@utility` classes (`text-scale-xs` through `text-scale-3xl`) pairing font-size + line-height. Responsive mobile overrides reduce `--text-2xl`/`--text-3xl` at `max-width: 640px`.
+
+### Shared Components (session 275)
+- **DateChipEditor** (`src/components/DateChipEditor.tsx`): Inline date editor for agenda date chips. Text input with natural language parsing (parseDate), quick option buttons (Today/Tomorrow/Next Week/Clear), calls `setDueDate`/`setScheduledDate`. Designed for use inside Popover. 11 tests.
+- **RenameDialog** (`src/components/RenameDialog.tsx`): Generic modal for renaming entities. Optional `title`, `description`, `placeholder`, `ariaLabel` props (defaults to device rename). Reused by TagList (tag rename) and PageHeader (page rename).
+
+### Lib Modules (session 275)
+- **starred-pages** (`src/lib/starred-pages.ts`): localStorage-backed starred page helpers — `getStarredPages()`, `isStarred()`, `toggleStarred()`. Used by PageBrowser for favorites. 13 tests.
+
+### Feature Integrations (session 275)
+- **Inline date editing in agenda** (F-22): Due date chips in AgendaResults wrapped in Popover → DateChipEditor. `DueDateChip` helper manages Popover state. AgendaView refreshes via `refreshKey` counter after edits.
+- **Tag rename** (F-29): Pencil button on each tag in TagList opens RenameDialog. `editBlock()` → materializer → `tags_cache` rebuild → resolve store auto-update. Duplicate name validation.
+- **Favorites/starred pages** (UX-58): Star toggle on each page in PageBrowser. Starred filter toggle in header with badge count. localStorage persistence via `starred-pages.ts`. Memoized via `starredRevision` counter.
