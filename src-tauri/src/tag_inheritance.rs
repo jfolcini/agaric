@@ -21,13 +21,13 @@ pub async fn propagate_tag_to_descendants(
     tag_id: &str,
 ) -> Result<(), AppError> {
     sqlx::query(
-        "WITH RECURSIVE descendants(id) AS ( \
-             SELECT b.id FROM blocks b \
+        "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT b.id, 0 FROM blocks b \
              WHERE b.parent_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
              UNION ALL \
-             SELECT b.id FROM blocks b \
+             SELECT b.id, d.depth + 1 FROM blocks b \
              JOIN descendants d ON b.parent_id = d.id \
-             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
          ) \
          INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
          SELECT id, ?2, ?1 FROM descendants",
@@ -69,20 +69,20 @@ pub async fn remove_inherited_tag(
     // nearest ancestor with the tag via a lateral ancestor walk.
     sqlx::query(
         "WITH RECURSIVE \
-             descendants(id) AS ( \
-                 SELECT b.id FROM blocks b \
+             descendants(id, depth) AS ( \
+                 SELECT b.id, 0 FROM blocks b \
                  WHERE b.parent_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
                  UNION ALL \
-                 SELECT b.id FROM blocks b \
+                 SELECT b.id, d.depth + 1 FROM blocks b \
                  JOIN descendants d ON b.parent_id = d.id \
-                 WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                 WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
              ), \
              ancestors(id, depth) AS ( \
                  SELECT parent_id AS id, 1 AS depth FROM blocks WHERE id = ?1 \
                  UNION ALL \
                  SELECT b.parent_id, a.depth + 1 FROM blocks b \
                  JOIN ancestors a ON b.id = a.id \
-                 WHERE b.parent_id IS NOT NULL \
+                 WHERE b.parent_id IS NOT NULL AND a.depth < 100 \
              ), \
              nearest_ancestor AS ( \
                  SELECT a.id FROM ancestors a \
@@ -116,7 +116,7 @@ pub async fn remove_inherited_tag(
                  UNION ALL \
                  SELECT b.parent_id, a.depth + 1 FROM blocks b \
                  JOIN ancestors a ON b.id = a.id \
-                 WHERE b.parent_id IS NOT NULL \
+                 WHERE b.parent_id IS NOT NULL AND a.depth < 100 \
              ), \
              nearest_ancestor AS ( \
                  SELECT a.id FROM ancestors a \
@@ -153,12 +153,12 @@ pub async fn recompute_subtree_inheritance(
 ) -> Result<(), AppError> {
     // Step 1: Delete all inherited entries where block_id is in the subtree
     sqlx::query(
-        "WITH RECURSIVE subtree(id) AS ( \
-             SELECT ?1 AS id \
+        "WITH RECURSIVE subtree(id, depth) AS ( \
+             SELECT ?1 AS id, 0 AS depth \
              UNION ALL \
-             SELECT b.id FROM blocks b \
+             SELECT b.id, s.depth + 1 FROM blocks b \
              JOIN subtree s ON b.parent_id = s.id \
-             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND s.depth < 100 \
          ) \
          DELETE FROM block_tag_inherited \
          WHERE block_id IN (SELECT id FROM subtree)",
@@ -171,12 +171,12 @@ pub async fn recompute_subtree_inheritance(
     // (other blocks outside the subtree shouldn't be affected, but entries
     // inherited FROM a subtree block that has been moved need cleanup)
     sqlx::query(
-        "WITH RECURSIVE subtree(id) AS ( \
-             SELECT ?1 AS id \
+        "WITH RECURSIVE subtree(id, depth) AS ( \
+             SELECT ?1 AS id, 0 AS depth \
              UNION ALL \
-             SELECT b.id FROM blocks b \
+             SELECT b.id, s.depth + 1 FROM blocks b \
              JOIN subtree s ON b.parent_id = s.id \
-             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND s.depth < 100 \
          ) \
          DELETE FROM block_tag_inherited \
          WHERE inherited_from IN (SELECT id FROM subtree) \
@@ -191,15 +191,15 @@ pub async fn recompute_subtree_inheritance(
     // within the subtree.
     sqlx::query(
         "WITH RECURSIVE \
-             subtree(id) AS ( \
-                 SELECT ?1 AS id \
+             subtree(id, depth) AS ( \
+                 SELECT ?1 AS id, 0 AS depth \
                  UNION ALL \
-                 SELECT b.id FROM blocks b \
+                 SELECT b.id, s.depth + 1 FROM blocks b \
                  JOIN subtree s ON b.parent_id = s.id \
-                 WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                 WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND s.depth < 100 \
              ), \
-             tagged_descendants AS ( \
-                 SELECT b.id AS block_id, bt.tag_id, bt.block_id AS inherited_from \
+             tagged_descendants(block_id, tag_id, inherited_from, depth) AS ( \
+                 SELECT b.id AS block_id, bt.tag_id, bt.block_id AS inherited_from, 0 AS depth \
                  FROM subtree st \
                  JOIN block_tags bt ON bt.block_id = st.id \
                  JOIN blocks tagged ON tagged.id = bt.block_id \
@@ -207,10 +207,10 @@ pub async fn recompute_subtree_inheritance(
                  WHERE tagged.deleted_at IS NULL AND tagged.is_conflict = 0 \
                    AND b.deleted_at IS NULL AND b.is_conflict = 0 \
                  UNION ALL \
-                 SELECT b.id, td.tag_id, td.inherited_from \
+                 SELECT b.id, td.tag_id, td.inherited_from, td.depth + 1 \
                  FROM tagged_descendants td \
                  JOIN blocks b ON b.parent_id = td.block_id \
-                 WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                 WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND td.depth < 100 \
              ) \
          INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
          SELECT block_id, tag_id, inherited_from FROM tagged_descendants",
@@ -224,12 +224,12 @@ pub async fn recompute_subtree_inheritance(
     // descendants should inherit from above.
     sqlx::query(
         "WITH RECURSIVE \
-             ancestors(id) AS ( \
-                 SELECT parent_id AS id FROM blocks WHERE id = ?1 \
+             ancestors(id, depth) AS ( \
+                 SELECT parent_id AS id, 0 AS depth FROM blocks WHERE id = ?1 \
                  UNION ALL \
-                 SELECT b.parent_id FROM blocks b \
+                 SELECT b.parent_id, a.depth + 1 FROM blocks b \
                  JOIN ancestors a ON b.id = a.id \
-                 WHERE b.parent_id IS NOT NULL \
+                 WHERE b.parent_id IS NOT NULL AND a.depth < 100 \
              ), \
              ancestor_tags AS ( \
                  SELECT bt.block_id AS inherited_from, bt.tag_id \
@@ -238,12 +238,12 @@ pub async fn recompute_subtree_inheritance(
                  JOIN blocks b ON b.id = anc.id \
                  WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
              ), \
-             subtree(id) AS ( \
-                 SELECT ?1 AS id \
+             subtree(id, depth) AS ( \
+                 SELECT ?1 AS id, 0 AS depth \
                  UNION ALL \
-                 SELECT b.id FROM blocks b \
+                 SELECT b.id, s.depth + 1 FROM blocks b \
                  JOIN subtree s ON b.parent_id = s.id \
-                 WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                 WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND s.depth < 100 \
              ) \
          INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
          SELECT st.id, at2.tag_id, at2.inherited_from \
@@ -311,11 +311,12 @@ pub async fn remove_subtree_inherited(
 ) -> Result<(), AppError> {
     // Remove entries where block_id is in subtree
     sqlx::query(
-        "WITH RECURSIVE subtree(id) AS ( \
-             SELECT ?1 AS id \
+        "WITH RECURSIVE subtree(id, depth) AS ( \
+             SELECT ?1 AS id, 0 AS depth \
              UNION ALL \
-             SELECT b.id FROM blocks b \
+             SELECT b.id, s.depth + 1 FROM blocks b \
              JOIN subtree s ON b.parent_id = s.id \
+             AND s.depth < 100 \
          ) \
          DELETE FROM block_tag_inherited \
          WHERE block_id IN (SELECT id FROM subtree)",
@@ -326,11 +327,12 @@ pub async fn remove_subtree_inherited(
 
     // Remove entries where inherited_from is in subtree (tags from deleted blocks)
     sqlx::query(
-        "WITH RECURSIVE subtree(id) AS ( \
-             SELECT ?1 AS id \
+        "WITH RECURSIVE subtree(id, depth) AS ( \
+             SELECT ?1 AS id, 0 AS depth \
              UNION ALL \
-             SELECT b.id FROM blocks b \
+             SELECT b.id, s.depth + 1 FROM blocks b \
              JOIN subtree s ON b.parent_id = s.id \
+             AND s.depth < 100 \
          ) \
          DELETE FROM block_tag_inherited \
          WHERE inherited_from IN (SELECT id FROM subtree)",
@@ -354,18 +356,18 @@ pub async fn rebuild_all(pool: &SqlitePool) -> Result<(), AppError> {
         .await?;
 
     sqlx::query(
-        "WITH RECURSIVE descendant_tags AS ( \
-             SELECT b.id AS block_id, bt.tag_id, bt.block_id AS inherited_from \
+        "WITH RECURSIVE descendant_tags(block_id, tag_id, inherited_from, depth) AS ( \
+             SELECT b.id AS block_id, bt.tag_id, bt.block_id AS inherited_from, 0 AS depth \
              FROM block_tags bt \
              JOIN blocks tagged ON tagged.id = bt.block_id \
              JOIN blocks b ON b.parent_id = bt.block_id \
              WHERE tagged.deleted_at IS NULL AND tagged.is_conflict = 0 \
                AND b.deleted_at IS NULL AND b.is_conflict = 0 \
              UNION ALL \
-             SELECT b.id AS block_id, dt.tag_id, dt.inherited_from \
+             SELECT b.id AS block_id, dt.tag_id, dt.inherited_from, dt.depth + 1 \
              FROM descendant_tags dt \
              JOIN blocks b ON b.parent_id = dt.block_id \
-             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND dt.depth < 100 \
          ) \
          INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
          SELECT block_id, tag_id, inherited_from FROM descendant_tags",
@@ -388,18 +390,18 @@ pub async fn rebuild_all_split(
 ) -> Result<(), AppError> {
     // Read phase: compute inherited tags from read_pool
     let rows = sqlx::query_as::<_, (String, String, String)>(
-        "WITH RECURSIVE descendant_tags AS ( \
-             SELECT b.id AS block_id, bt.tag_id, bt.block_id AS inherited_from \
+        "WITH RECURSIVE descendant_tags(block_id, tag_id, inherited_from, depth) AS ( \
+             SELECT b.id AS block_id, bt.tag_id, bt.block_id AS inherited_from, 0 AS depth \
              FROM block_tags bt \
              JOIN blocks tagged ON tagged.id = bt.block_id \
              JOIN blocks b ON b.parent_id = bt.block_id \
              WHERE tagged.deleted_at IS NULL AND tagged.is_conflict = 0 \
                AND b.deleted_at IS NULL AND b.is_conflict = 0 \
              UNION ALL \
-             SELECT b.id AS block_id, dt.tag_id, dt.inherited_from \
+             SELECT b.id AS block_id, dt.tag_id, dt.inherited_from, dt.depth + 1 \
              FROM descendant_tags dt \
              JOIN blocks b ON b.parent_id = dt.block_id \
-             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND dt.depth < 100 \
          ) \
          SELECT block_id, tag_id, inherited_from FROM descendant_tags",
     )
@@ -1109,5 +1111,44 @@ mod tests {
         assert!(rows.contains(&("CHILD_B".into(), "TAG2".into(), "PAGE_B".into())));
 
         assert_eq!(rows.len(), 5);
+    }
+
+    // ======================================================================
+    // M-40: depth limit doesn't break shallow trees
+    // ======================================================================
+
+    #[tokio::test]
+    async fn depth_limit_shallow_tree_works() {
+        let (pool, _dir) = test_pool().await;
+
+        // Build a chain of depth 5: ROOT -> L1 -> L2 -> L3 -> L4 -> LEAF
+        insert_block(&pool, "TAG", "tag", "tag-name", None).await;
+        insert_block(&pool, "ROOT", "page", "root", None).await;
+        insert_block(&pool, "L1", "content", "level 1", Some("ROOT")).await;
+        insert_block(&pool, "L2", "content", "level 2", Some("L1")).await;
+        insert_block(&pool, "L3", "content", "level 3", Some("L2")).await;
+        insert_block(&pool, "L4", "content", "level 4", Some("L3")).await;
+        insert_block(&pool, "LEAF", "content", "leaf", Some("L4")).await;
+
+        insert_tag_assoc(&pool, "ROOT", "TAG").await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        propagate_tag_to_descendants(&mut *conn, "ROOT", "TAG")
+            .await
+            .unwrap();
+
+        let rows = get_inherited(&pool).await;
+
+        // All 5 descendants should inherit the tag despite the depth limit
+        assert_eq!(
+            rows.len(),
+            5,
+            "All 5 descendants in a shallow tree should inherit TAG, got: {rows:?}"
+        );
+        assert!(rows.contains(&("L1".into(), "TAG".into(), "ROOT".into())));
+        assert!(rows.contains(&("L2".into(), "TAG".into(), "ROOT".into())));
+        assert!(rows.contains(&("L3".into(), "TAG".into(), "ROOT".into())));
+        assert!(rows.contains(&("L4".into(), "TAG".into(), "ROOT".into())));
+        assert!(rows.contains(&("LEAF".into(), "TAG".into(), "ROOT".into())));
     }
 }

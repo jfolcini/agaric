@@ -66,9 +66,18 @@ pub(crate) fn shift_date_once(
                 "d" => base + chrono::Duration::days(n),
                 "w" => base + chrono::Duration::days(n * 7),
                 "m" => {
-                    let total_months = (year as i64 * 12 + month as i64 - 1) + n;
-                    let new_year = (total_months / 12) as i32;
-                    let new_month = (total_months % 12 + 1) as u32;
+                    let total_months = (year as i64)
+                        .checked_mul(12)?
+                        .checked_add(month as i64 - 1)?
+                        .checked_add(n)?;
+                    let new_year_i64 = total_months.div_euclid(12);
+                    let new_month = (total_months.rem_euclid(12) + 1) as u32;
+                    // Clamp to a reasonable calendar range; return None for
+                    // extreme values instead of producing garbage dates.
+                    if !(1900..=2200).contains(&new_year_i64) {
+                        return None;
+                    }
+                    let new_year = i32::try_from(new_year_i64).ok()?;
                     let max_day = days_in_month(new_year, new_month);
                     chrono::NaiveDate::from_ymd_opt(new_year, new_month, day.min(max_day))?
                 }
@@ -616,6 +625,56 @@ mod tests {
             shift_date("2025-06-15", "monthly"),
             Some("2025-07-15".into()),
             "Jun 15 monthly should yield Jul 15"
+        );
+    }
+
+    // ==================================================================
+    // M-36: overflow / range checks for month arithmetic
+    // ==================================================================
+
+    #[test]
+    fn shift_date_once_months_normal() {
+        // 2026-01 + 3 months = 2026-04
+        let base = chrono::NaiveDate::from_ymd_opt(2026, 1, 15).unwrap();
+        let result = shift_date_once(base, "3m");
+        assert_eq!(
+            result,
+            Some(chrono::NaiveDate::from_ymd_opt(2026, 4, 15).unwrap()),
+            "Normal +3m shift should work"
+        );
+    }
+
+    #[test]
+    fn shift_date_once_months_year_rollover() {
+        // 2026-11 + 3 months = 2027-02
+        let base = chrono::NaiveDate::from_ymd_opt(2026, 11, 15).unwrap();
+        let result = shift_date_once(base, "3m");
+        assert_eq!(
+            result,
+            Some(chrono::NaiveDate::from_ymd_opt(2027, 2, 15).unwrap()),
+            "Year rollover with +3m should work"
+        );
+    }
+
+    #[test]
+    fn shift_date_once_months_extreme_positive_returns_none() {
+        // +100000 months should exceed the 2200 year cap
+        let base = chrono::NaiveDate::from_ymd_opt(2025, 6, 15).unwrap();
+        let result = shift_date_once(base, "100000m");
+        assert_eq!(
+            result, None,
+            "Extreme positive month shift should return None"
+        );
+    }
+
+    #[test]
+    fn shift_date_once_months_extreme_negative_returns_none() {
+        // -100000 months should go below the 1900 year floor
+        let base = chrono::NaiveDate::from_ymd_opt(2025, 6, 15).unwrap();
+        let result = shift_date_once(base, "-100000m");
+        assert_eq!(
+            result, None,
+            "Extreme negative month shift should return None"
         );
     }
 }

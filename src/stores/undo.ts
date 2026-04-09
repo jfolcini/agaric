@@ -102,12 +102,12 @@ export const useUndoStore = create<UndoStore>((set, get) => {
    */
   async function performSingleUndo(pageId: string): Promise<UndoResult | null> {
     const currentDepth = (() => {
-      const { pages } = get()
-      const pageState = getOrCreatePage(pages, pageId)
+      const state = get()
+      const pageState = getOrCreatePage(state.pages, pageId)
       const depth = pageState.undoDepth
 
       // Optimistic update: increment immediately
-      const newPages = new Map(get().pages)
+      const newPages = new Map(state.pages)
       newPages.set(pageId, {
         ...pageState,
         undoDepth: depth + 1,
@@ -163,15 +163,15 @@ export const useUndoStore = create<UndoStore>((set, get) => {
    */
   async function performSingleRedo(pageId: string): Promise<UndoResult | null> {
     const opRef = (() => {
-      const { pages } = get()
-      const pageState = getOrCreatePage(pages, pageId)
+      const state = get()
+      const pageState = getOrCreatePage(state.pages, pageId)
 
       if (pageState.redoStack.length === 0) return null
 
       const [first, ...remainingStack] = pageState.redoStack
 
       // Optimistic update: pop from redo stack and decrement undoDepth
-      const newPages = new Map(get().pages)
+      const newPages = new Map(state.pages)
       newPages.set(pageId, {
         ...pageState,
         redoStack: remainingStack,

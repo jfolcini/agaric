@@ -78,11 +78,15 @@ export function useSyncEvents(): void {
 
     // sync:progress
     listen<SyncProgressPayload>('sync:progress', (event) => {
-      const { state, ops_received, ops_sent } = event.payload
-      const store = useSyncStore.getState()
-      store.setState(mapBackendState(state))
-      store.setOpsReceived(ops_received)
-      store.setOpsSent(ops_sent)
+      try {
+        const { state, ops_received, ops_sent } = event.payload
+        const store = useSyncStore.getState()
+        store.setState(mapBackendState(state))
+        store.setOpsReceived(ops_received)
+        store.setOpsSent(ops_sent)
+      } catch (err: unknown) {
+        logger.error('useSyncEvents', 'sync:progress handler failed', undefined, err)
+      }
     })
       .then((unlisten) => {
         if (cancelled) unlisten()
@@ -94,40 +98,44 @@ export function useSyncEvents(): void {
 
     // sync:complete
     listen<SyncCompletePayload>('sync:complete', (event) => {
-      const { ops_received, ops_sent } = event.payload
-      const store = useSyncStore.getState()
-      store.setState('idle')
-      store.setOpsReceived(ops_received)
-      store.setOpsSent(ops_sent)
-      store.updateLastSynced(new Date().toISOString())
+      try {
+        const { ops_received, ops_sent } = event.payload
+        const store = useSyncStore.getState()
+        store.setState('idle')
+        store.setOpsReceived(ops_received)
+        store.setOpsSent(ops_sent)
+        store.updateLastSynced(new Date().toISOString())
 
-      // Show toast notification
-      if (ops_received > 0) {
-        toast.success(`Synced ${ops_received} change${ops_received === 1 ? '' : 's'} from device`)
-      }
-
-      // Reload blocks if we received ops (data changed).
-      // Reload ALL mounted page stores so every visible BlockTree updates.
-      if (ops_received > 0) {
-        for (const store of pageBlockRegistry.values()) {
-          store.getState().load()
+        // Show toast notification
+        if (ops_received > 0) {
+          toast.success(`Synced ${ops_received} change${ops_received === 1 ? '' : 's'} from device`)
         }
-        useResolveStore.getState().preload(true)
-      }
 
-      // Check for conflicts after sync (#438)
-      if (ops_received > 0) {
-        getConflicts({ limit: 1 })
-          .then((resp) => {
-            if (resp.items.length > 0) {
-              toast.warning('Sync completed with conflicts — review in Conflicts view')
-            }
-          })
-          .catch((err: unknown) => {
-            logger.warn('useSyncEvents', 'Failed to check conflicts after sync', {
-              error: String(err),
+        // Reload blocks if we received ops (data changed).
+        // Reload ALL mounted page stores so every visible BlockTree updates.
+        if (ops_received > 0) {
+          for (const store of pageBlockRegistry.values()) {
+            store.getState().load()
+          }
+          useResolveStore.getState().preload(true)
+        }
+
+        // Check for conflicts after sync (#438)
+        if (ops_received > 0) {
+          getConflicts({ limit: 1 })
+            .then((resp) => {
+              if (resp.items.length > 0) {
+                toast.warning('Sync completed with conflicts — review in Conflicts view')
+              }
             })
-          })
+            .catch((err: unknown) => {
+              logger.warn('useSyncEvents', 'Failed to check conflicts after sync', {
+                error: String(err),
+              })
+            })
+        }
+      } catch (err: unknown) {
+        logger.error('useSyncEvents', 'sync:complete handler failed', undefined, err)
       }
     })
       .then((unlisten) => {
@@ -140,9 +148,13 @@ export function useSyncEvents(): void {
 
     // sync:error
     listen<SyncErrorPayload>('sync:error', (event) => {
-      const { message } = event.payload
-      useSyncStore.getState().setState('error', message)
-      toast.error(`Sync failed: ${message}`)
+      try {
+        const { message } = event.payload
+        useSyncStore.getState().setState('error', message)
+        toast.error(`Sync failed: ${message}`)
+      } catch (err: unknown) {
+        logger.error('useSyncEvents', 'sync:error handler failed', undefined, err)
+      }
     })
       .then((unlisten) => {
         if (cancelled) unlisten()

@@ -184,6 +184,11 @@ pub async fn find_lca(
     // borrowed HashSet for O(1) lookups during the chain-B walk.
     let mut chain_a: Vec<(String, i64)> = Vec::new();
     {
+        // Track visited nodes in a HashSet for O(1) cycle detection
+        // instead of the previous O(n) linear scan on each step.
+        let mut visited_a: HashSet<(String, i64)> = HashSet::new();
+        visited_a.insert((op_a.0.clone(), op_a.1));
+
         // Process op_a by borrowing from the parameter — no clone needed.
         let mut next: Option<(String, i64)> = match get_op_by_seq(pool, &op_a.0, op_a.1).await {
             Ok(record) => extract_prev_edit(&record)?,
@@ -197,11 +202,10 @@ pub async fn find_lca(
             Err(e) => return Err(e),
         };
         while let Some(key) = next.take() {
-            if (key.0 == op_a.0 && key.1 == op_a.1)
-                || chain_a.iter().any(|(s, n)| *s == key.0 && *n == key.1)
-            {
+            if visited_a.contains(&key) {
                 break; // cycle detected — stop walking
             }
+            visited_a.insert(key.clone());
             chain_a.push(key);
             let last = chain_a.last().unwrap();
             match get_op_by_seq(pool, &last.0, last.1).await {
@@ -231,6 +235,10 @@ pub async fn find_lca(
     }
     let mut chain_b: Vec<(String, i64)> = Vec::new();
     {
+        // Track visited nodes in chain B with a HashSet for O(1) cycle detection.
+        let mut visited_b: HashSet<(String, i64)> = HashSet::new();
+        visited_b.insert((op_b.0.clone(), op_b.1));
+
         let mut next: Option<(String, i64)> = match get_op_by_seq(pool, &op_b.0, op_b.1).await {
             Ok(record) => extract_prev_edit(&record)?,
             Err(AppError::NotFound(_)) if has_snapshots > 0 => {
@@ -246,11 +254,10 @@ pub async fn find_lca(
             if visited.contains(&(key.0.as_str(), key.1)) {
                 return Ok(Some(key));
             }
-            if (key.0 == op_b.0 && key.1 == op_b.1)
-                || chain_b.iter().any(|(s, n)| *s == key.0 && *n == key.1)
-            {
+            if visited_b.contains(&key) {
                 break; // cycle detected — stop walking
             }
+            visited_b.insert(key.clone());
             chain_b.push(key);
             let last = chain_b.last().unwrap();
             match get_op_by_seq(pool, &last.0, last.1).await {
@@ -1321,6 +1328,120 @@ mod tests {
             result.unwrap(),
             None,
             "cyclic chain A never reaches (A,1), so no LCA with chain B"
+        );
+    }
+
+    // =====================================================================
+    // find_lca: HashSet-based cycle detection — self-loop
+    // =====================================================================
+
+    /// An op whose prev_edit points to itself forms a self-loop.
+    /// The visited HashSet should detect this on the very first step
+    /// and break immediately without hanging.
+    ///
+    /// ```text
+    /// (A,1) create_block B1
+    /// (A,2) edit_block B1, prev_edit=(A,2)  ←── self-loop
+    /// (B,1) edit_block B1, prev_edit=(A,1)      (divergent)
+    /// ```
+    #[tokio::test]
+    async fn find_lca_detects_self_loop() {
+        let (pool, _dir) = test_pool().await;
+
+        // (A,1) create_block B1
+        append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+            .await
+            .unwrap();
+
+        // (A,2) edit_block with prev_edit pointing to itself — self-loop
+        let payload_self = r#"{"block_id":"B1","to_text":"v-self","prev_edit":["device-A",2]}"#;
+        let hash_self = compute_op_hash(DEV_A, 2, None, "edit_block", payload_self);
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+             VALUES (?, ?, NULL, ?, 'edit_block', ?, ?)",
+        )
+        .bind(DEV_A)
+        .bind(2_i64)
+        .bind(&hash_self)
+        .bind(payload_self)
+        .bind(FIXED_TS)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // (B,1) normal divergent edit from create
+        let b_payload = r#"{"block_id":"B1","to_text":"v-B","prev_edit":["device-A",1]}"#;
+        let b_record = make_remote_record(DEV_B, 1, None, "edit_block", b_payload);
+        insert_remote_op(&pool, &b_record).await.unwrap();
+
+        // Chain A: (A,2) → prev_edit is (A,2) — self-loop detected immediately.
+        // Chain B: (B,1) → (A,1) = create_block.
+        // No LCA because chain A never gets past its self-loop.
+        let result = find_lca(&pool, &(DEV_A.into(), 2), &(DEV_B.into(), 1)).await;
+        assert!(
+            result.is_ok(),
+            "find_lca should not hang on self-loop, got: {:?}",
+            result
+        );
+        assert_eq!(
+            result.unwrap(),
+            None,
+            "self-loop in chain A prevents reaching (A,1), so no LCA"
+        );
+    }
+
+    /// Verify that find_lca still correctly finds the LCA when both
+    /// chains converge, confirming the HashSet optimization preserves
+    /// correct behavior.
+    ///
+    /// ```text
+    /// (A,1) create_block B1
+    /// (A,2) edit_block B1, prev_edit=(A,1)
+    /// (A,3) edit_block B1, prev_edit=(A,2)   ← chain A head
+    /// (B,1) edit_block B1, prev_edit=(A,2)   ← chain B head
+    /// ```
+    /// LCA should be (A,2).
+    #[tokio::test]
+    async fn find_lca_with_hashset_finds_correct_ancestor() {
+        let (pool, _dir) = test_pool().await;
+
+        // (A,1) create_block B1
+        append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+            .await
+            .unwrap();
+
+        // (A,2) edit_block prev_edit=(A,1)
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "v1", Some((DEV_A.into(), 1))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // (A,3) edit_block prev_edit=(A,2)
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "v2", Some((DEV_A.into(), 2))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // (B,1) edit_block prev_edit=(A,2) — diverges from (A,2)
+        let b_payload = r#"{"block_id":"B1","to_text":"v-B","prev_edit":["device-A",2]}"#;
+        let b_record = make_remote_record(DEV_B, 1, None, "edit_block", b_payload);
+        insert_remote_op(&pool, &b_record).await.unwrap();
+
+        let result = find_lca(&pool, &(DEV_A.into(), 3), &(DEV_B.into(), 1)).await;
+        assert!(result.is_ok(), "find_lca should succeed");
+        let lca = result.unwrap();
+        assert_eq!(
+            lca,
+            Some((DEV_A.into(), 2)),
+            "LCA should be (device-A, 2) where both chains diverge"
         );
     }
 }

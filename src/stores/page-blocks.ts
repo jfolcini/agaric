@@ -544,12 +544,13 @@ export function PageBlockStoreProvider({
   const store = storeRef.current.store
 
   // Register in the global registry for cross-context access
+  // biome-ignore lint/correctness/useExhaustiveDependencies: store is stable for a given pageId via storeRef
   useEffect(() => {
     pageBlockRegistry.set(pageId, store)
     return () => {
       pageBlockRegistry.delete(pageId)
     }
-  }, [pageId, store])
+  }, [pageId])
 
   return createElement(PageBlockContext.Provider, { value: store }, children)
 }

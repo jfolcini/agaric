@@ -4364,10 +4364,10 @@ pub async fn list_tags_by_prefix(
 #[tauri::command]
 #[specta::specta]
 pub async fn list_tags_for_block(
-    pool: State<'_, SqlitePool>,
+    pool: State<'_, ReadPool>,
     block_id: String,
 ) -> Result<Vec<String>, AppError> {
-    list_tags_for_block_inner(&pool, block_id)
+    list_tags_for_block_inner(&pool.0, block_id)
         .await
         .map_err(sanitize_internal_error)
 }

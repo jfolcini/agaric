@@ -802,16 +802,27 @@ pub async fn eval_backlink_query(
 
     // 5. Apply cursor pagination
     let start_after = page.after.as_ref().map(|c| c.id.as_str());
-    let filtered: Vec<&str> = if let Some(after_id) = start_after {
-        sorted_ids
-            .iter()
-            .map(|s| s.as_str())
-            .skip_while(|id| *id != after_id)
-            .skip(1) // skip the cursor item itself
-            .collect()
+    let start_idx = if let Some(after_id) = start_after {
+        if matches!(sort, BacklinkSort::Created { .. }) {
+            // Created sort uses ULID order which is lexicographic — binary
+            // search is a valid O(log n) replacement for the linear scan.
+            match sorted_ids.binary_search_by(|s| s.as_str().cmp(after_id)) {
+                Ok(i) => i + 1, // found: start after it
+                Err(i) => i,    // not found: start at insertion point
+            }
+        } else {
+            // Property sorts are ordered by property value, not by ID, so
+            // binary search on ID is invalid. Fall back to O(n) position scan.
+            sorted_ids
+                .iter()
+                .position(|s| s.as_str() == after_id)
+                .map(|i| i + 1)
+                .unwrap_or(sorted_ids.len())
+        }
     } else {
-        sorted_ids.iter().map(|s| s.as_str()).collect()
+        0
     };
+    let filtered: Vec<&str> = sorted_ids[start_idx..].iter().map(|s| s.as_str()).collect();
 
     let fetch_limit = (page.limit + 1) as usize;
     let page_ids: Vec<&str> = filtered.into_iter().take(fetch_limit).collect();
@@ -2806,6 +2817,99 @@ mod tests {
         assert_eq!(
             resp2.filtered_count, 3,
             "filtered count unchanged across pages"
+        );
+    }
+
+    /// Binary-search pagination: cursor ID exists in result set.
+    /// Verifies that after seeking to an existing cursor, items after
+    /// that cursor are returned correctly.
+    #[tokio::test]
+    async fn pagination_binary_search_cursor_exists() {
+        let (pool, _dir) = test_pool().await;
+        setup_backlinks(&pool).await;
+        // 3 source blocks: SRC_A, SRC_B, SRC_C (ULID-sorted ascending)
+
+        // First page: get first 1 item
+        let page1 = PageRequest::new(None, Some(1)).unwrap();
+        let resp1 = eval_backlink_query(&pool, "TARGET", None, None, &page1)
+            .await
+            .unwrap();
+        assert_eq!(resp1.items.len(), 1, "first page has 1 item");
+        assert!(resp1.has_more, "more items after first");
+        let first_id = resp1.items[0].id.clone();
+
+        // Second page via cursor from first item (cursor ID exists)
+        let page2 = PageRequest::new(resp1.next_cursor, Some(1)).unwrap();
+        let resp2 = eval_backlink_query(&pool, "TARGET", None, None, &page2)
+            .await
+            .unwrap();
+        assert_eq!(resp2.items.len(), 1, "second page has 1 item");
+        assert_ne!(
+            resp2.items[0].id, first_id,
+            "second page item differs from first"
+        );
+        assert!(resp2.has_more, "still more items");
+
+        // Third page
+        let page3 = PageRequest::new(resp2.next_cursor, Some(1)).unwrap();
+        let resp3 = eval_backlink_query(&pool, "TARGET", None, None, &page3)
+            .await
+            .unwrap();
+        assert_eq!(resp3.items.len(), 1, "third page has 1 item");
+        assert!(!resp3.has_more, "no more items");
+        assert!(resp3.next_cursor.is_none(), "no cursor on last page");
+    }
+
+    /// Binary-search pagination: cursor ID does NOT exist in result set.
+    /// This can happen when the cursor block was deleted between pages.
+    /// The binary_search Err(i) path returns the insertion point, so
+    /// pagination should skip to the next item after where the cursor
+    /// would have been.
+    #[tokio::test]
+    async fn pagination_binary_search_cursor_missing() {
+        let (pool, _dir) = test_pool().await;
+        setup_backlinks(&pool).await;
+        // 3 source blocks: SRC_A, SRC_B, SRC_C
+
+        // Get all items first to know the order
+        let all_page = default_page();
+        let all = eval_backlink_query(&pool, "TARGET", None, None, &all_page)
+            .await
+            .unwrap();
+        assert_eq!(all.items.len(), 3);
+
+        // Build a fake cursor with an ID that doesn't exist but sorts
+        // between the first and second items (binary search Err path).
+        // SRC_A < SRC_B < SRC_C in ULID sort; use an ID between A and B.
+        let fake_cursor_id = format!("{}Z", all.items[0].id); // lexically after first
+        let fake_cursor = Cursor {
+            id: fake_cursor_id,
+            position: None,
+            deleted_at: None,
+            seq: None,
+            rank: None,
+        };
+        let encoded = fake_cursor.encode().unwrap();
+        let page_missing = PageRequest::new(Some(encoded), Some(50)).unwrap();
+        let resp = eval_backlink_query(&pool, "TARGET", None, None, &page_missing)
+            .await
+            .unwrap();
+
+        // The fake cursor sorts after first item but before second,
+        // so binary_search returns Err(1) and we should get items from
+        // index 1 onward (the second and third items).
+        assert_eq!(
+            resp.items.len(),
+            2,
+            "should return items after the missing cursor position"
+        );
+        assert_eq!(
+            resp.items[0].id, all.items[1].id,
+            "first returned item is the second overall item"
+        );
+        assert_eq!(
+            resp.items[1].id, all.items[2].id,
+            "second returned item is the third overall item"
         );
     }
 
