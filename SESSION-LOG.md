@@ -1,5 +1,36 @@
 # Session Log
 
+## Session 310 — Sync security: B-33 + B-34 resolved (2026-04-10)
+
+**2 P0 security bugs resolved (11→9 open). Zero open bugs remaining. 2 files changed, 23 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| B-33 | Sync responder TLS cert hash verification (MITM fix) | `sync_net.rs`, `sync_daemon.rs` |
+| B-34 | Sync responder device ID CN validation (impersonation fix) | `sync_net.rs`, `sync_daemon.rs` |
+
+### Implementation
+- **mTLS enabled**: Server now requests client certs via `AllowAnyCert` verifier (non-mandatory, pairing still works)
+- **Client sends cert**: `connect_to_peer()` now uses `with_client_auth_cert()` instead of `with_no_client_auth()`
+- **Server extracts cert**: After TLS handshake, extracts SHA-256 hash + CN from peer cert via `x509_parser`
+- **verify_peer_cert()**: Pure function checks CN match (B-34) then hash match (B-33), returns enum
+- **TOFU (trust-on-first-use)**: First successful sync stores observed cert hash in `peer_refs` (both initiator and responder sides)
+
+### Review findings
+- Initial review: REQUEST CHANGES — cert hash never stored during pairing (pre-existing gap)
+- Fix: Added TOFU pattern — both sides store observed hash on first successful sync when no stored hash exists
+- Analogous to SSH known_hosts: first connection trusts, subsequent connections pin
+
+### Stats
+- 2 files changed (+556 / -11 lines)
+- 23 new tests (14 sync_net + 9 sync_daemon)
+- 1737 Rust tests pass
+- All 20 prek hooks pass
+
+---
+
 ## Session 309 — Logger cause refactor: M-46 resolved (2026-04-10)
 
 **1 item resolved (12→11 open). 25 source files + 4 test files changed. 72 call sites refactored.**
