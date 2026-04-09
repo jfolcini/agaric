@@ -23,29 +23,31 @@ Everything is a block. A **page** is just a special block type that acts as a co
 The default view is a **daily journal** — one page per day, created automatically. Four viewing modes:
 - **Day** — single day with full editing
 - **Week** — Mon-Sun overview, click any day heading to jump to its daily view
-- **Month** — calendar grid with content indicators; click a day to switch to daily view
-- **Agenda** — tasks grouped by date (Overdue / Today / Tomorrow / future) with sort and group controls
+- **Month** — calendar grid with content indicator dots, click a day to switch to daily view, configurable week start
+- **Agenda** — tasks grouped by date (Overdue / Today / Tomorrow / future) with stackable filters across eight dimensions (status, priority, due date, scheduled date, completed date, created date, tag, property), sort and group controls, projected recurring task occurrences
 
 ### Tags and Links
 
-- **Tags** (`#[ULID]`) — categorize blocks. Rendered as named chips, backed by ULIDs so renaming propagates everywhere.
+- **Tags** (`#[ULID]`) — categorize blocks. Rendered as named chips, backed by ULIDs so renaming propagates everywhere. Tag inheritance: child blocks inherit parent tags for queries.
 - **Block links** (`[[ULID]]`) — link to any page or block. Shows the resolved title as a clickable chip.
-- **Backlinks** — see everything that links to the current block.
+- **Block references** (`((ULID))`) — inline embed of another block's content. Hover preview, click-to-navigate.
+- **Backlinks** — see everything that links to the current block, grouped by source page with filtering.
 
 ### Properties
 
-Blocks can have typed properties (text, number, date, select, reference). A built-in **priority** property shows color-coded badges. Properties panel for inline editing. Properties are queryable — the agenda view uses them to find and filter tasks across five dimensions (status, priority, due date, scheduled date, tag).
+Blocks can have typed properties (text, number, date, select, reference). A built-in **priority** property shows color-coded badges. Properties panel for inline editing. Properties are queryable — the agenda view uses them to find and filter tasks across eight dimensions.
 
 ### Editor
 
 WYSIWYG editing powered by TipTap. A single roving editor instance mounts into whichever block you click — all other blocks render as static text. Supports:
-- Markdown bold (`**`), italic (`*`), inline code (`` ` ``), headings, code blocks, tables
-- Tag picker (`#` in editor) and block link picker (`[[`)
+- Markdown bold (`**`), italic (`*`), inline code (`` ` ``), strikethrough (`~~`), highlight (`==`), headings, code blocks, tables
+- Tag picker (`#` in editor), block link picker (`[[`), block reference picker (`((`)
 - Task cycling (`Ctrl+Enter`: TODO -> DOING -> DONE -> none), custom task keywords
 - Indent/dedent (`Tab` / `Shift+Tab`)
 - Templates with dynamic variables (via `/template` slash command)
-- Inline queries (`{{query ...}}` syntax)
+- Inline queries (`{{query ...}}` syntax) with visual query builder
 - Multi-selection with batch operations (Ctrl+Click / Shift+Click)
+- Drag-and-drop + clipboard paste for file attachments
 
 ### Sync
 
@@ -60,11 +62,16 @@ Peer-to-peer sync over local WiFi — no cloud server needed. Append-only operat
 
 ### More Features
 
-- **History view** — browse the operation log for any block
-- **Status panel** — materializer queue stats, FTS health, sync state
-- **Attachments** — attach files to any block
-- **Import / Export** — Logseq/Markdown import, data export
+- **Graph view** — force-directed page relationship visualization (d3-force), click-to-navigate, zoom/pan, keyboard-accessible
+- **History view** — browse the operation log for any block, point-in-time page restore
+- **Visual query builder** — modal for constructing inline queries by tag, property, or backlinks
+- **Mermaid diagrams** — code blocks with `mermaid` language auto-render as diagrams
+- **Keyboard customization** — customize all keyboard shortcuts via settings, conflict detection
+- **Status panel** — materializer queue stats, FTS health, sync state, op log compaction
+- **Attachments** — attach files to any block (drag-and-drop, paste), MIME validation, size limits
+- **Import / Export** — Logseq/Markdown import (YAML frontmatter stripping, tab normalization), Markdown export with ULID-to-name resolution
 - **Trash** — soft delete with 30-day auto-purge, restore at any time
+- **Recurring tasks** — three repeat modes (+, .+, ++), end conditions (count, date), agenda projection
 
 ## Tech Stack
 
@@ -73,10 +80,10 @@ Peer-to-peer sync over local WiFi — no cloud server needed. Append-only operat
 | Desktop shell | [Tauri 2](https://v2.tauri.app/) |
 | Frontend | React 18 + Vite + TipTap + Tailwind CSS 4 |
 | Backend | Rust + SQLite (via sqlx) |
-| Database | SQLite in WAL mode, 14 tables + 1 FTS5 virtual table, 19 indexes |
+| Database | SQLite in WAL mode, 15 tables + 1 FTS5 virtual table, 23 indexes |
 | State | Zustand stores |
 | Linting | Biome (no ESLint/Prettier) |
-| Testing | Vitest + vitest-axe + fast-check (frontend), cargo-nextest + insta (backend) |
+| Testing | Vitest + vitest-axe + fast-check (frontend), cargo-nextest + insta + Criterion (backend), Playwright (E2E) |
 
 ## Development
 
@@ -92,9 +99,9 @@ cargo tauri dev              # Launch app with hot reload
 ### Testing
 
 ```bash
-npm test                     # Frontend tests (~5000+ tests, Vitest)
-cd src-tauri && cargo nextest run   # Rust tests (~850+ tests)
-npx playwright test          # E2E tests (Playwright + Chromium)
+npm test                     # Frontend tests (~6000+ tests, Vitest)
+cd src-tauri && cargo nextest run   # Rust tests (~1700+ tests)
+npx playwright test          # E2E tests (21 spec files, Playwright + Chromium)
 ```
 
 ### Building
@@ -118,24 +125,29 @@ Both debug and release APKs build and run successfully. Release APKs are 24 MB (
 
 ```
 src/                         # React frontend
-  components/                #   UI components (JournalPage, BlockTree, etc.)
+  components/                #   UI components (JournalPage, BlockTree, GraphView, etc.)
+    ui/                      #   Design system primitives (Button, Dialog, FilterPill, etc.)
+    journal/                 #   Journal-specific components (MonthlyDayCell, etc.)
   editor/                    #   TipTap editor setup and extensions
-  stores/                    #   Zustand state stores
-  hooks/                     #   Custom React hooks (sync, online status, etc.)
-  lib/                       #   Tauri API wrappers and bindings
-  index.css                  #   Tailwind theme (Agaric color scheme)
+    extensions/              #   Custom TipTap extensions (tag-ref, block-link, etc.)
+  stores/                    #   Zustand state stores (8 stores, per-page factory)
+  hooks/                     #   Custom React hooks (~44 hooks)
+  lib/                       #   Tauri API wrappers, utilities, and bindings
+  index.css                  #   Tailwind theme (OKLch colors, semantic tokens)
 src-tauri/                   # Rust backend
-  src/                       #   Commands, database, materializer, sync, merge
-  migrations/                #   SQLite migrations (auto-run on startup)
+  src/                       #   Commands, database, materializer, sync, merge (38 modules)
+  migrations/                #   SQLite migrations (22 files, auto-run on startup)
   tests/                     #   Integration tests
-  benches/                   #   Benchmarks
+  benches/                   #   Criterion benchmarks (24 bench files)
   icons/                     #   App icons (all platforms)
   tauri.conf.json            #   Tauri configuration
-e2e/                         # Playwright E2E tests
+e2e/                         # Playwright E2E tests (21 spec files)
 public/                      # Static assets (agaric.svg icon)
 BUILD.md                     # Complete build guide
 AGENTS.md                    # Developer conventions
 ARCHITECTURE.md              # Architecture deep-dive
+FEATURE-MAP.md               # Complete feature inventory
+REVIEW-LATER.md              # Deferred items and tech debt
 ```
 
 ## Database

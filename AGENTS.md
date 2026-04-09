@@ -24,9 +24,9 @@ See **[BUILD.md](BUILD.md)** for the full build guide (prerequisites, platform-s
 # Quick reference
 cargo tauri dev              # Dev mode with hot reload
 cargo tauri build            # Production build (per-platform)
-npm run test                 # Vitest (~5000 tests)
-cd src-tauri && cargo nextest run   # Rust tests
-npx playwright test          # E2E tests
+npm run test                 # Vitest (~6000 tests)
+cd src-tauri && cargo nextest run   # Rust tests (~1700 tests)
+npx playwright test          # E2E tests (21 spec files)
 cargo tauri android build --target x86_64 --debug   # Android debug APK
 cargo tauri android build --target x86_64            # Android release APK (24 MB)
 prek run --all-files         # Pre-commit hooks
@@ -57,14 +57,15 @@ The architecture is mature and robust. **Do not introduce significant architectu
 - **WAL mode**, foreign keys ON on every connection
 - **Pool:** 2 writers + 4 readers (6 total)
 - **Migrations:** `src-tauri/migrations/` (22 files) — auto-run on pool init
-- **Schema:** 15 tables + 1 FTS5 virtual table (trigram tokenizer), 22 indexes, 2 triggers
+- **Schema:** 15 tables + 1 FTS5 virtual table (trigram tokenizer), 23 indexes, 2 triggers
 
 ## Frontend Architecture
 
-- **State:** 8 Zustand stores — `useBootStore`, `useBlockStore`, `useNavigationStore`, `useJournalStore`, `usePageBlocksStore`, `useResolveStore`, `useUndoStore`, `useSyncStore`
+- **State:** 8 Zustand stores — `useBootStore`, `useBlockStore` (focus/selection only), `useNavigationStore`, `useJournalStore`, `usePageBlocksStore` (per-page factory with context provider + registry), `useResolveStore`, `useUndoStore`, `useSyncStore`
 - **Editor:** Single roving TipTap instance with 10 custom extensions (TagRef, BlockLink, BlockRef, ExternalLink, AtTagPicker, BlockLinkPicker, BlockRefPicker, PropertyPicker, CheckboxInputRule, SlashCommand)
 - **Serializer:** Custom Markdown serializer (`src/editor/markdown-serializer.ts`) — zero external deps, handles `#[ULID]` and `[[ULID]]` tokens
 - **Sync hooks:** `useSyncTrigger` (exponential backoff periodic sync), `useSyncEvents` (Tauri event listener), `useOnlineStatus` (navigator.onLine)
+- **Error logging:** Dual-write logger (`src/lib/logger.ts`) — console + Rust IPC bridge. Stack capture, cause chain extraction (3 levels), rate limiting (5/min). Global error/rejection handlers in `main.tsx`.
 - **Code style:** 2-space indent, single quotes, no semicolons, 100-char line width (Biome)
 
 ## Frontend Development Guidelines
@@ -78,9 +79,9 @@ Every frontend change — new component, bugfix, feature — must build on exist
 | Layer | Location | Purpose | Examples |
 |-------|----------|---------|---------|
 | **Design tokens** | `src/index.css` | CSS custom properties (OKLch colors, spacing, semantic status/priority tokens), light/dark themes, `prefers-contrast` and `prefers-reduced-motion` support | `--status-done`, `--priority-urgent`, `--indent-width` |
-| **UI primitives** | `src/components/ui/` | Thin wrappers around Radix UI + CVA variants. Atomic building blocks. | Button, Select, Dialog, Popover, Badge, Input, ScrollArea, Tooltip |
-| **Shared components** | `src/components/` (non-page) | Reusable composed components used across multiple views | CollapsiblePanelHeader, EmptyState, LoadingSkeleton, ConfirmDialog, LoadMoreButton |
-| **Shared hooks** | `src/hooks/` | Reusable stateful logic | useBlockNavigation, usePaginatedQuery, useListKeyboardNavigation, useDebouncedCallback |
+| **UI primitives** | `src/components/ui/` | Thin wrappers around Radix UI + CVA variants. Atomic building blocks. | Button, Select, Dialog, Popover, Badge, Input, ScrollArea, Tooltip, FilterPill, StatusIcon, Spinner, Label |
+| **Shared components** | `src/components/` (non-page) | Reusable composed components used across multiple views | CollapsiblePanelHeader, EmptyState, LoadingSkeleton, ConfirmDialog, LoadMoreButton, SearchablePopover, BlockGutterControls, RichContentRenderer |
+| **Shared hooks** | `src/hooks/` | Reusable stateful logic | useBlockNavigation, usePaginatedQuery, useListKeyboardNavigation, useDebouncedCallback, usePropertySave, useDateInput, useQueryExecution, useBacklinkResolution |
 | **Page components** | `src/components/` (top-level) | Full views composed from the layers above | JournalPage, PageBrowser, HistoryView, SearchPanel |
 
 ### Before writing any frontend code
@@ -106,13 +107,16 @@ Every frontend change — new component, bugfix, feature — must build on exist
 
 ### Anti-patterns — do not do these
 
-- **Inline `<Loader2 className="animate-spin">`** — use or create a shared Spinner component.
+- **Inline `<Loader2 className="animate-spin">`** — use the shared `Spinner` component from `ui/spinner.tsx`.
 - **Ad-hoc hover/focus classes** per component — reuse the established patterns from Button/Input or define a shared utility.
 - **Hardcoded color classes** (`bg-red-100`, `text-amber-600`) when semantic tokens exist.
 - **Custom dropdown/select implementations** — always use `ui/select.tsx` or `ui/popover.tsx`.
 - **Duplicating existing shared components** instead of importing them.
 - **Skipping responsive/touch considerations** — every interactive element must work on both desktop and mobile (pointer:coarse).
 - **Skipping accessibility** — `aria-label`, `role`, `aria-busy`, `aria-expanded` are not optional.
+- **N+1 query patterns** — use `json_each()` batch queries on the backend instead of loops. See `fts.rs` batch resolve.
+- **Silent `.catch(() => {})` blocks** — always use `logger.warn` or `logger.error`. Silent error swallowing masks real bugs.
+- **Weakening strict settings** — do not add `@ts-ignore` or `biome-ignore` without a clear justification comment. Do not relax `exactOptionalPropertyTypes`, `noImplicitReturns`, or `unsafe_code = "deny"`.
 
 ### When extending the design system
 
@@ -126,12 +130,22 @@ If you need a new primitive, shared component, or hook:
 
 The measure of good frontend work is not just "does it work" but "does it make the next feature easier to build."
 
+### Component decomposition
+
+Components exceeding ~500 lines are candidates for extraction. The established pattern:
+
+1. Extract hooks first (state + effects → `useXyz` in `src/hooks/`).
+2. Extract presentational sub-components next (render blocks → named components).
+3. Maintain backward compatibility via re-exports from the original file.
+4. Every extracted unit gets its own test file with full coverage.
+
 ## Backend Architecture
 
 - **Error handling:** `AppError` enum (11 variants) serializes to `{ kind, message }` for Tauri 2 IPC. Specta-derived TS bindings.
 - **Undo/redo:** Two-tier model. In-editor: TipTap/ProseMirror history (cleared on blur). Page-level: `reverse.rs` computes inverse ops from op log. Non-reversible: `purge_block`, `delete_attachment`.
-- **Materializer:** Foreground queue (256 cap, core tables + `BatchApplyOps`) + background queue (1024 cap, caches/FTS). Auto-dedup, silent drop on backpressure.
-- **Commands:** 70 Tauri command handlers in `commands.rs`. Each has an `inner_*` function taking `&SqlitePool` for testability.
+- **Materializer:** Foreground queue (256 cap, core tables + `BatchApplyOps`) + background queue (1024 cap, caches/FTS). Auto-dedup, silent drop on backpressure. Background tasks use split read/write pools — reads from reader pool, writes only for the final transaction. Foreground consumer batch-drains and parallelizes independent block_id groups via JoinSet.
+- **Tag inheritance:** Materialized `block_tag_inherited` table, maintained transactionally by command handlers + background rebuild task. Replaces recursive CTEs for `include_inherited=true` queries.
+- **Commands:** 74 Tauri command handlers in `commands.rs`. Each has an `inner_*` function taking `&SqlitePool` for testability.
 - **Sync daemon:** `sync_daemon.rs` — background task with mDNS discovery, TLS WebSocket server, initiator-side sync via `SyncOrchestrator`. Per-peer backoff via `SyncScheduler`.
 - **Sync cert:** `sync_cert.rs` — persistent TLS certificate (generate-once-then-load pattern). `PersistedCert` managed state.
 
@@ -151,11 +165,12 @@ cd src-tauri && cargo test -- specta_tests --ignored
 
 ## Testing Conventions
 
-- **Minimum bar:** Every exported function gets happy-path + error-path tests. Components get render + interaction + `axe(container)` a11y tests.
+- **Minimum bar:** Every exported function gets happy-path + error-path tests. Components get render + interaction + `axe(container)` a11y tests. **Every component with Tauri IPC calls must have error-path tests** — mock invoke rejection and verify graceful degradation (toast, fallback UI, no crash).
 - **Test location:** `#[cfg(test)] mod tests` for Rust, `__tests__/` dirs for frontend.
 - **Frameworks:** vitest-axe, fast-check (property tests), insta (Rust snapshots)
-- **Benchmarks:** Criterion — manual only (`cd src-tauri && cargo bench`), never in CI.
+- **Benchmarks:** Criterion — manual only (`cd src-tauri && cargo bench`), never in CI. 24 bench files with 40+ benchmarks covering 62/72 non-trivial commands, parameterized at multiple scales (100/1K/10K/100K).
 - **Tarpaulin:** Expensive (~60s). Only run when working on coverage gaps.
+- **Silent catch blocks forbidden:** Never use `.catch(() => {})`. Use `logger.warn` or `logger.error` for all catch blocks — silent error swallowing masks real bugs.
 - **Detailed conventions:** `src-tauri/tests/AGENTS.md` (Rust), `src/__tests__/AGENTS.md` (frontend)
 
 ## Tooling Efficiency
@@ -165,6 +180,26 @@ During development, run only the relevant check:
 - Editing TS? → `npx vitest run`
 - Never run clippy/fmt/biome manually — prek hooks handle it at commit time
 - Frontend checks are irrelevant when only Rust changed (and vice versa)
+
+## Code Quality Enforcement
+
+Strict compiler and linter settings are enabled project-wide. **Do not weaken these.**
+
+- **TypeScript:** `exactOptionalPropertyTypes: true`, `noImplicitReturns: true` — use `| undefined` for optional properties, never pass `undefined` implicitly.
+- **Biome:** `noEvolvingTypes: error`, `useAwait: error`, `noUndeclaredDependencies: error`, `useExplicitLengthCheck: error` — test files have `useAwait` overridden where needed.
+- **Rust:** `unsafe_code = "deny"` in `[lints.rust]`. All clippy warnings must be resolved.
+- **Non-null assertions:** Banned (`noNonNullAssertion` in Biome). Use `as Type` casts or proper narrowing instead of `!`.
+
+## Performance Conventions
+
+Scalability analysis (session 302) established baseline performance at 100K blocks:
+
+- **O(1) operations** (PK lookups, property gets) — ~23µs regardless of scale. No action needed.
+- **Paginated lists** — cursor pagination keeps individual page loads fast even at 100K.
+- **Batch operations** — use `json_each()` for batch resolve/count. Single query, not N+1.
+- **Graph/agenda queries** — superlinear at 100K (see REVIEW-LATER for P-15, P-16). Frontend caching can mitigate.
+- **Lazy hash computation rejected** — breaks sync protocol integrity. `verify_op_record()` in `sync_protocol.rs` requires upfront hashes.
+- **CTE oracle pattern:** When optimizing a query (e.g., replacing recursive CTEs with materialized tables), preserve the old implementation as a `#[cfg(test)]` oracle function and add a test verifying both paths produce identical results.
 
 ## Android
 
@@ -189,7 +224,7 @@ During development, run only the relevant check:
 7. LOG      — Update SESSION-LOG.md
 ```
 
-Every step is mandatory. No self-reviewed commits.
+Every step is mandatory. No self-reviewed commits. Review subagents consistently catch real bugs — missing SQL filters (`is_conflict = 0`), incorrect CTE ordering, unused struct fields, TOCTOU race conditions, stale test assertions. Do not skip or abbreviate the review step.
 
 ## State Files
 
