@@ -6,6 +6,7 @@ import {
   blockquote,
   bold,
   boldItalic,
+  callout,
   code,
   codeBlock,
   doc,
@@ -212,6 +213,58 @@ describe('serialize', () => {
           ),
         ),
       ).toBe('> | A |\n> | --- |\n> | 1 |')
+    })
+  })
+
+  describe('callout', () => {
+    it('serializes info callout with [!INFO] prefix', () => {
+      expect(serialize(doc(callout('info', paragraph(text('some text')))))).toBe(
+        '> [!INFO] some text',
+      )
+    })
+
+    it('serializes warning callout', () => {
+      expect(serialize(doc(callout('warning', paragraph(text('be careful')))))).toBe(
+        '> [!WARNING] be careful',
+      )
+    })
+
+    it('serializes tip callout', () => {
+      expect(serialize(doc(callout('tip', paragraph(text('helpful hint')))))).toBe(
+        '> [!TIP] helpful hint',
+      )
+    })
+
+    it('serializes error callout', () => {
+      expect(serialize(doc(callout('error', paragraph(text('something broke')))))).toBe(
+        '> [!ERROR] something broke',
+      )
+    })
+
+    it('serializes note callout', () => {
+      expect(serialize(doc(callout('note', paragraph(text('take note')))))).toBe(
+        '> [!NOTE] take note',
+      )
+    })
+
+    it('serializes empty callout', () => {
+      expect(serialize(doc(callout('info')))).toBe('> [!INFO]')
+    })
+
+    it('serializes multi-line callout', () => {
+      expect(
+        serialize(doc(callout('warning', paragraph(text('line 1')), paragraph(text('line 2'))))),
+      ).toBe('> [!WARNING] line 1\n> line 2')
+    })
+
+    it('serializes callout with marks', () => {
+      expect(serialize(doc(callout('tip', paragraph(bold('important')))))).toBe(
+        '> [!TIP] **important**',
+      )
+    })
+
+    it('calloutType is uppercased in output', () => {
+      expect(serialize(doc(callout('info', paragraph(text('test')))))).toBe('> [!INFO] test')
     })
   })
 
@@ -598,6 +651,86 @@ describe('parse', () => {
       expect(parse('> quoted\nnormal')).toEqual(
         doc(blockquote(paragraph(text('quoted'))), paragraph(text('normal'))),
       )
+    })
+  })
+
+  describe('callout', () => {
+    it('parses > [!INFO] some text as callout blockquote', () => {
+      const result = parse('> [!INFO] some text')
+      expect(result).toEqual(doc(callout('info', paragraph(text('some text')))))
+    })
+
+    it('parses > [!WARNING] with content', () => {
+      expect(parse('> [!WARNING] be careful')).toEqual(
+        doc(callout('warning', paragraph(text('be careful')))),
+      )
+    })
+
+    it('parses > [!TIP] with content', () => {
+      expect(parse('> [!TIP] helpful hint')).toEqual(
+        doc(callout('tip', paragraph(text('helpful hint')))),
+      )
+    })
+
+    it('parses > [!ERROR] with content', () => {
+      expect(parse('> [!ERROR] something broke')).toEqual(
+        doc(callout('error', paragraph(text('something broke')))),
+      )
+    })
+
+    it('parses > [!NOTE] with content', () => {
+      expect(parse('> [!NOTE] take note')).toEqual(
+        doc(callout('note', paragraph(text('take note')))),
+      )
+    })
+
+    it('parses callout type case-insensitively', () => {
+      expect(parse('> [!info] lower')).toEqual(doc(callout('info', paragraph(text('lower')))))
+    })
+
+    it('parses multi-line callout', () => {
+      expect(parse('> [!WARNING] line 1\n> line 2')).toEqual(
+        doc(callout('warning', paragraph(text('line 1')), paragraph(text('line 2')))),
+      )
+    })
+
+    it('parses callout with marks', () => {
+      expect(parse('> [!TIP] **important**')).toEqual(
+        doc(callout('tip', paragraph(bold('important')))),
+      )
+    })
+
+    it('regular blockquote without callout prefix still works', () => {
+      expect(parse('> just a quote')).toEqual(doc(blockquote(paragraph(text('just a quote')))))
+    })
+
+    it('round-trip: serialize(parse(callout)) produces same output', () => {
+      const input = '> [!INFO] some text'
+      expect(serialize(parse(input))).toBe(input)
+    })
+
+    it('round-trip: multi-line callout', () => {
+      const input = '> [!WARNING] line 1\n> line 2'
+      expect(serialize(parse(input))).toBe(input)
+    })
+
+    it('round-trip: callout with marks', () => {
+      const input = '> [!TIP] **important**'
+      expect(serialize(parse(input))).toBe(input)
+    })
+
+    it('round-trip: empty callout body', () => {
+      const input = '> [!INFO]'
+      const result = parse(input)
+      // An empty body after [!INFO] parses into a callout with no content
+      expect(result.content?.[0]?.type).toBe('blockquote')
+      expect((result.content?.[0] as any)?.attrs?.calloutType).toBe('info')
+      expect(serialize(result)).toBe('> [!INFO]')
+    })
+
+    it('round-trip: regular blockquote is unchanged', () => {
+      const input = '> plain quote'
+      expect(serialize(parse(input))).toBe(input)
     })
   })
 

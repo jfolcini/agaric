@@ -1266,4 +1266,86 @@ describe('StaticBlock', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  describe('callout blocks', () => {
+    it('renders info callout with colored border and icon', () => {
+      render(<StaticBlock blockId="B1" content="> [!INFO] important info" onFocus={vi.fn()} />)
+      const callout = screen.getByTestId('callout-block')
+      expect(callout).toBeInTheDocument()
+      expect(callout).toHaveAttribute('data-callout-type', 'info')
+      expect(callout.className).toContain('border-blue-500')
+    })
+
+    it('renders warning callout', () => {
+      render(<StaticBlock blockId="B1" content="> [!WARNING] be careful" onFocus={vi.fn()} />)
+      const callout = screen.getByTestId('callout-block')
+      expect(callout).toHaveAttribute('data-callout-type', 'warning')
+      expect(callout.className).toContain('border-amber-500')
+    })
+
+    it('renders tip callout', () => {
+      render(<StaticBlock blockId="B1" content="> [!TIP] helpful hint" onFocus={vi.fn()} />)
+      const callout = screen.getByTestId('callout-block')
+      expect(callout).toHaveAttribute('data-callout-type', 'tip')
+      expect(callout.className).toContain('border-green-500')
+    })
+
+    it('renders error callout', () => {
+      render(<StaticBlock blockId="B1" content="> [!ERROR] something broke" onFocus={vi.fn()} />)
+      const callout = screen.getByTestId('callout-block')
+      expect(callout).toHaveAttribute('data-callout-type', 'error')
+      expect(callout.className).toContain('border-red-500')
+    })
+
+    it('renders note callout', () => {
+      render(<StaticBlock blockId="B1" content="> [!NOTE] take note" onFocus={vi.fn()} />)
+      const callout = screen.getByTestId('callout-block')
+      expect(callout).toHaveAttribute('data-callout-type', 'note')
+      expect(callout.className).toContain('border-gray-500')
+    })
+
+    it('renders type label in callout header', () => {
+      render(<StaticBlock blockId="B1" content="> [!INFO] some text" onFocus={vi.fn()} />)
+      expect(screen.getByText('Info')).toBeInTheDocument()
+    })
+
+    it('renders type icon with aria-hidden', () => {
+      render(<StaticBlock blockId="B1" content="> [!WARNING] watch out" onFocus={vi.fn()} />)
+      // The icon is rendered with aria-hidden="true"
+      const callout = screen.getByTestId('callout-block')
+      const icon = callout.querySelector('[aria-hidden="true"]')
+      expect(icon).toBeInTheDocument()
+    })
+
+    it('renders callout content below the header', () => {
+      render(<StaticBlock blockId="B1" content="> [!TIP] my tip content" onFocus={vi.fn()} />)
+      expect(screen.getByText('my tip content')).toBeInTheDocument()
+    })
+
+    it('default blockquote without callout renders normally', () => {
+      render(<StaticBlock blockId="B1" content="> just a quote" onFocus={vi.fn()} />)
+      const blockquote = screen.getByRole('button').querySelector('blockquote')
+      expect(blockquote).toBeInTheDocument()
+      expect(blockquote).not.toHaveAttribute('data-callout-type')
+      expect(screen.queryByTestId('callout-block')).not.toBeInTheDocument()
+    })
+
+    it('unknown callout type falls back to note styling', () => {
+      render(<StaticBlock blockId="B1" content="> [!CUSTOM] custom type" onFocus={vi.fn()} />)
+      const callout = screen.getByTestId('callout-block')
+      expect(callout).toHaveAttribute('data-callout-type', 'custom')
+      // Falls back to note config (gray border)
+      expect(callout.className).toContain('border-gray-500')
+    })
+
+    it('has no a11y violations for callout blocks', async () => {
+      const { container } = render(
+        <StaticBlock blockId="B1" content="> [!INFO] accessible callout" onFocus={vi.fn()} />,
+      )
+      const results = await axe(container, {
+        rules: { 'nested-interactive': { enabled: false } },
+      })
+      expect(results).toHaveNoViolations()
+    })
+  })
 })

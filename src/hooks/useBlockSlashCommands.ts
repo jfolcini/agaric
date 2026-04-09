@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   Calendar,
   CalendarClock,
   CalendarDays,
@@ -15,7 +16,9 @@ import {
   Heading4,
   Heading5,
   Heading6,
+  Info,
   LayoutTemplate,
+  Lightbulb,
   Link2,
   MapPin,
   Paperclip,
@@ -23,9 +26,11 @@ import {
   Repeat,
   Search,
   Signal,
+  StickyNote,
   Tag,
   Timer,
   UserCircle,
+  XCircle,
 } from 'lucide-react'
 import { matchSorter } from 'match-sorter'
 import type { MutableRefObject } from 'react'
@@ -144,6 +149,12 @@ export const SLASH_COMMANDS: PickerItem[] = [
     label: 'QUOTE — Insert blockquote',
     category: 'slashCommand.categories.structure',
     icon: Quote,
+  },
+  {
+    id: 'callout',
+    label: 'CALLOUT — Insert callout block',
+    category: 'slashCommand.categories.structure',
+    icon: Info,
   },
   {
     id: 'table',
@@ -393,6 +404,39 @@ export const REPEAT_END_COMMANDS: PickerItem[] = [
   },
 ]
 
+export const CALLOUT_COMMANDS: PickerItem[] = [
+  {
+    id: 'callout-info',
+    label: 'CALLOUT INFO — Blue info callout',
+    category: 'slashCommand.categories.structure',
+    icon: Info,
+  },
+  {
+    id: 'callout-warning',
+    label: 'CALLOUT WARNING — Amber warning callout',
+    category: 'slashCommand.categories.structure',
+    icon: AlertTriangle,
+  },
+  {
+    id: 'callout-tip',
+    label: 'CALLOUT TIP — Green tip callout',
+    category: 'slashCommand.categories.structure',
+    icon: Lightbulb,
+  },
+  {
+    id: 'callout-error',
+    label: 'CALLOUT ERROR — Red error callout',
+    category: 'slashCommand.categories.structure',
+    icon: XCircle,
+  },
+  {
+    id: 'callout-note',
+    label: 'CALLOUT NOTE — Gray note callout',
+    category: 'slashCommand.categories.structure',
+    icon: StickyNote,
+  },
+]
+
 export function searchSlashCommands(query: string): PickerItem[] {
   const q = query.toLowerCase()
   const baseResults = q ? matchSorter(SLASH_COMMANDS, q, { keys: ['label'] }) : SLASH_COMMANDS
@@ -404,6 +448,7 @@ export function searchSlashCommands(query: string): PickerItem[] {
   const effortResults = matchSorter(EFFORT_COMMANDS, q, { keys: ['label'] })
   const assigneeResults = matchSorter(ASSIGNEE_COMMANDS, q, { keys: ['label'] })
   const locationResults = matchSorter(LOCATION_COMMANDS, q, { keys: ['label'] })
+  const calloutResults = matchSorter(CALLOUT_COMMANDS, q, { keys: ['label'] })
 
   const tableMatch = q.match(/^table\s+(\d+)\s*x\s*(\d+)$/i)
   let results = [
@@ -415,6 +460,7 @@ export function searchSlashCommands(query: string): PickerItem[] {
     ...effortResults,
     ...assigneeResults,
     ...locationResults,
+    ...calloutResults,
   ]
   if (tableMatch) {
     const rows = Number.parseInt(tableMatch[1] as string, 10)
@@ -537,6 +583,31 @@ export function useBlockSlashCommands({
 
       if (item.id === 'quote') {
         rovingEditor.editor?.chain().focus().toggleBlockquote().run()
+        return
+      }
+
+      if (item.id === 'callout' || item.id.startsWith('callout-')) {
+        const calloutType = item.id === 'callout' ? 'info' : item.id.replace('callout-', '')
+        let currentContent = ''
+        if (rovingEditor.editor) {
+          const json = rovingEditor.editor.getJSON() as DocNode
+          currentContent = serialize(json)
+        } else {
+          const block = pageStore.getState().blocks.find((b) => b.id === focusedBlockId)
+          currentContent = block?.content ?? ''
+        }
+        const newContent = `> [!${calloutType.toUpperCase()}] ${currentContent}`
+        try {
+          await editBlock(focusedBlockId, newContent)
+          pageStore.setState((state) => ({
+            blocks: state.blocks.map((b) =>
+              b.id === focusedBlockId ? { ...b, content: newContent } : b,
+            ),
+          }))
+          rovingEditor.mount(focusedBlockId, newContent)
+        } catch {
+          toast.error(t('slash.calloutFailed'))
+        }
         return
       }
 

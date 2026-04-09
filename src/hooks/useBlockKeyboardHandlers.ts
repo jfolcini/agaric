@@ -61,27 +61,30 @@ export function useBlockKeyboardHandlers({
   discardDraft,
   t,
 }: UseBlockKeyboardHandlersParams): UseBlockKeyboardHandlersReturn {
+  const rovingEditorRef = useRef(rovingEditor)
+  rovingEditorRef.current = rovingEditor
+
   const handleFocusPrev = useCallback(() => {
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     if (idx > 0) {
       const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
       setFocused(prevBlock.id)
-      rovingEditor.mount(prevBlock.id, prevBlock.content ?? '')
+      rovingEditorRef.current.mount(prevBlock.id, prevBlock.content ?? '')
       const preview = prevBlock.content?.slice(0, 50) ?? ''
       announce(`Editing block: ${preview || 'empty block'}`)
     }
-  }, [collapsedVisible, focusedBlockId, setFocused, rovingEditor])
+  }, [collapsedVisible, focusedBlockId, setFocused])
 
   const handleFocusNext = useCallback(() => {
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     if (idx >= 0 && idx < collapsedVisible.length - 1) {
       const nextBlock = collapsedVisible[idx + 1] as (typeof collapsedVisible)[number]
       setFocused(nextBlock.id)
-      rovingEditor.mount(nextBlock.id, nextBlock.content ?? '')
+      rovingEditorRef.current.mount(nextBlock.id, nextBlock.content ?? '')
       const preview = nextBlock.content?.slice(0, 50) ?? ''
       announce(`Editing block: ${preview || 'empty block'}`)
     }
-  }, [collapsedVisible, focusedBlockId, setFocused, rovingEditor])
+  }, [collapsedVisible, focusedBlockId, setFocused])
 
   const handleDeleteBlock = useCallback(() => {
     if (!focusedBlockId) return
@@ -92,7 +95,7 @@ export function useBlockKeyboardHandlers({
     }
     deleteInProgress.current = true
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
-    rovingEditor.unmount()
+    rovingEditorRef.current.unmount()
     remove(focusedBlockId).finally(() => {
       deleteInProgress.current = false
     })
@@ -100,15 +103,15 @@ export function useBlockKeyboardHandlers({
     if (idx > 0) {
       const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
       setFocused(prevBlock.id)
-      rovingEditor.mount(prevBlock.id, prevBlock.content ?? '')
+      rovingEditorRef.current.mount(prevBlock.id, prevBlock.content ?? '')
     } else if (idx + 1 < collapsedVisible.length) {
       const nextBlock = collapsedVisible[idx + 1] as (typeof collapsedVisible)[number]
       setFocused(nextBlock.id)
-      rovingEditor.mount(nextBlock.id, nextBlock.content ?? '')
+      rovingEditorRef.current.mount(nextBlock.id, nextBlock.content ?? '')
     } else {
       setFocused(null)
     }
-  }, [focusedBlockId, collapsedVisible, rovingEditor, remove, setFocused, t])
+  }, [focusedBlockId, collapsedVisible, remove, setFocused, t])
 
   const handleIndent = useCallback(() => {
     if (!focusedBlockId) return
@@ -161,7 +164,7 @@ export function useBlockKeyboardHandlers({
 
     const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
 
-    const currentContent = rovingEditor.unmount() ?? collapsedVisible[idx]?.content ?? ''
+    const currentContent = rovingEditorRef.current.unmount() ?? collapsedVisible[idx]?.content ?? ''
     const prevContent = prevBlock.content ?? ''
 
     const mergedContent = prevContent + currentContent
@@ -175,7 +178,7 @@ export function useBlockKeyboardHandlers({
         blockId: prevBlock.id,
         error: String(err),
       })
-      rovingEditor.mount(focusedBlockId, currentContent)
+      rovingEditorRef.current.mount(focusedBlockId, currentContent)
       toast.error(t('blockTree.mergeBlocksFailed'))
       return
     }
@@ -193,21 +196,21 @@ export function useBlockKeyboardHandlers({
           error: String(revertErr),
         })
       })
-      rovingEditor.mount(focusedBlockId, currentContent)
+      rovingEditorRef.current.mount(focusedBlockId, currentContent)
       toast.error(t('blockTree.mergeBlocksFailed'))
       return
     }
 
     setFocused(prevBlock.id)
-    rovingEditor.mount(prevBlock.id, mergedContent)
+    rovingEditorRef.current.mount(prevBlock.id, mergedContent)
 
     setTimeout(() => {
-      if (rovingEditor.editor) {
-        const pmPos = Math.min(joinPoint, rovingEditor.editor.state.doc.content.size - 1)
-        rovingEditor.editor.commands.setTextSelection(pmPos)
+      if (rovingEditorRef.current.editor) {
+        const pmPos = Math.min(joinPoint, rovingEditorRef.current.editor.state.doc.content.size - 1)
+        rovingEditorRef.current.editor.commands.setTextSelection(pmPos)
       }
     }, 0)
-  }, [focusedBlockId, collapsedVisible, rovingEditor, edit, remove, setFocused, t])
+  }, [focusedBlockId, collapsedVisible, edit, remove, setFocused, t])
 
   const handleMergeById = useCallback(
     async (blockId: string) => {
@@ -216,7 +219,7 @@ export function useBlockKeyboardHandlers({
 
       const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
 
-      const editorContent = focusedBlockId === blockId ? rovingEditor.unmount() : null
+      const editorContent = focusedBlockId === blockId ? rovingEditorRef.current.unmount() : null
       const currentContent = editorContent ?? collapsedVisible[idx]?.content ?? ''
       const prevContent = prevBlock.content ?? ''
 
@@ -230,7 +233,7 @@ export function useBlockKeyboardHandlers({
           error: String(err),
         })
         if (editorContent !== null) {
-          rovingEditor.mount(blockId, currentContent)
+          rovingEditorRef.current.mount(blockId, currentContent)
         }
         toast.error(t('blockTree.mergeBlocksFailed'))
         return
@@ -250,7 +253,7 @@ export function useBlockKeyboardHandlers({
           })
         })
         if (editorContent !== null) {
-          rovingEditor.mount(blockId, currentContent)
+          rovingEditorRef.current.mount(blockId, currentContent)
         }
         toast.error(t('blockTree.mergeBlocksFailed'))
         return
@@ -258,7 +261,7 @@ export function useBlockKeyboardHandlers({
 
       setFocused(prevBlock.id)
     },
-    [collapsedVisible, focusedBlockId, rovingEditor, edit, remove, setFocused, t],
+    [collapsedVisible, focusedBlockId, edit, remove, setFocused, t],
   )
 
   // Re-entrancy guard: prevents rapid Backspace presses from duplicating deletes.
@@ -272,7 +275,7 @@ export function useBlockKeyboardHandlers({
     enterSaveInProgress.current = true
     try {
       // Capture content before flush so we can re-mount on failure
-      const savedContent = rovingEditor.getMarkdown?.() ?? ''
+      const savedContent = rovingEditorRef.current.getMarkdown?.() ?? ''
       handleFlush()
       const newBlockId = await createBelow(focusedBlockId)
       if (newBlockId) {
@@ -282,19 +285,19 @@ export function useBlockKeyboardHandlers({
       } else {
         // createBelow returned null (e.g. backend error) — re-mount editor
         // so the user isn't stuck with an unmounted block.
-        rovingEditor.mount(focusedBlockId, savedContent)
+        rovingEditorRef.current.mount(focusedBlockId, savedContent)
       }
     } finally {
       enterSaveInProgress.current = false
     }
-  }, [focusedBlockId, handleFlush, createBelow, setFocused, justCreatedBlockIds, rovingEditor])
+  }, [focusedBlockId, handleFlush, createBelow, setFocused, justCreatedBlockIds])
 
   const handleEscapeCancel = useCallback(() => {
     if (!focusedBlockId) return
     // Discard any persisted draft BEFORE unmounting so the autosave
     // cleanup cannot flush stale content to the database.
     discardDraft(focusedBlockId)
-    const changed = rovingEditor.unmount()
+    const changed = rovingEditorRef.current.unmount()
     if (changed !== null) {
       toast('Changes discarded', { duration: 2000 })
     }
@@ -311,7 +314,7 @@ export function useBlockKeyboardHandlers({
       })
     }
     setFocused(null)
-  }, [focusedBlockId, rovingEditor, setFocused, justCreatedBlockIds, remove, discardDraft])
+  }, [focusedBlockId, setFocused, justCreatedBlockIds, remove, discardDraft])
 
   return {
     handleFocusPrev,

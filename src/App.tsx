@@ -54,6 +54,7 @@ import {
   useSidebar,
 } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
+import { WelcomeModal } from './components/WelcomeModal'
 import { useItemCount } from './hooks/useItemCount'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
 import { useScrollRestore } from './hooks/useScrollRestore'
@@ -546,6 +547,7 @@ function App() {
         </SidebarInset>
       </SidebarProvider>
       <KeyboardShortcuts open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+      <WelcomeModal />
       <Toaster position="bottom-right" richColors closeButton />
     </BootGate>
   )

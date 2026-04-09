@@ -86,6 +86,9 @@ beforeEach(() => {
   localStorage.removeItem('theme-preference')
   document.documentElement.classList.remove('dark')
 
+  // Dismiss onboarding modal so it doesn't block interactions.
+  localStorage.setItem('agaric-onboarding-done', 'true')
+
   // Default mock: all invoke calls return an empty page response.
   // This covers: boot store's list_blocks, JournalPage, PageBrowser, TagList, TrashView.
   mockedInvoke.mockResolvedValue(emptyPage)

@@ -81,6 +81,7 @@ export interface CodeBlockNode {
 
 export interface BlockquoteNode {
   readonly type: 'blockquote'
+  readonly attrs?: { readonly calloutType?: string }
   readonly content?: readonly BlockLevelNode[]
 }
 
@@ -189,6 +190,11 @@ export function codeBlock(code: string, language?: string): CodeBlockNode {
 export function blockquote(...blocks: BlockLevelNode[]): BlockquoteNode {
   if (blocks.length === 0) return { type: 'blockquote' }
   return { type: 'blockquote', content: blocks }
+}
+
+export function callout(calloutType: string, ...blocks: BlockLevelNode[]): BlockquoteNode {
+  if (blocks.length === 0) return { type: 'blockquote', attrs: { calloutType } }
+  return { type: 'blockquote', attrs: { calloutType }, content: blocks }
 }
 
 export function table(...rows: TableRowNode[]): TableNode {

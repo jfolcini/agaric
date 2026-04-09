@@ -115,16 +115,16 @@ function EditableBlockInner({
   const [liveContent, setLiveContent] = useState('')
 
   useEffect(() => {
-    if (!isFocused || rovingEditor.activeBlockId !== blockId) {
+    if (!isFocused || rovingEditorRef.current.activeBlockId !== blockId) {
       setLiveContent('')
       return
     }
     const interval = setInterval(() => {
-      const md = rovingEditor.getMarkdown()
+      const md = rovingEditorRef.current.getMarkdown()
       if (md !== null) setLiveContent(md)
     }, 500)
     return () => clearInterval(interval)
-  }, [isFocused, blockId, rovingEditor])
+  }, [isFocused, blockId])
 
   const { discardDraft } = useDraftAutosave(isFocused ? blockId : null, liveContent)
 
@@ -156,30 +156,35 @@ function EditableBlockInner({
   const handleFocus = useCallback(
     (id: string) => {
       // Unmount from previous block if any
-      if (rovingEditor.activeBlockId && rovingEditor.activeBlockId !== id) {
-        persistUnmount(rovingEditor, rovingEditor.activeBlockId, edit, splitBlock)
+      if (rovingEditorRef.current.activeBlockId && rovingEditorRef.current.activeBlockId !== id) {
+        persistUnmount(
+          rovingEditorRef.current,
+          rovingEditorRef.current.activeBlockId,
+          edit,
+          splitBlock,
+        )
       }
       // Mount into the new block
       setFocused(id)
-      rovingEditor.mount(id, content)
+      rovingEditorRef.current.mount(id, content)
     },
-    [rovingEditor, content, setFocused, edit, splitBlock],
+    [content, setFocused, edit, splitBlock],
   )
 
   const handleBlur = useCallback(
     (e: React.FocusEvent) => {
-      if (!rovingEditor.activeBlockId) return
+      if (!rovingEditorRef.current.activeBlockId) return
 
       // If the editor has already moved to a different block (e.g.
       // handleFocus called mount on another block), this blur is stale —
       // ignore it to prevent saving the wrong block's content to this one.
-      if (rovingEditor.activeBlockId !== blockId) return
+      if (rovingEditorRef.current.activeBlockId !== blockId) return
 
       // For new blocks (created empty), persist any typed content before
       // checking transient UI. This prevents data loss when a popup is in
       // the DOM but the user clicked outside.
-      if (rovingEditor.originalMarkdown === '' && rovingEditor.getMarkdown) {
-        const content = rovingEditor.getMarkdown()
+      if (rovingEditorRef.current.originalMarkdown === '' && rovingEditorRef.current.getMarkdown) {
+        const content = rovingEditorRef.current.getMarkdown()
         if (content && content !== '') {
           edit(blockId, content)
           // Don't return — continue to normal blur logic (unmount, setFocused, etc.)
@@ -213,7 +218,7 @@ function EditableBlockInner({
       )
         return
 
-      const changed = rovingEditor.unmount()
+      const changed = rovingEditorRef.current.unmount()
       if (changed !== null) {
         if (shouldSplitOnBlur(changed)) {
           flushSync(() => {
@@ -228,7 +233,7 @@ function EditableBlockInner({
       }
       setFocused(null)
     },
-    [rovingEditor, blockId, edit, splitBlock, setFocused, discardDraft],
+    [blockId, edit, splitBlock, setFocused, discardDraft],
   )
 
   if (!isFocused) {

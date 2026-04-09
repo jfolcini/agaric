@@ -30,6 +30,7 @@ import type {
 
 const ULID_RE = /^[0-9A-Z]{26}$/
 const MAX_LINK_SCAN = 10_000
+const CALLOUT_RE = /^\[!(\w+)\]\s?(.*)/i
 
 // -- Serialize (PM doc → Markdown) --------------------------------------------
 
@@ -281,7 +282,12 @@ function serializeCodeBlock(node: CodeBlockNode): string {
 }
 
 function serializeBlockquote(node: BlockquoteNode): string {
-  if (!node.content || node.content.length === 0) return '> '
+  if (!node.content || node.content.length === 0) {
+    if (node.attrs?.calloutType) {
+      return `> [!${node.attrs.calloutType.toUpperCase()}]`
+    }
+    return '> '
+  }
   // Recursively serialize each child block, then prefix every line with "> "
   const inner = node.content
     .map((child) => {
@@ -293,10 +299,13 @@ function serializeBlockquote(node: BlockquoteNode): string {
       return ''
     })
     .join('\n')
-  return inner
-    .split('\n')
-    .map((line) => `> ${line}`)
-    .join('\n')
+  const lines = inner.split('\n')
+  // Prepend [!TYPE] prefix to the first line when calloutType is set
+  if (node.attrs?.calloutType) {
+    const prefix = `[!${node.attrs.calloutType.toUpperCase()}]`
+    lines[0] = lines[0] ? `${prefix} ${lines[0]}` : prefix
+  }
+  return lines.map((line) => `> ${line}`).join('\n')
 }
 
 function serializeTable(node: TableNode): string {
@@ -564,14 +573,29 @@ export function parse(markdown: string): DocNode {
         quoteLines.push(lines[i] === '>' ? '' : (lines[i]?.slice(2) as string))
         i++
       }
+      // Detect callout syntax: [!TYPE] at the start of the first line
+      let calloutType: string | undefined
+      const calloutMatch = quoteLines[0]?.match(CALLOUT_RE)
+      if (calloutMatch) {
+        calloutType = (calloutMatch[1] as string).toLowerCase()
+        // Strip the [!TYPE] prefix from the first line
+        quoteLines[0] = calloutMatch[2] as string
+        // If the first line is now empty and it's the only line, keep it (empty paragraph)
+      }
       // Recursively parse the inner content
       const innerMarkdown = quoteLines.join('\n')
       const innerDoc = parse(innerMarkdown)
       const content = innerDoc.content
       if (!content || content.length === 0) {
-        blocks.push({ type: 'blockquote' })
+        blocks.push(
+          calloutType ? { type: 'blockquote', attrs: { calloutType } } : { type: 'blockquote' },
+        )
       } else {
-        blocks.push({ type: 'blockquote', content })
+        blocks.push(
+          calloutType
+            ? { type: 'blockquote', attrs: { calloutType }, content }
+            : { type: 'blockquote', content },
+        )
       }
       continue
     }

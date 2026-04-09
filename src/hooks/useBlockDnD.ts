@@ -75,6 +75,9 @@ export function useBlockDnD({
   const fallbackRef = useRef<HTMLElement | null>(null)
   useAutoScrollOnDrag(scrollContainerRef ?? fallbackRef, !!activeId)
 
+  const rovingEditorRef = useRef(rovingEditor)
+  rovingEditorRef.current = rovingEditor
+
   // Items visible during drag: exclude descendants of the active item
   const activeDescendants = useMemo(
     () => (activeId ? getDragDescendants(collapsedVisible, activeId) : new Set<string>()),
@@ -112,12 +115,12 @@ export function useBlockDnD({
       setOffsetLeft(0)
 
       // Flush editor if active
-      if (rovingEditor.activeBlockId) {
+      if (rovingEditorRef.current.activeBlockId) {
         handleFlush()
         setFocused(null)
       }
     },
-    [rovingEditor, handleFlush, setFocused],
+    [handleFlush, setFocused],
   )
 
   const handleDragMove = useCallback((event: DragMoveEvent) => {

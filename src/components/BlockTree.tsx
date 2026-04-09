@@ -311,6 +311,9 @@ export function BlockTree({
     ...(editorPlaceholder ? { placeholder: editorPlaceholder } : {}),
   })
 
+  const rovingEditorRef = useRef(rovingEditor)
+  rovingEditorRef.current = rovingEditor
+
   const viewport = useViewportObserver()
 
   // ── Date picker hook ───────────────────────────────────────────────
@@ -483,9 +486,9 @@ export function BlockTree({
 
   // Keyboard callbacks
   const handleFlush = useCallback((): string | null => {
-    if (!rovingEditor.activeBlockId) return null
-    const blockId = rovingEditor.activeBlockId // capture BEFORE unmount nullifies it
-    const changed = rovingEditor.unmount()
+    if (!rovingEditorRef.current.activeBlockId) return null
+    const blockId = rovingEditorRef.current.activeBlockId // capture BEFORE unmount nullifies it
+    const changed = rovingEditorRef.current.unmount()
     if (changed !== null) {
       // Use the parser to detect multi-block content (headings, code blocks, etc.)
       // A single code block or heading with newlines should NOT split.
@@ -519,7 +522,7 @@ export function BlockTree({
       }
     }
     return changed
-  }, [rovingEditor, edit, splitBlock, rootParentId, t, pageStore])
+  }, [edit, splitBlock, rootParentId, t, pageStore])
 
   // ── Scroll container ref (for auto-scroll during drag) ──────────────
   const scrollContainerRef = useRef<HTMLElement | null>(null)
@@ -604,7 +607,7 @@ export function BlockTree({
         // Same tree — navigate locally
         await load()
         setFocused(targetId)
-        rovingEditor.mount(targetId, targetBlock.content ?? '')
+        rovingEditorRef.current.mount(targetId, targetBlock.content ?? '')
       } catch (err) {
         logger.error('BlockTree', 'Failed to navigate to block link target', {
           targetId,
@@ -613,7 +616,7 @@ export function BlockTree({
         toast.error(t('blockTree.linkTargetNotFound'))
       }
     },
-    [handleFlush, load, setFocused, rovingEditor, rootParentId, onNavigateToPage, t],
+    [handleFlush, load, setFocused, rootParentId, onNavigateToPage, t],
   )
 
   // Keep the ref in sync with the latest handleNavigate
@@ -878,23 +881,25 @@ export function BlockTree({
   useEffect(() => {
     const handler = () => {
       if (!focusedBlockId) return
-      datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos ?? undefined
+      datePickerCursorPos.current =
+        rovingEditorRef.current.editor?.state.selection.$anchor.pos ?? undefined
       setDatePickerMode('due')
       setDatePickerOpen(true)
     }
     return onBlockEvent(document, 'OPEN_DUE_DATE_PICKER', handler)
-  }, [focusedBlockId, rovingEditor, datePickerCursorPos, setDatePickerMode, setDatePickerOpen])
+  }, [focusedBlockId, datePickerCursorPos, setDatePickerMode, setDatePickerOpen])
 
   // ── Listen for toolbar scheduled-date picker event ──────────────────
   useEffect(() => {
     const handler = () => {
       if (!focusedBlockId) return
-      datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos ?? undefined
+      datePickerCursorPos.current =
+        rovingEditorRef.current.editor?.state.selection.$anchor.pos ?? undefined
       setDatePickerMode('schedule')
       setDatePickerOpen(true)
     }
     return onBlockEvent(document, 'OPEN_SCHEDULED_DATE_PICKER', handler)
-  }, [focusedBlockId, rovingEditor, datePickerCursorPos, setDatePickerMode, setDatePickerOpen])
+  }, [focusedBlockId, datePickerCursorPos, setDatePickerMode, setDatePickerOpen])
 
   // ── Listen for toolbar toggle-todo-state event ──────────────────────
   useEffect(() => {

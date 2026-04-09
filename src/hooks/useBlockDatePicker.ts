@@ -48,6 +48,9 @@ export function useBlockDatePicker({
   const [datePickerMode, setDatePickerMode] = useState<DatePickerMode>('date')
   const datePickerCursorPos = useRef<number | undefined>(undefined)
 
+  const rovingEditorRef = useRef(rovingEditor)
+  rovingEditorRef.current = rovingEditor
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: pagesListRef is a stable ref
   const handleDatePick = useCallback(
     async (d: Date) => {
@@ -120,8 +123,8 @@ export function useBlockDatePicker({
         pagesListRef.current = [...pagesListRef.current, { id: newPage.id, title: dateStr }]
       }
 
-      if (rovingEditor.editor && datePageId) {
-        const editor = rovingEditor.editor
+      if (rovingEditorRef.current.editor && datePageId) {
+        const editor = rovingEditorRef.current.editor
         const id = datePageId
         editor.commands.focus()
         requestAnimationFrame(() => {
@@ -129,7 +132,7 @@ export function useBlockDatePicker({
         })
       }
     },
-    [rovingEditor, datePickerMode, focusedBlockId],
+    [datePickerMode, focusedBlockId],
   )
 
   return {

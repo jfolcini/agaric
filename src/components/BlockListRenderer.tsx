@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import type { ViewportObserver } from '../hooks/useViewportObserver'
 import type { FlatBlock, Projection } from '../lib/tree-utils'
+import { cn } from '../lib/utils'
 import { EmptyState } from './EmptyState'
 import { SortableBlock } from './SortableBlock'
 
@@ -141,84 +142,137 @@ export function BlockListRenderer({
     prevCollapsedRef.current = collapsedIds
   }, [collapsedIds])
 
+  // ── Sibling aria props (UX-48) ─────────────────────────────────────
+  // Compute aria-setsize / aria-posinset for each block by grouping
+  // siblings that share the same parent in the flat list.
+  const siblingAriaProps = useMemo(() => {
+    const result = new Map<string, { setsize: number; posinset: number }>()
+    const groups = new Map<number, number[]>()
+
+    for (let i = 0; i < visibleItems.length; i++) {
+      const block = visibleItems[i]
+      let parentIdx = -1
+      if (block && block.depth > 0) {
+        for (let j = i - 1; j >= 0; j--) {
+          if (visibleItems[j]?.depth === block.depth - 1) {
+            parentIdx = j
+            break
+          }
+        }
+      }
+      if (!groups.has(parentIdx)) groups.set(parentIdx, [])
+      groups.get(parentIdx)?.push(i)
+    }
+
+    for (const [, indices] of groups) {
+      for (let j = 0; j < indices.length; j++) {
+        const idx = indices[j]
+        const block = idx != null ? visibleItems[idx] : undefined
+        if (block) {
+          result.set(block.id, { setsize: indices.length, posinset: j + 1 })
+        }
+      }
+    }
+
+    return result
+  }, [visibleItems])
+
   return (
     <SortableContext items={visibleItems.map((b) => b.id)} strategy={verticalListSortingStrategy}>
-      <div
-        className="block-tree space-y-0.5 [@media(pointer:coarse)]:space-y-1.5"
-        onPointerDown={onContainerPointerDown}
-      >
-        {visibleItems.map((block) => {
-          const isFocused = focusedBlockId === block.id
-          // Show projected depth during drag for the active item's over target
-          const projectedDepth =
-            projected && activeId && overId === block.id ? projected.depth : block.depth
+      {blocks.length === 0 && !loading ? (
+        <EmptyState message={rootParentId ? t('blockTree.emptyPage') : t('blockTree.noBlocks')} />
+      ) : (
+        <ul
+          className="block-tree list-none m-0 p-0 space-y-0.5 [@media(pointer:coarse)]:space-y-1.5"
+          aria-label={t('blockTree.treeLabel')}
+          onPointerDown={onContainerPointerDown}
+        >
+          {visibleItems.map((block) => {
+            const isFocused = focusedBlockId === block.id
+            // Show projected depth during drag for the active item's over target
+            const projectedDepth =
+              projected && activeId && overId === block.id ? projected.depth : block.depth
+            const aria = siblingAriaProps.get(block.id)
+            const hasChildren = hasChildrenSet.has(block.id)
+            const isCollapsed = collapsedIds.has(block.id)
 
-          // Focused block is never virtualized — always render fully
-          if (!isFocused && viewport.isOffscreen(block.id)) {
+            // Focused block is never virtualized — always render fully
+            if (!isFocused && viewport.isOffscreen(block.id)) {
+              return (
+                // biome-ignore lint/a11y/useAriaPropsSupportedByRole: aria-level is valid on listitem per WAI-ARIA spec
+                <li
+                  key={block.id}
+                  ref={viewport.observeRef}
+                  data-block-id={block.id}
+                  aria-level={block.depth + 1}
+                  aria-setsize={aria?.setsize}
+                  aria-posinset={aria?.posinset}
+                  aria-expanded={hasChildren ? !isCollapsed : undefined}
+                  className="block-placeholder list-none m-0 p-0"
+                  style={{ minHeight: viewport.getHeight(block.id) }}
+                />
+              )
+            }
             return (
-              <div
+              // biome-ignore lint/a11y/useAriaPropsSupportedByRole: aria-level is valid on listitem per WAI-ARIA spec
+              <li
                 key={block.id}
                 ref={viewport.observeRef}
                 data-block-id={block.id}
-                className="block-placeholder"
-                style={{ minHeight: viewport.getHeight(block.id) }}
-              />
-            )
-          }
-          return (
-            <div
-              key={block.id}
-              ref={viewport.observeRef}
-              data-block-id={block.id}
-              className={animatingBlockIds.has(block.id) ? 'block-children-enter' : undefined}
-            >
-              {/* Drop indicator: shows where the dragged block will land */}
-              {projected && overId === block.id && activeId !== block.id && (
-                <div
-                  className="drop-indicator h-[3px] bg-primary rounded-full ring-2 ring-primary/20"
-                  style={{ marginLeft: `calc(var(--indent-width) * ${projected.depth})` }}
+                aria-level={block.depth + 1}
+                aria-setsize={aria?.setsize}
+                aria-posinset={aria?.posinset}
+                aria-expanded={hasChildren ? !isCollapsed : undefined}
+                className={cn(
+                  'list-none m-0 p-0',
+                  animatingBlockIds.has(block.id) && 'block-children-enter',
+                )}
+              >
+                {/* Drop indicator: shows where the dragged block will land */}
+                {projected && overId === block.id && activeId !== block.id && (
+                  <div
+                    className="drop-indicator h-[3px] bg-primary rounded-full ring-2 ring-primary/20"
+                    style={{ marginLeft: `calc(var(--indent-width) * ${projected.depth})` }}
+                  />
+                )}
+                <SortableBlock
+                  blockId={block.id}
+                  content={block.content ?? ''}
+                  isFocused={isFocused}
+                  depth={block.id === activeId ? projectedDepth : block.depth}
+                  rovingEditor={rovingEditor}
+                  onNavigate={onNavigate}
+                  onDelete={onDelete}
+                  resolveBlockTitle={resolveBlockTitle}
+                  resolveTagName={resolveTagName}
+                  resolveBlockStatus={resolveBlockStatus}
+                  resolveTagStatus={resolveTagStatus}
+                  hasChildren={hasChildren}
+                  isCollapsed={isCollapsed}
+                  onToggleCollapse={onToggleCollapse}
+                  todoState={block.todo_state ?? null}
+                  onToggleTodo={onToggleTodo}
+                  priority={block.priority ?? null}
+                  onTogglePriority={onTogglePriority}
+                  dueDate={block.due_date ?? null}
+                  scheduledDate={block.scheduled_date ?? null}
+                  properties={blockProperties[block.id]}
+                  onIndent={onIndent}
+                  onDedent={onDedent}
+                  onMoveUp={onMoveUp}
+                  onMoveDown={onMoveDown}
+                  onMerge={onMerge}
+                  onShowHistory={onShowHistory}
+                  onShowProperties={onShowProperties}
+                  onZoomIn={hasChildren ? onZoomIn : undefined}
+                  isSelected={selectedBlockIds.includes(block.id)}
+                  onSelect={onSelect}
                 />
-              )}
-              <SortableBlock
-                blockId={block.id}
-                content={block.content ?? ''}
-                isFocused={isFocused}
-                depth={block.id === activeId ? projectedDepth : block.depth}
-                rovingEditor={rovingEditor}
-                onNavigate={onNavigate}
-                onDelete={onDelete}
-                resolveBlockTitle={resolveBlockTitle}
-                resolveTagName={resolveTagName}
-                resolveBlockStatus={resolveBlockStatus}
-                resolveTagStatus={resolveTagStatus}
-                hasChildren={hasChildrenSet.has(block.id)}
-                isCollapsed={collapsedIds.has(block.id)}
-                onToggleCollapse={onToggleCollapse}
-                todoState={block.todo_state ?? null}
-                onToggleTodo={onToggleTodo}
-                priority={block.priority ?? null}
-                onTogglePriority={onTogglePriority}
-                dueDate={block.due_date ?? null}
-                scheduledDate={block.scheduled_date ?? null}
-                properties={blockProperties[block.id]}
-                onIndent={onIndent}
-                onDedent={onDedent}
-                onMoveUp={onMoveUp}
-                onMoveDown={onMoveDown}
-                onMerge={onMerge}
-                onShowHistory={onShowHistory}
-                onShowProperties={onShowProperties}
-                onZoomIn={hasChildrenSet.has(block.id) ? onZoomIn : undefined}
-                isSelected={selectedBlockIds.includes(block.id)}
-                onSelect={onSelect}
-              />
-            </div>
-          )
-        })}
-        {blocks.length === 0 && !loading && (
-          <EmptyState message={rootParentId ? t('blockTree.emptyPage') : t('blockTree.noBlocks')} />
-        )}
-      </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
     </SortableContext>
   )
 }

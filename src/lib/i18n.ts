@@ -222,6 +222,16 @@ const resources = {
       'slash.templatePicker': 'Select template',
       'slash.selectTemplate': 'Select a template',
 
+      // Slash commands — callouts
+      'slash.calloutFailed': 'Failed to insert callout',
+
+      // Callout labels
+      'callout.info': 'Info',
+      'callout.warning': 'Warning',
+      'callout.tip': 'Tip',
+      'callout.error': 'Error',
+      'callout.note': 'Note',
+
       // Slash command category labels (UX-50)
       'slashCommand.categories.tasks': 'Tasks',
       'slashCommand.categories.dates': 'Dates',
@@ -1027,6 +1037,7 @@ const resources = {
       'blockTree.mergeBlocksFailed': 'Failed to merge blocks',
       'blockTree.noBlocks': 'No blocks yet. Click + Add block below to start writing.',
       'blockTree.emptyPage': 'Creating first block\u2026',
+      'blockTree.treeLabel': 'Block tree',
       'blockTree.createFirstBlockFailed': 'Failed to create first block',
 
       // Error toasts (stores/hooks)
@@ -1280,6 +1291,20 @@ const resources = {
       'toolbar.codeBlockLanguageTip': 'Code block language',
       'toolbar.codeBlockLanguage': 'Code block language',
       'toolbar.plainText': 'Plain text',
+
+      // F-31: Welcome / onboarding modal
+      'welcome.title': 'Welcome to Agaric',
+      'welcome.description': 'A local-first note-taking app for organizing your thoughts.',
+      'welcome.featureBlocks': 'Blocks + pages',
+      'welcome.featureBlocksDesc': 'Build knowledge with nested blocks organized into pages.',
+      'welcome.featureShortcuts': 'Keyboard shortcuts',
+      'welcome.featureShortcutsDesc': 'Press ? any time to see all available shortcuts.',
+      'welcome.featureTags': 'Tags + properties',
+      'welcome.featureTagsDesc': 'Organize and filter your notes with tags and custom properties.',
+      'welcome.getStarted': 'Get Started',
+      'welcome.createSamplePages': 'Create sample pages',
+      'welcome.samplePagesCreated': 'Sample pages created!',
+      'welcome.samplePagesFailed': 'Failed to create sample pages',
     },
   },
 }

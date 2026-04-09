@@ -11,7 +11,16 @@
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { toHtml } from 'hast-util-to-html'
 import { common, createLowlight } from 'lowlight'
-import { File, FileText, Image as ImageIcon } from 'lucide-react'
+import {
+  AlertTriangle,
+  File,
+  FileText,
+  Image as ImageIcon,
+  Info,
+  Lightbulb,
+  StickyNote,
+  XCircle,
+} from 'lucide-react'
 import type React from 'react'
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -35,6 +44,54 @@ const LazyPdfViewerDialog = lazy(() =>
 )
 
 const lowlight = createLowlight(common)
+
+/** Callout type configuration: border color, icon, and label. */
+const CALLOUT_CONFIG: Record<
+  string,
+  {
+    borderClass: string
+    bgClass: string
+    textClass: string
+    icon: React.ComponentType<{ className?: string | undefined }>
+    label: string
+  }
+> = {
+  info: {
+    borderClass: 'border-blue-500',
+    bgClass: 'bg-blue-50 dark:bg-blue-950/30',
+    textClass: 'text-blue-700 dark:text-blue-400',
+    icon: Info,
+    label: 'Info',
+  },
+  warning: {
+    borderClass: 'border-amber-500',
+    bgClass: 'bg-amber-50 dark:bg-amber-950/30',
+    textClass: 'text-amber-700 dark:text-amber-400',
+    icon: AlertTriangle,
+    label: 'Warning',
+  },
+  tip: {
+    borderClass: 'border-green-500',
+    bgClass: 'bg-green-50 dark:bg-green-950/30',
+    textClass: 'text-green-700 dark:text-green-400',
+    icon: Lightbulb,
+    label: 'Tip',
+  },
+  error: {
+    borderClass: 'border-red-500',
+    bgClass: 'bg-red-50 dark:bg-red-950/30',
+    textClass: 'text-red-700 dark:text-red-400',
+    icon: XCircle,
+    label: 'Error',
+  },
+  note: {
+    borderClass: 'border-gray-500',
+    bgClass: 'bg-gray-50 dark:bg-gray-950/30',
+    textClass: 'text-gray-700 dark:text-gray-400',
+    icon: StickyNote,
+    label: 'Note',
+  },
+}
 
 /**
  * Convert a local filesystem path to a Tauri asset protocol URL.
@@ -407,6 +464,10 @@ export function renderRichContent(
         </ScrollArea>,
       )
     } else if (block.type === 'blockquote') {
+      const calloutType = block.attrs?.calloutType
+      const calloutConfig = calloutType
+        ? (CALLOUT_CONFIG[calloutType] ?? CALLOUT_CONFIG.note)
+        : null
       const bqKey = `bq-${keyIdx++}`
       const bqChildren: React.ReactNode[] = []
       for (let ci = 0; ci < (block.content?.length ?? 0); ci++) {
@@ -438,11 +499,41 @@ export function renderRichContent(
           )
         }
       }
-      elements.push(
-        <blockquote key={bqKey} className="border-l-[3px] border-border pl-4 text-muted-foreground">
-          {bqChildren}
-        </blockquote>,
-      )
+      if (calloutConfig) {
+        const CalloutIcon = calloutConfig.icon
+        elements.push(
+          <blockquote
+            key={bqKey}
+            className={cn(
+              'border-l-[3px] pl-4 py-2 rounded-r-md',
+              calloutConfig.borderClass,
+              calloutConfig.bgClass,
+            )}
+            data-callout-type={calloutType}
+            data-testid="callout-block"
+          >
+            <div
+              className={cn(
+                'flex items-center gap-1.5 font-semibold text-sm mb-1',
+                calloutConfig.textClass,
+              )}
+            >
+              <CalloutIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>{calloutConfig.label}</span>
+            </div>
+            <div className="text-foreground">{bqChildren}</div>
+          </blockquote>,
+        )
+      } else {
+        elements.push(
+          <blockquote
+            key={bqKey}
+            className="border-l-[3px] border-border pl-4 text-muted-foreground"
+          >
+            {bqChildren}
+          </blockquote>,
+        )
+      }
     } else {
       // paragraph
       if (!block.content) continue
