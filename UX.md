@@ -11,7 +11,7 @@ Consolidated best practices implemented across the app. New components, features
 | Icons | Lucide (consistent 24px stroke set) |
 | Editor | TipTap (ProseMirror) — single roving instance |
 | Drag & drop | @dnd-kit with tree-aware depth projection |
-| State management | Zustand (7 stores) |
+| State management | Zustand (8 stores) |
 | Internationalization | i18next + react-i18next (`src/i18n.ts`) |
 | Toasts | Sonner (`src/components/ui/sonner.tsx`) |
 | Code style | 2-space indent, single quotes, no semicolons, 100-char width (Biome) |
@@ -59,6 +59,58 @@ File: `src/components/SortableBlock.tsx`
 | TODO | Empty square — `border-2 border-muted-foreground` |
 | DOING | Blue dot — `border-blue-500 bg-blue-500/20` |
 | DONE | Green checkmark — `border-green-600 bg-green-600` + white check, block gets `line-through opacity-50` |
+
+### Alert / Callout Tokens
+
+File: `src/index.css`
+
+Semantic tokens for callout blocks (tip, error, note) — replaces hardcoded Tailwind colors in `StaticBlock.tsx` CALLOUT_CONFIG. Both light and dark themes use OKLCH values.
+
+| Token | Usage |
+|-------|-------|
+| `--alert-tip` / `--alert-tip-foreground` / `--alert-tip-border` | Tip callout (green) |
+| `--alert-error` / `--alert-error-foreground` / `--alert-error-border` | Error callout (red) |
+| `--alert-note` / `--alert-note-foreground` / `--alert-note-border` | Note callout (blue) |
+| `--alert-info` / `--alert-info-foreground` / `--alert-info-border` | Info callout (blue) |
+
+### Typography Scale
+
+File: `src/index.css`
+
+System-level typography tokens with paired `@utility` classes for font-size + line-height:
+
+| Token | Size | Line-height | Utility |
+|-------|------|-------------|---------|
+| `--text-xs` | 0.75rem | 1.5 (`--leading-normal`) | `text-scale-xs` |
+| `--text-sm` | 0.875rem | 1.5 (`--leading-normal`) | `text-scale-sm` |
+| `--text-base` | 1rem | 1.5 (`--leading-normal`) | `text-scale-base` |
+| `--text-lg` | 1.125rem | 1.25 (`--leading-tight`) | `text-scale-lg` |
+| `--text-xl` | 1.25rem | 1.25 (`--leading-tight`) | `text-scale-xl` |
+| `--text-2xl` | 1.5rem | 1.25 (`--leading-tight`) | `text-scale-2xl` |
+| `--text-3xl` | 1.875rem | 1.25 (`--leading-tight`) | `text-scale-3xl` |
+
+Responsive heading overrides at the `md` breakpoint reduce `--text-2xl` (1.5→1.25rem) and `--text-3xl` (1.875→1.5rem) on mobile.
+
+### Animation & Transition Tokens
+
+File: `src/index.css`
+
+Standardized duration and easing tokens with `@utility` classes and `prefers-reduced-motion` override:
+
+| Token | Value | Utility |
+|-------|-------|---------|
+| `--duration-fast` | 100ms | `duration-fast` |
+| `--duration-normal` | 150ms | `duration-normal` |
+| `--duration-moderate` | 200ms | `duration-moderate` |
+| `--duration-slow` | 300ms | `duration-slow` |
+| `--duration-slower` | 500ms | `duration-slower` |
+| `--ease-out` | cubic-bezier(0.16, 1, 0.3, 1) | `ease-smooth` |
+| `--ease-in-out` | cubic-bezier(0.65, 0, 0.35, 1) | `ease-smooth-in-out` |
+| `--ease-spring` | cubic-bezier(0.34, 1.56, 0.64, 1) | `ease-spring` |
+
+All durations are set to `0ms` when `prefers-reduced-motion: reduce` is active.
+
+**Rule:** Reference these tokens in new animations. Never hardcode `200ms ease-in-out` inline when a token exists.
 
 ### Border Radius
 
@@ -219,8 +271,8 @@ File: `src/editor/use-block-keyboard.ts`
 | Escape | Cancel editing, discard changes | — |
 | Backspace | Delete empty block | Block is empty |
 | Backspace | Merge with previous block | Cursor at start, block non-empty |
-| Tab | Indent block (reparent) | — |
-| Shift+Tab | Dedent block | — |
+| Ctrl+Shift+Right | Indent block (reparent) | — |
+| Ctrl+Shift+Left | Dedent block | — |
 | Ctrl+Shift+Up | Move block up among siblings | — |
 | Ctrl+Shift+Down | Move block down among siblings | — |
 | Ctrl+Enter | Cycle task state (TODO → DOING → DONE → none) | — |
@@ -291,6 +343,7 @@ File: `src/App.tsx` (global keydown handler), `src/components/ui/sidebar.tsx` (C
 | Alt+T | Go to today (journal) |
 | Ctrl+Z | Undo (page-level, outside editor) |
 | Ctrl+Y | Redo (page-level, outside editor) |
+| Ctrl+Shift+P | Open block properties drawer |
 | Escape | Close dialog / cancel editing |
 
 ### History View Shortcuts (inside HistorySheet)
@@ -585,6 +638,56 @@ Floating toolbar above the active editor with formatting buttons grouped by `<Se
 All buttons use `onPointerDown` with `e.preventDefault()` — this prevents the TipTap editor from losing focus when clicking a toolbar button. Without `preventDefault()`, the editor blur fires and unmounts before the command runs.
 
 Active state: `aria-pressed="true"` + `bg-accent text-accent-foreground`. Disabled state: `disabled` attribute + `opacity-50`.
+
+Toolbar button groups are defined as config arrays in `src/lib/toolbar-config.ts` (factory functions). Use this pattern when a toolbar has many similar items — config array instead of inline JSX.
+
+### Shared Component Inventory
+
+Key reusable components extracted across sessions 237-299. Check these before building something new:
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `FilterPill` | `ui/filter-pill.tsx` | Badge with X remove button, 44px touch targets. Used by FilterPillRow, TagFilterPanel |
+| `SearchablePopover<T>` | `SearchablePopover.tsx` | Generic popover with search, loading, empty state. Replaces duplicate picker patterns |
+| `StatusIcon` | `ui/status-icon.tsx` | Task state icon (DONE/DOING/TODO) with optional showDone. Used by AgendaResults, UnfinishedTasks |
+| `BlockGutterControls` | `BlockGutterControls.tsx` | Gutter buttons (drag, history, delete) with Tooltip wrapping. Extracted from SortableBlock |
+| `FeatureErrorBoundary` | `FeatureErrorBoundary.tsx` | Per-section error boundary with retry, `role="alert"`, i18n. Wraps each section in App.tsx |
+| `ChevronToggle` | `ui/chevron-toggle.tsx` | Expand/collapse chevron with isExpanded/loading/size props. 7 consumers |
+| `StatusBadge` | `ui/status-badge.tsx` | CVA badge with 5 state variants (DONE/DOING/TODO/default/overdue) |
+| `PriorityBadge` | `ui/priority-badge.tsx` | CVA badge wrapping priorityColor() utility |
+| `AlertListItem` | `ui/alert-list-item.tsx` | CVA li with destructive/pending variants |
+| `SectionTitle` | `ui/section-title.tsx` | h4 with color/label/count props for section headers |
+| `PopoverMenuItem` | `ui/popover-menu-item.tsx` | CVA button with active/disabled styling for menu items |
+| `CollapsiblePanelHeader` | `CollapsiblePanelHeader.tsx` | Chevron + title + count for collapsible sections |
+| `ListViewState` | (pattern) | Reusable loading/empty/loaded branching. Used by 6+ components |
+| `AlertSection` | `AlertSection.tsx` | Shared overdue/upcoming section parameterized by variant |
+| `RichContentRenderer` | `RichContentRenderer.tsx` | renderRichContent + CALLOUT_CONFIG, extracted from StaticBlock (846→237 lines) |
+| `ImageLightbox` | `ImageLightbox.tsx` | Fullscreen Radix Dialog image viewer (90vw/90vh), Escape to close |
+
+**Agent guidance:** Always check this table and `src/components/ui/` before building something new. If a similar pattern exists, extend the existing component rather than creating a new one.
+
+### GraphView Patterns
+
+File: `src/components/GraphView.tsx`
+
+Force-directed page relationship graph using d3-force. Key UX patterns:
+
+- **Keyboard navigation:** SVG nodes have `tabindex="0"`, `role="button"`, Enter/Space handler, focus ring via d3 stroke
+- **Touch targets:** Invisible hit-area circle (`r=22`, transparent, `pointer-events: all`) behind visible node circle for 44px minimum
+- **Reduced motion:** Respects `prefers-reduced-motion` — when enabled, uses `alphaDecay(1)`, `tick(300)`, renders once, stops immediately
+- **Hover/active feedback:** Node radius 6→8 on hover, 5 on press, 8 on release
+- **Error handling:** `console.error('[GraphView] ...')` in catch, toast.error for user feedback
+
+### Keyboard Shortcut Customization
+
+File: `src/lib/keyboard-config.ts`, `src/components/KeyboardSettingsTab.tsx`
+
+All 40 shortcuts are configurable via Settings → Keyboard tab:
+- `DEFAULT_SHORTCUTS` defines all shortcuts with category/key metadata
+- `localStorage` persistence via `getCustomOverrides()`/`setCustomShortcut()`
+- Conflict detection: `findConflicts()` shows which shortcuts share a key combo
+- Per-shortcut reset + "Reset All to Defaults" with ConfirmDialog
+- `KeyboardShortcuts.tsx` help panel reads from `getCurrentShortcuts()` via `useMemo([open])` for live updates
 
 ### Toast Patterns
 
@@ -1033,7 +1136,7 @@ Syntax highlighting via lowlight with OKLCH-based colors:
 
 ### Sidebar Navigation
 
-- Journal / Search / Pages / Tags / Properties / Trash / Status / Conflicts / History
+- Journal / Search / Pages / Tags / Settings / Trash / Status / Conflicts / History / Templates / Graph
 - Active item: `border-l-2 border-l-primary` (light) / `border-l-4` (dark, for contrast)
 - Mobile: `<Sheet>` offcanvas with left-edge swipe gesture
 - Collapsed labels: `opacity-0` with negative margin (`-mt-8`) to maintain layout
@@ -1044,7 +1147,7 @@ File: `src/stores/navigation.ts`
 
 Managed by `useNavigationStore` (Zustand). Tracks current view and page stack.
 
-**View types:** `journal`, `search`, `pages`, `tags`, `properties`, `trash`, `status`, `conflicts`, `history`, `page-editor`
+**View types:** `journal`, `search`, `pages`, `tags`, `settings`, `trash`, `status`, `conflicts`, `history`, `templates`, `graph`, `page-editor`
 
 | Method | Behavior |
 |--------|----------|
@@ -1090,6 +1193,8 @@ Before shipping any UI change, verify:
 15. **Semantic HTML** — Buttons are `<button>`, lists are `<ul>/<li>`, forms use `<label>`
 16. **Spacing consistency** — Use Tailwind utilities, design tokens, no magic numbers
 17. **Blur boundaries** — New floating UI (popovers, pickers) must be added to the blur boundary check in `EditableBlock.tsx`
+18. **i18n** — All user-visible strings use `t()` from i18next, including toasts, ARIA labels, empty states, and error messages
+19. **Animation tokens** — Use `--duration-*` and `--ease-*` tokens for new animations, never hardcode durations inline
 
 ## Common Pitfalls
 
@@ -1128,3 +1233,27 @@ Before shipping any UI change, verify:
 17. **Missing toast feedback on destructive/state-changing actions** — Every Keep, Discard, Delete, or batch action should show a success toast. Reversible destructive actions should include an "Undo" toast action with 6s duration. Batch operations that may partially fail should show failure count with a "Retry" action.
 
 18. **Stale selection state** — `selectedBlockIds` must be cleaned up: `remove()` clears the deleted block, `load()` clears all selections on page navigation. Batch delete must filter descendant blocks to avoid double-deleting.
+
+19. **`flushSync` needed on editor blur** — When `handleBlur` calls `edit()` or `splitBlock()`, the store update must complete before the editor unmounts. Wrap in `flushSync()` to ensure React renders the store change synchronously. Without this, the editor disappears before the save completes. (Session 237, B-5/B-6)
+
+20. **Position capture before async gap** — When handling input rules with async operations (e.g., `[[text]]` link resolution), capture the insertion position *before* any `await`. After the async gap, the cursor may have moved. Use `insertContentAt(savedPos, ...)` instead of relative cursor operations. (Session 229, B-6)
+
+21. **Suggestion popup steals keyboard events** — When a suggestion popup (slash commands, tag picker, page picker) is visible, Enter/Tab/Escape/Backspace must pass through to the Suggestion plugin instead of being intercepted by the block keyboard handler's capture-phase listener. Check `isSuggestionPopupVisible()` before handling these keys. (Session 228)
+
+22. **Re-entrancy in async handlers** — `handleDeleteBlock`, `handleEnterSave`, and similar async handlers can be invoked multiple times concurrently (double-click, rapid keyboard). Use a ref-based guard (`deleteInProgress`, `enterSaveInProgress`) with `.finally()` reset. (Sessions 228-229)
+
+23. **`outline-none` vs `outline-hidden`** — `outline-none` conflicts with `focus-visible:outline-1`. Use `outline-hidden` instead, which properly hides the outline without conflicting with focus-visible styles. (Session 264, UX-27)
+
+24. **Race condition in save/discard** — When `saveDraft()` and `discardDraft()` can race (e.g., interval timer fires during unmount cleanup), use a version counter. The `useDraftAutosave` hook increments a version ref on discard; the save callback checks it hasn't changed before writing. (Session 242, B-13)
+
+25. **Map spread order in cache updates** — `new Map([...state.cache, ...fetchedData])` puts fetched data last (wins on conflict). `new Map([...fetchedData, ...state.cache])` puts cache last (stale data wins). After sync, force-refresh must put fetched data last. (Session 230, B-7)
+
+26. **Tab key stealing browser focus navigation** — Don't bind Tab/Shift+Tab for app shortcuts (like indent/dedent). It breaks standard browser focus navigation and makes the app inaccessible to keyboard-only users. Use Ctrl+Shift+Arrow instead. (Session 234)
+
+27. **SVG elements need explicit keyboard handling** — SVG `<circle>` and `<rect>` elements don't get keyboard events by default. Add `tabindex="0"`, `role="button"`, and explicit `keydown` handlers for Enter/Space. For touch targets, add an invisible larger circle behind the visible element. (Session 293/296)
+
+28. **JS-driven animations ignore global reduced-motion CSS** — The global `prefers-reduced-motion` CSS rule only handles CSS animations. d3-force simulations, requestAnimationFrame loops, and other JS-driven animations must check `window.matchMedia('(prefers-reduced-motion: reduce)')` and skip or instantly complete. (Session 296, UX-104)
+
+29. **Gutter buttons need pointer-events management** — Hover-reveal gutter buttons (`opacity-0`) still receive pointer events and block clicks on elements behind them. Add `pointer-events-none` when hidden, `pointer-events-auto` on all visibility triggers (group-hover, coarse pointer, focus-within, focus-visible). (Session 216, H-12)
+
+30. **@floating-ui/dom for popup positioning** — Never write manual coordinate math for popup placement. Use `computePosition()` with `offset()`, `flip()`, `shift()` middleware. Replaced ~65 lines of buggy clamp/flip code in suggestion-renderer.ts. (Session 208, H-9)
