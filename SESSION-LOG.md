@@ -1,5 +1,16 @@
 # Session Log
 
+## Session 280 — Batch 15: F-37 (2026-04-09)
+
+**Commit:** `15f593f` — `feat: F-37 — task dependency indicator + DONE warning` — 6 files, +422/-3
+
+### Items resolved
+- **F-37**: Task dependencies — DependencyIndicator component (Link2 icon + tooltip) in AgendaResults metadata. Lazy-loads properties with shared ref cache. DONE warning toast when task has `blocked_by` property. 10 tests.
+
+### Test counts
+- Frontend: 233 files, 5515 tests (was 5505)
+- Open REVIEW-LATER items: 17 (was 18)
+
 ## Session 279 — Batch 14: F-28, F-30, F-25 partial (2026-04-09)
 
 **Commit:** `4d48678` — `feat: batch 14 — numbered lists, dividers, settings view, query pagination` — 18 files, +1439/-120

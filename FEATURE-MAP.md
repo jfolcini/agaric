@@ -531,3 +531,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 ### Query Improvements (session 279)
 - **Query pagination** (F-25): Cursor-based load-more in QueryResult replacing hardcoded `limit: 50`. `PAGE_SIZE` constant + `LoadMoreButton`. Accumulates results across pages, merges page titles.
 - **Query expression pills** (F-25): `QueryExpressionPills` component parses query expression into Badge-rendered pills (type badge + param/filter badges). Raw expression preserved as `title` tooltip. 9 tests.
+
+### Task Dependencies (session 280)
+- **DependencyIndicator** (`src/components/DependencyIndicator.tsx`): Shows Link2 icon + tooltip when a block has a `blocked_by` ref property. Lazy-loads properties with shared `useRef<Map>` cache. Resolves blocking task title via `batchResolve`. Integrated in AgendaResults metadata slot. 8 tests.
+- **DONE warning** (F-37): When setting a task to DONE (via slash command or checkbox), checks for `blocked_by` property and shows `toast.warning` if dependencies exist.
