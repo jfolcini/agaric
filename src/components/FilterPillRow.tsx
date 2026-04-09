@@ -5,10 +5,9 @@
  * Extracted from BacklinkFilterBuilder.tsx for testability (#651-R4).
  */
 
-import { X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Badge } from '@/components/ui/badge'
+import { FilterPill } from '@/components/ui/filter-pill'
 import type { BacklinkFilter, CompareOp } from '../lib/tauri'
 
 // ---------------------------------------------------------------------------
@@ -105,28 +104,12 @@ export function FilterPillRow({
           key={index}
           className="contents"
         >
-          <Badge
-            variant="secondary"
-            className="filter-pill shrink-0 gap-1 text-xs"
-            role="group"
-            aria-label={`Filter: ${filterSummary(filter, tagResolver)}`}
-          >
-            {filterSummary(filter, tagResolver)}
-            <button
-              type="button"
-              className="ml-0.5 inline-flex items-center justify-center rounded-full p-1 hover:bg-muted active:bg-muted active:scale-95 focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-w-[44px] touch-target"
-              onClick={() => onRemove(index)}
-              onKeyDown={(e: React.KeyboardEvent) => {
-                if (e.key === 'Delete' || e.key === 'Backspace') {
-                  e.preventDefault()
-                  onRemove(index)
-                }
-              }}
-              aria-label={`Remove filter ${filterSummary(filter, tagResolver)}`}
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </Badge>
+          <FilterPill
+            label={filterSummary(filter, tagResolver)}
+            onRemove={() => onRemove(index)}
+            removeAriaLabel={`Remove filter ${filterSummary(filter, tagResolver)}`}
+            groupAriaLabel={`Filter: ${filterSummary(filter, tagResolver)}`}
+          />
         </li>
       ))}
     </ul>

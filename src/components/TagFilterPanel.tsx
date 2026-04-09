@@ -6,14 +6,14 @@
  * Results are paginated with cursor-based "Load more" via usePaginatedQuery.
  */
 
-import { Plus, Search, X } from 'lucide-react'
+import { Plus, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { FilterPill } from '@/components/ui/filter-pill'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
@@ -207,22 +207,14 @@ export function TagFilterPanel(): React.ReactElement {
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm text-muted-foreground">{t('tagFilter.selectedLabel')}</span>
           {selectedTags.map((tag) => (
-            <Badge
+            <FilterPill
               key={tag.id}
-              variant="secondary"
-              className="gap-1 truncate max-w-[150px]"
+              label={tag.name}
+              onRemove={() => handleRemoveTag(tag.id)}
+              removeAriaLabel={t('tagFilter.removeTagLabel', { name: tag.name })}
+              className="truncate max-w-[150px]"
               title={tag.name}
-            >
-              <span className="truncate">{tag.name}</span>
-              <button
-                type="button"
-                className="ml-1 rounded-full hover:bg-muted"
-                onClick={() => handleRemoveTag(tag.id)}
-                aria-label={t('tagFilter.removeTagLabel', { name: tag.name })}
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </Badge>
+            />
           ))}
         </div>
       )}

@@ -15,7 +15,7 @@ import type { PageBlockState } from '../stores/page-blocks'
 import { useResolveStore } from '../stores/resolve'
 import { useUndoStore } from '../stores/undo'
 
-type DatePickerMode = 'date' | 'due' | 'schedule' | 'repeat-until'
+export type DatePickerMode = 'date' | 'due' | 'schedule' | 'repeat-until'
 
 export interface UseBlockDatePickerParams {
   focusedBlockId: string | null

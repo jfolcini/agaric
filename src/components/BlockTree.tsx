@@ -34,17 +34,18 @@ import {
   searchSlashCommands,
   useBlockSlashCommands,
 } from '../hooks/useBlockSlashCommands'
+import { useBlockTreeEventListeners } from '../hooks/useBlockTreeEventListeners'
+import { useBlockTreeKeyboardShortcuts } from '../hooks/useBlockTreeKeyboardShortcuts'
 import { useBlockZoom } from '../hooks/useBlockZoom'
 import { useViewportObserver } from '../hooks/useViewportObserver'
 import type { NavigateToPageFn } from '../lib/block-events'
-import { BLOCK_EVENTS, onBlockEvent } from '../lib/block-events'
+import { processCheckboxSyntax } from '../lib/block-utils'
 import {
   batchResolve,
   createBlock,
   deleteDraft,
   getBatchProperties,
   getBlock,
-  setPriority as setPriorityCmd,
   setProperty,
   setTodoState as setTodoStateCmd,
 } from '../lib/tauri'
@@ -60,103 +61,10 @@ import { BlockZoomBar } from './BlockZoomBar'
 import { BlockContextMenu } from './block-tree/BlockContextMenu'
 import { BlockDatePicker } from './block-tree/BlockDatePicker'
 import { BlockDndOverlay } from './block-tree/BlockDndOverlay'
-import { ScrollArea } from './ui/scroll-area'
+import { TemplatePicker } from './block-tree/TemplatePicker'
 import { Skeleton } from './ui/skeleton'
 
-function TemplatePicker({
-  templatePages,
-  onSelect,
-  onClose,
-}: {
-  templatePages: Array<{ id: string; content: string; preview: string | null }>
-  onSelect: (templatePageId: string) => void
-  onClose: () => void
-}): React.ReactElement {
-  const { t } = useTranslation()
-  const dialogRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        onClose()
-      }
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault()
-        const dialog = dialogRef.current
-        if (!dialog) return
-        const buttons = dialog.querySelectorAll<HTMLElement>('button')
-        if (buttons.length === 0) return
-        const current = document.activeElement as HTMLElement
-        const idx = Array.from(buttons).indexOf(current)
-        const next =
-          e.key === 'ArrowDown'
-            ? (idx + 1) % buttons.length
-            : (idx - 1 + buttons.length) % buttons.length
-        buttons[next]?.focus()
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
-
-  useEffect(() => {
-    const btn = dialogRef.current?.querySelector<HTMLElement>('button')
-    btn?.focus()
-  }, [])
-
-  return (
-    <>
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
-      <div className="fixed inset-0 z-40" onClick={onClose} />
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('slash.templatePicker')}
-        className="fixed z-50 rounded-md border bg-popover p-2 shadow-lg left-1/2 top-1/3 -translate-x-1/2 min-w-[200px] max-w-[calc(100vw-2rem)] sm:max-w-[300px] max-sm:left-2 max-sm:right-2 max-sm:translate-x-0"
-      >
-        <ScrollArea className="max-h-[60vh]">
-          <p className="px-2 py-1 text-xs font-medium text-muted-foreground">
-            {t('slash.selectTemplate')}
-          </p>
-          {templatePages.map((tp) => (
-            <button
-              key={tp.id}
-              type="button"
-              className="w-full text-left rounded px-2 py-1.5 text-sm hover:bg-accent transition-colors touch-target"
-              onClick={() => onSelect(tp.id)}
-            >
-              <span className="font-medium">{tp.content || t('block.untitled')}</span>
-              {tp.preview && (
-                <span className="block text-xs text-muted-foreground truncate">{tp.preview}</span>
-              )}
-            </button>
-          ))}
-        </ScrollArea>
-      </div>
-    </>
-  )
-}
-
-/**
- * Detect markdown checkbox syntax at the start of content.
- * `- [ ] ` → TODO, `- [x] ` / `- [X] ` → DONE.
- * Returns the cleaned content and the detected todo state, or null if no match.
- */
-export function processCheckboxSyntax(content: string): {
-  cleanContent: string
-  todoState: string | null
-} {
-  if (content.startsWith('- [ ] ')) {
-    return { cleanContent: content.slice(6), todoState: 'TODO' }
-  }
-  if (content.startsWith('- [x] ') || content.startsWith('- [X] ')) {
-    return { cleanContent: content.slice(6), todoState: 'DONE' }
-  }
-  return { cleanContent: content, todoState: null }
-}
+export { processCheckboxSyntax } from '../lib/block-utils'
 
 export { guessMimeType } from '../lib/file-utils'
 
@@ -700,15 +608,21 @@ export function BlockTree({
     onShowProperties: () => focusedBlockId && handleShowProperties(focusedBlockId),
   })
 
-  // ── Discard button custom event (from FormattingToolbar) ───────────
-  useEffect(() => {
-    const handler = () => {
-      if (focusedBlockId) {
-        handleEscapeCancel()
-      }
-    }
-    return onBlockEvent(document, 'DISCARD_BLOCK_EDIT', handler)
-  }, [focusedBlockId, handleEscapeCancel])
+  // ── Extracted event listeners (custom DOM events from toolbar) ───────
+  useBlockTreeEventListeners({
+    focusedBlockId,
+    rootParentId,
+    handleEscapeCancel,
+    handleToggleTodo,
+    handleTogglePriority,
+    handleShowProperties,
+    rovingEditor,
+    datePickerCursorPos,
+    setDatePickerMode,
+    setDatePickerOpen,
+    pageStore,
+    t,
+  })
 
   // ── Empty-block cleanup: delete just-created blocks left empty ─────
   useEffect(() => {
@@ -724,215 +638,24 @@ export function BlockTree({
     }
   }, [focusedBlockId, remove, pageStore])
 
-  // ── Keyboard shortcut for collapse toggle (Mod+.) ──────────────────
-  useEffect(() => {
-    const handleCollapseKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === '.') {
-        e.preventDefault()
-        if (focusedBlockId && hasChildrenSet.has(focusedBlockId)) {
-          toggleCollapse(focusedBlockId)
-        }
-      }
-    }
-    document.addEventListener('keydown', handleCollapseKey)
-    return () => document.removeEventListener('keydown', handleCollapseKey)
-  }, [focusedBlockId, hasChildrenSet, toggleCollapse])
-
-  // ── Keyboard shortcuts for multi-selection (Ctrl+A, Escape) ─────────
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      // Ctrl+A / Cmd+A — select all blocks (only when not editing)
-      if ((e.ctrlKey || e.metaKey) && e.key === 'a' && !focusedBlockId) {
-        e.preventDefault()
-        rawSelectAll(blocks.map((b) => b.id))
-      }
-      // Escape — clear selection (when not editing and there's an active selection)
-      if (
-        e.key === 'Escape' &&
-        !e.defaultPrevented &&
-        !focusedBlockId &&
-        selectedBlockIds.length > 0
-      ) {
-        e.preventDefault()
-        clearSelected()
-      }
-    }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [focusedBlockId, selectedBlockIds.length, rawSelectAll, blocks, clearSelected])
-
-  // ── Keyboard shortcut: Escape closes unfocused editor (UX-M8) ──────
-  // The TipTap-level Escape handler (use-block-keyboard.ts) only fires when
-  // the editor DOM has focus.  This document-level handler covers the case
-  // where the user clicked elsewhere on the page and presses Escape — the
-  // editor is still mounted but not focused.
-  useEffect(() => {
-    const handleUnfocusedEscape = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return
-      const { focusedBlockId: fid, selectedBlockIds: sel } = useBlockStore.getState()
-      if (!fid) return
-      // Don't interfere when there's an active multi-selection (handled above)
-      if (sel.length > 0) return
-      // Only act when the TipTap editor is NOT the active element
-      const proseMirror = document.querySelector('.ProseMirror')
-      if (proseMirror?.contains(document.activeElement)) return
-      e.preventDefault()
-      // Save any pending edits before closing (unfocused Escape should persist content)
-      handleFlush()
-      setFocused(null)
-    }
-    document.addEventListener('keydown', handleUnfocusedEscape)
-    return () => document.removeEventListener('keydown', handleUnfocusedEscape)
-  }, [handleFlush, setFocused])
-
-  // ── Keyboard shortcut for task cycling (Ctrl+Enter / Cmd+Enter) ────
-  useEffect(() => {
-    const handleTaskKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-        e.preventDefault()
-        if (focusedBlockId) {
-          handleToggleTodo(focusedBlockId)
-        }
-      }
-    }
-    document.addEventListener('keydown', handleTaskKey)
-    return () => document.removeEventListener('keydown', handleTaskKey)
-  }, [focusedBlockId, handleToggleTodo])
-
-  // ── Priority cycling event listener (from FormattingToolbar) ─────────
-  useEffect(() => {
-    const handler = () => {
-      if (focusedBlockId) handleTogglePriority(focusedBlockId)
-    }
-    return onBlockEvent(document, 'CYCLE_PRIORITY', handler)
-  }, [focusedBlockId, handleTogglePriority])
-
-  // ── Direct priority set from keyboard shortcuts (Ctrl+Shift+1/2/3) ──
-  useEffect(() => {
-    const handleSetPriority = async (e: Event) => {
-      if (!focusedBlockId) return
-      const priority =
-        e.type === BLOCK_EVENTS.SET_PRIORITY_1
-          ? '1'
-          : e.type === BLOCK_EVENTS.SET_PRIORITY_2
-            ? '2'
-            : '3'
-      try {
-        await setPriorityCmd(focusedBlockId, priority)
-        if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-        pageStore.setState((s) => ({
-          blocks: s.blocks.map((b) => (b.id === focusedBlockId ? { ...b, priority } : b)),
-        }))
-      } catch (err) {
-        logger.error('BlockTree', 'Failed to set priority', {
-          blockId: focusedBlockId,
-          priority,
-          error: String(err),
-        })
-        toast.error(t('blockTree.setPriorityFailed'))
-      }
-    }
-    const cleanup1 = onBlockEvent(document, 'SET_PRIORITY_1', handleSetPriority)
-    const cleanup2 = onBlockEvent(document, 'SET_PRIORITY_2', handleSetPriority)
-    const cleanup3 = onBlockEvent(document, 'SET_PRIORITY_3', handleSetPriority)
-    return () => {
-      cleanup1()
-      cleanup2()
-      cleanup3()
-    }
-  }, [focusedBlockId, rootParentId, t, pageStore])
-
-  // ── Listen for toolbar date picker event ────────────────────────────
-  useEffect(() => {
-    const handleDateEvent = () => {
-      if (!focusedBlockId) return
-      datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos
-      setDatePickerMode('date')
-      setDatePickerOpen(true)
-    }
-    return onBlockEvent(document, 'OPEN_DATE_PICKER', handleDateEvent)
-  }, [
+  // ── Extracted keyboard shortcuts (document-level keydown listeners) ─
+  useBlockTreeKeyboardShortcuts({
     focusedBlockId,
-    rovingEditor.editor,
+    selectedBlockIds,
+    hasChildrenSet,
+    blocks,
+    toggleCollapse,
+    rawSelectAll,
+    clearSelected,
+    handleFlush,
+    setFocused,
+    handleToggleTodo,
+    handleSlashCommand,
+    rovingEditor,
     datePickerCursorPos,
     setDatePickerMode,
     setDatePickerOpen,
-  ])
-
-  // ── Listen for toolbar due-date picker event ─────────────────────────
-  useEffect(() => {
-    const handler = () => {
-      if (!focusedBlockId) return
-      datePickerCursorPos.current =
-        rovingEditorRef.current.editor?.state.selection.$anchor.pos ?? undefined
-      setDatePickerMode('due')
-      setDatePickerOpen(true)
-    }
-    return onBlockEvent(document, 'OPEN_DUE_DATE_PICKER', handler)
-  }, [focusedBlockId, datePickerCursorPos, setDatePickerMode, setDatePickerOpen])
-
-  // ── Listen for toolbar scheduled-date picker event ──────────────────
-  useEffect(() => {
-    const handler = () => {
-      if (!focusedBlockId) return
-      datePickerCursorPos.current =
-        rovingEditorRef.current.editor?.state.selection.$anchor.pos ?? undefined
-      setDatePickerMode('schedule')
-      setDatePickerOpen(true)
-    }
-    return onBlockEvent(document, 'OPEN_SCHEDULED_DATE_PICKER', handler)
-  }, [focusedBlockId, datePickerCursorPos, setDatePickerMode, setDatePickerOpen])
-
-  // ── Listen for toolbar toggle-todo-state event ──────────────────────
-  useEffect(() => {
-    const handler = () => {
-      if (focusedBlockId) handleToggleTodo(focusedBlockId)
-    }
-    return onBlockEvent(document, 'TOGGLE_TODO_STATE', handler)
-  }, [focusedBlockId, handleToggleTodo])
-
-  // ── Listen for toolbar open-block-properties event ──────────────────
-  useEffect(() => {
-    const handler = () => {
-      if (focusedBlockId) handleShowProperties(focusedBlockId)
-    }
-    return onBlockEvent(document, 'OPEN_BLOCK_PROPERTIES', handler)
-  }, [focusedBlockId, handleShowProperties])
-
-  // ── Keyboard shortcut: Ctrl+Shift+D → open date picker ─────────────
-  useEffect(() => {
-    const handleDateShortcut = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'D') {
-        e.preventDefault()
-        if (!focusedBlockId) return
-        datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos ?? undefined
-        setDatePickerMode('date')
-        setDatePickerOpen(true)
-      }
-    }
-    document.addEventListener('keydown', handleDateShortcut)
-    return () => document.removeEventListener('keydown', handleDateShortcut)
-  }, [
-    focusedBlockId,
-    rovingEditor.editor,
-    datePickerCursorPos,
-    setDatePickerMode,
-    setDatePickerOpen,
-  ])
-
-  // ── Keyboard shortcut: Ctrl+1‑6 → toggle heading level ─────────────
-  useEffect(() => {
-    const handleHeadingShortcut = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return
-      if (e.key < '1' || e.key > '6') return
-      if (!focusedBlockId) return
-      e.preventDefault()
-      const level = Number.parseInt(e.key, 10)
-      handleSlashCommand({ id: `h${level}`, label: `Heading ${level}` })
-    }
-    document.addEventListener('keydown', handleHeadingShortcut)
-    return () => document.removeEventListener('keydown', handleHeadingShortcut)
-  }, [focusedBlockId, handleSlashCommand])
+  })
 
   // ── Click on whitespace within block tree closes editor (UX-M9) ──
   const handleContainerPointerDown = useCallback(
