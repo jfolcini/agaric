@@ -14,36 +14,24 @@
 
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
-import type { LucideIcon } from 'lucide-react'
-import {
-  AtSign,
-  Bold,
-  CalendarCheck2,
-  CalendarClock,
-  CalendarDays,
-  CheckSquare,
-  Code,
-  FileCode2,
-  FileSymlink,
-  Heading,
-  Highlighter,
-  Info,
-  Italic,
-  Link2,
-  ListOrdered,
-  Minus,
-  Quote,
-  Redo2,
-  Settings2,
-  Strikethrough,
-  Undo2,
-  X,
-} from 'lucide-react'
+import { FileCode2, Heading, Link2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { dispatchBlockEvent } from '@/lib/block-events'
+import type { ToolbarButtonConfig } from '@/lib/toolbar-config'
+import {
+  createHistoryButtons,
+  createMarkToggles,
+  createMetadataButtons,
+  createRefsAndBlocks,
+  createStructureButtons,
+  LANG_SHORT,
+  toolbarActiveClass,
+} from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
+import { CodeLanguageSelector } from './CodeLanguageSelector'
+import { HeadingLevelSelector } from './HeadingLevelSelector'
 import { LinkEditPopover } from './LinkEditPopover'
 import { Button } from './ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover'
@@ -51,66 +39,12 @@ import { ScrollArea } from './ui/scroll-area'
 import { Separator } from './ui/separator'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 
-/** Shared active-state class applied to toolbar buttons when their feature is on. */
-const toolbarActiveClass = 'bg-accent text-accent-foreground'
-
-/** Languages available in the code block language selector popover. */
-const CODE_LANGUAGES = [
-  'javascript',
-  'typescript',
-  'python',
-  'rust',
-  'bash',
-  'sql',
-  'html',
-  'css',
-  'json',
-  'go',
-  'java',
-  'c',
-  'cpp',
-  'ruby',
-  'markdown',
-  'yaml',
-  'toml',
-] as const
-
-/** Short display labels shown on the toolbar button when a code block language is active. */
-const LANG_SHORT: Record<string, string> = {
-  javascript: 'JS',
-  typescript: 'TS',
-  python: 'PY',
-  rust: 'RS',
-  bash: 'SH',
-  sql: 'SQL',
-  html: 'HTML',
-  css: 'CSS',
-  json: 'JSON',
-  go: 'GO',
-  java: 'JA',
-  c: 'C',
-  cpp: 'C++',
-  ruby: 'RB',
-  markdown: 'MD',
-  yaml: 'YML',
-  toml: 'TOML',
-}
-
 interface FormattingToolbarProps {
   editor: Editor
   /** Block ID used to associate toolbar with its editor via aria-controls. */
   blockId?: string
   /** Current priority of the focused block (null, '1', '2', '3'). */
   currentPriority?: string | null
-}
-
-interface ToolbarButtonConfig {
-  icon: LucideIcon
-  label: string
-  tip: string
-  activeKey?: string
-  disabledWhenFalse?: string
-  action: () => void
 }
 
 function Tip({
@@ -226,157 +160,11 @@ export function FormattingToolbar({
 
   // ── Button config groups ─────────────────────────────────────────────
 
-  const markToggles: ToolbarButtonConfig[] = useMemo(
-    () => [
-      {
-        icon: Bold,
-        label: 'toolbar.bold',
-        tip: 'toolbar.boldTip',
-        activeKey: 'bold',
-        action: () => editor.chain().focus().toggleBold().run(),
-      },
-      {
-        icon: Italic,
-        label: 'toolbar.italic',
-        tip: 'toolbar.italicTip',
-        activeKey: 'italic',
-        action: () => editor.chain().focus().toggleItalic().run(),
-      },
-      {
-        icon: Code,
-        label: 'toolbar.code',
-        tip: 'toolbar.codeTip',
-        activeKey: 'code',
-        action: () => editor.chain().focus().toggleCode().run(),
-      },
-      {
-        icon: Strikethrough,
-        label: 'toolbar.strikethrough',
-        tip: 'toolbar.strikethroughTip',
-        activeKey: 'strike',
-        action: () => editor.chain().focus().toggleStrike().run(),
-      },
-      {
-        icon: Highlighter,
-        label: 'toolbar.highlight',
-        tip: 'toolbar.highlightTip',
-        activeKey: 'highlight',
-        action: () => editor.chain().focus().toggleHighlight().run(),
-      },
-    ],
-    [editor],
-  )
-
-  const refsAndBlocks: ToolbarButtonConfig[] = useMemo(
-    () => [
-      {
-        icon: FileSymlink,
-        label: 'toolbar.internalLink',
-        tip: 'toolbar.pageLinkTip',
-        action: () => editor.chain().focus().insertContent('[[').run(),
-      },
-      {
-        icon: AtSign,
-        label: 'toolbar.insertTag',
-        tip: 'toolbar.tagTip',
-        action: () => editor.chain().focus().insertContent('@').run(),
-      },
-      {
-        icon: Quote,
-        label: 'toolbar.blockquote',
-        tip: 'toolbar.blockquoteTip',
-        activeKey: 'blockquote',
-        action: () => editor.chain().focus().toggleBlockquote().run(),
-      },
-    ],
-    [editor],
-  )
-
-  const structureButtons: ToolbarButtonConfig[] = useMemo(
-    () => [
-      {
-        icon: ListOrdered,
-        label: 'toolbar.orderedList',
-        tip: 'toolbar.orderedListTip',
-        action: () => dispatchBlockEvent('INSERT_ORDERED_LIST'),
-      },
-      {
-        icon: Minus,
-        label: 'toolbar.divider',
-        tip: 'toolbar.dividerTip',
-        action: () => dispatchBlockEvent('INSERT_DIVIDER'),
-      },
-      {
-        icon: Info,
-        label: 'toolbar.callout',
-        tip: 'toolbar.calloutTip',
-        action: () => dispatchBlockEvent('INSERT_CALLOUT'),
-      },
-    ],
-    [],
-  )
-
-  const metadataButtons: ToolbarButtonConfig[] = useMemo(
-    () => [
-      {
-        icon: CalendarDays,
-        label: 'toolbar.insertDate',
-        tip: 'toolbar.insertDateTip',
-        action: () => dispatchBlockEvent('OPEN_DATE_PICKER'),
-      },
-      {
-        icon: CalendarClock,
-        label: 'toolbar.setDueDate',
-        tip: 'toolbar.dueDateTip',
-        action: () => dispatchBlockEvent('OPEN_DUE_DATE_PICKER'),
-      },
-      {
-        icon: CalendarCheck2,
-        label: 'toolbar.setScheduledDate',
-        tip: 'toolbar.scheduledDateTip',
-        action: () => dispatchBlockEvent('OPEN_SCHEDULED_DATE_PICKER'),
-      },
-      {
-        icon: CheckSquare,
-        label: 'toolbar.todoToggle',
-        tip: 'toolbar.todoToggleTip',
-        action: () => dispatchBlockEvent('TOGGLE_TODO_STATE'),
-      },
-      {
-        icon: Settings2,
-        label: 'toolbar.properties',
-        tip: 'toolbar.propertiesTip',
-        action: () => dispatchBlockEvent('OPEN_BLOCK_PROPERTIES'),
-      },
-    ],
-    [],
-  )
-
-  const historyButtons: ToolbarButtonConfig[] = useMemo(
-    () => [
-      {
-        icon: Undo2,
-        label: 'toolbar.undo',
-        tip: 'toolbar.undoTip',
-        disabledWhenFalse: 'canUndo',
-        action: () => editor.chain().focus().undo().run(),
-      },
-      {
-        icon: Redo2,
-        label: 'toolbar.redo',
-        tip: 'toolbar.redoTip',
-        disabledWhenFalse: 'canRedo',
-        action: () => editor.chain().focus().redo().run(),
-      },
-      {
-        icon: X,
-        label: 'toolbar.discard',
-        tip: 'toolbar.discardTip',
-        action: () => dispatchBlockEvent('DISCARD_BLOCK_EDIT'),
-      },
-    ],
-    [editor],
-  )
+  const markToggles = useMemo(() => createMarkToggles(editor), [editor])
+  const refsAndBlocks = useMemo(() => createRefsAndBlocks(editor), [editor])
+  const structureButtons = useMemo(() => createStructureButtons(), [])
+  const metadataButtons = useMemo(() => createMetadataButtons(), [])
+  const historyButtons = useMemo(() => createHistoryButtons(editor), [editor])
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -460,55 +248,12 @@ export function FormattingToolbar({
               </PopoverAnchor>
             </Tip>
             <PopoverContent align="start" className="w-auto p-1">
-              <div className="flex flex-col gap-0.5">
-                {CODE_LANGUAGES.map((lang) => (
-                  <Button
-                    key={lang}
-                    variant="ghost"
-                    size="sm"
-                    className={cn(
-                      'justify-start text-sm',
-                      state.codeBlockLanguage === lang && 'bg-accent',
-                    )}
-                    onPointerDown={(e) => {
-                      e.preventDefault()
-                      const attrs = { language: lang }
-                      if (!state.codeBlock) {
-                        editor
-                          .chain()
-                          .focus()
-                          .toggleCodeBlock()
-                          .updateAttributes('codeBlock', attrs)
-                          .run()
-                      } else {
-                        editor.chain().focus().updateAttributes('codeBlock', attrs).run()
-                      }
-                      setCodeBlockPopoverOpen(false)
-                    }}
-                  >
-                    {lang}
-                  </Button>
-                ))}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={cn(
-                    'justify-start text-sm',
-                    state.codeBlock && !state.codeBlockLanguage && 'bg-accent',
-                  )}
-                  onPointerDown={(e) => {
-                    e.preventDefault()
-                    if (state.codeBlock) {
-                      editor.chain().focus().updateAttributes('codeBlock', { language: '' }).run()
-                    } else {
-                      editor.chain().focus().toggleCodeBlock().run()
-                    }
-                    setCodeBlockPopoverOpen(false)
-                  }}
-                >
-                  {t('toolbar.plainText')}
-                </Button>
-              </div>
+              <CodeLanguageSelector
+                editor={editor}
+                isCodeBlock={state.codeBlock}
+                currentLanguage={state.codeBlockLanguage}
+                onClose={() => setCodeBlockPopoverOpen(false)}
+              />
             </PopoverContent>
           </Popover>
 
@@ -537,44 +282,11 @@ export function FormattingToolbar({
               </PopoverAnchor>
             </Tip>
             <PopoverContent align="start" className="w-auto p-1">
-              <div className="flex flex-col gap-0.5">
-                {([1, 2, 3, 4, 5, 6] as const).map((level) => (
-                  <Button
-                    key={level}
-                    variant="ghost"
-                    size="sm"
-                    className={cn(
-                      'justify-start text-sm',
-                      state.headingLevel === level && 'bg-accent',
-                    )}
-                    onPointerDown={(e) => {
-                      e.preventDefault()
-                      editor.chain().focus().toggleHeading({ level }).run()
-                      setHeadingPopoverOpen(false)
-                    }}
-                  >
-                    H{level}
-                  </Button>
-                ))}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={cn('justify-start text-sm', state.headingLevel === 0 && 'bg-accent')}
-                  onPointerDown={(e) => {
-                    e.preventDefault()
-                    if (state.headingLevel > 0) {
-                      editor
-                        .chain()
-                        .focus()
-                        .toggleHeading({ level: state.headingLevel as 1 | 2 | 3 | 4 | 5 | 6 })
-                        .run()
-                    }
-                    setHeadingPopoverOpen(false)
-                  }}
-                >
-                  {t('toolbar.paragraph')}
-                </Button>
-              </div>
+              <HeadingLevelSelector
+                editor={editor}
+                headingLevel={state.headingLevel}
+                onClose={() => setHeadingPopoverOpen(false)}
+              />
             </PopoverContent>
           </Popover>
 

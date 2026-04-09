@@ -10,14 +10,14 @@
  */
 
 import type React from 'react'
-import { useCallback, useState } from 'react'
+import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { formatDate } from '@/lib/date-utils'
-import { parseDate } from '@/lib/parse-date'
 import { setDueDate, setScheduledDate } from '@/lib/tauri'
+import { useDateInput } from '../hooks/useDateInput'
 
 export type DateType = 'due' | 'scheduled'
 
@@ -39,8 +39,9 @@ export function DateChipEditor({
   onSuccess,
 }: DateChipEditorProps): React.ReactElement {
   const { t } = useTranslation()
-  const [dateInput, setDateInput] = useState('')
-  const [datePreview, setDatePreview] = useState<string | null>(null)
+
+  // Date input hook (M-29) — manages input state + NL preview
+  const { dateInput, datePreview, handleChange } = useDateInput()
 
   const applyDate = useCallback(
     async (newDate: string | null) => {
@@ -91,11 +92,7 @@ export function DateChipEditor({
           className="text-sm"
           placeholder={t('dateChip.placeholder')}
           value={dateInput}
-          onChange={(e) => {
-            setDateInput(e.target.value)
-            const parsed = parseDate(e.target.value)
-            setDatePreview(parsed)
-          }}
+          onChange={handleChange}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && datePreview) {
               e.preventDefault()

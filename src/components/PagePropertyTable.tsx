@@ -11,12 +11,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
-import {
-  buildInitParams,
-  handleDeleteProperty,
-  handleSaveProperty,
-  NON_DELETABLE_PROPERTIES,
-} from '@/lib/property-save-utils'
+import { buildInitParams, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
+import { usePropertySave } from '../hooks/usePropertySave'
 import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
 import { createPropertyDef, getProperties, listPropertyDefs, setProperty } from '../lib/tauri'
 import { AddPropertyPopover } from './AddPropertyPopover'
@@ -73,34 +69,23 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
     [definitions],
   )
 
+  // Save / delete via shared hook (M-28)
+  const { handleSave: doSave, handleDelete: doDeleteProperty } = usePropertySave({
+    blockId: pageId,
+    setProperties,
+    toasts: {
+      saveFailed: 'pageProperty.saveFailed',
+      deleteFailed: 'pageProperty.deleteFailed',
+    },
+  })
+
+  /** Wrapper that resolves valueType from def before delegating to hook. */
   const doSaveProperty = useCallback(
     async (key: string, def: PropertyDefinition | undefined, rawValue: string) => {
-      try {
-        const valueType = def?.value_type ?? 'text'
-        const ok = await handleSaveProperty(pageId, key, rawValue, valueType, (props) =>
-          setProperties(props),
-        )
-        if (!ok) {
-          toast.error(t('property.invalidNumber'))
-        }
-      } catch {
-        toast.error(t('pageProperty.saveFailed'))
-      }
+      const valueType = def?.value_type ?? 'text'
+      await doSave(key, rawValue, valueType)
     },
-    [pageId, t],
-  )
-
-  const doDeleteProperty = useCallback(
-    async (key: string) => {
-      try {
-        await handleDeleteProperty(pageId, key, () => {
-          setProperties((prev) => prev.filter((p) => p.key !== key))
-        })
-      } catch {
-        toast.error(t('pageProperty.deleteFailed'))
-      }
-    },
-    [pageId, t],
+    [doSave],
   )
 
   const handleConfirmDelete = useCallback(() => {

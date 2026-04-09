@@ -26,8 +26,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { logger } from '@/lib/logger'
-import { parseDate } from '@/lib/parse-date'
 import { formatPropertyName } from '@/lib/property-utils'
+import { useDateInput } from '../hooks/useDateInput'
 import type { BlockRow, PropertyDefinition, PropertyRow } from '../lib/tauri'
 import { listBlocks, setProperty, updatePropertyDefOptions } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
@@ -65,36 +65,49 @@ export function PropertyRowEditor({
   })()
 
   const [localValue, setLocalValue] = useState(currentValue)
-  const [datePreview, setDatePreview] = useState<string | null>(null)
 
   // Sync localValue when prop changes externally
   useEffect(() => {
     setLocalValue(currentValue)
   }, [currentValue])
 
+  // Date input hook (M-29) — always called, values used only for date type
+  const dateSave = useCallback(
+    (isoDate: string) => {
+      if (isoDate !== currentValue) onSave(isoDate)
+    },
+    [currentValue, onSave],
+  )
+  const {
+    dateInput,
+    datePreview,
+    handleChange: handleDateChange,
+    handleBlur: handleDateBlur,
+  } = useDateInput({
+    initialValue: currentValue,
+    onSave: valueType === 'date' ? dateSave : undefined,
+  })
+
   const handleBlur = useCallback(() => {
     if (valueType === 'date') {
-      const trimmed = localValue.trim()
-      setDatePreview(null)
-      if (!trimmed) {
-        if (localValue !== currentValue) onSave(localValue)
-        return
-      }
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-        const parsed = parseDate(trimmed)
-        if (parsed) {
-          setLocalValue(parsed)
-          onSave(parsed)
-          return
-        }
-        // Invalid NL — don't save
-        return
-      }
+      handleDateBlur()
+      return
     }
     if (localValue !== currentValue) {
       onSave(localValue)
     }
-  }, [localValue, currentValue, onSave, valueType])
+  }, [localValue, currentValue, onSave, valueType, handleDateBlur])
+
+  const handleChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (valueType === 'date') {
+        handleDateChange(e)
+      } else {
+        setLocalValue(e.target.value)
+      }
+    },
+    [valueType, handleDateChange],
+  )
 
   const handleSelectChange = useCallback(
     (val: string) => {
@@ -275,19 +288,9 @@ export function PropertyRowEditor({
             <Input
               className="h-7 text-xs"
               type={valueType === 'number' ? 'number' : 'text'}
-              value={localValue}
+              value={valueType === 'date' ? dateInput : localValue}
               placeholder={valueType === 'date' ? t('property.datePlaceholder') : undefined}
-              onChange={(e) => {
-                setLocalValue(e.target.value)
-                if (valueType === 'date') {
-                  const raw = e.target.value.trim()
-                  if (!raw || /^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-                    setDatePreview(raw || null)
-                  } else {
-                    setDatePreview(parseDate(raw))
-                  }
-                }
-              }}
+              onChange={handleChange}
               onBlur={handleBlur}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') (e.target as HTMLInputElement).blur()

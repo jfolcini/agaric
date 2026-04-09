@@ -20,16 +20,12 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
-import {
-  buildInitParams,
-  handleDeleteProperty,
-  handleSaveProperty,
-  NON_DELETABLE_PROPERTIES,
-} from '@/lib/property-save-utils'
+import { buildInitParams, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
-import { announce } from '../lib/announcer'
-import { parseDate } from '../lib/parse-date'
+import { useDateInput } from '../hooks/useDateInput'
+import { usePropertySave } from '../hooks/usePropertySave'
 import type { PropertyDefinition, PropertyRow as PropertyRowData } from '../lib/tauri'
 import {
   getProperties,
@@ -87,51 +83,14 @@ export function BlockPropertyDrawer({
       .finally(() => setLoading(false))
   }, [blockId, open, t])
 
-  // Save handler
-  const handleSave = useCallback(
-    async (key: string, value: string, type: string) => {
-      if (!blockId) return
-      try {
-        const ok = await handleSaveProperty(blockId, key, value, type, (props) =>
-          setProperties(props),
-        )
-        if (!ok) {
-          toast.error(t('property.invalidNumber'))
-          return
-        }
-        announce(t('property.saved'))
-      } catch (err) {
-        logger.error('BlockPropertyDrawer', 'Failed to save property', {
-          blockId: blockId ?? '',
-          key,
-          error: String(err),
-        })
-        toast.error(t('property.saveFailed'))
-      }
-    },
-    [blockId, t],
-  )
-
-  // Delete handler
-  const handleDelete = useCallback(
-    async (key: string) => {
-      if (!blockId) return
-      try {
-        await handleDeleteProperty(blockId, key, () => {
-          setProperties((prev) => prev.filter((p) => p.key !== key))
-        })
-        announce(t('property.deleted'))
-      } catch (err) {
-        logger.error('BlockPropertyDrawer', 'Failed to delete property', {
-          blockId: blockId ?? '',
-          key,
-          error: String(err),
-        })
-        toast.error(t('property.deleteFailed'))
-      }
-    },
-    [blockId, t],
-  )
+  // Save / delete via shared hook (M-28)
+  const { handleSave, handleDelete } = usePropertySave({
+    blockId,
+    setProperties,
+    announceOnSave: 'property.saved',
+    announceOnDelete: 'property.deleted',
+    logTag: 'BlockPropertyDrawer',
+  })
 
   // Determine property type from definitions
   const getType = useCallback(
@@ -352,46 +311,15 @@ export function PropertyRow({
 }: PropertyRowProps): React.ReactElement {
   const { t } = useTranslation()
   const isDate = inputType === 'date'
-  const [datePreview, setDatePreview] = useState<string | null>(null)
-  const [dateError, setDateError] = useState(false)
 
-  const handleDateBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    const raw = e.target.value.trim()
-    setDatePreview(null)
-    setDateError(false)
-    if (!raw) {
-      onSave('')
-      return
-    }
-    // If it's already a valid YYYY-MM-DD, accept as-is
-    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-      onSave(raw)
-      return
-    }
-    const parsed = parseDate(raw)
-    if (parsed) {
-      onSave(parsed)
-      e.target.value = parsed
-    } else {
-      setDateError(true)
-      // Don't save — leave the field as is
-    }
-  }
-
-  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value.trim()
-    setDateError(false)
-    if (!raw) {
-      setDatePreview(null)
-      return
-    }
-    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-      setDatePreview(raw)
-    } else {
-      const parsed = parseDate(raw)
-      setDatePreview(parsed)
-    }
-  }
+  // Date input hook (M-29) — always called, values used only when isDate
+  const {
+    dateInput,
+    datePreview,
+    dateError,
+    handleChange: handleDateChange,
+    handleBlur: handleDateBlur,
+  } = useDateInput({ initialValue: value, onSave: isDate ? onSave : undefined })
 
   return (
     <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
@@ -412,7 +340,7 @@ export function PropertyRow({
           className="h-7 text-xs"
           type={isDate ? 'text' : inputType}
           aria-label={ariaLabel}
-          defaultValue={value}
+          {...(isDate ? { value: dateInput } : { defaultValue: value })}
           placeholder={isDate ? t('property.datePlaceholder') : undefined}
           onBlur={isDate ? handleDateBlur : (e) => onSave(e.target.value)}
           onChange={isDate ? handleDateChange : undefined}
