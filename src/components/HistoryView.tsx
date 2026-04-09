@@ -19,6 +19,7 @@ import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import type { HistoryEntry } from '../lib/tauri'
 import { listPageHistory, revertOps } from '../lib/tauri'
+import { CompactionCard } from './CompactionCard'
 import { EmptyState } from './EmptyState'
 import { HistoryFilterBar } from './HistoryFilterBar'
 import { HistoryListItem } from './HistoryListItem'
@@ -269,6 +270,9 @@ export function HistoryView(): React.ReactElement {
 
   return (
     <div className="history-view space-y-4">
+      {/* Op log compaction card */}
+      <CompactionCard />
+
       <div className="sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-4 border-b border-border/40 space-y-2">
         {/* Filter bar */}
         <HistoryFilterBar opTypeFilter={opTypeFilter} onFilterChange={setOpTypeFilter} />

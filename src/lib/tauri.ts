@@ -760,3 +760,29 @@ export async function logFrontend(
 export function getLogDir(): Promise<string> {
   return invoke('get_log_dir') as Promise<string>
 }
+
+// ---------------------------------------------------------------------------
+// Op Log Compaction (F-20)
+// ---------------------------------------------------------------------------
+
+export interface CompactionStatus {
+  total_ops: number
+  oldest_op_date: string | null
+  eligible_ops: number
+  retention_days: number
+}
+
+export interface CompactionResult {
+  snapshot_id: string | null
+  ops_deleted: number
+}
+
+/** Get current op log compaction status and stats. */
+export function getCompactionStatus(): Promise<CompactionStatus> {
+  return invoke('get_compaction_status')
+}
+
+/** Compact the op log by removing ops older than retentionDays. */
+export function compactOpLog(retentionDays: number): Promise<CompactionResult> {
+  return invoke('compact_op_log_cmd', { retentionDays })
+}

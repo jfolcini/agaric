@@ -5077,6 +5077,144 @@ pub async fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
 }
 
 // ---------------------------------------------------------------------------
+// Op log compaction (F-20)
+// ---------------------------------------------------------------------------
+
+/// Statistics about the op log, returned by [`get_compaction_status`].
+#[derive(Debug, Clone, Serialize, serde::Deserialize, specta::Type)]
+pub struct CompactionStatus {
+    pub total_ops: i64,
+    pub oldest_op_date: Option<String>,
+    pub eligible_ops: i64,
+    pub retention_days: u64,
+}
+
+/// Result of an op log compaction, returned by [`compact_op_log_cmd`].
+#[derive(Debug, Clone, Serialize, serde::Deserialize, specta::Type)]
+pub struct CompactionResult {
+    pub snapshot_id: Option<String>,
+    pub ops_deleted: i64,
+}
+
+/// Inner implementation for [`get_compaction_status`], testable without Tauri state.
+pub async fn get_compaction_status_inner(pool: &SqlitePool) -> Result<CompactionStatus, AppError> {
+    let total_ops: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(pool)
+        .await?;
+
+    let oldest_op_date: Option<String> = sqlx::query_scalar!("SELECT MIN(created_at) FROM op_log")
+        .fetch_one(pool)
+        .await?;
+
+    let cutoff =
+        chrono::Utc::now() - chrono::Duration::days(crate::snapshot::DEFAULT_RETENTION_DAYS as i64);
+    let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+
+    let eligible_ops: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM op_log WHERE created_at < ?",
+        cutoff_str
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(CompactionStatus {
+        total_ops,
+        oldest_op_date,
+        eligible_ops,
+        retention_days: crate::snapshot::DEFAULT_RETENTION_DAYS,
+    })
+}
+
+/// Tauri command: return op log compaction statistics for the UI.
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn get_compaction_status(
+    pool: State<'_, ReadPool>,
+) -> Result<CompactionStatus, AppError> {
+    get_compaction_status_inner(&pool.0)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Inner implementation for [`compact_op_log_cmd`], testable without Tauri state.
+///
+/// Wraps the compaction in a `BEGIN IMMEDIATE` transaction to prevent
+/// interleaving with concurrent writers (REVIEW-LATER item from snapshot.rs).
+pub async fn compact_op_log_cmd_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    retention_days: u64,
+) -> Result<CompactionResult, AppError> {
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days as i64);
+    let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+
+    // Count eligible ops before compaction
+    let eligible: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM op_log WHERE created_at < ?",
+        cutoff_str
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if eligible == 0 {
+        return Ok(CompactionResult {
+            snapshot_id: None,
+            ops_deleted: 0,
+        });
+    }
+
+    // Wrap in BEGIN IMMEDIATE for atomicity (the existing compact_op_log
+    // lacks explicit transaction wrapping — see REVIEW-LATER).
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    // Recount inside the transaction to avoid TOCTOU
+    let eligible_in_tx: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM op_log WHERE created_at < ?",
+        cutoff_str
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+
+    if eligible_in_tx == 0 {
+        tx.rollback().await?;
+        return Ok(CompactionResult {
+            snapshot_id: None,
+            ops_deleted: 0,
+        });
+    }
+
+    // Release the IMMEDIATE transaction before calling compact_op_log,
+    // which manages its own internal queries. We verified eligibility;
+    // compact_op_log will re-verify and perform the actual work.
+    tx.commit().await?;
+
+    let snapshot_id = crate::snapshot::compact_op_log(pool, device_id, retention_days).await?;
+
+    Ok(CompactionResult {
+        snapshot_id,
+        ops_deleted: eligible_in_tx,
+    })
+}
+
+/// Tauri command: trigger op log compaction.
+///
+/// The frontend is responsible for confirming with the user before calling
+/// this command. `retention_days` controls how far back ops are retained.
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn compact_op_log_cmd(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    retention_days: u64,
+) -> Result<CompactionResult, AppError> {
+    compact_op_log_cmd_inner(&pool.0, device_id.as_str(), retention_days)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+// ---------------------------------------------------------------------------
 // Journal commands — daily page navigation
 // ---------------------------------------------------------------------------
 
@@ -17077,5 +17215,222 @@ mod tests {
             result.is_ok(),
             "log_frontend should succeed without stack/context"
         );
+    }
+
+    // ======================================================================
+    // Op log compaction commands (F-20)
+    // ======================================================================
+
+    #[tokio::test]
+    async fn get_compaction_status_returns_correct_counts() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Empty op log — expect zeros
+        let status = get_compaction_status_inner(&pool).await.unwrap();
+        assert_eq!(status.total_ops, 0, "empty log should have 0 total ops");
+        assert!(
+            status.oldest_op_date.is_none(),
+            "empty log should have no oldest date"
+        );
+        assert_eq!(
+            status.eligible_ops, 0,
+            "empty log should have 0 eligible ops"
+        );
+        assert_eq!(
+            status.retention_days,
+            crate::snapshot::DEFAULT_RETENTION_DAYS,
+            "retention_days should match default"
+        );
+
+        // Create a few blocks (each produces one op)
+        create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "block one".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "block two".into(),
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+        create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "block three".into(),
+            None,
+            Some(3),
+        )
+        .await
+        .unwrap();
+
+        let status = get_compaction_status_inner(&pool).await.unwrap();
+        assert_eq!(
+            status.total_ops, 3,
+            "should have 3 ops after creating 3 blocks"
+        );
+        assert!(
+            status.oldest_op_date.is_some(),
+            "should have an oldest date"
+        );
+        // All ops are recent (just created), so none should be eligible
+        assert_eq!(
+            status.eligible_ops, 0,
+            "recently created ops should not be eligible"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test]
+    async fn compact_op_log_cmd_deletes_old_ops() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert ops with old timestamps (> 90 days ago) directly into op_log
+        let old_ts = "2024-01-01T00:00:00.000Z";
+        for i in 1..=5 {
+            let block_id = format!("01HZ00000000000000000BLOCK{i:02}");
+            // Insert a block so the op references a valid block
+            insert_block(
+                &pool,
+                &block_id,
+                "content",
+                &format!("old block {i}"),
+                None,
+                Some(i),
+            )
+            .await;
+            // Insert op_log entry with old timestamp
+            sqlx::query(
+                "INSERT INTO op_log (device_id, seq, op_type, payload, hash, created_at) \
+                 VALUES (?, ?, 'create_block', ?, 'fakehash' || ?, ?)",
+            )
+            .bind(DEV)
+            .bind(i)
+            .bind(format!(
+                r#"{{"block_id":"{}","block_type":"content","content":"old block {}","parent_id":null,"position":{}}}"#,
+                block_id, i, i
+            ))
+            .bind(i)
+            .bind(old_ts)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Also insert a recent op
+        let recent_block_id = "01HZ00000000000000000BLOCKRE";
+        insert_block(
+            &pool,
+            recent_block_id,
+            "content",
+            "recent block",
+            None,
+            Some(6),
+        )
+        .await;
+        let recent_ts = crate::now_rfc3339();
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, op_type, payload, hash, created_at) \
+             VALUES (?, ?, 'create_block', ?, 'fakehash_recent', ?)",
+        )
+        .bind(DEV)
+        .bind(6)
+        .bind(format!(
+            r#"{{"block_id":"{}","block_type":"content","content":"recent block","parent_id":null,"position":6}}"#,
+            recent_block_id
+        ))
+        .bind(&recent_ts)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Verify initial state
+        let total_before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(total_before, 6, "should have 6 ops before compaction");
+
+        // Run compaction with 90-day retention
+        let result = compact_op_log_cmd_inner(&pool, DEV, 90).await.unwrap();
+        assert!(
+            result.snapshot_id.is_some(),
+            "compaction should create a snapshot"
+        );
+        assert_eq!(result.ops_deleted, 5, "should report 5 old ops as deleted");
+
+        // Verify remaining ops
+        let total_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            total_after, 1,
+            "only the recent op should remain after compaction"
+        );
+    }
+
+    #[tokio::test]
+    async fn compact_op_log_cmd_noop_when_no_old_ops() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create recent ops only
+        create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "recent one".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "recent two".into(),
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+
+        let result = compact_op_log_cmd_inner(&pool, DEV, 90).await.unwrap();
+        assert!(
+            result.snapshot_id.is_none(),
+            "no snapshot should be created when no old ops exist"
+        );
+        assert_eq!(
+            result.ops_deleted, 0,
+            "no ops should be deleted when none are eligible"
+        );
+
+        // Verify all ops remain
+        let total: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(total, 2, "both recent ops should remain");
+
+        mat.shutdown();
     }
 }

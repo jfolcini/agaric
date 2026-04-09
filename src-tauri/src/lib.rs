@@ -173,6 +173,9 @@ pub fn run() {
         // Frontend logging (F-19)
         commands::log_frontend,
         commands::get_log_dir,
+        // Op log compaction (F-20)
+        commands::get_compaction_status,
+        commands::compact_op_log_cmd,
     ]);
 
     tauri::Builder::default()
@@ -388,6 +391,9 @@ mod specta_tests {
             // Frontend logging (F-19)
             crate::commands::log_frontend,
             crate::commands::get_log_dir,
+            // Op log compaction (F-20)
+            crate::commands::get_compaction_status,
+            crate::commands::compact_op_log_cmd,
         ])
     }
 

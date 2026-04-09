@@ -780,6 +780,31 @@ async getLogDir() : Promise<Result<string, { kind: string; message: string }>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Tauri command: return op log compaction statistics for the UI.
+ */
+async getCompactionStatus() : Promise<Result<CompactionStatus, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_compaction_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: trigger op log compaction.
+ *
+ * The frontend is responsible for confirming with the user before calling
+ * this command. `retention_days` controls how far back ops are retained.
+ */
+async compactOpLogCmd(retentionDays: number) : Promise<Result<CompactionResult, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("compact_op_log_cmd", { retentionDays }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -833,6 +858,14 @@ export type BacklinkSort = { type: "Created"; dir: SortDir } | { type: "Property
  * Row returned by paginated block queries.
  */
 export type BlockRow = { id: string; block_type: string; content: string | null; parent_id: string | null; position: number | null; deleted_at: string | null; is_conflict: boolean; conflict_type: string | null; todo_state: string | null; priority: string | null; due_date: string | null; scheduled_date: string | null }
+/**
+ * Result of an op log compaction, returned by [`compact_op_log_cmd`].
+ */
+export type CompactionResult = { snapshot_id: string | null; ops_deleted: number }
+/**
+ * Statistics about the op log, returned by [`get_compaction_status`].
+ */
+export type CompactionStatus = { total_ops: number; oldest_op_date: string | null; eligible_ops: number; retention_days: number }
 /**
  * Comparison operators for property filters.
  */

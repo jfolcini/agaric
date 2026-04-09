@@ -27,8 +27,11 @@ import {
   FileSymlink,
   Heading,
   Highlighter,
+  Info,
   Italic,
   Link2,
+  ListOrdered,
+  Minus,
   Quote,
   Redo2,
   Settings2,
@@ -286,6 +289,30 @@ export function FormattingToolbar({
     [editor],
   )
 
+  const structureButtons: ToolbarButtonConfig[] = useMemo(
+    () => [
+      {
+        icon: ListOrdered,
+        label: 'toolbar.orderedList',
+        tip: 'toolbar.orderedListTip',
+        action: () => dispatchBlockEvent('INSERT_ORDERED_LIST'),
+      },
+      {
+        icon: Minus,
+        label: 'toolbar.divider',
+        tip: 'toolbar.dividerTip',
+        action: () => dispatchBlockEvent('INSERT_DIVIDER'),
+      },
+      {
+        icon: Info,
+        label: 'toolbar.callout',
+        tip: 'toolbar.calloutTip',
+        action: () => dispatchBlockEvent('INSERT_CALLOUT'),
+      },
+    ],
+    [],
+  )
+
   const metadataButtons: ToolbarButtonConfig[] = useMemo(
     () => [
       {
@@ -538,6 +565,14 @@ export function FormattingToolbar({
               </div>
             </PopoverContent>
           </Popover>
+
+          <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
+
+          <ToolbarButtonGroup
+            buttons={structureButtons}
+            state={state as Record<string, unknown>}
+            t={t}
+          />
 
           <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 

@@ -34,6 +34,11 @@ vi.mock('sonner', () => ({
   },
 }))
 
+// Mock CompactionCard so it doesn't make extra invoke calls in HistoryView tests
+vi.mock('../CompactionCard', () => ({
+  CompactionCard: () => null,
+}))
+
 vi.mock('@/components/ui/select', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require('react')

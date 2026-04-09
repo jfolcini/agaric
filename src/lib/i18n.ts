@@ -136,6 +136,12 @@ const resources = {
       'toolbar.undoTip': 'Undo (Ctrl+Z)',
       'toolbar.redoTip': 'Redo (Ctrl+Y)',
       'toolbar.discardTip': 'Discard changes (Esc)',
+      'toolbar.orderedList': 'Ordered list',
+      'toolbar.orderedListTip': 'Ordered list (1. prefix)',
+      'toolbar.divider': 'Divider',
+      'toolbar.dividerTip': 'Divider (---)',
+      'toolbar.callout': 'Callout',
+      'toolbar.calloutTip': 'Callout (> [!INFO])',
 
       // Context menu
       'contextMenu.delete': 'Delete',
@@ -1203,6 +1209,22 @@ const resources = {
 
       // UX-41: History
       'history.loadedMoreEntries': 'Loaded {{count}} more entries',
+
+      // F-20: Op Log Compaction
+      'compaction.title': 'Op Log Compaction',
+      'compaction.totalOps': 'Total operations: {{count}}',
+      'compaction.oldestOp': 'Oldest operation: {{date}}',
+      'compaction.oldestOpNone': 'Oldest operation: N/A',
+      'compaction.eligibleOps': 'Eligible for cleanup: {{count}}',
+      'compaction.compactNow': 'Compact Now',
+      'compaction.confirmTitle': 'Compact Op Log?',
+      'compaction.confirmDescription':
+        'This will permanently delete {{count}} operations older than {{days}} days. The original data in these operations will be lost. This cannot be undone.',
+      'compaction.compactButton': 'Compact',
+      'compaction.cancel': 'Cancel',
+      'compaction.success': 'Compacted {{count}} operations',
+      'compaction.failed': 'Failed to compact op log',
+      'compaction.loadFailed': 'Failed to load compaction status',
 
       // UX-41: Pairing
       'pairing.inProgress': 'Pairing in progress...',

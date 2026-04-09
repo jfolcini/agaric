@@ -186,7 +186,7 @@ describe('FormattingToolbar', () => {
       expect(toolbar).toBeInTheDocument()
     })
 
-    it('renders all nineteen formatting buttons', () => {
+    it('renders all twenty-two formatting buttons', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
       expect(screen.getByRole('button', { name: 'Bold' })).toBeInTheDocument()
@@ -200,6 +200,9 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: 'Code block language' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Blockquote' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Heading level' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Ordered list' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Divider' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Callout' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Cycle priority' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Insert date' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Set due date' })).toBeInTheDocument()
@@ -213,7 +216,7 @@ describe('FormattingToolbar', () => {
     it('renders separators between button groups', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const seps = screen.getAllByTestId('separator')
-      expect(seps).toHaveLength(3)
+      expect(seps).toHaveLength(4)
       for (const sep of seps) {
         expect(sep).toHaveAttribute('data-orientation', 'vertical')
       }
@@ -600,6 +603,9 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: 'Code block language' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Blockquote' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Heading level' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Ordered list' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Divider' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Callout' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Cycle priority' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Insert date' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Set due date' })).toBeInTheDocument()
@@ -678,6 +684,73 @@ describe('FormattingToolbar', () => {
       fireEvent.pointerDown(screen.getByRole('button', { name: 'Toggle TODO state' }))
       expect(spy).toHaveBeenCalledOnce()
       document.removeEventListener('toggle-todo-state', spy)
+    })
+  })
+
+  // ── UX-90: Structure buttons (Ordered List, Divider, Callout) ─────────
+
+  describe('structure buttons', () => {
+    it('renders Ordered list button with aria-label', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: 'Ordered list' })
+      expect(btn).toBeInTheDocument()
+      expect(btn).toHaveAttribute('aria-label', 'Ordered list')
+    })
+
+    it('renders Divider button with aria-label', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: 'Divider' })
+      expect(btn).toBeInTheDocument()
+      expect(btn).toHaveAttribute('aria-label', 'Divider')
+    })
+
+    it('renders Callout button with aria-label', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: 'Callout' })
+      expect(btn).toBeInTheDocument()
+      expect(btn).toHaveAttribute('aria-label', 'Callout')
+    })
+
+    it('dispatches insert-ordered-list event on pointerdown', () => {
+      const spy = vi.fn()
+      document.addEventListener('insert-ordered-list', spy)
+      render(<FormattingToolbar editor={makeEditor()} />)
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Ordered list' }))
+      expect(spy).toHaveBeenCalledOnce()
+      document.removeEventListener('insert-ordered-list', spy)
+    })
+
+    it('dispatches insert-divider event on pointerdown', () => {
+      const spy = vi.fn()
+      document.addEventListener('insert-divider', spy)
+      render(<FormattingToolbar editor={makeEditor()} />)
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Divider' }))
+      expect(spy).toHaveBeenCalledOnce()
+      document.removeEventListener('insert-divider', spy)
+    })
+
+    it('dispatches insert-callout event on pointerdown', () => {
+      const spy = vi.fn()
+      document.addEventListener('insert-callout', spy)
+      render(<FormattingToolbar editor={makeEditor()} />)
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Callout' }))
+      expect(spy).toHaveBeenCalledOnce()
+      document.removeEventListener('insert-callout', spy)
+    })
+
+    it('prevents default on pointerdown to preserve editor focus', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      for (const label of ['Ordered list', 'Divider', 'Callout']) {
+        const btn = screen.getByRole('button', { name: label })
+        const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
+        const prevented = !btn.dispatchEvent(event)
+        expect(prevented).toBe(true)
+      }
+    })
+
+    it('passes axe audit with structure buttons', async () => {
+      const { container } = render(<FormattingToolbar editor={makeEditor()} />)
+      expect(await axe(container)).toHaveNoViolations()
     })
   })
 

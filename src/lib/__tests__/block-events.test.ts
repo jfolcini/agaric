@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BLOCK_EVENTS, dispatchBlockEvent, onBlockEvent } from '../block-events'
 
 describe('BLOCK_EVENTS', () => {
-  it('contains all 10 expected event keys', () => {
+  it('contains all 13 expected event keys', () => {
     const expectedKeys = [
       'OPEN_DATE_PICKER',
       'OPEN_DUE_DATE_PICKER',
@@ -23,6 +23,9 @@ describe('BLOCK_EVENTS', () => {
       'SET_PRIORITY_1',
       'SET_PRIORITY_2',
       'SET_PRIORITY_3',
+      'INSERT_ORDERED_LIST',
+      'INSERT_DIVIDER',
+      'INSERT_CALLOUT',
     ]
     expect(Object.keys(BLOCK_EVENTS).sort()).toEqual(expectedKeys.sort())
   })
