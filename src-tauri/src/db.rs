@@ -45,7 +45,13 @@ fn base_connect_options(db_path: &Path) -> SqliteConnectOptions {
         .synchronous(SqliteSynchronous::Normal)
         .create_if_missing(true)
         .pragma("foreign_keys", "ON")
-        .pragma("wal_autocheckpoint", "1000") // checkpoint every 1000 pages (~4MB)
+        // WAL autocheckpoint: 5000 pages (~20 MB).  The default (1000) triggers
+        // checkpoints too frequently during bursty write workloads (e.g. bulk
+        // import or sync merges), stalling readers.  5000 pages lets the WAL
+        // grow larger between checkpoints, improving write throughput while
+        // journal_size_limit caps the on-disk WAL at 50 MB to prevent unbounded growth.
+        .pragma("wal_autocheckpoint", "5000")
+        .pragma("journal_size_limit", "52428800") // 50 MB WAL size cap
         .busy_timeout(std::time::Duration::from_secs(5))
 }
 
@@ -424,33 +430,33 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(row, Some(1000), "wal_autocheckpoint should be 1000 pages");
+        assert_eq!(row, Some(5000), "wal_autocheckpoint should be 5000 pages");
     }
 
     #[tokio::test]
     async fn init_pools_wal_autocheckpoint_configured() {
         let (pools, _dir) = test_pools().await;
 
-        // Verify write pool has wal_autocheckpoint = 1000
+        // Verify write pool has wal_autocheckpoint = 5000
         let write_val = sqlx::query_scalar!("PRAGMA wal_autocheckpoint")
             .fetch_one(&pools.write)
             .await
             .unwrap();
         assert_eq!(
             write_val,
-            Some(1000),
-            "write pool wal_autocheckpoint should be 1000 pages"
+            Some(5000),
+            "write pool wal_autocheckpoint should be 5000 pages"
         );
 
-        // Verify read pool has wal_autocheckpoint = 1000
+        // Verify read pool has wal_autocheckpoint = 5000
         let read_val = sqlx::query_scalar!("PRAGMA wal_autocheckpoint")
             .fetch_one(&pools.read)
             .await
             .unwrap();
         assert_eq!(
             read_val,
-            Some(1000),
-            "read pool wal_autocheckpoint should be 1000 pages"
+            Some(5000),
+            "read pool wal_autocheckpoint should be 5000 pages"
         );
     }
 

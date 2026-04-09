@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use rand::Rng;
 use tokio::sync::{Mutex, Notify};
 
 // ---------------------------------------------------------------------------
@@ -109,6 +110,9 @@ impl SyncScheduler {
     }
 
     /// Record a sync failure for `peer_id`, doubling the backoff.
+    ///
+    /// Applies ±10 % random jitter to the computed backoff so that multiple
+    /// devices failing simultaneously do not all retry at the same instant.
     pub fn record_failure(&self, peer_id: &str) {
         let mut backoff = self.backoff.lock().unwrap_or_else(|e| e.into_inner());
         let state = backoff.entry(peer_id.to_string()).or_insert(BackoffState {
@@ -117,8 +121,12 @@ impl SyncScheduler {
             consecutive_failures: 0,
         });
         state.consecutive_failures += 1;
-        state.backoff = (state.backoff * 2).min(MAX_BACKOFF);
-        state.next_retry_at = Instant::now() + state.backoff;
+        let base = (state.backoff * 2).min(MAX_BACKOFF);
+        // ±10 % jitter to spread out simultaneous retries across devices.
+        let jitter = rand::thread_rng().gen_range(0.9..=1.1);
+        let jittered_secs = (base.as_secs_f64() * jitter).max(MIN_BACKOFF.as_secs_f64());
+        state.backoff = base; // store the deterministic base for the next doubling
+        state.next_retry_at = Instant::now() + Duration::from_secs_f64(jittered_secs);
     }
 
     /// Record a successful sync, resetting the backoff for `peer_id`.
@@ -287,6 +295,47 @@ mod tests {
         let backoff = sched.backoff.lock().unwrap();
         let state = backoff.get("peer-a").unwrap();
         assert!(state.backoff <= MAX_BACKOFF);
+    }
+
+    #[test]
+    fn backoff_jitter_stays_within_ten_percent() {
+        // Run many iterations to exercise the random jitter range.
+        // For a base backoff of 10 s the jittered next_retry_at should
+        // always fall within [9 s, 11 s] of `now`.
+        let sched = SyncScheduler::new();
+        for _ in 0..200 {
+            sched.record_success("jitter-peer"); // reset each iteration
+
+            // Drive the deterministic base to exactly 8 s (1→2→4→8)
+            // so the *next* record_failure doubles it to 16 s.
+            // We can instead just use a single failure: base goes 1→2.
+            // Let's drive to a rounder number for clarity:
+            //   fail 1: base = 2 s
+            //   fail 2: base = 4 s
+            //   fail 3: base = 8 s
+            //   fail 4: base = 16 s
+            for _ in 0..3 {
+                sched.record_failure("jitter-peer");
+            }
+            // After 3 failures the deterministic base is 8 s.
+            // The 4th failure will double to 16 s and apply jitter.
+            let before = Instant::now();
+            sched.record_failure("jitter-peer");
+            let after = Instant::now();
+
+            let state = sched.backoff.lock().unwrap();
+            let s = state.get("jitter-peer").unwrap();
+            let retry_at = s.next_retry_at;
+            drop(state);
+
+            // Expected base = 16 s, jitter ∈ [0.9, 1.1] → [14.4 s, 17.6 s]
+            let lo = before + Duration::from_secs_f64(16.0 * 0.9 - 0.05);
+            let hi = after + Duration::from_secs_f64(16.0 * 1.1 + 0.05);
+            assert!(
+                retry_at >= lo && retry_at <= hi,
+                "jittered retry_at should be within ±10 %% of 16 s base"
+            );
+        }
     }
 
     #[tokio::test]

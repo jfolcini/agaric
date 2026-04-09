@@ -16,6 +16,21 @@ import { logger } from '../lib/logger'
 import type { BlockRow, ProjectedAgendaEntry } from '../lib/tauri'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../lib/tauri'
 
+// ── Module-level cache for projected agenda (UX-114) ──────────────────
+const PROJECTED_CACHE_TTL_MS = 30_000 // 30 seconds
+
+interface ProjectedCacheEntry {
+  entries: ProjectedAgendaEntry[]
+  timestamp: number
+}
+
+const projectedCache = new Map<string, ProjectedCacheEntry>()
+
+/** @internal — exported for test isolation only. */
+export function clearProjectedCache(): void {
+  projectedCache.clear()
+}
+
 export interface UseDuePanelDataOptions {
   date: string
   sourceFilter: string | null
@@ -266,13 +281,30 @@ export function useDuePanelData({
     }
   }, [date, sourceFilter])
 
-  // Fetch projected entries for repeating tasks
+  // Fetch projected agenda entries with caching (UX-114)
   useEffect(() => {
     let stale = false
+    const cacheKey = date
+
+    // Serve cached data immediately if available
+    const cached = projectedCache.get(cacheKey)
+    if (cached && Date.now() - cached.timestamp < PROJECTED_CACHE_TTL_MS) {
+      setProjectedEntries(cached.entries)
+      setProjectedLoading(false)
+      return
+    }
+
+    if (cached) {
+      // Stale cache — show immediately but refetch
+      setProjectedEntries(cached.entries)
+    }
+
     setProjectedLoading(true)
     listProjectedAgenda({ startDate: date, endDate: date, limit: 20 })
       .then((entries) => {
         if (!stale) {
+          // Update cache
+          projectedCache.set(cacheKey, { entries, timestamp: Date.now() })
           setProjectedEntries(entries)
           const parentIds = entries
             .map((e) => e.block.parent_id)

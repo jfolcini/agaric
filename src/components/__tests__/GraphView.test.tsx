@@ -20,7 +20,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { logger } from '../../lib/logger'
 import { useNavigationStore } from '../../stores/navigation'
-import { GraphView } from '../GraphView'
+import { clearGraphCache, GraphView } from '../GraphView'
 
 vi.mock('../../lib/logger', () => ({
   logger: {
@@ -96,6 +96,7 @@ const emptyPage = { items: [], next_cursor: null, has_more: false }
 
 beforeEach(() => {
   vi.clearAllMocks()
+  clearGraphCache()
   useNavigationStore.setState({
     currentView: 'graph',
     pageStack: [],

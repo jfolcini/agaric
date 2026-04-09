@@ -37,6 +37,22 @@ interface GraphEdge extends SimulationLinkDatum<GraphNode> {
   target: string | GraphNode
 }
 
+// ── Module-level cache for stale-while-revalidate (UX-113) ────────────
+const GRAPH_CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
+
+interface GraphCache {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  timestamp: number
+}
+
+let graphCache: GraphCache | null = null
+
+/** @internal — exported for test isolation only. */
+export function clearGraphCache(): void {
+  graphCache = null
+}
+
 export function GraphView(): React.ReactElement {
   const { t } = useTranslation()
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
@@ -46,9 +62,19 @@ export function GraphView(): React.ReactElement {
   const [nodes, setNodes] = useState<GraphNode[]>([])
   const [edges, setEdges] = useState<GraphEdge[]>([])
 
-  // Fetch data
+  // Fetch data with stale-while-revalidate caching (UX-113)
   useEffect(() => {
     let cancelled = false
+
+    // Serve cached data immediately if available
+    if (graphCache) {
+      setNodes(graphCache.nodes)
+      setEdges(graphCache.edges)
+      setLoading(false)
+
+      // If cache is still fresh, skip refetch
+      if (Date.now() - graphCache.timestamp < GRAPH_CACHE_TTL_MS) return
+    }
 
     async function fetchData() {
       try {
@@ -72,6 +98,9 @@ export function GraphView(): React.ReactElement {
             source: l.source_id,
             target: l.target_id,
           }))
+
+        // Update cache
+        graphCache = { nodes: pageNodes, edges: pageEdges, timestamp: Date.now() }
 
         setNodes(pageNodes)
         setEdges(pageEdges)

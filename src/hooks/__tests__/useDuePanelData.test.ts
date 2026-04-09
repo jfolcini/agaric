@@ -29,7 +29,7 @@ vi.mock('../../lib/tauri', () => ({
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../../lib/tauri'
-import { useDuePanelData } from '../useDuePanelData'
+import { clearProjectedCache, useDuePanelData } from '../useDuePanelData'
 
 const mockedListBlocks = vi.mocked(listBlocks)
 const mockedBatchResolve = vi.mocked(batchResolve)
@@ -63,6 +63,7 @@ function makeBlock(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  clearProjectedCache()
   mockedListBlocks.mockResolvedValue(emptyResponse)
   mockedBatchResolve.mockResolvedValue([])
   mockedListProjectedAgenda.mockResolvedValue([])

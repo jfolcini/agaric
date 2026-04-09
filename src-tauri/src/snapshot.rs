@@ -476,15 +476,9 @@ pub const DEFAULT_RETENTION_DAYS: u64 = 90;
 /// Compact the op log: create a snapshot and purge ops older than `retention_days`.
 /// Returns `Some(snapshot_id)` if compaction occurred, `None` if no old ops exist.
 ///
-/// # Safety note
-///
-/// This function does NOT wrap its steps in an explicit transaction.
-/// Currently it relies on serialisation from the sync daemon's task
-/// scheduling.  With the write pool at `max_connections(2)`, concurrent
-/// calls could interleave between the count check, snapshot creation,
-/// and op purge.  If compaction is ever exposed as a user-facing command
-/// or run from a concurrent background task, wrap the body in
-/// `BEGIN IMMEDIATE` to make the atomicity explicit.
+/// All steps (count check, snapshot creation, op purge, old-snapshot cleanup)
+/// are wrapped in a single `BEGIN IMMEDIATE` transaction so that concurrent
+/// calls cannot interleave between them.
 pub async fn compact_op_log(
     pool: &SqlitePool,
     device_id: &str,
@@ -495,28 +489,78 @@ pub async fn compact_op_log(
     // with op_log.created_at timestamps (F03).
     let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
+    // BEGIN IMMEDIATE — acquire the write lock upfront so the count check,
+    // snapshot creation, op purge, and cleanup are all atomic.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
     // Check if any ops exist before the cutoff
     let count: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM op_log WHERE created_at < ?",
         cutoff_str
     )
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await?;
 
     if count == 0 {
+        tx.commit().await?;
         return Ok(None);
     }
 
-    // Create snapshot first
-    let snapshot_id = create_snapshot(pool, device_id).await?;
+    // Create snapshot inline (cannot delegate to create_snapshot which starts
+    // its own transaction — SQLite does not support nested transactions).
+    let snapshot_id = crate::ulid::SnapshotId::new().into_string();
+
+    // Collect tables and frontier within this transaction for consistency.
+    let tables = collect_tables(&mut tx).await?;
+    let (up_to_seqs, up_to_hash) = collect_frontier(&mut tx).await?;
+
+    let data = SnapshotData {
+        schema_version: SCHEMA_VERSION,
+        snapshot_device_id: device_id.to_string(),
+        up_to_seqs,
+        up_to_hash: up_to_hash.clone(),
+        tables,
+    };
+
+    let encoded = encode_snapshot(&data)?;
+
+    // Step 1: INSERT with status='pending'
+    sqlx::query(
+        "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
+         VALUES (?, 'pending', ?, ?, ?)",
+    )
+    .bind(&snapshot_id)
+    .bind(&up_to_hash)
+    .bind(serde_json::to_string(&data.up_to_seqs)?)
+    .bind(&encoded)
+    .execute(&mut *tx)
+    .await?;
+
+    // Step 2: UPDATE to 'complete'
+    sqlx::query("UPDATE log_snapshots SET status = 'complete' WHERE id = ?")
+        .bind(&snapshot_id)
+        .execute(&mut *tx)
+        .await?;
 
     // Purge old ops (only those before the cutoff)
     sqlx::query("DELETE FROM op_log WHERE created_at < ?")
         .bind(&cutoff_str)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
 
-    cleanup_old_snapshots(pool, 3).await?;
+    // Cleanup old snapshots (inlined to stay within this transaction)
+    let keep: i64 = 3;
+    sqlx::query(
+        "DELETE FROM log_snapshots WHERE status = 'pending' \
+         OR id NOT IN \
+         (SELECT id FROM log_snapshots WHERE status = 'complete' \
+          ORDER BY id DESC LIMIT ?1)",
+    )
+    .bind(keep)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
 
     Ok(Some(snapshot_id))
 }
@@ -2754,6 +2798,110 @@ mod tests {
         assert!(
             err_msg.contains("unsupported schema version"),
             "error should mention unsupported version, got: {err_msg}"
+        );
+    }
+
+    // =======================================================================
+    // compact_op_log_transaction_happy_path (M-30)
+    // =======================================================================
+
+    /// Verify that `compact_op_log` works correctly with its transaction
+    /// wrapping: create old + recent ops, run compaction, verify that old ops
+    /// are purged, recent ops survive, and a snapshot is created — all
+    /// atomically within a single BEGIN IMMEDIATE transaction.
+    #[tokio::test]
+    async fn compact_op_log_transaction_happy_path() {
+        let (pool, _dir) = test_pool().await;
+        let device_id = "dev-tx";
+
+        // Insert a block with an old op (> 90 days ago)
+        insert_block(&pool, "block-old-1", "old content 1").await;
+        insert_op_at(&pool, device_id, "block-old-1", "2024-01-01T00:00:00Z").await;
+
+        // Insert another block with an old op
+        insert_block(&pool, "block-old-2", "old content 2").await;
+        insert_op_at(&pool, device_id, "block-old-2", "2024-02-01T00:00:00Z").await;
+
+        // Insert a block with a recent op (should survive compaction)
+        insert_block(&pool, "block-recent", "recent content").await;
+        let now = crate::now_rfc3339();
+        insert_op_at(&pool, device_id, "block-recent", &now).await;
+
+        // Verify starting state: 3 ops, 0 snapshots
+        let ops_before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(ops_before, 3, "should start with 3 ops");
+
+        let snaps_before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(snaps_before, 0, "should start with 0 snapshots");
+
+        // Run compaction
+        let result = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
+            .await
+            .unwrap();
+        assert!(
+            result.is_some(),
+            "compaction should return Some(snapshot_id) when old ops exist"
+        );
+        let snapshot_id = result.unwrap();
+        assert!(!snapshot_id.is_empty(), "snapshot id should not be empty");
+
+        // Old ops should be purged, recent op preserved
+        let ops_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(ops_after, 1, "only the recent op should survive compaction");
+
+        // Verify it's the recent op
+        let remaining_ts: String = sqlx::query_scalar!("SELECT created_at FROM op_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(
+            !remaining_ts.starts_with("2024-"),
+            "remaining op should not have an old timestamp"
+        );
+
+        // A complete snapshot should exist
+        let snap_count: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            snap_count, 1,
+            "compaction should create exactly one complete snapshot"
+        );
+
+        // Verify the snapshot captures all 3 blocks (snapshot is taken
+        // before op purge, so it reflects the full table state)
+        let (_, snap_data) = get_latest_snapshot(&pool).await.unwrap().unwrap();
+        let decoded = decode_snapshot(&snap_data).unwrap();
+        assert_eq!(
+            decoded.tables.blocks.len(),
+            3,
+            "snapshot should capture all 3 blocks"
+        );
+        assert_eq!(
+            decoded.snapshot_device_id, device_id,
+            "snapshot device_id should match"
+        );
+
+        // No pending snapshots should remain (cleanup runs in same tx)
+        let pending: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'pending'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            pending, 0,
+            "no pending snapshots should remain after compaction"
         );
     }
 

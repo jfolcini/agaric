@@ -406,7 +406,9 @@ pub async fn create_block_inner(
     let (block, op_record) =
         create_block_in_tx(&mut tx, device_id, block_type, content, parent_id, position).await?;
     tx.commit().await?;
-    let _ = materializer.dispatch_background(&op_record);
+    if let Err(e) = materializer.dispatch_background(&op_record) {
+        tracing::warn!(error = %e, "failed to dispatch background cache task");
+    }
     Ok(block)
 }
 
@@ -494,7 +496,9 @@ pub async fn edit_block_inner(
     // 5. Dispatch background cache tasks (fire-and-forget).
     // Use dispatch_edit_background with the block_type hint so only
     // relevant caches are rebuilt (e.g. content blocks skip tags/pages).
-    let _ = materializer.dispatch_edit_background(&op_record, &block_type);
+    if let Err(e) = materializer.dispatch_edit_background(&op_record, &block_type) {
+        tracing::warn!(error = %e, "failed to dispatch background cache task");
+    }
 
     // 6. Return response
     Ok(BlockRow {
@@ -580,7 +584,9 @@ pub async fn delete_block_inner(
     tx.commit().await?;
 
     // Fire-and-forget background cache dispatch
-    let _ = materializer.dispatch_background(&op_record);
+    if let Err(e) = materializer.dispatch_background(&op_record) {
+        tracing::warn!(error = %e, "failed to dispatch background cache task");
+    }
 
     Ok(DeleteResponse {
         block_id,
@@ -670,7 +676,9 @@ pub async fn restore_block_inner(
     tx.commit().await?;
 
     // Fire-and-forget background cache dispatch
-    let _ = materializer.dispatch_background(&op_record);
+    if let Err(e) = materializer.dispatch_background(&op_record) {
+        tracing::warn!(error = %e, "failed to dispatch background cache task");
+    }
 
     Ok(RestoreResponse {
         block_id,
@@ -866,7 +874,9 @@ pub async fn purge_block_inner(
     tx.commit().await?;
 
     // Fire-and-forget background cache dispatch
-    let _ = materializer.dispatch_background(&op_record);
+    if let Err(e) = materializer.dispatch_background(&op_record) {
+        tracing::warn!(error = %e, "failed to dispatch background cache task");
+    }
 
     Ok(PurgeResponse {
         block_id,
@@ -1026,7 +1036,9 @@ pub async fn move_block_inner(
     tx.commit().await?;
 
     // 6. Dispatch background cache tasks (fire-and-forget)
-    let _ = materializer.dispatch_background(&op_record);
+    if let Err(e) = materializer.dispatch_background(&op_record) {
+        tracing::warn!(error = %e, "failed to dispatch background cache task");
+    }
 
     // 7. Return response
     Ok(MoveResponse {
@@ -1302,7 +1314,9 @@ pub async fn add_tag_inner(
     tx.commit().await?;
 
     // 5. Dispatch background cache tasks (fire-and-forget)
-    let _ = materializer.dispatch_background(&op_record);
+    if let Err(e) = materializer.dispatch_background(&op_record) {
+        tracing::warn!(error = %e, "failed to dispatch background cache task");
+    }
 
     // 6. Return response
     Ok(TagResponse { block_id, tag_id })
@@ -1378,7 +1392,9 @@ pub async fn remove_tag_inner(
     tx.commit().await?;
 
     // 5. Dispatch background cache tasks (fire-and-forget)
-    let _ = materializer.dispatch_background(&op_record);
+    if let Err(e) = materializer.dispatch_background(&op_record) {
+        tracing::warn!(error = %e, "failed to dispatch background cache task");
+    }
 
     // 6. Return response
     Ok(TagResponse { block_id, tag_id })
@@ -1816,7 +1832,9 @@ pub async fn set_property_inner(
     )
     .await?;
     tx.commit().await?;
-    let _ = materializer.dispatch_background(&op_record);
+    if let Err(e) = materializer.dispatch_background(&op_record) {
+        tracing::warn!(error = %e, "failed to dispatch background cache task");
+    }
     Ok(block)
 }
 
@@ -2159,7 +2177,9 @@ async fn delete_property_core(
     tx.commit().await?;
 
     // 5. Dispatch background cache tasks (fire-and-forget)
-    let _ = materializer.dispatch_background(&op_record);
+    if let Err(e) = materializer.dispatch_background(&op_record) {
+        tracing::warn!(error = %e, "failed to dispatch background cache task");
+    }
 
     Ok(())
 }
@@ -2663,7 +2683,9 @@ pub async fn revert_ops_inner(
 
     // Dispatch background cache tasks (fire-and-forget)
     for record in &op_records {
-        let _ = materializer.dispatch_background(record);
+        if let Err(e) = materializer.dispatch_background(record) {
+            tracing::warn!(error = %e, "failed to dispatch background cache task");
+        }
     }
 
     Ok(results)
@@ -2824,7 +2846,9 @@ pub async fn undo_page_op_inner(
     tx.commit().await?;
 
     // Dispatch background cache tasks
-    let _ = materializer.dispatch_background(&op_record);
+    if let Err(e) = materializer.dispatch_background(&op_record) {
+        tracing::warn!(error = %e, "failed to dispatch background cache task");
+    }
 
     Ok(UndoResult {
         reversed_op: OpRef {
@@ -2870,7 +2894,9 @@ pub async fn redo_page_op_inner(
     tx.commit().await?;
 
     // Dispatch background cache tasks
-    let _ = materializer.dispatch_background(&op_record);
+    if let Err(e) = materializer.dispatch_background(&op_record) {
+        tracing::warn!(error = %e, "failed to dispatch background cache task");
+    }
 
     Ok(UndoResult {
         reversed_op: OpRef {
@@ -3880,7 +3906,9 @@ pub async fn add_attachment_inner(
     tx.commit().await?;
 
     // Fire-and-forget background cache dispatch
-    let _ = materializer.dispatch_background(&op_record);
+    if let Err(e) = materializer.dispatch_background(&op_record) {
+        tracing::warn!(error = %e, "failed to dispatch background cache task");
+    }
 
     Ok(AttachmentRow {
         id: attachment_id,
@@ -3939,7 +3967,9 @@ pub async fn delete_attachment_inner(
     tx.commit().await?;
 
     // Fire-and-forget background cache dispatch
-    let _ = materializer.dispatch_background(&op_record);
+    if let Err(e) = materializer.dispatch_background(&op_record) {
+        tracing::warn!(error = %e, "failed to dispatch background cache task");
+    }
 
     Ok(())
 }
@@ -4002,10 +4032,11 @@ pub async fn list_page_links_inner(pool: &SqlitePool) -> Result<Vec<PageLink>, A
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
 
-/// F09/F10: Sanitize internal errors before they reach the frontend.
-/// Database errors may contain table/column names or query fragments
-/// that leak implementation details. We replace them with a generic
-/// message while logging the original for debugging.
+/// Sanitize internal error details before returning to the frontend.
+///
+/// Applied to write commands only. Read commands intentionally return
+/// unsanitized errors — these are useful for frontend debugging in a
+/// local-first app where information disclosure is not a security risk.
 #[cfg(not(tarpaulin_include))]
 fn sanitize_internal_error(err: AppError) -> AppError {
     match &err {

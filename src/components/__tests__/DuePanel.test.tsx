@@ -20,6 +20,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { clearProjectedCache } from '../../hooks/useDuePanelData'
 
 vi.mock('../../lib/tauri', () => ({
   listBlocks: vi.fn(),
@@ -86,6 +87,7 @@ const emptyResponse = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  clearProjectedCache()
   mockedListBlocks.mockResolvedValue(emptyResponse)
   mockedBatchResolve.mockResolvedValue([])
   mockedListProjectedAgenda.mockResolvedValue([])

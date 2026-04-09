@@ -438,7 +438,9 @@ pub(crate) async fn handle_recurrence(
 
     // Dispatch all ops after commit
     for op in &op_records {
-        let _ = materializer.dispatch_background(op);
+        if let Err(e) = materializer.dispatch_background(op) {
+            tracing::warn!(error = %e, "failed to dispatch background cache task");
+        }
     }
 
     Ok(true)
