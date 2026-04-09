@@ -1,5 +1,46 @@
 # Session Log
 
+## Session 295 — Batch 26: MAINT dedup/cleanup (2026-04-09)
+
+**Commit:** `ba51a19` — `refactor: M-18/M-21/M-22/M-23/M-25/M-26` — 16 files, +801/-372
+
+### Items resolved
+- **M-18**: EditableBlock.tsx — extracted `processFileAttachments()` from identical `handleDrop`/`handlePaste` loops. Module-level async function taking `files`, `blockId`, `t`. Both handlers now call shared function. −7 lines.
+- **M-21**: Extracted shared `StatusIcon` to `src/components/ui/status-icon.tsx`. Props: `{ state, showDone? }`. Removed duplicate local StatusIcon from AgendaResults.tsx (−28 lines) and UnfinishedTasks.tsx (−19 lines). 12 new tests with 3 axe audits.
+- **M-22**: Inlined `CompactionConfirmDialog` async handler into `CompactionCard.tsx`. Deleted 63-line unnecessary wrapper component. CompactionCard now uses `<ConfirmDialog>` directly.
+- **M-23**: Deleted `TextValuePicker.tsx` (33 lines) and test. Zero production imports — dead code replaced by TagValuePicker.
+- **M-25**: Extracted `BlockGutterControls` from `SortableBlock.tsx`. `GutterButton` helper with Tooltip→button→icon pattern. 3 buttons (drag, history, delete) consolidated. SortableBlock −50 lines. 23 new tests with 2 axe audits.
+- **M-26**: Extracted `resolveBlockDisplay()` and `handleBlockNavigation()` to `src/lib/query-result-utils.ts`. Updated QueryResultList.tsx and QueryResultTable.tsx. 10 new tests.
+
+### Files created
+- `src/components/ui/status-icon.tsx` — shared StatusIcon (54 lines)
+- `src/components/ui/__tests__/status-icon.test.tsx` — 12 tests
+- `src/components/BlockGutterControls.tsx` — gutter button extraction (127 lines)
+- `src/components/__tests__/BlockGutterControls.test.tsx` — 23 tests
+- `src/lib/query-result-utils.ts` — shared query result utilities (35 lines)
+- `src/lib/__tests__/query-result-utils.test.ts` — 10 tests
+
+### Files deleted
+- `src/components/CompactionConfirmDialog.tsx` (63 lines)
+- `src/components/TextValuePicker.tsx` (33 lines)
+- `src/components/__tests__/TextValuePicker.test.tsx` (97 lines)
+
+### Files modified
+
+| Area | Change |
+|------|--------|
+| EditableBlock.tsx | M-18: processFileAttachments extraction |
+| AgendaResults.tsx | M-21: import shared StatusIcon |
+| UnfinishedTasks.tsx | M-21: import shared StatusIcon with showDone={false} |
+| CompactionCard.tsx | M-22: inline async handler + ConfirmDialog |
+| SortableBlock.tsx | M-25: import BlockGutterControls |
+| QueryResultList.tsx | M-26: import shared utilities |
+| QueryResultTable.tsx | M-26: import shared utilities |
+
+### Test counts
+- Frontend: 243 files, 5726 tests (was 5690)
+- Open REVIEW-LATER items: 31 (was 37)
+
 ## Session 294 — Batch 25: Test quality fixes (2026-04-09)
 
 **Commit:** `a79bfa6` — `test: T-18/T-19/T-20/T-22/T-23/T-27` — 6 files, +140/-23
