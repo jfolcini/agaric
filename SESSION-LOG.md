@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 317 — Feature: F-14 resolved (2026-04-10)
+
+**1 item resolved (2→1 open). Attachment files now sync between devices.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| F-14 | Attachment file transfer over sync protocol | new `sync_files.rs`, `sync_protocol.rs`, `sync_daemon.rs`, `sync_events.rs`, `lib.rs` |
+
+### Implementation
+- New `sync_files.rs` module: file discovery, read/write, chunked transfer, blake3 verification
+- 4 new SyncMessage variants: FileRequest, FileOffer, FileReceived, FileTransferComplete
+- Bidirectional transfer: initiator requests first, then responder requests
+- 5MB chunk size for files >5MB (under 10MB WebSocket frame limit)
+- Graceful degradation: missing/corrupt files logged as warnings, don't abort sync
+- Integrated after op-sync phase in both initiator and responder paths
+
+### Stats
+- 5 files changed (+1,015 / -7 lines)
+- 23 new tests (file discovery, read/write, hash verification, serde roundtrip, chunking)
+- 1770 Rust tests pass, all 20 prek hooks pass
+
+---
+
 ## Session 316 — Feature: F-32 resolved (2026-04-10)
 
 **1 item resolved (3→2 open). Drag-to-reschedule tasks in weekly view.**
