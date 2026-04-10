@@ -51,6 +51,16 @@ The architecture is mature and robust. **Do not introduce significant architectu
 - **New slash commands, filter dimensions, UI components** are additive and low-risk. Prefer these over structural changes.
 - **If a feature seems to require schema migration, a new op type, or a new Zustand store** — stop and discuss with the user first. There is almost always a way to achieve it within the existing model.
 
+## Threat Model
+
+Agaric is a **single-user, multi-device, local-first** application with **no cloud connectivity**. The threat model reflects this:
+
+- **There is no malicious actor.** The only people with access to the app's data are the user and their own devices. Sync happens over the local network between devices the user has explicitly paired.
+- **TLS + mTLS between devices** is for data integrity and device authentication (preventing accidental cross-talk), not for defending against adversaries on the network.
+- **TOFU cert pinning** is a convenience to detect device re-installs or misconfigurations, not a defense against MITM attacks.
+- **Do not add security hardening that assumes adversarial peers.** The sync protocol's peers are the user's own devices. DoS protection, rate limiting, path traversal guards against sync peers, and similar measures are unnecessary and add complexity without value.
+- **Focus defensive effort on data integrity** — preventing accidental corruption, hash chain consistency, transaction atomicity — not on defending against attack scenarios that don't apply.
+
 ## Database
 
 - **File:** `notes.db` in `~/.local/share/com.agaric.app/` (Linux) or app data dir (Android)

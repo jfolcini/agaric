@@ -364,6 +364,10 @@ struct CacheRepeatingRow {
 /// 4. Writes projected entries via DELETE + INSERT in a single transaction.
 pub async fn rebuild_projected_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
     let today = chrono::Local::now().date_naive();
+    // Pre-compute projections for the next 365 days only. Queries beyond this
+    // horizon fall back to on-the-fly computation (which is slower but correct).
+    // 365 days is sufficient for weekly/monthly calendar views — the primary
+    // consumer of projected agenda data.
     let horizon = today + chrono::Duration::days(365);
 
     // Fetch all repeating blocks (same query as list_projected_agenda_inner).
