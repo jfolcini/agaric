@@ -1,5 +1,31 @@
 # Session Log
 
+## Session 315 — Performance: P-16 resolved (2026-04-10)
+
+**1 item resolved (4→3 open). PERF category fully cleared.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| P-16 | Projected agenda cache — new table + materializer task | `cache.rs`, `materializer.rs`, `agenda.rs`, `lib.rs`, `0025_*` |
+
+### Implementation
+- New `projected_agenda_cache` table: `(block_id, projected_date, source)` with date index
+- `rebuild_projected_agenda_cache()` pre-computes projections for 365 days from today
+- Respects repeat-until and repeat-count end conditions
+- `RebuildProjectedAgendaCache` materializer task triggered on property/block/tag changes
+- `list_projected_agenda_inner` tries cache first, falls back to on-the-fly if empty
+- Boot-time population dispatch ensures cache ready before first user query
+- Oracle test verifies cache matches on-the-fly computation
+
+### Stats
+- 5 files changed + 1 migration (+710 / -10 lines)
+- 7 new tests (basic rebuild, repeat-until, repeat-count, DONE exclusion, idempotency, split variant, oracle)
+- 1747 Rust tests pass, all 20 prek hooks pass
+
+---
+
 ## Session 314 — Maintainability: M-41 resolved (2026-04-10)
 
 **1 item resolved (5→4 open). 19k-line commands.rs split into 9 domain modules.**
