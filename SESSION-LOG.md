@@ -1,5 +1,37 @@
 # Session Log
 
+## Session 325 — Frontend fixes: 6 items resolved (2026-04-10)
+
+**6 items resolved (53→47 open). 16 files changed, +704/-370 lines. 12 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| B-42 | RescheduleDropZone now routes to setScheduledDate for scheduled-only blocks | `RescheduleDropZone.tsx`, `RescheduleDropZone.test.tsx` |
+| B-43 | DuePanel filter pills moved outside ListViewState — always visible | `DuePanel.tsx`, `DuePanel.test.tsx`, `i18n.ts`, `i18n.test.ts` |
+| UX-117 | Navigation store persisted via Zustand persist middleware | `navigation.ts`, `navigation.test.ts` |
+| UX-127 | PageBrowser starred badge text-[10px] → text-xs (12px) | `PageBrowser.tsx` |
+| UX-129 | Empty-content blocks filtered from DuePanel, DonePanel, projected | `useDuePanelData.ts`, `DonePanel.tsx`, tests |
+| UX-132 | AddBlockButton moved directly after BlockTree | `PageEditor.tsx` |
+
+### Additional fixes
+- Pre-existing `cargo fmt` in `cache.rs`
+- Pre-existing `tsc`/biome errors in `checkbox-input-rule.test.ts` (non-null assertions → `as` casts)
+- Orphaned `duePanel.empty` i18n key removed
+
+### Review findings addressed
+- B-43: Removed orphaned `duePanel.empty` i18n key and test reference
+- UX-117: Added `onRehydrateStorage` to derive `nextTabId` from persisted tabs (prevents ID collisions); added `resetStore()` to persistence test `beforeEach`
+- UX-129: Added projected entries filtering (missed by build subagent, caught by reviewer)
+
+### Stats
+- 16 files changed (+704 / -370 lines)
+- 12 new tests (4 RescheduleDropZone + 5 navigation + 1 useDuePanelData + 1 DonePanel + 1 DuePanel)
+- 6066 frontend tests pass, all 20 prek hooks pass
+
+---
+
 ## Session 324 — Test coverage: 7 items resolved (2026-04-10)
 
 **7 items resolved (60→53 open). 6 files changed, +413 lines. 21 new tests.**
