@@ -1,5 +1,22 @@
 # Session Log
 
+## Session 330 — i18n sweep: UX-120 resolved (2026-04-10)
+
+**1 item resolved (29→28 open). 7 files changed, +123/-53 lines.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| UX-120 | i18n: 34 hardcoded strings in history/conflict/sync components | `ConflictTypeRenderer.tsx`, `ConflictList.tsx`, `HistoryFilterBar.tsx`, `HistoryPanel.tsx`, `DiffDisplay.tsx`, `PairingPeersList.tsx`, `i18n.ts` |
+
+### Stats
+- 7 files changed (+123 / -53 lines)
+- 35 new i18n keys added (conflict.*, history.*, diff.*, device.*, dialog.*)
+- 6089 frontend tests pass, all 20 prek hooks pass
+
+---
+
 ## Session 329 — Empty panels + i18n: 2 items resolved (2026-04-10)
 
 **2 items resolved (31→29 open). 16 files changed, +255/-147 lines. 4 new tests.**
