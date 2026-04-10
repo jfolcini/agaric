@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 329 — Empty panels + i18n: 2 items resolved (2026-04-10)
+
+**2 items resolved (31→29 open). 16 files changed, +255/-147 lines. 4 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| UX-152 | Empty panels return null — UnfinishedTasks, DuePanel, LinkedReferences, UnlinkedReferences. DuePanelFilters gains source count badges. | 8 components + 6 test files |
+| UX-121 | i18n: 17 hardcoded strings in BlockContextMenu, RenameDialog, LinkEditPopover, ConfirmDialog, SearchPanel | 5 components + `i18n.ts` |
+
+### Stats
+- 16 files changed (+255 / -147 lines)
+- 4 new tests (2 DuePanelFilters + 2 updated panel tests)
+- 6089 frontend tests pass, all 20 prek hooks pass
+
+---
+
 ## Session 328 — Mixed fixes: 3 items resolved (2026-04-10)
 
 **3 items resolved (34→31 open). 6 files changed, +290/-20 lines. 2 new tests.**
