@@ -3731,17 +3731,21 @@ pub async fn import_markdown_inner(
         .map(|f| f.trim_end_matches(".md").to_string())
         .unwrap_or_else(|| "Imported Page".to_string());
 
-    // Create the page
-    let page = create_block_inner(
-        pool,
+    // --- Single IMMEDIATE transaction for entire import ---
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let mut op_records: Vec<op_log::OpRecord> = Vec::new();
+
+    // Create the page inside the transaction
+    let (page, page_op) = create_block_in_tx(
+        &mut tx,
         device_id,
-        materializer,
         "page".into(),
         page_title.clone(),
         None,
         None,
     )
     .await?;
+    op_records.push(page_op);
     let page_id = page.id.clone();
 
     let mut blocks_created: i64 = 0;
@@ -3762,11 +3766,10 @@ pub async fn import_markdown_inner(
             .map(|(_, id)| id.clone())
             .unwrap_or(page_id.clone());
 
-        // Create the block
-        match create_block_inner(
-            pool,
+        // Create the block inside the transaction
+        match create_block_in_tx(
+            &mut tx,
             device_id,
-            materializer,
             "content".into(),
             block.content.clone(),
             Some(parent_id.clone()),
@@ -3774,18 +3777,18 @@ pub async fn import_markdown_inner(
         )
         .await
         {
-            Ok(new_block) => {
+            Ok((new_block, block_op)) => {
                 blocks_created += 1;
+                op_records.push(block_op);
                 parent_stack.push((block.depth, new_block.id.clone()));
 
-                // Set properties
+                // Set properties inside the same transaction
                 for (key, value) in &block.properties {
-                    match set_property_inner(
-                        pool,
+                    match set_property_in_tx(
+                        &mut tx,
                         device_id,
-                        materializer,
                         new_block.id.clone(),
-                        key.clone(),
+                        key,
                         Some(value.clone()),
                         None,
                         None,
@@ -3793,7 +3796,10 @@ pub async fn import_markdown_inner(
                     )
                     .await
                     {
-                        Ok(_) => properties_set += 1,
+                        Ok((_block, prop_op)) => {
+                            properties_set += 1;
+                            op_records.push(prop_op);
+                        }
                         Err(e) => warnings.push(format!("Property '{key}' on block failed: {e}")),
                     }
                 }
@@ -3801,6 +3807,16 @@ pub async fn import_markdown_inner(
             Err(e) => {
                 warnings.push(format!("Block creation failed: {e}"));
             }
+        }
+    }
+
+    // Commit the single transaction
+    tx.commit().await?;
+
+    // Dispatch materializer tasks after commit
+    for op_record in &op_records {
+        if let Err(e) = materializer.dispatch_background(op_record) {
+            tracing::warn!(error = %e, "import_markdown: failed to dispatch background task");
         }
     }
 
@@ -4010,17 +4026,24 @@ pub async fn list_page_links_inner(pool: &SqlitePool) -> Result<Vec<PageLink>, A
     //
     // Simple approach: join source_id to blocks to get parent_id (the page),
     // then filter both sides to be page-type blocks that aren't deleted.
-    let links = sqlx::query_as!(
-        PageLink,
-        r#"SELECT DISTINCT
-            COALESCE(sb.parent_id, bl.source_id) AS "source_id!",
+    //
+    // P-15 optimized: JOIN tb first (smaller page-only set via idx_blocks_page_alive),
+    // move LEFT JOIN conditions inline so pb.id IS NOT NULL replaces the WHERE filter.
+    let links = sqlx::query_as::<_, PageLink>(
+        "SELECT DISTINCT
+            COALESCE(sb.parent_id, bl.source_id) AS source_id,
             bl.target_id AS target_id
          FROM block_links bl
-         JOIN blocks sb ON sb.id = bl.source_id AND sb.deleted_at IS NULL
-         JOIN blocks tb ON tb.id = bl.target_id AND tb.deleted_at IS NULL AND tb.block_type = 'page'
+         JOIN blocks tb ON tb.id = bl.target_id
+             AND tb.block_type = 'page'
+             AND tb.deleted_at IS NULL
+         JOIN blocks sb ON sb.id = bl.source_id
+             AND sb.deleted_at IS NULL
          LEFT JOIN blocks pb ON pb.id = sb.parent_id
+             AND pb.deleted_at IS NULL
+             AND pb.block_type = 'page'
          WHERE COALESCE(sb.parent_id, bl.source_id) != bl.target_id
-         AND (sb.parent_id IS NULL OR (pb.deleted_at IS NULL AND pb.block_type = 'page'))"#
+             AND (sb.parent_id IS NULL OR pb.id IS NOT NULL)",
     )
     .fetch_all(pool)
     .await?;
@@ -5282,7 +5305,7 @@ pub async fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
 // ---------------------------------------------------------------------------
 
 /// A link between two pages (for graph visualization).
-#[derive(Debug, Clone, Serialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, sqlx::FromRow, specta::Type)]
 pub struct PageLink {
     pub source_id: String,
     pub target_id: String,
@@ -18035,6 +18058,129 @@ mod tests {
         mat.shutdown();
     }
 
+    /// P-19: Verify that `import_markdown_inner` runs all block + property
+    /// writes inside a single transaction by checking that:
+    /// 1. All blocks are present in the DB after a successful import.
+    /// 2. All properties are persisted correctly.
+    /// 3. The op_log contains the expected number of entries.
+    /// 4. Parent-child hierarchy is correct.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn import_markdown_single_transaction() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let content = "- Parent block\n  priority:: high\n  status:: active\n  - Child A\n  - Child B\n    - Grandchild";
+        let result =
+            import_markdown_inner(&pool, DEV, &mat, content.into(), Some("TxTest.md".into()))
+                .await
+                .unwrap();
+
+        // Basic import stats
+        assert_eq!(result.page_title, "TxTest");
+        assert_eq!(result.blocks_created, 4, "should create 4 blocks");
+        assert_eq!(result.properties_set, 2, "should set 2 properties");
+        assert!(result.warnings.is_empty(), "should have no warnings");
+
+        // Verify page exists
+        let page: Option<BlockRow> = sqlx::query_as!(
+            BlockRow,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE block_type = 'page' AND content = 'TxTest'"#
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert!(page.is_some(), "page block must exist");
+        let page = page.unwrap();
+
+        // Verify all content blocks exist under the page hierarchy
+        let all_blocks: Vec<BlockRow> = sqlx::query_as!(
+            BlockRow,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE block_type = 'content' ORDER BY position"#
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(all_blocks.len(), 4, "should have 4 content blocks in DB");
+
+        // Verify parent-child: "Parent block" is child of page
+        let parent_block = all_blocks
+            .iter()
+            .find(|b| b.content.as_deref() == Some("Parent block"))
+            .expect("Parent block must exist");
+        assert_eq!(
+            parent_block.parent_id.as_deref(),
+            Some(page.id.as_str()),
+            "Parent block should be child of the page"
+        );
+
+        // Verify child: "Child A" has parent = "Parent block"
+        let child_a = all_blocks
+            .iter()
+            .find(|b| b.content.as_deref() == Some("Child A"))
+            .expect("Child A must exist");
+        assert_eq!(
+            child_a.parent_id.as_deref(),
+            Some(parent_block.id.as_str()),
+            "Child A should be child of Parent block"
+        );
+
+        // Verify grandchild: "Grandchild" has parent = "Child B"
+        let child_b = all_blocks
+            .iter()
+            .find(|b| b.content.as_deref() == Some("Child B"))
+            .expect("Child B must exist");
+        let grandchild = all_blocks
+            .iter()
+            .find(|b| b.content.as_deref() == Some("Grandchild"))
+            .expect("Grandchild must exist");
+        assert_eq!(
+            grandchild.parent_id.as_deref(),
+            Some(child_b.id.as_str()),
+            "Grandchild should be child of Child B"
+        );
+
+        // Verify properties were persisted
+        // "priority" is a reserved key stored in blocks.priority column
+        let refreshed_parent: BlockRow = sqlx::query_as!(
+            BlockRow,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ?"#,
+            parent_block.id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            refreshed_parent.priority.as_deref(),
+            Some("high"),
+            "priority reserved property should be in blocks.priority"
+        );
+
+        // "status" is a custom property stored in block_properties
+        let props: Vec<(String, String)> = sqlx::query_as(
+            "SELECT key, value_text FROM block_properties WHERE block_id = ? ORDER BY key",
+        )
+        .bind(&parent_block.id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(props.len(), 1, "parent block should have 1 custom property");
+        assert_eq!(props[0].0, "status");
+        assert_eq!(props[0].1, "active");
+
+        // Verify op_log entries: 1 page + 4 blocks + 2 properties = 7 ops
+        let op_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
+            .bind(DEV)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            op_count.0, 7,
+            "op_log should have 7 entries (1 page + 4 blocks + 2 properties)"
+        );
+
+        mat.shutdown();
+    }
+
     // ======================================================================
     // Attachment commands (F-7, F-11)
     // ======================================================================
@@ -19047,6 +19193,191 @@ mod tests {
         assert!(
             !has_deleted_source,
             "should not include links from a deleted parent page"
+        );
+
+        mat.shutdown();
+    }
+
+    // ======================================================================
+    // CTE oracle: verify optimized list_page_links query matches the original
+    // ======================================================================
+
+    /// Original (pre-P-15) query preserved as a correctness oracle.
+    /// Runs the old SQL and returns sorted results for comparison.
+    async fn list_page_links_oracle(pool: &SqlitePool) -> Vec<PageLink> {
+        let mut rows = sqlx::query_as::<_, PageLink>(
+            "SELECT DISTINCT
+                COALESCE(sb.parent_id, bl.source_id) AS source_id,
+                bl.target_id AS target_id
+             FROM block_links bl
+             JOIN blocks sb ON sb.id = bl.source_id AND sb.deleted_at IS NULL
+             JOIN blocks tb ON tb.id = bl.target_id AND tb.deleted_at IS NULL AND tb.block_type = 'page'
+             LEFT JOIN blocks pb ON pb.id = sb.parent_id
+             WHERE COALESCE(sb.parent_id, bl.source_id) != bl.target_id
+             AND (sb.parent_id IS NULL OR (pb.deleted_at IS NULL AND pb.block_type = 'page'))",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        rows.sort();
+        rows
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_page_links_optimized_matches_oracle() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // -- Set up a non-trivial graph covering all edge-case branches --
+
+        // 3 pages
+        let p1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page Alpha".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let p2 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page Beta".into(),
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let p3 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page Gamma".into(),
+            None,
+            Some(3),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Content blocks under p1
+        let b1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            format!("link to beta [[{}]]", p2.id),
+            Some(p1.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let b2 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            format!("link to gamma [[{}]]", p3.id),
+            Some(p1.id.clone()),
+            Some(2),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Content block under p2 linking to p3
+        let b3 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            format!("cross link [[{}]]", p3.id),
+            Some(p2.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Self-link: content under p1 linking back to p1 (should be excluded)
+        let b4 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            format!("self [[{}]]", p1.id),
+            Some(p1.id.clone()),
+            Some(3),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Duplicate content blocks linking to same target (tests DISTINCT)
+        let b5 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            format!("also beta [[{}]]", p2.id),
+            Some(p1.id.clone()),
+            Some(4),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Direct page-to-page link (source is itself a page, no parent rollup)
+        sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(&p2.id)
+            .bind(&p1.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Insert all content block links
+        for (src, tgt) in [
+            (&b1.id, &p2.id),
+            (&b2.id, &p3.id),
+            (&b3.id, &p3.id),
+            (&b4.id, &p1.id),
+            (&b5.id, &p2.id),
+        ] {
+            sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+                .bind(src)
+                .bind(tgt)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        // -- Compare optimized vs oracle --
+        let mut optimized = list_page_links_inner(&pool).await.unwrap();
+        optimized.sort();
+
+        let oracle = list_page_links_oracle(&pool).await;
+
+        assert_eq!(
+            optimized, oracle,
+            "P-15 optimized query must match original oracle.\n  optimized: {optimized:?}\n  oracle:    {oracle:?}"
+        );
+
+        // Sanity: we should have some links
+        assert!(
+            !optimized.is_empty(),
+            "test should produce at least one page link"
         );
 
         mat.shutdown();
