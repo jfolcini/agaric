@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 316 — Feature: F-32 resolved (2026-04-10)
+
+**1 item resolved (3→2 open). Drag-to-reschedule tasks in weekly view.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| F-32 | Drag-to-reschedule tasks between days | `BlockListItem.tsx`, `DuePanel.tsx`, `UnfinishedTasks.tsx`, `WeeklyView.tsx`, `i18n.ts` |
+
+### Implementation
+- BlockListItem: added `blockId` prop, `draggable` + `onDragStart` with `application/x-block-reschedule` MIME type
+- DuePanel + UnfinishedTasks: pass `blockId` to task list items
+- WeeklyView: wrapped each DaySection in existing `RescheduleDropZone` component
+- RescheduleDropZone was already fully implemented — only integration was needed
+- Uses native HTML5 drag (coexists with dnd-kit for same-page reordering)
+
+### Stats
+- 8 files changed (+326 / -3 lines)
+- 15 new tests (10 drop zone + 4 draggable + 1 integration)
+- 5999 frontend tests pass, all 20 prek hooks pass
+
+---
+
 ## Session 315 — Performance: P-16 resolved (2026-04-10)
 
 **1 item resolved (4→3 open). PERF category fully cleared.**
