@@ -1,5 +1,28 @@
 # Session Log
 
+## Session 324 — Test coverage: 7 items resolved (2026-04-10)
+
+**7 items resolved (60→53 open). 6 files changed, +413 lines. 21 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| T-29 | Projected agenda cache oracle: add .+weekly, ++monthly, +5d, +2w repeat modes | `cache.rs` |
+| T-34 | Projected agenda cache error paths: malformed rule, zero count, past until, DONE excluded | `cache.rs` |
+| T-37 | ExternalLink URL validation: 5 tests (http, https, ftp/js rejected, invalid) | `extensions.test.ts` |
+| T-38 | CheckboxInputRule handler execution: rule count, TODO/DONE handler invocation | `checkbox-input-rule.test.ts` |
+| T-40 | Resolve store cache eviction: set() at 10K, batchSet() overflow, pagesList at 5K | `resolve.test.ts` |
+| T-43 | Sidebar interactions: Ctrl+B toggle, contentEditable guard, localStorage persistence | `sidebar.test.tsx` |
+| T-44 | Parse-date edge cases: leap year, month boundary, zero offset, year boundary, Feb 30 | `parse-date.test.ts` |
+
+### Stats
+- 6 files changed (+413 / -3 lines)
+- 21 new tests (5 Rust + 16 frontend)
+- 1775 Rust tests pass, 6055 frontend tests pass, all 20 prek hooks pass
+
+---
+
 ## Session 323 — Quick fixes batch: 11 items resolved (2026-04-10)
 
 **11 items resolved (71→60 open). 21 files changed.**
