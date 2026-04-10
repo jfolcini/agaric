@@ -1,5 +1,34 @@
 # Session Log
 
+## Session 312 — Performance: P-18 resolved (2026-04-10)
+
+**1 item resolved (7→6 open). 5 files + 1 migration, 1 oracle test.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| P-18 | Position normalization + covering index for list_children | `pagination.rs`, `commands.rs`, `merge.rs`, `recurrence.rs`, `0024_*` |
+
+### Implementation
+- Migration 0024: backfill NULL positions to `i64::MAX` sentinel, add `idx_blocks_parent_covering(parent_id, deleted_at, position, id)`
+- `list_children`: removed IFNULL() from ORDER BY and WHERE — query now directly uses `position` column
+- Auto-position COALESCE excludes sentinel from MAX() to prevent overflow
+- Conflict copy and recurrence both use sentinel-safe position increment (`p == sentinel` guard)
+- Oracle test walks both old (IFNULL) and new (plain position) queries across all pages, asserts identical results
+
+### Review findings
+- Initial: REQUEST CHANGES — `recurrence.rs` missing sentinel check on `position.map(|p| p + 1)`
+- Fix applied: added `p == NULL_POSITION_SENTINEL` guard matching merge.rs pattern
+- Clippy: changed `p >= i64::MAX` to `p == i64::MAX` (tautology fix)
+
+### Stats
+- 5 files changed + 1 migration (+238 / -38 lines)
+- 1 oracle test + updated existing tests
+- 1740 Rust tests pass, all 20 prek hooks pass
+
+---
+
 ## Session 311 — Performance: P-15 + P-19 resolved (2026-04-10)
 
 **2 items resolved (9→7 open). 3 files changed + 1 migration, 2 new tests.**
