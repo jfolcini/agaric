@@ -335,7 +335,7 @@ pub(crate) async fn create_block_in_tx(
         None => {
             let row = sqlx::query!(
                 "SELECT COALESCE(MAX(position), 0) + 1 as next_pos FROM blocks \
-                 WHERE parent_id IS ? AND deleted_at IS NULL",
+                 WHERE parent_id IS ? AND deleted_at IS NULL AND position < 9223372036854775807",
                 parent_id
             )
             .fetch_optional(&mut **tx)

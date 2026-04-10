@@ -15,6 +15,7 @@ use sqlx::SqlitePool;
 use crate::commands::{create_block_in_tx, get_block_inner, is_valid_iso_date, set_property_in_tx};
 use crate::materializer::Materializer;
 use crate::op_log;
+use crate::pagination::NULL_POSITION_SENTINEL;
 
 // ---------------------------------------------------------------------------
 // Pure date helpers
@@ -267,7 +268,11 @@ pub(crate) async fn handle_recurrence(
         original.block_type.clone(),
         original.content.unwrap_or_default(),
         original.parent_id.clone(),
-        original.position.map(|p| p + 1),
+        match original.position {
+            Some(p) if p == NULL_POSITION_SENTINEL => Some(NULL_POSITION_SENTINEL),
+            Some(p) => Some(p + 1),
+            None => Some(NULL_POSITION_SENTINEL),
+        },
     )
     .await?;
     op_records.push(op);

@@ -37,7 +37,7 @@ const MAX_PAGE_SIZE: i64 = 200;
 /// Children with `position = NULL` (e.g. tag associations) are sorted *after*
 /// all positioned siblings.  `i64::MAX` is safe because no real block list will
 /// approach 2^63 children, and SQLite natively handles 64-bit signed integers.
-const NULL_POSITION_SENTINEL: i64 = i64::MAX;
+pub(crate) const NULL_POSITION_SENTINEL: i64 = i64::MAX;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -205,11 +205,11 @@ fn build_page_response<T: specta::Type>(
 
 /// List children of `parent_id` (or top-level blocks when `None`), paginated.
 ///
-/// Ordered by `(position ASC, id ASC)`.  Blocks with `NULL` position (e.g. tag
-/// children) are sorted *after* all positioned blocks via
-/// `IFNULL(position, <sentinel>)`.
+/// Ordered by `(position ASC, id ASC)`.  Blocks that formerly had `NULL`
+/// position (e.g. tag children) now store `NULL_POSITION_SENTINEL` and sort
+/// *after* all positioned blocks.
 ///
-/// Uses index `idx_blocks_parent(parent_id, deleted_at)`.
+/// Uses index `idx_blocks_parent_covering(parent_id, deleted_at, position, id)`.
 pub async fn list_children(
     pool: &SqlitePool,
     parent_id: Option<&str>,
@@ -222,7 +222,6 @@ pub async fn list_children(
         None => (None, 0, ""),
     };
 
-    // ?6 = NULL_POSITION_SENTINEL, reused in IFNULL() for ORDER BY + keyset.
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
@@ -231,16 +230,15 @@ pub async fn list_children(
          FROM blocks
          WHERE parent_id IS ?1 AND deleted_at IS NULL
            AND (?2 IS NULL OR (
-                IFNULL(position, ?6) > ?3
-                OR (IFNULL(position, ?6) = ?3 AND id > ?4)))
-         ORDER BY IFNULL(position, ?6) ASC, id ASC
+                position > ?3
+                OR (position = ?3 AND id > ?4)))
+         ORDER BY position ASC, id ASC
          LIMIT ?5"#,
-        parent_id,              // ?1
-        cursor_flag,            // ?2
-        cursor_pos,             // ?3
-        cursor_id,              // ?4
-        fetch_limit,            // ?5
-        NULL_POSITION_SENTINEL, // ?6
+        parent_id,   // ?1
+        cursor_flag, // ?2
+        cursor_pos,  // ?3
+        cursor_id,   // ?4
+        fetch_limit, // ?5
     )
     .fetch_all(pool)
     .await?;
@@ -1309,7 +1307,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_children_null_positions_sort_after_positioned() {
+    async fn list_children_sentinel_positions_sort_after_positioned() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "PARENT01", "page", "parent", None, Some(1)).await;
@@ -1331,8 +1329,25 @@ mod tests {
             Some(2),
         )
         .await;
-        insert_block(&pool, "TAG00001", "tag", "tag1", Some("PARENT01"), None).await;
-        insert_block(&pool, "TAG00002", "tag", "tag2", Some("PARENT01"), None).await;
+        // P-18: Use sentinel value instead of NULL for tag-like blocks
+        insert_block(
+            &pool,
+            "TAG00001",
+            "tag",
+            "tag1",
+            Some("PARENT01"),
+            Some(NULL_POSITION_SENTINEL),
+        )
+        .await;
+        insert_block(
+            &pool,
+            "TAG00002",
+            "tag",
+            "tag2",
+            Some("PARENT01"),
+            Some(NULL_POSITION_SENTINEL),
+        )
+        .await;
 
         // Page 1: positioned children first
         let p1 = PageRequest::new(None, Some(2)).unwrap();
@@ -1346,17 +1361,20 @@ mod tests {
         assert_eq!(r1.items[0].id, "CHILD001", "positioned children come first");
         assert_eq!(r1.items[1].id, "CHILD002", "second positioned child");
 
-        // Page 2: NULL-position children via cursor
+        // Page 2: sentinel-position children via cursor
         let p2 = PageRequest::new(r1.next_cursor, Some(2)).unwrap();
         let r2 = list_children(&pool, Some("PARENT01"), &p2).await.unwrap();
         assert_eq!(
             r2.items.len(),
             2,
-            "page 2 should return 2 null-position items"
+            "page 2 should return 2 sentinel-position items"
         );
         assert!(!r2.has_more, "page 2 should be the last page");
-        assert_eq!(r2.items[0].id, "TAG00001", "NULL-position items come after");
-        assert_eq!(r2.items[1].id, "TAG00002", "second null-position item");
+        assert_eq!(
+            r2.items[0].id, "TAG00001",
+            "sentinel-position items come after"
+        );
+        assert_eq!(r2.items[1].id, "TAG00002", "second sentinel-position item");
     }
 
     #[tokio::test]
@@ -3042,11 +3060,167 @@ mod tests {
             "next_cursor must be None when has_more is false"
         );
     }
-}
 
-// ===========================================================================
-// Property-based tests (proptest)
-// ===========================================================================
+    // ====================================================================
+    // CTE oracle: verify optimized (no IFNULL) query matches original
+    // ====================================================================
+
+    /// Oracle: the old IFNULL-based list_children query (pre-P-18).
+    /// Preserved for correctness verification against the new plain-position query.
+    async fn list_children_ifnull_oracle(
+        pool: &SqlitePool,
+        parent_id: Option<&str>,
+        page: &PageRequest,
+    ) -> Result<PageResponse<BlockRow>, AppError> {
+        let fetch_limit = page.limit + 1;
+
+        let (cursor_flag, cursor_pos, cursor_id): (Option<i64>, i64, &str) =
+            match page.after.as_ref() {
+                Some(c) => (Some(1), c.position.unwrap_or(NULL_POSITION_SENTINEL), &c.id),
+                None => (None, 0, ""),
+            };
+
+        let rows = sqlx::query_as::<_, BlockRow>(
+            r#"SELECT id, block_type, content, parent_id, position,
+                    deleted_at, is_conflict,
+                    conflict_type, todo_state, priority, due_date, scheduled_date
+             FROM blocks
+             WHERE parent_id IS ?1 AND deleted_at IS NULL
+               AND (?2 IS NULL OR (
+                    IFNULL(position, ?6) > ?3
+                    OR (IFNULL(position, ?6) = ?3 AND id > ?4)))
+             ORDER BY IFNULL(position, ?6) ASC, id ASC
+             LIMIT ?5"#,
+        )
+        .bind(parent_id)
+        .bind(cursor_flag)
+        .bind(cursor_pos)
+        .bind(cursor_id)
+        .bind(fetch_limit)
+        .bind(NULL_POSITION_SENTINEL)
+        .fetch_all(pool)
+        .await?;
+
+        build_page_response(rows, page.limit, |last| Cursor {
+            id: last.id.clone(),
+            position: Some(last.position.unwrap_or(NULL_POSITION_SENTINEL)),
+            deleted_at: None,
+            seq: None,
+            rank: None,
+        })
+    }
+
+    /// CTE oracle test: verify the new plain-position query produces identical
+    /// results to the old IFNULL-based query on the same dataset.
+    #[tokio::test]
+    async fn list_children_optimized_matches_ifnull_oracle() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "PARENT01", "page", "parent", None, Some(1)).await;
+
+        // Mix of positioned and sentinel-positioned blocks
+        insert_block(
+            &pool,
+            "CHILD001",
+            "content",
+            "c1",
+            Some("PARENT01"),
+            Some(1),
+        )
+        .await;
+        insert_block(
+            &pool,
+            "CHILD002",
+            "content",
+            "c2",
+            Some("PARENT01"),
+            Some(2),
+        )
+        .await;
+        insert_block(
+            &pool,
+            "CHILD003",
+            "content",
+            "c3",
+            Some("PARENT01"),
+            Some(5),
+        )
+        .await;
+        insert_block(
+            &pool,
+            "CHILD004",
+            "content",
+            "c4",
+            Some("PARENT01"),
+            Some(5),
+        )
+        .await;
+        // Sentinel-positioned blocks (simulating former NULL positions after migration)
+        insert_block(
+            &pool,
+            "TAG00001",
+            "tag",
+            "tag1",
+            Some("PARENT01"),
+            Some(NULL_POSITION_SENTINEL),
+        )
+        .await;
+        insert_block(
+            &pool,
+            "TAG00002",
+            "tag",
+            "tag2",
+            Some("PARENT01"),
+            Some(NULL_POSITION_SENTINEL),
+        )
+        .await;
+
+        // Walk all pages with both implementations and collect results
+        let mut new_ids = Vec::new();
+        let mut old_ids = Vec::new();
+        let mut new_cursor = None;
+        let mut old_cursor = None;
+        loop {
+            let new_page = PageRequest::new(new_cursor.clone(), Some(2)).unwrap();
+            let old_page = PageRequest::new(old_cursor.clone(), Some(2)).unwrap();
+
+            let new_resp = list_children(&pool, Some("PARENT01"), &new_page)
+                .await
+                .unwrap();
+            let old_resp = list_children_ifnull_oracle(&pool, Some("PARENT01"), &old_page)
+                .await
+                .unwrap();
+
+            // Each page should return the same items
+            let new_page_ids: Vec<&str> = new_resp.items.iter().map(|b| b.id.as_str()).collect();
+            let old_page_ids: Vec<&str> = old_resp.items.iter().map(|b| b.id.as_str()).collect();
+            assert_eq!(
+                new_page_ids, old_page_ids,
+                "page results must match between optimized and oracle query"
+            );
+
+            new_ids.extend(new_page_ids.iter().map(|s| s.to_string()));
+            old_ids.extend(old_page_ids.iter().map(|s| s.to_string()));
+
+            assert_eq!(
+                new_resp.has_more, old_resp.has_more,
+                "has_more must match between optimized and oracle query"
+            );
+
+            if !new_resp.has_more {
+                break;
+            }
+            new_cursor = new_resp.next_cursor;
+            old_cursor = old_resp.next_cursor;
+        }
+
+        assert_eq!(
+            new_ids, old_ids,
+            "full walk must produce identical results for optimized and oracle queries"
+        );
+        assert_eq!(new_ids.len(), 6, "must return all 6 blocks");
+    }
+}
 
 #[cfg(test)]
 mod proptest_tests {

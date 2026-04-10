@@ -13,6 +13,7 @@ use crate::dag;
 use crate::error::AppError;
 use crate::op::*;
 use crate::op_log::{self, OpRecord};
+use crate::pagination::NULL_POSITION_SENTINEL;
 use crate::ulid::BlockId;
 
 /// Maximum number of iterations when walking prev_edit chains.
@@ -196,7 +197,13 @@ pub async fn create_conflict_copy(
     // that the materializer compacts positions to contiguous 1..n on sync,
     // which resolves the duplicate.  Between creation and the next
     // materializer run, two blocks may share the same position.
-    let new_position = position.map(|p| p + 1);
+    // P-18: When original position is the sentinel (or NULL before migration),
+    // keep the sentinel instead of incrementing (which would overflow i64::MAX).
+    let new_position = match position {
+        Some(p) if p == NULL_POSITION_SENTINEL => Some(NULL_POSITION_SENTINEL),
+        Some(p) => Some(p + 1),
+        None => Some(NULL_POSITION_SENTINEL),
+    };
 
     // 3. Build the CreateBlock payload
     let payload = OpPayload::CreateBlock(CreateBlockPayload {
@@ -1399,11 +1406,12 @@ mod tests {
     }
 
     /// Conflict copy when original block has NULL position (e.g. a tag).
+    /// P-18: NULL positions are now normalized to sentinel (i64::MAX).
     #[tokio::test]
     async fn create_conflict_copy_null_position() {
         let (pool, _dir) = test_pool().await;
 
-        // Insert a tag block with NULL position
+        // Insert a tag block with NULL position (pre-migration data)
         insert_block(&pool, "T1", "tag", "my-tag", None, None).await;
 
         let record = create_conflict_copy(&pool, DEV_A, "T1", "conflicting tag", "Text")
@@ -1415,9 +1423,10 @@ mod tests {
             payload.block_type, "tag",
             "conflict copy should inherit block_type from original tag"
         );
-        assert!(
-            payload.position.is_none(),
-            "position should remain None when original position is NULL"
+        assert_eq!(
+            payload.position,
+            Some(NULL_POSITION_SENTINEL),
+            "position should be sentinel when original position is NULL"
         );
     }
 
