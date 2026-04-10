@@ -30,6 +30,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
+import { logger } from '@/lib/logger'
 import { useJournalAutoCreate } from '../hooks/useJournalAutoCreate'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { DayEntry } from '../lib/date-utils'
@@ -99,7 +100,8 @@ export function JournalPage({
         }
       }
       setPageMap(map)
-    } catch {
+    } catch (err) {
+      logger.warn('JournalPage', 'Failed to fetch journal pages, using empty map', undefined, err)
       setPageMap(new Map())
     }
     setLoading(false)

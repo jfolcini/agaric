@@ -51,7 +51,10 @@ export function PageLink({
       tabIndex={0}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
-      className={cn('cursor-pointer hover:underline', className)}
+      className={cn(
+        'cursor-pointer hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:rounded-sm',
+        className,
+      )}
     >
       {children ?? title}
     </span>

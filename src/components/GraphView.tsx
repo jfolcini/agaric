@@ -13,6 +13,8 @@ import {
   forceLink,
   forceManyBody,
   forceSimulation,
+  forceX,
+  forceY,
   type SimulationLinkDatum,
   type SimulationNodeDatum,
 } from 'd3-force'
@@ -148,20 +150,22 @@ export function GraphView(): React.ReactElement {
         'link',
         forceLink<GraphNode, GraphEdge>(simEdges)
           .id((d) => d.id)
-          .distance(80),
+          .distance(60),
       )
-      .force('charge', forceManyBody().strength(-200))
+      .force('charge', forceManyBody().strength(-100))
       .force('center', forceCenter(width / 2, height / 2))
       .force('collide', forceCollide(20))
+      .force('x', forceX(width / 2).strength(0.05))
+      .force('y', forceY(height / 2).strength(0.05))
 
     // Draw edges
     const link = g
       .selectAll<SVGLineElement, GraphEdge>('line')
       .data(simEdges)
       .join('line')
-      .attr('stroke', 'var(--border)')
-      .attr('stroke-opacity', 0.5)
-      .attr('stroke-width', 1)
+      .attr('stroke', 'var(--muted-foreground)')
+      .attr('stroke-opacity', 0.7)
+      .attr('stroke-width', 1.5)
 
     // Draw node groups
     const node = g

@@ -50,7 +50,7 @@ export function MonthlyDayCell({
       aria-label={fullDate}
       tabIndex={isCurrentMonth ? 0 : -1}
       className={cn(
-        'relative bg-background p-1.5 min-h-[80px] [@media(pointer:coarse)]:min-h-[44px] transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+        'relative bg-background p-1.5 min-h-[80px] [@media(pointer:coarse)]:min-h-[44px] transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden',
         isCurrentMonth && 'cursor-pointer hover:bg-accent/30 active:bg-accent/50',
         !isCurrentMonth && 'opacity-40 pointer-events-none',
       )}

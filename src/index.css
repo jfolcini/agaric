@@ -378,14 +378,15 @@
 
 /* Match static block padding so text doesn't jump on focus/blur. */
 .ProseMirror {
-  @apply px-3 py-1 text-base outline-none;
+  @apply px-3 py-1 outline-none;
+  font-size: var(--agaric-font-size, 1rem);
   min-height: 1.75rem;
   line-height: 1.5;
 }
-@media (min-width: 768px) {
-  .ProseMirror {
-    @apply text-sm;
-  }
+
+/* Static (non-focused) block content inherits user font size setting. */
+.block-static {
+  font-size: var(--agaric-font-size, 1rem);
 }
 
 /* Remove default paragraph margins inside the editor */

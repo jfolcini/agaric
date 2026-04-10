@@ -58,7 +58,7 @@ export function TabBar(): React.ReactElement | null {
           aria-selected={i === activeTabIndex}
           className={cn(
             'flex items-center gap-1 px-3 py-1 text-sm rounded-t-md truncate max-w-[200px] cursor-pointer select-none',
-            'focus-visible:ring-[3px] focus-visible:ring-ring/50 outline-none',
+            'focus-visible:ring-[3px] focus-visible:ring-ring/50 outline-hidden',
             i === activeTabIndex
               ? 'bg-background border border-b-0 border-border font-medium'
               : 'text-muted-foreground hover:bg-accent/50',

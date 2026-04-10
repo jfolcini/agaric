@@ -26,6 +26,15 @@ vi.mock('../../lib/tauri', () => ({
   batchResolve: vi.fn(),
 }))
 
+vi.mock('../../lib/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}))
+
 vi.mock('lucide-react', () => ({
   ChevronRight: (props: Record<string, unknown>) => <svg data-testid="chevron-right" {...props} />,
   ChevronDown: (props: Record<string, unknown>) => <svg data-testid="chevron-down" {...props} />,
@@ -135,7 +144,7 @@ describe('DonePanel', () => {
     expect(await screen.findByText('1 Completed')).toBeInTheDocument()
   })
 
-  // 2. Renders empty state when no items
+  // 2. Returns null when no items (UX-130)
   it('does not render when no items', async () => {
     mockedQueryByProperty.mockResolvedValue(emptyResponse)
 
@@ -145,8 +154,9 @@ describe('DonePanel', () => {
       expect(mockedQueryByProperty).toHaveBeenCalled()
     })
 
-    expect(container.querySelector('.done-panel')).toBeInTheDocument()
-    expect(screen.getByText('No completed items yet.')).toBeInTheDocument()
+    // UX-130: component returns null when empty
+    expect(container.querySelector('.done-panel')).not.toBeInTheDocument()
+    expect(screen.queryByText('No completed items yet.')).not.toBeInTheDocument()
   })
 
   // 3. Groups by source page with page titles
@@ -441,18 +451,20 @@ describe('DonePanel', () => {
   // Error-path tests
   // ---------------------------------------------------------------------------
 
-  // 14. queryByProperty rejects on initial load → shows empty state
-  it('shows empty state when queryByProperty rejects on initial load', async () => {
+  // 14. queryByProperty rejects on initial load → renders nothing + logs error (UX-124, UX-130)
+  it('renders nothing when queryByProperty rejects on initial load', async () => {
     mockedQueryByProperty.mockRejectedValueOnce(new Error('backend error'))
 
-    render(<DonePanel date="2025-06-15" />)
+    const { container } = render(<DonePanel date="2025-06-15" />)
 
     await waitFor(() => {
       expect(mockedQueryByProperty).toHaveBeenCalled()
     })
 
-    // Should show the empty state since no blocks were loaded
-    expect(screen.getByText('No completed items yet.')).toBeInTheDocument()
+    // UX-130: component returns null when empty (even on error)
+    await waitFor(() => {
+      expect(container.querySelector('.done-panel')).not.toBeInTheDocument()
+    })
     // batchResolve should not have been called since queryByProperty failed first
     expect(mockedBatchResolve).not.toHaveBeenCalled()
   })

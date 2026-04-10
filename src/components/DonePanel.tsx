@@ -14,6 +14,7 @@ import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import type { NavigateToPageFn } from '../lib/block-events'
+import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, queryByProperty } from '../lib/tauri'
 import { BlockListItem } from './BlockListItem'
@@ -68,8 +69,8 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
           }
           setPageTitles(titleMap)
         }
-      } catch {
-        // Silently handle errors
+      } catch (err) {
+        logger.error('DonePanel', 'Failed to load done items', undefined, err)
       } finally {
         setLoading(false)
       }
@@ -114,8 +115,10 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
           }
           setPageTitles(titleMap)
         }
-      } catch {
-        // Silently handle errors
+      } catch (err) {
+        if (!cancelled) {
+          logger.error('DonePanel', 'Failed to load done items', undefined, err)
+        }
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -168,6 +171,11 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
 
   const headerLabel =
     totalCount === 1 ? t('donePanel.headerOne') : t('donePanel.header', { count: totalCount })
+
+  // UX-130: Don't render panel when no completed items
+  if (!loading && blocks.length === 0) {
+    return null
+  }
 
   return (
     <section className="done-panel" aria-label={t('donePanel.completedItems')}>

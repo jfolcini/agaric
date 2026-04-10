@@ -22,7 +22,6 @@ import { usePollingQuery } from '../hooks/usePollingQuery'
 import type { ImportResult, StatusInfo } from '../lib/tauri'
 import { getStatus, importMarkdown } from '../lib/tauri'
 import { useSyncStore } from '../stores/sync'
-import { DeviceManagement } from './DeviceManagement'
 
 function queueHealthClasses(depth: number): string {
   if (depth === 0) return 'border-status-done text-status-done-foreground'
@@ -344,9 +343,6 @@ export function StatusPanel(): React.ReactElement {
             )}
           </CardContent>
         </Card>
-
-        <Separator className="my-4" />
-        <DeviceManagement />
 
         <Separator className="my-4" />
         <Card>

@@ -4,6 +4,7 @@
 
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import { logger } from '@/lib/logger'
 import { useAgendaPreferences } from '../../hooks/useAgendaPreferences'
 import { executeAgendaFilters } from '../../lib/agenda-filters'
 import type { BlockRow } from '../../lib/tauri'
@@ -87,8 +88,8 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
       setFilteredBlocks((prev) => [...prev, ...resp.items])
       setAgendaHasMore(resp.has_more)
       setAgendaCursor(resp.next_cursor)
-    } catch {
-      // ignore
+    } catch (err) {
+      logger.warn('AgendaView', 'Failed to load more agenda items', undefined, err)
     }
     setAgendaLoading(false)
   }, [agendaCursor])

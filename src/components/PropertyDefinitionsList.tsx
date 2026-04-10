@@ -24,6 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
 import type { PropertyDefinition } from '../lib/tauri'
 import {
@@ -35,7 +36,7 @@ import {
 import { EmptyState } from './EmptyState'
 import { ListViewState } from './ListViewState'
 
-const VALUE_TYPES = ['text', 'number', 'date', 'select'] as const
+const VALUE_TYPES = ['text', 'number', 'date', 'select', 'ref'] as const
 
 export function PropertyDefinitionsList(): React.ReactElement {
   const { t } = useTranslation()
@@ -232,15 +233,21 @@ export function PropertyDefinitionsList(): React.ReactElement {
                     </Popover>
                   )}
                   <div className="flex-1" />
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={`Delete property ${def.key}`}
-                    className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
-                    onClick={() => setDeleteTarget(def.key)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
+                  {NON_DELETABLE_PROPERTIES.has(def.key) ? (
+                    <Badge variant="outline" className="shrink-0 text-xs text-muted-foreground">
+                      {t('propertiesView.builtIn')}
+                    </Badge>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={`Delete property ${def.key}`}
+                      className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
+                      onClick={() => setDeleteTarget(def.key)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
                 </ListItem>
               ))}
             </ul>

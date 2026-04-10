@@ -42,6 +42,7 @@ export function TrashView(): React.ReactElement {
     loading,
     hasMore,
     loadMore,
+    reload,
     setItems: setBlocks,
   } = usePaginatedQuery(queryFn, { onError: t('trash.loadFailed') })
 
@@ -261,20 +262,20 @@ export function TrashView(): React.ReactElement {
       if (!block.deleted_at) continue
       try {
         await restoreBlock(block.id, block.deleted_at)
-        setBlocks((prev) => prev.filter((b) => b.id !== block.id))
         if (block.block_type === 'page' || block.block_type === 'tag') {
           useResolveStore.getState().set(block.id, block.content ?? 'Untitled', false)
         }
         restored++
-      } catch {
-        // continue with next
+      } catch (err) {
+        logger.warn('TrashView', 'Restore failed for block', { blockId: block.id }, err)
       }
     }
+    reload()
     setSelected(new Set())
     if (restored > 0) {
       toast.success(t('trash.batchRestored', { count: restored }))
     }
-  }, [blocks, selected, setBlocks, t])
+  }, [blocks, selected, reload, t])
 
   const handleBatchPurge = useCallback(async () => {
     const selectedIds = Array.from(selected)
@@ -283,18 +284,31 @@ export function TrashView(): React.ReactElement {
     for (const id of selectedIds) {
       try {
         await purgeBlock(id)
-        setBlocks((prev) => prev.filter((b) => b.id !== id))
         purged++
-      } catch {
-        // continue with next
+      } catch (err) {
+        logger.warn(
+          'TrashView',
+          'Purge failed for block, may have been cascade-deleted',
+          { blockId: id },
+          err,
+        )
+        if (
+          err != null &&
+          typeof err === 'object' &&
+          'kind' in err &&
+          (err as { kind: string }).kind === 'not_found'
+        ) {
+          purged++
+        }
       }
     }
+    reload()
     setSelected(new Set())
     setConfirmBatchPurge(false)
     if (purged > 0) {
       toast.success(t('trash.batchPurged', { count: purged }))
     }
-  }, [selected, setBlocks, t])
+  }, [selected, reload, t])
 
   // ── Breadcrumb helper ────────────────────────────────────────────
 

@@ -595,6 +595,7 @@ const resources = {
       'propertiesView.deadlineWarning': 'Deadline Warning',
       'propertiesView.deadlineWarningDesc':
         'Show tasks approaching their deadline in the DuePanel. Set to 0 to disable.',
+      'propertiesView.builtIn': 'Built-in',
 
       // Tags
       'tags.loadFailed': 'Failed to load tags',

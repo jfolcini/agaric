@@ -29,7 +29,7 @@ export function PageTitleEditor({
       contentEditable
       suppressContentEditableWarning
       className={[
-        'flex-1 text-xl font-semibold outline-none rounded-md px-1',
+        'flex-1 text-xl font-semibold outline-hidden rounded-md px-1',
         'focus:ring-2 focus:ring-ring/50',
         'hover:bg-accent/5 focus-within:bg-accent/5 transition-colors',
       ].join(' ')}

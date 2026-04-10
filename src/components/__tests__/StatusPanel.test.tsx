@@ -449,17 +449,6 @@ describe('StatusPanel', () => {
     })
   })
 
-  it('renders DeviceManagement section', async () => {
-    mockedInvoke.mockResolvedValue(mockStatus)
-
-    render(<StatusPanel />)
-
-    // DeviceManagement shows local device ID after loading
-    await waitFor(() => {
-      expect(screen.getByText(/Device ID/i)).toBeInTheDocument()
-    })
-  })
-
   describe('tooltip keyboard accessibility', () => {
     it('tooltip triggers have tabIndex={0} for keyboard access', async () => {
       mockedInvoke.mockResolvedValue(mockStatus)

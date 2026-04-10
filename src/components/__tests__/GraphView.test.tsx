@@ -50,6 +50,12 @@ vi.mock('d3-force', () => ({
   })),
   forceCenter: vi.fn(),
   forceCollide: vi.fn(),
+  forceX: vi.fn(() => ({
+    strength: vi.fn().mockReturnThis(),
+  })),
+  forceY: vi.fn(() => ({
+    strength: vi.fn().mockReturnThis(),
+  })),
 }))
 
 vi.mock('d3-selection', () => ({
