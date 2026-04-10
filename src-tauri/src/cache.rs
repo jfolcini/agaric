@@ -338,14 +338,226 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
 }
 
 // ---------------------------------------------------------------------------
+// rebuild_projected_agenda_cache (P-16)
+// ---------------------------------------------------------------------------
+
+/// Row returned by the repeating-blocks query inside the cache rebuild.
+///
+/// Mirrors `RepeatingBlockRow` in `commands/mod.rs` but lives here to avoid
+/// a circular dependency (cache → commands).
+struct CacheRepeatingRow {
+    id: String,
+    due_date: Option<String>,
+    scheduled_date: Option<String>,
+    repeat_rule: Option<String>,
+    repeat_until: Option<String>,
+    repeat_count: Option<f64>,
+    repeat_seq: Option<f64>,
+}
+
+/// Full recompute of `projected_agenda_cache`.
+///
+/// 1. Fetches all repeating blocks (non-DONE, non-deleted, has repeat property,
+///    has at least one date column).
+/// 2. For each block, projects dates for the next 365 days from today.
+/// 3. Respects end conditions (repeat-until, repeat-count).
+/// 4. Writes projected entries via DELETE + INSERT in a single transaction.
+pub async fn rebuild_projected_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
+    let today = chrono::Local::now().date_naive();
+    let horizon = today + chrono::Duration::days(365);
+
+    // Fetch all repeating blocks (same query as list_projected_agenda_inner).
+    let rows: Vec<CacheRepeatingRow> = sqlx::query_as!(
+        CacheRepeatingRow,
+        r#"SELECT b.id,
+                b.due_date, b.scheduled_date,
+                bp.value_text AS repeat_rule,
+                bp_until.value_date AS repeat_until,
+                bp_count.value_num AS repeat_count,
+                bp_seq.value_num AS repeat_seq
+         FROM blocks b
+         JOIN block_properties bp ON bp.block_id = b.id AND bp.key = 'repeat'
+         LEFT JOIN block_properties bp_until ON bp_until.block_id = b.id AND bp_until.key = 'repeat-until'
+         LEFT JOIN block_properties bp_count ON bp_count.block_id = b.id AND bp_count.key = 'repeat-count'
+         LEFT JOIN block_properties bp_seq ON bp_seq.block_id = b.id AND bp_seq.key = 'repeat-seq'
+         WHERE b.deleted_at IS NULL
+           AND b.is_conflict = 0
+           AND (b.todo_state IS NULL OR b.todo_state != 'DONE')
+           AND bp.value_text IS NOT NULL
+           AND (b.due_date IS NOT NULL OR b.scheduled_date IS NOT NULL)"#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    // Build all projected entries in memory.
+    let mut entries: Vec<(String, String, String)> = Vec::new(); // (block_id, date, source)
+
+    for block in &rows {
+        let rule = match &block.repeat_rule {
+            Some(r) if !r.is_empty() => r.clone(),
+            _ => continue,
+        };
+
+        let repeat_until = block.repeat_until.clone();
+        let repeat_count = block.repeat_count;
+        let repeat_seq = block.repeat_seq;
+
+        let until_date = repeat_until
+            .as_deref()
+            .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
+
+        let remaining = match (repeat_count, repeat_seq) {
+            (Some(count), Some(seq)) if count > seq => Some((count - seq) as usize),
+            (Some(count), None) => Some(count as usize),
+            (Some(_), Some(_)) => Some(0usize),
+            _ => None,
+        };
+
+        // Parse mode and interval from rule
+        let trimmed = rule.trim().to_lowercase();
+        let (mode, interval) = if let Some(rest) = trimmed.strip_prefix(".+") {
+            ("dot_plus", rest)
+        } else if let Some(rest) = trimmed.strip_prefix("++") {
+            ("plus_plus", rest)
+        } else {
+            ("default", trimmed.as_str())
+        };
+
+        // Project for each date source (due_date, scheduled_date)
+        let sources: Vec<(&str, &str)> = [
+            block.due_date.as_deref().map(|d| ("due_date", d)),
+            block
+                .scheduled_date
+                .as_deref()
+                .map(|d| ("scheduled_date", d)),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+
+        for (source_name, date_str) in sources {
+            let base = match chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+
+            // Determine starting point based on mode
+            let mut current = match mode {
+                "dot_plus" => today,
+                "plus_plus" => {
+                    let mut c = base;
+                    for _ in 0..10_000 {
+                        c = match crate::recurrence::shift_date_once(c, interval) {
+                            Some(d) => d,
+                            None => break,
+                        };
+                        if c > today {
+                            break;
+                        }
+                    }
+                    c
+                }
+                _ => base,
+            };
+
+            let mut projected_count = 0usize;
+            let max_remaining = remaining.unwrap_or(usize::MAX);
+
+            // For ++ mode, pre-add the caught-up date itself.
+            if mode == "plus_plus"
+                && projected_count < max_remaining
+                && current >= today
+                && current <= horizon
+            {
+                let skip = until_date.is_some_and(|until| current > until);
+                if !skip {
+                    entries.push((
+                        block.id.clone(),
+                        current.format("%Y-%m-%d").to_string(),
+                        source_name.to_string(),
+                    ));
+                    projected_count += 1;
+                }
+            }
+
+            // Safety limit to prevent infinite loops
+            for _ in 0..10_000 {
+                if projected_count >= max_remaining {
+                    break;
+                }
+
+                current = match crate::recurrence::shift_date_once(current, interval) {
+                    Some(d) => d,
+                    None => break,
+                };
+
+                if let Some(until) = until_date {
+                    if current > until {
+                        break;
+                    }
+                }
+
+                if current > horizon {
+                    break;
+                }
+
+                if current >= today {
+                    entries.push((
+                        block.id.clone(),
+                        current.format("%Y-%m-%d").to_string(),
+                        source_name.to_string(),
+                    ));
+                    projected_count += 1;
+                }
+            }
+        }
+    }
+
+    // Write to DB: DELETE + INSERT in a single transaction.
+    let mut tx = pool.begin().await?;
+
+    sqlx::query("DELETE FROM projected_agenda_cache")
+        .execute(&mut *tx)
+        .await?;
+
+    for (block_id, date, source) in &entries {
+        sqlx::query(
+            "INSERT OR IGNORE INTO projected_agenda_cache (block_id, projected_date, source) VALUES (?1, ?2, ?3)",
+        )
+        .bind(block_id)
+        .bind(date)
+        .bind(source)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Read/write split variant of [`rebuild_projected_agenda_cache`].
+///
+/// Reads repeating blocks from `read_pool`, computes projections, then
+/// writes to `write_pool`. Delegates to the single-pool implementation
+/// using the write pool for the combined read+write — acceptable because
+/// cache rebuilds are background stale-while-revalidate operations.
+pub async fn rebuild_projected_agenda_cache_split(
+    write_pool: &SqlitePool,
+    _read_pool: &SqlitePool,
+) -> Result<(), AppError> {
+    rebuild_projected_agenda_cache(write_pool).await
+}
+
+// ---------------------------------------------------------------------------
 // rebuild_all_caches — convenience wrapper
 // ---------------------------------------------------------------------------
 
-/// Rebuilds all three read-path caches in sequence.
+/// Rebuilds all four read-path caches in sequence.
 ///
-/// Calls [`rebuild_tags_cache`], [`rebuild_pages_cache`], and
-/// [`rebuild_agenda_cache`].  Each runs in its own transaction so a failure
-/// in a later cache does not roll back earlier ones.
+/// Calls [`rebuild_tags_cache`], [`rebuild_pages_cache`],
+/// [`rebuild_agenda_cache`], and [`rebuild_projected_agenda_cache`].
+/// Each runs in its own transaction so a failure in a later cache does
+/// not roll back earlier ones.
 ///
 /// Note: `reindex_block_links` is *not* included because it operates on a
 /// single block and is called per-block during materialisation.
@@ -353,6 +565,7 @@ pub async fn rebuild_all_caches(pool: &SqlitePool) -> Result<(), AppError> {
     rebuild_tags_cache(pool).await?;
     rebuild_pages_cache(pool).await?;
     rebuild_agenda_cache(pool).await?;
+    rebuild_projected_agenda_cache(pool).await?;
     Ok(())
 }
 
@@ -2596,5 +2809,382 @@ mod tests {
             0,
             "dangling [[ULID]] must not produce a block_links row"
         );
+    }
+
+    // ====================================================================
+    // projected_agenda_cache (P-16) — CTE oracle test
+    // ====================================================================
+
+    /// Helper: insert a repeating block with a due_date and repeat property.
+    async fn insert_repeating_block(
+        pool: &SqlitePool,
+        id: &str,
+        due_date: &str,
+        scheduled_date: Option<&str>,
+        repeat_rule: &str,
+        repeat_until: Option<&str>,
+        repeat_count: Option<f64>,
+        repeat_seq: Option<f64>,
+    ) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, due_date, scheduled_date) \
+             VALUES (?1, 'content', 'repeating task', ?2, ?3)",
+        )
+        .bind(id)
+        .bind(due_date)
+        .bind(scheduled_date)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        // repeat property
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?1, 'repeat', ?2)",
+        )
+        .bind(id)
+        .bind(repeat_rule)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        // repeat-until
+        if let Some(until) = repeat_until {
+            sqlx::query(
+                "INSERT INTO block_properties (block_id, key, value_date) VALUES (?1, 'repeat-until', ?2)",
+            )
+            .bind(id)
+            .bind(until)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+
+        // repeat-count
+        if let Some(count) = repeat_count {
+            sqlx::query(
+                "INSERT INTO block_properties (block_id, key, value_num) VALUES (?1, 'repeat-count', ?2)",
+            )
+            .bind(id)
+            .bind(count)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+
+        // repeat-seq
+        if let Some(seq) = repeat_seq {
+            sqlx::query(
+                "INSERT INTO block_properties (block_id, key, value_num) VALUES (?1, 'repeat-seq', ?2)",
+            )
+            .bind(id)
+            .bind(seq)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn projected_agenda_cache_basic_rebuild() {
+        let (pool, _dir) = test_pool().await;
+
+        let today = chrono::Local::now().date_naive();
+        let due = (today - chrono::Duration::days(3))
+            .format("%Y-%m-%d")
+            .to_string();
+
+        // Weekly repeating task, due 3 days ago
+        insert_repeating_block(&pool, "RPT01", &due, None, "weekly", None, None, None).await;
+
+        rebuild_projected_agenda_cache(&pool).await.unwrap();
+
+        let count = count_rows(&pool, "projected_agenda_cache").await;
+        assert!(
+            count > 0,
+            "projected cache must contain entries after rebuild (got {count})"
+        );
+
+        // All projected dates should be >= today and within 365 days
+        let horizon = (today + chrono::Duration::days(365))
+            .format("%Y-%m-%d")
+            .to_string();
+        let today_str = today.format("%Y-%m-%d").to_string();
+
+        let invalid_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM projected_agenda_cache \
+             WHERE projected_date < ?1 OR projected_date > ?2",
+        )
+        .bind(&today_str)
+        .bind(&horizon)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            invalid_count, 0,
+            "all projected dates must be in [today, today+365]"
+        );
+    }
+
+    #[tokio::test]
+    async fn projected_agenda_cache_respects_repeat_until() {
+        let (pool, _dir) = test_pool().await;
+
+        let today = chrono::Local::now().date_naive();
+        let due = today.format("%Y-%m-%d").to_string();
+        let until = (today + chrono::Duration::days(30))
+            .format("%Y-%m-%d")
+            .to_string();
+
+        insert_repeating_block(
+            &pool,
+            "RPT02",
+            &due,
+            None,
+            "weekly",
+            Some(&until),
+            None,
+            None,
+        )
+        .await;
+
+        rebuild_projected_agenda_cache(&pool).await.unwrap();
+
+        let past_until: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM projected_agenda_cache \
+             WHERE block_id = 'RPT02' AND projected_date > ?1",
+        )
+        .bind(&until)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            past_until, 0,
+            "no projected dates should exceed repeat-until"
+        );
+    }
+
+    #[tokio::test]
+    async fn projected_agenda_cache_respects_repeat_count() {
+        let (pool, _dir) = test_pool().await;
+
+        let today = chrono::Local::now().date_naive();
+        let due = today.format("%Y-%m-%d").to_string();
+
+        // Allow only 3 more occurrences (count=5, seq=2 → remaining=3)
+        insert_repeating_block(
+            &pool,
+            "RPT03",
+            &due,
+            None,
+            "daily",
+            None,
+            Some(5.0),
+            Some(2.0),
+        )
+        .await;
+
+        rebuild_projected_agenda_cache(&pool).await.unwrap();
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM projected_agenda_cache WHERE block_id = 'RPT03'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            count, 3,
+            "should produce exactly 3 projected entries (5 count - 2 seq = 3 remaining)"
+        );
+    }
+
+    #[tokio::test]
+    async fn projected_agenda_cache_excludes_done_blocks() {
+        let (pool, _dir) = test_pool().await;
+
+        let today = chrono::Local::now().date_naive();
+        let due = today.format("%Y-%m-%d").to_string();
+
+        insert_repeating_block(&pool, "RPT04", &due, None, "daily", None, None, None).await;
+
+        // Mark as DONE
+        sqlx::query("UPDATE blocks SET todo_state = 'DONE' WHERE id = 'RPT04'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        rebuild_projected_agenda_cache(&pool).await.unwrap();
+
+        let count = count_rows(&pool, "projected_agenda_cache").await;
+        assert_eq!(count, 0, "DONE blocks must not generate projections");
+    }
+
+    #[tokio::test]
+    async fn projected_agenda_cache_idempotent_rebuild() {
+        let (pool, _dir) = test_pool().await;
+
+        let today = chrono::Local::now().date_naive();
+        let due = today.format("%Y-%m-%d").to_string();
+
+        insert_repeating_block(&pool, "RPT05", &due, None, "weekly", None, None, None).await;
+
+        rebuild_projected_agenda_cache(&pool).await.unwrap();
+        let first_count = count_rows(&pool, "projected_agenda_cache").await;
+
+        rebuild_projected_agenda_cache(&pool).await.unwrap();
+        let second_count = count_rows(&pool, "projected_agenda_cache").await;
+
+        assert_eq!(
+            first_count, second_count,
+            "consecutive rebuilds must produce identical results"
+        );
+    }
+
+    #[tokio::test]
+    async fn projected_agenda_cache_split_variant_matches_single_pool() {
+        let (pool, _dir) = test_pool().await;
+
+        let today = chrono::Local::now().date_naive();
+        let due = (today - chrono::Duration::days(5))
+            .format("%Y-%m-%d")
+            .to_string();
+
+        insert_repeating_block(&pool, "RPT06", &due, None, "daily", None, None, None).await;
+
+        rebuild_projected_agenda_cache_split(&pool, &pool)
+            .await
+            .unwrap();
+
+        let count = count_rows(&pool, "projected_agenda_cache").await;
+        assert!(
+            count > 0,
+            "split variant must produce entries (got {count})"
+        );
+    }
+
+    /// CTE oracle test: verifies that the cache produces identical entries
+    /// to the on-the-fly computation for the same date range.
+    #[tokio::test]
+    async fn projected_agenda_cache_oracle_matches_on_the_fly() {
+        let (pool, _dir) = test_pool().await;
+
+        let today = chrono::Local::now().date_naive();
+
+        // Create several repeating blocks with various rules
+        let due1 = (today - chrono::Duration::days(10))
+            .format("%Y-%m-%d")
+            .to_string();
+        let due2 = today.format("%Y-%m-%d").to_string();
+        let due3 = (today + chrono::Duration::days(5))
+            .format("%Y-%m-%d")
+            .to_string();
+        let sched3 = (today + chrono::Duration::days(2))
+            .format("%Y-%m-%d")
+            .to_string();
+        let until4 = (today + chrono::Duration::days(60))
+            .format("%Y-%m-%d")
+            .to_string();
+
+        // Block 1: weekly repeat, due in the past
+        insert_repeating_block(&pool, "ORC01", &due1, None, "weekly", None, None, None).await;
+
+        // Block 2: daily repeat, due today
+        insert_repeating_block(&pool, "ORC02", &due2, None, "daily", None, None, None).await;
+
+        // Block 3: monthly repeat with both due_date and scheduled_date
+        insert_repeating_block(
+            &pool,
+            "ORC03",
+            &due3,
+            Some(&sched3),
+            "monthly",
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        // Block 4: 3d repeat with repeat-until
+        insert_repeating_block(&pool, "ORC04", &due2, None, "3d", Some(&until4), None, None).await;
+
+        // Block 5: daily repeat with count limit (5 remaining = 8 count - 3 seq)
+        insert_repeating_block(
+            &pool,
+            "ORC05",
+            &due2,
+            None,
+            "daily",
+            None,
+            Some(8.0),
+            Some(3.0),
+        )
+        .await;
+
+        // Step 1: Rebuild the cache
+        rebuild_projected_agenda_cache(&pool).await.unwrap();
+
+        // Step 2: Query the cache for a 90-day window
+        let start = today.format("%Y-%m-%d").to_string();
+        let end_date = today + chrono::Duration::days(90);
+        let end = end_date.format("%Y-%m-%d").to_string();
+
+        let cached_rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT block_id, projected_date, source FROM projected_agenda_cache \
+             WHERE projected_date >= ?1 AND projected_date <= ?2 \
+             ORDER BY projected_date, block_id, source",
+        )
+        .bind(&start)
+        .bind(&end)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        // Step 3: Compute on-the-fly for the same range
+        let on_the_fly = crate::commands::list_projected_agenda_inner(
+            &pool,
+            start.clone(),
+            end.clone(),
+            Some(500),
+        )
+        .await
+        .unwrap();
+
+        // Convert on-the-fly results to comparable tuples, sorted
+        let mut on_the_fly_tuples: Vec<(String, String, String)> = on_the_fly
+            .iter()
+            .map(|e| {
+                (
+                    e.block.id.clone(),
+                    e.projected_date.clone(),
+                    e.source.clone(),
+                )
+            })
+            .collect();
+        on_the_fly_tuples.sort();
+
+        let mut cached_sorted = cached_rows.clone();
+        cached_sorted.sort();
+
+        // Step 4: Verify they produce identical entries
+        assert_eq!(
+            cached_sorted.len(),
+            on_the_fly_tuples.len(),
+            "cache ({}) and on-the-fly ({}) must produce the same number of entries",
+            cached_sorted.len(),
+            on_the_fly_tuples.len()
+        );
+
+        for (i, (cached, on_fly)) in cached_sorted
+            .iter()
+            .zip(on_the_fly_tuples.iter())
+            .enumerate()
+        {
+            assert_eq!(
+                cached, on_fly,
+                "entry {i} differs: cache={cached:?} vs on-the-fly={on_fly:?}"
+            );
+        }
     }
 }

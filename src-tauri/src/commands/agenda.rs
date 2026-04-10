@@ -103,10 +103,9 @@ pub async fn count_agenda_batch_by_source_inner(
 
 /// Compute projected future agenda entries for repeating tasks.
 ///
-/// Finds non-DONE blocks with a `repeat` property and at least one date
-/// (due_date or scheduled_date). Shifts dates forward using the repeat rule
-/// until the projected date exceeds `end_date` or end conditions are met.
-/// Only returns projections within [start_date, end_date].
+/// First tries the `projected_agenda_cache` table (populated by the background
+/// materializer). If the cache is empty, falls back to the original on-the-fly
+/// computation for first-run or pre-cache scenarios.
 ///
 /// Returns at most `limit` entries (default 200, max 500).
 pub async fn list_projected_agenda_inner(
@@ -132,6 +131,87 @@ pub async fn list_projected_agenda_inner(
         ));
     }
 
+    // Try cache first — a single query replaces the O(n*m) projection loop.
+    let cache_limit = cap as i64;
+    #[allow(clippy::type_complexity)]
+    let cached: Vec<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        Option<String>,
+        bool,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT pac.block_id, pac.projected_date, pac.source,
+                b.id, b.block_type, b.content, b.parent_id, b.position,
+                b.deleted_at, b.is_conflict, b.conflict_type,
+                b.todo_state, b.priority, b.due_date, b.scheduled_date
+         FROM projected_agenda_cache pac
+         JOIN blocks b ON b.id = pac.block_id
+         WHERE pac.projected_date >= ?1
+           AND pac.projected_date <= ?2
+           AND b.deleted_at IS NULL
+           AND b.is_conflict = 0
+         ORDER BY pac.projected_date ASC
+         LIMIT ?3",
+    )
+    .bind(&start_date)
+    .bind(&end_date)
+    .bind(cache_limit)
+    .fetch_all(pool)
+    .await?;
+
+    if !cached.is_empty() {
+        let entries: Vec<ProjectedAgendaEntry> = cached
+            .into_iter()
+            .map(|row| {
+                use crate::pagination::BlockRow;
+                ProjectedAgendaEntry {
+                    block: BlockRow {
+                        id: row.3,
+                        block_type: row.4,
+                        content: row.5,
+                        parent_id: row.6,
+                        position: row.7,
+                        deleted_at: row.8,
+                        is_conflict: row.9,
+                        conflict_type: row.10,
+                        todo_state: row.11,
+                        priority: row.12,
+                        due_date: row.13,
+                        scheduled_date: row.14,
+                    },
+                    projected_date: row.1,
+                    source: row.2,
+                }
+            })
+            .collect();
+        return Ok(entries);
+    }
+
+    // Fallback: on-the-fly computation (first run before cache is populated).
+    list_projected_agenda_on_the_fly(pool, range_start, range_end, cap).await
+}
+
+/// On-the-fly projection of repeating tasks (original algorithm).
+///
+/// Used as a fallback when `projected_agenda_cache` is empty (e.g. first boot
+/// before the materializer has populated the cache).
+async fn list_projected_agenda_on_the_fly(
+    pool: &SqlitePool,
+    range_start: chrono::NaiveDate,
+    range_end: chrono::NaiveDate,
+    cap: usize,
+) -> Result<Vec<ProjectedAgendaEntry>, AppError> {
     // Find repeating blocks: non-DONE, non-deleted, has repeat property,
     // has at least one date column.
     // LEFT JOINs fetch repeat-until / repeat-count / repeat-seq in the same

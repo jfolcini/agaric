@@ -263,6 +263,12 @@ pub fn run() {
                 }
             }
 
+            // P-16: Populate projected agenda cache at boot so the first query
+            // hits the cache rather than falling back to on-the-fly computation.
+            if let Err(e) = materializer.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache) {
+                tracing::warn!(error = %e, "failed to enqueue projected agenda cache rebuild at boot");
+            }
+
             // Create scheduler wrapped in Arc for sharing with the SyncDaemon
             let scheduler = std::sync::Arc::new(sync_scheduler::SyncScheduler::new());
 

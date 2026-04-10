@@ -80,6 +80,8 @@ pub enum MaterializeTask {
     CleanupOrphanedAttachments,
     /// Background: rebuild the block_tag_inherited cache (P-4)
     RebuildTagInheritanceCache,
+    /// Background: rebuild projected_agenda_cache (P-16)
+    RebuildProjectedAgendaCache,
     /// Barrier: used by `flush_foreground()`/`flush_background()` to wait for
     /// queue drain. The consumer signals the `Notify` when it processes this
     /// task.  `Arc<Notify>` is `Clone`, so `MaterializeTask` keeps its
@@ -993,6 +995,7 @@ impl Materializer {
                 self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
+                self.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
                 // FTS: remove the deleted block
                 if !hint.block_id.is_empty() {
@@ -1006,6 +1009,7 @@ impl Materializer {
                 self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
+                self.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
                 // FTS: re-index the restored block
                 if !hint.block_id.is_empty() {
@@ -1019,6 +1023,7 @@ impl Materializer {
                 self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
+                self.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
                 // FTS: remove the purged block
                 if !hint.block_id.is_empty() {
@@ -1030,12 +1035,15 @@ impl Materializer {
             "add_tag" | "remove_tag" => {
                 self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
+                self.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
             }
             "set_property" | "delete_property" => {
                 // Always rebuild agenda cache — the property may contain a
                 // value_date even if it's null in this particular op.
                 self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
+                // May change repeat rule, due_date, or scheduled_date
+                self.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache)?;
             }
             "move_block" => {
                 self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
@@ -1068,8 +1076,9 @@ fn hash_id(s: &str) -> u64 {
 /// Coalesce duplicate tasks from a batch:
 ///
 /// - Parameterless cache-rebuild tasks (`RebuildTagsCache`, `RebuildPagesCache`,
-///   `RebuildAgendaCache`, `RebuildFtsIndex`, `FtsOptimize`) are deduplicated
-///   by discriminant — only the first occurrence survives.
+///   `RebuildAgendaCache`, `RebuildProjectedAgendaCache`, `RebuildFtsIndex`,
+///   `FtsOptimize`) are deduplicated by discriminant — only the first
+///   occurrence survives.
 /// - `ReindexBlockLinks`, `UpdateFtsBlock`, `ReindexFtsReferences`, and
 ///   `RemoveFtsBlock` tasks are deduplicated by `block_id`.
 /// - `ApplyOp` tasks are always preserved (they should not appear on the bg
@@ -1708,6 +1717,10 @@ async fn handle_background_task(
         MaterializeTask::RebuildTagInheritanceCache => match read_pool {
             Some(rp) => crate::tag_inheritance::rebuild_all_split(pool, rp).await,
             None => crate::tag_inheritance::rebuild_all(pool).await,
+        },
+        MaterializeTask::RebuildProjectedAgendaCache => match read_pool {
+            Some(rp) => cache::rebuild_projected_agenda_cache_split(pool, rp).await,
+            None => cache::rebuild_projected_agenda_cache(pool).await,
         },
         MaterializeTask::ApplyOp(ref record) => {
             tracing::warn!(seq = record.seq, "unexpected ApplyOp in background queue");
