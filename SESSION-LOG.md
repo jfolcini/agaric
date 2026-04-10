@@ -1,5 +1,25 @@
 # Session Log
 
+## Session 331 — Hook extraction + test coverage: 4 items resolved (2026-04-10)
+
+**4 items resolved (28→24 open). 7 files changed, +1347/-182 lines. 56 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| M-52 | Extract shared useListMultiSelect hook from 3 views | New `useListMultiSelect.ts` + hook test, `TrashView.tsx`, `HistoryView.tsx`, `ConflictList.tsx` |
+| UX-140 | Shift-click propagates target state (add/remove) | Bundled into useListMultiSelect hook |
+| T-36 | handle_recurrence() dedicated integration tests (5 tests) | `recurrence.rs` |
+| T-45 | tauri-mock.ts tests for ~20 untested commands (38 tests) | `tauri-mock.test.ts` |
+
+### Stats
+- 7 files changed (+1347 / -182 lines)
+- 56 new tests (13 hook + 5 Rust recurrence + 38 tauri-mock)
+- 6134 frontend tests pass, 1779 Rust tests pass, all 20 prek hooks pass
+
+---
+
 ## Session 330 — i18n sweep: UX-120 resolved (2026-04-10)
 
 **1 item resolved (29→28 open). 7 files changed, +123/-53 lines.**
