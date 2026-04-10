@@ -3126,6 +3126,24 @@ mod tests {
         )
         .await;
 
+        // Block 6: .+weekly (from-completion mode) — due today, projects weekly from today
+        insert_repeating_block(&pool, "ORC06", &due2, None, ".+weekly", None, None, None).await;
+
+        // Block 7: ++monthly (catch-up mode) — due 30 days ago, catches up to next future occurrence
+        let due7 = (today - chrono::Duration::days(30))
+            .format("%Y-%m-%d")
+            .to_string();
+        insert_repeating_block(&pool, "ORC07", &due7, None, "++monthly", None, None, None).await;
+
+        // Block 8: +5d (custom Nd) — due 2 days ago, projects every 5 days
+        let due8 = (today - chrono::Duration::days(2))
+            .format("%Y-%m-%d")
+            .to_string();
+        insert_repeating_block(&pool, "ORC08", &due8, None, "+5d", None, None, None).await;
+
+        // Block 9: +2w (custom Nw) — due today, projects every 14 days
+        insert_repeating_block(&pool, "ORC09", &due2, None, "+2w", None, None, None).await;
+
         // Step 1: Rebuild the cache
         rebuild_projected_agenda_cache(&pool).await.unwrap();
 
@@ -3190,5 +3208,137 @@ mod tests {
                 "entry {i} differs: cache={cached:?} vs on-the-fly={on_fly:?}"
             );
         }
+    }
+
+    // ====================================================================
+    // projected_agenda_cache — error-path tests
+    // ====================================================================
+
+    #[tokio::test]
+    async fn projected_cache_skips_malformed_repeat_rule() {
+        let (pool, _dir) = test_pool().await;
+
+        let today = chrono::Local::now().date_naive();
+        let due = today.format("%Y-%m-%d").to_string();
+
+        insert_repeating_block(&pool, "ERRRPT01", &due, None, "invalid_rule", None, None, None)
+            .await;
+
+        // Must not panic
+        rebuild_projected_agenda_cache(&pool).await.unwrap();
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM projected_agenda_cache WHERE block_id = 'ERRRPT01'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            count, 0,
+            "malformed repeat rule must produce 0 projected entries"
+        );
+    }
+
+    #[tokio::test]
+    async fn projected_cache_zero_repeat_count_produces_no_entries() {
+        let (pool, _dir) = test_pool().await;
+
+        let today = chrono::Local::now().date_naive();
+        let due = today.format("%Y-%m-%d").to_string();
+
+        // repeat-count = 0, repeat-seq = 0 → remaining = 0
+        insert_repeating_block(
+            &pool,
+            "ERRRPT02",
+            &due,
+            None,
+            "daily",
+            None,
+            Some(0.0),
+            Some(0.0),
+        )
+        .await;
+
+        rebuild_projected_agenda_cache(&pool).await.unwrap();
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM projected_agenda_cache WHERE block_id = 'ERRRPT02'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            count, 0,
+            "zero repeat-count must produce 0 projected entries"
+        );
+    }
+
+    #[tokio::test]
+    async fn projected_cache_repeat_until_in_past_produces_no_entries() {
+        let (pool, _dir) = test_pool().await;
+
+        let today = chrono::Local::now().date_naive();
+        let due = today.format("%Y-%m-%d").to_string();
+        let yesterday = (today - chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+
+        insert_repeating_block(
+            &pool,
+            "ERRRPT03",
+            &due,
+            None,
+            "daily",
+            Some(&yesterday),
+            None,
+            None,
+        )
+        .await;
+
+        rebuild_projected_agenda_cache(&pool).await.unwrap();
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM projected_agenda_cache WHERE block_id = 'ERRRPT03'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            count, 0,
+            "repeat-until in the past must produce 0 projected entries"
+        );
+    }
+
+    #[tokio::test]
+    async fn projected_cache_done_blocks_excluded() {
+        let (pool, _dir) = test_pool().await;
+
+        let today = chrono::Local::now().date_naive();
+        let due = today.format("%Y-%m-%d").to_string();
+
+        insert_repeating_block(&pool, "ERRRPT04", &due, None, "daily", None, None, None).await;
+
+        // Mark as DONE
+        sqlx::query("UPDATE blocks SET todo_state = 'DONE' WHERE id = 'ERRRPT04'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        rebuild_projected_agenda_cache(&pool).await.unwrap();
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM projected_agenda_cache WHERE block_id = 'ERRRPT04'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            count, 0,
+            "DONE blocks must produce 0 projected entries"
+        );
     }
 }

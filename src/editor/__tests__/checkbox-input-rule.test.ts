@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { CheckboxInputRule } from '../extensions/checkbox-input-rule'
 
 describe('CheckboxInputRule extension', () => {
@@ -70,5 +70,45 @@ describe('Checkbox regex patterns', () => {
 
   it('DONE regex does not match with leading text', () => {
     expect(doneRegex.test('text - [x] ')).toBe(false)
+  })
+})
+
+describe('CheckboxInputRule input rules', () => {
+  it('extension has exactly 2 input rules', () => {
+    const ext = CheckboxInputRule.configure({ onCheckbox: null })
+    const rules = ext.config.addInputRules?.call({ options: ext.options })
+    expect(rules).toHaveLength(2)
+  })
+
+  it('TODO handler calls onCheckbox with TODO', () => {
+    const onCheckbox = vi.fn()
+    const ext = CheckboxInputRule.configure({ onCheckbox })
+    const rules = ext.config.addInputRules?.call({ options: ext.options })!
+    const todoRule = rules[0]
+    const mockState = { tr: { delete: vi.fn() } } as any
+    const mockRange = { from: 1, to: 7 }
+    todoRule.handler({
+      state: mockState,
+      range: mockRange,
+      match: '- [ ] '.match(/^- \[ \] $/)!,
+    } as any)
+    expect(mockState.tr.delete).toHaveBeenCalledWith(1, 7)
+    expect(onCheckbox).toHaveBeenCalledWith('TODO')
+  })
+
+  it('DONE handler calls onCheckbox with DONE', () => {
+    const onCheckbox = vi.fn()
+    const ext = CheckboxInputRule.configure({ onCheckbox })
+    const rules = ext.config.addInputRules?.call({ options: ext.options })!
+    const doneRule = rules[1]
+    const mockState = { tr: { delete: vi.fn() } } as any
+    const mockRange = { from: 1, to: 7 }
+    doneRule.handler({
+      state: mockState,
+      range: mockRange,
+      match: '- [x] '.match(/^- \[[xX]\] $/)!,
+    } as any)
+    expect(mockState.tr.delete).toHaveBeenCalledWith(1, 7)
+    expect(onCheckbox).toHaveBeenCalledWith('DONE')
   })
 })

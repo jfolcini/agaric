@@ -6,9 +6,9 @@
  *  - ref forwarding for simple HTML sub-components
  */
 
-import { render } from '@testing-library/react'
+import { fireEvent, render } from '@testing-library/react'
 import * as React from 'react'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import {
   Sidebar,
   SidebarContent,
@@ -202,5 +202,90 @@ describe('Sidebar ref forwarding', () => {
     expect(ref.current).toBeInstanceOf(HTMLElement)
     expect(ref.current?.tagName).toBe('MAIN')
     expect(ref.current?.getAttribute('data-slot')).toBe('sidebar-inset')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SidebarProvider interactions
+// ---------------------------------------------------------------------------
+
+describe('SidebarProvider interactions', () => {
+  // Ensure desktop viewport so Sidebar renders the desktop branch with data-state
+  beforeEach(() => {
+    Object.defineProperty(window, 'innerWidth', {
+      value: 1024,
+      configurable: true,
+      writable: true,
+    })
+  })
+
+  it('Ctrl+B toggles sidebar open/closed', () => {
+    render(
+      <SidebarProvider defaultOpen>
+        <Sidebar>
+          <SidebarContent>Content</SidebarContent>
+        </Sidebar>
+      </SidebarProvider>,
+    )
+
+    const sidebar = document.querySelector('[data-slot="sidebar"]')
+    expect(sidebar).toHaveAttribute('data-state', 'expanded')
+
+    fireEvent.keyDown(window, { key: 'b', ctrlKey: true })
+    expect(sidebar).toHaveAttribute('data-state', 'collapsed')
+
+    fireEvent.keyDown(window, { key: 'b', ctrlKey: true })
+    expect(sidebar).toHaveAttribute('data-state', 'expanded')
+  })
+
+  it('Ctrl+B is ignored when target is contentEditable', () => {
+    render(
+      <SidebarProvider defaultOpen>
+        <Sidebar>
+          <SidebarContent>
+            <div contentEditable="true" data-testid="editor">
+              Edit me
+            </div>
+          </SidebarContent>
+        </Sidebar>
+      </SidebarProvider>,
+    )
+
+    const sidebar = document.querySelector('[data-slot="sidebar"]')
+    expect(sidebar).toHaveAttribute('data-state', 'expanded')
+
+    const editor = document.querySelector('[data-testid="editor"]') as HTMLElement
+    editor.focus()
+    fireEvent.keyDown(editor, { key: 'b', ctrlKey: true })
+
+    expect(sidebar).toHaveAttribute('data-state', 'expanded')
+  })
+
+  it('sidebar width is persisted to localStorage', () => {
+    localStorage.setItem('sidebar_width', '200')
+
+    render(
+      <SidebarProvider>
+        <div>Child</div>
+      </SidebarProvider>,
+    )
+
+    const wrapper = document.querySelector('[data-slot="sidebar-wrapper"]') as HTMLElement
+    expect(wrapper.style.getPropertyValue('--sidebar-width')).toBe('200px')
+
+    localStorage.removeItem('sidebar_width')
+  })
+
+  it('sidebar width falls back to default when localStorage is empty', () => {
+    localStorage.removeItem('sidebar_width')
+
+    render(
+      <SidebarProvider>
+        <div>Child</div>
+      </SidebarProvider>,
+    )
+
+    const wrapper = document.querySelector('[data-slot="sidebar-wrapper"]') as HTMLElement
+    expect(wrapper.style.getPropertyValue('--sidebar-width')).toBe('150px')
   })
 })

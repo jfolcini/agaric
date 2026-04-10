@@ -143,3 +143,41 @@ describe('parseDate', () => {
     expect(parseDate('2026-01-32')).toBeNull()
   })
 })
+
+describe('edge cases', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('leap year: Feb 29 parses correctly', () => {
+    expect(parseDate('2024-02-29')).toBe('2024-02-29')
+  })
+
+  it('month boundary: Jan 31 + 1 month overshoots to March', () => {
+    vi.setSystemTime(new Date('2026-01-31'))
+    // JS setMonth(1) on Jan 31 → Feb 31 doesn't exist → rolls to March 3
+    expect(parseDate('+1m')).toBe('2026-03-03')
+  })
+
+  it('zero offset: +0d returns today', () => {
+    vi.setSystemTime(new Date('2026-04-10'))
+    expect(parseDate('+0d')).toBe('2026-04-10')
+  })
+
+  it('year boundary: Dec 31 + 1 day', () => {
+    vi.setSystemTime(new Date('2025-12-31'))
+    expect(parseDate('+1d')).toBe('2026-01-01')
+  })
+
+  it('invalid month name rejected', () => {
+    expect(parseDate('Foo 15')).toBeNull()
+  })
+
+  it('Feb 30 rejected', () => {
+    expect(parseDate('2026-02-30')).toBeNull()
+  })
+})

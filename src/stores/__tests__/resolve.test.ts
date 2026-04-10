@@ -326,3 +326,74 @@ describe('resolveStatus', () => {
     expect(status).toBe('active')
   })
 })
+
+// ---------------------------------------------------------------------------
+// cache eviction
+// ---------------------------------------------------------------------------
+describe('cache eviction', () => {
+  it('set() evicts oldest entries when cache exceeds MAX_CACHE_SIZE', () => {
+    // Pre-fill cache with exactly 10,000 entries
+    const cache = new Map<string, { title: string; deleted: boolean }>()
+    for (let i = 0; i < 10_000; i++) {
+      cache.set(`id-${i}`, { title: `T${i}`, deleted: false })
+    }
+    useResolveStore.setState({ cache })
+
+    // Add one more entry — should trigger eviction
+    useResolveStore.getState().set('new-id', 'Title', false)
+
+    const state = useResolveStore.getState()
+    expect(state.cache.size).toBe(10_000)
+    // The first entry added should have been evicted
+    expect(state.cache.has('id-0')).toBe(false)
+    // The new entry should be present
+    expect(state.cache.has('new-id')).toBe(true)
+  })
+
+  it('batchSet() evicts when batch pushes cache over limit', () => {
+    // Pre-fill cache to 9,998 entries
+    const cache = new Map<string, { title: string; deleted: boolean }>()
+    for (let i = 0; i < 9_998; i++) {
+      cache.set(`id-${i}`, { title: `T${i}`, deleted: false })
+    }
+    useResolveStore.setState({ cache })
+
+    // Add 3 entries — total would be 10,001, should evict 1 oldest
+    useResolveStore.getState().batchSet([
+      { id: 'a', title: 'A', deleted: false },
+      { id: 'b', title: 'B', deleted: false },
+      { id: 'c', title: 'C', deleted: false },
+    ])
+
+    const state = useResolveStore.getState()
+    expect(state.cache.size).toBe(10_000)
+    // The first entry (oldest) should have been evicted
+    expect(state.cache.has('id-0')).toBe(false)
+    // All new entries should be present
+    expect(state.cache.has('a')).toBe(true)
+    expect(state.cache.has('b')).toBe(true)
+    expect(state.cache.has('c')).toBe(true)
+  })
+
+  it('set() evicts oldest pagesList entries at MAX_PAGES_LIST_SIZE', () => {
+    // Pre-fill pagesList to 5,000 entries
+    const pagesList = Array.from({ length: 5_000 }, (_, i) => ({
+      id: `page-${i}`,
+      title: `Page ${i}`,
+    }))
+    useResolveStore.setState({ pagesList })
+
+    // Add one more page — should trigger eviction via slice(-5000)
+    useResolveStore.getState().set('new-page', 'New Page', false)
+
+    const state = useResolveStore.getState()
+    expect(state.pagesList.length).toBe(5_000)
+    // The first page should have been evicted
+    expect(state.pagesList.find((p) => p.id === 'page-0')).toBeUndefined()
+    // The new page should be at the end
+    expect(state.pagesList[state.pagesList.length - 1]).toEqual({
+      id: 'new-page',
+      title: 'New Page',
+    })
+  })
+})
