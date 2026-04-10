@@ -10,7 +10,6 @@
  * components (OverdueSection, UpcomingSection, DuePanelFilters).
  */
 
-import { CheckCircle2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -23,7 +22,6 @@ import { truncateContent } from '../lib/text-utils'
 import { BlockListItem } from './BlockListItem'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { DuePanelFilters } from './DuePanelFilters'
-import { EmptyState } from './EmptyState'
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { OverdueSection } from './OverdueSection'
@@ -149,168 +147,166 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
 
   return (
     <section className="due-panel" aria-label={t('duePanel.duePanelLabel')}>
-      <ListViewState
-        loading={loading || projectedLoading}
-        items={allDisplayItems}
-        skeleton={
-          <div
-            className="due-panel-loading flex items-center gap-2 px-2 py-2"
-            aria-busy="true"
-            role="status"
-          >
-            <LoadingSkeleton count={3} height="h-10" />
-          </div>
-        }
-        empty={<EmptyState icon={CheckCircle2} message={t('duePanel.empty')} compact />}
+      {/* Main header -- collapsible, always visible */}
+      <CollapsiblePanelHeader
+        isCollapsed={collapsed}
+        onToggle={toggleCollapsed}
+        className="due-panel-header"
       >
-        {() => (
-          <>
-            {/* Main header -- collapsible */}
-            <CollapsiblePanelHeader
-              isCollapsed={collapsed}
-              onToggle={toggleCollapsed}
-              className="due-panel-header"
+        {headerLabel}
+      </CollapsiblePanelHeader>
+
+      {!collapsed && (
+        <DuePanelFilters
+          sourceFilter={sourceFilter}
+          onSourceFilterChange={setSourceFilter}
+          hideBeforeScheduled={hideBeforeScheduled}
+          onToggleHideBeforeScheduled={toggleHideBeforeScheduled}
+        />
+      )}
+
+      {!collapsed && (
+        <ListViewState
+          loading={loading || projectedLoading}
+          items={allDisplayItems}
+          skeleton={
+            <div
+              className="due-panel-loading flex items-center gap-2 px-2 py-2"
+              aria-busy="true"
+              role="status"
             >
-              {headerLabel}
-            </CollapsiblePanelHeader>
+              <LoadingSkeleton count={3} height="h-10" />
+            </div>
+          }
+          empty={null}
+        >
+          {() => (
+            <div className="due-panel-content mt-1 space-y-2">
+              {/* Overdue section */}
+              {isToday && (
+                <OverdueSection
+                  blocks={overdueBlocks}
+                  pageTitles={pageTitles}
+                  onNavigateToPage={onNavigateToPage}
+                />
+              )}
 
-            {!collapsed && (
-              <DuePanelFilters
-                sourceFilter={sourceFilter}
-                onSourceFilterChange={setSourceFilter}
-                hideBeforeScheduled={hideBeforeScheduled}
-                onToggleHideBeforeScheduled={toggleHideBeforeScheduled}
-              />
-            )}
+              {/* Upcoming section */}
+              {isToday && (
+                <UpcomingSection
+                  blocks={upcomingBlocks}
+                  pageTitles={pageTitles}
+                  onNavigateToPage={onNavigateToPage}
+                />
+              )}
 
-            {!collapsed && (
-              <div className="due-panel-content mt-1 space-y-2">
-                {/* Overdue section */}
-                {isToday && (
-                  <OverdueSection
-                    blocks={overdueBlocks}
-                    pageTitles={pageTitles}
-                    onNavigateToPage={onNavigateToPage}
-                  />
-                )}
+              {/* Grouped blocks */}
+              {grouped.map((group) => (
+                <div key={group.label} className="due-panel-group">
+                  {/* Group sub-header (not collapsible) */}
+                  <div className="due-panel-group-header px-3 py-1 text-xs font-semibold uppercase text-muted-foreground tracking-wide bg-muted/50 rounded [@media(pointer:coarse)]:text-sm">
+                    {group.label}
+                  </div>
 
-                {/* Upcoming section */}
-                {isToday && (
-                  <UpcomingSection
-                    blocks={upcomingBlocks}
-                    pageTitles={pageTitles}
-                    onNavigateToPage={onNavigateToPage}
-                  />
-                )}
+                  <ul
+                    className="due-panel-blocks ml-2 space-y-1"
+                    aria-label={`${group.label} items`}
+                  >
+                    {group.items.map((block) => (
+                      <BlockListItem
+                        key={block.id}
+                        blockId={block.id}
+                        content={block.content}
+                        contentMaxLength={120}
+                        emptyContentFallback={t('duePanel.emptyContent')}
+                        metadata={
+                          block.priority ? (
+                            <PriorityBadge
+                              priority={block.priority}
+                              className="due-panel-priority [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1"
+                            />
+                          ) : undefined
+                        }
+                        pageId={block.parent_id}
+                        pageTitle={
+                          block.parent_id
+                            ? (pageTitles.get(block.parent_id) ?? t('duePanel.untitled'))
+                            : ''
+                        }
+                        breadcrumbArrow={t('duePanel.breadcrumbArrow')}
+                        className="due-panel-item hover:bg-muted/50 active:bg-muted/70"
+                        contentClassName="due-panel-item-text"
+                        breadcrumbClassName="due-panel-breadcrumb"
+                        testId="due-panel-item"
+                        onClick={() => handleBlockClick(block)}
+                        onKeyDown={(e) => handleBlockKeyDown(e, block)}
+                      />
+                    ))}
+                  </ul>
+                </div>
+              ))}
 
-                {/* Grouped blocks */}
-                {grouped.map((group) => (
-                  <div key={group.label} className="due-panel-group">
-                    {/* Group sub-header (not collapsible) */}
-                    <div className="due-panel-group-header px-3 py-1 text-xs font-semibold uppercase text-muted-foreground tracking-wide bg-muted/50 rounded [@media(pointer:coarse)]:text-sm">
-                      {group.label}
-                    </div>
-
-                    <ul
-                      className="due-panel-blocks ml-2 space-y-1"
-                      aria-label={`${group.label} items`}
-                    >
-                      {group.items.map((block) => (
-                        <BlockListItem
-                          key={block.id}
-                          blockId={block.id}
-                          content={block.content}
-                          contentMaxLength={120}
-                          emptyContentFallback={t('duePanel.emptyContent')}
-                          metadata={
-                            block.priority ? (
-                              <PriorityBadge
-                                priority={block.priority}
-                                className="due-panel-priority [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1"
-                              />
-                            ) : undefined
-                          }
-                          pageId={block.parent_id}
-                          pageTitle={
-                            block.parent_id
-                              ? (pageTitles.get(block.parent_id) ?? t('duePanel.untitled'))
-                              : ''
-                          }
-                          breadcrumbArrow={t('duePanel.breadcrumbArrow')}
-                          className="due-panel-item hover:bg-muted/50 active:bg-muted/70"
-                          contentClassName="due-panel-item-text"
-                          breadcrumbClassName="due-panel-breadcrumb"
-                          testId="due-panel-item"
-                          onClick={() => handleBlockClick(block)}
-                          onKeyDown={(e) => handleBlockKeyDown(e, block)}
-                        />
+              {/* Projected future occurrences from repeating tasks */}
+              {(() => {
+                // Deduplicate: exclude projected entries whose block already appears in real agenda
+                const realBlockIds = new Set(blocks.map((b) => b.id))
+                const uniqueProjected = projectedEntries.filter(
+                  (e) => !realBlockIds.has(e.block.id),
+                )
+                return uniqueProjected.length > 0 ? (
+                  <div className="mt-3 border-t border-dashed border-muted-foreground/30 pt-3">
+                    <p className="text-xs [@media(pointer:coarse)]:text-sm font-medium text-muted-foreground mb-2">
+                      {t('due.projected', { defaultValue: 'Projected' })}
+                    </p>
+                    <ul className="space-y-1">
+                      {uniqueProjected.map((entry) => (
+                        <li
+                          key={`projected-${entry.block.id}-${entry.source}`}
+                          className="flex items-center gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:bg-muted/50 active:bg-muted/70 transition-colors"
+                          onClick={() => {
+                            if (!entry.block.parent_id || !onNavigateToPage) return
+                            const title = pageTitles.get(entry.block.parent_id) ?? ''
+                            onNavigateToPage(entry.block.parent_id, title, entry.block.id)
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key !== 'Enter' && e.key !== ' ') return
+                            e.preventDefault()
+                            if (!entry.block.parent_id || !onNavigateToPage) return
+                            const title = pageTitles.get(entry.block.parent_id) ?? ''
+                            onNavigateToPage(entry.block.parent_id, title, entry.block.id)
+                          }}
+                        >
+                          <span className="text-xs font-mono opacity-60">
+                            {entry.source === 'due_date' ? '\u23F0' : '\uD83D\uDCC5'}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate">
+                            {truncateContent(entry.block.content, 80, t('duePanel.emptyContent'))}
+                          </span>
+                          {entry.block.priority && (
+                            <PriorityBadge priority={entry.block.priority} />
+                          )}
+                        </li>
                       ))}
                     </ul>
                   </div>
-                ))}
+                ) : null
+              })()}
 
-                {/* Projected future occurrences from repeating tasks */}
-                {(() => {
-                  // Deduplicate: exclude projected entries whose block already appears in real agenda
-                  const realBlockIds = new Set(blocks.map((b) => b.id))
-                  const uniqueProjected = projectedEntries.filter(
-                    (e) => !realBlockIds.has(e.block.id),
-                  )
-                  return uniqueProjected.length > 0 ? (
-                    <div className="mt-3 border-t border-dashed border-muted-foreground/30 pt-3">
-                      <p className="text-xs [@media(pointer:coarse)]:text-sm font-medium text-muted-foreground mb-2">
-                        {t('due.projected', { defaultValue: 'Projected' })}
-                      </p>
-                      <ul className="space-y-1">
-                        {uniqueProjected.map((entry) => (
-                          <li
-                            key={`projected-${entry.block.id}-${entry.source}`}
-                            className="flex items-center gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:bg-muted/50 active:bg-muted/70 transition-colors"
-                            onClick={() => {
-                              if (!entry.block.parent_id || !onNavigateToPage) return
-                              const title = pageTitles.get(entry.block.parent_id) ?? ''
-                              onNavigateToPage(entry.block.parent_id, title, entry.block.id)
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key !== 'Enter' && e.key !== ' ') return
-                              e.preventDefault()
-                              if (!entry.block.parent_id || !onNavigateToPage) return
-                              const title = pageTitles.get(entry.block.parent_id) ?? ''
-                              onNavigateToPage(entry.block.parent_id, title, entry.block.id)
-                            }}
-                          >
-                            <span className="text-xs font-mono opacity-60">
-                              {entry.source === 'due_date' ? '\u23F0' : '\uD83D\uDCC5'}
-                            </span>
-                            <span className="min-w-0 flex-1 truncate">
-                              {truncateContent(entry.block.content, 80, t('duePanel.emptyContent'))}
-                            </span>
-                            {entry.block.priority && (
-                              <PriorityBadge priority={entry.block.priority} />
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null
-                })()}
-
-                {/* Load more */}
-                <LoadMoreButton
-                  hasMore={hasMore}
-                  loading={loading}
-                  onLoadMore={loadMore}
-                  className="due-panel-load-more"
-                  label={t('duePanel.loadMore')}
-                  loadingLabel={t('duePanel.loading')}
-                  ariaLabel={t('duePanel.loadMoreLabel')}
-                  ariaLoadingLabel={t('duePanel.loadingMore')}
-                />
-              </div>
-            )}
-          </>
-        )}
-      </ListViewState>
+              {/* Load more */}
+              <LoadMoreButton
+                hasMore={hasMore}
+                loading={loading}
+                onLoadMore={loadMore}
+                className="due-panel-load-more"
+                label={t('duePanel.loadMore')}
+                loadingLabel={t('duePanel.loading')}
+                ariaLabel={t('duePanel.loadMoreLabel')}
+                ariaLoadingLabel={t('duePanel.loadingMore')}
+              />
+            </div>
+          )}
+        </ListViewState>
+      )}
     </section>
   )
 }

@@ -126,8 +126,8 @@ describe('DuePanel', () => {
     expect(await screen.findByText('1 Due')).toBeInTheDocument()
   })
 
-  // 2. Shows empty state message when no items
-  it('shows empty state when no items are due', async () => {
+  // 2. Shows header and filter pills (no empty-state overlay) when no items
+  it('shows header and filters when no items are due', async () => {
     mockedListBlocks.mockResolvedValue(emptyResponse)
 
     render(<DuePanel date="2025-06-15" />)
@@ -136,8 +136,11 @@ describe('DuePanel', () => {
       expect(mockedListBlocks).toHaveBeenCalled()
     })
 
-    expect(await screen.findByText(/Nothing due/)).toBeInTheDocument()
+    // Header and filters remain visible so the user can switch filters
     expect(screen.getByLabelText('Due items')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument()
+    // No content blocks rendered
+    expect(screen.queryByTestId('due-panel-item')).not.toBeInTheDocument()
   })
 
   // 3. Groups blocks by todo_state in correct order (DOING > TODO > DONE > null)
@@ -652,6 +655,30 @@ describe('DuePanel', () => {
     expect(await screen.findByText('2 Due')).toBeInTheDocument()
   })
 
+  // 20. Filter pills remain visible when filtered result set is empty (B-43)
+  it('filter pills remain visible when the filtered result set is empty', async () => {
+    // All data sources return empty — simulates a filter producing 0 results
+    mockedListBlocks.mockResolvedValue(emptyResponse)
+    mockedListProjectedAgenda.mockResolvedValue([])
+    mockedQueryByProperty.mockResolvedValue(emptyResponse)
+
+    render(<DuePanel date="2025-06-15" />)
+
+    // Wait for loading to finish
+    await waitFor(() => {
+      expect(mockedListBlocks).toHaveBeenCalled()
+    })
+
+    // Filter pills should still be present even with zero results
+    expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Due' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Scheduled' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Properties' })).toBeInTheDocument()
+
+    // Header should also be visible
+    expect(screen.getByLabelText('Due items')).toBeInTheDocument()
+  })
+
   // --- Projected agenda entries (repeating tasks) ---
   describe('projected entries', () => {
     it('renders projected entries section when projections exist', async () => {
@@ -1014,19 +1041,19 @@ describe('DuePanel', () => {
 
   // --- Error paths ---
   describe('error paths', () => {
-    it('listBlocks rejection on initial load shows empty state and finishes loading', async () => {
+    it('listBlocks rejection on initial load shows header/filters and finishes loading', async () => {
       mockedListBlocks.mockRejectedValueOnce(new Error('network failure'))
 
       const { container } = render(<DuePanel date="2025-06-15" />)
 
-      // Should finish loading and show the empty state
-      expect(await screen.findByText(/Nothing due/)).toBeInTheDocument()
+      // Wait for loading to finish — header and filters remain visible
+      await waitFor(() => {
+        expect(container.querySelector('[aria-busy="true"]')).not.toBeInTheDocument()
+      })
 
-      // Loading skeleton should be gone
-      expect(container.querySelector('[aria-busy="true"]')).not.toBeInTheDocument()
-
-      // Section still renders without crashing
+      // Header and filter pills are still accessible
       expect(screen.getByLabelText('Due items')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument()
     })
 
     it('batchResolve rejection after listBlocks still renders blocks without page titles', async () => {

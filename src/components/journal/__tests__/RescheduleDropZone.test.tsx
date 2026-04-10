@@ -19,10 +19,24 @@ import { axe } from 'vitest-axe'
 const mockToast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
 vi.mock('sonner', () => ({ toast: mockToast }))
 
+// ── Mock logger ────────────────────────────────────────────────────────
+vi.mock('@/lib/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}))
+
 // ── Mock tauri setDueDate ──────────────────────────────────────────────
 const mockSetDueDate = vi.hoisted(() => vi.fn())
+const mockGetBlock = vi.hoisted(() => vi.fn())
+const mockSetScheduledDate = vi.hoisted(() => vi.fn())
 vi.mock('../../../lib/tauri', () => ({
   setDueDate: (...args: unknown[]) => mockSetDueDate(...args),
+  getBlock: (...args: unknown[]) => mockGetBlock(...args),
+  setScheduledDate: (...args: unknown[]) => mockSetScheduledDate(...args),
 }))
 
 import { RESCHEDULE_DRAG_TYPE, RescheduleDropZone } from '../RescheduleDropZone'
@@ -30,6 +44,8 @@ import { RESCHEDULE_DRAG_TYPE, RescheduleDropZone } from '../RescheduleDropZone'
 beforeEach(() => {
   vi.clearAllMocks()
   mockSetDueDate.mockResolvedValue({})
+  mockSetScheduledDate.mockResolvedValue({})
+  mockGetBlock.mockResolvedValue({ due_date: '2025-01-10', scheduled_date: null })
 })
 
 /** Helper to create a mock DataTransfer with the reschedule MIME type. */
@@ -216,5 +232,81 @@ describe('RescheduleDropZone', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // 8. Calls setScheduledDate when block has only scheduled_date
+  it('calls setScheduledDate when block has only scheduled_date', async () => {
+    mockGetBlock.mockResolvedValueOnce({ scheduled_date: '2025-01-10', due_date: null })
+
+    render(
+      <RescheduleDropZone dateStr="2025-01-15">
+        <span>Content</span>
+      </RescheduleDropZone>,
+    )
+
+    const zone = screen.getByTestId('reschedule-drop-zone-2025-01-15')
+    fireEvent.drop(zone, { dataTransfer: makeDataTransfer('block-sched') })
+
+    await waitFor(() => {
+      expect(mockSetScheduledDate).toHaveBeenCalledWith('block-sched', '2025-01-15')
+    })
+    expect(mockSetDueDate).not.toHaveBeenCalled()
+  })
+
+  // 9. Calls setDueDate when block has only due_date
+  it('calls setDueDate when block has only due_date', async () => {
+    mockGetBlock.mockResolvedValueOnce({ due_date: '2025-01-10', scheduled_date: null })
+
+    render(
+      <RescheduleDropZone dateStr="2025-01-15">
+        <span>Content</span>
+      </RescheduleDropZone>,
+    )
+
+    const zone = screen.getByTestId('reschedule-drop-zone-2025-01-15')
+    fireEvent.drop(zone, { dataTransfer: makeDataTransfer('block-due') })
+
+    await waitFor(() => {
+      expect(mockSetDueDate).toHaveBeenCalledWith('block-due', '2025-01-15')
+    })
+    expect(mockSetScheduledDate).not.toHaveBeenCalled()
+  })
+
+  // 10. Calls setDueDate when block has both dates
+  it('calls setDueDate when block has both dates', async () => {
+    mockGetBlock.mockResolvedValueOnce({ due_date: '2025-01-10', scheduled_date: '2025-01-08' })
+
+    render(
+      <RescheduleDropZone dateStr="2025-01-15">
+        <span>Content</span>
+      </RescheduleDropZone>,
+    )
+
+    const zone = screen.getByTestId('reschedule-drop-zone-2025-01-15')
+    fireEvent.drop(zone, { dataTransfer: makeDataTransfer('block-both') })
+
+    await waitFor(() => {
+      expect(mockSetDueDate).toHaveBeenCalledWith('block-both', '2025-01-15')
+    })
+    expect(mockSetScheduledDate).not.toHaveBeenCalled()
+  })
+
+  // 11. Falls back to setDueDate when getBlock fails
+  it('falls back to setDueDate when getBlock fails', async () => {
+    mockGetBlock.mockRejectedValueOnce(new Error('Block not found'))
+
+    render(
+      <RescheduleDropZone dateStr="2025-01-15">
+        <span>Content</span>
+      </RescheduleDropZone>,
+    )
+
+    const zone = screen.getByTestId('reschedule-drop-zone-2025-01-15')
+    fireEvent.drop(zone, { dataTransfer: makeDataTransfer('block-err') })
+
+    await waitFor(() => {
+      expect(mockSetDueDate).toHaveBeenCalledWith('block-err', '2025-01-15')
+    })
+    expect(mockSetScheduledDate).not.toHaveBeenCalled()
   })
 })

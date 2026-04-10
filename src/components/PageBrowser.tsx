@@ -272,7 +272,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
               {starredCount > 0 && (
                 <Badge
                   variant="secondary"
-                  className="starred-count absolute -top-1.5 -right-1.5 h-4 min-w-[1rem] px-1 text-[10px]"
+                  className="starred-count absolute -top-1.5 -right-1.5 h-4 min-w-[1rem] px-1 text-xs"
                 >
                   {starredCount}
                 </Badge>

@@ -13,8 +13,9 @@ import type React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
-import { setDueDate } from '../../lib/tauri'
+import { getBlock, setDueDate, setScheduledDate } from '../../lib/tauri'
 
 interface RescheduleDropZoneProps {
   dateStr: string
@@ -55,7 +56,26 @@ export function RescheduleDropZone({
       const blockId = e.dataTransfer.getData(RESCHEDULE_DRAG_TYPE)
       if (!blockId) return
       try {
-        await setDueDate(blockId, dateStr)
+        let useScheduledDate = false
+        try {
+          const block = await getBlock(blockId)
+          if (block.scheduled_date && !block.due_date) {
+            useScheduledDate = true
+          }
+        } catch (err) {
+          logger.warn(
+            'RescheduleDropZone',
+            'Failed to fetch block, falling back to setDueDate',
+            { blockId },
+            err,
+          )
+        }
+
+        if (useScheduledDate) {
+          await setScheduledDate(blockId, dateStr)
+        } else {
+          await setDueDate(blockId, dateStr)
+        }
         toast.success(t('journal.rescheduled', { date: dateStr }))
       } catch {
         toast.error(t('journal.rescheduleFailed'))

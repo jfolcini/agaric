@@ -147,6 +147,11 @@ function PageEditorInner({
       {/* Block tree — loads children of pageId */}
       <BlockTree parentId={pageId} onNavigateToPage={onNavigateToPage} />
 
+      {/* Add block button — always directly beneath the last block */}
+      <div>
+        <AddBlockButton onClick={handleAddBlock} />
+      </div>
+
       {/* Due/Done panels — shown on date-formatted pages (mirrors DaySection daily view) */}
       {isDateFormattedPage(title) && (
         <>
@@ -164,11 +169,6 @@ function PageEditorInner({
 
       {/* Unlinked references — collapsed by default, below linked references */}
       <UnlinkedReferences pageId={pageId} pageTitle={title} onNavigateToPage={onNavigateToPage} />
-
-      {/* Add block button — always directly beneath the last block */}
-      <div>
-        <AddBlockButton onClick={handleAddBlock} />
-      </div>
 
       {/* Page metadata bar — word count, block count, created date */}
       <PageMetadataBar blocks={blocks} pageId={pageId} />

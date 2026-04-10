@@ -497,7 +497,7 @@ const resources = {
       'duePanel.loadMoreLabel': 'Load more due items',
       'duePanel.breadcrumbArrow': '\u2192',
       'duePanel.untitled': 'Untitled',
-      'duePanel.empty': 'Nothing due — enjoy your day!',
+
       'duePanel.filterAll': 'All',
       'duePanel.filterDue': 'Due',
       'duePanel.filterScheduled': 'Scheduled',

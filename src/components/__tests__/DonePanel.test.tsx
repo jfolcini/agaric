@@ -573,4 +573,29 @@ describe('DonePanel', () => {
     expect(groupHeaders[0]).toHaveTextContent('Resolved Page (1)')
     expect(groupHeaders[1]).toHaveTextContent('Untitled (1)')
   })
+
+  // 18. Does not render blocks with empty content (UX-129)
+  it('does not render blocks with empty content', async () => {
+    mockedQueryByProperty.mockResolvedValue({
+      items: [
+        makeBlock({ id: 'B1', content: 'real done task' }),
+        makeBlock({ id: 'B2', content: null }),
+        makeBlock({ id: 'B3', content: '' }),
+        makeBlock({ id: 'B4', content: '   ' }),
+        makeBlock({ id: 'B5', content: 'another done task' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<DonePanel date="2025-06-15" />)
+
+    // Only the 2 non-empty blocks should render
+    expect(await screen.findByText('2 Completed')).toBeInTheDocument()
+    expect(screen.getByText('real done task')).toBeInTheDocument()
+    expect(screen.getByText('another done task')).toBeInTheDocument()
+
+    // Empty / whitespace blocks should not appear
+    expect(screen.queryByText('(empty)')).not.toBeInTheDocument()
+  })
 })

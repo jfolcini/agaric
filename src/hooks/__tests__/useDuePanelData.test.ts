@@ -288,4 +288,27 @@ describe('useDuePanelData', () => {
       expect(result.current.upcomingBlocks).toHaveLength(0)
     })
   })
+
+  it('filters out blocks with empty content (UX-129)', async () => {
+    mockedListBlocks.mockResolvedValue({
+      items: [
+        makeBlock({ id: 'B1', content: 'real task' }),
+        makeBlock({ id: 'B2', content: null }),
+        makeBlock({ id: 'B3', content: '' }),
+        makeBlock({ id: 'B4', content: '   ' }),
+        makeBlock({ id: 'B5', content: 'another task' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
+
+    await waitFor(() => {
+      expect(result.current.blocks).toHaveLength(2)
+    })
+    expect(result.current.blocks[0]?.id).toBe('B1')
+    expect(result.current.blocks[1]?.id).toBe('B5')
+    expect(result.current.totalCount).toBe(2)
+  })
 })

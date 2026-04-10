@@ -94,7 +94,7 @@ export function useDuePanelData({
         if (stale) return
 
         const overdue = resp.items.filter(
-          (b) => b.due_date && b.due_date < date && b.todo_state !== 'DONE',
+          (b) => b.due_date && b.due_date < date && b.todo_state !== 'DONE' && b.content?.trim(),
         )
         setOverdueBlocks(overdue)
 
@@ -151,7 +151,8 @@ export function useDuePanelData({
             b.due_date &&
             b.due_date >= tomorrowStr &&
             b.due_date <= endStr &&
-            b.todo_state !== 'DONE',
+            b.todo_state !== 'DONE' &&
+            b.content?.trim(),
         )
         setUpcomingBlocks(upcoming)
 
@@ -200,14 +201,16 @@ export function useDuePanelData({
           sourceFilter === 'property:'
             ? resp.items.filter((b) => b.due_date !== date && b.scheduled_date !== date)
             : resp.items
-        const newBlocks = cursor ? [...blocks, ...filteredItems] : filteredItems
+        // Filter out blocks with empty content (UX-129)
+        const nonEmptyItems = filteredItems.filter((b) => b.content?.trim())
+        const newBlocks = cursor ? [...blocks, ...nonEmptyItems] : nonEmptyItems
         setBlocks(newBlocks)
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
-        setTotalCount(cursor ? totalCount + filteredItems.length : filteredItems.length)
+        setTotalCount(cursor ? totalCount + nonEmptyItems.length : nonEmptyItems.length)
 
         // Resolve parent page titles
-        const allBlocks = cursor ? [...blocks, ...filteredItems] : filteredItems
+        const allBlocks = cursor ? [...blocks, ...nonEmptyItems] : nonEmptyItems
         const uniqueParentIds = [
           ...new Set(allBlocks.map((b) => b.parent_id).filter((id): id is string => id != null)),
         ]
@@ -251,14 +254,18 @@ export function useDuePanelData({
           sourceFilter === 'property:'
             ? resp.items.filter((b) => b.due_date !== date && b.scheduled_date !== date)
             : resp.items
-        setBlocks(items)
+        // Filter out blocks with empty content (UX-129)
+        const nonEmptyItems = items.filter((b) => b.content?.trim())
+        setBlocks(nonEmptyItems)
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
-        setTotalCount(items.length)
+        setTotalCount(nonEmptyItems.length)
 
         // Resolve parent page titles
         const uniqueParentIds = [
-          ...new Set(items.map((b) => b.parent_id).filter((id): id is string => id != null)),
+          ...new Set(
+            nonEmptyItems.map((b) => b.parent_id).filter((id): id is string => id != null),
+          ),
         ]
         if (uniqueParentIds.length > 0) {
           const resolved = await batchResolve(uniqueParentIds)
@@ -289,14 +296,14 @@ export function useDuePanelData({
     // Serve cached data immediately if available
     const cached = projectedCache.get(cacheKey)
     if (cached && Date.now() - cached.timestamp < PROJECTED_CACHE_TTL_MS) {
-      setProjectedEntries(cached.entries)
+      setProjectedEntries(cached.entries.filter((e) => e.block.content?.trim()))
       setProjectedLoading(false)
       return
     }
 
     if (cached) {
       // Stale cache — show immediately but refetch
-      setProjectedEntries(cached.entries)
+      setProjectedEntries(cached.entries.filter((e) => e.block.content?.trim()))
     }
 
     setProjectedLoading(true)
@@ -305,8 +312,10 @@ export function useDuePanelData({
         if (!stale) {
           // Update cache
           projectedCache.set(cacheKey, { entries, timestamp: Date.now() })
-          setProjectedEntries(entries)
-          const parentIds = entries
+          // Filter out empty-content projected entries (UX-129)
+          const nonEmptyEntries = entries.filter((e) => e.block.content?.trim())
+          setProjectedEntries(nonEmptyEntries)
+          const parentIds = nonEmptyEntries
             .map((e) => e.block.parent_id)
             .filter((id): id is string => id != null)
           if (parentIds.length > 0) {

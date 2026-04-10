@@ -3221,8 +3221,17 @@ mod tests {
         let today = chrono::Local::now().date_naive();
         let due = today.format("%Y-%m-%d").to_string();
 
-        insert_repeating_block(&pool, "ERRRPT01", &due, None, "invalid_rule", None, None, None)
-            .await;
+        insert_repeating_block(
+            &pool,
+            "ERRRPT01",
+            &due,
+            None,
+            "invalid_rule",
+            None,
+            None,
+            None,
+        )
+        .await;
 
         // Must not panic
         rebuild_projected_agenda_cache(&pool).await.unwrap();
@@ -3336,9 +3345,6 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(
-            count, 0,
-            "DONE blocks must produce 0 projected entries"
-        );
+        assert_eq!(count, 0, "DONE blocks must produce 0 projected entries");
     }
 }

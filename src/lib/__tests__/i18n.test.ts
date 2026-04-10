@@ -128,7 +128,6 @@ describe('key existence', () => {
 
     // Due Panel
     'duePanel.header',
-    'duePanel.empty',
 
     // Search
     'search.minCharsHint',

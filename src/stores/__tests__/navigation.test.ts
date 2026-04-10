@@ -612,4 +612,108 @@ describe('useNavigationStore', () => {
       expect(useNavigationStore.getState().pageStack).toEqual([{ pageId: 'P2', title: 'Page 2' }])
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // persistence
+  // ---------------------------------------------------------------------------
+  describe('persistence', () => {
+    const STORAGE_KEY = 'agaric:navigation'
+
+    beforeEach(() => {
+      resetStore()
+      localStorage.removeItem(STORAGE_KEY)
+    })
+
+    it('persists tabs and currentView to localStorage', () => {
+      useNavigationStore.getState().navigateToPage('P1', 'Page 1')
+      useNavigationStore.getState().openInNewTab('P2', 'Page 2')
+
+      const raw = localStorage.getItem(STORAGE_KEY)
+      expect(raw).not.toBeNull()
+
+      const parsed = JSON.parse(raw as string)
+      expect(parsed.version).toBe(0)
+      expect(parsed.state.currentView).toBe('page-editor')
+      expect(parsed.state.tabs).toHaveLength(2)
+      expect(parsed.state.activeTabIndex).toBe(1)
+      expect(parsed.state.pageStack).toEqual([{ pageId: 'P2', title: 'Page 2' }])
+    })
+
+    it('restores tabs from localStorage on re-create', () => {
+      const persistedState = {
+        state: {
+          currentView: 'page-editor',
+          tabs: [
+            { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+            { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+          ],
+          activeTabIndex: 1,
+          pageStack: [{ pageId: 'P2', title: 'Page 2' }],
+        },
+        version: 0,
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedState))
+
+      // Trigger rehydration
+      useNavigationStore.persist.rehydrate()
+
+      const state = useNavigationStore.getState()
+      expect(state.currentView).toBe('page-editor')
+      expect(state.tabs).toHaveLength(2)
+      expect(state.activeTabIndex).toBe(1)
+      expect(state.tabs[0]?.pageStack).toEqual([{ pageId: 'P1', title: 'Page 1' }])
+      expect(state.tabs[1]?.pageStack).toEqual([{ pageId: 'P2', title: 'Page 2' }])
+    })
+
+    it('does not persist selectedBlockId', () => {
+      useNavigationStore.getState().navigateToPage('P1', 'Page 1', 'BLOCK_42')
+
+      // Verify it's in memory
+      expect(useNavigationStore.getState().selectedBlockId).toBe('BLOCK_42')
+
+      const raw = localStorage.getItem(STORAGE_KEY)
+      expect(raw).not.toBeNull()
+
+      const parsed = JSON.parse(raw as string)
+      expect(parsed.state).not.toHaveProperty('selectedBlockId')
+    })
+
+    it('gracefully handles corrupted localStorage', () => {
+      localStorage.setItem(STORAGE_KEY, '!!!not-valid-json{{{')
+
+      // Rehydrate should not throw; store falls back to defaults
+      expect(() => useNavigationStore.persist.rehydrate()).not.toThrow()
+
+      const state = useNavigationStore.getState()
+      // Store should still be functional with its current state
+      expect(state.currentView).toBeDefined()
+      expect(state.tabs).toBeDefined()
+    })
+
+    it('derives nextTabId from persisted tabs to avoid ID collisions', () => {
+      const persistedState = {
+        state: {
+          currentView: 'page-editor',
+          tabs: [
+            { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+            { id: '5', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+          ],
+          activeTabIndex: 1,
+          pageStack: [{ pageId: 'P2', title: 'Page 2' }],
+        },
+        version: 0,
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedState))
+
+      useNavigationStore.persist.rehydrate()
+
+      // After rehydrating tabs with max ID '5', new tabs should get ID '6'+
+      useNavigationStore.getState().openInNewTab('P3', 'Page 3')
+
+      const state = useNavigationStore.getState()
+      expect(state.tabs).toHaveLength(3)
+      const newTabId = Number.parseInt(state.tabs[2]?.id ?? '0', 10)
+      expect(newTabId).toBeGreaterThanOrEqual(6)
+    })
+  })
 })

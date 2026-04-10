@@ -49,14 +49,16 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
           ...(cursor != null && { cursor }),
           limit: 50,
         })
-        const newBlocks = cursor ? [...blocks, ...resp.items] : resp.items
+        // Filter out blocks with empty content (UX-129)
+        const nonEmptyItems = resp.items.filter((b) => b.content?.trim())
+        const newBlocks = cursor ? [...blocks, ...nonEmptyItems] : nonEmptyItems
         setBlocks(newBlocks)
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
-        setTotalCount(cursor ? totalCount + resp.items.length : resp.items.length)
+        setTotalCount(cursor ? totalCount + nonEmptyItems.length : nonEmptyItems.length)
 
         // Resolve parent page titles
-        const allBlocks = cursor ? [...blocks, ...resp.items] : resp.items
+        const allBlocks = cursor ? [...blocks, ...nonEmptyItems] : nonEmptyItems
         const uniqueParentIds = [
           ...new Set(allBlocks.map((b) => b.parent_id).filter((id): id is string => id != null)),
         ]
@@ -96,14 +98,18 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
           limit: 50,
         })
         if (cancelled) return
-        setBlocks(resp.items)
+        // Filter out blocks with empty content (UX-129)
+        const nonEmptyItems = resp.items.filter((b) => b.content?.trim())
+        setBlocks(nonEmptyItems)
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
-        setTotalCount(resp.items.length)
+        setTotalCount(nonEmptyItems.length)
 
         // Resolve parent page titles
         const uniqueParentIds = [
-          ...new Set(resp.items.map((b) => b.parent_id).filter((id): id is string => id != null)),
+          ...new Set(
+            nonEmptyItems.map((b) => b.parent_id).filter((id): id is string => id != null),
+          ),
         ]
         if (uniqueParentIds.length > 0) {
           const resolved = await batchResolve(uniqueParentIds)
