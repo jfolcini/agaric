@@ -85,14 +85,43 @@ impl From<OpTransfer> for OpRecord {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SyncMessage {
-    HeadExchange { heads: Vec<DeviceHead> },
-    OpBatch { ops: Vec<OpTransfer>, is_last: bool },
-    ResetRequired { reason: String },
-    SnapshotOffer { size_bytes: u64 },
+    HeadExchange {
+        heads: Vec<DeviceHead>,
+    },
+    OpBatch {
+        ops: Vec<OpTransfer>,
+        is_last: bool,
+    },
+    ResetRequired {
+        reason: String,
+    },
+    SnapshotOffer {
+        size_bytes: u64,
+    },
     SnapshotAccept,
     SnapshotReject,
-    SyncComplete { last_hash: String },
-    Error { message: String },
+    SyncComplete {
+        last_hash: String,
+    },
+    Error {
+        message: String,
+    },
+    /// Request file transfer for missing attachments.
+    FileRequest {
+        attachment_ids: Vec<String>,
+    },
+    /// Offer a file for transfer (metadata before binary data).
+    FileOffer {
+        attachment_id: String,
+        size_bytes: u64,
+        blake3_hash: String,
+    },
+    /// File transfer complete — receiver confirms integrity.
+    FileReceived {
+        attachment_id: String,
+    },
+    /// No more files to transfer.
+    FileTransferComplete,
 }
 
 /// Current phase of the sync state machine.
@@ -103,6 +132,7 @@ pub enum SyncState {
     StreamingOps,
     ApplyingOps,
     Merging,
+    TransferringFiles,
     Complete,
     ResetRequired,
     Failed(String),
@@ -814,6 +844,22 @@ impl SyncOrchestrator {
                 | SyncMessage::SnapshotAccept
                 | SyncMessage::SnapshotReject,
             ) => {}
+            // File transfer messages accepted in TransferringFiles or StreamingOps state
+            (
+                SyncState::TransferringFiles | SyncState::StreamingOps,
+                SyncMessage::FileRequest { .. }
+                | SyncMessage::FileOffer { .. }
+                | SyncMessage::FileReceived { .. }
+                | SyncMessage::FileTransferComplete,
+            ) => {}
+            // File transfer messages in other states are ignored gracefully
+            (
+                _,
+                SyncMessage::FileRequest { .. }
+                | SyncMessage::FileOffer { .. }
+                | SyncMessage::FileReceived { .. }
+                | SyncMessage::FileTransferComplete,
+            ) => {}
         }
 
         match msg {
@@ -1016,6 +1062,19 @@ impl SyncOrchestrator {
             // ---- Snapshot (not yet implemented) -----------------------------
             SyncMessage::SnapshotOffer { .. } => Ok(Some(SyncMessage::SnapshotReject)),
             SyncMessage::SnapshotAccept | SyncMessage::SnapshotReject => Ok(None),
+
+            // ---- File transfer (F-14) ----------------------------------------
+            // These messages are handled by the sync daemon's file transfer
+            // phase (sync_files module).  The orchestrator accepts them for
+            // state-machine correctness but delegates actual I/O to the daemon.
+            SyncMessage::FileRequest { .. } => {
+                self.state = SyncState::TransferringFiles;
+                self.session.state = SyncState::TransferringFiles;
+                Ok(None)
+            }
+            SyncMessage::FileOffer { .. } => Ok(None),
+            SyncMessage::FileReceived { .. } => Ok(None),
+            SyncMessage::FileTransferComplete => Ok(None),
         }
     }
 
@@ -1453,6 +1512,18 @@ mod tests {
             SyncMessage::Error {
                 message: "something went wrong".into(),
             },
+            SyncMessage::FileRequest {
+                attachment_ids: vec!["ATT1".into(), "ATT2".into()],
+            },
+            SyncMessage::FileOffer {
+                attachment_id: "ATT1".into(),
+                size_bytes: 4096,
+                blake3_hash: "a".repeat(64),
+            },
+            SyncMessage::FileReceived {
+                attachment_id: "ATT1".into(),
+            },
+            SyncMessage::FileTransferComplete,
         ];
 
         for msg in &messages {

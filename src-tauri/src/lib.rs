@@ -24,6 +24,7 @@ pub mod soft_delete;
 pub mod sync_cert;
 pub mod sync_daemon;
 pub mod sync_events;
+pub mod sync_files;
 pub mod sync_net;
 pub mod sync_protocol;
 pub mod sync_scheduler;

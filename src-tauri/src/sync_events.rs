@@ -90,6 +90,7 @@ pub fn sync_state_label(state: &crate::sync_protocol::SyncState) -> &'static str
         SyncState::StreamingOps => "streaming_ops",
         SyncState::ApplyingOps => "applying_ops",
         SyncState::Merging => "merging",
+        SyncState::TransferringFiles => "transferring_files",
         SyncState::Complete => "complete",
         SyncState::ResetRequired => "reset_required",
         SyncState::Failed(_) => "failed",
@@ -205,6 +206,10 @@ mod tests {
         assert_eq!(sync_state_label(&SyncState::StreamingOps), "streaming_ops");
         assert_eq!(sync_state_label(&SyncState::ApplyingOps), "applying_ops");
         assert_eq!(sync_state_label(&SyncState::Merging), "merging");
+        assert_eq!(
+            sync_state_label(&SyncState::TransferringFiles),
+            "transferring_files"
+        );
         assert_eq!(sync_state_label(&SyncState::Complete), "complete");
         assert_eq!(
             sync_state_label(&SyncState::ResetRequired),

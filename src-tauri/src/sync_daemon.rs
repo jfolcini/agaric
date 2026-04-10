@@ -468,7 +468,7 @@ async fn try_sync_with_peer(
         .with_event_sink(event_sink_box)
         .with_expected_remote_id(peer_id.to_string());
 
-    match run_sync_session(&mut orch, &mut conn, cancel).await {
+    match run_sync_session(&mut orch, &mut conn, cancel, pool).await {
         Ok(()) => {
             scheduler.record_success(peer_id);
             // Save the peer's address for future direct connections
@@ -535,6 +535,7 @@ async fn run_sync_session(
     orch: &mut SyncOrchestrator,
     conn: &mut SyncConnection,
     cancel: &AtomicBool,
+    pool: &SqlitePool,
 ) -> Result<(), AppError> {
     // Initiator sends first message
     let first_msg = orch.start().await?;
@@ -570,6 +571,31 @@ async fn run_sync_session(
                     )));
                 }
             }
+        }
+    }
+
+    // ── File transfer phase (F-14) ────────────────────────────────────────
+    // After the op-sync completes, transfer missing attachment files.
+    // The initiator requests first, then responds to the responder's request.
+    if orch.is_complete() {
+        if let Ok(app_data_dir) = crate::sync_files::app_data_dir_from_pool(pool).await {
+            match crate::sync_files::run_file_transfer_initiator(conn, pool, &app_data_dir).await {
+                Ok(stats) => {
+                    if stats.files_received > 0 || stats.files_sent > 0 {
+                        tracing::info!(
+                            files_rx = stats.files_received,
+                            files_tx = stats.files_sent,
+                            "initiator file transfer complete"
+                        );
+                    }
+                }
+                Err(e) => {
+                    // File transfer failure should not abort the sync
+                    tracing::warn!(error = %e, "initiator file transfer failed (non-fatal)");
+                }
+            }
+        } else {
+            tracing::warn!("could not determine app_data_dir, skipping file transfer");
         }
     }
 
@@ -804,6 +830,37 @@ async fn handle_incoming_sync(
                     break;
                 }
             }
+        }
+    }
+
+    // ── File transfer phase (F-14) ────────────────────────────────────────
+    // After the op-sync completes, transfer missing attachment files.
+    // The responder responds first, then requests its own files.
+    if orch.is_complete() {
+        if let Ok(app_data_dir) = crate::sync_files::app_data_dir_from_pool(&pool_ref).await {
+            match crate::sync_files::run_file_transfer_responder(
+                &mut conn,
+                &pool_ref,
+                &app_data_dir,
+            )
+            .await
+            {
+                Ok(stats) => {
+                    if stats.files_received > 0 || stats.files_sent > 0 {
+                        tracing::info!(
+                            files_rx = stats.files_received,
+                            files_tx = stats.files_sent,
+                            "responder file transfer complete"
+                        );
+                    }
+                }
+                Err(e) => {
+                    // File transfer failure should not abort the sync
+                    tracing::warn!(error = %e, "responder file transfer failed (non-fatal)");
+                }
+            }
+        } else {
+            tracing::warn!("could not determine app_data_dir, skipping file transfer");
         }
     }
 
