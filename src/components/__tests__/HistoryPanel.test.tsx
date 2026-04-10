@@ -25,6 +25,52 @@ vi.mock('sonner', () => ({
   },
 }))
 
+vi.mock('@/components/ui/select', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const React = require('react')
+  const Ctx = React.createContext({})
+
+  function Select({ value, onValueChange, children }: any) {
+    const triggerPropsRef = React.useRef({})
+    return React.createElement(
+      Ctx.Provider,
+      { value: { value, onValueChange, triggerPropsRef } },
+      children,
+    )
+  }
+
+  function SelectTrigger({ size, className, ...props }: any) {
+    const ctx = React.useContext(Ctx)
+    Object.assign(ctx.triggerPropsRef.current, { size, className, ...props })
+    return null
+  }
+
+  function SelectValue() {
+    return null
+  }
+
+  function SelectContent({ children }: any) {
+    const ctx = React.useContext(Ctx)
+    const tp = ctx.triggerPropsRef.current
+    return React.createElement(
+      'select',
+      {
+        value: ctx.value ?? '',
+        onChange: (e: any) => ctx.onValueChange?.(e.target.value),
+        'aria-label': tp['aria-label'],
+        id: tp.id,
+      },
+      children,
+    )
+  }
+
+  function SelectItem({ value, children }: any) {
+    return React.createElement('option', { value }, children)
+  }
+
+  return { Select, SelectTrigger, SelectValue, SelectContent, SelectItem }
+})
+
 const mockedInvoke = vi.mocked(invoke)
 
 function makeHistoryEntry(
@@ -496,5 +542,69 @@ describe('HistoryPanel', () => {
 
     // device_id 'DEVICE01' truncated to 8 chars = 'DEVICE01'
     expect(screen.getByText('dev:DEVICE01')).toBeInTheDocument()
+  })
+
+  // -- Op-type filter bar (UX-139) -------------------------------------------
+
+  it('renders the op-type filter bar', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    render(<HistoryPanel blockId="BLOCK001" />)
+
+    // The HistoryFilterBar should render with a combobox
+    const select = await screen.findByRole('combobox', { name: /Filter by operation type/ })
+    expect(select).toBeInTheDocument()
+  })
+
+  it('filters entries by op type when filter is changed', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'edited' }, '2025-01-15T12:00:00Z'),
+        makeHistoryEntry(2, 'create_block', { block_type: 'content' }, '2025-01-14T10:00:00Z'),
+        makeHistoryEntry(3, 'edit_block', { to_text: 'another edit' }, '2025-01-13T10:00:00Z'),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryPanel blockId="BLOCK001" />)
+
+    // All entries visible initially
+    expect(await screen.findByText('edited')).toBeInTheDocument()
+    expect(screen.getByText('create_block')).toBeInTheDocument()
+    expect(screen.getByText('another edit')).toBeInTheDocument()
+
+    // Filter to edit_block only
+    const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
+    await user.selectOptions(select, 'edit_block')
+
+    // Only edit_block entries should be visible
+    expect(screen.getByText('edited')).toBeInTheDocument()
+    expect(screen.getByText('another edit')).toBeInTheDocument()
+    expect(screen.queryByText('create_block')).not.toBeInTheDocument()
+  })
+
+  it('shows empty state when filter produces zero results', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'edited' }, '2025-01-15T12:00:00Z')],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryPanel blockId="BLOCK001" />)
+
+    await screen.findByText('edited')
+
+    // Filter to create_block — no entries match
+    const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
+    await user.selectOptions(select, 'create_block')
+
+    // Empty state should be shown
+    expect(screen.getByText('No history for this block')).toBeInTheDocument()
+    expect(screen.queryByText('edited')).not.toBeInTheDocument()
   })
 })

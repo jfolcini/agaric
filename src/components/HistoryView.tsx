@@ -310,14 +310,12 @@ export function HistoryView(): React.ReactElement {
         <HistoryFilterBar opTypeFilter={opTypeFilter} onFilterChange={setOpTypeFilter} />
 
         {/* Selection toolbar */}
-        {selected.size > 0 && (
-          <HistorySelectionToolbar
-            selectedCount={selected.size}
-            reverting={reverting}
-            onRevertClick={() => setConfirmRevert(true)}
-            onClearSelection={clearSelection}
-          />
-        )}
+        <HistorySelectionToolbar
+          selectedCount={selected.size}
+          reverting={reverting}
+          onRevertClick={() => setConfirmRevert(true)}
+          onClearSelection={clearSelection}
+        />
       </div>
 
       {/* Loading skeletons */}

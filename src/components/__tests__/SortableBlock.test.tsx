@@ -700,7 +700,7 @@ describe('SortableBlock collapse/expand chevron', () => {
     expect(screen.queryByTestId('chevron-right-icon')).not.toBeInTheDocument()
   })
 
-  it('renders a spacer matching chevron width when hasChildren is false', () => {
+  it('does not render spacer when hasChildren is false', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -713,8 +713,7 @@ describe('SortableBlock collapse/expand chevron', () => {
 
     const inlineControls = container.querySelector('.inline-controls')
     const spacer = inlineControls?.querySelector('.w-5')
-    expect(spacer).toBeInTheDocument()
-    expect(spacer?.tagName.toLowerCase()).toBe('div')
+    expect(spacer).not.toBeInTheDocument()
   })
 
   it('applies rotate-90 class when expanded (not collapsed)', () => {

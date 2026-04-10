@@ -118,7 +118,10 @@ export function SourcePageFilter({
         <Button
           variant="ghost"
           size="sm"
-          className={cn('source-page-filter-trigger h-7 w-7 p-0', buttonColor)}
+          className={cn(
+            'source-page-filter-trigger h-7 w-7 p-0 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]',
+            buttonColor,
+          )}
           aria-label={t('sourceFilter.filterLabel')}
         >
           <Filter className="h-4 w-4" />

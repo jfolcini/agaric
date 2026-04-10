@@ -139,8 +139,8 @@ beforeEach(() => {
 })
 
 describe('LinkedReferences', () => {
-  // 1. renders empty state when no backlinks
-  it('renders nothing when no backlinks', async () => {
+  // 1. renders header with "0 References" when no backlinks (no EmptyState box)
+  it('shows header with zero count when no backlinks', async () => {
     mockInvokeWith(emptyGrouped)
 
     const { container } = render(<LinkedReferences pageId="PAGE1" />)
@@ -152,7 +152,10 @@ describe('LinkedReferences', () => {
     await waitFor(() => {
       expect(container.querySelector('.linked-references')).toBeInTheDocument()
     })
-    expect(screen.getByText('No references to this page yet.')).toBeInTheDocument()
+    // Header is always visible with count
+    expect(screen.getByText('0 References')).toBeInTheDocument()
+    // No EmptyState box
+    expect(screen.queryByText('No references to this page yet.')).not.toBeInTheDocument()
   })
 
   // 2. renders header with correct count
@@ -1047,8 +1050,8 @@ describe('LinkedReferences', () => {
   // Error path tests (mockRejectedValue coverage)
   // ---------------------------------------------------------------------------
 
-  // 35. initial backlinks load failure: finishes loading and shows empty state
-  it('error: initial backlinks load failure shows empty state after loading finishes', async () => {
+  // 35. initial backlinks load failure: finishes loading and shows header (no EmptyState)
+  it('error: initial backlinks load failure shows header after loading finishes', async () => {
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_backlinks_grouped') return Promise.reject(new Error('backend unavailable'))
@@ -1070,8 +1073,9 @@ describe('LinkedReferences', () => {
       expect(container.querySelector('[data-slot="skeleton"]')).not.toBeInTheDocument()
     })
 
-    // Empty state is shown because groups are still []
-    expect(screen.getByText('No references to this page yet.')).toBeInTheDocument()
+    // Header is visible with zero count (no EmptyState box)
+    expect(screen.getByText('0 References')).toBeInTheDocument()
+    expect(screen.queryByText('No references to this page yet.')).not.toBeInTheDocument()
   })
 
   // 36. pagination failure: shows toast and preserves existing groups

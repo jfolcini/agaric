@@ -23,6 +23,7 @@ import type { HistoryEntry } from '../lib/tauri'
 import { editBlock, getBlockHistory } from '../lib/tauri'
 import { DiffDisplay } from './DiffDisplay'
 import { EmptyState } from './EmptyState'
+import { HistoryFilterBar } from './HistoryFilterBar'
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 
@@ -39,6 +40,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   const [hasMore, setHasMore] = useState(false)
   const [restoringSeq, setRestoringSeq] = useState<number | null>(null)
   const [confirmEntry, setConfirmEntry] = useState<HistoryEntry | null>(null)
+  const [opTypeFilter, setOpTypeFilter] = useState<string | null>(null)
   const { expandedKeys, diffCache, loadingDiffs, handleToggleDiff } = useHistoryDiffToggle<number>(
     (entry) => entry.seq,
   )
@@ -80,6 +82,8 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
     if (nextCursor) loadHistory(nextCursor)
   }, [nextCursor, loadHistory])
 
+  const filteredEntries = opTypeFilter ? entries.filter((e) => e.op_type === opTypeFilter) : entries
+
   const handleRestore = useCallback(
     async (entry: HistoryEntry) => {
       if (!blockId) return
@@ -104,9 +108,11 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
 
   return (
     <div className="history-panel space-y-4">
+      <HistoryFilterBar opTypeFilter={opTypeFilter} onFilterChange={setOpTypeFilter} />
+
       <ListViewState
         loading={loading}
-        items={entries}
+        items={filteredEntries}
         skeleton={<LoadingSkeleton count={2} height="h-14" className="history-panel-loading" />}
         empty={<EmptyState icon={Clock} message="No history for this block" />}
       >

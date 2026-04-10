@@ -42,11 +42,21 @@ export function HistorySelectionToolbar({
       selectedCount={selectedCount}
       className="history-selection-toolbar gap-3 p-3"
     >
-      <Button variant="outline" size="sm" onClick={onRevertClick} disabled={reverting}>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onRevertClick}
+        disabled={reverting || selectedCount === 0}
+      >
         <RotateCcw className="h-3.5 w-3.5" />
         {reverting ? t('history.revertingButton') : t('history.revertSelectedButton')}
       </Button>
-      <Button variant="ghost" size="sm" onClick={onClearSelection} disabled={reverting}>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onClearSelection}
+        disabled={reverting || selectedCount === 0}
+      >
         {t('history.clearSelectionButton')}
       </Button>
       <span className="text-xs text-muted-foreground ml-auto hidden sm:inline">

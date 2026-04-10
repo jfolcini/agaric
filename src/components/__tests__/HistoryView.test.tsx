@@ -503,9 +503,11 @@ describe('HistoryView', () => {
     // Click Clear selection
     await user.click(screen.getByRole('button', { name: /Clear selection/ }))
 
-    // Toolbar should disappear
+    // Toolbar stays visible but shows 0 selected with disabled buttons
     expect(screen.queryByText('1 selected')).not.toBeInTheDocument()
-    expect(screen.queryByText('Clear selection')).not.toBeInTheDocument()
+    expect(screen.getByText('0 selected')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Revert selected/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Clear selection/ })).toBeDisabled()
   })
 
   it('escape key clears selection', async () => {
@@ -529,8 +531,30 @@ describe('HistoryView', () => {
     // Press Escape
     await user.keyboard('{Escape}')
 
-    // Selection should be cleared
+    // Selection should be cleared but toolbar stays visible
     expect(screen.queryByText('1 selected')).not.toBeInTheDocument()
+    expect(screen.getByText('0 selected')).toBeInTheDocument()
+  })
+
+  it('toolbar is visible even when nothing is selected', async () => {
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // Toolbar should be visible with 0 selected
+    expect(screen.getByText('0 selected')).toBeInTheDocument()
+    expect(screen.getByRole('toolbar', { name: /0 selected/ })).toBeInTheDocument()
+
+    // Buttons should be disabled
+    expect(screen.getByRole('button', { name: /Revert selected/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Clear selection/ })).toBeDisabled()
   })
 
   it('calls list_page_history with correct params on mount', async () => {

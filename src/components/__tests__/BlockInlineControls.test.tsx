@@ -248,10 +248,8 @@ describe('BlockInlineControls', () => {
     vi.clearAllMocks()
   })
 
-  it('renders spacer when hasChildren is false', () => {
-    const { container } = renderControls(makeProps())
-    const spacer = container.querySelector('.w-5')
-    expect(spacer).toBeInTheDocument()
+  it('does not render collapse toggle when hasChildren is false', () => {
+    renderControls(makeProps())
     expect(screen.queryByTestId('chevron-toggle')).not.toBeInTheDocument()
   })
 

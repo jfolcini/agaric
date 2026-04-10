@@ -198,9 +198,7 @@ export function BlockInlineControls({
             {isCollapsed ? t('block.expandTip') : t('block.collapseTip')}
           </TooltipContent>
         </Tooltip>
-      ) : (
-        <div className="flex-shrink-0 w-5 [@media(pointer:coarse)]:w-[44px]" />
-      )}
+      ) : null}
 
       <Tooltip>
         <TooltipTrigger asChild>

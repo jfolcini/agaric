@@ -714,6 +714,28 @@ async fn handle_incoming_sync(
             return Ok(());
         }
 
+        // S-5: Acquire per-peer lock BEFORE reading/storing cert hash so
+        // two devices that connect simultaneously after pairing cannot
+        // race through the TOFU path and overwrite each other's hash.
+        let guard = match scheduler.try_lock_peer(&remote_id) {
+            Some(guard) => {
+                tracing::info!(peer_id = %remote_id, "responder locked peer for sync");
+                guard
+            }
+            None => {
+                tracing::info!(
+                    peer_id = %remote_id,
+                    "rejecting incoming sync: already syncing with this peer"
+                );
+                conn.send_json(&SyncMessage::Error {
+                    message: "peer is busy with another sync session".into(),
+                })
+                .await?;
+                let _ = conn.close().await;
+                return Ok(());
+            }
+        };
+
         // B-34: Verify device ID matches TLS certificate CN
         // B-33: Verify TLS certificate hash matches stored cert_hash
         let stored_hash = peer_refs::get_peer_ref(&pool_ref, &remote_id)
@@ -773,24 +795,7 @@ async fn handle_incoming_sync(
             }
         }
 
-        match scheduler.try_lock_peer(&remote_id) {
-            Some(guard) => {
-                tracing::info!(peer_id = %remote_id, "responder locked peer for sync");
-                Some(guard)
-            }
-            None => {
-                tracing::info!(
-                    peer_id = %remote_id,
-                    "rejecting incoming sync: already syncing with this peer"
-                );
-                conn.send_json(&SyncMessage::Error {
-                    message: "peer is busy with another sync session".into(),
-                })
-                .await?;
-                let _ = conn.close().await;
-                return Ok(());
-            }
-        }
+        Some(guard)
     } else {
         None
     };

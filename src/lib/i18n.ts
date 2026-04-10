@@ -1185,7 +1185,6 @@ const resources = {
 
       // References aria-labels + empty state (UX-13)
       'references.panelLabel': 'References',
-      'references.noReferences': 'No references to this page yet.',
 
       // Unlinked references aria-labels
       'unlinkedRefs.panelLabel': 'Unlinked references',
