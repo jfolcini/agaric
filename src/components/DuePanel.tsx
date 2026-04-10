@@ -218,6 +218,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                       {group.items.map((block) => (
                         <BlockListItem
                           key={block.id}
+                          blockId={block.id}
                           content={block.content}
                           contentMaxLength={120}
                           emptyContentFallback={t('duePanel.emptyContent')}

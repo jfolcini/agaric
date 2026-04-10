@@ -44,6 +44,8 @@ export interface BlockListItemProps {
   breadcrumbClassName?: string
   /** data-testid for the `<li>`. */
   testId?: string
+  /** Block ID — when provided, enables native HTML5 drag for rescheduling (F-32). */
+  blockId?: string
 }
 
 export function BlockListItem({
@@ -61,11 +63,13 @@ export function BlockListItem({
   contentClassName,
   breadcrumbClassName,
   testId,
+  blockId,
 }: BlockListItemProps): React.ReactElement {
   return (
     <li
       className={cn(
         'flex items-center gap-2 rounded-md px-3 py-2 cursor-pointer transition-colors',
+        blockId && 'cursor-grab',
         className,
       )}
       data-testid={testId}
@@ -73,6 +77,13 @@ export function BlockListItem({
       tabIndex={0}
       onClick={onClick}
       onKeyDown={onKeyDown}
+      draggable={!!blockId}
+      onDragStart={(e) => {
+        if (blockId) {
+          e.dataTransfer.setData('application/x-block-reschedule', blockId)
+          e.dataTransfer.effectAllowed = 'move'
+        }
+      }}
     >
       {/* Metadata slot: icons, badges, chips */}
       {metadata}

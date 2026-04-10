@@ -9,6 +9,7 @@ import type { DayEntry } from '../../lib/date-utils'
 import { formatDate, getWeekDays } from '../../lib/date-utils'
 import { useJournalStore } from '../../stores/journal'
 import { DaySection } from './DaySection'
+import { RescheduleDropZone } from './RescheduleDropZone'
 
 interface WeeklyViewProps {
   makeDayEntry: (d: Date) => DayEntry
@@ -36,7 +37,7 @@ export function WeeklyView({
       {entries.map((entry, i) => {
         const isToday = entry.dateStr === todayStr
         return (
-          <div key={entry.dateStr}>
+          <RescheduleDropZone key={entry.dateStr} dateStr={entry.dateStr}>
             {i > 0 && <div className="border-t border-border my-4" />}
             <DaySection
               entry={entry}
@@ -49,7 +50,7 @@ export function WeeklyView({
               onNavigateToPage={onNavigateToPage}
               onAddBlock={onAddBlock}
             />
-          </div>
+          </RescheduleDropZone>
         )
       })}
     </div>

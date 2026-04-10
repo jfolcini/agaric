@@ -15,6 +15,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { format } from 'date-fns'
+import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { DayEntry } from '../../../lib/date-utils'
@@ -69,6 +70,13 @@ vi.mock('../DaySection', () => ({
       </section>
     )
   },
+}))
+
+// ── Mock RescheduleDropZone ─────────────────────────────────────────
+vi.mock('../RescheduleDropZone', () => ({
+  RescheduleDropZone: ({ dateStr, children }: { dateStr: string; children: React.ReactNode }) => (
+    <div data-testid={`reschedule-drop-zone-${dateStr}`}>{children}</div>
+  ),
 }))
 
 vi.mocked(invoke)
@@ -215,5 +223,27 @@ describe('WeeklyView', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+  })
+
+  it('wraps each DaySection in a RescheduleDropZone with the correct dateStr', () => {
+    render(<WeeklyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+
+    // Week of Jan 15, 2025 (Wed): Mon Jan 13 - Sun Jan 19
+    for (const dateStr of [
+      '2025-01-13',
+      '2025-01-14',
+      '2025-01-15',
+      '2025-01-16',
+      '2025-01-17',
+      '2025-01-18',
+      '2025-01-19',
+    ]) {
+      const dropZone = screen.getByTestId(`reschedule-drop-zone-${dateStr}`)
+      expect(dropZone).toBeInTheDocument()
+
+      // DaySection should be inside the drop zone
+      const daySection = screen.getByTestId(`day-section-${dateStr}`)
+      expect(dropZone).toContainElement(daySection)
+    }
   })
 })

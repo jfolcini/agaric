@@ -84,6 +84,8 @@ const resources = {
       'journal.monthlyCalendarLabel': 'Monthly calendar',
       'journal.loadCountsFailed': 'Failed to load calendar counts',
       'journal.loadCalendarFailed': 'Failed to load calendar',
+      'journal.rescheduled': 'Task rescheduled to {{date}}',
+      'journal.rescheduleFailed': 'Failed to reschedule task',
 
       // Formatting toolbar
       'toolbar.bold': 'Bold',

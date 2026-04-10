@@ -19,7 +19,7 @@
  * 15. A11y audit passes (axe)
  */
 
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -398,5 +398,62 @@ describe('BlockListItem', () => {
     )
 
     expect(screen.getByText('bold and link')).toBeInTheDocument()
+  })
+
+  // 20. Draggable: li is not draggable when blockId is not provided
+  it('is not draggable when blockId is omitted', () => {
+    render(
+      <ul>
+        <BlockListItem {...defaultProps()} />
+      </ul>,
+    )
+
+    const li = screen.getByRole('listitem')
+    expect(li).not.toHaveAttribute('draggable', 'true')
+  })
+
+  // 21. Draggable: li is draggable when blockId is provided
+  it('is draggable when blockId is provided', () => {
+    render(
+      <ul>
+        <BlockListItem {...defaultProps({ blockId: 'block-123' })} />
+      </ul>,
+    )
+
+    const li = screen.getByRole('listitem')
+    expect(li).toHaveAttribute('draggable', 'true')
+  })
+
+  // 22. Draggable: has cursor-grab class when blockId is provided
+  it('has cursor-grab class when blockId is provided', () => {
+    render(
+      <ul>
+        <BlockListItem {...defaultProps({ blockId: 'block-123' })} />
+      </ul>,
+    )
+
+    const li = screen.getByRole('listitem')
+    expect(li.className).toContain('cursor-grab')
+  })
+
+  // 23. Draggable: onDragStart sets correct MIME type and blockId
+  it('sets reschedule MIME type and blockId on dragStart', () => {
+    render(
+      <ul>
+        <BlockListItem {...defaultProps({ blockId: 'block-xyz' })} />
+      </ul>,
+    )
+
+    const li = screen.getByRole('listitem')
+    const setData = vi.fn()
+    const dataTransfer = {
+      setData,
+      effectAllowed: 'uninitialized',
+    }
+
+    fireEvent.dragStart(li, { dataTransfer })
+
+    expect(setData).toHaveBeenCalledWith('application/x-block-reschedule', 'block-xyz')
+    expect(dataTransfer.effectAllowed).toBe('move')
   })
 })

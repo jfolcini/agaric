@@ -253,6 +253,7 @@ export function UnfinishedTasks({ onNavigateToPage }: UnfinishedTasksProps): Rea
                     {group.blocks.map((block) => (
                       <BlockListItem
                         key={block.id}
+                        blockId={block.id}
                         content={block.content}
                         metadata={
                           <>
