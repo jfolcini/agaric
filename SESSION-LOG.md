@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 318 — Feature: F-36 resolved (2026-04-10)
+
+**FINAL ITEM RESOLVED. REVIEW-LATER backlog at 0. All 44 items cleared.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| F-36 | Multiple editor tabs | `navigation.ts`, `TabBar.tsx`, `App.tsx`, `PageHeader.tsx`, `PageHeaderMenu.tsx`, `keyboard-config.ts`, `i18n.ts` |
+
+### Implementation
+- Navigation store: Tab[] + activeTabIndex, pageStack kept as backward-compat mirror
+- TabBar: horizontal tab bar (hidden for single tab), a11y (role=tablist/tab)
+- App.tsx: TabBar above PageEditor + Ctrl+T/W/Tab keyboard shortcuts
+- PageHeaderMenu: "Open in New Tab" action
+- Single TipTap invariant preserved: only active tab's PageEditor renders
+
+### Stats
+- 10 files changed (+972 / -34 lines)
+- 56 new tests (43 navigation + 13 TabBar)
+- 6033 frontend tests pass, all 20 prek hooks pass
+
+---
+
 ## Session 317 — Feature: F-14 resolved (2026-04-10)
 
 **1 item resolved (2→1 open). Attachment files now sync between devices.**
