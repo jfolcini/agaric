@@ -35,6 +35,7 @@ import { PropertiesView } from './components/PropertiesView'
 import { SearchPanel } from './components/SearchPanel'
 import { SettingsView } from './components/SettingsView'
 import { StatusPanel } from './components/StatusPanel'
+import { TabBar } from './components/TabBar'
 import { TagFilterPanel } from './components/TagFilterPanel'
 import { TagList } from './components/TagList'
 import { TemplatesView } from './components/TemplatesView'
@@ -279,6 +280,43 @@ function App() {
     window.addEventListener('keydown', handleGlobalShortcuts)
     return () => window.removeEventListener('keydown', handleGlobalShortcuts)
   }, [t])
+
+  // ── Tab shortcuts (Ctrl+T, Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab) ──────
+  useEffect(() => {
+    function handleTabShortcuts(e: KeyboardEvent) {
+      const mod = e.ctrlKey || e.metaKey
+      if (!mod) return
+
+      const state = useNavigationStore.getState()
+      if (state.currentView !== 'page-editor') return
+
+      if (e.key === 't') {
+        e.preventDefault()
+        const activeTab = state.tabs[state.activeTabIndex]
+        const top = activeTab?.pageStack[activeTab.pageStack.length - 1]
+        if (top) {
+          state.openInNewTab(top.pageId, top.title)
+        }
+      }
+      if (e.key === 'w') {
+        e.preventDefault()
+        state.closeTab(state.activeTabIndex)
+      }
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        if (state.tabs.length <= 1) return
+        if (e.shiftKey) {
+          const prev = state.activeTabIndex === 0 ? state.tabs.length - 1 : state.activeTabIndex - 1
+          state.switchTab(prev)
+        } else {
+          const next = (state.activeTabIndex + 1) % state.tabs.length
+          state.switchTab(next)
+        }
+      }
+    }
+    window.addEventListener('keydown', handleTabShortcuts)
+    return () => window.removeEventListener('keydown', handleTabShortcuts)
+  }, [])
 
   const handleNewPage = useCallback(async () => {
     try {
@@ -551,14 +589,17 @@ function App() {
                 </FeatureErrorBoundary>
               )}
               {currentView === 'page-editor' && activePage && (
-                <FeatureErrorBoundary name="PageEditor">
-                  <PageEditor
-                    pageId={activePage.pageId}
-                    title={activePage.title}
-                    onBack={goBack}
-                    onNavigateToPage={handlePageSelect}
-                  />
-                </FeatureErrorBoundary>
+                <>
+                  <TabBar />
+                  <FeatureErrorBoundary name="PageEditor">
+                    <PageEditor
+                      pageId={activePage.pageId}
+                      title={activePage.title}
+                      onBack={goBack}
+                      onNavigateToPage={handlePageSelect}
+                    />
+                  </FeatureErrorBoundary>
+                </>
               )}
             </div>
           </div>

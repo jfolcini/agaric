@@ -243,6 +243,11 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     setKebabOpen(false)
   }, [])
 
+  const handleOpenInNewTab = useCallback(() => {
+    useNavigationStore.getState().openInNewTab(pageId, editableTitle || title)
+    setKebabOpen(false)
+  }, [pageId, editableTitle, title])
+
   // --- Alias state ---
   const [aliases, setAliases] = useState<string[]>([])
   const [editingAliases, setEditingAliases] = useState(false)
@@ -391,6 +396,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
             setKebabOpen(false)
             setDeleteDialogOpen(true)
           }}
+          onOpenInNewTab={handleOpenInNewTab}
         />
       </div>
 

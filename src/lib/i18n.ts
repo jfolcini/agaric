@@ -1436,6 +1436,22 @@ const resources = {
       'mermaid.loading': 'Rendering diagram…',
       'mermaid.error': 'Diagram error',
       'mermaid.label': 'Mermaid diagram',
+
+      // F-36: Editor tabs
+      'tabs.close': 'Close tab',
+      'tabs.openInNewTab': 'Open in new tab',
+      'tabs.untitled': 'Untitled',
+      'tabs.tabList': 'Editor tabs',
+      'tabs.closeActiveTab': 'Close active tab',
+      'tabs.nextTab': 'Next tab',
+      'tabs.previousTab': 'Previous tab',
+
+      // Keyboard shortcuts — tabs
+      'keyboard.category.tabs': 'Tabs',
+      'keyboard.openInNewTab': 'Open current page in new tab',
+      'keyboard.closeActiveTab': 'Close active tab',
+      'keyboard.nextTab': 'Switch to next tab',
+      'keyboard.previousTab': 'Switch to previous tab',
     },
   },
 }

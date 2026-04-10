@@ -73,7 +73,7 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getAllByText('Escape').length).toBeGreaterThanOrEqual(1)
 
     // Verify conditions are rendered separately from keys
-    expect(screen.getAllByText(t('keyboard.condition.inEditor')).length).toBe(7)
+    expect(screen.getAllByText(t('keyboard.condition.inEditor')).length).toBe(11)
     expect(screen.getByText(t('keyboard.condition.atStart'))).toBeInTheDocument()
     expect(screen.getByText(t('keyboard.condition.atEnd'))).toBeInTheDocument()
   })
@@ -217,7 +217,7 @@ describe('KeyboardShortcuts', () => {
 
     expect(screen.getByText(t('keyboard.condition.atStart'))).toBeInTheDocument()
     expect(screen.getByText(t('keyboard.condition.atEnd'))).toBeInTheDocument()
-    expect(screen.getAllByText(t('keyboard.condition.inEditor'))).toHaveLength(7)
+    expect(screen.getAllByText(t('keyboard.condition.inEditor'))).toHaveLength(11)
   })
 
   it('shows customized shortcuts when localStorage has overrides', () => {

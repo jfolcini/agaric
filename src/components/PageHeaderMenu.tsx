@@ -20,6 +20,7 @@ export interface PageHeaderMenuProps {
   onToggleJournalTemplate: () => void
   onExport: () => void
   onDeleteRequest: () => void
+  onOpenInNewTab?: (() => void) | undefined
 }
 
 export function PageHeaderMenu({
@@ -37,6 +38,7 @@ export function PageHeaderMenu({
   onToggleJournalTemplate,
   onExport,
   onDeleteRequest,
+  onOpenInNewTab,
 }: PageHeaderMenuProps) {
   const { t } = useTranslation()
 
@@ -86,6 +88,18 @@ export function PageHeaderMenu({
           className="w-56 p-1 max-w-[calc(100vw-2rem)]"
           aria-label={t('pageHeader.pageActions')}
         >
+          {onOpenInNewTab != null && (
+            <>
+              <button
+                type="button"
+                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+                onClick={onOpenInNewTab}
+              >
+                {t('tabs.openInNewTab')}
+              </button>
+              <hr className="my-1 h-px bg-border border-none" />
+            </>
+          )}
           <button
             type="button"
             className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"

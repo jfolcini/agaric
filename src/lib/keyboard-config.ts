@@ -285,6 +285,36 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.global',
     description: 'keyboard.closeOverlays',
   },
+
+  // Tabs
+  {
+    id: 'openInNewTab',
+    keys: 'Ctrl + T',
+    category: 'keyboard.category.tabs',
+    description: 'keyboard.openInNewTab',
+    condition: 'keyboard.condition.inEditor',
+  },
+  {
+    id: 'closeActiveTab',
+    keys: 'Ctrl + W',
+    category: 'keyboard.category.tabs',
+    description: 'keyboard.closeActiveTab',
+    condition: 'keyboard.condition.inEditor',
+  },
+  {
+    id: 'nextTab',
+    keys: 'Ctrl + Tab',
+    category: 'keyboard.category.tabs',
+    description: 'keyboard.nextTab',
+    condition: 'keyboard.condition.inEditor',
+  },
+  {
+    id: 'previousTab',
+    keys: 'Ctrl + Shift + Tab',
+    category: 'keyboard.category.tabs',
+    description: 'keyboard.previousTab',
+    condition: 'keyboard.condition.inEditor',
+  },
 ]
 
 export function getCustomOverrides(): Record<string, string> {
