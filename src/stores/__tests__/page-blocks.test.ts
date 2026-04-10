@@ -411,7 +411,7 @@ describe('PageBlockStore', () => {
       expect(blocks[0]?.id).toBe('B')
     })
 
-    it('clears focusedBlockId via global store when the focused block is deleted', async () => {
+    it('does not mutate global block store focus — callers manage focus', async () => {
       store.setState({
         blocks: [makeBlock({ id: 'A' })],
       })
@@ -424,23 +424,7 @@ describe('PageBlockStore', () => {
 
       await store.getState().remove('A')
 
-      expect(mockGlobalSetState).toHaveBeenCalledWith({ focusedBlockId: null })
-    })
-
-    it('preserves focusedBlockId when a different block is deleted', async () => {
-      store.setState({
-        blocks: [makeBlock({ id: 'A' }), makeBlock({ id: 'B' })],
-      })
-      mockGlobalBlockState = { focusedBlockId: 'A', selectedBlockIds: [] }
-      mockedInvoke.mockResolvedValueOnce({
-        block_id: 'B',
-        deleted_at: '2025-01-01T00:00:00Z',
-        descendants_affected: 0,
-      })
-
-      await store.getState().remove('B')
-
-      expect(mockGlobalSetState).not.toHaveBeenCalledWith({ focusedBlockId: null })
+      expect(mockGlobalSetState).not.toHaveBeenCalled()
     })
 
     it('does not modify state on backend error', async () => {
@@ -454,7 +438,7 @@ describe('PageBlockStore', () => {
       expect(store.getState().blocks).toHaveLength(1)
     })
 
-    it('clears deleted block from selectedBlockIds via global store', async () => {
+    it('does not mutate global block store selection — callers manage selection', async () => {
       store.setState({
         blocks: [
           makeBlock({ id: 'A', content: 'alpha', position: 0 }),
@@ -470,9 +454,7 @@ describe('PageBlockStore', () => {
 
       await store.getState().remove('A')
 
-      expect(mockGlobalSetState).toHaveBeenCalledWith({
-        selectedBlockIds: ['B'],
-      })
+      expect(mockGlobalSetState).not.toHaveBeenCalled()
     })
   })
 

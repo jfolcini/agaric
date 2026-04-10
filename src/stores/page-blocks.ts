@@ -238,16 +238,9 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         set((state) => ({
           blocks: state.blocks.filter((b) => b.id !== blockId && !descendants.has(b.id)),
         }))
-        // Cross-store: clear focus/selection in global store if the deleted block was focused
-        const globalState = useBlockStore.getState()
-        if (globalState.focusedBlockId === blockId) {
-          useBlockStore.setState({ focusedBlockId: null })
-        }
-        if (globalState.selectedBlockIds.includes(blockId)) {
-          useBlockStore.setState({
-            selectedBlockIds: globalState.selectedBlockIds.filter((id) => id !== blockId),
-          })
-        }
+        // Focus/selection cleanup is the caller's responsibility — all current
+        // callers (handleDeleteBlock, handleMerge*, handleEscapeCancel, BlockTree
+        // empty-block cleanup) explicitly manage focus after remove() resolves.
         notifyUndoNewAction(rootParentId)
       } catch (err) {
         logger.error('page-blocks', 'Failed to delete block', { blockId }, err)
