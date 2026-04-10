@@ -208,7 +208,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
   return (
     <div className="page-browser space-y-4">
-      <div className="sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-4 border-b border-border/40 space-y-2">
+      <div
+        className="sticky top-0 z-10 bg-background isolate -mx-4 px-4 md:-mx-6 md:px-6 pb-4 border-b border-border/40 space-y-2"
+        style={{ backgroundColor: 'var(--background, #fff)' }}
+      >
         {/* Create page form */}
         <form
           ref={formRef}

@@ -19,15 +19,16 @@ import {
   type SimulationNodeDatum,
 } from 'd3-force'
 import { select } from 'd3-selection'
-import { type ZoomBehavior, zoom } from 'd3-zoom'
-import { Network } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { type ZoomBehavior, zoom, zoomIdentity } from 'd3-zoom'
+import { Maximize2, Minus, Network, Plus } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { listBlocks, listPageLinks } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
 import { logger } from '../lib/logger'
 import { EmptyState } from './EmptyState'
 import { LoadingSkeleton } from './LoadingSkeleton'
+import { Button } from './ui/button'
 
 interface GraphNode extends SimulationNodeDatum {
   id: string
@@ -59,6 +60,7 @@ export function GraphView(): React.ReactElement {
   const { t } = useTranslation()
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
   const svgRef = useRef<SVGSVGElement>(null)
+  const zoomBehaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [nodes, setNodes] = useState<GraphNode[]>([])
@@ -264,6 +266,24 @@ export function GraphView(): React.ReactElement {
       })
 
     svgSel.call(zoomBehavior)
+    zoomBehaviorRef.current = zoomBehavior
+
+    // Keyboard zoom handler (UX-146)
+    svg.setAttribute('tabindex', '0')
+    function handleZoomKey(e: KeyboardEvent) {
+      const svgSelection = select(svg)
+      if (e.key === '+' || e.key === '=') {
+        e.preventDefault()
+        zoomBehavior.scaleBy(svgSelection.transition().duration(200), 1.3)
+      } else if (e.key === '-') {
+        e.preventDefault()
+        zoomBehavior.scaleBy(svgSelection.transition().duration(200), 1 / 1.3)
+      } else if (e.key === '0') {
+        e.preventDefault()
+        zoomBehavior.transform(svgSelection.transition().duration(300), zoomIdentity)
+      }
+    }
+    svg.addEventListener('keydown', handleZoomKey)
 
     // Respect prefers-reduced-motion (UX-104)
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -283,6 +303,7 @@ export function GraphView(): React.ReactElement {
       sim.stop()
       return () => {
         sim.stop()
+        svg.removeEventListener('keydown', handleZoomKey)
       }
     }
 
@@ -299,8 +320,28 @@ export function GraphView(): React.ReactElement {
 
     return () => {
       sim.stop()
+      svg.removeEventListener('keydown', handleZoomKey)
     }
   }, [nodes, edges, navigateToPage])
+
+  // Zoom button handlers (UX-146)
+  const handleZoomIn = useCallback(() => {
+    if (!svgRef.current) return
+    const svgSel = select(svgRef.current)
+    zoomBehaviorRef.current?.scaleBy(svgSel.transition().duration(200), 1.3)
+  }, [])
+
+  const handleZoomOut = useCallback(() => {
+    if (!svgRef.current) return
+    const svgSel = select(svgRef.current)
+    zoomBehaviorRef.current?.scaleBy(svgSel.transition().duration(200), 1 / 1.3)
+  }, [])
+
+  const handleZoomReset = useCallback(() => {
+    if (!svgRef.current) return
+    const svgSel = select(svgRef.current)
+    zoomBehaviorRef.current?.transform(svgSel.transition().duration(300), zoomIdentity)
+  }, [])
 
   if (loading) return <LoadingSkeleton count={3} height="h-16" />
   if (error)
@@ -312,13 +353,34 @@ export function GraphView(): React.ReactElement {
   if (nodes.length === 0) return <EmptyState icon={Network} message={t('graph.noPages')} />
 
   return (
-    <div className="graph-view h-full w-full" data-testid="graph-view">
+    <div className="graph-view relative h-full w-full" data-testid="graph-view">
       <svg
         ref={svgRef}
         className="w-full h-full min-h-[400px]"
         role="img"
         aria-label={t('graph.title')}
       />
+      <div className="absolute bottom-3 right-3 flex flex-col gap-1">
+        <Button variant="outline" size="icon" onClick={handleZoomIn} aria-label={t('graph.zoomIn')}>
+          <Plus className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={handleZoomOut}
+          aria-label={t('graph.zoomOut')}
+        >
+          <Minus className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={handleZoomReset}
+          aria-label={t('graph.zoomReset')}
+        >
+          <Maximize2 className="h-4 w-4" />
+        </Button>
+      </div>
     </div>
   )
 }

@@ -40,15 +40,168 @@ mod queries;
 mod sync_cmds;
 mod tags;
 
-pub use agenda::*;
-pub use attachments::*;
-pub use blocks::*;
-pub use history::*;
-pub use pages::*;
-pub use properties::*;
-pub use queries::*;
-pub use sync_cmds::*;
-pub use tags::*;
+// Tauri command handlers and testable _inner functions — explicitly re-exported.
+pub use agenda::{
+    count_agenda_batch, count_agenda_batch_by_source, count_agenda_batch_by_source_inner,
+    count_agenda_batch_inner, list_projected_agenda, list_projected_agenda_inner,
+};
+pub use attachments::{
+    add_attachment, add_attachment_inner, delete_attachment, delete_attachment_inner,
+    list_attachments, list_attachments_inner,
+};
+pub use blocks::{
+    batch_resolve, batch_resolve_inner, create_block, create_block_inner, delete_block,
+    delete_block_inner, edit_block, edit_block_inner, get_block, get_block_inner, list_blocks,
+    list_blocks_inner, move_block, move_block_inner, purge_block, purge_block_inner, restore_block,
+    restore_block_inner,
+};
+pub use history::{
+    apply_reverse_in_tx, compute_edit_diff, compute_edit_diff_inner, list_page_history,
+    list_page_history_inner, redo_page_op, redo_page_op_inner, restore_page_to_op,
+    restore_page_to_op_inner, revert_ops, revert_ops_inner, undo_page_op, undo_page_op_inner,
+};
+pub use pages::{
+    export_page_markdown, export_page_markdown_inner, get_page_aliases, get_page_aliases_inner,
+    import_markdown, import_markdown_inner, list_page_links, list_page_links_inner,
+    resolve_page_by_alias, resolve_page_by_alias_inner, set_page_aliases, set_page_aliases_inner,
+};
+pub use properties::{
+    create_property_def, create_property_def_inner, delete_property, delete_property_def,
+    delete_property_def_inner, delete_property_inner, get_batch_properties,
+    get_batch_properties_inner, get_properties, get_properties_inner, list_property_defs,
+    list_property_defs_inner, list_property_keys, list_property_keys_inner, set_due_date,
+    set_due_date_inner, set_priority, set_priority_inner, set_property, set_property_inner,
+    set_scheduled_date, set_scheduled_date_inner, set_todo_state, set_todo_state_inner,
+    update_property_def_options, update_property_def_options_inner,
+};
+pub use queries::{
+    count_backlinks_batch, count_backlinks_batch_inner, get_backlinks, get_backlinks_inner,
+    get_conflicts, get_conflicts_inner, get_status, get_status_inner, list_backlinks_grouped,
+    list_backlinks_grouped_inner, list_unlinked_references, list_unlinked_references_inner,
+    query_backlinks_filtered, query_backlinks_filtered_inner, query_by_property,
+    query_by_property_inner, search_blocks, search_blocks_inner,
+};
+pub use sync_cmds::{
+    cancel_pairing, cancel_pairing_inner, cancel_sync, cancel_sync_inner, confirm_pairing,
+    confirm_pairing_inner, delete_peer_ref, delete_peer_ref_inner, get_device_id,
+    get_device_id_inner, get_peer_ref, get_peer_ref_inner, list_peer_refs, list_peer_refs_inner,
+    set_peer_address, set_peer_address_inner, start_pairing, start_pairing_inner, start_sync,
+    start_sync_inner, update_peer_name, update_peer_name_inner,
+};
+pub use tags::{
+    add_tag, add_tag_inner, list_tags_by_prefix, list_tags_by_prefix_inner, list_tags_for_block,
+    list_tags_for_block_inner, query_by_tags, query_by_tags_inner, remove_tag, remove_tag_inner,
+};
+
+// specta-generated type-export fns required by `collect_commands![]` in lib.rs.
+// These are created by the `#[specta::specta]` proc macro on each Tauri command handler.
+#[doc(hidden)]
+pub use agenda::{
+    __specta__fn__count_agenda_batch, __specta__fn__count_agenda_batch_by_source,
+    __specta__fn__list_projected_agenda,
+};
+#[doc(hidden)]
+pub use attachments::{
+    __specta__fn__add_attachment, __specta__fn__delete_attachment, __specta__fn__list_attachments,
+};
+#[doc(hidden)]
+pub use blocks::{
+    __specta__fn__batch_resolve, __specta__fn__create_block, __specta__fn__delete_block,
+    __specta__fn__edit_block, __specta__fn__get_block, __specta__fn__list_blocks,
+    __specta__fn__move_block, __specta__fn__purge_block, __specta__fn__restore_block,
+};
+#[doc(hidden)]
+pub use history::{
+    __specta__fn__compute_edit_diff, __specta__fn__list_page_history, __specta__fn__redo_page_op,
+    __specta__fn__restore_page_to_op, __specta__fn__revert_ops, __specta__fn__undo_page_op,
+};
+#[doc(hidden)]
+pub use pages::{
+    __specta__fn__export_page_markdown, __specta__fn__get_page_aliases,
+    __specta__fn__import_markdown, __specta__fn__list_page_links,
+    __specta__fn__resolve_page_by_alias, __specta__fn__set_page_aliases,
+};
+#[doc(hidden)]
+pub use properties::{
+    __specta__fn__create_property_def, __specta__fn__delete_property,
+    __specta__fn__delete_property_def, __specta__fn__get_batch_properties,
+    __specta__fn__get_properties, __specta__fn__list_property_defs,
+    __specta__fn__list_property_keys, __specta__fn__set_due_date, __specta__fn__set_priority,
+    __specta__fn__set_property, __specta__fn__set_scheduled_date, __specta__fn__set_todo_state,
+    __specta__fn__update_property_def_options,
+};
+#[doc(hidden)]
+pub use queries::{
+    __specta__fn__count_backlinks_batch, __specta__fn__get_backlinks, __specta__fn__get_conflicts,
+    __specta__fn__get_status, __specta__fn__list_backlinks_grouped,
+    __specta__fn__list_unlinked_references, __specta__fn__query_backlinks_filtered,
+    __specta__fn__query_by_property, __specta__fn__search_blocks,
+};
+#[doc(hidden)]
+pub use sync_cmds::{
+    __specta__fn__cancel_pairing, __specta__fn__cancel_sync, __specta__fn__confirm_pairing,
+    __specta__fn__delete_peer_ref, __specta__fn__get_device_id, __specta__fn__get_peer_ref,
+    __specta__fn__list_peer_refs, __specta__fn__set_peer_address, __specta__fn__start_pairing,
+    __specta__fn__start_sync, __specta__fn__update_peer_name,
+};
+#[doc(hidden)]
+pub use tags::{
+    __specta__fn__add_tag, __specta__fn__list_tags_by_prefix, __specta__fn__list_tags_for_block,
+    __specta__fn__query_by_tags, __specta__fn__remove_tag,
+};
+
+// Tauri `__cmd__` wrappers generated by `#[tauri::command]` on each handler.
+#[doc(hidden)]
+pub use agenda::{
+    __cmd__count_agenda_batch, __cmd__count_agenda_batch_by_source, __cmd__list_projected_agenda,
+};
+#[doc(hidden)]
+pub use attachments::{__cmd__add_attachment, __cmd__delete_attachment, __cmd__list_attachments};
+#[doc(hidden)]
+pub use blocks::{
+    __cmd__batch_resolve, __cmd__create_block, __cmd__delete_block, __cmd__edit_block,
+    __cmd__get_block, __cmd__list_blocks, __cmd__move_block, __cmd__purge_block,
+    __cmd__restore_block,
+};
+#[doc(hidden)]
+pub use history::{
+    __cmd__compute_edit_diff, __cmd__list_page_history, __cmd__redo_page_op,
+    __cmd__restore_page_to_op, __cmd__revert_ops, __cmd__undo_page_op,
+};
+#[doc(hidden)]
+pub use pages::{
+    __cmd__export_page_markdown, __cmd__get_page_aliases, __cmd__import_markdown,
+    __cmd__list_page_links, __cmd__resolve_page_by_alias, __cmd__set_page_aliases,
+};
+#[doc(hidden)]
+pub use properties::{
+    __cmd__create_property_def, __cmd__delete_property, __cmd__delete_property_def,
+    __cmd__get_batch_properties, __cmd__get_properties, __cmd__list_property_defs,
+    __cmd__list_property_keys, __cmd__set_due_date, __cmd__set_priority, __cmd__set_property,
+    __cmd__set_scheduled_date, __cmd__set_todo_state, __cmd__update_property_def_options,
+};
+#[doc(hidden)]
+pub use queries::{
+    __cmd__count_backlinks_batch, __cmd__get_backlinks, __cmd__get_conflicts, __cmd__get_status,
+    __cmd__list_backlinks_grouped, __cmd__list_unlinked_references,
+    __cmd__query_backlinks_filtered, __cmd__query_by_property, __cmd__search_blocks,
+};
+#[doc(hidden)]
+pub use sync_cmds::{
+    __cmd__cancel_pairing, __cmd__cancel_sync, __cmd__confirm_pairing, __cmd__delete_peer_ref,
+    __cmd__get_device_id, __cmd__get_peer_ref, __cmd__list_peer_refs, __cmd__set_peer_address,
+    __cmd__start_pairing, __cmd__start_sync, __cmd__update_peer_name,
+};
+#[doc(hidden)]
+pub use tags::{
+    __cmd__add_tag, __cmd__list_tags_by_prefix, __cmd__list_tags_for_block, __cmd__query_by_tags,
+    __cmd__remove_tag,
+};
+
+// pub(crate) helpers used by other crate modules (e.g. recurrence.rs)
+pub(crate) use blocks::{create_block_in_tx, set_property_in_tx};
+pub(crate) use properties::is_valid_iso_date;
+
 const MAX_CONTENT_LENGTH: usize = 256 * 1024;
 
 /// Maximum allowed nesting depth for the block tree.

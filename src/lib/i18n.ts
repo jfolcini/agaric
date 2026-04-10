@@ -431,6 +431,9 @@ const resources = {
       'graph.noPages': 'No pages to visualize',
       'graph.loadFailed': 'Failed to load graph data',
       'graph.title': 'Page Relationships',
+      'graph.zoomIn': 'Zoom in',
+      'graph.zoomOut': 'Zoom out',
+      'graph.zoomReset': 'Fit to view',
 
       'pageHeader.exportMarkdown': 'Export as Markdown',
       'pageHeader.deletePage': 'Delete page',

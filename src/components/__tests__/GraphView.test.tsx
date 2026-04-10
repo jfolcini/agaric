@@ -329,4 +329,59 @@ describe('GraphView', () => {
       expect(screen.getByTestId('graph-view')).toBeInTheDocument()
     })
   })
+
+  it('renders zoom control buttons', async () => {
+    const pagesResponse = {
+      items: [
+        { id: 'page-1', content: 'Page One', block_type: 'page' },
+        { id: 'page-2', content: 'Page Two', block_type: 'page' },
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    const linksResponse = [{ source_id: 'page-1', target_id: 'page-2' }]
+
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+      if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
+      return Promise.resolve(null)
+    })
+
+    render(<GraphView />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+    })
+
+    expect(screen.getByRole('button', { name: 'Zoom in' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Zoom out' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Fit to view' })).toBeInTheDocument()
+  })
+
+  it('SVG has tabindex for keyboard focus', async () => {
+    const pagesResponse = {
+      items: [
+        { id: 'page-1', content: 'Page One', block_type: 'page' },
+        { id: 'page-2', content: 'Page Two', block_type: 'page' },
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    const linksResponse = [{ source_id: 'page-1', target_id: 'page-2' }]
+
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+      if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
+      return Promise.resolve(null)
+    })
+
+    render(<GraphView />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+    })
+
+    const svg = screen.getByRole('img', { name: 'Page Relationships' })
+    expect(svg).toHaveAttribute('tabindex', '0')
+  })
 })
