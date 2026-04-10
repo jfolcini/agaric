@@ -1,5 +1,32 @@
 # Session Log
 
+## Session 327 — UX polish: 7 items resolved (2026-04-10)
+
+**7 items resolved (41→34 open). 16 files changed, +486/-166 lines. 27 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| UX-128 | TabBar arrow key nav (ARIA tablist) + horizontal mode for hook | `TabBar.tsx`, `useListKeyboardNavigation.ts`, tests |
+| T-35 | TabBar keyboard navigation tests (6 tests) | `TabBar.test.tsx` |
+| UX-136 | Calendar month nav buttons adjacent to label | `calendar.tsx` |
+| UX-137 | Date picker Input component + unified padding | `BlockDatePicker.tsx` |
+| UX-149 | Calendar legend moved to dropdown popover | `JournalPage.tsx`, `JournalCalendarDropdown.tsx`, tests |
+| UX-154 | LinkedReferences filter icon button inline with header | `LinkedReferences.tsx`, tests |
+| UX-156 | Star/favorite button in PageHeader | `PageHeader.tsx`, `i18n.ts`, tests |
+
+### Additional fixes
+- Missing i18n keys: `references.loadPropertiesFailed`, `references.loadTagsFailed`, `references.showFilters`, `pageHeader.starPage`, `pageHeader.unstarPage`
+- Calendar.test.tsx nav button selector updated (was using removed `absolute` class)
+
+### Stats
+- 16 files changed (+486 / -166 lines)
+- 27 new tests (7 hook + 6 TabBar + 1 dropdown + 3 PageHeader + 10 LinkedReferences)
+- 6085 frontend tests pass, all 20 prek hooks pass
+
+---
+
 ## Session 326 — Mixed fixes: 6 items resolved (2026-04-10)
 
 **6 items resolved (47→41 open). 19 files changed, +295/-147 lines. 4 new tests.**
