@@ -1,5 +1,31 @@
 # Session Log
 
+## Session 326 — Mixed fixes: 6 items resolved (2026-04-10)
+
+**6 items resolved (47→41 open). 19 files changed, +295/-147 lines. 4 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| S-5 | TOFU race condition — lock acquired before cert hash read | `sync_daemon.rs` |
+| UX-122 | Animation durations → design system tokens | `alert-dialog.tsx`, `dialog.tsx`, `sheet.tsx` |
+| UX-123 | Touch target overrides on filter/sort controls | `AgendaSortGroupControls.tsx`, `FilterSortControls.tsx`, `DuePanelFilters.tsx`, `SourcePageFilter.tsx` |
+| UX-131 | LinkedReferences header outside ListViewState | `LinkedReferences.tsx`, `LinkedReferences.test.tsx` |
+| UX-133 | Gutter spacer removed for leaf blocks | `BlockInlineControls.tsx`, `BlockInlineControls.test.tsx`, `SortableBlock.test.tsx` |
+| UX-139 | HistoryView toolbar always visible + HistoryPanel filter bar | `HistoryView.tsx`, `HistoryPanel.tsx`, `HistorySelectionToolbar.tsx`, tests |
+
+### Additional fixes
+- Orphaned `references.noReferences` i18n key removed
+- SortableBlock.test.tsx spacer assertion updated
+
+### Stats
+- 19 files changed (+295 / -147 lines)
+- 4 new tests (1 HistoryView + 3 HistoryPanel)
+- 6070 frontend tests pass, 1775 Rust tests pass, all 20 prek hooks pass
+
+---
+
 ## Session 325 — Frontend fixes: 6 items resolved (2026-04-10)
 
 **6 items resolved (53→47 open). 16 files changed, +704/-370 lines. 12 new tests.**
