@@ -1,5 +1,39 @@
 # Session Log
 
+## Session 314 — Maintainability: M-41 resolved (2026-04-10)
+
+**1 item resolved (5→4 open). 19k-line commands.rs split into 9 domain modules.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| M-41 | Split commands.rs (19,385 lines) into 9 domain modules | 15 files (9 new + mod.rs + 5 snapshot moves) |
+
+### Module breakdown
+
+| Module | Lines | Content |
+|--------|-------|---------|
+| blocks.rs | 1,332 | Block CRUD + tree operations |
+| properties.rs | 736 | Property CRUD + definitions |
+| history.rs | 668 | Undo/redo, revert, history |
+| pages.rs | 460 | Aliases, import/export, graph links |
+| agenda.rs | 375 | Agenda queries + projection |
+| queries.rs | 346 | Search, backlinks, conflicts |
+| tags.rs | 342 | Tag management + queries |
+| sync_cmds.rs | 317 | Peer refs, pairing, sync control |
+| attachments.rs | 256 | Attachment CRUD |
+| mod.rs | 14,693 | Shared types, constants, tests |
+
+### Stats
+- 15 files changed (+5,001 / -4,875 lines)
+- Zero logic changes — purely mechanical extraction
+- mod.rs re-exports all pub items, lib.rs unchanged
+- 1,740 Rust tests pass, cargo sqlx prepare --check passes
+- All 20 prek hooks pass
+
+---
+
 ## Session 313 — Maintainability: M-39 resolved (2026-04-10)
 
 **1 item resolved (6→5 open). 2 files changed.**
