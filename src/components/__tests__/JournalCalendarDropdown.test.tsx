@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -346,5 +346,20 @@ describe('JournalCalendarDropdown', () => {
     })
 
     expect(screen.getByRole('dialog', { name: /date picker/i })).toBeInTheDocument()
+  })
+
+  // ── Calendar dot legend ─────────────────────────────────────────────
+
+  it('renders color dot legend with all 4 source labels inside the dropdown', () => {
+    render(<JournalCalendarDropdown {...defaultProps} />)
+
+    const legend = screen.getByTestId('calendar-legend')
+    expect(legend).toBeInTheDocument()
+
+    // All 4 legend labels should be present
+    expect(within(legend).getByText('Page')).toBeInTheDocument()
+    expect(within(legend).getByText('Due')).toBeInTheDocument()
+    expect(within(legend).getByText('Scheduled')).toBeInTheDocument()
+    expect(within(legend).getByText('Property')).toBeInTheDocument()
   })
 })

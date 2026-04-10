@@ -5,7 +5,7 @@
  * and a tag badge row with an inline tag picker popover.
  */
 
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Star } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -14,6 +14,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { logger } from '@/lib/logger'
 import { useBlockTags } from '../hooks/useBlockTags'
+import { isStarred, toggleStarred } from '../lib/starred-pages'
 import {
   deleteBlock,
   deleteProperty,
@@ -45,6 +46,21 @@ export interface PageHeaderProps {
 export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   const { t } = useTranslation()
   const pageStore = usePageBlockStoreApi()
+
+  // --- Star / favourite ---
+  // biome-ignore lint/correctness/noUnusedVariables: revision counter triggers re-render on toggle
+  const [starredRevision, setStarredRevision] = useState(0)
+
+  const handleToggleStar = useCallback(() => {
+    toggleStarred(pageId)
+    setStarredRevision((r) => r + 1)
+  }, [pageId])
+
+  const starred = (() => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+    starredRevision
+    return isStarred(pageId)
+  })()
 
   // --- Breadcrumb navigation for namespaced pages ---
   const navigateToNamespace = useCallback(() => {
@@ -377,6 +393,16 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           onBlur={handleTitleBlur}
           onKeyDown={handleTitleKeyDown}
         />
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={handleToggleStar}
+          aria-label={starred ? t('pageHeader.unstarPage') : t('pageHeader.starPage')}
+          className="shrink-0 text-muted-foreground hover:text-star data-[starred=true]:text-star"
+          data-starred={starred}
+        >
+          <Star className="h-4 w-4" fill={starred ? 'currentColor' : 'none'} />
+        </Button>
         <PageOutline />
         <PageHeaderMenu
           canRedo={canRedo}

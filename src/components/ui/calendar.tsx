@@ -35,16 +35,16 @@ const Calendar = React.forwardRef<HTMLDivElement, CalendarProps>(
             months: 'flex flex-col sm:flex-row gap-2',
             month: 'flex flex-col gap-4',
             month_caption:
-              'flex justify-center pt-1 pb-2 relative items-center text-sm font-medium h-10',
+              'flex items-center justify-center gap-1 pt-1 pb-2 text-sm font-medium h-10',
             caption_label: 'text-sm font-medium',
             nav: 'flex items-center gap-1',
             button_previous: cn(
               buttonVariants({ variant: 'outline' }),
-              'size-7 bg-transparent p-0 opacity-50 hover:opacity-100 absolute left-0 [@media(pointer:coarse)]:size-10',
+              'size-7 bg-transparent p-0 opacity-50 hover:opacity-100 [@media(pointer:coarse)]:size-10',
             ),
             button_next: cn(
               buttonVariants({ variant: 'outline' }),
-              'size-7 bg-transparent p-0 opacity-50 hover:opacity-100 absolute right-0 [@media(pointer:coarse)]:size-10',
+              'size-7 bg-transparent p-0 opacity-50 hover:opacity-100 [@media(pointer:coarse)]:size-10',
             ),
             month_grid: 'w-full border-collapse space-y-1',
             weekdays: 'flex',

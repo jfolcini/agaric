@@ -4,14 +4,19 @@
  * Renders one button per open tab. Hidden when only a single tab is open.
  * Each tab shows the page title (label) and a close area (X icon).
  *
+ * Implements ARIA tablist pattern with ArrowLeft/ArrowRight + Home/End
+ * keyboard navigation using automatic activation (focus follows selection).
+ *
  * The close area is a `<span>` (not a `<button>`) to avoid nested-interactive
  * a11y violations inside `role="tab"`. Close also available via Ctrl+W.
  */
 
 import { X } from 'lucide-react'
 import type React from 'react'
+import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
+import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { useNavigationStore } from '../stores/navigation'
 
 export function TabBar(): React.ReactElement | null {
@@ -20,6 +25,24 @@ export function TabBar(): React.ReactElement | null {
   const activeTabIndex = useNavigationStore((s) => s.activeTabIndex)
   const switchTab = useNavigationStore((s) => s.switchTab)
   const closeTab = useNavigationStore((s) => s.closeTab)
+
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
+  const keyNavRef = useRef(false)
+
+  const { handleKeyDown: handleListKeyDown } = useListKeyboardNavigation({
+    itemCount: tabs.length,
+    horizontal: true,
+    homeEnd: true,
+    wrap: true,
+  })
+
+  // Focus the active tab button after a keyboard-triggered tab switch
+  useEffect(() => {
+    if (keyNavRef.current) {
+      tabRefs.current[activeTabIndex]?.focus()
+      keyNavRef.current = false
+    }
+  }, [activeTabIndex])
 
   // Hide bar when only a single tab is open
   if (tabs.length <= 1) return null
@@ -40,6 +63,20 @@ export function TabBar(): React.ReactElement | null {
     if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault()
       closeTab(i)
+      return
+    }
+
+    // Arrow key navigation with automatic activation
+    if (handleListKeyDown(e)) {
+      e.preventDefault()
+      // Compute the new index manually (useState is async)
+      let newIndex = i
+      if (e.key === 'ArrowRight') newIndex = i >= tabs.length - 1 ? 0 : i + 1
+      else if (e.key === 'ArrowLeft') newIndex = i <= 0 ? tabs.length - 1 : i - 1
+      else if (e.key === 'Home') newIndex = 0
+      else if (e.key === 'End') newIndex = tabs.length - 1
+      keyNavRef.current = true
+      switchTab(newIndex)
     }
   }
 
@@ -52,6 +89,9 @@ export function TabBar(): React.ReactElement | null {
       {tabs.map((tab, i) => (
         <button
           key={tab.id}
+          ref={(el) => {
+            tabRefs.current[i] = el
+          }}
           type="button"
           role="tab"
           tabIndex={i === activeTabIndex ? 0 : -1}

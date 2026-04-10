@@ -6,12 +6,14 @@
  * Uses cursor-based pagination with "Load more" button.
  */
 
+import { SlidersHorizontal } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { logger } from '@/lib/logger'
 import { useBacklinkResolution } from '../hooks/useBacklinkResolution'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
@@ -213,14 +215,37 @@ export function LinkedReferences({
 
   return (
     <section className="linked-references" aria-label={t('references.panelLabel')}>
-      {/* Main header -- always visible, outside ListViewState */}
-      <CollapsiblePanelHeader
-        isCollapsed={!expanded}
-        onToggle={toggleExpanded}
-        className="linked-references-header"
-      >
-        {headerLabel}
-      </CollapsiblePanelHeader>
+      {/* Main header -- always visible, outside ListViewState, with inline filter toggle */}
+      <div className="flex items-center gap-1">
+        <CollapsiblePanelHeader
+          isCollapsed={!expanded}
+          onToggle={toggleExpanded}
+          className="linked-references-header flex-1"
+        >
+          {headerLabel}
+        </CollapsiblePanelHeader>
+        {expanded && totalCount > 0 && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="shrink-0 h-7 w-7 text-muted-foreground"
+                onClick={() => setShowAdvancedFilters((prev) => !prev)}
+                aria-expanded={showAdvancedFilters}
+                aria-label={
+                  showAdvancedFilters ? t('references.hideFilters') : t('references.showFilters')
+                }
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {showAdvancedFilters ? t('references.hideFilters') : t('references.showFilters')}
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </div>
 
       {expanded && (
         <ListViewState
@@ -250,15 +275,6 @@ export function LinkedReferences({
                     setSourcePageExcluded(exc)
                   }}
                 />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-xs text-muted-foreground"
-                  onClick={() => setShowAdvancedFilters((prev) => !prev)}
-                  aria-expanded={showAdvancedFilters}
-                >
-                  {showAdvancedFilters ? t('references.hideFilters') : t('references.moreFilters')}
-                </Button>
               </div>
 
               {showAdvancedFilters && (

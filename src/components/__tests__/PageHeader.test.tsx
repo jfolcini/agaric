@@ -53,6 +53,7 @@ vi.mock('lucide-react', () => ({
   Plus: () => <svg data-testid="plus-icon" />,
   Redo2: () => <svg data-testid="redo2-icon" />,
   Repeat: () => <svg data-testid="repeat-icon" />,
+  Star: (props: Record<string, unknown>) => <svg data-testid="star-icon" {...props} />,
   Undo2: () => <svg data-testid="undo2-icon" />,
   User: () => <svg data-testid="user-icon" />,
   X: () => <svg data-testid="x-icon" />,
@@ -62,9 +63,19 @@ vi.mock('lucide-react', () => ({
 // Mock sonner
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 
+// Mock starred-pages
+vi.mock('../../lib/starred-pages', () => ({
+  isStarred: vi.fn(() => false),
+  toggleStarred: vi.fn(),
+  getStarredPages: vi.fn(() => []),
+}))
+
 import { toast } from 'sonner'
+import { isStarred, toggleStarred } from '../../lib/starred-pages'
 
 const mockedToastError = vi.mocked(toast.error)
+const mockedIsStarred = vi.mocked(isStarred)
+const mockedToggleStarred = vi.mocked(toggleStarred)
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -1345,5 +1356,39 @@ describe('PageHeader error paths', () => {
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith('Failed to update aliases')
     })
+  })
+})
+
+// ── Star / favourite button (UX-156) ──────────────────────────────────────
+
+describe('PageHeader star button (UX-156)', () => {
+  it('renders star button', () => {
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    const starBtn = screen.getByRole('button', { name: /star this page/i })
+    expect(starBtn).toBeInTheDocument()
+  })
+
+  it('toggles star on click', async () => {
+    const user = userEvent.setup()
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    const starBtn = screen.getByRole('button', { name: /star this page/i })
+    await user.click(starBtn)
+
+    expect(mockedToggleStarred).toHaveBeenCalledWith('PAGE_1')
+  })
+
+  it('shows filled star when page is starred', () => {
+    mockedIsStarred.mockReturnValue(true)
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    const starBtn = screen.getByRole('button', { name: /unstar this page/i })
+    expect(starBtn).toBeInTheDocument()
+
+    const starIcon = screen.getByTestId('star-icon')
+    expect(starIcon).toHaveAttribute('fill', 'currentColor')
   })
 })

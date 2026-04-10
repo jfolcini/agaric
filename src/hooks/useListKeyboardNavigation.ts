@@ -1,7 +1,8 @@
 /**
- * Shared hook for ArrowUp/ArrowDown list keyboard navigation.
+ * Shared hook for list keyboard navigation.
  *
- * Supports wrapping vs clamping, Vim-style j/k, Home/End,
+ * Supports vertical (ArrowUp/ArrowDown) and horizontal (ArrowLeft/ArrowRight)
+ * modes, wrapping vs clamping, Vim-style j/k, Home/End,
  * and Enter/Space item selection.
  */
 
@@ -10,9 +11,11 @@ import { useEffect, useState } from 'react'
 export interface UseListKeyboardNavigationOptions {
   /** Number of items in the list */
   itemCount: number
+  /** Use ArrowLeft/ArrowRight instead of ArrowUp/ArrowDown (default: false) */
+  horizontal?: boolean
   /** Wrap around when reaching the ends (default: true) */
   wrap?: boolean
-  /** Enable Vim-style j/k navigation (default: false) */
+  /** Enable Vim-style j/k navigation (default: false, vertical mode only) */
   vim?: boolean
   /** Enable Home/End keys (default: false) */
   homeEnd?: boolean
@@ -33,7 +36,14 @@ export interface UseListKeyboardNavigationReturn {
 export function useListKeyboardNavigation(
   options: UseListKeyboardNavigationOptions,
 ): UseListKeyboardNavigationReturn {
-  const { itemCount, wrap = true, vim = false, homeEnd = false, onSelect } = options
+  const {
+    itemCount,
+    horizontal = false,
+    wrap = true,
+    vim = false,
+    homeEnd = false,
+    onSelect,
+  } = options
 
   const [focusedIndex, setFocusedIndex] = useState(0)
 
@@ -46,8 +56,16 @@ export function useListKeyboardNavigation(
   function handleKeyDown(e: React.KeyboardEvent | KeyboardEvent): boolean {
     if (itemCount === 0) return false
 
-    // ArrowUp or k (if vim)
-    if (e.key === 'ArrowUp' || (vim && e.key === 'k')) {
+    // Build prev/next key sets based on orientation
+    const prevKeys: string[] = horizontal ? ['ArrowLeft'] : ['ArrowUp']
+    const nextKeys: string[] = horizontal ? ['ArrowRight'] : ['ArrowDown']
+    if (vim && !horizontal) {
+      prevKeys.push('k')
+      nextKeys.push('j')
+    }
+
+    // Previous (ArrowUp / ArrowLeft / k)
+    if (prevKeys.includes(e.key)) {
       if (wrap) {
         setFocusedIndex((prev) => (prev <= 0 ? itemCount - 1 : prev - 1))
       } else {
@@ -56,8 +74,8 @@ export function useListKeyboardNavigation(
       return true
     }
 
-    // ArrowDown or j (if vim)
-    if (e.key === 'ArrowDown' || (vim && e.key === 'j')) {
+    // Next (ArrowDown / ArrowRight / j)
+    if (nextKeys.includes(e.key)) {
       if (wrap) {
         setFocusedIndex((prev) => (prev >= itemCount - 1 ? 0 : prev + 1))
       } else {

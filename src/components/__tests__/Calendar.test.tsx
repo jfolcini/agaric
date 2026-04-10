@@ -108,8 +108,8 @@ describe('Calendar', () => {
     expect(dayButtons[0]?.className).toContain('[@media(pointer:coarse)]:size-11')
 
     // Nav buttons should have coarse pointer size override
-    const navButtons = Array.from(container.querySelectorAll('button')).filter((btn) =>
-      btn.className.includes('absolute'),
+    const navButtons = Array.from(container.querySelectorAll('button')).filter(
+      (btn) => btn.querySelector('svg') && btn.className.includes('size-7'),
     )
     expect(navButtons.length).toBeGreaterThanOrEqual(2)
     for (const btn of navButtons) {

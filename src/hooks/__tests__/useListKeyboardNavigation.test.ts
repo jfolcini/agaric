@@ -273,6 +273,115 @@ describe('useListKeyboardNavigation', () => {
     expect(result.current.focusedIndex).toBe(0)
   })
 
+  describe('horizontal mode', () => {
+    it('ArrowRight increments in horizontal mode', () => {
+      const { result } = renderHook(() =>
+        useListKeyboardNavigation({ itemCount: 5, horizontal: true }),
+      )
+
+      expect(result.current.focusedIndex).toBe(0)
+
+      act(() => {
+        result.current.handleKeyDown(keyEvent('ArrowRight'))
+      })
+
+      expect(result.current.focusedIndex).toBe(1)
+    })
+
+    it('ArrowLeft decrements in horizontal mode', () => {
+      const { result } = renderHook(() =>
+        useListKeyboardNavigation({ itemCount: 5, horizontal: true }),
+      )
+
+      // Move right first
+      act(() => {
+        result.current.handleKeyDown(keyEvent('ArrowRight'))
+        result.current.handleKeyDown(keyEvent('ArrowRight'))
+      })
+      expect(result.current.focusedIndex).toBe(2)
+
+      act(() => {
+        result.current.handleKeyDown(keyEvent('ArrowLeft'))
+      })
+
+      expect(result.current.focusedIndex).toBe(1)
+    })
+
+    it('ArrowUp is ignored in horizontal mode', () => {
+      const { result } = renderHook(() =>
+        useListKeyboardNavigation({ itemCount: 5, horizontal: true }),
+      )
+
+      let handled = false
+      act(() => {
+        handled = result.current.handleKeyDown(keyEvent('ArrowUp'))
+      })
+      expect(handled).toBe(false)
+      expect(result.current.focusedIndex).toBe(0)
+    })
+
+    it('ArrowDown is ignored in horizontal mode', () => {
+      const { result } = renderHook(() =>
+        useListKeyboardNavigation({ itemCount: 5, horizontal: true }),
+      )
+
+      let handled = false
+      act(() => {
+        handled = result.current.handleKeyDown(keyEvent('ArrowDown'))
+      })
+      expect(handled).toBe(false)
+      expect(result.current.focusedIndex).toBe(0)
+    })
+
+    it('wraps ArrowRight from last to first in horizontal mode', () => {
+      const { result } = renderHook(() =>
+        useListKeyboardNavigation({ itemCount: 3, horizontal: true, wrap: true }),
+      )
+
+      // Go to end
+      act(() => {
+        result.current.handleKeyDown(keyEvent('ArrowRight'))
+        result.current.handleKeyDown(keyEvent('ArrowRight'))
+      })
+      expect(result.current.focusedIndex).toBe(2)
+
+      act(() => {
+        result.current.handleKeyDown(keyEvent('ArrowRight'))
+      })
+      expect(result.current.focusedIndex).toBe(0)
+    })
+
+    it('wraps ArrowLeft from first to last in horizontal mode', () => {
+      const { result } = renderHook(() =>
+        useListKeyboardNavigation({ itemCount: 3, horizontal: true, wrap: true }),
+      )
+
+      expect(result.current.focusedIndex).toBe(0)
+
+      act(() => {
+        result.current.handleKeyDown(keyEvent('ArrowLeft'))
+      })
+      expect(result.current.focusedIndex).toBe(2)
+    })
+
+    it('vim j/k are ignored in horizontal mode', () => {
+      const { result } = renderHook(() =>
+        useListKeyboardNavigation({ itemCount: 5, horizontal: true, vim: true }),
+      )
+
+      let handled = false
+      act(() => {
+        handled = result.current.handleKeyDown(keyEvent('j'))
+      })
+      expect(handled).toBe(false)
+
+      act(() => {
+        handled = result.current.handleKeyDown(keyEvent('k'))
+      })
+      expect(handled).toBe(false)
+    })
+  })
+
   describe('return value for handled/unhandled keys', () => {
     it('returns true for handled keys', () => {
       const onSelect = vi.fn()

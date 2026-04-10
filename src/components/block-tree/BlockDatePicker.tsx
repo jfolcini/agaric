@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next'
 import { useWeekStart } from '../../hooks/useWeekStart'
 import { parseDate } from '../../lib/parse-date'
 import { Calendar } from '../ui/calendar'
+import { Input } from '../ui/input'
 import { ScrollArea } from '../ui/scroll-area'
 
 export function BlockDatePicker({
@@ -87,15 +88,15 @@ export function BlockDatePicker({
         role="dialog"
         aria-modal="true"
         aria-label={t('journal.datePickerLabel')}
-        className="date-picker-popup fixed z-50 rounded-md border bg-popover p-2 shadow-lg left-1/2 top-1/3 -translate-x-1/2 max-w-[calc(100vw-2rem)] max-sm:left-2 max-sm:right-2 max-sm:translate-x-0"
+        className="date-picker-popup fixed z-50 rounded-md border bg-popover p-3 shadow-lg left-1/2 top-1/3 -translate-x-1/2 max-w-[calc(100vw-2rem)] max-sm:left-2 max-sm:right-2 max-sm:translate-x-0"
         data-testid="date-picker-popup"
       >
         <ScrollArea className="max-sm:max-h-[70vh]">
-          <div className="px-3 pb-2">
+          <div className="pb-2">
             <div className="flex items-center gap-2">
-              <input
+              <Input
                 type="text"
-                className="flex-1 rounded border px-2 py-1 text-sm"
+                className="flex-1"
                 placeholder="Type a date... (today, +3d, Apr 15)"
                 value={dateTextInput}
                 onChange={(e) => {

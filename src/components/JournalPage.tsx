@@ -219,29 +219,6 @@ export function JournalPage({
 
   return (
     <div className="space-y-4">
-      {/* Calendar dot color legend */}
-      <div
-        className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground"
-        data-testid="calendar-legend"
-      >
-        <span className="flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full bg-primary" />
-          {t('journal.legendPage')}
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full bg-date-due-foreground" />
-          {t('journal.legendDue')}
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full bg-date-scheduled-foreground" />
-          {t('journal.legendScheduled')}
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full bg-date-property-foreground" />
-          {t('journal.legendProperty')}
-        </span>
-      </div>
-
       {/* Loading indicator on initial fetch */}
       {loading && (
         <div aria-busy="true">

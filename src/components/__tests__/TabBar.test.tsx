@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -197,6 +197,85 @@ describe('TabBar', () => {
       const state = useNavigationStore.getState()
       expect(state.tabs).toHaveLength(1)
       expect(state.tabs[0]?.label).toBe('Page 2')
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // keyboard navigation (T-35)
+  // ---------------------------------------------------------------------------
+  describe('keyboard navigation', () => {
+    function setupThreeTabs(activeTabIndex: number) {
+      const tabs = [
+        { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+        { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+        { id: '2', pageStack: [{ pageId: 'P3', title: 'Page 3' }], label: 'Page 3' },
+      ]
+      useNavigationStore.setState({
+        currentView: 'page-editor',
+        tabs,
+        activeTabIndex,
+        pageStack: tabs[activeTabIndex]?.pageStack ?? [],
+      })
+    }
+
+    it('ArrowRight switches to next tab', () => {
+      setupThreeTabs(0)
+      render(<TabBar />)
+
+      const tabs = screen.getAllByRole('tab')
+      fireEvent.keyDown(tabs[0] as HTMLElement, { key: 'ArrowRight' })
+
+      expect(useNavigationStore.getState().activeTabIndex).toBe(1)
+    })
+
+    it('ArrowLeft switches to previous tab', () => {
+      setupThreeTabs(2)
+      render(<TabBar />)
+
+      const tabs = screen.getAllByRole('tab')
+      fireEvent.keyDown(tabs[2] as HTMLElement, { key: 'ArrowLeft' })
+
+      expect(useNavigationStore.getState().activeTabIndex).toBe(1)
+    })
+
+    it('ArrowRight wraps from last to first', () => {
+      setupThreeTabs(2)
+      render(<TabBar />)
+
+      const tabs = screen.getAllByRole('tab')
+      fireEvent.keyDown(tabs[2] as HTMLElement, { key: 'ArrowRight' })
+
+      expect(useNavigationStore.getState().activeTabIndex).toBe(0)
+    })
+
+    it('ArrowLeft wraps from first to last', () => {
+      setupThreeTabs(0)
+      render(<TabBar />)
+
+      const tabs = screen.getAllByRole('tab')
+      fireEvent.keyDown(tabs[0] as HTMLElement, { key: 'ArrowLeft' })
+
+      expect(useNavigationStore.getState().activeTabIndex).toBe(2)
+    })
+
+    it('Home goes to first tab', () => {
+      setupThreeTabs(2)
+      render(<TabBar />)
+
+      const tabs = screen.getAllByRole('tab')
+      fireEvent.keyDown(tabs[2] as HTMLElement, { key: 'Home' })
+
+      expect(useNavigationStore.getState().activeTabIndex).toBe(0)
+    })
+
+    it('End goes to last tab', () => {
+      setupThreeTabs(0)
+      render(<TabBar />)
+
+      const tabs = screen.getAllByRole('tab')
+      fireEvent.keyDown(tabs[0] as HTMLElement, { key: 'End' })
+
+      expect(useNavigationStore.getState().activeTabIndex).toBe(2)
     })
   })
 

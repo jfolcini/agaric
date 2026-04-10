@@ -264,9 +264,12 @@ const resources = {
       'references.loadMore': 'Load more',
       'references.loading': 'Loading...',
       'references.loadFailed': 'Failed to load references',
+      'references.loadPropertiesFailed': 'Failed to load property keys',
+      'references.loadTagsFailed': 'Failed to load tags',
       'references.untitled': 'Untitled',
       'references.empty': '(empty)',
       'references.hideFilters': 'Hide filters',
+      'references.showFilters': 'Show filters',
       'references.moreFilters': 'More filters',
       'references.loadingMore': 'Loading more references',
       'references.loadMoreLabel': 'Load more references',
@@ -446,6 +449,8 @@ const resources = {
       'pageHeader.pageDeleted': 'Page deleted',
       'pageHeader.deleteFailed': 'Failed to delete page',
       'pageHeader.deleteConfirm': 'Delete this page? It can be restored from trash.',
+      'pageHeader.starPage': 'Star this page',
+      'pageHeader.unstarPage': 'Unstar this page',
 
       // Page Browser
       'pageBrowser.newPagePlaceholder': 'New page name...',
