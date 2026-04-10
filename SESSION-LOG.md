@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 328 — Mixed fixes: 3 items resolved (2026-04-10)
+
+**3 items resolved (34→31 open). 6 files changed, +290/-20 lines. 2 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| UX-146 | Graph zoom controls — keyboard (+/-/0) + floating buttons | `GraphView.tsx`, `GraphView.test.tsx`, `i18n.ts` |
+| UX-155 | PageBrowser sticky header opacity — isolate + fallback bg | `PageBrowser.tsx` |
+| M-50 | commands/mod.rs pub use * → explicit re-exports | `commands/mod.rs` |
+
+### Additional fixes
+- Corrupted REVIEW-LATER.md entry (leftover UX-136 fragment) cleaned up
+
+### Notes
+- UX-152 (empty panels return null) attempted but subagent connection failed; reverted incomplete changes. Will retry next session.
+
+### Stats
+- 6 files changed (+290 / -20 lines)
+- 2 new tests (GraphView zoom buttons + SVG tabindex)
+- 6087 frontend tests pass, 1774 Rust tests pass, all 20 prek hooks pass
+
+---
+
 ## Session 327 — UX polish: 7 items resolved (2026-04-10)
 
 **7 items resolved (41→34 open). 16 files changed, +486/-166 lines. 27 new tests.**
