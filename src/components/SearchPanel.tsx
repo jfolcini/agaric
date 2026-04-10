@@ -289,7 +289,7 @@ export function SearchPanel(): React.ReactElement {
           autoFocus
         />
         <Button type="submit" variant="outline" disabled={!query.trim()}>
-          Search
+          {t('search.searchButton')}
         </Button>
         {(typing || searchLoading) && <Spinner className="text-muted-foreground" />}
       </form>

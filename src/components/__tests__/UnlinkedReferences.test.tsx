@@ -126,20 +126,31 @@ beforeEach(() => {
 })
 
 describe('UnlinkedReferences', () => {
-  // 1. Renders collapsed by default
-  it('renders collapsed by default — header visible, content not visible', () => {
+  // 1. Renders collapsed by default (with results present)
+  it('renders collapsed by default — header visible, content not visible', async () => {
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
     render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
 
-    // Header should be present
-    const header = screen.getByRole('button', { name: /unlinked references/i })
+    // Wait for eager fetch to complete
+    await waitFor(() => {
+      expect(mockedListUnlinked).toHaveBeenCalled()
+    })
+
+    // Header should be present and collapsed
+    const header = await screen.findByRole('button', { name: /unlinked reference/i })
     expect(header).toBeInTheDocument()
     expect(header).toHaveAttribute('aria-expanded', 'false')
 
     // Content should NOT be visible (collapsed)
     expect(document.querySelector('.unlinked-references-content')).not.toBeInTheDocument()
-
-    // listUnlinkedReferences should NOT have been called (lazy load)
-    expect(mockedListUnlinked).not.toHaveBeenCalled()
   })
 
   // 2. Shows total count in header after expanding
@@ -455,23 +466,23 @@ describe('UnlinkedReferences', () => {
     })
   })
 
-  // 11. Shows "No Unlinked References" when totalCount is 0
-  it('shows "No Unlinked References" when totalCount is 0', async () => {
-    const user = userEvent.setup()
+  // 11. UX-152: Returns null when totalCount is 0
+  it('returns null when no unlinked references', async () => {
     mockedListUnlinked.mockResolvedValue(emptyResponse)
 
-    render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
+    const { container } = render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
 
-    // Expand
-    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
-
-    // Should show "No Unlinked References" in header
+    // Wait for eager fetch to complete
     await waitFor(() => {
-      expect(screen.getByText('No Unlinked References')).toBeInTheDocument()
+      expect(mockedListUnlinked).toHaveBeenCalled()
     })
 
-    // Empty state message
-    expect(screen.getByText('No unlinked references found.')).toBeInTheDocument()
+    // Component should return null — no section, no header, nothing
+    await waitFor(() => {
+      expect(container.querySelector('.unlinked-references')).not.toBeInTheDocument()
+    })
+    expect(screen.queryByText('No Unlinked References')).not.toBeInTheDocument()
+    expect(screen.queryByText('No unlinked references found.')).not.toBeInTheDocument()
   })
 
   // 11b. Shows loading indicator when expanding and fetching

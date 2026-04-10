@@ -10,7 +10,7 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CollapsiblePanelHeader } from '@/components/CollapsiblePanelHeader'
-import { EmptyState } from '@/components/EmptyState'
+
 import { Badge } from '@/components/ui/badge'
 import { StatusIcon } from '@/components/ui/status-icon'
 import { formatCompactDate, getTodayString } from '@/lib/date-utils'
@@ -116,7 +116,9 @@ function writeCollapsedState(collapsed: boolean): void {
 
 // ── Component ──────────────────────────────────────────────────────────
 
-export function UnfinishedTasks({ onNavigateToPage }: UnfinishedTasksProps): React.ReactElement {
+export function UnfinishedTasks({
+  onNavigateToPage,
+}: UnfinishedTasksProps): React.ReactElement | null {
   const { t } = useTranslation()
   const [collapsed, setCollapsed] = useState(readCollapsedState)
   const [blocks, setBlocks] = useState<BlockRow[]>([])
@@ -214,13 +216,7 @@ export function UnfinishedTasks({ onNavigateToPage }: UnfinishedTasksProps): Rea
   if (loading) return <div aria-busy="true" role="status" className="sr-only" />
 
   // Don't render section if no unfinished tasks
-  if (blocks.length === 0) {
-    return (
-      <div role="status" data-testid="unfinished-empty">
-        <EmptyState message={t('unfinished.empty')} compact />
-      </div>
-    )
-  }
+  if (blocks.length === 0) return null
 
   return (
     <section aria-label={t('unfinished.sectionLabel')} data-testid="unfinished-tasks">

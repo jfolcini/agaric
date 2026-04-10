@@ -11,6 +11,7 @@
 import type { Editor } from '@tiptap/react'
 import type React from 'react'
 import { useCallback, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
@@ -51,6 +52,7 @@ export function LinkEditPopover({
   initialUrl,
   onClose,
 }: LinkEditPopoverProps): React.ReactElement {
+  const { t } = useTranslation()
   const [url, setUrl] = useState(initialUrl)
   const [urlError, setUrlError] = useState<string | null>(null)
 
@@ -63,13 +65,13 @@ export function LinkEditPopover({
     }
     const normalized = normalizeUrl(url)
     if (!normalized) {
-      setUrlError('javascript: and data: URLs are not allowed')
+      setUrlError(t('linkEdit.invalidUrl'))
       return
     }
     setUrlError(null)
     editor.chain().focus().setLink({ href: normalized }).run()
     onClose()
-  }, [editor, url, onClose])
+  }, [editor, url, onClose, t])
 
   const handleRemove = useCallback(() => {
     editor.chain().focus().unsetLink().run()
@@ -121,7 +123,7 @@ export function LinkEditPopover({
           onPointerDown={(e) => e.preventDefault()}
           onClick={handleApply}
         >
-          {isEditing ? 'Update' : 'Apply'}
+          {isEditing ? t('linkEdit.update') : t('linkEdit.apply')}
         </Button>
         {isEditing && (
           <Button
@@ -131,7 +133,7 @@ export function LinkEditPopover({
             onPointerDown={(e) => e.preventDefault()}
             onClick={handleRemove}
           >
-            Remove
+            {t('linkEdit.remove')}
           </Button>
         )}
       </div>

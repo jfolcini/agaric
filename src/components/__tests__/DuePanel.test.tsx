@@ -126,21 +126,21 @@ describe('DuePanel', () => {
     expect(await screen.findByText('1 Due')).toBeInTheDocument()
   })
 
-  // 2. Shows header and filter pills (no empty-state overlay) when no items
-  it('shows header and filters when no items are due', async () => {
+  // 2. Returns null when all sources are empty (UX-152)
+  it('returns null when all sources are empty', async () => {
     mockedListBlocks.mockResolvedValue(emptyResponse)
 
-    render(<DuePanel date="2025-06-15" />)
+    const { container } = render(<DuePanel date="2025-06-15" />)
 
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalled()
     })
 
-    // Header and filters remain visible so the user can switch filters
-    expect(screen.getByLabelText('Due items')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument()
-    // No content blocks rendered
-    expect(screen.queryByTestId('due-panel-item')).not.toBeInTheDocument()
+    // UX-152: Panel returns null when ALL tabs are empty
+    await waitFor(() => {
+      expect(container.innerHTML).toBe('')
+    })
+    expect(screen.queryByLabelText('Due items')).not.toBeInTheDocument()
   })
 
   // 3. Groups blocks by todo_state in correct order (DOING > TODO > DONE > null)
@@ -454,10 +454,10 @@ describe('DuePanel', () => {
 
     await screen.findByText('filter test block')
 
-    const allBtn = screen.getByRole('button', { name: 'All' })
-    const dueBtn = screen.getByRole('button', { name: 'Due' })
-    const scheduledBtn = screen.getByRole('button', { name: 'Scheduled' })
-    const propsBtn = screen.getByRole('button', { name: 'Properties' })
+    const allBtn = screen.getByRole('button', { name: /^All( \(\d+\))?$/ })
+    const dueBtn = screen.getByRole('button', { name: /^Due( \(\d+\))?$/ })
+    const scheduledBtn = screen.getByRole('button', { name: /^Scheduled( \(\d+\))?$/ })
+    const propsBtn = screen.getByRole('button', { name: /^Properties( \(\d+\))?$/ })
 
     expect(allBtn).toHaveAttribute('aria-pressed', 'true')
     expect(dueBtn).toHaveAttribute('aria-pressed', 'false')
@@ -485,7 +485,7 @@ describe('DuePanel', () => {
       has_more: false,
     })
 
-    const dueBtn = screen.getByRole('button', { name: 'Due' })
+    const dueBtn = screen.getByRole('button', { name: /^Due/ })
     await user.click(dueBtn)
 
     await waitFor(() => {
@@ -511,7 +511,7 @@ describe('DuePanel', () => {
     await screen.findByText('all filter block')
 
     // First click "Due" to set a filter
-    const dueBtn = screen.getByRole('button', { name: 'Due' })
+    const dueBtn = screen.getByRole('button', { name: /^Due/ })
     await user.click(dueBtn)
 
     await waitFor(() => {
@@ -528,7 +528,7 @@ describe('DuePanel', () => {
     })
 
     // Now click "All" to clear the filter
-    const allBtn = screen.getByRole('button', { name: 'All' })
+    const allBtn = screen.getByRole('button', { name: /^All/ })
     await user.click(allBtn)
 
     await waitFor(() => {
@@ -562,7 +562,7 @@ describe('DuePanel', () => {
       has_more: false,
     })
 
-    const propsBtn = screen.getByRole('button', { name: 'Properties' })
+    const propsBtn = screen.getByRole('button', { name: /^Properties/ })
     await user.click(propsBtn)
 
     await waitFor(() => {
@@ -600,7 +600,7 @@ describe('DuePanel', () => {
     expect(screen.getByText('property block')).toBeInTheDocument()
 
     // Click "Properties" filter
-    const propsBtn = screen.getByRole('button', { name: 'Properties' })
+    const propsBtn = screen.getByRole('button', { name: /^Properties/ })
     await user.click(propsBtn)
 
     // Only property-sourced block remains
@@ -655,28 +655,25 @@ describe('DuePanel', () => {
     expect(await screen.findByText('2 Due')).toBeInTheDocument()
   })
 
-  // 20. Filter pills remain visible when filtered result set is empty (B-43)
-  it('filter pills remain visible when the filtered result set is empty', async () => {
-    // All data sources return empty — simulates a filter producing 0 results
+  // 20. Panel returns null when all sources are empty (UX-152 supersedes B-43)
+  it('returns null when all data sources return empty', async () => {
+    // All data sources return empty
     mockedListBlocks.mockResolvedValue(emptyResponse)
     mockedListProjectedAgenda.mockResolvedValue([])
     mockedQueryByProperty.mockResolvedValue(emptyResponse)
 
-    render(<DuePanel date="2025-06-15" />)
+    const { container } = render(<DuePanel date="2025-06-15" />)
 
     // Wait for loading to finish
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalled()
     })
 
-    // Filter pills should still be present even with zero results
-    expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Due' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Scheduled' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Properties' })).toBeInTheDocument()
-
-    // Header should also be visible
-    expect(screen.getByLabelText('Due items')).toBeInTheDocument()
+    // UX-152: Panel returns null when ALL tabs are empty
+    await waitFor(() => {
+      expect(container.innerHTML).toBe('')
+    })
+    expect(screen.queryByLabelText('Due items')).not.toBeInTheDocument()
   })
 
   // --- Projected agenda entries (repeating tasks) ---
@@ -1041,19 +1038,18 @@ describe('DuePanel', () => {
 
   // --- Error paths ---
   describe('error paths', () => {
-    it('listBlocks rejection on initial load shows header/filters and finishes loading', async () => {
+    it('listBlocks rejection on initial load returns null (UX-152)', async () => {
       mockedListBlocks.mockRejectedValueOnce(new Error('network failure'))
 
       const { container } = render(<DuePanel date="2025-06-15" />)
 
-      // Wait for loading to finish — header and filters remain visible
+      // Wait for loading to finish — component returns null when all empty
       await waitFor(() => {
-        expect(container.querySelector('[aria-busy="true"]')).not.toBeInTheDocument()
+        expect(container.innerHTML).toBe('')
       })
 
-      // Header and filter pills are still accessible
-      expect(screen.getByLabelText('Due items')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument()
+      // UX-152: Panel returns null when all sources are empty
+      expect(screen.queryByLabelText('Due items')).not.toBeInTheDocument()
     })
 
     it('batchResolve rejection after listBlocks still renders blocks without page titles', async () => {
@@ -1125,14 +1121,14 @@ describe('DuePanel', () => {
       })
     })
 
-    it('queryByProperty rejection for overdue fetch does not show overdue section', async () => {
+    it('queryByProperty rejection for overdue fetch returns null when all empty (UX-152)', async () => {
       const today = new Date()
       const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
 
       mockedListBlocks.mockResolvedValueOnce(emptyResponse)
       mockedQueryByProperty.mockRejectedValueOnce(new Error('overdue query failed'))
 
-      render(<DuePanel date={todayStr} />)
+      const { container } = render(<DuePanel date={todayStr} />)
 
       // Wait for loading to finish
       await waitFor(() => {
@@ -1144,11 +1140,13 @@ describe('DuePanel', () => {
         expect(screen.queryByText('Overdue')).not.toBeInTheDocument()
       })
 
-      // Component still renders without crashing
-      expect(screen.getByLabelText('Due items')).toBeInTheDocument()
+      // UX-152: Panel returns null when all sources are empty
+      await waitFor(() => {
+        expect(container.innerHTML).toBe('')
+      })
     })
 
-    it('queryByProperty rejection for upcoming fetch does not show upcoming section', async () => {
+    it('queryByProperty rejection for upcoming fetch returns null when all empty (UX-152)', async () => {
       localStorage.setItem('agaric:deadlineWarningDays', '7')
       const today = new Date()
       const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
@@ -1160,7 +1158,7 @@ describe('DuePanel', () => {
         .mockResolvedValueOnce(emptyResponse)
         .mockRejectedValueOnce(new Error('upcoming query failed'))
 
-      render(<DuePanel date={todayStr} />)
+      const { container } = render(<DuePanel date={todayStr} />)
 
       // Wait for loading to finish
       await waitFor(() => {
@@ -1170,8 +1168,10 @@ describe('DuePanel', () => {
       // Upcoming section should not appear
       expect(screen.queryByText('Upcoming')).not.toBeInTheDocument()
 
-      // Component still renders without crashing
-      expect(screen.getByLabelText('Due items')).toBeInTheDocument()
+      // UX-152: Panel returns null when all sources are empty
+      await waitFor(() => {
+        expect(container.innerHTML).toBe('')
+      })
 
       localStorage.removeItem('agaric:deadlineWarningDays')
     })

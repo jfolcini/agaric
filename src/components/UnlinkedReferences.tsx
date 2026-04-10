@@ -86,17 +86,16 @@ export function UnlinkedReferences({
     [pageId, t],
   )
 
-  // Fetch on expand or when pageId changes — lazy load
+  // Fetch on mount and when pageId changes (eager — needed to know if we
+  // should render the panel at all, see UX-152 early-return below).
   useEffect(() => {
     setGroups([])
     setNextCursor(null)
     setHasMore(false)
     setTotalCount(0)
     setExpandedGroups({})
-    if (!collapsed) {
-      fetchGroups()
-    }
-  }, [fetchGroups, collapsed])
+    fetchGroups()
+  }, [fetchGroups])
 
   // Reset collapsed state when pageId changes
   // biome-ignore lint/correctness/useExhaustiveDependencies: pageId is the intentional trigger for resetting collapse state on navigation
@@ -164,6 +163,11 @@ export function UnlinkedReferences({
       : totalCount === 1
         ? t('unlinkedRefs.headerOne')
         : t('unlinkedRefs.header', { count: totalCount })
+
+  // UX-152: Don't render when no unlinked references (and not loading)
+  if (!loading && totalCount === 0 && groups.length === 0) {
+    return null
+  }
 
   return (
     <section className="unlinked-references" aria-label={t('unlinkedRefs.panelLabel')}>

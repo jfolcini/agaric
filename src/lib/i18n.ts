@@ -1460,6 +1460,38 @@ const resources = {
       'keyboard.closeActiveTab': 'Close active tab',
       'keyboard.nextTab': 'Switch to next tab',
       'keyboard.previousTab': 'Switch to previous tab',
+
+      // UX-121: Block Context (batch toolbar)
+      'blockContext.selected': 'selected',
+      'blockContext.clear': 'Clear',
+      'blockContext.todoLabel': 'TODO',
+      'blockContext.doingLabel': 'DOING',
+      'blockContext.doneLabel': 'DONE',
+      'blockContext.delete': 'Delete',
+      'blockContext.deleteConfirmTitle': 'Delete {{count}} block(s)?',
+      'blockContext.deleteConfirmDescription':
+        'This will soft-delete the selected blocks. They can be restored from the trash.',
+      'blockContext.deleteConfirmAction': 'Yes, delete',
+
+      // UX-121: Rename dialog
+      'rename.title': 'Rename device',
+      'rename.deviceName': 'Enter a name for this device.',
+      'rename.placeholder': 'Device name',
+      'rename.cancel': 'Cancel',
+      'rename.save': 'Save',
+
+      // UX-121: Link edit popover
+      'linkEdit.invalidUrl': 'javascript: and data: URLs are not allowed',
+      'linkEdit.apply': 'Apply',
+      'linkEdit.update': 'Update',
+      'linkEdit.remove': 'Remove',
+
+      // UX-121: Confirm dialog defaults
+      'dialog.cancel': 'Cancel',
+      'dialog.confirm': 'Confirm',
+
+      // UX-121: Search panel
+      'search.searchButton': 'Search',
     },
   },
 }

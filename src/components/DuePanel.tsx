@@ -117,6 +117,11 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     return counts
   }, [visibleBlocks, date])
 
+  // UX-152: Don't render when ALL sources are empty (not loading)
+  if (!loading && !projectedLoading && allDisplayItems.length === 0) {
+    return null
+  }
+
   // Group blocks by todo_state in the defined order, sorted by priority within
   const groupLabels: Record<string, string> = {
     DOING: t('duePanel.groupDoing'),
@@ -162,6 +167,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
           onSourceFilterChange={setSourceFilter}
           hideBeforeScheduled={hideBeforeScheduled}
           onToggleHideBeforeScheduled={toggleHideBeforeScheduled}
+          sourceCounts={sourceCounts}
         />
       )}
 

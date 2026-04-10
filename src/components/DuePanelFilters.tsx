@@ -17,6 +17,7 @@ export interface DuePanelFiltersProps {
   onSourceFilterChange: (value: string | null) => void
   hideBeforeScheduled: boolean
   onToggleHideBeforeScheduled: () => void
+  sourceCounts?: { due: number; scheduled: number; property: number }
 }
 
 export function DuePanelFilters({
@@ -24,36 +25,49 @@ export function DuePanelFilters({
   onSourceFilterChange,
   hideBeforeScheduled,
   onToggleHideBeforeScheduled,
+  sourceCounts,
 }: DuePanelFiltersProps): React.ReactElement {
   const { t } = useTranslation()
 
   const filterOptions = [
-    { label: t('duePanel.filterAll'), value: null },
-    { label: t('duePanel.filterDue'), value: 'column:due_date' },
-    { label: t('duePanel.filterScheduled'), value: 'column:scheduled_date' },
-    { label: t('duePanel.filterProperties'), value: 'property:' },
+    { label: t('duePanel.filterAll'), value: null, countKey: 'all' as const },
+    { label: t('duePanel.filterDue'), value: 'column:due_date', countKey: 'due' as const },
+    {
+      label: t('duePanel.filterScheduled'),
+      value: 'column:scheduled_date',
+      countKey: 'scheduled' as const,
+    },
+    { label: t('duePanel.filterProperties'), value: 'property:', countKey: 'property' as const },
   ]
 
   return (
     <div className="due-panel-filters flex items-center gap-1 px-2 py-1">
-      {filterOptions.map((opt) => (
-        <button
-          key={opt.label}
-          type="button"
-          className={cn(
-            'rounded-full px-2.5 py-1 text-xs font-medium transition-colors [@media(pointer:coarse)]:min-h-[44px]',
-            sourceFilter === opt.value
-              ? 'bg-primary text-primary-foreground'
-              : 'bg-muted text-muted-foreground hover:bg-muted/80',
-          )}
-          onClick={() => {
-            onSourceFilterChange(opt.value)
-          }}
-          aria-pressed={sourceFilter === opt.value}
-        >
-          {opt.label}
-        </button>
-      ))}
+      {filterOptions.map((opt) => {
+        const count = sourceCounts
+          ? opt.countKey === 'all'
+            ? sourceCounts.due + sourceCounts.scheduled + sourceCounts.property
+            : sourceCounts[opt.countKey]
+          : 0
+        return (
+          <button
+            key={opt.label}
+            type="button"
+            className={cn(
+              'rounded-full px-2.5 py-1 text-xs font-medium transition-colors [@media(pointer:coarse)]:min-h-[44px]',
+              sourceFilter === opt.value
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-muted text-muted-foreground hover:bg-muted/80',
+            )}
+            onClick={() => {
+              onSourceFilterChange(opt.value)
+            }}
+            aria-pressed={sourceFilter === opt.value}
+          >
+            {opt.label}
+            {sourceCounts && count > 0 ? ` (${count})` : ''}
+          </button>
+        )
+      })}
       <button
         type="button"
         className={cn(

@@ -213,6 +213,11 @@ export function LinkedReferences({
   const headerLabel =
     totalCount === 1 ? t('references.headerOne') : t('references.header', { count: totalCount })
 
+  // UX-152: Don't render when no references (and not loading)
+  if (!loading && totalCount === 0 && groups.length === 0) {
+    return null
+  }
+
   return (
     <section className="linked-references" aria-label={t('references.panelLabel')}>
       {/* Main header -- always visible, outside ListViewState, with inline filter toggle */}

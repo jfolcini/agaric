@@ -151,4 +151,29 @@ describe('DuePanelFilters', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  it('displays source counts on filter pills', () => {
+    render(
+      <DuePanelFilters {...defaultProps} sourceCounts={{ due: 3, scheduled: 1, property: 0 }} />,
+    )
+
+    // "All" shows total count (3+1+0 = 4)
+    expect(screen.getByRole('button', { name: 'All (4)' })).toBeInTheDocument()
+    // "Due" shows its count
+    expect(screen.getByRole('button', { name: 'Due (3)' })).toBeInTheDocument()
+    // "Scheduled" shows its count
+    expect(screen.getByRole('button', { name: 'Scheduled (1)' })).toBeInTheDocument()
+    // "Properties" has 0 — no count suffix
+    expect(screen.getByRole('button', { name: 'Properties' })).toBeInTheDocument()
+  })
+
+  it('does not display counts when sourceCounts is not provided', () => {
+    render(<DuePanelFilters {...defaultProps} />)
+
+    // Without sourceCounts, pills show plain labels
+    expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Due' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Scheduled' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Properties' })).toBeInTheDocument()
+  })
 })

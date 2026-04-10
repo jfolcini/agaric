@@ -150,8 +150,8 @@ function renderLinkedReferences(props: LinkedReferencesProps) {
 }
 
 describe('LinkedReferences', () => {
-  // 1. renders header with "0 References" when no backlinks (no EmptyState box)
-  it('shows header with zero count when no backlinks', async () => {
+  // 1. UX-152: renders nothing when no backlinks (returns null)
+  it('renders nothing when no backlinks', async () => {
     mockInvokeWith(emptyGrouped)
 
     const { container } = renderLinkedReferences({ pageId: 'PAGE1' })
@@ -160,13 +160,11 @@ describe('LinkedReferences', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_backlinks_grouped', expect.anything())
     })
 
+    // Component should return null — no section, no header, nothing
     await waitFor(() => {
-      expect(container.querySelector('.linked-references')).toBeInTheDocument()
+      expect(container.querySelector('.linked-references')).not.toBeInTheDocument()
     })
-    // Header is always visible with count
-    expect(screen.getByText('0 References')).toBeInTheDocument()
-    // No EmptyState box
-    expect(screen.queryByText('No references to this page yet.')).not.toBeInTheDocument()
+    expect(screen.queryByText('0 References')).not.toBeInTheDocument()
   })
 
   // 2. renders header with correct count
@@ -1069,8 +1067,8 @@ describe('LinkedReferences', () => {
   // Error path tests (mockRejectedValue coverage)
   // ---------------------------------------------------------------------------
 
-  // 35. initial backlinks load failure: finishes loading and shows header (no EmptyState)
-  it('error: initial backlinks load failure shows header after loading finishes', async () => {
+  // 35. initial backlinks load failure: shows toast and returns null (UX-152)
+  it('error: initial backlinks load failure shows toast and returns null', async () => {
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_backlinks_grouped') return Promise.reject(new Error('backend unavailable'))
@@ -1092,9 +1090,9 @@ describe('LinkedReferences', () => {
       expect(container.querySelector('[data-slot="skeleton"]')).not.toBeInTheDocument()
     })
 
-    // Header is visible with zero count (no EmptyState box)
-    expect(screen.getByText('0 References')).toBeInTheDocument()
-    expect(screen.queryByText('No references to this page yet.')).not.toBeInTheDocument()
+    // UX-152: Component returns null when empty (even after error)
+    expect(container.querySelector('.linked-references')).not.toBeInTheDocument()
+    expect(screen.queryByText('0 References')).not.toBeInTheDocument()
   })
 
   // 36. pagination failure: shows toast and preserves existing groups

@@ -50,16 +50,18 @@ export function BlockContextMenu({
   return (
     <>
       <div className="batch-toolbar sticky top-0 z-10 flex items-center gap-2 rounded-lg border bg-background/95 backdrop-blur px-3 py-2 mb-2 shadow-sm">
-        <span className="text-sm font-medium tabular-nums">{selectedBlockIds.length} selected</span>
+        <span className="text-sm font-medium tabular-nums">
+          {selectedBlockIds.length} {t('blockContext.selected')}
+        </span>
 
         <div className="flex-1" />
 
         <div className="flex items-center gap-1">
           {[
-            { state: null as string | null, label: 'Clear' },
-            { state: 'TODO', label: 'TODO' },
-            { state: 'DOING', label: 'DOING' },
-            { state: 'DONE', label: 'DONE' },
+            { state: null as string | null, label: t('blockContext.clear') },
+            { state: 'TODO', label: t('blockContext.todoLabel') },
+            { state: 'DOING', label: t('blockContext.doingLabel') },
+            { state: 'DONE', label: t('blockContext.doneLabel') },
           ].map(({ state, label }) => (
             <Button
               key={label}
@@ -81,7 +83,7 @@ export function BlockContextMenu({
           onClick={() => onSetBatchDeleteConfirm(true)}
         >
           <Trash2 className="h-3.5 w-3.5 mr-1" />
-          Delete
+          {t('blockContext.delete')}
         </Button>
 
         <Button
@@ -96,14 +98,18 @@ export function BlockContextMenu({
       <AlertDialog open={batchDeleteConfirm} onOpenChange={onSetBatchDeleteConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {selectedBlockIds.length} block(s)?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t('blockContext.deleteConfirmTitle', { count: selectedBlockIds.length })}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              This will soft-delete the selected blocks. They can be restored from the trash.
+              {t('blockContext.deleteConfirmDescription')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={onBatchDelete}>Yes, delete</AlertDialogAction>
+            <AlertDialogCancel>{t('dialog.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={onBatchDelete}>
+              {t('blockContext.deleteConfirmAction')}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

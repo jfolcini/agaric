@@ -60,8 +60,8 @@ export function RenameDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={className}>
         <DialogHeader>
-          <DialogTitle>{title ?? 'Rename device'}</DialogTitle>
-          <DialogDescription>{description ?? 'Enter a name for this device.'}</DialogDescription>
+          <DialogTitle>{title ?? t('rename.title')}</DialogTitle>
+          <DialogDescription>{description ?? t('rename.deviceName')}</DialogDescription>
         </DialogHeader>
         <form
           onSubmit={(e) => {
@@ -72,17 +72,17 @@ export function RenameDialog({
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={placeholder ?? 'Device name'}
+            placeholder={placeholder ?? t('rename.placeholder')}
             aria-label={ariaLabel ?? t('device.deviceNameLabel')}
             autoFocus
           />
         </form>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t('rename.cancel')}
           </Button>
           <Button onClick={handleSave} disabled={!name.trim()}>
-            Save
+            {t('rename.save')}
           </Button>
         </DialogFooter>
       </DialogContent>

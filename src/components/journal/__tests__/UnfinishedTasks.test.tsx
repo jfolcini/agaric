@@ -115,18 +115,19 @@ beforeEach(() => {
 // ── Tests ────────────────────────────────────────────────────────────
 
 describe('UnfinishedTasks', () => {
-  it('renders empty state when no unfinished tasks', async () => {
+  it('renders nothing when no unfinished tasks', async () => {
     mockInvokeForBlocks([])
 
-    render(<UnfinishedTasks />)
+    const { container } = render(<UnfinishedTasks />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('unfinished-empty')).toBeInTheDocument()
+      expect(screen.queryByTestId('unfinished-tasks')).not.toBeInTheDocument()
+      expect(screen.queryByRole('status', { busy: true })).not.toBeInTheDocument()
     })
-    expect(screen.getByText('No unfinished tasks — you\u2019re all caught up!')).toBeInTheDocument()
+    expect(container.innerHTML).toBe('')
   })
 
-  it('renders empty state when all tasks are DONE', async () => {
+  it('renders nothing when all tasks are DONE', async () => {
     const doneBlock = makeBlock({
       id: 'D1',
       todo_state: 'DONE',
@@ -134,14 +135,16 @@ describe('UnfinishedTasks', () => {
     })
     mockInvokeForBlocks([doneBlock])
 
-    render(<UnfinishedTasks />)
+    const { container } = render(<UnfinishedTasks />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('unfinished-empty')).toBeInTheDocument()
+      expect(screen.queryByTestId('unfinished-tasks')).not.toBeInTheDocument()
+      expect(screen.queryByRole('status', { busy: true })).not.toBeInTheDocument()
     })
+    expect(container.innerHTML).toBe('')
   })
 
-  it('renders empty state when all dates are today or future', async () => {
+  it('renders nothing when all dates are today or future', async () => {
     const futureBlock = makeBlock({
       id: 'F1',
       todo_state: 'TODO',
@@ -149,11 +152,13 @@ describe('UnfinishedTasks', () => {
     })
     mockInvokeForBlocks([futureBlock])
 
-    render(<UnfinishedTasks />)
+    const { container } = render(<UnfinishedTasks />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('unfinished-empty')).toBeInTheDocument()
+      expect(screen.queryByTestId('unfinished-tasks')).not.toBeInTheDocument()
+      expect(screen.queryByRole('status', { busy: true })).not.toBeInTheDocument()
     })
+    expect(container.innerHTML).toBe('')
   })
 
   it('renders unfinished tasks grouped by age', async () => {
@@ -439,11 +444,11 @@ describe('UnfinishedTasks', () => {
 
     const { container } = render(<UnfinishedTasks />)
 
-    await waitFor(async () => {
-      expect(screen.getByTestId('unfinished-empty')).toBeInTheDocument()
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
+    await waitFor(() => {
+      expect(screen.queryByRole('status', { busy: true })).not.toBeInTheDocument()
     })
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
   })
 
   it('has no a11y violations when expanded with tasks', async () => {

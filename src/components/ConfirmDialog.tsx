@@ -6,6 +6,7 @@
  */
 
 import type React from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,14 +40,17 @@ export function ConfirmDialog({
   onOpenChange,
   title,
   description,
-  cancelLabel = 'Cancel',
-  actionLabel = 'Confirm',
+  cancelLabel,
+  actionLabel,
   actionVariant = 'default',
   onAction,
   loading = false,
   children,
   className,
 }: ConfirmDialogProps): React.ReactElement {
+  const { t } = useTranslation()
+  const resolvedCancelLabel = cancelLabel ?? t('dialog.cancel')
+  const resolvedActionLabel = actionLabel ?? t('dialog.confirm')
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent className={className}>
@@ -56,7 +60,7 @@ export function ConfirmDialog({
         </AlertDialogHeader>
         {children}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={loading}>{cancelLabel}</AlertDialogCancel>
+          <AlertDialogCancel disabled={loading}>{resolvedCancelLabel}</AlertDialogCancel>
           <AlertDialogAction
             className={cn(
               actionVariant === 'destructive' && buttonVariants({ variant: 'destructive' }),
@@ -66,7 +70,7 @@ export function ConfirmDialog({
             autoFocus
           >
             {loading && <Spinner />}
-            {actionLabel}
+            {resolvedActionLabel}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
