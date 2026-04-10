@@ -31,6 +31,16 @@ vi.mock('../../../lib/tauri', () => ({
   queryByProperty: vi.fn(),
 }))
 
+// ── Mock logger ─────────────────────────────────────────────────────
+vi.mock('@/lib/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}))
+
 // ── Capture props from AgendaFilterBuilder ──────────────────────────
 const { filterChangeRef } = vi.hoisted(() => ({
   filterChangeRef: { current: null as ((filters: unknown[]) => void) | null },

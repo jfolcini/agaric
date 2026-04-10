@@ -65,7 +65,13 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
             if (!cancelled) setAgendaPageTitles(titleMap)
           }
         }
-      } catch {
+      } catch (err) {
+        logger.warn(
+          'AgendaView',
+          'Agenda filter query failed, showing empty results',
+          undefined,
+          err,
+        )
         if (!cancelled) {
           setFilteredBlocks([])
           setAgendaLoading(false)

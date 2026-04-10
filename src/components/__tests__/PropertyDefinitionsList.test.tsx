@@ -337,4 +337,53 @@ describe('PropertyDefinitionsList', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  it('includes ref type in the create-property type dropdown', async () => {
+    mockedInvoke.mockResolvedValueOnce([])
+
+    render(<PropertyDefinitionsList />)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('list_property_defs')
+    })
+
+    // The mock renders a native <select> for the type selector
+    const typeSelects = screen.getAllByRole('combobox')
+    const typeSelect = typeSelects.find((el) => el.getAttribute('aria-label') === 'Type') as
+      | HTMLSelectElement
+      | undefined
+    expect(typeSelect).toBeDefined()
+    const optionValues = Array.from(typeSelect?.options ?? []).map((o) => o.value)
+    expect(optionValues).toContain('ref')
+  })
+
+  it('hides delete button on built-in properties and shows Built-in badge', async () => {
+    mockedInvoke.mockResolvedValueOnce([
+      makePropDef('repeat', 'text'),
+      makePropDef('completed_at', 'date'),
+      makePropDef('custom-field', 'text'),
+    ])
+
+    render(<PropertyDefinitionsList />)
+
+    expect(await screen.findByText('Repeat')).toBeInTheDocument()
+    expect(screen.getByText('Completed At')).toBeInTheDocument()
+    expect(screen.getByText('Custom Field')).toBeInTheDocument()
+
+    // Built-in properties show "Built-in" badge, not delete button
+    expect(
+      screen.queryByRole('button', { name: /Delete property repeat/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /Delete property completed_at/i }),
+    ).not.toBeInTheDocument()
+
+    const badges = screen.getAllByText('Built-in')
+    expect(badges).toHaveLength(2)
+
+    // Custom property still has delete button
+    expect(
+      screen.getByRole('button', { name: /Delete property custom-field/i }),
+    ).toBeInTheDocument()
+  })
 })

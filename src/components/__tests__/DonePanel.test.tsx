@@ -79,6 +79,7 @@ vi.mock('../PageLink', () => ({
   ),
 }))
 
+import { logger } from '../../lib/logger'
 import type { BlockRow } from '../../lib/tauri'
 import { batchResolve, queryByProperty } from '../../lib/tauri'
 import { DonePanel } from '../DonePanel'
@@ -465,6 +466,13 @@ describe('DonePanel', () => {
     await waitFor(() => {
       expect(container.querySelector('.done-panel')).not.toBeInTheDocument()
     })
+    // UX-124: logger.error should have been called
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      'DonePanel',
+      'Failed to load done items',
+      undefined,
+      expect.any(Error),
+    )
     // batchResolve should not have been called since queryByProperty failed first
     expect(mockedBatchResolve).not.toHaveBeenCalled()
   })

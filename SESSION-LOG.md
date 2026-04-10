@@ -1,5 +1,31 @@
 # Session Log
 
+## Session 323 — Quick fixes batch: 11 items resolved (2026-04-10)
+
+**11 items resolved (71→60 open). 21 files changed.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| B-47 | Batch purge ghost entries — reload after loop + logger.warn | `TrashView.tsx` |
+| B-48 | Add 'ref' type to PropertyDefinitionsList VALUE_TYPES | `PropertyDefinitionsList.tsx` |
+| B-49 | Font size CSS variable consumed by .ProseMirror and .block-static | `index.css` |
+| UX-119 | outline-none → outline-hidden in 7 UI files | `button.tsx`, `input.tsx`, `select.tsx`, `calendar.tsx`, `PageTitleEditor.tsx`, `TabBar.tsx`, `MonthlyDayCell.tsx` |
+| UX-124 | Add logger to silent catch blocks in 3 files | `DonePanel.tsx`, `JournalPage.tsx`, `AgendaView.tsx` |
+| UX-125 | Add focus-visible ring to PageLink span | `PageLink.tsx` |
+| UX-130 | DonePanel returns null when empty | `DonePanel.tsx` |
+| UX-142 | Hide delete button on built-in property definitions | `PropertyDefinitionsList.tsx`, `i18n.ts` |
+| UX-143 | Remove DeviceManagement from StatusPanel | `StatusPanel.tsx` |
+| UX-145 | Graph edges more visible (muted-foreground, opacity 0.7, width 1.5) | `GraphView.tsx` |
+| UX-147 | Graph layout more compact (distance 60, charge -100, gravity forces) | `GraphView.tsx` |
+
+### Stats
+- 21 files changed (+112 / -68 lines)
+- 6032 frontend tests pass, all 20 prek hooks pass
+
+---
+
 ## Session 318 — Feature: F-36 resolved (2026-04-10)
 
 **FINAL ITEM RESOLVED. REVIEW-LATER backlog at 0. All 44 items cleared.**

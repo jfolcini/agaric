@@ -76,7 +76,6 @@ The default view — one page per day, created automatically.
 - Queue health indicators (color-coded green/amber/red)
 - Sync state indicator in sidebar (green = idle, amber = syncing, red = error, gray = no peers)
 - Paired peers list with sync stats (ops received/sent, last synced)
-- Pair/unpair device actions
 
 ### Conflicts
 

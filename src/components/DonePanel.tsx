@@ -19,7 +19,6 @@ import type { BlockRow } from '../lib/tauri'
 import { batchResolve, queryByProperty } from '../lib/tauri'
 import { BlockListItem } from './BlockListItem'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
-import { EmptyState } from './EmptyState'
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { PageLink } from './PageLink'
@@ -191,7 +190,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
             <LoadingSkeleton count={3} height="h-10" />
           </div>
         }
-        empty={<EmptyState icon={CheckCircle2} message={t('donePanel.empty')} compact />}
+        empty={null}
       >
         {() => (
           <>
