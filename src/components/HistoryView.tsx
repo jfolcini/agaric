@@ -16,6 +16,7 @@ import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
+import { useListMultiSelect } from '../hooks/useListMultiSelect'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { formatTimestamp } from '../lib/format'
 import type { HistoryEntry } from '../lib/tauri'
@@ -45,8 +46,6 @@ function entryKey(entry: HistoryEntry): string {
 
 export function HistoryView(): React.ReactElement {
   const { t } = useTranslation()
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [lastClickedIndex, setLastClickedIndex] = useState(-1)
   const [reverting, setReverting] = useState(false)
   const [opTypeFilter, setOpTypeFilter] = useState<string | null>(null)
   const [confirmRevert, setConfirmRevert] = useState(false)
@@ -105,68 +104,34 @@ export function HistoryView(): React.ReactElement {
     vim: true,
   })
 
+  // ── Multi-select (shared hook) ────────────────────────────────────
+  const {
+    selected,
+    toggleSelection: hookToggle,
+    selectAll,
+    clearSelection,
+    handleRowClick: hookHandleRowClick,
+  } = useListMultiSelect({
+    items: entries,
+    getItemId: entryKey,
+    filterPredicate: (entry: HistoryEntry) => !NON_REVERSIBLE_OPS.has(entry.op_type),
+  })
+
+  // Wrapper: HistoryListItem passes index, hook expects ID
+  const handleToggleSelection = useCallback(
+    (index: number) => {
+      const entry = entries[index]
+      if (entry) hookToggle(entryKey(entry))
+    },
+    [entries, hookToggle],
+  )
+
   // Reset selection when filter changes (entries are replaced by the hook)
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset UI state when filter changes
   useEffect(() => {
-    setSelected(new Set())
+    clearSelection()
     setFocusedIndex(0)
-    setLastClickedIndex(-1)
-  }, [opTypeFilter, setFocusedIndex])
-
-  // ── Selection helpers ────────────────────────────────────────────
-
-  const toggleSelection = useCallback(
-    (index: number) => {
-      const entry = entries[index]
-      if (!entry || NON_REVERSIBLE_OPS.has(entry.op_type)) return
-      const key = entryKey(entry)
-      setSelected((prev) => {
-        const next = new Set(prev)
-        if (next.has(key)) {
-          next.delete(key)
-        } else {
-          next.add(key)
-        }
-        return next
-      })
-      setLastClickedIndex(index)
-    },
-    [entries],
-  )
-
-  const rangeSelect = useCallback(
-    (toIndex: number) => {
-      const fromIndex = lastClickedIndex >= 0 ? lastClickedIndex : 0
-      const start = Math.min(fromIndex, toIndex)
-      const end = Math.max(fromIndex, toIndex)
-      setSelected((prev) => {
-        const next = new Set(prev)
-        for (let i = start; i <= end; i++) {
-          const entry = entries[i]
-          if (entry && !NON_REVERSIBLE_OPS.has(entry.op_type)) {
-            next.add(entryKey(entry))
-          }
-        }
-        return next
-      })
-      setLastClickedIndex(toIndex)
-    },
-    [entries, lastClickedIndex],
-  )
-
-  const selectAll = useCallback(() => {
-    const next = new Set<string>()
-    for (const entry of entries) {
-      if (!NON_REVERSIBLE_OPS.has(entry.op_type)) {
-        next.add(entryKey(entry))
-      }
-    }
-    setSelected(next)
-  }, [entries])
-
-  const clearSelection = useCallback(() => {
-    setSelected(new Set())
-  }, [])
+  }, [opTypeFilter, setFocusedIndex, clearSelection])
 
   // ── Revert ───────────────────────────────────────────────────────
 
@@ -185,7 +150,7 @@ export function HistoryView(): React.ReactElement {
       }))
 
       await revertOps({ ops })
-      setSelected(new Set())
+      clearSelection()
       // Reload after revert
       setEntries([])
       await reload()
@@ -194,7 +159,7 @@ export function HistoryView(): React.ReactElement {
     }
     setReverting(false)
     setConfirmRevert(false)
-  }, [selected, entries, reload, setEntries, t])
+  }, [selected, entries, reload, setEntries, clearSelection, t])
 
   const handleRestoreToHere = useCallback((entry: HistoryEntry) => {
     setRestoreTarget(entry)
@@ -245,7 +210,7 @@ export function HistoryView(): React.ReactElement {
       // Space — toggle checkbox on focused item
       if (e.key === ' ' && focusedIndex >= 0) {
         e.preventDefault()
-        toggleSelection(focusedIndex)
+        handleToggleSelection(focusedIndex)
         return
       }
 
@@ -272,7 +237,14 @@ export function HistoryView(): React.ReactElement {
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [navHandleKeyDown, focusedIndex, toggleSelection, selectAll, selected.size, clearSelection])
+  }, [
+    navHandleKeyDown,
+    focusedIndex,
+    handleToggleSelection,
+    selectAll,
+    selected.size,
+    clearSelection,
+  ])
 
   // Scroll focused item into view
   useEffect(() => {
@@ -288,14 +260,11 @@ export function HistoryView(): React.ReactElement {
 
   const handleRowClick = useCallback(
     (index: number, e: React.MouseEvent) => {
-      if (e.shiftKey) {
-        rangeSelect(index)
-      } else {
-        toggleSelection(index)
-      }
+      const entry = entries[index]
+      if (entry) hookHandleRowClick(entryKey(entry), e)
       setFocusedIndex(index)
     },
-    [rangeSelect, toggleSelection, setFocusedIndex],
+    [entries, hookHandleRowClick, setFocusedIndex],
   )
 
   // ── Render ───────────────────────────────────────────────────────
@@ -364,7 +333,7 @@ export function HistoryView(): React.ReactElement {
                 isLoadingDiff={loadingDiffs.has(key)}
                 diffSpans={diffCache.get(key)}
                 onRowClick={handleRowClick}
-                onToggleSelection={toggleSelection}
+                onToggleSelection={handleToggleSelection}
                 onToggleDiff={handleToggleDiff}
                 onRestoreToHere={handleRestoreToHere}
               />

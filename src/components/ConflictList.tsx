@@ -33,6 +33,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
+import { useListMultiSelect } from '../hooks/useListMultiSelect'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { announce } from '../lib/announcer'
 import type { BlockRow, DeleteResponse } from '../lib/tauri'
@@ -77,7 +78,15 @@ export function ConflictList(): React.ReactElement {
   const [confirmKeepBlock, setConfirmKeepBlock] = useState<BlockRow | null>(null)
   const [originals, setOriginals] = useState<Map<string, BlockRow>>(new Map())
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const {
+    selected: selectedIds,
+    toggleSelection: toggleSelected,
+    selectAll,
+    clearSelection,
+  } = useListMultiSelect({
+    items: blocks,
+    getItemId: (b: BlockRow) => b.id,
+  })
   const [batchAction, setBatchAction] = useState<'keep' | 'discard' | null>(null)
   const [deviceNames, setDeviceNames] = useState<Map<string, string>>(new Map())
   const fetchedParentsRef = useRef(new Set<string>())
@@ -136,15 +145,6 @@ export function ConflictList(): React.ReactElement {
       unlisten?.()
     }
   }, [reload])
-
-  // Clean up selectedIds when blocks are removed after resolution
-  useEffect(() => {
-    setSelectedIds((prev) => {
-      const blockIds = new Set(blocks.map((b) => b.id))
-      const next = new Set([...prev].filter((id) => blockIds.has(id)))
-      return next.size === prev.size ? prev : next
-    })
-  }, [blocks])
 
   // Fetch source device info for each conflict block (#651 C-3)
   useEffect(() => {
@@ -214,15 +214,6 @@ export function ConflictList(): React.ReactElement {
     })
   }, [])
 
-  const toggleSelected = useCallback((id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }, [])
-
   const { focusedIndex, handleKeyDown } = useListKeyboardNavigation({
     itemCount: blocks.length,
     onSelect: (idx) => {
@@ -250,11 +241,11 @@ export function ConflictList(): React.ReactElement {
 
   const handleToggleSelectAll = useCallback(() => {
     if (selectedIds.size === blocks.length) {
-      setSelectedIds(new Set())
+      clearSelection()
     } else {
-      setSelectedIds(new Set(blocks.map((b) => b.id)))
+      selectAll()
     }
-  }, [selectedIds.size, blocks])
+  }, [selectedIds.size, blocks.length, clearSelection, selectAll])
 
   const handleKeep = useCallback(
     async (block: BlockRow) => {
@@ -378,7 +369,7 @@ export function ConflictList(): React.ReactElement {
         failCount++
       }
     }
-    setSelectedIds(new Set())
+    clearSelection()
     setBatchAction(null)
     if (failCount > 0) {
       toast.error(`${failCount} of ${selectedBlocks.length} operations failed`, {
@@ -396,7 +387,7 @@ export function ConflictList(): React.ReactElement {
       toast.success(msg)
       announce(msg)
     }
-  }, [blocks, selectedIds, batchAction, setBlocks, t])
+  }, [blocks, selectedIds, batchAction, setBlocks, clearSelection, t])
 
   return (
     <div className="conflict-list space-y-4">

@@ -684,4 +684,483 @@ mod tests {
             "Extreme negative month shift should return None"
         );
     }
+
+    // ==================================================================
+    // T-36: handle_recurrence() dedicated integration tests
+    // ==================================================================
+
+    use crate::commands::{
+        create_block_inner, get_block_inner, get_properties_inner, set_due_date_inner,
+        set_property_inner, set_todo_state_inner,
+    };
+    use crate::db::init_pool;
+    use crate::materializer::Materializer;
+    use crate::pagination::BlockRow;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    const DEV: &str = "test-device-001";
+
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path: PathBuf = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        (pool, dir)
+    }
+
+    /// Helper: set a repeat property on a block.
+    async fn set_repeat_property(
+        pool: &SqlitePool,
+        mat: &Materializer,
+        block_id: &str,
+        rule: &str,
+    ) {
+        set_property_inner(
+            pool,
+            DEV,
+            mat,
+            block_id.to_string(),
+            "repeat".to_string(),
+            Some(rule.to_string()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+
+    /// Helper: set a property with a numeric value.
+    async fn set_num_property(
+        pool: &SqlitePool,
+        mat: &Materializer,
+        block_id: &str,
+        key: &str,
+        value: f64,
+    ) {
+        set_property_inner(
+            pool,
+            DEV,
+            mat,
+            block_id.to_string(),
+            key.to_string(),
+            None,
+            Some(value),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+
+    /// Helper: set a property with a date value.
+    async fn set_date_property(
+        pool: &SqlitePool,
+        mat: &Materializer,
+        block_id: &str,
+        key: &str,
+        date: &str,
+    ) {
+        set_property_inner(
+            pool,
+            DEV,
+            mat,
+            block_id.to_string(),
+            key.to_string(),
+            None,
+            None,
+            Some(date.to_string()),
+            None,
+        )
+        .await
+        .unwrap();
+    }
+
+    /// Helper: find sibling blocks created by recurrence (TODO blocks that
+    /// aren't the original).
+    async fn find_recurrence_siblings(pool: &SqlitePool, original_id: &str) -> Vec<BlockRow> {
+        sqlx::query_as!(
+            BlockRow,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at,
+                      is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
+                      due_date, scheduled_date
+               FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
+            original_id
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn handle_recurrence_daily_creates_sibling_with_shifted_due_date() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a content block
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "recurring daily task".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set TODO state
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set due_date
+        set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("2025-06-15".into()),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set repeat = daily
+        set_repeat_property(&pool, &mat, &block.id, "daily").await;
+        mat.flush_background().await.unwrap();
+
+        // Mark DONE to trigger handle_recurrence via set_todo_state_inner
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Verify sibling was created with shifted due_date
+        let siblings = find_recurrence_siblings(&pool, &block.id).await;
+        assert_eq!(
+            siblings.len(),
+            1,
+            "handle_recurrence should create exactly one sibling"
+        );
+        let sibling = &siblings[0];
+        assert_eq!(
+            sibling.due_date.as_deref(),
+            Some("2025-06-16"),
+            "sibling due_date should be shifted by 1 day from 2025-06-15"
+        );
+        assert_eq!(
+            sibling.todo_state.as_deref(),
+            Some("TODO"),
+            "sibling should have TODO state"
+        );
+        assert_eq!(
+            sibling.content.as_deref(),
+            Some("recurring daily task"),
+            "sibling should copy the original content"
+        );
+
+        // Original should be DONE
+        let original = get_block_inner(&pool, block.id.clone()).await.unwrap();
+        assert_eq!(
+            original.todo_state.as_deref(),
+            Some("DONE"),
+            "original block should remain DONE"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn handle_recurrence_repeat_until_stops_when_past_deadline() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "until-limited task".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set due_date to 2025-06-15
+        set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("2025-06-15".into()),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set repeat = daily
+        set_repeat_property(&pool, &mat, &block.id, "daily").await;
+        mat.flush_background().await.unwrap();
+
+        // Set repeat-until to 2025-06-15 — shifted date (2025-06-16) > until date
+        set_date_property(&pool, &mat, &block.id, "repeat-until", "2025-06-15").await;
+        mat.flush_background().await.unwrap();
+
+        // Mark DONE — handle_recurrence should NOT create a sibling
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let siblings = find_recurrence_siblings(&pool, &block.id).await;
+        assert_eq!(
+            siblings.len(),
+            0,
+            "no sibling should be created when shifted date exceeds repeat-until"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn handle_recurrence_repeat_count_stops_when_exhausted() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "count-limited task".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("2025-06-15".into()),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_repeat_property(&pool, &mat, &block.id, "daily").await;
+        mat.flush_background().await.unwrap();
+
+        // Set repeat-count = 2 and repeat-seq = 2 (already exhausted)
+        set_num_property(&pool, &mat, &block.id, "repeat-count", 2.0).await;
+        mat.flush_background().await.unwrap();
+        set_num_property(&pool, &mat, &block.id, "repeat-seq", 2.0).await;
+        mat.flush_background().await.unwrap();
+
+        // Mark DONE — handle_recurrence should NOT create a sibling
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let siblings = find_recurrence_siblings(&pool, &block.id).await;
+        assert_eq!(
+            siblings.len(),
+            0,
+            "no sibling should be created when repeat-seq >= repeat-count"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn handle_recurrence_copies_properties_to_sibling() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "property copy test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("2025-06-15".into()),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_repeat_property(&pool, &mat, &block.id, "weekly").await;
+        mat.flush_background().await.unwrap();
+
+        // Set repeat-until on original
+        set_date_property(&pool, &mat, &block.id, "repeat-until", "2025-12-31").await;
+        mat.flush_background().await.unwrap();
+
+        // Set repeat-count and repeat-seq on original
+        set_num_property(&pool, &mat, &block.id, "repeat-count", 5.0).await;
+        mat.flush_background().await.unwrap();
+        set_num_property(&pool, &mat, &block.id, "repeat-seq", 1.0).await;
+        mat.flush_background().await.unwrap();
+
+        // Mark DONE
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let siblings = find_recurrence_siblings(&pool, &block.id).await;
+        assert_eq!(siblings.len(), 1, "should create exactly one sibling");
+        let sibling = &siblings[0];
+
+        // Verify properties on the sibling
+        let props = get_properties_inner(&pool, sibling.id.clone())
+            .await
+            .unwrap();
+
+        // repeat property copied
+        let repeat_prop = props.iter().find(|p| p.key == "repeat");
+        assert!(repeat_prop.is_some(), "sibling should have repeat property");
+        assert_eq!(
+            repeat_prop.unwrap().value_text.as_deref(),
+            Some("weekly"),
+            "sibling repeat should match original rule"
+        );
+
+        // repeat-until copied
+        let until_prop = props.iter().find(|p| p.key == "repeat-until");
+        assert!(
+            until_prop.is_some(),
+            "sibling should have repeat-until property"
+        );
+        assert_eq!(
+            until_prop.unwrap().value_date.as_deref(),
+            Some("2025-12-31"),
+            "sibling repeat-until should match original"
+        );
+
+        // repeat-count copied
+        let count_prop = props.iter().find(|p| p.key == "repeat-count");
+        assert!(
+            count_prop.is_some(),
+            "sibling should have repeat-count property"
+        );
+        assert_eq!(
+            count_prop.unwrap().value_num,
+            Some(5.0),
+            "sibling repeat-count should match original"
+        );
+
+        // repeat-seq incremented from 1 to 2
+        let seq_prop = props.iter().find(|p| p.key == "repeat-seq");
+        assert!(
+            seq_prop.is_some(),
+            "sibling should have repeat-seq property"
+        );
+        assert_eq!(
+            seq_prop.unwrap().value_num,
+            Some(2.0),
+            "sibling repeat-seq should be incremented from 1 to 2"
+        );
+
+        // due_date shifted by 1 week
+        assert_eq!(
+            sibling.due_date.as_deref(),
+            Some("2025-06-22"),
+            "sibling due_date should be shifted by 7 days"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn handle_recurrence_sets_repeat_origin_on_sibling() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "origin test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("2025-06-15".into()),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_repeat_property(&pool, &mat, &block.id, "daily").await;
+        mat.flush_background().await.unwrap();
+
+        // Mark DONE — creates first sibling
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let siblings = find_recurrence_siblings(&pool, &block.id).await;
+        assert_eq!(siblings.len(), 1, "should create one sibling");
+        let sibling = &siblings[0];
+
+        // Verify repeat-origin points back to original block
+        let props = get_properties_inner(&pool, sibling.id.clone())
+            .await
+            .unwrap();
+        let origin_prop = props.iter().find(|p| p.key == "repeat-origin");
+        assert!(
+            origin_prop.is_some(),
+            "sibling should have repeat-origin property"
+        );
+        assert_eq!(
+            origin_prop.unwrap().value_ref.as_deref(),
+            Some(block.id.as_str()),
+            "repeat-origin should point to the original block"
+        );
+    }
 }

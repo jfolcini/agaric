@@ -2011,3 +2011,352 @@ describe('export_page_markdown', () => {
     expect(() => invoke('export_page_markdown', { pageId: 'NONEXISTENT' })).toThrow('not found')
   })
 })
+
+// ---------------------------------------------------------------------------
+// get_block_history (list_block_history in REVIEW-LATER)
+// ---------------------------------------------------------------------------
+
+describe('get_block_history', () => {
+  it('returns empty PageResponse shape', () => {
+    const result = invoke('get_block_history', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<
+      string,
+      unknown
+    >
+    expect(result).toEqual({ items: [], next_cursor: null, has_more: false })
+  })
+
+  it('returns same shape for any block ID', () => {
+    const result = invoke('get_block_history', {
+      blockId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as Record<string, unknown>
+    expect(result).toHaveProperty('items')
+    expect(result).toHaveProperty('next_cursor', null)
+    expect(result).toHaveProperty('has_more', false)
+    expect(result.items).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// list_page_history
+// ---------------------------------------------------------------------------
+
+describe('list_page_history', () => {
+  it('returns empty when no ops performed', () => {
+    const result = invoke('list_page_history', {}) as {
+      items: Array<Record<string, unknown>>
+    }
+    expect(result.items).toHaveLength(0)
+    expect(result).toHaveProperty('next_cursor', null)
+    expect(result).toHaveProperty('has_more', false)
+  })
+
+  it('records ops in reverse chronological order', () => {
+    invoke('create_block', {
+      blockType: 'content',
+      content: 'first',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    })
+    invoke('create_block', {
+      blockType: 'content',
+      content: 'second',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    })
+    const result = invoke('list_page_history', {}) as {
+      items: Array<Record<string, unknown>>
+    }
+    expect(result.items.length).toBeGreaterThanOrEqual(2)
+    // Most recent op should be first
+    const seqs = result.items.map((o) => o.seq as number)
+    expect(seqs[0] ?? 0).toBeGreaterThan(seqs[1] ?? 0)
+  })
+
+  it('returns op entries with expected shape', () => {
+    invoke('edit_block', { blockId: SEED_IDS.BLOCK_GS_1, toText: 'history-shape-test' })
+    const result = invoke('list_page_history', {}) as {
+      items: Array<Record<string, unknown>>
+    }
+    const op = result.items[0]
+    expect(op).toHaveProperty('device_id')
+    expect(op).toHaveProperty('seq')
+    expect(op).toHaveProperty('op_type')
+    expect(op).toHaveProperty('payload')
+    expect(op).toHaveProperty('created_at')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Sync / Peer-ref commands
+// ---------------------------------------------------------------------------
+
+describe('list_peer_refs', () => {
+  it('returns an empty array', () => {
+    const result = invoke('list_peer_refs')
+    expect(result).toEqual([])
+  })
+})
+
+describe('get_peer_ref', () => {
+  it('returns null', () => {
+    const result = invoke('get_peer_ref', { peerId: 'any-id' })
+    expect(result).toBeNull()
+  })
+})
+
+describe('delete_peer_ref', () => {
+  it('returns undefined', () => {
+    const result = invoke('delete_peer_ref', { peerId: 'any-id' })
+    expect(result).toBeUndefined()
+  })
+})
+
+describe('get_device_id', () => {
+  it('returns a mock device ID string', () => {
+    const result = invoke('get_device_id')
+    expect(result).toBe('mock-device-id-0000')
+    expect(typeof result).toBe('string')
+  })
+})
+
+describe('start_pairing', () => {
+  it('returns pairing info with passphrase, qr_svg, and port', () => {
+    const result = invoke('start_pairing') as Record<string, unknown>
+    expect(result).toHaveProperty('passphrase')
+    expect(result).toHaveProperty('qr_svg')
+    expect(result).toHaveProperty('port')
+    expect(typeof result.passphrase).toBe('string')
+    expect(typeof result.qr_svg).toBe('string')
+    expect(typeof result.port).toBe('number')
+  })
+
+  it('returns expected default values', () => {
+    const result = invoke('start_pairing') as Record<string, unknown>
+    expect(result).toEqual({
+      passphrase: 'alpha bravo charlie delta',
+      qr_svg: '<svg></svg>',
+      port: 8765,
+    })
+  })
+})
+
+describe('confirm_pairing', () => {
+  it('returns undefined', () => {
+    const result = invoke('confirm_pairing', { passphrase: 'alpha bravo charlie delta' })
+    expect(result).toBeUndefined()
+  })
+})
+
+describe('cancel_pairing', () => {
+  it('returns undefined', () => {
+    const result = invoke('cancel_pairing')
+    expect(result).toBeUndefined()
+  })
+})
+
+describe('start_sync', () => {
+  it('returns SyncStatus shape with syncing state', () => {
+    const result = invoke('start_sync', { peerId: 'peer-123' }) as Record<string, unknown>
+    expect(result).toEqual({
+      state: 'syncing',
+      local_device_id: 'mock-device-id-0000',
+      remote_device_id: 'peer-123',
+      ops_received: 0,
+      ops_sent: 0,
+    })
+  })
+
+  it('echoes back the provided peerId as remote_device_id', () => {
+    const result = invoke('start_sync', { peerId: 'other-peer' }) as Record<string, unknown>
+    expect(result.remote_device_id).toBe('other-peer')
+  })
+})
+
+describe('cancel_sync', () => {
+  it('returns undefined', () => {
+    const result = invoke('cancel_sync')
+    expect(result).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Attachment commands (F-7)
+// ---------------------------------------------------------------------------
+
+describe('list_attachments', () => {
+  it('returns an empty array', () => {
+    const result = invoke('list_attachments', { blockId: SEED_IDS.BLOCK_GS_1 })
+    expect(result).toEqual([])
+  })
+})
+
+describe('add_attachment', () => {
+  it('returns attachment with expected shape', () => {
+    const result = invoke('add_attachment', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      filename: 'test.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 1024,
+      fsPath: '/tmp/test.pdf',
+    }) as Record<string, unknown>
+    expect(result).toHaveProperty('id')
+    expect(result.block_id).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result.filename).toBe('test.pdf')
+    expect(result.mime_type).toBe('application/pdf')
+    expect(result.size_bytes).toBe(1024)
+    expect(result.fs_path).toBe('/tmp/test.pdf')
+    expect(result).toHaveProperty('created_at')
+  })
+
+  it('generates unique IDs for each attachment', () => {
+    const a1 = invoke('add_attachment', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      filename: 'a.png',
+      mimeType: 'image/png',
+      sizeBytes: 100,
+      fsPath: '/tmp/a.png',
+    }) as Record<string, unknown>
+    const a2 = invoke('add_attachment', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      filename: 'b.png',
+      mimeType: 'image/png',
+      sizeBytes: 200,
+      fsPath: '/tmp/b.png',
+    }) as Record<string, unknown>
+    expect(a1.id).not.toBe(a2.id)
+  })
+})
+
+describe('delete_attachment', () => {
+  it('returns null', () => {
+    const result = invoke('delete_attachment', { attachmentId: 'any-id' })
+    expect(result).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// list_projected_agenda
+// ---------------------------------------------------------------------------
+
+describe('list_projected_agenda', () => {
+  it('returns an empty array', () => {
+    const result = invoke('list_projected_agenda', {
+      startDate: '2026-01-01',
+      endDate: '2026-12-31',
+    })
+    expect(result).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Draft autosave commands (F-17)
+// ---------------------------------------------------------------------------
+
+describe('save_draft', () => {
+  it('returns null', () => {
+    const result = invoke('save_draft', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      content: 'draft content',
+    })
+    expect(result).toBeNull()
+  })
+})
+
+describe('flush_draft', () => {
+  it('returns null', () => {
+    const result = invoke('flush_draft', { blockId: SEED_IDS.BLOCK_GS_1 })
+    expect(result).toBeNull()
+  })
+})
+
+describe('delete_draft', () => {
+  it('returns null', () => {
+    const result = invoke('delete_draft', { blockId: SEED_IDS.BLOCK_GS_1 })
+    expect(result).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// set_peer_address
+// ---------------------------------------------------------------------------
+
+describe('set_peer_address', () => {
+  it('returns null', () => {
+    const result = invoke('set_peer_address', {
+      peerId: 'peer-123',
+      address: '192.168.1.1:8765',
+    })
+    expect(result).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// update_peer_name
+// ---------------------------------------------------------------------------
+
+describe('update_peer_name', () => {
+  it('returns undefined', () => {
+    const result = invoke('update_peer_name', { peerId: 'peer-123', name: 'My Laptop' })
+    expect(result).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// import_markdown
+// ---------------------------------------------------------------------------
+
+describe('import_markdown', () => {
+  it('creates a page from markdown content with heading', () => {
+    const result = invoke('import_markdown', {
+      content: '# My Imported Page\n\nFirst paragraph\nSecond paragraph',
+      filename: null,
+    }) as Record<string, unknown>
+    expect(result).toHaveProperty('page_title', 'My Imported Page')
+    expect(result).toHaveProperty('blocks_created')
+    expect(result.blocks_created).toBeGreaterThanOrEqual(2)
+    expect(result).toHaveProperty('properties_set', 0)
+    expect(result).toHaveProperty('warnings')
+    expect(Array.isArray(result.warnings)).toBe(true)
+  })
+
+  it('derives page title from filename when no heading present', () => {
+    const result = invoke('import_markdown', {
+      content: 'Some content without a heading',
+      filename: 'my-notes.md',
+    }) as Record<string, unknown>
+    expect(result.page_title).toBe('my-notes')
+  })
+
+  it('prefers heading over filename for page title', () => {
+    const result = invoke('import_markdown', {
+      content: '# Heading Title\n\nContent here',
+      filename: 'fallback.md',
+    }) as Record<string, unknown>
+    expect(result.page_title).toBe('Heading Title')
+  })
+
+  it('strips list markers from content lines', () => {
+    const result = invoke('import_markdown', {
+      content: '# List Page\n- Item one\n- Item two\n* Item three',
+      filename: null,
+    }) as Record<string, unknown>
+    expect(result.blocks_created).toBe(3)
+  })
+
+  it('skips empty lines', () => {
+    const result = invoke('import_markdown', {
+      content: '# Sparse\n\n\nOnly one line\n\n',
+      filename: null,
+    }) as Record<string, unknown>
+    expect(result.blocks_created).toBe(1)
+  })
+
+  it('imported page is accessible via list_blocks', () => {
+    invoke('import_markdown', {
+      content: '# Unique Import Test\n\nTest block content',
+      filename: null,
+    })
+    const pages = invoke('list_blocks', { blockType: 'page' }) as {
+      items: Record<string, unknown>[]
+    }
+    expect(pages.items.some((p) => p.content === 'Unique Import Test')).toBe(true)
+  })
+})

@@ -21,6 +21,7 @@ import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
+import { useListMultiSelect } from '../hooks/useListMultiSelect'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { formatTimestamp } from '../lib/format'
 import { logger } from '../lib/logger'
@@ -67,9 +68,12 @@ export function TrashView(): React.ReactElement {
 
   const [confirmPurgeId, setConfirmPurgeId] = useState<string | null>(null)
 
-  // ── Multi-select state ───────────────────────────────────────────
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null)
+  // ── Multi-select (shared hook) ────────────────────────────────────
+  const { selected, toggleSelection, selectAll, clearSelection, handleRowClick, lastClickedId } =
+    useListMultiSelect({
+      items: filteredBlocks,
+      getItemId: (b: BlockRow) => b.id,
+    })
   const [confirmBatchPurge, setConfirmBatchPurge] = useState(false)
 
   // ── Original location breadcrumbs ────────────────────────────────
@@ -107,71 +111,6 @@ export function TrashView(): React.ReactElement {
     }
   }, [parentIds])
 
-  // ── Selection helpers ────────────────────────────────────────────
-
-  const toggleSelection = useCallback(
-    (index: number) => {
-      const block = filteredBlocks[index]
-      if (!block) return
-      setSelected((prev) => {
-        const next = new Set(prev)
-        if (next.has(block.id)) {
-          next.delete(block.id)
-        } else {
-          next.add(block.id)
-        }
-        return next
-      })
-      setLastClickedIndex(index)
-    },
-    [filteredBlocks],
-  )
-
-  const rangeSelect = useCallback(
-    (toIndex: number) => {
-      const fromIndex = lastClickedIndex != null && lastClickedIndex >= 0 ? lastClickedIndex : 0
-      const start = Math.min(fromIndex, toIndex)
-      const end = Math.max(fromIndex, toIndex)
-      setSelected((prev) => {
-        const next = new Set(prev)
-        for (let i = start; i <= end; i++) {
-          const block = filteredBlocks[i]
-          if (block) next.add(block.id)
-        }
-        return next
-      })
-      setLastClickedIndex(toIndex)
-    },
-    [filteredBlocks, lastClickedIndex],
-  )
-
-  const selectAll = useCallback(() => {
-    const next = new Set<string>()
-    for (const block of filteredBlocks) {
-      next.add(block.id)
-    }
-    setSelected(next)
-  }, [filteredBlocks])
-
-  const clearSelection = useCallback(() => {
-    setSelected(new Set())
-  }, [])
-
-  // ── Row click handler ────────────────────────────────────────────
-
-  const handleRowClick = useCallback(
-    (index: number, e: React.MouseEvent) => {
-      if (e.shiftKey) {
-        rangeSelect(index)
-      } else if (e.ctrlKey || e.metaKey) {
-        toggleSelection(index)
-      } else {
-        toggleSelection(index)
-      }
-    },
-    [rangeSelect, toggleSelection],
-  )
-
   // ── Keyboard shortcuts ───────────────────────────────────────────
 
   useEffect(() => {
@@ -185,9 +124,9 @@ export function TrashView(): React.ReactElement {
         return
 
       // Space — toggle focused/first item (simplified: toggle last clicked)
-      if (e.key === ' ' && lastClickedIndex != null && lastClickedIndex >= 0) {
+      if (e.key === ' ' && lastClickedId != null) {
         e.preventDefault()
-        toggleSelection(lastClickedIndex)
+        toggleSelection(lastClickedId)
         return
       }
 
@@ -207,7 +146,7 @@ export function TrashView(): React.ReactElement {
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [lastClickedIndex, toggleSelection, selectAll, selected.size, clearSelection])
+  }, [lastClickedId, toggleSelection, selectAll, selected.size, clearSelection])
 
   // ── Single-item actions ──────────────────────────────────────────
 
@@ -217,11 +156,6 @@ export function TrashView(): React.ReactElement {
       try {
         await restoreBlock(block.id, block.deleted_at)
         setBlocks((prev) => prev.filter((b) => b.id !== block.id))
-        setSelected((prev) => {
-          const next = new Set(prev)
-          next.delete(block.id)
-          return next
-        })
         if (block.block_type === 'page' || block.block_type === 'tag') {
           useResolveStore.getState().set(block.id, block.content ?? 'Untitled', false)
         }
@@ -238,11 +172,6 @@ export function TrashView(): React.ReactElement {
       try {
         await purgeBlock(blockId)
         setBlocks((prev) => prev.filter((b) => b.id !== blockId))
-        setSelected((prev) => {
-          const next = new Set(prev)
-          next.delete(blockId)
-          return next
-        })
         setConfirmPurgeId(null)
         toast.success(t('trash.blockPurged'))
       } catch {
@@ -271,11 +200,11 @@ export function TrashView(): React.ReactElement {
       }
     }
     reload()
-    setSelected(new Set())
+    clearSelection()
     if (restored > 0) {
       toast.success(t('trash.batchRestored', { count: restored }))
     }
-  }, [blocks, selected, reload, t])
+  }, [blocks, selected, reload, clearSelection, t])
 
   const handleBatchPurge = useCallback(async () => {
     const selectedIds = Array.from(selected)
@@ -303,12 +232,12 @@ export function TrashView(): React.ReactElement {
       }
     }
     reload()
-    setSelected(new Set())
+    clearSelection()
     setConfirmBatchPurge(false)
     if (purged > 0) {
       toast.success(t('trash.batchPurged', { count: purged }))
     }
-  }, [selected, reload, t])
+  }, [selected, reload, clearSelection, t])
 
   // ── Breadcrumb helper ────────────────────────────────────────────
 
@@ -402,7 +331,7 @@ export function TrashView(): React.ReactElement {
               role="list"
               aria-label={t('trash.listLabel')}
             >
-              {filteredBlocks.map((block, index) => {
+              {filteredBlocks.map((block) => {
                 const isSelected = selected.has(block.id)
                 const parentLabel = getParentLabel(block)
                 return (
@@ -417,11 +346,11 @@ export function TrashView(): React.ReactElement {
                         : 'hover:bg-accent/50 active:bg-accent/70',
                     )}
                     data-testid="trash-item"
-                    onClick={(e) => handleRowClick(index, e)}
+                    onClick={(e) => handleRowClick(block.id, e)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault()
-                        toggleSelection(index)
+                        toggleSelection(block.id)
                       }
                     }}
                   >
@@ -429,7 +358,7 @@ export function TrashView(): React.ReactElement {
                       <input
                         type="checkbox"
                         checked={isSelected}
-                        onChange={() => toggleSelection(index)}
+                        onChange={() => toggleSelection(block.id)}
                         onClick={(e) => e.stopPropagation()}
                         className="h-4 w-4 shrink-0 rounded border-border [@media(pointer:coarse)]:h-6 [@media(pointer:coarse)]:w-6"
                         aria-label={t('trash.selectItemLabel', {
