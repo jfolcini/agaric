@@ -103,7 +103,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   )
 
   if (!blockId) {
-    return <EmptyState message="Select a block to see history" compact />
+    return <EmptyState message={t('history.selectBlockEmpty')} compact />
   }
 
   return (
@@ -114,7 +114,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         loading={loading}
         items={filteredEntries}
         skeleton={<LoadingSkeleton count={2} height="h-14" className="history-panel-loading" />}
-        empty={<EmptyState icon={Clock} message="No history for this block" />}
+        empty={<EmptyState icon={Clock} message={t('history.noHistoryEmpty')} />}
       >
         {(items) => (
           <ul className="history-list space-y-2 list-none p-0 m-0">
@@ -158,7 +158,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
                           loading={loadingDiffs.has(entry.seq)}
                           size="md"
                         />
-                        Diff
+                        {t('history.diffButton')}
                       </Button>
                     )}
                     {isEditBlock && preview && (
@@ -174,7 +174,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
                         ) : (
                           <RotateCcw className="h-3.5 w-3.5" />
                         )}
-                        Restore
+                        {t('history.restoreButton')}
                       </Button>
                     )}
                   </div>
@@ -202,10 +202,10 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         onOpenChange={(open) => {
           if (!open) setConfirmEntry(null)
         }}
-        title="Restore to this version?"
+        title={t('history.restoreConfirmTitle')}
         description={`This will replace the current block content with the version from ${confirmEntry ? formatTimestamp(confirmEntry.created_at) : ''}. You can undo this change.`}
-        cancelLabel="Cancel"
-        actionLabel="Restore"
+        cancelLabel={t('dialog.cancel')}
+        actionLabel={t('history.restoreConfirmAction')}
         onAction={() => {
           if (confirmEntry) handleRestore(confirmEntry)
           setConfirmEntry(null)

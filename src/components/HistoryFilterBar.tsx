@@ -19,18 +19,18 @@ import {
 // ---------------------------------------------------------------------------
 
 const OP_TYPES = [
-  { value: 'edit_block', label: 'Edit' },
-  { value: 'create_block', label: 'Create' },
-  { value: 'delete_block', label: 'Delete' },
-  { value: 'move_block', label: 'Move' },
-  { value: 'add_tag', label: 'Add tag' },
-  { value: 'remove_tag', label: 'Remove tag' },
-  { value: 'set_property', label: 'Set property' },
-  { value: 'delete_property', label: 'Delete property' },
-  { value: 'add_attachment', label: 'Add attachment' },
-  { value: 'delete_attachment', label: 'Delete attachment' },
-  { value: 'restore_block', label: 'Restore' },
-  { value: 'purge_block', label: 'Purge' },
+  { value: 'edit_block', labelKey: 'history.opTypeEdit' },
+  { value: 'create_block', labelKey: 'history.opTypeCreate' },
+  { value: 'delete_block', labelKey: 'history.opTypeDelete' },
+  { value: 'move_block', labelKey: 'history.opTypeMove' },
+  { value: 'add_tag', labelKey: 'history.opTypeAddTag' },
+  { value: 'remove_tag', labelKey: 'history.opTypeRemoveTag' },
+  { value: 'set_property', labelKey: 'history.opTypeSetProperty' },
+  { value: 'delete_property', labelKey: 'history.opTypeDeleteProperty' },
+  { value: 'add_attachment', labelKey: 'history.opTypeAddAttachment' },
+  { value: 'delete_attachment', labelKey: 'history.opTypeRemoveAttachment' },
+  { value: 'restore_block', labelKey: 'history.opTypeRestore' },
+  { value: 'purge_block', labelKey: 'history.opTypePurge' },
 ] as const
 
 // ---------------------------------------------------------------------------
@@ -72,7 +72,7 @@ export function HistoryFilterBar({
           <SelectItem value="__all__">{t('history.allTypesOption')}</SelectItem>
           {OP_TYPES.map((opType) => (
             <SelectItem key={opType.value} value={opType.value}>
-              {opType.label}
+              {t(opType.labelKey)}
             </SelectItem>
           ))}
         </SelectContent>

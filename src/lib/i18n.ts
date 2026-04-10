@@ -725,6 +725,67 @@ const resources = {
       'conflict.expand': 'Expand conflict details',
       'conflict.collapse': 'Collapse conflict details',
 
+      // Conflict — property diff labels (UX-120)
+      'conflict.propertyState': 'State: ',
+      'conflict.propertyPriority': 'Priority: ',
+      'conflict.propertyDue': 'Due: ',
+      'conflict.propertyScheduled': 'Scheduled: ',
+      'conflict.contentAlsoChanged': 'Content also changed',
+      'conflict.propertyChanges': 'Property changes',
+
+      // Conflict — move diff labels (UX-120)
+      'conflict.moveConflictHeader': 'Move conflict',
+      'conflict.moveParent': 'Parent: ',
+      'conflict.movePosition': 'Position: ',
+
+      // Conflict — text conflict labels (UX-120)
+      'conflict.currentLabel': 'Current: ',
+      'conflict.incomingLabel': 'Incoming: ',
+
+      // Conflict — help and dialog text (UX-120)
+      'conflict.helpText':
+        'Keep replaces the current content with the incoming version. Discard removes the conflicting version.',
+      'conflict.keepDescription':
+        'This will replace the current content with the incoming version.',
+      'conflict.discardDescription': 'This will permanently remove the conflicting version.',
+      'conflict.batchKeepDescription':
+        'This will replace {{count}} block(s) with their incoming versions.',
+      'conflict.batchDiscardDescription':
+        'This will permanently remove {{count}} conflicting version(s).',
+      'conflict.keepConfirmAction': 'Yes, keep',
+      'conflict.discardConfirmAction': 'Yes, discard',
+      'conflict.batchKeepAction': 'Yes, keep all',
+      'conflict.batchDiscardAction': 'Yes, discard all',
+
+      // History — op type labels (UX-120)
+      'history.opTypeEdit': 'Edit',
+      'history.opTypeCreate': 'Create',
+      'history.opTypeDelete': 'Delete',
+      'history.opTypeMove': 'Move',
+      'history.opTypeAddTag': 'Add tag',
+      'history.opTypeRemoveTag': 'Remove tag',
+      'history.opTypeSetProperty': 'Set property',
+      'history.opTypeDeleteProperty': 'Delete property',
+      'history.opTypeAddAttachment': 'Add attachment',
+      'history.opTypeRemoveAttachment': 'Remove attachment',
+      'history.opTypeRestore': 'Restore',
+      'history.opTypePurge': 'Purge',
+
+      // History — empty states and dialog (UX-120)
+      'history.selectBlockEmpty': 'Select a block to see history',
+      'history.noHistoryEmpty': 'No history for this block',
+      'history.restoreConfirmTitle': 'Restore to this version?',
+      'history.restoreConfirmAction': 'Restore',
+
+      // Diff (UX-120)
+      'diff.noChanges': 'No changes',
+
+      // Device (UX-120)
+      'device.thisDevice': 'This device',
+
+      // Dialog generic (UX-120)
+      'dialog.no': 'No',
+
       // Peer address (manual IP entry)
       'status.peerAddress': 'Address',
       'status.peerAddressNotSet': 'No address',

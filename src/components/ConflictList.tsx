@@ -175,7 +175,7 @@ export function ConflictList(): React.ReactElement {
         for (const peer of peers) {
           nameMap.set(peer.peer_id, peer.device_name ?? `${peer.peer_id.slice(0, 8)}...`)
         }
-        nameMap.set(localId, 'This device')
+        nameMap.set(localId, t('device.thisDevice'))
 
         // Build blockId -> deviceName map
         if (!stale) {
@@ -200,7 +200,7 @@ export function ConflictList(): React.ReactElement {
     return () => {
       stale = true
     }
-  }, [blocks])
+  }, [blocks, t])
 
   const toggleExpanded = useCallback((id: string) => {
     setExpandedIds((prev) => {
@@ -384,7 +384,7 @@ export function ConflictList(): React.ReactElement {
       toast.error(`${failCount} of ${selectedBlocks.length} operations failed`, {
         duration: 5000,
         action: {
-          label: 'Retry',
+          label: t('action.retry'),
           onClick: () => setBatchAction(savedBatchAction),
         },
       })
@@ -396,7 +396,7 @@ export function ConflictList(): React.ReactElement {
       toast.success(msg)
       announce(msg)
     }
-  }, [blocks, selectedIds, batchAction, setBlocks])
+  }, [blocks, selectedIds, batchAction, setBlocks, t])
 
   return (
     <div className="conflict-list space-y-4">
@@ -413,10 +413,7 @@ export function ConflictList(): React.ReactElement {
       {blocks.length > 0 && (
         <div className="sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-4 border-b border-border/40 space-y-4">
           <div className="flex items-center justify-between">
-            <p className="text-xs text-muted-foreground">
-              <strong>Keep</strong> replaces the current content with the incoming version.{' '}
-              <strong>Discard</strong> removes the conflicting version.
-            </p>
+            <p className="text-xs text-muted-foreground">{t('conflict.helpText')}</p>
             <Button
               variant="ghost"
               size="sm"
@@ -490,11 +487,11 @@ export function ConflictList(): React.ReactElement {
         title={t('conflict.keepIncomingTitle')}
         description={
           <>
-            This will replace the current content with the incoming version.
+            {t('conflict.keepDescription')}
             {confirmKeepBlock && (
               <span className="mt-2 block space-y-1 text-xs">
                 <span className="block">
-                  <span className="font-medium">Current:</span>{' '}
+                  <span className="font-medium">{t('conflict.currentLabel')}</span>{' '}
                   <span className="text-muted-foreground">
                     {truncatePreview(
                       confirmKeepBlock.parent_id
@@ -505,7 +502,7 @@ export function ConflictList(): React.ReactElement {
                   </span>
                 </span>
                 <span className="block">
-                  <span className="font-medium">Incoming:</span>{' '}
+                  <span className="font-medium">{t('conflict.incomingLabel')}</span>{' '}
                   <span className="text-muted-foreground">
                     {truncatePreview(confirmKeepBlock.content ?? t('conflict.emptyContent'))}
                   </span>
@@ -514,8 +511,8 @@ export function ConflictList(): React.ReactElement {
             )}
           </>
         }
-        cancelLabel="Cancel"
-        actionLabel="Yes, keep"
+        cancelLabel={t('dialog.cancel')}
+        actionLabel={t('conflict.keepConfirmAction')}
         onAction={() => {
           if (confirmKeepBlock) handleKeep(confirmKeepBlock)
         }}
@@ -531,7 +528,7 @@ export function ConflictList(): React.ReactElement {
         title={t('conflict.discardTitle')}
         description={
           <>
-            This will permanently remove the conflicting version.
+            {t('conflict.discardDescription')}
             {confirmDiscardId &&
               (() => {
                 const discardBlock = blocks.find((b) => b.id === confirmDiscardId)
@@ -546,8 +543,8 @@ export function ConflictList(): React.ReactElement {
               })()}
           </>
         }
-        cancelLabel="No"
-        actionLabel="Yes, discard"
+        cancelLabel={t('dialog.no')}
+        actionLabel={t('conflict.discardConfirmAction')}
         onAction={() => {
           if (confirmDiscardId) {
             const discardBlock = blocks.find((b) => b.id === confirmDiscardId)
@@ -570,11 +567,13 @@ export function ConflictList(): React.ReactElement {
         }
         description={
           batchAction === 'keep'
-            ? `This will replace ${selectedIds.size} block(s) with their incoming versions.`
-            : `This will permanently remove ${selectedIds.size} conflicting version(s).`
+            ? t('conflict.batchKeepDescription', { count: selectedIds.size })
+            : t('conflict.batchDiscardDescription', { count: selectedIds.size })
         }
-        cancelLabel="Cancel"
-        actionLabel={batchAction === 'keep' ? 'Yes, keep all' : 'Yes, discard all'}
+        cancelLabel={t('dialog.cancel')}
+        actionLabel={
+          batchAction === 'keep' ? t('conflict.batchKeepAction') : t('conflict.batchDiscardAction')
+        }
         onAction={handleBatchConfirm}
         className="conflict-batch-confirm"
       />

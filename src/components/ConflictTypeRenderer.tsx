@@ -35,7 +35,8 @@ export function ConflictTypeRenderer({
     if (block.todo_state !== original.todo_state) {
       diffs.push(
         <div key="state">
-          State: <span className="text-muted-foreground">{original.todo_state ?? '(none)'}</span>
+          {t('conflict.propertyState')}
+          <span className="text-muted-foreground">{original.todo_state ?? '(none)'}</span>
           {' \u2192 '}
           <span className="font-medium">{block.todo_state ?? '(none)'}</span>
         </div>,
@@ -44,7 +45,8 @@ export function ConflictTypeRenderer({
     if (block.priority !== original.priority) {
       diffs.push(
         <div key="priority">
-          Priority: <span className="text-muted-foreground">{original.priority ?? '(none)'}</span>
+          {t('conflict.propertyPriority')}
+          <span className="text-muted-foreground">{original.priority ?? '(none)'}</span>
           {' \u2192 '}
           <span className="font-medium">{block.priority ?? '(none)'}</span>
         </div>,
@@ -53,7 +55,8 @@ export function ConflictTypeRenderer({
     if (block.due_date !== original.due_date) {
       diffs.push(
         <div key="due">
-          Due: <span className="text-muted-foreground">{original.due_date ?? '(none)'}</span>
+          {t('conflict.propertyDue')}
+          <span className="text-muted-foreground">{original.due_date ?? '(none)'}</span>
           {' \u2192 '}
           <span className="font-medium">{block.due_date ?? '(none)'}</span>
         </div>,
@@ -62,7 +65,7 @@ export function ConflictTypeRenderer({
     if (block.scheduled_date !== original.scheduled_date) {
       diffs.push(
         <div key="sched">
-          Scheduled:{' '}
+          {t('conflict.propertyScheduled')}{' '}
           <span className="text-muted-foreground">{original.scheduled_date ?? '(none)'}</span>
           {' \u2192 '}
           <span className="font-medium">{block.scheduled_date ?? '(none)'}</span>
@@ -70,12 +73,14 @@ export function ConflictTypeRenderer({
       )
     }
     if (block.content !== original.content) {
-      diffs.push(<div key="content">Content also changed</div>)
+      diffs.push(<div key="content">{t('conflict.contentAlsoChanged')}</div>)
     }
     if (diffs.length > 0) {
       return (
         <div className="conflict-property-diff text-sm">
-          <span className="font-medium text-op-edit-foreground">Property changes</span>
+          <span className="font-medium text-op-edit-foreground">
+            {t('conflict.propertyChanges')}
+          </span>
           <div className="mt-1 space-y-0.5 text-xs">{diffs}</div>
         </div>
       )
@@ -86,11 +91,13 @@ export function ConflictTypeRenderer({
   if (conflictType === 'Move' && original) {
     return (
       <div className="conflict-move-diff text-sm">
-        <span className="font-medium text-conflict-move-foreground">Move conflict</span>
+        <span className="font-medium text-conflict-move-foreground">
+          {t('conflict.moveConflictHeader')}
+        </span>
         <div className="mt-1 space-y-0.5 text-xs">
           {block.parent_id !== original.parent_id && (
             <div>
-              Parent:{' '}
+              {t('conflict.moveParent')}{' '}
               <span className="font-mono text-muted-foreground">
                 {truncateId(original.parent_id ?? '?')}
               </span>
@@ -100,7 +107,8 @@ export function ConflictTypeRenderer({
           )}
           {block.position !== original.position && (
             <div>
-              Position: {original.position ?? '?'} \u2192 {block.position ?? '?'}
+              {t('conflict.movePosition')}
+              {original.position ?? '?'} \u2192 {block.position ?? '?'}
             </div>
           )}
         </div>
@@ -111,7 +119,7 @@ export function ConflictTypeRenderer({
   // Default: Text conflict (or fallback)
   const originalContent = (
     <>
-      <span className="font-medium text-muted-foreground">Current:</span>{' '}
+      <span className="font-medium text-muted-foreground">{t('conflict.currentLabel')}</span>{' '}
       {original ? (
         original.content ? (
           <span>{renderRichContent(original.content, { interactive: false })}</span>
@@ -126,7 +134,7 @@ export function ConflictTypeRenderer({
 
   const incomingContent = (
     <>
-      <span className="font-medium">Incoming:</span>{' '}
+      <span className="font-medium">{t('conflict.incomingLabel')}</span>{' '}
       <span className="conflict-item-text">
         {block.content
           ? renderRichContent(block.content, { interactive: false })

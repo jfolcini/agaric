@@ -1,4 +1,5 @@
 import type React from 'react'
+import { useTranslation } from 'react-i18next'
 import type { DiffSpan } from '../lib/tauri'
 
 interface DiffDisplayProps {
@@ -10,8 +11,9 @@ interface DiffDisplayProps {
  * Deletions are red with strikethrough, insertions green.
  */
 export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
+  const { t } = useTranslation()
   if (spans.length === 0) {
-    return <span className="text-xs text-muted-foreground italic">No changes</span>
+    return <span className="text-xs text-muted-foreground italic">{t('diff.noChanges')}</span>
   }
   return (
     <p className="diff-display text-sm leading-relaxed whitespace-pre-wrap break-words m-0">

@@ -59,7 +59,7 @@ export function PairingPeersList({ peers, onUnpair }: PairingPeersListProps): Re
                       onClick={() => onUnpair(peer.peer_id)}
                       className="pairing-unpair-btn shrink-0 touch-target"
                     >
-                      Unpair
+                      {t('device.unpairButton')}
                     </Button>
                   </div>
                 </Card>
