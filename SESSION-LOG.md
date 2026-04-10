@@ -1,5 +1,31 @@
 # Session Log
 
+## Session 313 — Maintainability: M-39 resolved (2026-04-10)
+
+**1 item resolved (6→5 open). 2 files changed.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| M-39 | Remove cross-store mutation from page-blocks `remove()` | `page-blocks.ts`, `page-blocks.test.ts` |
+
+### Implementation
+- Removed direct `useBlockStore.setState()` calls (focus/selection clearing) from `remove()` action
+- All callers already manage focus: handleDeleteBlock, handleMerge*, handleEscapeCancel, BlockTree empty-block cleanup
+- Kept `useBlockStore` import for read-only access in `load()` (preserving focused block content during sync)
+- Updated 3 tests to assert store does NOT mutate global block store
+
+### Review verdict
+- APPROVE with minor doc fix — reviewer verified all 6 callers manage focus independently
+- Fixed misleading comment (removed handleBatchDelete which doesn't use remove(), added BlockTree)
+
+### Stats
+- 2 files changed (+7 / -32 lines)
+- 5984 frontend tests pass, all 20 prek hooks pass
+
+---
+
 ## Session 312 — Performance: P-18 resolved (2026-04-10)
 
 **1 item resolved (7→6 open). 5 files + 1 migration, 1 oracle test.**
