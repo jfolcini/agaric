@@ -1,5 +1,32 @@
 # Session Log
 
+## Session 311 — Performance: P-15 + P-19 resolved (2026-04-10)
+
+**2 items resolved (9→7 open). 3 files changed + 1 migration, 2 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| P-15 | Graph query: partial index + JOIN reorder + oracle test | `commands.rs`, `0023_page_links_indexes.sql` |
+| P-19 | Import batching: single BEGIN IMMEDIATE transaction | `commands.rs` |
+
+### Implementation
+- **P-15**: New `idx_blocks_page_alive` partial index on page-only alive blocks. JOINs reordered (target before source). LEFT JOIN conditions moved to ON clause. Switched from `query_as!` to runtime `query_as` (removed stale .sqlx/ cache). Oracle test verifies old and new queries produce identical results.
+- **P-19**: `import_markdown_inner` wrapped in single `BEGIN IMMEDIATE` tx. Uses `create_block_in_tx` + `set_property_in_tx` instead of `_inner` variants. Collects OpRecords and dispatches materializer after commit. 400 transactions → 1 for a 100-block import.
+
+### Review verdicts
+- P-15: APPROVE — query equivalence verified mathematically and by oracle test, partial index effective
+- P-19: APPROVE — correct transaction mode, atomicity, error handling, dispatch timing
+
+### Stats
+- 3 files changed (+359 / -49 lines) + 1 new migration
+- 2 new tests (oracle + single-transaction import)
+- 1739 Rust tests pass
+- All 20 prek hooks pass
+
+---
+
 ## Session 310 — Sync security: B-33 + B-34 resolved (2026-04-10)
 
 **2 P0 security bugs resolved (11→9 open). Zero open bugs remaining. 2 files changed, 23 new tests.**
