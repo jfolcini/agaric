@@ -387,7 +387,7 @@ export const LOCATION_COMMANDS: PickerItem[] = [
   },
 ]
 
-export const REPEAT_END_COMMANDS: PickerItem[] = [
+const REPEAT_END_COMMANDS: PickerItem[] = [
   {
     id: 'repeat-until',
     label: 'REPEAT UNTIL — Stop repeating after a date',

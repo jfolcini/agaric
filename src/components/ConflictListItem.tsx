@@ -30,7 +30,7 @@ export function inferConflictType(
 }
 
 /** Badge color class by conflict type. */
-export function conflictTypeBadgeClass(type: 'Text' | 'Property' | 'Move'): string {
+function conflictTypeBadgeClass(type: 'Text' | 'Property' | 'Move'): string {
   switch (type) {
     case 'Text':
       return 'bg-conflict-text text-conflict-text-foreground border-border'

@@ -10,9 +10,6 @@ export function getWeekOptions(): { weekStartsOn: 0 | 1 } {
   return { weekStartsOn: getWeekStartDay() }
 }
 
-/** @deprecated Use getWeekOptions() instead. */
-export const WEEK_OPTIONS = { weekStartsOn: 1 as const }
-
 /** Earliest navigable journal date. */
 export const MIN_JOURNAL_DATE = new Date(2020, 0, 1)
 
