@@ -255,6 +255,7 @@ Type `/` in the editor to access the command palette. Commands are grouped by ca
 | **Global** | Ctrl+Z / Ctrl+Y | Undo / redo (page-level) |
 | | Ctrl+F | Focus search |
 | | Ctrl+N | Create new page |
+| | Ctrl+Shift+E | Export page as Markdown |
 | | ? | Show keyboard shortcuts help |
 | **History view** | Space | Toggle selection |
 | | Shift+Click | Range select |
@@ -262,7 +263,7 @@ Type `/` in the editor to access the command palette. Commands are grouped by ca
 | | Enter | Revert selected |
 | | j/k | Vim-style navigation |
 
-**Keyboard shortcut customization** (UX-86): All 40 shortcuts are configurable via Settings → Keyboard tab. `keyboard-config.ts` stores custom overrides in localStorage, merges with defaults. `KeyboardSettingsTab` component provides inline editing (pencil → input → save/cancel), conflict detection showing which shortcuts conflict, per-shortcut reset, and "Reset All to Defaults" with ConfirmDialog. `KeyboardShortcuts.tsx` help panel dynamically reads from `getCurrentShortcuts()` via `useMemo([open])` so it shows current (possibly customized) bindings when opened. 19 config + 13 settings tab + 1 dynamic panel tests.
+**Keyboard shortcut customization** (UX-86): All 41 shortcuts are configurable via Settings → Keyboard tab. `keyboard-config.ts` stores custom overrides in localStorage, merges with defaults. `KeyboardSettingsTab` component provides inline editing (pencil → input → save/cancel), conflict detection showing which shortcuts conflict, per-shortcut reset, and "Reset All to Defaults" with ConfirmDialog. `KeyboardShortcuts.tsx` help panel dynamically reads from `getCurrentShortcuts()` via `useMemo([open])` so it shows current (possibly customized) bindings when opened. 19 config + 13 settings tab + 1 dynamic panel tests.
 
 ---
 

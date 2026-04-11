@@ -1,5 +1,24 @@
 # Session Log
 
+## Session 336 — Performance + maintainability: 3 items resolved (2026-04-11)
+
+**3 items resolved. 10 files changed, ~+60/-20 lines. 3 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| P-17 | Memoized O(n) Zustand selectors with useCallback in EditableBlock + BlockPropertyDrawer | `EditableBlock.tsx`, `BlockPropertyDrawer.tsx` |
+| M-53 | Replaced 5 selector-less store subscriptions with individual selectors | `App.tsx`, `WeeklyView.tsx`, `MonthlyView.tsx`, `DaySection.tsx` |
+| UX-158 | Added Ctrl+Shift+E configurable shortcut for per-page Markdown export with menu hint | `keyboard-config.ts`, `i18n.ts`, `PageHeader.tsx`, `PageHeaderMenu.tsx` + 3 tests |
+
+### Stats
+- 10 files changed (~+60 / -20 lines)
+- 3 new tests (1 keyboard-config + 1 PageHeader + 1 PageHeaderMenu)
+- 6194 frontend tests pass, all prek hooks pass
+
+---
+
 ## Session 335 — Icon consistency + color tokens: 10 items resolved (2026-04-11)
 
 **10 items resolved. 19 files changed, ~+150/-50 lines.**
