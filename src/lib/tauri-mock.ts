@@ -620,6 +620,28 @@ export function setupMock(): void {
         return { block_id: a.blockId, purged_count: 1 }
       }
 
+      case 'restore_all_deleted': {
+        let count = 0
+        for (const b of blocks.values()) {
+          if (b.deleted_at) {
+            b.deleted_at = null
+            count++
+          }
+        }
+        return { affected_count: count }
+      }
+
+      case 'purge_all_deleted': {
+        let count = 0
+        for (const [id, b] of blocks.entries()) {
+          if (b.deleted_at) {
+            blocks.delete(id)
+            count++
+          }
+        }
+        return { affected_count: count }
+      }
+
       case 'get_block': {
         const a = args as Record<string, unknown>
         const b = blocks.get(a.blockId as string)
@@ -1051,6 +1073,7 @@ export function setupMock(): void {
           next_cursor: null,
           has_more: false,
           total_count: totalCount,
+          filtered_count: totalCount,
         }
       }
 
@@ -1239,10 +1262,16 @@ export function setupMock(): void {
           return {
             page_id: pageId,
             page_title: page ? ((page.content as string) ?? null) : null,
-            items,
+            blocks: items,
           }
         })
-        return { groups, next_cursor: null, has_more: false, total_count: backlinkItems.length }
+        return {
+          groups,
+          next_cursor: null,
+          has_more: false,
+          total_count: backlinkItems.length,
+          filtered_count: backlinkItems.length,
+        }
       }
 
       case 'list_unlinked_references': {
@@ -1277,10 +1306,16 @@ export function setupMock(): void {
           return {
             page_id: pid,
             page_title: p ? ((p.content as string) ?? null) : null,
-            items,
+            blocks: items,
           }
         })
-        return { groups, next_cursor: null, has_more: false, total_count: unlinked.length }
+        return {
+          groups,
+          next_cursor: null,
+          has_more: false,
+          total_count: unlinked.length,
+          filtered_count: unlinked.length,
+        }
       }
 
       // -----------------------------------------------------------------------
@@ -1492,6 +1527,9 @@ export function setupMock(): void {
       case 'flush_draft':
       case 'delete_draft':
         return null
+
+      case 'list_drafts':
+        return []
 
       // -----------------------------------------------------------------------
       // Peer address

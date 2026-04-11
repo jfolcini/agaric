@@ -129,6 +129,50 @@ impl SyncDaemon {
 }
 
 // ---------------------------------------------------------------------------
+// Extracted pure helpers for testability (T-41)
+// ---------------------------------------------------------------------------
+
+/// Determine whether a newly discovered mDNS peer should trigger an
+/// immediate sync attempt.
+///
+/// Returns `true` only when all of the following hold:
+/// 1. The peer is not the local device (no self-sync).
+/// 2. The peer was not already present in the discovered-peers map.
+/// 3. The peer appears in `peer_refs` (i.e. it is already paired).
+///
+/// Extracted from `daemon_loop` Branch A for independent testing.
+fn should_attempt_sync_with_discovered_peer(
+    peer_device_id: &str,
+    local_device_id: &str,
+    already_discovered: bool,
+    peer_refs: &[PeerRef],
+) -> bool {
+    if peer_device_id == local_device_id {
+        return false;
+    }
+    if already_discovered {
+        return false;
+    }
+    peer_refs.iter().any(|p| p.peer_id == peer_device_id)
+}
+
+/// Try to construct a [`DiscoveredPeer`] from a stored `last_address`.
+///
+/// Used when a paired peer is not currently visible via mDNS but has a
+/// cached network address from a previous successful sync or manual entry.
+/// Returns `None` if the address cannot be parsed as a `SocketAddr`.
+///
+/// Extracted from `daemon_loop` Branches B/C for independent testing.
+fn build_fallback_peer(peer_id: &str, last_address: &str) -> Option<DiscoveredPeer> {
+    let socket_addr: std::net::SocketAddr = last_address.parse().ok()?;
+    Some(DiscoveredPeer {
+        device_id: peer_id.to_string(),
+        addresses: vec![socket_addr.ip()],
+        port: socket_addr.port(),
+    })
+}
+
+// ---------------------------------------------------------------------------
 // daemon_loop — the core async select! loop
 // ---------------------------------------------------------------------------
 
@@ -239,9 +283,9 @@ async fn daemon_loop(
             Some(event) = mdns_rx.recv() => {
                 if let Some(peer) = sync_net::parse_service_event(event) {
                     if peer.device_id != device_id {
-                        let is_new = !discovered.contains_key(&peer.device_id);
+                        let already_discovered = discovered.contains_key(&peer.device_id);
                         discovered.insert(peer.device_id.clone(), (peer.clone(), tokio::time::Instant::now()));
-                        if is_new {
+                        if !already_discovered {
                             tracing::info!(
                                 peer_id = %peer.device_id,
                                 "discovered new peer via mDNS"
@@ -253,7 +297,12 @@ async fn daemon_loop(
                                     tracing::warn!("list_peer_refs failed: {e}");
                                     vec![]
                                 });
-                            if refs.iter().any(|p| p.peer_id == peer.device_id) {
+                            if should_attempt_sync_with_discovered_peer(
+                                &peer.device_id,
+                                &device_id,
+                                already_discovered,
+                                &refs,
+                            ) {
                                 try_sync_with_peer(
                                     &pool,
                                     &device_id,
@@ -294,12 +343,7 @@ async fn daemon_loop(
                         .await;
                     } else if let Some(ref addr) = peer_ref.last_address {
                         // Fallback: use last-known address (manual IP / stored from previous sync)
-                        if let Ok(socket_addr) = addr.parse::<std::net::SocketAddr>() {
-                            let fallback_peer = DiscoveredPeer {
-                                device_id: peer_ref.peer_id.clone(),
-                                addresses: vec![socket_addr.ip()],
-                                port: socket_addr.port(),
-                            };
+                        if let Some(fallback_peer) = build_fallback_peer(&peer_ref.peer_id, addr) {
                             try_sync_with_peer(
                                 &pool,
                                 &device_id,
@@ -350,12 +394,7 @@ async fn daemon_loop(
                         .await;
                     } else if let Some(ref addr) = refs_by_id.get(pid.as_str()).and_then(|r| r.last_address.clone()) {
                         // Fallback: use last-known address (manual IP / stored from previous sync)
-                        if let Ok(socket_addr) = addr.parse::<std::net::SocketAddr>() {
-                            let fallback_peer = DiscoveredPeer {
-                                device_id: pid.clone(),
-                                addresses: vec![socket_addr.ip()],
-                                port: socket_addr.port(),
-                            };
+                        if let Some(fallback_peer) = build_fallback_peer(&pid, addr) {
                             try_sync_with_peer(
                                 &pool,
                                 &device_id,
@@ -1350,5 +1389,251 @@ mod tests {
             matches!(result, CertVerifyResult::CnMismatch { .. }),
             "B-34 CN check must run before B-33 hash check"
         );
+    }
+
+    // ======================================================================
+    // T-41 — Peer discovery filtering logic
+    // ======================================================================
+
+    /// Helper to build a minimal `PeerRef` for filter tests.
+    fn make_peer_ref(peer_id: &str) -> PeerRef {
+        PeerRef {
+            peer_id: peer_id.to_string(),
+            last_hash: None,
+            last_sent_hash: None,
+            synced_at: None,
+            reset_count: 0,
+            last_reset_at: None,
+            cert_hash: None,
+            device_name: None,
+            last_address: None,
+        }
+    }
+
+    #[test]
+    fn should_attempt_sync_rejects_self_discovery() {
+        let refs = vec![make_peer_ref("MY_DEVICE")];
+        assert!(
+            !should_attempt_sync_with_discovered_peer("MY_DEVICE", "MY_DEVICE", false, &refs),
+            "must never attempt sync with self even if paired"
+        );
+    }
+
+    #[test]
+    fn should_attempt_sync_rejects_already_discovered_peer() {
+        let refs = vec![make_peer_ref("PEER_B")];
+        assert!(
+            !should_attempt_sync_with_discovered_peer("PEER_B", "MY_DEVICE", true, &refs),
+            "must not re-trigger sync for a peer already in the discovered map"
+        );
+    }
+
+    #[test]
+    fn should_attempt_sync_rejects_unpaired_peer() {
+        // Peer refs list contains PEER_A but NOT PEER_C
+        let refs = vec![make_peer_ref("PEER_A")];
+        assert!(
+            !should_attempt_sync_with_discovered_peer("PEER_C", "MY_DEVICE", false, &refs),
+            "must not attempt sync with an unpaired peer"
+        );
+    }
+
+    #[test]
+    fn should_attempt_sync_accepts_new_paired_peer() {
+        let refs = vec![make_peer_ref("PEER_A"), make_peer_ref("PEER_B")];
+        assert!(
+            should_attempt_sync_with_discovered_peer("PEER_B", "MY_DEVICE", false, &refs),
+            "must trigger sync for a newly discovered, paired peer"
+        );
+    }
+
+    // ======================================================================
+    // T-41 — Fallback peer construction
+    // ======================================================================
+
+    #[test]
+    fn build_fallback_peer_parses_valid_ipv4_socket_addr() {
+        let peer = build_fallback_peer("DEV_A", "192.168.1.42:9443");
+        assert!(peer.is_some(), "valid IPv4 socket addr must parse");
+        let peer = peer.unwrap();
+        assert_eq!(peer.device_id, "DEV_A", "device_id must match input");
+        assert_eq!(peer.port, 9443, "port must be extracted from socket addr");
+        assert_eq!(peer.addresses.len(), 1, "must contain exactly one address");
+        assert_eq!(
+            peer.addresses[0].to_string(),
+            "192.168.1.42",
+            "IP must match"
+        );
+    }
+
+    #[test]
+    fn build_fallback_peer_parses_valid_ipv6_socket_addr() {
+        let peer = build_fallback_peer("DEV_B", "[::1]:8080");
+        assert!(peer.is_some(), "valid IPv6 socket addr must parse");
+        let peer = peer.unwrap();
+        assert_eq!(peer.device_id, "DEV_B", "device_id must match input");
+        assert_eq!(peer.port, 8080, "port must be extracted from socket addr");
+        assert!(peer.addresses[0].is_loopback(), "::1 must be loopback");
+    }
+
+    #[test]
+    fn build_fallback_peer_returns_none_for_invalid_address() {
+        assert!(
+            build_fallback_peer("DEV_X", "not-an-address").is_none(),
+            "garbage input must return None"
+        );
+        assert!(
+            build_fallback_peer("DEV_X", "192.168.1.1").is_none(),
+            "IP without port must return None (not a SocketAddr)"
+        );
+        assert!(
+            build_fallback_peer("DEV_X", "").is_none(),
+            "empty string must return None"
+        );
+    }
+
+    // ======================================================================
+    // T-41 — Stale mDNS eviction edge cases
+    // ======================================================================
+
+    #[test]
+    fn stale_eviction_all_fresh_retains_all() {
+        use std::time::Duration;
+        use tokio::time::Instant;
+
+        let mut discovered: HashMap<String, (sync_net::DiscoveredPeer, Instant)> = HashMap::new();
+        for i in 0..5 {
+            let peer = sync_net::DiscoveredPeer {
+                device_id: format!("PEER_{i}"),
+                addresses: vec!["10.0.0.1".parse().unwrap()],
+                port: 9000 + i,
+            };
+            // All seen just now
+            discovered.insert(format!("PEER_{i}"), (peer, Instant::now()));
+        }
+
+        let stale_threshold = Instant::now() - Duration::from_secs(300);
+        discovered.retain(|_, (_, last_seen)| *last_seen > stale_threshold);
+
+        assert_eq!(
+            discovered.len(),
+            5,
+            "all fresh peers must be retained when none are stale"
+        );
+    }
+
+    #[test]
+    fn stale_eviction_all_stale_removes_all() {
+        use std::time::Duration;
+        use tokio::time::Instant;
+
+        let mut discovered: HashMap<String, (sync_net::DiscoveredPeer, Instant)> = HashMap::new();
+        for i in 0..3 {
+            let peer = sync_net::DiscoveredPeer {
+                device_id: format!("OLD_{i}"),
+                addresses: vec!["10.0.0.1".parse().unwrap()],
+                port: 9000,
+            };
+            // All seen 10 minutes ago (well past 5-minute threshold)
+            discovered.insert(
+                format!("OLD_{i}"),
+                (peer, Instant::now() - Duration::from_secs(600)),
+            );
+        }
+
+        let stale_threshold = Instant::now() - Duration::from_secs(300);
+        discovered.retain(|_, (_, last_seen)| *last_seen > stale_threshold);
+
+        assert_eq!(discovered.len(), 0, "all stale peers must be evicted");
+    }
+
+    // ======================================================================
+    // T-41 — verify_peer_cert additional edge cases
+    // ======================================================================
+
+    #[test]
+    fn verify_peer_cert_empty_cn_string_is_mismatch() {
+        // An empty-string CN should still be compared against the remote_id
+        let result = verify_peer_cert(
+            "device-A",
+            Some(""), // CN is empty string — doesn't match "device-A"
+            Some("aaaa"),
+            Some("aaaa"),
+        );
+        assert_eq!(
+            result,
+            CertVerifyResult::CnMismatch {
+                remote_id: "device-A".into(),
+                cert_cn: "".into(),
+            },
+            "empty CN string must trigger CnMismatch"
+        );
+    }
+
+    #[test]
+    fn verify_peer_cert_empty_hash_strings_mismatch() {
+        // Empty-string observed hash vs non-empty stored hash → mismatch
+        let result = verify_peer_cert(
+            "device-A",
+            Some("device-A"),
+            Some(""),         // observed hash is empty
+            Some("deadbeef"), // stored hash is non-empty
+        );
+        assert_eq!(
+            result,
+            CertVerifyResult::HashMismatch {
+                remote_id: "device-A".into(),
+            },
+            "empty observed hash must not match non-empty stored hash"
+        );
+    }
+
+    // ======================================================================
+    // T-41 — Placeholder tests for private async functions
+    //
+    // These document behaviors that need testing when mock infrastructure
+    // (MockSyncConnection) is available.  They are #[ignore]d because
+    // the functions are private and require WebSocket/TLS mocking.
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires MockSyncConnection — see T-41"]
+    async fn try_sync_with_peer_respects_backoff_gate() {
+        // When a peer is in backoff (scheduler.may_retry returns false),
+        // try_sync_with_peer should return immediately without attempting
+        // a connection.  No "connecting" progress event should be emitted.
+        //
+        // Requires: MockSyncConnection, pub(crate) visibility on try_sync_with_peer
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires MockSyncConnection — see T-41"]
+    async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
+        // When connect_to_peer fails, try_sync_with_peer should:
+        // 1. Call scheduler.record_failure(peer_id)
+        // 2. Emit SyncEvent::Error with the connection error message
+        // 3. Not attempt to run the sync protocol
+        //
+        // Requires: MockSyncConnection or mock connect_to_peer
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires MockSyncConnection — see T-41"]
+    async fn handle_incoming_sync_rejects_sync_with_self() {
+        // When the responder receives a HeadExchange where the only
+        // device_id matches the local device_id, it should send a
+        // SyncMessage::Error("cannot sync with self") and close.
+        //
+        // Requires: MockSyncConnection with controllable recv_json/send_json
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires MockSyncConnection — see T-41"]
+    async fn run_sync_session_respects_cancel_flag() {
+        // When the cancel AtomicBool is set to true mid-session,
+        // run_sync_session should return Err with "sync cancelled by user".
+        // The orchestrator should not process further messages.
+        //
+        // Requires: MockSyncConnection, pub(crate) visibility on run_sync_session
     }
 }

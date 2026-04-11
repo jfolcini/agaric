@@ -364,3 +364,54 @@ test.describe('Inner links — Add block button position', () => {
     }
   })
 })
+
+// ===========================================================================
+// [[ picker — create new page & input-rule auto-resolve
+// ===========================================================================
+
+test.describe('[[ picker — create new page & input-rule auto-resolve', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+    await openPage(page, 'Getting Started')
+  })
+
+  test('create new page via [[ picker', async ({ page }) => {
+    await focusBlock(page)
+
+    // Type [[ to open picker, then type a page name that doesn't exist
+    await page.keyboard.press('End')
+    await page.keyboard.type(' [[', { delay: 30 })
+
+    const list = page.locator('[data-testid="suggestion-list"]')
+    await expect(list).toBeVisible({ timeout: 5000 })
+
+    // Type a non-existent page name
+    await page.keyboard.type('BrandNewPage', { delay: 20 })
+
+    // Should show a "Create" option
+    const createItem = list.locator('[data-testid="suggestion-item"]', { hasText: /[Cc]reate/ })
+    await expect(createItem).toBeVisible({ timeout: 5000 })
+
+    // Click the Create option
+    await createItem.click()
+
+    // A block-link chip should appear in the editor
+    await expect(
+      page.locator('[data-testid="block-editor"] [data-testid="block-link-chip"]'),
+    ).toBeVisible({ timeout: 5000 })
+  })
+
+  test('[[text]] input rule auto-resolves to link chip', async ({ page }) => {
+    await focusBlock(page)
+
+    // Move to end and type [[Quick Notes]] with closing brackets
+    await page.keyboard.press('End')
+    await page.keyboard.type(' [[Quick Notes]]', { delay: 30 })
+
+    // The text should auto-resolve to a block-link chip without picker interaction
+    const chip = page.locator('[data-testid="block-editor"] [data-testid="block-link-chip"]', {
+      hasText: 'Quick Notes',
+    })
+    await expect(chip).toBeVisible({ timeout: 5000 })
+  })
+})

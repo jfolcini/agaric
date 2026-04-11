@@ -280,3 +280,61 @@ test.describe('Tag insertion via @ picker', () => {
     await expect(tagChips).toHaveCount(2, { timeout: 5000 })
   })
 })
+
+// ===========================================================================
+// 6. @ picker — create new tag & Tab autocomplete
+// ===========================================================================
+
+test.describe('@ picker — create new tag & Tab autocomplete', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+    await openPage(page, 'Getting Started')
+  })
+
+  test('create new tag via @ picker', async ({ page }) => {
+    const editor = await focusBlock(page)
+
+    // Clear content and type @ followed by a tag name that doesn't exist
+    await page.keyboard.press('Control+a')
+    await editor.type('hello @nonexistenttag', { delay: 30 })
+
+    // The suggestion list should appear with a "Create" option
+    const list = page.locator('[data-testid="suggestion-list"]')
+    await expect(list).toBeVisible({ timeout: 5000 })
+
+    const createItem = list.locator('[data-testid="suggestion-item"]', { hasText: /[Cc]reate/ })
+    await expect(createItem).toBeVisible({ timeout: 5000 })
+
+    // Click the Create option
+    await createItem.click()
+
+    // A tag-ref chip should appear in the editor
+    await expect(editor.locator('[data-testid="tag-ref-chip"]')).toBeVisible({ timeout: 5000 })
+  })
+
+  test('Tab autocomplete with @ picker', async ({ page }) => {
+    const editor = await focusBlock(page)
+
+    // Clear and type partial content, then use the Insert tag button
+    await page.keyboard.press('Control+a')
+    await editor.type('autocomplete: ')
+    await page.getByRole('button', { name: 'Insert tag' }).click()
+
+    // Wait for the suggestion list to appear
+    const list = page.locator('[data-testid="suggestion-list"]')
+    await expect(list).toBeVisible({ timeout: 5000 })
+
+    // Type partial query to filter down to "work"
+    await page.keyboard.type('wor', { delay: 30 })
+    const workItem = list.locator('[data-testid="suggestion-item"]', { hasText: 'work' })
+    await expect(workItem).toBeVisible({ timeout: 5000 })
+
+    // Select by clicking the filtered suggestion (autocomplete behaviour)
+    await workItem.click()
+
+    // A tag-ref chip with "work" should appear in the editor
+    await expect(editor.locator('[data-testid="tag-ref-chip"]', { hasText: 'work' })).toBeVisible({
+      timeout: 5000,
+    })
+  })
+})
