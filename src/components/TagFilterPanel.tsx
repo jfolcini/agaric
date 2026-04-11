@@ -8,7 +8,7 @@
 
 import { Plus, Search } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
@@ -16,7 +16,9 @@ import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
+import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
@@ -57,6 +59,8 @@ export function TagFilterPanel(): React.ReactElement {
   const [mode, setMode] = useState<'and' | 'or' | 'not'>('and')
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
+  const resultsListRef = useRef<HTMLDivElement>(null)
+  const matchingTagsRef = useRef<HTMLDivElement>(null)
 
   // Debounced prefix search
   const searchTags = useCallback(
@@ -180,6 +184,65 @@ export function TagFilterPanel(): React.ReactElement {
   // Filter out already-selected tags from matching results
   const filteredMatching = matchingTags.filter((t) => !selectedTags.some((s) => s.id === t.tag_id))
 
+  // ── List keyboard navigation ─────────────────────────────────────
+  const {
+    focusedIndex: resultsFocusedIndex,
+    setFocusedIndex: setResultsFocusedIndex,
+    handleKeyDown: resultsHandleKeyDown,
+  } = useListKeyboardNavigation({
+    itemCount: results.length,
+    homeEnd: true,
+    pageUpDown: true,
+    onSelect: (index: number) => {
+      const block = results[index]
+      if (block) handleResultClick(block)
+    },
+  })
+
+  const {
+    focusedIndex: matchingFocusedIndex,
+    setFocusedIndex: setMatchingFocusedIndex,
+    handleKeyDown: matchingHandleKeyDown,
+  } = useListKeyboardNavigation({
+    itemCount: filteredMatching.length,
+    homeEnd: true,
+    onSelect: (index: number) => {
+      const tag = filteredMatching[index]
+      if (tag) handleAddTag(tag)
+    },
+  })
+
+  // Reset focused index when items change
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — reset on results change
+  useEffect(() => {
+    setResultsFocusedIndex(0)
+  }, [results.length, setResultsFocusedIndex])
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — reset on matching tags change
+  useEffect(() => {
+    setMatchingFocusedIndex(0)
+  }, [filteredMatching.length, setMatchingFocusedIndex])
+
+  // Scroll focused result into view
+  useEffect(() => {
+    if (resultsFocusedIndex < 0 || !resultsListRef.current) return
+    const items = resultsListRef.current.querySelectorAll('[data-result-item]')
+    const el = items[resultsFocusedIndex] as HTMLElement | undefined
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ block: 'nearest' })
+    }
+  }, [resultsFocusedIndex])
+
+  // Scroll focused matching tag into view
+  useEffect(() => {
+    if (matchingFocusedIndex < 0 || !matchingTagsRef.current) return
+    const items = matchingTagsRef.current.querySelectorAll('[data-matching-tag]')
+    const el = items[matchingFocusedIndex] as HTMLElement | undefined
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ block: 'nearest' })
+    }
+  }, [matchingFocusedIndex])
+
   return (
     <div className="tag-filter-panel space-y-4">
       <h3 className="text-sm font-semibold">{t('tagFilter.title')}</h3>
@@ -194,6 +257,10 @@ export function TagFilterPanel(): React.ReactElement {
               e.preventDefault()
               setPrefix('')
               setMatchingTags([])
+            }
+            if (e.key === 'ArrowDown' && filteredMatching.length > 0 && matchingTagsRef.current) {
+              e.preventDefault()
+              matchingTagsRef.current.focus()
             }
           }}
           placeholder={t('tagFilter.searchPlaceholder')}
@@ -299,26 +366,48 @@ export function TagFilterPanel(): React.ReactElement {
           <h4 className="mb-2 text-sm font-medium text-muted-foreground">
             {t('tagFilter.matchingTagsTitle')}
           </h4>
-          <div className="space-y-1">
-            {filteredMatching.map((tag) => (
-              <div
-                key={tag.tag_id}
-                className="flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-accent/50 active:bg-accent/70"
-              >
-                <span>
-                  <HighlightPrefix text={tag.name} prefix={prefix} /> ({tag.usage_count})
-                </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="gap-1 px-2"
-                  onClick={() => handleAddTag(tag)}
+          <div
+            className="space-y-1"
+            ref={matchingTagsRef}
+            role="listbox"
+            aria-label={t('tagFilter.matchingTagsTitle')}
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (matchingHandleKeyDown(e)) {
+                e.preventDefault()
+              }
+            }}
+          >
+            {filteredMatching.map((tag, index) => {
+              const isFocused = index === matchingFocusedIndex
+              return (
+                <div
+                  key={tag.tag_id}
+                  role="option"
+                  aria-selected={isFocused}
+                  data-matching-tag
+                  tabIndex={-1}
+                  className={cn(
+                    'flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-accent/50 active:bg-accent/70',
+                    isFocused && 'ring-2 ring-ring/50 bg-accent/30',
+                  )}
                 >
-                  <Plus className="h-3 w-3" />
-                  {t('tagFilter.addButton')}
-                </Button>
-              </div>
-            ))}
+                  <span>
+                    <HighlightPrefix text={tag.name} prefix={prefix} /> ({tag.usage_count})
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="gap-1 px-2"
+                    onClick={() => handleAddTag(tag)}
+                    tabIndex={-1}
+                  >
+                    <Plus className="h-3 w-3" />
+                    {t('tagFilter.addButton')}
+                  </Button>
+                </div>
+              )
+            })}
           </div>
         </section>
       )}
@@ -341,24 +430,53 @@ export function TagFilterPanel(): React.ReactElement {
           <h4 className="text-sm font-medium text-muted-foreground">
             {t('tagFilter.resultsTitle')} ({results.length})
           </h4>
-          {results.map((block) => (
-            <ResultCard
-              key={block.id}
-              block={block}
-              onClick={() => handleResultClick(block)}
-              contentClassName="whitespace-pre-wrap"
-            >
-              {block.parent_id && pageTitles.get(block.parent_id) && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  {t('tagFilter.inPage')}{' '}
-                  <PageLink
-                    pageId={block.parent_id}
-                    title={pageTitles.get(block.parent_id) ?? ''}
-                  />
-                </p>
-              )}
-            </ResultCard>
-          ))}
+          <div
+            ref={resultsListRef}
+            role="listbox"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (resultsHandleKeyDown(e)) {
+                e.preventDefault()
+              }
+            }}
+            aria-activedescendant={
+              resultsFocusedIndex >= 0 && results[resultsFocusedIndex]
+                ? `tag-result-${results[resultsFocusedIndex].id}`
+                : undefined
+            }
+            className="space-y-3"
+          >
+            {results.map((block, index) => {
+              const isFocused = index === resultsFocusedIndex
+              return (
+                <div
+                  key={block.id}
+                  id={`tag-result-${block.id}`}
+                  role="option"
+                  aria-selected={isFocused}
+                  data-result-item
+                  tabIndex={-1}
+                  className={cn(isFocused && 'ring-2 ring-ring/50 rounded-lg')}
+                >
+                  <ResultCard
+                    block={block}
+                    onClick={() => handleResultClick(block)}
+                    contentClassName="whitespace-pre-wrap"
+                  >
+                    {block.parent_id && pageTitles.get(block.parent_id) && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {t('tagFilter.inPage')}{' '}
+                        <PageLink
+                          pageId={block.parent_id}
+                          title={pageTitles.get(block.parent_id) ?? ''}
+                        />
+                      </p>
+                    )}
+                  </ResultCard>
+                </div>
+              )
+            })}
+          </div>
         </section>
       )}
 

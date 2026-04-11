@@ -9,11 +9,12 @@
 
 import { CheckCircle2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '../hooks/useBlockPropertyEvents'
+import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import type { NavigateToPageFn } from '../lib/block-events'
 import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
@@ -176,6 +177,38 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
     return groups
   })()
 
+  // ── Keyboard navigation (UX-138) ────────────────────────────────────
+  const listRef = useRef<HTMLDivElement>(null)
+  const flatItems = grouped.flatMap((g) => g.items)
+
+  const {
+    focusedIndex,
+    setFocusedIndex,
+    handleKeyDown: navHandleKeyDown,
+  } = useListKeyboardNavigation({
+    itemCount: flatItems.length,
+    homeEnd: true,
+    pageUpDown: true,
+    onSelect: (idx) => {
+      const block = flatItems[idx]
+      if (block) handleBlockClick(block)
+    },
+  })
+
+  // Reset focused index when date changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset
+  useEffect(() => {
+    setFocusedIndex(0)
+  }, [date, setFocusedIndex])
+
+  // Scroll focused item into view
+  useEffect(() => {
+    if (!listRef.current) return
+    const items = listRef.current.querySelectorAll('[data-block-list-item]')
+    const el = items[focusedIndex] as HTMLElement | undefined
+    el?.scrollIntoView?.({ block: 'nearest' })
+  }, [focusedIndex])
+
   const headerLabel =
     totalCount === 1 ? t('donePanel.headerOne') : t('donePanel.header', { count: totalCount })
 
@@ -200,77 +233,93 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
         }
         empty={null}
       >
-        {() => (
-          <>
-            {/* Main header -- collapsible */}
-            <CollapsiblePanelHeader
-              isCollapsed={collapsed}
-              onToggle={toggleCollapsed}
-              className="done-panel-header"
-            >
-              {headerLabel}
-            </CollapsiblePanelHeader>
+        {() => {
+          let flatIndex = 0
+          return (
+            <>
+              {/* Main header -- collapsible */}
+              <CollapsiblePanelHeader
+                isCollapsed={collapsed}
+                onToggle={toggleCollapsed}
+                className="done-panel-header"
+              >
+                {headerLabel}
+              </CollapsiblePanelHeader>
 
-            {!collapsed && (
-              <div className="done-panel-content mt-1 space-y-2">
-                {/* Grouped blocks */}
-                {grouped.map((group) => (
-                  <div key={group.pageId} className="done-panel-group">
-                    {/* Group sub-header: page title + block count (not individually collapsible) */}
-                    <div className="done-panel-group-header px-3 py-1 text-xs [@media(pointer:coarse)]:text-sm font-semibold text-muted-foreground tracking-wide uppercase bg-muted rounded">
-                      <PageLink
-                        pageId={group.pageId}
-                        title={group.title}
-                        className="hover:underline"
-                      />{' '}
-                      ({group.items.length})
+              {!collapsed && (
+                // biome-ignore lint/a11y/noStaticElementInteractions: keyboard nav container
+                <div
+                  className="done-panel-content mt-1 space-y-2"
+                  ref={listRef}
+                  // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard nav container
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (navHandleKeyDown(e)) e.preventDefault()
+                  }}
+                >
+                  {/* Grouped blocks */}
+                  {grouped.map((group) => (
+                    <div key={group.pageId} className="done-panel-group">
+                      {/* Group sub-header: page title + block count (not individually collapsible) */}
+                      <div className="done-panel-group-header px-3 py-1 text-xs [@media(pointer:coarse)]:text-sm font-semibold text-muted-foreground tracking-wide uppercase bg-muted rounded">
+                        <PageLink
+                          pageId={group.pageId}
+                          title={group.title}
+                          className="hover:underline"
+                        />{' '}
+                        ({group.items.length})
+                      </div>
+
+                      <ul
+                        className="done-panel-blocks ml-2 space-y-1"
+                        aria-label={t('donePanel.groupItemsLabel', { title: group.title })}
+                      >
+                        {group.items.map((block) => {
+                          const currentFlatIndex = flatIndex++
+                          return (
+                            <BlockListItem
+                              key={block.id}
+                              content={block.content}
+                              metadata={
+                                <CheckCircle2 className="done-panel-check h-4 w-4 shrink-0 text-status-done-foreground" />
+                              }
+                              pageId={block.parent_id}
+                              pageTitle={
+                                block.parent_id
+                                  ? (pageTitles.get(block.parent_id) ?? t('donePanel.untitled'))
+                                  : ''
+                              }
+                              breadcrumbArrow={t('donePanel.breadcrumbArrow')}
+                              breadcrumbAsLink={false}
+                              className="done-panel-item hover:bg-muted/50 active:bg-muted/70"
+                              contentClassName="done-panel-item-text"
+                              breadcrumbClassName="done-panel-breadcrumb [@media(pointer:coarse)]:text-sm"
+                              onClick={() => handleBlockClick(block)}
+                              onKeyDown={(e) => handleBlockKeyDown(e, block)}
+                              isFocused={focusedIndex === currentFlatIndex}
+                            />
+                          )
+                        })}
+                      </ul>
                     </div>
+                  ))}
 
-                    <ul
-                      className="done-panel-blocks ml-2 space-y-1"
-                      aria-label={t('donePanel.groupItemsLabel', { title: group.title })}
-                    >
-                      {group.items.map((block) => (
-                        <BlockListItem
-                          key={block.id}
-                          content={block.content}
-                          metadata={
-                            <CheckCircle2 className="done-panel-check h-4 w-4 shrink-0 text-status-done-foreground" />
-                          }
-                          pageId={block.parent_id}
-                          pageTitle={
-                            block.parent_id
-                              ? (pageTitles.get(block.parent_id) ?? t('donePanel.untitled'))
-                              : ''
-                          }
-                          breadcrumbArrow={t('donePanel.breadcrumbArrow')}
-                          breadcrumbAsLink={false}
-                          className="done-panel-item hover:bg-muted/50 active:bg-muted/70"
-                          contentClassName="done-panel-item-text"
-                          breadcrumbClassName="done-panel-breadcrumb [@media(pointer:coarse)]:text-sm"
-                          onClick={() => handleBlockClick(block)}
-                          onKeyDown={(e) => handleBlockKeyDown(e, block)}
-                        />
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-
-                {/* Load more */}
-                <LoadMoreButton
-                  hasMore={hasMore}
-                  loading={loading}
-                  onLoadMore={loadMore}
-                  className="done-panel-load-more"
-                  label={t('donePanel.loadMore')}
-                  loadingLabel={t('donePanel.loading')}
-                  ariaLabel={t('donePanel.loadMoreLabel')}
-                  ariaLoadingLabel={t('donePanel.loadingMore')}
-                />
-              </div>
-            )}
-          </>
-        )}
+                  {/* Load more */}
+                  <LoadMoreButton
+                    hasMore={hasMore}
+                    loading={loading}
+                    onLoadMore={loadMore}
+                    className="done-panel-load-more"
+                    label={t('donePanel.loadMore')}
+                    loadingLabel={t('donePanel.loading')}
+                    ariaLabel={t('donePanel.loadMoreLabel')}
+                    ariaLoadingLabel={t('donePanel.loadingMore')}
+                  />
+                </div>
+              )}
+            </>
+          )
+        }}
       </ListViewState>
     </section>
   )

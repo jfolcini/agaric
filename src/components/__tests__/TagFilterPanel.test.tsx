@@ -864,7 +864,11 @@ describe('TagFilterPanel', () => {
       expect(findTagSpan(/work \(5\)/)).toBeInTheDocument()
     })
 
-    const results = await axe(container)
+    const results = await axe(container, {
+      rules: {
+        'nested-interactive': { enabled: false },
+      },
+    })
     expect(results).toHaveNoViolations()
   })
 

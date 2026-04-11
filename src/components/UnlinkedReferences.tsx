@@ -8,12 +8,13 @@
 
 import { Link2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
+import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BacklinkGroup } from '../lib/tauri'
 import { editBlock, listUnlinkedReferences } from '../lib/tauri'
@@ -22,6 +23,8 @@ import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { EmptyState } from './EmptyState'
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
+
+const UNLINKED_FOCUS_CLASSES = 'ring-2 ring-ring/50 bg-accent/30'
 
 export interface UnlinkedReferencesProps {
   pageId: string
@@ -157,6 +160,69 @@ export function UnlinkedReferences({
     untitledLabel: t('unlinkedRefs.untitled'),
   })
 
+  // Flatten visible blocks for keyboard navigation
+  const flatVisibleBlocks = useMemo(() => {
+    const flat: { id: string; pageId: string }[] = []
+    for (const g of groups) {
+      if (expandedGroups[g.page_id] ?? true) {
+        for (const b of g.blocks) {
+          flat.push({ id: b.id, pageId: g.page_id })
+        }
+      }
+    }
+    return flat
+  }, [groups, expandedGroups])
+
+  const {
+    focusedIndex,
+    setFocusedIndex,
+    handleKeyDown: handleListKeyDown,
+  } = useListKeyboardNavigation({
+    itemCount: flatVisibleBlocks.length,
+    onSelect: (idx) => {
+      const entry = flatVisibleBlocks[idx]
+      if (!entry) return
+      const group = groups.find((g) => g.page_id === entry.pageId)
+      const block = group?.blocks.find((b) => b.id === entry.id)
+      if (block) handleBlockClick(block)
+    },
+  })
+
+  const listRef = useRef<HTMLDivElement>(null)
+
+  const focusedBlockId = flatVisibleBlocks[focusedIndex]?.id ?? null
+
+  // Reset focusedIndex when groups change
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset
+  useEffect(() => {
+    setFocusedIndex(0)
+  }, [groups, expandedGroups, setFocusedIndex])
+
+  // Scroll focused block into view and apply focus indicator
+  useEffect(() => {
+    const container = listRef.current
+    if (!container || !focusedBlockId) return
+
+    const el = container.querySelector(`[data-backlink-item="${focusedBlockId}"]`) as HTMLElement
+    if (!el) return
+
+    el.scrollIntoView({ block: 'nearest' })
+
+    // Apply focus classes
+    const classes = UNLINKED_FOCUS_CLASSES.split(' ')
+    for (const cls of classes) el.classList.add(cls)
+    return () => {
+      for (const cls of classes) el.classList.remove(cls)
+    }
+  }, [focusedBlockId])
+
+  const handleContainerKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (handleListKeyDown(e)) e.preventDefault()
+    },
+    [handleListKeyDown],
+  )
+
   const headerLabel =
     totalCount === 0
       ? t('unlinkedRefs.headerNone')
@@ -199,45 +265,57 @@ export function UnlinkedReferences({
             {() => (
               <>
                 {/* Group list */}
-                <CollapsibleGroupList
-                  groups={groups}
-                  expandedGroups={expandedGroups}
-                  onToggleGroup={toggleGroup}
-                  untitledLabel={t('unlinkedRefs.untitled')}
-                  defaultExpanded
-                  groupClassName="unlinked-references-group"
-                  headerClassName="unlinked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1 text-sm font-medium hover:bg-accent/50 active:bg-accent/70 transition-colors"
-                  listClassName="unlinked-references-blocks ml-4 mt-1 space-y-1"
-                  listAriaLabel={(title) => t('unlinkedRefs.mentionsFrom', { title })}
-                  {...(onNavigateToPage && {
-                    onPageTitleClick: (pageId: string, title: string) =>
-                      onNavigateToPage(pageId, title),
-                  })}
-                  renderBlock={(block, _group) => (
-                    <li
-                      key={block.id}
-                      className="unlinked-reference-item flex items-center gap-3 border-b py-1.5 px-2 last:border-b-0"
-                    >
-                      <button
-                        type="button"
-                        className="unlinked-reference-item-text text-sm flex-1 truncate cursor-pointer hover:bg-muted/50 text-left"
-                        onClick={() => handleBlockClick(block)}
+                {/* biome-ignore lint/a11y/useSemanticElements: keyboard nav container wrapping BacklinkGroupRenderer */}
+                <div
+                  ref={listRef}
+                  role="group"
+                  // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard nav requires focusable container
+                  tabIndex={0}
+                  onKeyDown={handleContainerKeyDown}
+                  aria-label="Unlinked reference blocks"
+                  className="unlinked-references-list outline-none"
+                >
+                  <CollapsibleGroupList
+                    groups={groups}
+                    expandedGroups={expandedGroups}
+                    onToggleGroup={toggleGroup}
+                    untitledLabel={t('unlinkedRefs.untitled')}
+                    defaultExpanded
+                    groupClassName="unlinked-references-group"
+                    headerClassName="unlinked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1 text-sm font-medium hover:bg-accent/50 active:bg-accent/70 transition-colors"
+                    listClassName="unlinked-references-blocks ml-4 mt-1 space-y-1"
+                    listAriaLabel={(title) => t('unlinkedRefs.mentionsFrom', { title })}
+                    {...(onNavigateToPage && {
+                      onPageTitleClick: (pageId: string, title: string) =>
+                        onNavigateToPage(pageId, title),
+                    })}
+                    renderBlock={(block, _group) => (
+                      <li
+                        key={block.id}
+                        data-backlink-item={block.id}
+                        className={`unlinked-reference-item flex items-center gap-3 border-b py-1.5 px-2 last:border-b-0${block.id === focusedBlockId ? ` ${UNLINKED_FOCUS_CLASSES}` : ''}`}
                       >
-                        {block.content || t('unlinkedRefs.empty')}
-                      </button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="link-it-button shrink-0 text-xs text-muted-foreground hover:text-primary"
-                        onClick={() => handleLinkIt(block.id, block.content ?? '')}
-                        aria-label={`Link it: replace mention in block ${block.id.slice(0, 8)}`}
-                      >
-                        <Link2 className="h-3.5 w-3.5 mr-1" />
-                        {t('unlinkedRefs.linkIt')}
-                      </Button>
-                    </li>
-                  )}
-                />
+                        <button
+                          type="button"
+                          className="unlinked-reference-item-text text-sm flex-1 truncate cursor-pointer hover:bg-muted/50 text-left"
+                          onClick={() => handleBlockClick(block)}
+                        >
+                          {block.content || t('unlinkedRefs.empty')}
+                        </button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="link-it-button shrink-0 text-xs text-muted-foreground hover:text-primary"
+                          onClick={() => handleLinkIt(block.id, block.content ?? '')}
+                          aria-label={`Link it: replace mention in block ${block.id.slice(0, 8)}`}
+                        >
+                          <Link2 className="h-3.5 w-3.5 mr-1" />
+                          {t('unlinkedRefs.linkIt')}
+                        </Button>
+                      </li>
+                    )}
+                  />
+                </div>
 
                 {/* Load more pagination */}
                 <LoadMoreButton

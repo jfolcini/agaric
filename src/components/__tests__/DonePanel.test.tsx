@@ -24,6 +24,9 @@ import { axe } from 'vitest-axe'
 vi.mock('../../lib/tauri', () => ({
   queryByProperty: vi.fn(),
   batchResolve: vi.fn(),
+  getBlock: vi.fn(),
+  setDueDate: vi.fn(),
+  setScheduledDate: vi.fn(),
 }))
 
 vi.mock('../../hooks/useBlockPropertyEvents', () => ({
@@ -44,6 +47,7 @@ vi.mock('lucide-react', () => ({
   ChevronDown: (props: Record<string, unknown>) => <svg data-testid="chevron-down" {...props} />,
   CheckCircle2: (props: Record<string, unknown>) => <svg data-testid="check-circle" {...props} />,
   Loader2: (props: Record<string, unknown>) => <svg data-testid="loader-spinner" {...props} />,
+  CalendarDays: (props: Record<string, unknown>) => <svg data-testid="calendar-days" {...props} />,
 }))
 
 vi.mock('../StaticBlock', () => ({

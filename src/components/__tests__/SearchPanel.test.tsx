@@ -32,6 +32,18 @@ vi.mock('sonner', () => ({
   },
 }))
 
+// UX-153: Mock resolvePageByAlias separately so alias-resolution calls
+// don't consume values from the FIFO invoke mock queue.
+vi.mock('../../lib/tauri', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/tauri')>()
+  return {
+    ...actual,
+    resolvePageByAlias: vi.fn().mockResolvedValue(null),
+  }
+})
+
+import { resolvePageByAlias } from '../../lib/tauri'
+
 const mockedInvoke = vi.mocked(invoke)
 
 const emptyPage = { items: [], next_cursor: null, has_more: false }
@@ -50,6 +62,8 @@ const makeSearchResult = (overrides?: Partial<Record<string, unknown>>) => ({
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  // Re-establish default after clearAllMocks resets it
+  vi.mocked(resolvePageByAlias).mockResolvedValue(null)
   useNavigationStore.setState({
     currentView: 'search',
     tabs: [{ id: '0', pageStack: [], label: '' }],

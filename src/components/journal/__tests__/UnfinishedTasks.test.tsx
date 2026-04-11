@@ -409,7 +409,7 @@ describe('UnfinishedTasks', () => {
     expect(within(olderGroup).getByText('Older task')).toBeInTheDocument()
 
     // Collapse the yesterday group
-    const yesterdayHeader = within(yesterdayGroup).getByRole('button')
+    const yesterdayHeader = within(yesterdayGroup).getByRole('button', { expanded: true })
     await user.click(yesterdayHeader)
 
     // Yesterday items should be hidden, older should still be visible

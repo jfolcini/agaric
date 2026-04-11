@@ -1558,8 +1558,8 @@ describe('SortableBlock visibility controls', () => {
     )
 
     const handle = screen.getByRole('button', { name: /reorder block/i })
-    expect(handle.className).not.toContain('[@media(pointer:coarse)]:hidden')
-    expect(handle.className).not.toContain('[@media(pointer:coarse)]:flex')
+    expect(handle.className).not.toContain('max-sm:hidden')
+    expect(handle.className).not.toContain('max-sm:flex')
   })
 
   it('history button has no per-button coarse-pointer classes for touch devices', () => {
@@ -1574,8 +1574,8 @@ describe('SortableBlock visibility controls', () => {
     )
 
     const historyBtn = screen.getByRole('button', { name: /block history/i })
-    expect(historyBtn.className).not.toContain('[@media(pointer:coarse)]:hidden')
-    expect(historyBtn.className).not.toContain('[@media(pointer:coarse)]:flex')
+    expect(historyBtn.className).not.toContain('max-sm:hidden')
+    expect(historyBtn.className).not.toContain('max-sm:flex')
   })
 
   it('delete handle has no per-button coarse-pointer classes for touch devices', () => {
@@ -1590,8 +1590,8 @@ describe('SortableBlock visibility controls', () => {
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    expect(deleteBtn.className).not.toContain('[@media(pointer:coarse)]:hidden')
-    expect(deleteBtn.className).not.toContain('[@media(pointer:coarse)]:flex')
+    expect(deleteBtn.className).not.toContain('max-sm:hidden')
+    expect(deleteBtn.className).not.toContain('max-sm:flex')
   })
 
   it('priority badge is not rendered when no priority is set', () => {
@@ -3829,10 +3829,10 @@ describe('SortableBlock mobile gutter hidden (UX-21)', () => {
     )
 
     const dragHandle = screen.getByTestId('drag-handle')
-    expect(dragHandle.className).not.toContain('[@media(pointer:coarse)]:hidden')
-    expect(dragHandle.className).not.toContain('[@media(pointer:coarse)]:flex')
-    expect(dragHandle.className).not.toContain('[@media(pointer:coarse)]:opacity-100')
-    expect(dragHandle.className).not.toContain('[@media(pointer:coarse)]:pointer-events-auto')
+    expect(dragHandle.className).not.toContain('max-sm:hidden')
+    expect(dragHandle.className).not.toContain('max-sm:flex')
+    expect(dragHandle.className).not.toContain('max-sm:opacity-100')
+    expect(dragHandle.className).not.toContain('max-sm:pointer-events-auto')
   })
 
   it('history button has no per-button coarse-pointer classes (gutter container handles hiding)', () => {
@@ -3847,10 +3847,10 @@ describe('SortableBlock mobile gutter hidden (UX-21)', () => {
     )
 
     const historyBtn = screen.getByRole('button', { name: /block history/i })
-    expect(historyBtn.className).not.toContain('[@media(pointer:coarse)]:hidden')
-    expect(historyBtn.className).not.toContain('[@media(pointer:coarse)]:flex')
-    expect(historyBtn.className).not.toContain('[@media(pointer:coarse)]:opacity-100')
-    expect(historyBtn.className).not.toContain('[@media(pointer:coarse)]:pointer-events-auto')
+    expect(historyBtn.className).not.toContain('max-sm:hidden')
+    expect(historyBtn.className).not.toContain('max-sm:flex')
+    expect(historyBtn.className).not.toContain('max-sm:opacity-100')
+    expect(historyBtn.className).not.toContain('max-sm:pointer-events-auto')
   })
 
   it('delete button has no per-button coarse-pointer classes (gutter container handles hiding)', () => {
@@ -3865,10 +3865,10 @@ describe('SortableBlock mobile gutter hidden (UX-21)', () => {
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    expect(deleteBtn.className).not.toContain('[@media(pointer:coarse)]:hidden')
-    expect(deleteBtn.className).not.toContain('[@media(pointer:coarse)]:flex')
-    expect(deleteBtn.className).not.toContain('[@media(pointer:coarse)]:opacity-100')
-    expect(deleteBtn.className).not.toContain('[@media(pointer:coarse)]:pointer-events-auto')
+    expect(deleteBtn.className).not.toContain('max-sm:hidden')
+    expect(deleteBtn.className).not.toContain('max-sm:flex')
+    expect(deleteBtn.className).not.toContain('max-sm:opacity-100')
+    expect(deleteBtn.className).not.toContain('max-sm:pointer-events-auto')
   })
 
   it('gutter container has touch-collapse classes', () => {
@@ -3885,11 +3885,11 @@ describe('SortableBlock mobile gutter hidden (UX-21)', () => {
 
     const dragHandle = screen.getByTestId('drag-handle')
     const gutterDiv = dragHandle.parentElement as HTMLElement
-    expect(gutterDiv.className).toContain('[@media(pointer:coarse)]:w-0')
-    expect(gutterDiv.className).toContain('[@media(pointer:coarse)]:overflow-hidden')
+    expect(gutterDiv.className).toContain('max-sm:w-0')
+    expect(gutterDiv.className).toContain('max-sm:overflow-hidden')
   })
 
-  it('outer wrapper has [@media(pointer:coarse)]:items-start for vertical alignment', () => {
+  it('outer wrapper has max-sm:items-start for vertical alignment', () => {
     render(
       <SortableBlock
         blockId="BLOCK_MOBILE"
@@ -3900,7 +3900,7 @@ describe('SortableBlock mobile gutter hidden (UX-21)', () => {
     )
 
     const wrapper = screen.getByTestId('sortable-block')
-    expect(wrapper.className).toContain('[@media(pointer:coarse)]:items-start')
+    expect(wrapper.className).toContain('max-sm:items-start')
   })
 
   it('content div retains flex-1 min-w-0', () => {
@@ -4116,5 +4116,26 @@ describe('SortableBlock error paths', () => {
     expect(screen.getByRole('textbox')).toHaveValue('3h')
     expect(screen.queryByTestId('select-options-dropdown')).not.toBeInTheDocument()
     expect(screen.queryByTestId('ref-picker')).not.toBeInTheDocument()
+  })
+})
+
+describe('responsive layout (UX-151)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+  })
+
+  it('outer wrapper does not have overflow-hidden', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_RESP"
+        content="responsive test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    const wrapper = screen.getByTestId('sortable-block')
+    expect(wrapper.className).not.toContain('overflow-hidden')
   })
 })

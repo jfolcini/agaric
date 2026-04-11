@@ -391,11 +391,15 @@
   font-size: var(--agaric-font-size, 1rem);
   min-height: 1.75rem;
   line-height: 1.5;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 /* Static (non-focused) block content inherits user font size setting. */
 .block-static {
   font-size: var(--agaric-font-size, 1rem);
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 /* Remove default paragraph margins inside the editor */

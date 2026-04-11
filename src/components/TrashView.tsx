@@ -9,7 +9,7 @@
 
 import { RotateCcw, Search, Trash2, X } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { BatchActionToolbar } from '@/components/BatchActionToolbar'
@@ -21,6 +21,7 @@ import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
+import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '../hooks/useListMultiSelect'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
@@ -72,13 +73,32 @@ export function TrashView(): React.ReactElement {
 
   const [confirmPurgeId, setConfirmPurgeId] = useState<string | null>(null)
 
+  const listRef = useRef<HTMLDivElement>(null)
+
   // ── Multi-select (shared hook) ────────────────────────────────────
-  const { selected, toggleSelection, selectAll, clearSelection, handleRowClick, lastClickedId } =
+  const { selected, toggleSelection, selectAll, clearSelection, handleRowClick } =
     useListMultiSelect({
       items: filteredBlocks,
       getItemId: (b: BlockRow) => b.id,
     })
   const [confirmBatchPurge, setConfirmBatchPurge] = useState(false)
+
+  // ── List keyboard navigation ─────────────────────────────────────
+  const {
+    focusedIndex,
+    setFocusedIndex,
+    handleKeyDown: navHandleKeyDown,
+  } = useListKeyboardNavigation({
+    itemCount: filteredBlocks.length,
+    homeEnd: true,
+    pageUpDown: true,
+  })
+
+  // Reset focused index when filter changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — reset on filter change
+  useEffect(() => {
+    setFocusedIndex(0)
+  }, [debouncedFilter, setFocusedIndex])
 
   // ── Original location breadcrumbs ────────────────────────────────
   const [parentMap, setParentMap] = useState<Map<string, ResolvedBlock | null>>(new Map())
@@ -127,10 +147,19 @@ export function TrashView(): React.ReactElement {
       )
         return
 
-      // Space — toggle focused/first item (simplified: toggle last clicked)
-      if (matchesShortcutBinding(e, 'listToggleSelection') && lastClickedId != null) {
+      // Delegate to list keyboard navigation (ArrowUp/Down, Home/End, PageUp/Down)
+      if (navHandleKeyDown(e)) {
         e.preventDefault()
-        toggleSelection(lastClickedId)
+        return
+      }
+
+      // Space — toggle focused item
+      if (matchesShortcutBinding(e, 'listToggleSelection') && focusedIndex >= 0) {
+        const block = filteredBlocks[focusedIndex]
+        if (block) {
+          e.preventDefault()
+          toggleSelection(block.id)
+        }
         return
       }
 
@@ -150,7 +179,15 @@ export function TrashView(): React.ReactElement {
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [lastClickedId, toggleSelection, selectAll, selected.size, clearSelection])
+  }, [
+    navHandleKeyDown,
+    focusedIndex,
+    filteredBlocks,
+    toggleSelection,
+    selectAll,
+    selected.size,
+    clearSelection,
+  ])
 
   // ── Single-item actions ──────────────────────────────────────────
 
@@ -256,6 +293,26 @@ export function TrashView(): React.ReactElement {
     [parentMap, t],
   )
 
+  // ── Scroll focused item into view ────────────────────────────────
+  useEffect(() => {
+    if (focusedIndex < 0 || !listRef.current) return
+    const items = listRef.current.querySelectorAll('[data-trash-item]')
+    const el = items[focusedIndex] as HTMLElement | undefined
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ block: 'nearest' })
+    }
+  }, [focusedIndex])
+
+  // ── Row click with focus tracking ────────────────────────────────
+  const handleRowClickWithFocus = useCallback(
+    (blockId: string, e: React.MouseEvent) => {
+      handleRowClick(blockId, e)
+      const index = filteredBlocks.findIndex((b) => b.id === blockId)
+      if (index >= 0) setFocusedIndex(index)
+    },
+    [handleRowClick, filteredBlocks, setFocusedIndex],
+  )
+
   return (
     <section className="trash-view space-y-4" aria-label={t('trash.regionLabel')}>
       {/* Filter input */}
@@ -331,34 +388,45 @@ export function TrashView(): React.ReactElement {
               }
             />
           ) : (
-            // biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn
             <div
               className="trash-view-list space-y-2"
-              role="list"
+              role="listbox"
+              ref={listRef}
               aria-label={t('trash.listLabel')}
+              tabIndex={0}
+              aria-activedescendant={
+                focusedIndex >= 0 && filteredBlocks[focusedIndex]
+                  ? `trash-item-${filteredBlocks[focusedIndex].id}`
+                  : undefined
+              }
             >
-              {filteredBlocks.map((block) => {
+              {filteredBlocks.map((block, index) => {
                 const isSelected = selected.has(block.id)
+                const isFocused = index === focusedIndex
                 const parentLabel = getParentLabel(block)
                 return (
-                  // biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn
                   <div
                     key={block.id}
-                    role="listitem"
+                    id={`trash-item-${block.id}`}
+                    role="option"
+                    aria-selected={isSelected}
+                    data-trash-item
                     className={cn(
                       'trash-item flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded-lg border bg-card p-4 transition-colors cursor-pointer',
                       isSelected
                         ? 'bg-accent/50 border-accent'
                         : 'hover:bg-accent/50 active:bg-accent/70',
+                      isFocused && 'ring-2 ring-ring/50 bg-accent/30',
                     )}
                     data-testid="trash-item"
-                    onClick={(e) => handleRowClick(block.id, e)}
+                    onClick={(e) => handleRowClickWithFocus(block.id, e)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault()
                         toggleSelection(block.id)
                       }
                     }}
+                    tabIndex={isFocused ? 0 : -1}
                   >
                     <div className="trash-item-content flex min-w-0 items-center gap-3 flex-wrap">
                       <input
@@ -371,6 +439,7 @@ export function TrashView(): React.ReactElement {
                           content: block.content ?? t('trash.emptyContent'),
                         })}
                         data-testid="trash-item-checkbox"
+                        tabIndex={-1}
                       />
                       <Badge variant="secondary" className="trash-item-type shrink-0">
                         {block.block_type}
@@ -413,6 +482,7 @@ export function TrashView(): React.ReactElement {
                               className="trash-restore-btn [@media(pointer:coarse)]:h-10"
                               data-testid="trash-restore-btn"
                               onClick={() => handleRestore(block)}
+                              tabIndex={-1}
                             >
                               <RotateCcw className="h-3.5 w-3.5" />
                               {t('trash.restoreButton')}
@@ -429,6 +499,7 @@ export function TrashView(): React.ReactElement {
                         className="trash-purge-btn [@media(pointer:coarse)]:h-10"
                         data-testid="trash-purge-btn"
                         onClick={() => setConfirmPurgeId(block.id)}
+                        tabIndex={-1}
                       >
                         {t('trash.purgeButton')}
                       </Button>

@@ -8,7 +8,7 @@
 
 import { SlidersHorizontal } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
@@ -18,6 +18,7 @@ import { logger } from '@/lib/logger'
 import { useBacklinkResolution } from '../hooks/useBacklinkResolution'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '../hooks/useBlockPropertyEvents'
+import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BacklinkFilter, BacklinkGroup, BacklinkSort } from '../lib/tauri'
 import { listBacklinksGrouped, listPropertyKeys, listTagsByPrefix } from '../lib/tauri'
@@ -27,6 +28,8 @@ import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { SourcePageFilter } from './SourcePageFilter'
+
+const BACKLINK_FOCUS_CLASSES = ['ring-2', 'ring-ring/50', 'bg-accent/30'] as const
 
 export interface LinkedReferencesProps {
   pageId: string
@@ -205,6 +208,68 @@ export function LinkedReferences({
     }
   }, [nextCursor, fetchGroups])
 
+  // Flatten visible blocks for keyboard navigation
+  const flatVisibleBlocks = useMemo(() => {
+    const flat: { id: string; pageId: string }[] = []
+    for (const g of groups) {
+      if (groupExpanded[g.page_id]) {
+        for (const b of g.blocks) {
+          flat.push({ id: b.id, pageId: g.page_id })
+        }
+      }
+    }
+    return flat
+  }, [groups, groupExpanded])
+
+  const {
+    focusedIndex,
+    setFocusedIndex,
+    handleKeyDown: handleListKeyDown,
+  } = useListKeyboardNavigation({
+    itemCount: flatVisibleBlocks.length,
+    onSelect: (idx) => {
+      const entry = flatVisibleBlocks[idx]
+      if (!entry) return
+      const group = groups.find((g) => g.page_id === entry.pageId)
+      const block = group?.blocks.find((b) => b.id === entry.id)
+      if (block) handleBlockClick(block)
+    },
+  })
+
+  const listRef = useRef<HTMLDivElement>(null)
+
+  const focusedBlockId = flatVisibleBlocks[focusedIndex]?.id ?? null
+
+  // Reset focusedIndex when groups change
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset
+  useEffect(() => {
+    setFocusedIndex(0)
+  }, [groups, groupExpanded, setFocusedIndex])
+
+  // Scroll focused block into view and apply focus indicator
+  useEffect(() => {
+    const container = listRef.current
+    if (!container || !focusedBlockId) return
+
+    const el = container.querySelector(`[data-backlink-item="${focusedBlockId}"]`) as HTMLElement
+    if (!el) return
+
+    el.scrollIntoView({ block: 'nearest' })
+
+    // Apply focus classes
+    for (const cls of BACKLINK_FOCUS_CLASSES) el.classList.add(cls)
+    return () => {
+      for (const cls of BACKLINK_FOCUS_CLASSES) el.classList.remove(cls)
+    }
+  }, [focusedBlockId])
+
+  const handleContainerKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (handleListKeyDown(e)) e.preventDefault()
+    },
+    [handleListKeyDown],
+  )
+
   // Derive sourcePages from groups for SourcePageFilter
   const sourcePages = groups.map((g) => ({
     pageId: g.page_id,
@@ -300,17 +365,28 @@ export function LinkedReferences({
                 </div>
               )}
 
-              <BacklinkGroupRenderer
-                groups={groups}
-                expandedGroups={groupExpanded}
-                onToggleGroup={toggleGroup}
-                onNavigateToPage={onNavigateToPage}
-                handleBlockClick={handleBlockClick}
-                handleBlockKeyDown={handleBlockKeyDown}
-                resolveBlockTitle={resolveBlockTitle}
-                resolveBlockStatus={resolveBlockStatus}
-                resolveTagName={resolveTagName}
-              />
+              {/* biome-ignore lint/a11y/useSemanticElements: keyboard nav container wrapping BacklinkGroupRenderer */}
+              <div
+                ref={listRef}
+                role="group"
+                // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard nav requires focusable container
+                tabIndex={0}
+                onKeyDown={handleContainerKeyDown}
+                aria-label="Reference blocks"
+                className="linked-references-list outline-none"
+              >
+                <BacklinkGroupRenderer
+                  groups={groups}
+                  expandedGroups={groupExpanded}
+                  onToggleGroup={toggleGroup}
+                  onNavigateToPage={onNavigateToPage}
+                  handleBlockClick={handleBlockClick}
+                  handleBlockKeyDown={handleBlockKeyDown}
+                  resolveBlockTitle={resolveBlockTitle}
+                  resolveBlockStatus={resolveBlockStatus}
+                  resolveTagName={resolveTagName}
+                />
+              </div>
 
               <LoadMoreButton
                 hasMore={hasMore}

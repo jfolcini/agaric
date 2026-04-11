@@ -29,10 +29,11 @@ import { Spinner } from '@/components/ui/spinner'
 import { buildPageTree } from '@/lib/page-tree'
 import { getRecentPages } from '@/lib/recent-pages'
 import { getStarredPages, isStarred, toggleStarred } from '@/lib/starred-pages'
+import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePageDelete } from '../hooks/usePageDelete'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import type { BlockRow } from '../lib/tauri'
-import { createBlock, listBlocks } from '../lib/tauri'
+import { createBlock, listBlocks, resolvePageByAlias } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
 import { LoadMoreButton } from './LoadMoreButton'
 
@@ -88,7 +89,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const [showStarredOnly, setShowStarredOnly] = useState(false)
   const [starredRevision, setStarredRevision] = useState(0)
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
+  const [aliasMatchId, setAliasMatchId] = useState<string | null>(null)
   const formRef = useRef<HTMLFormElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
 
   // Track load-more announcements for screen readers
   const prevLengthRef = useRef(0)
@@ -102,6 +105,19 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     }
     prevLengthRef.current = pages.length
   }, [pages.length, t])
+
+  // Alias resolution for filter
+  useEffect(() => {
+    if (!filterText.trim()) {
+      setAliasMatchId(null)
+      return
+    }
+    resolvePageByAlias(filterText.trim())
+      .then((result) => {
+        setAliasMatchId(result ? result[0] : null)
+      })
+      .catch(() => setAliasMatchId(null))
+  }, [filterText])
 
   const handleCreatePage = useCallback(async () => {
     const name = newPageName.trim() || t('pageBrowser.untitled')
@@ -160,7 +176,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     let result = pages
     if (filterText.trim()) {
       const lower = filterText.toLowerCase()
-      result = result.filter((p) => (p.content ?? '').toLowerCase().includes(lower))
+      result = result.filter(
+        (p) => (p.content ?? '').toLowerCase().includes(lower) || p.id === aliasMatchId,
+      )
     }
     if (showStarredOnly) {
       // eslint-disable-next-line @typescript-eslint/no-unused-expressions
@@ -187,7 +205,53 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       })
     }
     return sorted
-  }, [pages, filterText, sortOption, showStarredOnly, starredRevision])
+  }, [pages, filterText, sortOption, showStarredOnly, starredRevision, aliasMatchId])
+
+  const {
+    focusedIndex,
+    setFocusedIndex,
+    handleKeyDown: navHandleKeyDown,
+  } = useListKeyboardNavigation({
+    itemCount: filteredPages.length,
+    homeEnd: true,
+    pageUpDown: true,
+    onSelect: (idx) => {
+      const page = filteredPages[idx]
+      if (page) onPageSelect?.(page.id, page.content ?? undefined)
+    },
+  })
+
+  // Reset focusedIndex when filter/sort changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: filterText and sortOption intentionally trigger reset
+  useEffect(() => {
+    setFocusedIndex(0)
+  }, [filterText, sortOption, setFocusedIndex])
+
+  // Document-level keydown: skip if user is typing in input/select/textarea
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'SELECT' ||
+        target.tagName === 'TEXTAREA'
+      )
+        return
+      if (navHandleKeyDown(e)) {
+        e.preventDefault()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [navHandleKeyDown])
+
+  // Scroll focused item into view
+  useEffect(() => {
+    if (focusedIndex < 0 || !listRef.current) return
+    const items = listRef.current.querySelectorAll('[data-page-item]')
+    const el = items[focusedIndex] as HTMLElement | undefined
+    el?.scrollIntoView({ block: 'nearest' })
+  }, [focusedIndex])
 
   const isFiltering = filterText.trim().length > 0 || showStarredOnly
 
@@ -295,8 +359,13 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         />
       )}
 
-      {/* biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn */}
-      <div className="page-browser-list space-y-1" role="list">
+      <div
+        ref={listRef}
+        className="page-browser-list space-y-1"
+        role="listbox"
+        tabIndex={0}
+        aria-label={t('pageBrowser.pageList')}
+      >
         {isFiltering && filteredPages.length === 0 ? (
           <EmptyState
             icon={showStarredOnly ? Star : Search}
@@ -320,12 +389,14 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
             />
           ))
         ) : (
-          filteredPages.map((page) => (
-            // biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn
+          filteredPages.map((page, index) => (
             <div
               key={page.id}
-              role="listitem"
-              className="group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50"
+              role="option"
+              aria-selected={focusedIndex === index}
+              data-page-item
+              tabIndex={-1}
+              className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50${focusedIndex === index ? ' ring-2 ring-ring/50 bg-accent/30' : ''}`}
             >
               <Button
                 variant="ghost"
@@ -356,6 +427,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                     text={page.content ?? t('pageBrowser.untitled')}
                     filterText={filterText.trim()}
                   />
+                  {aliasMatchId === page.id &&
+                    filterText.trim() !== '' &&
+                    !(page.content ?? '').toLowerCase().includes(filterText.toLowerCase()) && (
+                      <span className="alias-badge text-xs text-muted-foreground">(alias)</span>
+                    )}
                 </span>
               </button>
               <Button

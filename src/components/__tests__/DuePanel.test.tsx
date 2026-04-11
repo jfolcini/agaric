@@ -27,6 +27,9 @@ vi.mock('../../lib/tauri', () => ({
   batchResolve: vi.fn(),
   listProjectedAgenda: vi.fn(),
   queryByProperty: vi.fn(),
+  getBlock: vi.fn(),
+  setDueDate: vi.fn(),
+  setScheduledDate: vi.fn(),
 }))
 
 vi.mock('../StaticBlock', () => ({
@@ -47,6 +50,7 @@ vi.mock('lucide-react', () => ({
   ChevronDown: (props: Record<string, unknown>) => <svg data-testid="chevron-down" {...props} />,
   CheckCircle2: (props: Record<string, unknown>) => <svg data-testid="check-circle" {...props} />,
   Loader2: (props: Record<string, unknown>) => <svg data-testid="loader-spinner" {...props} />,
+  CalendarDays: (props: Record<string, unknown>) => <svg data-testid="calendar-days" {...props} />,
 }))
 
 vi.mock('@/components/ui/button', () => ({

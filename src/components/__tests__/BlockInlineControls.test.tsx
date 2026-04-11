@@ -425,21 +425,24 @@ describe('BlockInlineControls', () => {
     })
   })
 
-  it('main container has coarse-pointer vertical stacking classes', () => {
+  it('main container has narrow-viewport wrapping layout classes', () => {
     const { container } = renderControls(makeProps())
     const inlineControls = container.querySelector('.inline-controls') as HTMLElement
-    expect(inlineControls.className).toContain('[@media(pointer:coarse)]:flex-col')
-    expect(inlineControls.className).toContain('[@media(pointer:coarse)]:w-10')
-    expect(inlineControls.className).toContain('[@media(pointer:coarse)]:items-center')
+    expect(inlineControls.className).toContain('max-sm:flex-wrap')
+    expect(inlineControls.className).toContain('max-sm:w-auto')
+    expect(inlineControls.className).toContain('max-sm:flex-shrink')
   })
 
-  it('indicator buttons do not have [@media(pointer:coarse)]:min-w-[44px]', () => {
+  it('indicator buttons use max-sm: classes instead of [@media(pointer:coarse)]', () => {
     renderControls(makeProps({ hasChildren: true, priority: '1' }))
     const collapseToggle = screen.getByTestId('collapse-toggle')
     const taskMarker = screen.getByTestId('task-marker')
     const priorityBadge = screen.getByTestId('priority-badge')
-    expect(collapseToggle.className).not.toContain('[@media(pointer:coarse)]:min-w-[44px]')
-    expect(taskMarker.className).not.toContain('[@media(pointer:coarse)]:min-w-[44px]')
-    expect(priorityBadge.className).not.toContain('[@media(pointer:coarse)]:min-w-[44px]')
+    expect(collapseToggle.className).not.toContain('[@media(pointer:coarse)]')
+    expect(taskMarker.className).not.toContain('[@media(pointer:coarse)]')
+    expect(priorityBadge.className).not.toContain('[@media(pointer:coarse)]')
+    expect(collapseToggle.className).toContain('max-sm:')
+    expect(taskMarker.className).toContain('max-sm:')
+    expect(priorityBadge.className).toContain('max-sm:')
   })
 })

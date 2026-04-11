@@ -272,7 +272,7 @@ function SortableBlockInner({
         data-block-id={blockId}
         data-testid="sortable-block"
         className={cn(
-          'sortable-block group relative flex items-center gap-1 [@media(pointer:coarse)]:items-start [@media(pointer:coarse)]:overflow-hidden',
+          'sortable-block group relative flex items-center gap-1 max-sm:items-start',
           isFocused && 'block-active',
         )}
         onTouchStart={(e) => {
@@ -313,7 +313,7 @@ function SortableBlockInner({
 
         {/* ── Sliding content wrapper (swipe-to-delete) ───────────── */}
         <div
-          className="flex items-center gap-1 w-full [@media(pointer:coarse)]:items-start"
+          className="flex items-center gap-1 w-full max-sm:items-start max-sm:flex-wrap"
           data-testid="swipe-content"
           style={{
             transform:
@@ -335,7 +335,7 @@ function SortableBlockInner({
           <div
             className={cn(
               GUTTER_WIDTH,
-              'relative z-10 flex-shrink-0 flex items-center gap-1 justify-end [@media(pointer:coarse)]:w-0 [@media(pointer:coarse)]:overflow-hidden',
+              'relative z-10 flex-shrink-0 flex items-center gap-1 justify-end max-sm:w-0 max-sm:overflow-hidden',
             )}
           >
             <BlockGutterControls

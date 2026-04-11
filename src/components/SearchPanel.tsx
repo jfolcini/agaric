@@ -26,7 +26,14 @@ import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { logger } from '../lib/logger'
 import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
 import type { BlockRow, TagCacheRow } from '../lib/tauri'
-import { batchResolve, getBlock, listBlocks, listTagsByPrefix, searchBlocks } from '../lib/tauri'
+import {
+  batchResolve,
+  getBlock,
+  listBlocks,
+  listTagsByPrefix,
+  resolvePageByAlias,
+  searchBlocks,
+} from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
 import { EmptyState } from './EmptyState'
 import { PageLink } from './PageLink'
@@ -50,6 +57,8 @@ export function SearchPanel(): React.ReactElement {
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
   const [recentPages, setRecentPages] = useState<RecentPage[]>([])
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
+  const [aliasMatch, setAliasMatch] = useState<BlockRow | null>(null)
+  const [aliasQuery, setAliasQuery] = useState<string>('')
 
   // Filter state
   const [filterPageId, setFilterPageId] = useState<string | null>(null)
@@ -121,6 +130,52 @@ export function SearchPanel(): React.ReactElement {
       })
   }, [results])
 
+  // Alias resolution: supplement FTS results with alias matches
+  useEffect(() => {
+    if (!debouncedQuery.trim()) {
+      setAliasMatch(null)
+      setAliasQuery('')
+      return
+    }
+    let cancelled = false
+    resolvePageByAlias(debouncedQuery.trim())
+      .then(async (result) => {
+        if (cancelled) return
+        if (!result) {
+          setAliasMatch(null)
+          setAliasQuery('')
+          return
+        }
+        const [pageId] = result
+        if (results.some((r) => r.id === pageId)) {
+          setAliasMatch(null)
+          setAliasQuery('')
+          return
+        }
+        try {
+          const block = await getBlock(pageId)
+          if (!cancelled) {
+            setAliasMatch(block)
+            setAliasQuery(debouncedQuery.trim())
+          }
+        } catch {
+          if (!cancelled) {
+            setAliasMatch(null)
+            setAliasQuery('')
+          }
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAliasMatch(null)
+          setAliasQuery('')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [debouncedQuery, results])
+
   const debounced = useDebouncedCallback((value: string) => {
     setTyping(false)
     setDebouncedQuery(value)
@@ -138,6 +193,8 @@ export function SearchPanel(): React.ReactElement {
       setItems([])
       setSearched(false)
       setTyping(false)
+      setAliasMatch(null)
+      setAliasQuery('')
       return
     }
 
@@ -413,8 +470,24 @@ export function SearchPanel(): React.ReactElement {
       )}
 
       <div aria-live="polite">
-        {searched && !searchLoading && results.length === 0 && !error && (
+        {searched && !searchLoading && results.length === 0 && !error && !aliasMatch && (
           <EmptyState icon={Search} message={t('search.noResultsFound')} />
+        )}
+
+        {aliasMatch && (
+          <div className="relative" data-testid="alias-match">
+            <ResultCard
+              block={aliasMatch}
+              onClick={() => handleResultClick(aliasMatch)}
+              disabled={loadingResultId === aliasMatch.id}
+              showSpinner={loadingResultId === aliasMatch.id}
+              contentClassName="line-clamp-2"
+              highlightText={debouncedQuery}
+            />
+            <span className="absolute top-1 right-2 text-xs text-muted-foreground">
+              {t('search.aliasMatch', { alias: aliasQuery })}
+            </span>
+          </div>
         )}
 
         {results.length > 0 && (

@@ -197,6 +197,7 @@ const resources = {
       'block.noPagesFound': 'No pages found',
       'block.refPickerLabel': 'Select a page',
       'block.editProperty': 'Edit property',
+      'block.reschedule': 'Reschedule',
 
       // Block references
       'blockRef.pickerLabel': 'Block references',
@@ -491,6 +492,7 @@ const resources = {
       'pageBrowser.showStarred': 'Show starred pages',
       'pageBrowser.showAll': 'Show all pages',
       'pageBrowser.noStarredPages': 'No starred pages',
+      'pageBrowser.pageList': 'Page list',
 
       // Due Panel
       'duePanel.headerOne': '1 Due',
@@ -1122,6 +1124,7 @@ const resources = {
       'search.noPagesFound': 'No pages found',
       'search.noTagsFound': 'No tags found',
       'search.filtersActive': 'Filters active',
+      'search.aliasMatch': 'via alias: {{alias}}',
 
       // Status panel (additions)
       'status.foregroundQueueTooltip':

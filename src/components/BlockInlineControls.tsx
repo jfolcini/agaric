@@ -177,7 +177,7 @@ export function BlockInlineControls({
   return (
     <div
       className={cn(
-        'inline-controls flex items-center flex-shrink-0 gap-1 [@media(pointer:coarse)]:flex-col [@media(pointer:coarse)]:w-10 [@media(pointer:coarse)]:items-center',
+        'inline-controls flex items-center flex-shrink-0 gap-1 max-sm:flex-shrink max-sm:flex-wrap max-sm:w-auto max-sm:gap-1',
       )}
     >
       {hasChildren ? (
@@ -185,7 +185,7 @@ export function BlockInlineControls({
           <TooltipTrigger asChild>
             <button
               type="button"
-              className="collapse-toggle flex-shrink-0 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+              className="collapse-toggle flex-shrink-0 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
               data-testid="collapse-toggle"
               onClick={() => onToggleCollapse?.(blockId)}
               aria-label={isCollapsed ? t('block.expandChildren') : t('block.collapseChildren')}
@@ -204,7 +204,7 @@ export function BlockInlineControls({
         <TooltipTrigger asChild>
           <button
             type="button"
-            className="task-marker flex-shrink-0 p-0.5 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+            className="task-marker flex-shrink-0 p-0.5 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
             data-testid="task-marker"
             onClick={(e) => {
               e.stopPropagation()
@@ -225,7 +225,7 @@ export function BlockInlineControls({
           <TooltipTrigger asChild>
             <button
               type="button"
-              className="priority-badge flex-shrink-0 p-0.5 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+              className="priority-badge flex-shrink-0 p-0.5 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
               data-testid="priority-badge"
               aria-label={t('block.priorityCycle', { level: PRIORITY_DISPLAY[priority] })}
               onClick={(e) => {
@@ -235,7 +235,7 @@ export function BlockInlineControls({
             >
               <span
                 className={cn(
-                  'inline-flex items-center justify-center rounded px-1.5 py-0.5 text-xs font-bold [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1',
+                  'inline-flex items-center justify-center rounded px-1.5 py-0.5 text-xs font-bold max-sm:px-2.5 max-sm:py-1',
                   priorityColor(priority),
                 )}
               >
@@ -274,7 +274,7 @@ export function BlockInlineControls({
       {properties?.some((p) => p.key === 'repeat') && (
         <button
           type="button"
-          className="repeat-indicator flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none bg-indicator-repeat text-indicator-repeat-foreground [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1"
+          className="repeat-indicator flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none bg-indicator-repeat text-indicator-repeat-foreground max-sm:px-2.5 max-sm:py-1"
           aria-label={t('block.repeats', {
             value: properties.find((p) => p.key === 'repeat')?.value ?? '',
           })}
@@ -311,7 +311,7 @@ export function BlockInlineControls({
           <TooltipTrigger asChild>
             <button
               type="button"
-              className="attachment-badge flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1 touch-target"
+              className="attachment-badge flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent max-sm:px-2.5 max-sm:py-1 touch-target"
               aria-label={t('block.attachments', { count: attachmentCount })}
               aria-expanded={showAttachments}
               onClick={onToggleAttachments}

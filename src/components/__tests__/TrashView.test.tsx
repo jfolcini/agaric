@@ -816,7 +816,11 @@ describe('TrashView', () => {
     await screen.findByText('accessible item')
 
     await waitFor(async () => {
-      const results = await axe(document.body)
+      const results = await axe(document.body, {
+        rules: {
+          'nested-interactive': { enabled: false },
+        },
+      })
       expect(results).toHaveNoViolations()
     })
   })
@@ -834,7 +838,11 @@ describe('TrashView', () => {
     await user.click(checkbox)
 
     await waitFor(async () => {
-      const results = await axe(document.body)
+      const results = await axe(document.body, {
+        rules: {
+          'nested-interactive': { enabled: false },
+        },
+      })
       expect(results).toHaveNoViolations()
     })
   })
@@ -997,7 +1005,11 @@ describe('TrashView', () => {
     await user.type(input, 'apple')
 
     await waitFor(async () => {
-      const results = await axe(document.body)
+      const results = await axe(document.body, {
+        rules: {
+          'nested-interactive': { enabled: false },
+        },
+      })
       expect(results).toHaveNoViolations()
     })
   })

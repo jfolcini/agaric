@@ -10,11 +10,19 @@
  * elements without duplicating the surrounding structure.
  */
 
+import { CalendarDays } from 'lucide-react'
 import type React from 'react'
+import { useCallback, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
+import { logger } from '../lib/logger'
+import { getBlock, setDueDate, setScheduledDate } from '../lib/tauri'
 import { PageLink } from './PageLink'
 import { renderRichContent } from './StaticBlock'
+import { Calendar } from './ui/calendar'
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 
 export interface BlockListItemProps {
   /** Block content text — truncated via CSS line-clamp. */
@@ -47,6 +55,17 @@ export interface BlockListItemProps {
   testId?: string
   /** Block ID — when provided, enables native HTML5 drag for rescheduling (F-32). */
   blockId?: string
+  /** Callback fired after rescheduling a block via the touch calendar popover. */
+  onReschedule?: (blockId: string, newDate: string) => void
+  /** Whether this item is focused via keyboard navigation. */
+  isFocused?: boolean
+}
+
+function formatDateISO(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
 export function BlockListItem({
@@ -65,16 +84,56 @@ export function BlockListItem({
   breadcrumbClassName,
   testId,
   blockId,
+  onReschedule,
+  isFocused,
 }: BlockListItemProps): React.ReactElement {
+  const { t } = useTranslation()
   const callbacks = useRichContentCallbacks()
+  const [popoverOpen, setPopoverOpen] = useState(false)
+
+  const handleDateSelect = useCallback(
+    async (date: Date | undefined) => {
+      if (!date || !blockId) return
+      const dateStr = formatDateISO(date)
+      setPopoverOpen(false)
+      if (onReschedule) {
+        onReschedule(blockId, dateStr)
+        return
+      }
+      try {
+        let useScheduledDate = false
+        try {
+          const block = await getBlock(blockId)
+          if (block.scheduled_date && !block.due_date) {
+            useScheduledDate = true
+          }
+        } catch (err) {
+          logger.warn('BlockListItem', 'Failed to fetch block', { blockId }, err)
+        }
+        if (useScheduledDate) {
+          await setScheduledDate(blockId, dateStr)
+        } else {
+          await setDueDate(blockId, dateStr)
+        }
+        toast.success(t('journal.rescheduled', { date: dateStr }))
+      } catch {
+        toast.error(t('journal.rescheduleFailed'))
+      }
+    },
+    [blockId, onReschedule, t],
+  )
+
   return (
     <li
       className={cn(
         'flex items-center gap-2 rounded-md px-3 py-2 cursor-pointer transition-colors',
         blockId && 'cursor-grab',
+        isFocused && 'ring-2 ring-ring/50 bg-accent/30',
         className,
       )}
       data-testid={testId}
+      data-block-list-item
+      id={testId || blockId ? `block-item-${blockId}` : undefined}
       // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
       tabIndex={0}
       onClick={onClick}
@@ -105,6 +164,32 @@ export function BlockListItem({
           {breadcrumbArrow}{' '}
           {breadcrumbAsLink ? <PageLink pageId={pageId} title={pageTitle} /> : pageTitle}
         </span>
+      )}
+
+      {/* Reschedule button — visible on touch devices */}
+      {blockId && (
+        <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className="reschedule-btn hidden [@media(pointer:coarse)]:inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors touch-target"
+              aria-label={t('block.reschedule')}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+              data-testid="reschedule-btn"
+            >
+              <CalendarDays className="h-4 w-4" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent
+            align="end"
+            className="w-auto p-0"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+          >
+            <Calendar mode="single" onSelect={handleDateSelect} data-testid="reschedule-calendar" />
+          </PopoverContent>
+        </Popover>
       )}
     </li>
   )

@@ -10,7 +10,7 @@
  */
 
 import type React from 'react'
-import { useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { EmptyState } from '@/components/EmptyState'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
@@ -20,6 +20,7 @@ import { StatusIcon } from '@/components/ui/status-icon'
 import { formatCompactDate, getTodayString } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
+import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import {
   type AgendaSortBy,
   groupByDate,
@@ -148,6 +149,53 @@ export function AgendaResults({
   // Shared cache for block properties — avoids redundant IPC calls across renders
   const propertiesCacheRef = useRef<Map<string, PropertyRow[]>>(new Map())
 
+  // ── Keyboard navigation (UX-138) ────────────────────────────────────
+  const listRef = useRef<HTMLDivElement>(null)
+
+  // Apply sorting to blocks for consistent ordering (used in both flat + grouped modes)
+  const sortedBlocks = useMemo(() => sortAgendaBlocksBy(blocks, sortBy), [blocks, sortBy])
+
+  // Compute groups for display (needed before flatItems)
+  const groups = useMemo(() => {
+    if (groupBy === 'date') return groupByDate(blocks)
+    if (groupBy === 'priority') return groupByPriority(blocks)
+    if (groupBy === 'state') return groupByState(blocks)
+    return null
+  }, [blocks, groupBy])
+
+  const flatItems = useMemo(
+    () => (groups ? groups.flatMap((g) => g.blocks) : sortedBlocks),
+    [groups, sortedBlocks],
+  )
+
+  const {
+    focusedIndex,
+    setFocusedIndex,
+    handleKeyDown: navHandleKeyDown,
+  } = useListKeyboardNavigation({
+    itemCount: flatItems.length,
+    homeEnd: true,
+    pageUpDown: true,
+    onSelect: (idx) => {
+      const block = flatItems[idx]
+      if (block) handleItemClick(block)
+    },
+  })
+
+  // Reset focused index when blocks / sort / group change
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset
+  useEffect(() => {
+    setFocusedIndex(0)
+  }, [blocks, sortBy, groupBy, setFocusedIndex])
+
+  // Scroll focused item into view
+  useEffect(() => {
+    if (!listRef.current) return
+    const items = listRef.current.querySelectorAll('[data-block-list-item]')
+    const el = items[focusedIndex] as HTMLElement | undefined
+    el?.scrollIntoView?.({ block: 'nearest' })
+  }, [focusedIndex])
+
   // ── Loading state (initial load, no blocks yet) ────────────────────
   if (loading && blocks.length === 0) {
     return (
@@ -187,7 +235,7 @@ export function AgendaResults({
   // ── Results list ───────────────────────────────────────────────────
 
   /** Render a single agenda item (shared between flat and grouped modes). */
-  function renderItem(block: BlockRow) {
+  function renderItem(block: BlockRow, currentFlatIndex: number) {
     return (
       <BlockListItem
         key={block.id}
@@ -224,6 +272,7 @@ export function AgendaResults({
         breadcrumbClassName="agenda-results-breadcrumb"
         onClick={() => handleItemClick(block)}
         onKeyDown={(e) => handleItemKeyDown(e, block)}
+        isFocused={focusedIndex === currentFlatIndex}
       />
     )
   }
@@ -236,11 +285,19 @@ export function AgendaResults({
     'No date': 'agenda.noDate',
   }
 
-  // Apply sorting to blocks for consistent ordering
-  const sortedBlocks = sortAgendaBlocksBy(blocks, sortBy)
+  let flatIndex = 0
 
   return (
-    <div className="agenda-results space-y-2">
+    // biome-ignore lint/a11y/noStaticElementInteractions: keyboard nav container
+    <div
+      className="agenda-results space-y-2"
+      ref={listRef}
+      // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard nav container
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (navHandleKeyDown(e)) e.preventDefault()
+      }}
+    >
       {/* Screen-reader result count */}
       <div role="status" className="sr-only">
         {blocks.length === 1
@@ -248,13 +305,8 @@ export function AgendaResults({
           : t('agenda.resultCount', { count: blocks.length })}
       </div>
 
-      {groupBy === 'date' || groupBy === 'priority' || groupBy === 'state' ? (
-        (groupBy === 'date'
-          ? groupByDate(blocks)
-          : groupBy === 'priority'
-            ? groupByPriority(blocks)
-            : groupByState(blocks)
-        ).map((group) => {
+      {groups ? (
+        groups.map((group) => {
           const i18nKey = GROUP_I18N[group.label]
           const displayLabel = i18nKey ? t(i18nKey) : group.label
           return (
@@ -271,14 +323,14 @@ export function AgendaResults({
                 </span>
               </h3>
               <ul className="agenda-results-list space-y-2" aria-label={displayLabel}>
-                {group.blocks.map((block) => renderItem(block))}
+                {group.blocks.map((block) => renderItem(block, flatIndex++))}
               </ul>
             </div>
           )
         })
       ) : (
         <ul className="agenda-results-list space-y-1" aria-label={t('agenda.agendaResults')}>
-          {sortedBlocks.map((block) => renderItem(block))}
+          {sortedBlocks.map((block) => renderItem(block, flatIndex++))}
         </ul>
       )}
 

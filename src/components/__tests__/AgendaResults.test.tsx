@@ -23,6 +23,7 @@ vi.mock('lucide-react', () => ({
   CheckCircle2: (props: Record<string, unknown>) => <svg data-testid="icon-done" {...props} />,
   Loader2: (props: Record<string, unknown>) => <svg data-testid="loader-spinner" {...props} />,
   Link2: (props: Record<string, unknown>) => <svg data-testid="icon-link2" {...props} />,
+  CalendarDays: (props: Record<string, unknown>) => <svg data-testid="calendar-days" {...props} />,
 }))
 
 vi.mock('../StaticBlock', () => ({
@@ -44,6 +45,9 @@ const mockBatchResolve = vi.fn().mockResolvedValue([])
 vi.mock('../../lib/tauri', () => ({
   getProperties: (...args: unknown[]) => mockGetProperties(...args),
   batchResolve: (...args: unknown[]) => mockBatchResolve(...args),
+  getBlock: vi.fn(),
+  setDueDate: vi.fn(),
+  setScheduledDate: vi.fn(),
 }))
 
 vi.mock('@/components/ui/button', () => ({
