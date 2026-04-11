@@ -87,13 +87,13 @@ describe('CheckboxInputRule input rules', () => {
     // biome-ignore lint/suspicious/noExplicitAny: test-only — TipTap extension `this` context mock
     const rules = ext.config.addInputRules?.call({ options: ext.options } as any)
     const todoRule = rules?.[0]
-    const mockState = { tr: { delete: vi.fn() } } as any
+    const mockState = { tr: { delete: vi.fn() } }
     const mockRange = { from: 1, to: 7 }
     todoRule?.handler({
       state: mockState,
       range: mockRange,
       match: '- [ ] '.match(/^- \[ \] $/) as RegExpMatchArray,
-    } as any)
+    } as unknown as Parameters<NonNullable<typeof todoRule>['handler']>[0])
     expect(mockState.tr.delete).toHaveBeenCalledWith(1, 7)
     expect(onCheckbox).toHaveBeenCalledWith('TODO')
   })
@@ -104,13 +104,13 @@ describe('CheckboxInputRule input rules', () => {
     // biome-ignore lint/suspicious/noExplicitAny: test-only — TipTap extension `this` context mock
     const rules = ext.config.addInputRules?.call({ options: ext.options } as any)
     const doneRule = rules?.[1]
-    const mockState = { tr: { delete: vi.fn() } } as any
+    const mockState = { tr: { delete: vi.fn() } }
     const mockRange = { from: 1, to: 7 }
     doneRule?.handler({
       state: mockState,
       range: mockRange,
       match: '- [x] '.match(/^- \[[xX]\] $/) as RegExpMatchArray,
-    } as any)
+    } as unknown as Parameters<NonNullable<typeof doneRule>['handler']>[0])
     expect(mockState.tr.delete).toHaveBeenCalledWith(1, 7)
     expect(onCheckbox).toHaveBeenCalledWith('DONE')
   })

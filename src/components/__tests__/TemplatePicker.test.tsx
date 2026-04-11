@@ -116,7 +116,7 @@ describe('TemplatePicker', () => {
     // The backdrop is the first child div with fixed inset-0
     const backdrop = container.querySelector('.fixed.inset-0')
     expect(backdrop).toBeInTheDocument()
-    await user.click(backdrop!)
+    await user.click(backdrop as Element)
 
     expect(onClose).toHaveBeenCalledTimes(1)
   })

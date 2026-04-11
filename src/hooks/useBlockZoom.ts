@@ -45,7 +45,7 @@ export function useBlockZoom(
     // Navigate up one level: find the zoomed block's parent and zoom to it
     if (!zoomedBlockId) return
     const zoomedBlock = blocks.find((b) => b.id === zoomedBlockId)
-    if (!zoomedBlock || !zoomedBlock.parent_id) {
+    if (!zoomedBlock?.parent_id) {
       setZoomedBlockId(null)
       return
     }

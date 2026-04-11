@@ -32,7 +32,15 @@ vi.mock('@/components/ui/select', () => {
   const React = require('react')
   const Ctx = React.createContext({})
 
-  function Select({ value, onValueChange, children }: any) {
+  function Select({
+    value,
+    onValueChange,
+    children,
+  }: {
+    value?: string
+    onValueChange?: (v: string) => void
+    children?: React.ReactNode
+  }) {
     const triggerPropsRef = React.useRef({})
     return React.createElement(
       Ctx.Provider,
@@ -41,7 +49,7 @@ vi.mock('@/components/ui/select', () => {
     )
   }
 
-  function SelectTrigger({ size, className, ...props }: any) {
+  function SelectTrigger({ size, className, ...props }: Record<string, unknown>) {
     const ctx = React.useContext(Ctx)
     Object.assign(ctx.triggerPropsRef.current, { size, className, ...props })
     return null
@@ -51,14 +59,14 @@ vi.mock('@/components/ui/select', () => {
     return null
   }
 
-  function SelectContent({ children }: any) {
+  function SelectContent({ children }: { children?: React.ReactNode }) {
     const ctx = React.useContext(Ctx)
     const tp = ctx.triggerPropsRef.current
     return React.createElement(
       'select',
       {
         value: ctx.value ?? '',
-        onChange: (e: any) => ctx.onValueChange?.(e.target.value),
+        onChange: (e: React.ChangeEvent<HTMLSelectElement>) => ctx.onValueChange?.(e.target.value),
         'aria-label': tp['aria-label'],
         id: tp.id,
       },
@@ -66,7 +74,7 @@ vi.mock('@/components/ui/select', () => {
     )
   }
 
-  function SelectItem({ value, children }: any) {
+  function SelectItem({ value, children }: { value: string; children?: React.ReactNode }) {
     return React.createElement('option', { value }, children)
   }
 

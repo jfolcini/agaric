@@ -39,8 +39,7 @@ function enableTauri() {
 
 /** Remove __TAURI_INTERNALS__ to simulate browser-only environment. */
 function disableTauri() {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  delete (window as any).__TAURI_INTERNALS__
+  delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
 }
 
 // ── Setup / Teardown ─────────────────────────────────────────────────────

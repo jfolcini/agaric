@@ -41,7 +41,9 @@
       "!**/src-tauri/target",
       "!**/src-tauri/gen",
       "!**/.sqlx",
-      "!src/lib/bindings.ts"
+      "!src/lib/bindings.ts",
+      "!**/coverage",
+      "!**/*.css"
     ]
   },
   "overrides": [

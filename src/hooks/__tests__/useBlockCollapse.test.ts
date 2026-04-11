@@ -169,7 +169,7 @@ describe('useBlockCollapse', () => {
   })
 
   it('restores collapsed IDs from localStorage on init', () => {
-    store['collapsed_ids'] = JSON.stringify(['B'])
+    store.collapsed_ids = JSON.stringify(['B'])
 
     const { result } = renderHook(() => useBlockCollapse(flatBlocks))
 

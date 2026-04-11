@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { parse, serialize } from '../markdown-serializer'
-import type { InlineNode, ParagraphNode, TableNode, TextNode } from '../types'
+import type {
+  BlockquoteNode,
+  DocNode,
+  InlineNode,
+  ParagraphNode,
+  TableNode,
+  TextNode,
+} from '../types'
 import {
   blockLink,
   blockquote,
@@ -727,7 +734,7 @@ describe('parse', () => {
       const result = parse(input)
       // An empty body after [!INFO] parses into a callout with no content
       expect(result.content?.[0]?.type).toBe('blockquote')
-      expect((result.content?.[0] as any)?.attrs?.calloutType).toBe('info')
+      expect((result.content?.[0] as BlockquoteNode | undefined)?.attrs?.calloutType).toBe('info')
       expect(serialize(result)).toBe('> [!INFO]')
     })
 
@@ -1461,7 +1468,9 @@ describe('block_ref round-trip', () => {
         },
       ],
     }
-    expect(serialize(doc as any)).toBe('see ((01HZ00000000000000000BLOCK)) for details')
+    expect(serialize(doc as unknown as DocNode)).toBe(
+      'see ((01HZ00000000000000000BLOCK)) for details',
+    )
   })
 
   it('parses ((ULID)) to block_ref node', () => {
@@ -1485,15 +1494,15 @@ describe('block_ref round-trip', () => {
 
   it('does not parse ((lowercase)) as block_ref', () => {
     const result = parse('not ((01hz00000000000000000block)) a ref')
-    const para = result.content?.[0]
+    const para = result.content?.[0] as ParagraphNode | undefined
     // Should be plain text, not a block_ref node
-    expect(para?.content?.some((c: any) => c.type === 'block_ref')).toBeFalsy()
+    expect(para?.content?.some((c) => c.type === 'block_ref')).toBeFalsy()
   })
 
   it('does not parse (( with non-ULID content', () => {
     const result = parse('just ((some text)) here')
-    const para = result.content?.[0]
-    expect(para?.content?.some((c: any) => c.type === 'block_ref')).toBeFalsy()
+    const para = result.content?.[0] as ParagraphNode | undefined
+    expect(para?.content?.some((c) => c.type === 'block_ref')).toBeFalsy()
   })
 })
 

@@ -10,6 +10,7 @@
  *  - Accessibility compliance
  */
 
+import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -42,7 +43,15 @@ vi.mock('@/components/ui/select', () => {
   const React = require('react')
   const Ctx = React.createContext({})
 
-  function Select({ value, onValueChange, children }: any) {
+  function Select({
+    value,
+    onValueChange,
+    children,
+  }: {
+    value?: string
+    onValueChange?: (v: string) => void
+    children?: React.ReactNode
+  }) {
     const triggerPropsRef = React.useRef({})
     return React.createElement(
       Ctx.Provider,
@@ -51,7 +60,7 @@ vi.mock('@/components/ui/select', () => {
     )
   }
 
-  function SelectTrigger({ size, className, ...props }: any) {
+  function SelectTrigger({ size, className, ...props }: Record<string, unknown>) {
     const ctx = React.useContext(Ctx)
     Object.assign(ctx.triggerPropsRef.current, { size, className, ...props })
     return null
@@ -61,14 +70,14 @@ vi.mock('@/components/ui/select', () => {
     return null
   }
 
-  function SelectContent({ children }: any) {
+  function SelectContent({ children }: { children?: React.ReactNode }) {
     const ctx = React.useContext(Ctx)
     const tp = ctx.triggerPropsRef.current
     return React.createElement(
       'select',
       {
         value: ctx.value ?? '',
-        onChange: (e: any) => ctx.onValueChange?.(e.target.value),
+        onChange: (e: React.ChangeEvent<HTMLSelectElement>) => ctx.onValueChange?.(e.target.value),
         'aria-label': tp['aria-label'],
         id: tp.id,
       },
@@ -76,7 +85,7 @@ vi.mock('@/components/ui/select', () => {
     )
   }
 
-  function SelectItem({ value, children }: any) {
+  function SelectItem({ value, children }: { value: string; children?: React.ReactNode }) {
     return React.createElement('option', { value }, children)
   }
 
@@ -114,17 +123,18 @@ beforeEach(() => {
 
 /** Standard mock: returns given properties and definitions for relevant commands. */
 function setupMock(props: PropertyRow[] = [], defs: PropertyDefinition[] = []) {
-  mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+  mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+    const a = args as Record<string, unknown> | undefined
     if (cmd === 'get_properties') return props
     if (cmd === 'list_property_defs') return defs
     if (cmd === 'set_property') return undefined
     if (cmd === 'delete_property') return undefined
     if (cmd === 'create_property_def') {
-      return makeDef(args?.key ?? 'new', args?.valueType ?? 'text')
+      return makeDef((a?.key as string) ?? 'new', (a?.valueType as string) ?? 'text')
     }
     if (cmd === 'update_property_def_options') {
-      const d = defs.find((def) => def.key === args?.key)
-      return { ...d, key: args?.key, options: args?.options }
+      const d = defs.find((def) => def.key === a?.key)
+      return { ...d, key: a?.key as string, options: a?.options as string }
     }
     // PageHeader also calls these in integration
     if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
@@ -518,11 +528,12 @@ describe('PagePropertyTable add property flow', () => {
     const props: PropertyRow[] = []
     const defs: PropertyDefinition[] = []
 
-    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      const a = args as Record<string, unknown> | undefined
       if (cmd === 'get_properties') return [...props]
       if (cmd === 'list_property_defs') return [...defs]
       if (cmd === 'create_property_def') {
-        const newDef = makeDef(args?.key, args?.valueType)
+        const newDef = makeDef(a?.key as string, (a?.valueType as string) ?? 'text')
         defs.push(newDef)
         return newDef
       }
@@ -786,7 +797,7 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
       if (cmd === 'get_properties') return []
       if (cmd === 'list_property_defs') return []
       if (cmd === 'create_property_def') {
-        const err: any = new Error()
+        const err: Record<string, unknown> = new Error() as unknown as Record<string, unknown>
         err.message = undefined
         throw err
       }
@@ -818,11 +829,12 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
 
   it('set_property rejection during handleCreateDef shows error toast', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      const a = args as Record<string, unknown> | undefined
       if (cmd === 'get_properties') return []
       if (cmd === 'list_property_defs') return []
       if (cmd === 'create_property_def')
-        return makeDef(args?.key ?? 'myprop', args?.valueType ?? 'text')
+        return makeDef((a?.key as string) ?? 'myprop', (a?.valueType as string) ?? 'text')
       if (cmd === 'set_property') throw new Error('set failed after create')
       return null
     })

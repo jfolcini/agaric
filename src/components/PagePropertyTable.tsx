@@ -121,8 +121,9 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
           const updated = await getProperties(pageId)
           setProperties(updated)
         }
-      } catch (err: any) {
-        toast.error(err.message ?? t('property.createDefFailed'))
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : undefined
+        toast.error(message ?? t('property.createDefFailed'))
       }
     },
     [pageId, t],
