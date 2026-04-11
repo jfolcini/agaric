@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 342 — F-38 Phase 3: list selection shortcuts (2026-04-11)
+
+**F-38 Phase 3 complete. 5 files changed, ~+50 lines. 10 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| F-38 P3 | Trash/History view shortcuts (Space/Ctrl+A/Escape) migrated to DEFAULT_SHORTCUTS. Renamed hist* → list* shared category. | `keyboard-config.ts`, `i18n.ts`, `TrashView.tsx`, `HistoryView.tsx` + tests |
+
+### Stats
+- 5 files changed (~+50 lines)
+- 10 new tests
+- 6229 frontend tests pass, all prek hooks pass
+- 60 shortcuts now configurable (was 57)
+
+---
+
 ## Session 341 — F-38 Phase 4: tab bar + journal shortcuts (2026-04-11)
 
 **F-38 Phase 4 complete. 4 files changed, ~+40 lines. 8 new tests.**

@@ -265,7 +265,7 @@ Type `/` in the editor to access the command palette. Commands are grouped by ca
 | | Enter | Revert selected |
 | | j/k | Vim-style navigation |
 
-**Keyboard shortcut customization** (UX-86): All 57 shortcuts are configurable via Settings → Keyboard tab. `keyboard-config.ts` stores custom overrides in localStorage, merges with defaults. `KeyboardSettingsTab` component provides inline editing (pencil → input → save/cancel), conflict detection showing which shortcuts conflict, per-shortcut reset, and "Reset All to Defaults" with ConfirmDialog. `KeyboardShortcuts.tsx` help panel dynamically reads from `getCurrentShortcuts()` via `useMemo([open])` so it shows current (possibly customized) bindings when opened. 19 config + 13 settings tab + 1 dynamic panel tests.
+**Keyboard shortcut customization** (UX-86): All 60 shortcuts are configurable via Settings → Keyboard tab. `keyboard-config.ts` stores custom overrides in localStorage, merges with defaults. `KeyboardSettingsTab` component provides inline editing (pencil → input → save/cancel), conflict detection showing which shortcuts conflict, per-shortcut reset, and "Reset All to Defaults" with ConfirmDialog. `KeyboardShortcuts.tsx` help panel dynamically reads from `getCurrentShortcuts()` via `useMemo([open])` so it shows current (possibly customized) bindings when opened. 19 config + 13 settings tab + 1 dynamic panel tests.
 
 ---
 
