@@ -38,6 +38,16 @@ pub const EVENT_SYNC_PROGRESS: &str = "sync:progress";
 pub const EVENT_SYNC_COMPLETE: &str = "sync:complete";
 pub const EVENT_SYNC_ERROR: &str = "sync:error";
 
+/// Event emitted when block properties change (for panel invalidation).
+pub const EVENT_PROPERTY_CHANGED: &str = "block:properties-changed";
+
+/// Payload for property change events.
+#[derive(Debug, Clone, Serialize)]
+pub struct PropertyChangedEvent {
+    pub block_id: String,
+    pub changed_keys: Vec<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Sink trait
 // ---------------------------------------------------------------------------
@@ -342,5 +352,17 @@ mod tests {
             }
             _ => panic!("expected Progress event"),
         }
+    }
+
+    #[test]
+    fn property_changed_event_serializes_correctly() {
+        let event = PropertyChangedEvent {
+            block_id: "BLK01".to_string(),
+            changed_keys: vec!["todo_state".to_string(), "completed_at".to_string()],
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("BLK01"));
+        assert!(json.contains("todo_state"));
+        assert!(json.contains("completed_at"));
     }
 }

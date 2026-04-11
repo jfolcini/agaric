@@ -557,6 +557,7 @@ pub async fn list_property_keys(read_pool: State<'_, ReadPool>) -> Result<Vec<St
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
 pub async fn set_property(
+    app: tauri::AppHandle,
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
@@ -567,7 +568,9 @@ pub async fn set_property(
     value_date: Option<String>,
     value_ref: Option<String>,
 ) -> Result<BlockRow, AppError> {
-    set_property_inner(
+    let block_id_clone = block_id.clone();
+    let key_clone = key.clone();
+    let result = set_property_inner(
         &pool.0,
         device_id.as_str(),
         &materializer,
@@ -579,7 +582,17 @@ pub async fn set_property(
         value_ref,
     )
     .await
-    .map_err(sanitize_internal_error)
+    .map_err(sanitize_internal_error)?;
+    use crate::sync_events::{PropertyChangedEvent, EVENT_PROPERTY_CHANGED};
+    use tauri::Emitter;
+    let _ = app.emit(
+        EVENT_PROPERTY_CHANGED,
+        PropertyChangedEvent {
+            block_id: block_id_clone,
+            changed_keys: vec![key_clone],
+        },
+    );
+    Ok(result)
 }
 
 /// Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`].
@@ -587,15 +600,27 @@ pub async fn set_property(
 #[tauri::command]
 #[specta::specta]
 pub async fn set_todo_state(
+    app: tauri::AppHandle,
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
     block_id: String,
     state: Option<String>,
 ) -> Result<BlockRow, AppError> {
-    set_todo_state_inner(&pool.0, device_id.as_str(), &materializer, block_id, state)
+    let block_id_clone = block_id.clone();
+    let result = set_todo_state_inner(&pool.0, device_id.as_str(), &materializer, block_id, state)
         .await
-        .map_err(sanitize_internal_error)
+        .map_err(sanitize_internal_error)?;
+    use crate::sync_events::{PropertyChangedEvent, EVENT_PROPERTY_CHANGED};
+    use tauri::Emitter;
+    let _ = app.emit(
+        EVENT_PROPERTY_CHANGED,
+        PropertyChangedEvent {
+            block_id: block_id_clone,
+            changed_keys: vec!["todo_state".to_string()],
+        },
+    );
+    Ok(result)
 }
 
 /// Tauri command: set priority on a block. Delegates to [`set_priority_inner`].
@@ -619,15 +644,27 @@ pub async fn set_priority(
 #[tauri::command]
 #[specta::specta]
 pub async fn set_due_date(
+    app: tauri::AppHandle,
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
     block_id: String,
     date: Option<String>,
 ) -> Result<BlockRow, AppError> {
-    set_due_date_inner(&pool.0, device_id.as_str(), &materializer, block_id, date)
+    let block_id_clone = block_id.clone();
+    let result = set_due_date_inner(&pool.0, device_id.as_str(), &materializer, block_id, date)
         .await
-        .map_err(sanitize_internal_error)
+        .map_err(sanitize_internal_error)?;
+    use crate::sync_events::{PropertyChangedEvent, EVENT_PROPERTY_CHANGED};
+    use tauri::Emitter;
+    let _ = app.emit(
+        EVENT_PROPERTY_CHANGED,
+        PropertyChangedEvent {
+            block_id: block_id_clone,
+            changed_keys: vec!["due_date".to_string()],
+        },
+    );
+    Ok(result)
 }
 
 /// Tauri command: set scheduled date on a block. Delegates to [`set_scheduled_date_inner`].
@@ -635,15 +672,28 @@ pub async fn set_due_date(
 #[tauri::command]
 #[specta::specta]
 pub async fn set_scheduled_date(
+    app: tauri::AppHandle,
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
     block_id: String,
     date: Option<String>,
 ) -> Result<BlockRow, AppError> {
-    set_scheduled_date_inner(&pool.0, device_id.as_str(), &materializer, block_id, date)
-        .await
-        .map_err(sanitize_internal_error)
+    let block_id_clone = block_id.clone();
+    let result =
+        set_scheduled_date_inner(&pool.0, device_id.as_str(), &materializer, block_id, date)
+            .await
+            .map_err(sanitize_internal_error)?;
+    use crate::sync_events::{PropertyChangedEvent, EVENT_PROPERTY_CHANGED};
+    use tauri::Emitter;
+    let _ = app.emit(
+        EVENT_PROPERTY_CHANGED,
+        PropertyChangedEvent {
+            block_id: block_id_clone,
+            changed_keys: vec!["scheduled_date".to_string()],
+        },
+    );
+    Ok(result)
 }
 
 /// Tauri command: delete a property from a block. Delegates to [`delete_property_inner`].
@@ -651,15 +701,28 @@ pub async fn set_scheduled_date(
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_property(
+    app: tauri::AppHandle,
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
     block_id: String,
     key: String,
 ) -> Result<(), AppError> {
+    let block_id_clone = block_id.clone();
+    let key_clone = key.clone();
     delete_property_inner(&pool.0, device_id.as_str(), &materializer, block_id, key)
         .await
-        .map_err(sanitize_internal_error)
+        .map_err(sanitize_internal_error)?;
+    use crate::sync_events::{PropertyChangedEvent, EVENT_PROPERTY_CHANGED};
+    use tauri::Emitter;
+    let _ = app.emit(
+        EVENT_PROPERTY_CHANGED,
+        PropertyChangedEvent {
+            block_id: block_id_clone,
+            changed_keys: vec![key_clone],
+        },
+    );
+    Ok(())
 }
 
 /// Tauri command: get all properties for a block. Delegates to [`get_properties_inner`].
