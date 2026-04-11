@@ -18,7 +18,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import { useNavigationStore } from '../../stores/navigation'
+import { selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { TemplatesView } from '../TemplatesView'
 
 vi.mock('sonner', () => ({
@@ -68,7 +68,12 @@ function makeChild(id: string, content: string, parentId: string) {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  useNavigationStore.setState({ currentView: 'templates', pageStack: [], selectedBlockId: null })
+  useNavigationStore.setState({
+    currentView: 'templates',
+    tabs: [{ id: '0', pageStack: [], label: '' }],
+    activeTabIndex: 0,
+    selectedBlockId: null,
+  })
 })
 
 describe('TemplatesView', () => {
@@ -197,7 +202,7 @@ describe('TemplatesView', () => {
 
     const state = useNavigationStore.getState()
     expect(state.currentView).toBe('page-editor')
-    expect(state.pageStack).toEqual([{ pageId: 'T1', title: 'Meeting Notes' }])
+    expect(selectPageStack(state)).toEqual([{ pageId: 'T1', title: 'Meeting Notes' }])
   })
 
   it('removes template status on X click', async () => {

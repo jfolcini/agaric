@@ -42,7 +42,8 @@ beforeEach(() => {
   })
   useNavigationStore.setState({
     currentView: 'pages',
-    pageStack: [],
+    tabs: [{ id: '0', pageStack: [], label: '' }],
+    activeTabIndex: 0,
     selectedBlockId: null,
   })
   mockedInvoke.mockResolvedValue(emptyPage)

@@ -1133,4 +1133,119 @@ describe('HistoryView', () => {
       })
     })
   })
+
+  // =========================================================================
+  // Home/End and PageUp/PageDown keyboard navigation (UX-138)
+  // =========================================================================
+
+  describe('Home/End and PageUp/PageDown navigation', () => {
+    it('Home key moves focus to first entry', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [
+          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z'),
+          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, '2025-01-15T11:00:00Z'),
+          makeHistoryEntry(3, 'edit_block', { to_text: 'item 3' }, '2025-01-15T10:00:00Z'),
+        ],
+        next_cursor: null,
+        has_more: false,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      // Navigate down to third item
+      await user.keyboard('{ArrowDown}')
+      await user.keyboard('{ArrowDown}')
+      const items = screen.getAllByTestId(/^history-item-/)
+      expect(items[2]).toHaveClass('ring-2')
+
+      // Home should go back to first item
+      await user.keyboard('{Home}')
+      expect(items[0]).toHaveClass('ring-2')
+    })
+
+    it('End key moves focus to last entry', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [
+          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z'),
+          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, '2025-01-15T11:00:00Z'),
+          makeHistoryEntry(3, 'edit_block', { to_text: 'item 3' }, '2025-01-15T10:00:00Z'),
+        ],
+        next_cursor: null,
+        has_more: false,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      // End should go to last item
+      await user.keyboard('{End}')
+      const items = screen.getAllByTestId(/^history-item-/)
+      expect(items[2]).toHaveClass('ring-2')
+    })
+
+    it('PageDown jumps by 10 entries', async () => {
+      const user = userEvent.setup()
+      const entries = Array.from({ length: 15 }, (_, i) =>
+        makeHistoryEntry(
+          i + 1,
+          'edit_block',
+          { to_text: `item ${i + 1}` },
+          `2025-01-${String(15 - i).padStart(2, '0')}T12:00:00Z`,
+        ),
+      )
+      const page = {
+        items: entries,
+        next_cursor: null,
+        has_more: false,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      // PageDown should jump by 10
+      await user.keyboard('{PageDown}')
+      const items = screen.getAllByTestId(/^history-item-/)
+      expect(items[10]).toHaveClass('ring-2')
+    })
+
+    it('PageUp jumps back by 10 entries', async () => {
+      const user = userEvent.setup()
+      const entries = Array.from({ length: 15 }, (_, i) =>
+        makeHistoryEntry(
+          i + 1,
+          'edit_block',
+          { to_text: `item ${i + 1}` },
+          `2025-01-${String(15 - i).padStart(2, '0')}T12:00:00Z`,
+        ),
+      )
+      const page = {
+        items: entries,
+        next_cursor: null,
+        has_more: false,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      // Navigate to item 12 via End then ArrowUp a few times
+      await user.keyboard('{End}')
+      const items = screen.getAllByTestId(/^history-item-/)
+      expect(items[14]).toHaveClass('ring-2')
+
+      // PageUp should jump back by 10
+      await user.keyboard('{PageUp}')
+      expect(items[4]).toHaveClass('ring-2')
+    })
+  })
 })

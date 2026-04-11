@@ -22,7 +22,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { addRecentPage } from '../../lib/recent-pages'
-import { useNavigationStore } from '../../stores/navigation'
+import { selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { SearchPanel } from '../SearchPanel'
 
 vi.mock('sonner', () => ({
@@ -52,7 +52,8 @@ beforeEach(() => {
   localStorage.clear()
   useNavigationStore.setState({
     currentView: 'search',
-    pageStack: [],
+    tabs: [{ id: '0', pageStack: [], label: '' }],
+    activeTabIndex: 0,
     selectedBlockId: null,
   })
 })
@@ -403,8 +404,8 @@ describe('SearchPanel', () => {
 
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
-    expect(navState.pageStack[0]?.pageId).toBe('PARENT1')
-    expect(navState.pageStack[0]?.title).toBe('Parent Page Title')
+    expect(selectPageStack(navState)[0]?.pageId).toBe('PARENT1')
+    expect(selectPageStack(navState)[0]?.title).toBe('Parent Page Title')
     expect(navState.selectedBlockId).toBe('CHILD1')
   })
 
@@ -439,8 +440,8 @@ describe('SearchPanel', () => {
     await waitFor(() => {
       const navState = useNavigationStore.getState()
       expect(navState.currentView).toBe('page-editor')
-      expect(navState.pageStack[0]?.pageId).toBe('PAGE1')
-      expect(navState.pageStack[0]?.title).toBe('My Page')
+      expect(selectPageStack(navState)[0]?.pageId).toBe('PAGE1')
+      expect(selectPageStack(navState)[0]?.title).toBe('My Page')
       expect(navState.selectedBlockId).toBeNull()
     })
   })
@@ -476,7 +477,7 @@ describe('SearchPanel', () => {
     // Navigation should not have changed
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('search')
-    expect(navState.pageStack).toHaveLength(0)
+    expect(selectPageStack(navState)).toHaveLength(0)
   })
 
   it('shows toast when parent lookup fails on result click', async () => {
@@ -828,8 +829,8 @@ describe('SearchPanel', () => {
 
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
-    expect(navState.pageStack[0]?.pageId).toBe('P1')
-    expect(navState.pageStack[0]?.title).toBe('Page One')
+    expect(selectPageStack(navState)[0]?.pageId).toBe('P1')
+    expect(selectPageStack(navState)[0]?.title).toBe('Page One')
   })
 
   it('updates recent pages in localStorage when clicking a search result (page type)', async () => {
@@ -1020,9 +1021,9 @@ describe('SearchPanel', () => {
 
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
-    expect(navState.pageStack).toHaveLength(1)
-    expect(navState.pageStack[0]?.pageId).toBe('PARENT1')
-    expect(navState.pageStack[0]?.title).toBe('Breadcrumb Page')
+    expect(selectPageStack(navState)).toHaveLength(1)
+    expect(selectPageStack(navState)[0]?.pageId).toBe('PARENT1')
+    expect(selectPageStack(navState)[0]?.title).toBe('Breadcrumb Page')
   })
 
   // =========================================================================
@@ -1123,7 +1124,7 @@ describe('SearchPanel', () => {
       await waitFor(() => {
         const navState = useNavigationStore.getState()
         expect(navState.currentView).toBe('page-editor')
-        expect(navState.pageStack[0]?.pageId).toBe('PARENT1')
+        expect(selectPageStack(navState)[0]?.pageId).toBe('PARENT1')
       })
     })
 
@@ -1432,6 +1433,88 @@ describe('SearchPanel', () => {
 
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // =========================================================================
+  // Home/End and PageUp/PageDown keyboard navigation (UX-138)
+  // =========================================================================
+
+  describe('Home/End and PageUp/PageDown navigation', () => {
+    it('Home key moves focus to first result, End to last', async () => {
+      const user = userEvent.setup()
+
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makeSearchResult({ id: 'B1', content: 'first' }),
+          makeSearchResult({ id: 'B2', content: 'second' }),
+          makeSearchResult({ id: 'B3', content: 'third' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<SearchPanel />)
+
+      const input = screen.getByPlaceholderText('Search blocks...')
+      typeAndSubmit(input, 'test')
+
+      await waitFor(() => {
+        expect(screen.getByRole('listbox')).toBeInTheDocument()
+      })
+
+      const listbox = screen.getByRole('listbox')
+      listbox.focus()
+
+      const options = screen.getAllByRole('option')
+
+      // Move to second item first
+      await user.keyboard('{ArrowDown}')
+      expect(options[1]).toHaveAttribute('aria-selected', 'true')
+
+      // End key should jump to last result
+      await user.keyboard('{End}')
+      expect(options[2]).toHaveAttribute('aria-selected', 'true')
+
+      // Home key should jump to first result
+      await user.keyboard('{Home}')
+      expect(options[0]).toHaveAttribute('aria-selected', 'true')
+    })
+
+    it('PageDown/PageUp navigate through results', async () => {
+      const user = userEvent.setup()
+
+      const items = Array.from({ length: 15 }, (_, i) =>
+        makeSearchResult({ id: `B${i}`, content: `result ${i}` }),
+      )
+
+      mockedInvoke.mockResolvedValueOnce({
+        items,
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<SearchPanel />)
+
+      const input = screen.getByPlaceholderText('Search blocks...')
+      typeAndSubmit(input, 'test')
+
+      await waitFor(() => {
+        expect(screen.getByRole('listbox')).toBeInTheDocument()
+      })
+
+      const listbox = screen.getByRole('listbox')
+      listbox.focus()
+
+      const options = screen.getAllByRole('option')
+
+      // PageDown should jump forward by 10
+      await user.keyboard('{PageDown}')
+      expect(options[10]).toHaveAttribute('aria-selected', 'true')
+
+      // PageUp should jump back by 10
+      await user.keyboard('{PageUp}')
+      expect(options[0]).toHaveAttribute('aria-selected', 'true')
     })
   })
 })

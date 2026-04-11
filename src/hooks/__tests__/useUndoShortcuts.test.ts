@@ -56,10 +56,15 @@ vi.mock('@/stores/navigation', () => ({
   useNavigationStore: {
     getState: vi.fn(() => ({
       currentView: 'page-editor',
-      pageStack: [{ pageId: 'PAGE_1', title: 'Test Page' }],
+      tabs: [
+        { id: '0', pageStack: [{ pageId: 'PAGE_1', title: 'Test Page' }], label: 'Test Page' },
+      ],
+      activeTabIndex: 0,
       replacePage: mockReplacePage,
     })),
   },
+  selectPageStack: (state: { tabs: { pageStack: unknown[] }[]; activeTabIndex: number }) =>
+    state.tabs[state.activeTabIndex]?.pageStack ?? [],
 }))
 
 vi.mock('@/stores/undo', () => ({
@@ -133,7 +138,8 @@ beforeEach(async () => {
   // Reset default mock return values
   mockedNavGetState.mockReturnValue({
     currentView: 'page-editor',
-    pageStack: [{ pageId: 'PAGE_1', title: 'Test Page' }],
+    tabs: [{ id: '0', pageStack: [{ pageId: 'PAGE_1', title: 'Test Page' }], label: 'Test Page' }],
+    activeTabIndex: 0,
     replacePage: mockReplacePage,
   } as unknown as ReturnType<typeof useNavigationStore.getState>)
 
@@ -178,7 +184,8 @@ describe('useUndoShortcuts', () => {
   it('does NOT fire when currentView is not page-editor', () => {
     mockedNavGetState.mockReturnValue({
       currentView: 'journal',
-      pageStack: [],
+      tabs: [{ id: '0', pageStack: [], label: '' }],
+      activeTabIndex: 0,
       replacePage: mockReplacePage,
     } as unknown as ReturnType<typeof useNavigationStore.getState>)
 
@@ -196,7 +203,8 @@ describe('useUndoShortcuts', () => {
   it('does NOT fire when pageStack is empty', () => {
     mockedNavGetState.mockReturnValue({
       currentView: 'page-editor',
-      pageStack: [],
+      tabs: [{ id: '0', pageStack: [], label: '' }],
+      activeTabIndex: 0,
       replacePage: mockReplacePage,
     } as unknown as ReturnType<typeof useNavigationStore.getState>)
 
@@ -323,11 +331,18 @@ describe('useUndoShortcuts', () => {
   it('uses the last page in the stack for pageId', () => {
     mockedNavGetState.mockReturnValue({
       currentView: 'page-editor',
-      pageStack: [
-        { pageId: 'PAGE_1', title: 'First' },
-        { pageId: 'PAGE_2', title: 'Second' },
-        { pageId: 'PAGE_3', title: 'Third' },
+      tabs: [
+        {
+          id: '0',
+          pageStack: [
+            { pageId: 'PAGE_1', title: 'First' },
+            { pageId: 'PAGE_2', title: 'Second' },
+            { pageId: 'PAGE_3', title: 'Third' },
+          ],
+          label: 'Third',
+        },
       ],
+      activeTabIndex: 0,
       replacePage: mockReplacePage,
     } as unknown as ReturnType<typeof useNavigationStore.getState>)
 

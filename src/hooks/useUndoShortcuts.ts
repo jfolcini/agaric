@@ -9,7 +9,7 @@
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { useNavigationStore } from '@/stores/navigation'
+import { selectPageStack, useNavigationStore } from '@/stores/navigation'
 import { pageBlockRegistry } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
 import { getBlock } from '../lib/tauri'
@@ -39,8 +39,9 @@ export function useUndoShortcuts(): void {
         return
       }
 
-      const { currentView, pageStack } = useNavigationStore.getState()
-      if (currentView !== 'page-editor' || pageStack.length === 0) return
+      const state = useNavigationStore.getState()
+      const pageStack = selectPageStack(state)
+      if (state.currentView !== 'page-editor' || pageStack.length === 0) return
 
       const pageId = pageStack[pageStack.length - 1]?.pageId as string
 

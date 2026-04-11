@@ -192,6 +192,8 @@ export function SearchPanel(): React.ReactElement {
 
   const { focusedIndex, handleKeyDown: handleListKeyDown } = useListKeyboardNavigation({
     itemCount: results.length,
+    homeEnd: true,
+    pageUpDown: true,
     onSelect: (idx) => {
       const block = results[idx]
       if (block) handleResultClick(block)

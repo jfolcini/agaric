@@ -71,7 +71,7 @@ import { formatRelativeTime } from './lib/format-relative-time'
 import { logger } from './lib/logger'
 import { createBlock, flushDraft, getConflicts, listBlocks, listDrafts } from './lib/tauri'
 import { useJournalStore } from './stores/journal'
-import { useNavigationStore, type View } from './stores/navigation'
+import { selectPageStack, useNavigationStore, type View } from './stores/navigation'
 import { useResolveStore } from './stores/resolve'
 import { useSyncStore } from './stores/sync'
 
@@ -109,7 +109,8 @@ function CollapseButton() {
 /** Resolve the header label from the current navigation state. */
 function useHeaderLabel(): string {
   const { t } = useTranslation()
-  const { currentView, pageStack } = useNavigationStore()
+  const currentView = useNavigationStore((s) => s.currentView)
+  const pageStack = useNavigationStore(selectPageStack)
   // page-editor has its own editable title — don't duplicate it in the header
   if (currentView === 'page-editor' && pageStack.length > 0) {
     return ''
@@ -153,7 +154,8 @@ function useTrashCount(): number {
 
 function App() {
   const { t } = useTranslation()
-  const { currentView, pageStack, setView, navigateToPage, goBack } = useNavigationStore()
+  const { currentView, setView, navigateToPage, goBack } = useNavigationStore()
+  const pageStack = useNavigationStore(selectPageStack)
   const headerLabel = useHeaderLabel()
   const conflictCount = useConflictCount()
   const trashCount = useTrashCount()

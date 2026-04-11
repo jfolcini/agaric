@@ -39,7 +39,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   useNavigationStore.setState({
     currentView: 'journal',
-    pageStack: [],
+    tabs: [{ id: '0', pageStack: [], label: '' }],
+    activeTabIndex: 0,
     selectedBlockId: null,
   })
 })
@@ -253,5 +254,59 @@ describe('QueryResultList', () => {
     // ArrowUp from first item wraps to last
     await user.keyboard('{ArrowUp}')
     expect(options[2]).toHaveAttribute('aria-selected', 'true')
+  })
+
+  // =========================================================================
+  // Home/End and PageUp/PageDown keyboard navigation (UX-138)
+  // =========================================================================
+
+  it('Home key moves focus to first result, End to last', async () => {
+    const results = [
+      makeBlock({ id: 'B1', content: 'First' }),
+      makeBlock({ id: 'B2', content: 'Second' }),
+      makeBlock({ id: 'B3', content: 'Third' }),
+    ]
+    const user = userEvent.setup()
+
+    render(<QueryResultList results={results} pageTitles={new Map()} />)
+
+    const listbox = screen.getByRole('listbox')
+    await user.click(listbox)
+
+    const options = screen.getAllByRole('option')
+
+    // Move to second item
+    await user.keyboard('{ArrowDown}')
+    expect(options[1]).toHaveAttribute('aria-selected', 'true')
+
+    // End key should jump to last item
+    await user.keyboard('{End}')
+    expect(options[2]).toHaveAttribute('aria-selected', 'true')
+
+    // Home key should jump to first item
+    await user.keyboard('{Home}')
+    expect(options[0]).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('PageDown/PageUp navigate through results', async () => {
+    const results = Array.from({ length: 15 }, (_, i) =>
+      makeBlock({ id: `B${i}`, content: `Item ${i}` }),
+    )
+    const user = userEvent.setup()
+
+    render(<QueryResultList results={results} pageTitles={new Map()} />)
+
+    const listbox = screen.getByRole('listbox')
+    await user.click(listbox)
+
+    const options = screen.getAllByRole('option')
+
+    // PageDown should jump forward by 10
+    await user.keyboard('{PageDown}')
+    expect(options[10]).toHaveAttribute('aria-selected', 'true')
+
+    // PageUp should jump back by 10
+    await user.keyboard('{PageUp}')
+    expect(options[0]).toHaveAttribute('aria-selected', 'true')
   })
 })

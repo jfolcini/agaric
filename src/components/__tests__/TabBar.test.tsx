@@ -2,7 +2,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
-import { resetTabIdCounter, useNavigationStore } from '../../stores/navigation'
+import { resetTabIdCounter, selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { TabBar } from '../TabBar'
 
 /** Helper to reset the store to a clean initial state. */
@@ -12,7 +12,6 @@ function resetStore() {
     currentView: 'page-editor',
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
-    pageStack: [],
     selectedBlockId: null,
   })
 }
@@ -39,7 +38,6 @@ describe('TabBar', () => {
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
         ],
         activeTabIndex: 0,
-        pageStack: [{ pageId: 'P1', title: 'Page 1' }],
       })
 
       render(<TabBar />)
@@ -59,7 +57,6 @@ describe('TabBar', () => {
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Project' }], label: 'Project' },
         ],
         activeTabIndex: 0,
-        pageStack: [{ pageId: 'P1', title: 'My Notes' }],
       })
 
       render(<TabBar />)
@@ -76,7 +73,6 @@ describe('TabBar', () => {
           { id: '1', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
         ],
         activeTabIndex: 1,
-        pageStack: [{ pageId: 'P1', title: 'Page 1' }],
       })
 
       render(<TabBar />)
@@ -92,7 +88,6 @@ describe('TabBar', () => {
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
         ],
         activeTabIndex: 1,
-        pageStack: [{ pageId: 'P2', title: 'Page 2' }],
       })
 
       render(<TabBar />)
@@ -115,7 +110,6 @@ describe('TabBar', () => {
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
         ],
         activeTabIndex: 1,
-        pageStack: [{ pageId: 'P2', title: 'Page 2' }],
       })
 
       const user = userEvent.setup()
@@ -125,7 +119,7 @@ describe('TabBar', () => {
 
       const state = useNavigationStore.getState()
       expect(state.activeTabIndex).toBe(0)
-      expect(state.pageStack).toEqual([{ pageId: 'P1', title: 'Page 1' }])
+      expect(selectPageStack(state)).toEqual([{ pageId: 'P1', title: 'Page 1' }])
     })
 
     it('clicking close icon removes the tab', async () => {
@@ -136,7 +130,6 @@ describe('TabBar', () => {
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
         ],
         activeTabIndex: 0,
-        pageStack: [{ pageId: 'P1', title: 'Page 1' }],
       })
 
       const user = userEvent.setup()
@@ -159,7 +152,6 @@ describe('TabBar', () => {
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
         ],
         activeTabIndex: 1,
-        pageStack: [{ pageId: 'P2', title: 'Page 2' }],
       })
 
       const user = userEvent.setup()
@@ -183,7 +175,6 @@ describe('TabBar', () => {
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
         ],
         activeTabIndex: 1,
-        pageStack: [{ pageId: 'P2', title: 'Page 2' }],
       })
 
       const user = userEvent.setup()
@@ -214,7 +205,6 @@ describe('TabBar', () => {
         currentView: 'page-editor',
         tabs,
         activeTabIndex,
-        pageStack: tabs[activeTabIndex]?.pageStack ?? [],
       })
     }
 
@@ -291,7 +281,6 @@ describe('TabBar', () => {
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
         ],
         activeTabIndex: 0,
-        pageStack: [{ pageId: 'P1', title: 'Page 1' }],
       })
 
       const { container } = render(<TabBar />)
@@ -308,7 +297,6 @@ describe('TabBar', () => {
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
         ],
         activeTabIndex: 0,
-        pageStack: [{ pageId: 'P1', title: 'Page 1' }],
       })
 
       render(<TabBar />)
@@ -324,7 +312,6 @@ describe('TabBar', () => {
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
         ],
         activeTabIndex: 0,
-        pageStack: [{ pageId: 'P1', title: 'Page 1' }],
       })
 
       render(<TabBar />)
@@ -341,7 +328,6 @@ describe('TabBar', () => {
           { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
         ],
         activeTabIndex: 0,
-        pageStack: [{ pageId: 'P1', title: 'Page 1' }],
       })
 
       const { container } = render(<TabBar />)

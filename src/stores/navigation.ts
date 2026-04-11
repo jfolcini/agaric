@@ -6,8 +6,7 @@
  *
  * Multiple editor tabs are supported. Each tab has its own page stack.
  * Only one tab is active at a time, preserving the single TipTap editor invariant.
- * The top-level `pageStack` field is kept in sync with the active tab for
- * backward compatibility — existing code that reads `pageStack` continues to work.
+ * Use `selectPageStack` to derive the active tab's page stack from the store state.
  */
 
 import { create } from 'zustand'
@@ -44,8 +43,6 @@ let nextTabId = 1
 interface NavigationStore {
   /** Active sidebar / content view. */
   currentView: View
-  /** Breadcrumb stack for nested page navigation (mirrors active tab). */
-  pageStack: PageEntry[]
   /** All open tabs. */
   tabs: Tab[]
   /** Index of the currently active tab. */
@@ -71,9 +68,9 @@ interface NavigationStore {
   switchTab: (tabIndex: number) => void
 }
 
-/** Sync pageStack from active tab. */
-function syncPageStack(tabs: Tab[], activeTabIndex: number): PageEntry[] {
-  return tabs[activeTabIndex]?.pageStack ?? []
+/** Selector: active tab's page stack. Always in sync — no dual state. */
+export function selectPageStack(state: NavigationStore): PageEntry[] {
+  return state.tabs[state.activeTabIndex]?.pageStack ?? []
 }
 
 /** Derive a tab label from its page stack. */
@@ -88,7 +85,6 @@ export const useNavigationStore = create<NavigationStore>()(
       currentView: 'journal',
       tabs: [{ id: '0', pageStack: [], label: '' }],
       activeTabIndex: 0,
-      pageStack: [],
       selectedBlockId: null,
 
       setView: (view: View) => {
@@ -99,7 +95,6 @@ export const useNavigationStore = create<NavigationStore>()(
             currentView: view,
             tabs: [{ id: '0', pageStack: [], label: '' }],
             activeTabIndex: 0,
-            pageStack: [],
             selectedBlockId: null,
           })
         } else {
@@ -109,11 +104,11 @@ export const useNavigationStore = create<NavigationStore>()(
 
       navigateToPage: (pageId: string, title: string, blockId?: string) => {
         const state = get()
-        const { tabs, activeTabIndex, pageStack } = state
+        const { tabs, activeTabIndex } = state
         const activeTab = tabs[activeTabIndex]
         if (!activeTab) return
 
-        // Use top-level pageStack for dedup (backward compat with partial setState)
+        const pageStack = selectPageStack(state)
         const top = pageStack[pageStack.length - 1]
         if (top?.pageId === pageId) {
           set({ selectedBlockId: blockId ?? null })
@@ -130,14 +125,14 @@ export const useNavigationStore = create<NavigationStore>()(
         set({
           currentView: 'page-editor',
           tabs: newTabs,
-          pageStack: newStack,
           selectedBlockId: blockId ?? null,
         })
       },
 
       goBack: () => {
         const state = get()
-        const { tabs, activeTabIndex, pageStack } = state
+        const { tabs, activeTabIndex } = state
+        const pageStack = selectPageStack(state)
         if (pageStack.length === 0) return
 
         const newStack = pageStack.slice(0, -1)
@@ -150,7 +145,6 @@ export const useNavigationStore = create<NavigationStore>()(
             set({
               tabs: newTabs,
               activeTabIndex: newIndex,
-              pageStack: syncPageStack(newTabs, newIndex),
               selectedBlockId: null,
             })
           } else {
@@ -160,7 +154,6 @@ export const useNavigationStore = create<NavigationStore>()(
               currentView: 'pages',
               tabs: newTabs,
               activeTabIndex: 0,
-              pageStack: [],
               selectedBlockId: null,
             })
           }
@@ -173,13 +166,14 @@ export const useNavigationStore = create<NavigationStore>()(
               label: tabLabel(newStack),
             }
           }
-          set({ tabs: newTabs, pageStack: newStack, selectedBlockId: null })
+          set({ tabs: newTabs, selectedBlockId: null })
         }
       },
 
       replacePage: (pageId: string, title: string) => {
         const state = get()
-        const { tabs, activeTabIndex, pageStack } = state
+        const { tabs, activeTabIndex } = state
+        const pageStack = selectPageStack(state)
         if (pageStack.length === 0) return
 
         const newStack = [...pageStack]
@@ -193,7 +187,7 @@ export const useNavigationStore = create<NavigationStore>()(
             label: tabLabel(newStack),
           }
         }
-        set({ tabs: newTabs, pageStack: newStack })
+        set({ tabs: newTabs })
       },
 
       clearSelection: () => {
@@ -214,7 +208,6 @@ export const useNavigationStore = create<NavigationStore>()(
           currentView: 'page-editor',
           tabs: newTabs,
           activeTabIndex: newIndex,
-          pageStack: newStack,
           selectedBlockId: null,
         })
       },
@@ -230,7 +223,6 @@ export const useNavigationStore = create<NavigationStore>()(
             currentView: 'pages',
             tabs: [{ id: '0', pageStack: [], label: '' }],
             activeTabIndex: 0,
-            pageStack: [],
             selectedBlockId: null,
           })
           return
@@ -248,7 +240,6 @@ export const useNavigationStore = create<NavigationStore>()(
         set({
           tabs: newTabs,
           activeTabIndex: newIndex,
-          pageStack: syncPageStack(newTabs, newIndex),
           selectedBlockId: null,
         })
       },
@@ -259,7 +250,6 @@ export const useNavigationStore = create<NavigationStore>()(
         if (tabIndex === state.activeTabIndex) return
         set({
           activeTabIndex: tabIndex,
-          pageStack: syncPageStack(state.tabs, tabIndex),
           selectedBlockId: null,
         })
       },
@@ -270,7 +260,6 @@ export const useNavigationStore = create<NavigationStore>()(
         currentView: state.currentView,
         tabs: state.tabs,
         activeTabIndex: state.activeTabIndex,
-        pageStack: state.pageStack,
       }),
       onRehydrateStorage: () => (state) => {
         // Derive nextTabId from persisted tabs to avoid ID collisions

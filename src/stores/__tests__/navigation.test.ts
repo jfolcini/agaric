@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { resetTabIdCounter, useNavigationStore } from '../navigation'
+import { resetTabIdCounter, selectPageStack, useNavigationStore } from '../navigation'
 
 /** Helper to reset the store to a clean initial state. */
 function resetStore() {
@@ -8,7 +8,6 @@ function resetStore() {
     currentView: 'journal',
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
-    pageStack: [],
     selectedBlockId: null,
   })
 }
@@ -25,7 +24,7 @@ describe('useNavigationStore', () => {
     it('defaults to journal view with empty stack and null selection', () => {
       const state = useNavigationStore.getState()
       expect(state.currentView).toBe('journal')
-      expect(state.pageStack).toEqual([])
+      expect(selectPageStack(state)).toEqual([])
       expect(state.selectedBlockId).toBeNull()
     })
 
@@ -51,7 +50,6 @@ describe('useNavigationStore', () => {
         currentView: 'page-editor',
         tabs: [{ id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' }],
         activeTabIndex: 0,
-        pageStack: [{ pageId: 'P1', title: 'Page 1' }],
         selectedBlockId: 'B1',
       })
 
@@ -59,7 +57,7 @@ describe('useNavigationStore', () => {
 
       const state = useNavigationStore.getState()
       expect(state.currentView).toBe('pages')
-      expect(state.pageStack).toEqual([])
+      expect(selectPageStack(state)).toEqual([])
       expect(state.selectedBlockId).toBeNull()
       expect(state.tabs).toHaveLength(1)
       expect(state.tabs[0]?.pageStack).toEqual([])
@@ -69,13 +67,14 @@ describe('useNavigationStore', () => {
       // Manually set a stack (unlikely scenario, but guards the condition)
       useNavigationStore.setState({
         currentView: 'search',
-        pageStack: [{ pageId: 'P1', title: 'Page 1' }],
+        tabs: [{ id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' }],
+        activeTabIndex: 0,
       })
 
       useNavigationStore.getState().setView('tags')
 
       expect(useNavigationStore.getState().currentView).toBe('tags')
-      expect(useNavigationStore.getState().pageStack).toHaveLength(1)
+      expect(selectPageStack(useNavigationStore.getState())).toHaveLength(1)
     })
 
     it('allows switching to page-editor directly', () => {
@@ -93,7 +92,7 @@ describe('useNavigationStore', () => {
 
       const state = useNavigationStore.getState()
       expect(state.currentView).toBe('page-editor')
-      expect(state.pageStack).toEqual([{ pageId: 'P1', title: 'My Page' }])
+      expect(selectPageStack(state)).toEqual([{ pageId: 'P1', title: 'My Page' }])
       expect(state.selectedBlockId).toBeNull()
     })
 
@@ -121,7 +120,7 @@ describe('useNavigationStore', () => {
       navigateToPage('P3', 'Page 3')
 
       const state = useNavigationStore.getState()
-      expect(state.pageStack).toEqual([
+      expect(selectPageStack(state)).toEqual([
         { pageId: 'P1', title: 'Page 1' },
         { pageId: 'P2', title: 'Page 2' },
         { pageId: 'P3', title: 'Page 3' },
@@ -133,12 +132,12 @@ describe('useNavigationStore', () => {
       const { navigateToPage } = useNavigationStore.getState()
 
       navigateToPage('P1', 'Page 1')
-      expect(useNavigationStore.getState().pageStack).toHaveLength(1)
+      expect(selectPageStack(useNavigationStore.getState())).toHaveLength(1)
 
       navigateToPage('P1', 'Page 1', 'BLOCK_X')
 
       const state = useNavigationStore.getState()
-      expect(state.pageStack).toHaveLength(1)
+      expect(selectPageStack(state)).toHaveLength(1)
       expect(state.selectedBlockId).toBe('BLOCK_X')
     })
 
@@ -168,16 +167,12 @@ describe('useNavigationStore', () => {
           },
         ],
         activeTabIndex: 0,
-        pageStack: [
-          { pageId: 'P1', title: 'Page 1' },
-          { pageId: 'P2', title: 'Page 2' },
-        ],
       })
 
       useNavigationStore.getState().goBack()
 
       const state = useNavigationStore.getState()
-      expect(state.pageStack).toEqual([{ pageId: 'P1', title: 'Page 1' }])
+      expect(selectPageStack(state)).toEqual([{ pageId: 'P1', title: 'Page 1' }])
       expect(state.currentView).toBe('page-editor')
     })
 
@@ -186,14 +181,13 @@ describe('useNavigationStore', () => {
         currentView: 'page-editor',
         tabs: [{ id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' }],
         activeTabIndex: 0,
-        pageStack: [{ pageId: 'P1', title: 'Page 1' }],
         selectedBlockId: 'B1',
       })
 
       useNavigationStore.getState().goBack()
 
       const state = useNavigationStore.getState()
-      expect(state.pageStack).toEqual([])
+      expect(selectPageStack(state)).toEqual([])
       expect(state.currentView).toBe('pages')
       expect(state.selectedBlockId).toBeNull()
     })
@@ -203,14 +197,13 @@ describe('useNavigationStore', () => {
         currentView: 'pages',
         tabs: [{ id: '0', pageStack: [], label: '' }],
         activeTabIndex: 0,
-        pageStack: [],
       })
 
       useNavigationStore.getState().goBack()
 
       const state = useNavigationStore.getState()
       expect(state.currentView).toBe('pages')
-      expect(state.pageStack).toEqual([])
+      expect(selectPageStack(state)).toEqual([])
     })
 
     it('clears selectedBlockId when going back', () => {
@@ -227,10 +220,6 @@ describe('useNavigationStore', () => {
           },
         ],
         activeTabIndex: 0,
-        pageStack: [
-          { pageId: 'P1', title: 'Page 1' },
-          { pageId: 'P2', title: 'Page 2' },
-        ],
         selectedBlockId: 'BLOCK_X',
       })
 
@@ -258,16 +247,12 @@ describe('useNavigationStore', () => {
           },
         ],
         activeTabIndex: 0,
-        pageStack: [
-          { pageId: 'P1', title: 'Page 1' },
-          { pageId: 'P2', title: 'Old Title' },
-        ],
       })
 
       useNavigationStore.getState().replacePage('P2', 'New Title')
 
       const state = useNavigationStore.getState()
-      expect(state.pageStack).toEqual([
+      expect(selectPageStack(state)).toEqual([
         { pageId: 'P1', title: 'Page 1' },
         { pageId: 'P2', title: 'New Title' },
       ])
@@ -279,12 +264,13 @@ describe('useNavigationStore', () => {
         currentView: 'page-editor',
         tabs: [{ id: '0', pageStack: [{ pageId: 'OLD_ID', title: 'Old' }], label: 'Old' }],
         activeTabIndex: 0,
-        pageStack: [{ pageId: 'OLD_ID', title: 'Old' }],
       })
 
       useNavigationStore.getState().replacePage('NEW_ID', 'New')
 
-      expect(useNavigationStore.getState().pageStack).toEqual([{ pageId: 'NEW_ID', title: 'New' }])
+      expect(selectPageStack(useNavigationStore.getState())).toEqual([
+        { pageId: 'NEW_ID', title: 'New' },
+      ])
     })
 
     it('is a no-op when stack is empty', () => {
@@ -292,12 +278,11 @@ describe('useNavigationStore', () => {
         currentView: 'pages',
         tabs: [{ id: '0', pageStack: [], label: '' }],
         activeTabIndex: 0,
-        pageStack: [],
       })
 
       useNavigationStore.getState().replacePage('P1', 'Title')
 
-      expect(useNavigationStore.getState().pageStack).toEqual([])
+      expect(selectPageStack(useNavigationStore.getState())).toEqual([])
     })
   })
 
@@ -334,7 +319,7 @@ describe('useNavigationStore', () => {
       const state = useNavigationStore.getState()
       expect(state.tabs).toHaveLength(2)
       expect(state.activeTabIndex).toBe(1)
-      expect(state.pageStack).toEqual([{ pageId: 'P2', title: 'Page 2' }])
+      expect(selectPageStack(state)).toEqual([{ pageId: 'P2', title: 'Page 2' }])
       expect(state.currentView).toBe('page-editor')
     })
 
@@ -392,7 +377,7 @@ describe('useNavigationStore', () => {
       const state = useNavigationStore.getState()
       expect(state.currentView).toBe('pages')
       expect(state.tabs).toHaveLength(1)
-      expect(state.pageStack).toEqual([])
+      expect(selectPageStack(state)).toEqual([])
     })
 
     it('adjusts activeTabIndex when closing a tab before the active one', () => {
@@ -405,7 +390,7 @@ describe('useNavigationStore', () => {
 
       const state = useNavigationStore.getState()
       expect(state.activeTabIndex).toBe(1)
-      expect(state.pageStack).toEqual([{ pageId: 'P3', title: 'Page 3' }])
+      expect(selectPageStack(state)).toEqual([{ pageId: 'P3', title: 'Page 3' }])
     })
 
     it('adjusts activeTabIndex when closing the active tab at the end', () => {
@@ -417,7 +402,7 @@ describe('useNavigationStore', () => {
 
       const state = useNavigationStore.getState()
       expect(state.activeTabIndex).toBe(0)
-      expect(state.pageStack).toEqual([{ pageId: 'P1', title: 'Page 1' }])
+      expect(selectPageStack(state)).toEqual([{ pageId: 'P1', title: 'Page 1' }])
     })
 
     it('is a no-op for out-of-bounds index', () => {
@@ -446,7 +431,7 @@ describe('useNavigationStore', () => {
 
       const state = useNavigationStore.getState()
       expect(state.activeTabIndex).toBe(0)
-      expect(state.pageStack).toEqual([{ pageId: 'P1', title: 'Page 1' }])
+      expect(selectPageStack(state)).toEqual([{ pageId: 'P1', title: 'Page 1' }])
     })
   })
 
@@ -463,7 +448,7 @@ describe('useNavigationStore', () => {
 
       const state = useNavigationStore.getState()
       expect(state.activeTabIndex).toBe(0)
-      expect(state.pageStack).toEqual([{ pageId: 'P1', title: 'Page 1' }])
+      expect(selectPageStack(state)).toEqual([{ pageId: 'P1', title: 'Page 1' }])
     })
 
     it('is a no-op when switching to the already active tab', () => {
@@ -514,14 +499,14 @@ describe('useNavigationStore', () => {
       store.navigateToPage('P1', 'Page 1')
       store.navigateToPage('P2', 'Page 2')
 
-      expect(useNavigationStore.getState().pageStack).toHaveLength(2)
+      expect(selectPageStack(useNavigationStore.getState())).toHaveLength(2)
 
       useNavigationStore.getState().goBack()
-      expect(useNavigationStore.getState().pageStack).toHaveLength(1)
+      expect(selectPageStack(useNavigationStore.getState())).toHaveLength(1)
       expect(useNavigationStore.getState().currentView).toBe('page-editor')
 
       useNavigationStore.getState().goBack()
-      expect(useNavigationStore.getState().pageStack).toHaveLength(0)
+      expect(selectPageStack(useNavigationStore.getState())).toHaveLength(0)
       expect(useNavigationStore.getState().currentView).toBe('pages')
     })
 
@@ -530,14 +515,13 @@ describe('useNavigationStore', () => {
         currentView: 'pages',
         tabs: [{ id: '0', pageStack: [], label: '' }],
         activeTabIndex: 0,
-        pageStack: [],
       })
 
       useNavigationStore.getState().goBack()
       useNavigationStore.getState().goBack()
 
       expect(useNavigationStore.getState().currentView).toBe('pages')
-      expect(useNavigationStore.getState().pageStack).toEqual([])
+      expect(selectPageStack(useNavigationStore.getState())).toEqual([])
     })
 
     it('setView to non-editor clears stack, then navigate rebuilds it', () => {
@@ -547,10 +531,12 @@ describe('useNavigationStore', () => {
       store.navigateToPage('P2', 'Page 2')
 
       useNavigationStore.getState().setView('journal')
-      expect(useNavigationStore.getState().pageStack).toEqual([])
+      expect(selectPageStack(useNavigationStore.getState())).toEqual([])
 
       useNavigationStore.getState().navigateToPage('P3', 'Page 3')
-      expect(useNavigationStore.getState().pageStack).toEqual([{ pageId: 'P3', title: 'Page 3' }])
+      expect(selectPageStack(useNavigationStore.getState())).toEqual([
+        { pageId: 'P3', title: 'Page 3' },
+      ])
     })
   })
 
@@ -572,7 +558,9 @@ describe('useNavigationStore', () => {
 
       // Switch to tab 0
       useNavigationStore.getState().switchTab(0)
-      expect(useNavigationStore.getState().pageStack).toEqual([{ pageId: 'P1', title: 'Page 1' }])
+      expect(selectPageStack(useNavigationStore.getState())).toEqual([
+        { pageId: 'P1', title: 'Page 1' },
+      ])
 
       // Navigate within tab 0
       useNavigationStore.getState().navigateToPage('P4', 'Page 4')
@@ -593,7 +581,7 @@ describe('useNavigationStore', () => {
       // Should have closed tab 1 and switched to tab 0
       expect(state.tabs).toHaveLength(1)
       expect(state.activeTabIndex).toBe(0)
-      expect(state.pageStack).toEqual([{ pageId: 'P1', title: 'Page 1' }])
+      expect(selectPageStack(state)).toEqual([{ pageId: 'P1', title: 'Page 1' }])
       expect(state.currentView).toBe('page-editor')
     })
 
@@ -603,13 +591,19 @@ describe('useNavigationStore', () => {
       useNavigationStore.getState().openInNewTab('P3', 'Page 3')
 
       // Active is tab 2 (P3)
-      expect(useNavigationStore.getState().pageStack).toEqual([{ pageId: 'P3', title: 'Page 3' }])
+      expect(selectPageStack(useNavigationStore.getState())).toEqual([
+        { pageId: 'P3', title: 'Page 3' },
+      ])
 
       useNavigationStore.getState().switchTab(0)
-      expect(useNavigationStore.getState().pageStack).toEqual([{ pageId: 'P1', title: 'Page 1' }])
+      expect(selectPageStack(useNavigationStore.getState())).toEqual([
+        { pageId: 'P1', title: 'Page 1' },
+      ])
 
       useNavigationStore.getState().switchTab(1)
-      expect(useNavigationStore.getState().pageStack).toEqual([{ pageId: 'P2', title: 'Page 2' }])
+      expect(selectPageStack(useNavigationStore.getState())).toEqual([
+        { pageId: 'P2', title: 'Page 2' },
+      ])
     })
   })
 
@@ -636,7 +630,6 @@ describe('useNavigationStore', () => {
       expect(parsed.state.currentView).toBe('page-editor')
       expect(parsed.state.tabs).toHaveLength(2)
       expect(parsed.state.activeTabIndex).toBe(1)
-      expect(parsed.state.pageStack).toEqual([{ pageId: 'P2', title: 'Page 2' }])
     })
 
     it('restores tabs from localStorage on re-create', () => {
@@ -648,7 +641,6 @@ describe('useNavigationStore', () => {
             { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
           ],
           activeTabIndex: 1,
-          pageStack: [{ pageId: 'P2', title: 'Page 2' }],
         },
         version: 0,
       }
@@ -699,7 +691,6 @@ describe('useNavigationStore', () => {
             { id: '5', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
           ],
           activeTabIndex: 1,
-          pageStack: [{ pageId: 'P2', title: 'Page 2' }],
         },
         version: 0,
       }

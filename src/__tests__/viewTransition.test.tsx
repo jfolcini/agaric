@@ -41,7 +41,8 @@ beforeEach(() => {
   useBootStore.setState({ state: 'ready', error: null })
   useNavigationStore.setState({
     currentView: 'journal',
-    pageStack: [],
+    tabs: [{ id: '0', pageStack: [], label: '' }],
+    activeTabIndex: 0,
     selectedBlockId: null,
   })
   mockedInvoke.mockResolvedValue(emptyPage)

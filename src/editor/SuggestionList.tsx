@@ -59,6 +59,8 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
     } = useListKeyboardNavigation({
       itemCount: items.length,
       wrap: true,
+      homeEnd: true,
+      pageUpDown: true,
       onSelect: selectItem,
     })
 

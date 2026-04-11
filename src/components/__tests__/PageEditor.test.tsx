@@ -150,7 +150,8 @@ beforeEach(() => {
   useUndoStore.setState({ pages: new Map() })
   useNavigationStore.setState({
     currentView: 'page-editor',
-    pageStack: [{ pageId: 'PAGE_1', title: 'My Page' }],
+    tabs: [{ id: '0', pageStack: [{ pageId: 'PAGE_1', title: 'My Page' }], label: 'My Page' }],
+    activeTabIndex: 0,
     selectedBlockId: null,
   })
 })

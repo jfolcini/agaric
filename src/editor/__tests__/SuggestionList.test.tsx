@@ -496,4 +496,64 @@ describe('SuggestionList', () => {
     expect(screen.getByText('standup')).toBeInTheDocument()
     expect(screen.getByTestId('suggestion-breadcrumb')).toHaveTextContent('work / meetings')
   })
+
+  // =========================================================================
+  // Home/End and PageUp/PageDown keyboard navigation (UX-138)
+  // =========================================================================
+
+  it('Home key moves selection to first item, End to last via imperative ref', () => {
+    const ref = createRef<SuggestionListRef>()
+    const command = vi.fn()
+    render(<SuggestionList ref={ref} items={sampleItems} command={command} />)
+
+    // Move to last item
+    act(() => {
+      ref.current?.onKeyDown({ event: makeKeyEvent('ArrowDown') })
+    })
+    act(() => {
+      ref.current?.onKeyDown({ event: makeKeyEvent('ArrowDown') })
+    })
+    expect(screen.getByText('Gamma')).toHaveAttribute('aria-selected', 'true')
+
+    // Home should go to first
+    act(() => {
+      const handled = ref.current?.onKeyDown({ event: makeKeyEvent('Home') })
+      expect(handled).toBe(true)
+    })
+    expect(screen.getByText('Alpha')).toHaveAttribute('aria-selected', 'true')
+
+    // End should go to last
+    act(() => {
+      const handled = ref.current?.onKeyDown({ event: makeKeyEvent('End') })
+      expect(handled).toBe(true)
+    })
+    expect(screen.getByText('Gamma')).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('PageDown/PageUp navigate through items via imperative ref', () => {
+    const ref = createRef<SuggestionListRef>()
+    const command = vi.fn()
+    const manyItems: PickerItem[] = Array.from({ length: 15 }, (_, i) => ({
+      id: String(i),
+      label: `Item ${i}`,
+    }))
+    render(<SuggestionList ref={ref} items={manyItems} command={command} />)
+
+    // First item selected by default
+    expect(screen.getByText('Item 0')).toHaveAttribute('aria-selected', 'true')
+
+    // PageDown should jump forward by 10
+    act(() => {
+      const handled = ref.current?.onKeyDown({ event: makeKeyEvent('PageDown') })
+      expect(handled).toBe(true)
+    })
+    expect(screen.getByText('Item 10')).toHaveAttribute('aria-selected', 'true')
+
+    // PageUp should jump back by 10
+    act(() => {
+      const handled = ref.current?.onKeyDown({ event: makeKeyEvent('PageUp') })
+      expect(handled).toBe(true)
+    })
+    expect(screen.getByText('Item 0')).toHaveAttribute('aria-selected', 'true')
+  })
 })

@@ -82,7 +82,8 @@ beforeEach(() => {
   pageStore = createPageBlockStore('PAGE_1')
   useNavigationStore.setState({
     currentView: 'page-editor',
-    pageStack: [{ pageId: 'PAGE_1', title: 'My Page' }],
+    tabs: [{ id: '0', pageStack: [{ pageId: 'PAGE_1', title: 'My Page' }], label: 'My Page' }],
+    activeTabIndex: 0,
     selectedBlockId: null,
   })
   useResolveStore.setState({ cache: new Map(), pagesList: [], version: 0, _preloaded: false })

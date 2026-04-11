@@ -65,7 +65,7 @@ vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 import { toast } from 'sonner'
 import type { BlockRow } from '../../lib/tauri'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../../lib/tauri'
-import { useNavigationStore } from '../../stores/navigation'
+import { selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { DuePanel } from '../DuePanel'
 
 const mockedListBlocks = vi.mocked(listBlocks)
@@ -107,7 +107,8 @@ beforeEach(() => {
   mockedQueryByProperty.mockResolvedValue(emptyResponse)
   useNavigationStore.setState({
     currentView: 'journal',
-    pageStack: [],
+    tabs: [{ id: '0', pageStack: [], label: '' }],
+    activeTabIndex: 0,
     selectedBlockId: null,
   })
 })
@@ -1044,9 +1045,9 @@ describe('DuePanel', () => {
 
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
-    expect(navState.pageStack).toHaveLength(1)
-    expect(navState.pageStack[0]?.pageId).toBe('PAGE1')
-    expect(navState.pageStack[0]?.title).toBe('Linked Page')
+    expect(selectPageStack(navState)).toHaveLength(1)
+    expect(selectPageStack(navState)[0]?.pageId).toBe('PAGE1')
+    expect(selectPageStack(navState)[0]?.title).toBe('Linked Page')
   })
 
   // --- Error paths ---

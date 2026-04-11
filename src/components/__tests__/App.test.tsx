@@ -20,7 +20,7 @@ import { announce } from '../../lib/announcer'
 import { logger } from '../../lib/logger'
 import { useBootStore } from '../../stores/boot'
 import { useJournalStore } from '../../stores/journal'
-import { useNavigationStore } from '../../stores/navigation'
+import { selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { useSyncStore } from '../../stores/sync'
 
 vi.mock('../../lib/announcer', () => ({
@@ -75,7 +75,8 @@ beforeEach(() => {
   // Reset the navigation store so each test starts at the default view.
   useNavigationStore.setState({
     currentView: 'journal',
-    pageStack: [],
+    tabs: [{ id: '0', pageStack: [], label: '' }],
+    activeTabIndex: 0,
     selectedBlockId: null,
   })
 
@@ -309,7 +310,14 @@ describe('App', () => {
     // Navigate to page-editor via the navigation store
     useNavigationStore.setState({
       currentView: 'page-editor',
-      pageStack: [{ pageId: 'PAGE_1', title: 'My Test Page' }],
+      tabs: [
+        {
+          id: '0',
+          pageStack: [{ pageId: 'PAGE_1', title: 'My Test Page' }],
+          label: 'My Test Page',
+        },
+      ],
+      activeTabIndex: 0,
       selectedBlockId: null,
     })
 
@@ -380,7 +388,7 @@ describe('App', () => {
     await waitFor(() => {
       const state = useNavigationStore.getState()
       expect(state.currentView).toBe('page-editor')
-      expect(state.pageStack).toContainEqual(
+      expect(selectPageStack(state)).toContainEqual(
         expect.objectContaining({ pageId: 'NEW_PAGE_ID_00000000000000', title: 'Untitled' }),
       )
     })
@@ -576,7 +584,12 @@ describe('App', () => {
     })
 
     it('Alt+Arrow does nothing when not on journal view', async () => {
-      useNavigationStore.setState({ currentView: 'pages', pageStack: [], selectedBlockId: null })
+      useNavigationStore.setState({
+        currentView: 'pages',
+        tabs: [{ id: '0', pageStack: [], label: '' }],
+        activeTabIndex: 0,
+        selectedBlockId: null,
+      })
       const startDate = new Date(2025, 5, 15)
       useJournalStore.setState({ mode: 'daily', currentDate: startDate })
 
@@ -796,7 +809,12 @@ describe('App', () => {
 
   describe('GlobalDateControls in non-journal views', () => {
     it('shows Today button in pages view', async () => {
-      useNavigationStore.setState({ currentView: 'pages', pageStack: [], selectedBlockId: null })
+      useNavigationStore.setState({
+        currentView: 'pages',
+        tabs: [{ id: '0', pageStack: [], label: '' }],
+        activeTabIndex: 0,
+        selectedBlockId: null,
+      })
       render(<App />)
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /today/i })).toBeInTheDocument()
@@ -804,7 +822,12 @@ describe('App', () => {
     })
 
     it('shows calendar button in pages view', async () => {
-      useNavigationStore.setState({ currentView: 'pages', pageStack: [], selectedBlockId: null })
+      useNavigationStore.setState({
+        currentView: 'pages',
+        tabs: [{ id: '0', pageStack: [], label: '' }],
+        activeTabIndex: 0,
+        selectedBlockId: null,
+      })
       render(<App />)
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /calendar/i })).toBeInTheDocument()
@@ -812,7 +835,12 @@ describe('App', () => {
     })
 
     it('clicking Today in non-journal view navigates to journal daily', async () => {
-      useNavigationStore.setState({ currentView: 'pages', pageStack: [], selectedBlockId: null })
+      useNavigationStore.setState({
+        currentView: 'pages',
+        tabs: [{ id: '0', pageStack: [], label: '' }],
+        activeTabIndex: 0,
+        selectedBlockId: null,
+      })
       const user = userEvent.setup()
       render(<App />)
 
@@ -829,7 +857,12 @@ describe('App', () => {
     })
 
     it('shows Today button in trash view', async () => {
-      useNavigationStore.setState({ currentView: 'trash', pageStack: [], selectedBlockId: null })
+      useNavigationStore.setState({
+        currentView: 'trash',
+        tabs: [{ id: '0', pageStack: [], label: '' }],
+        activeTabIndex: 0,
+        selectedBlockId: null,
+      })
       render(<App />)
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /today/i })).toBeInTheDocument()
@@ -931,7 +964,7 @@ describe('App', () => {
 
       // Navigation should NOT have changed
       expect(useNavigationStore.getState().currentView).toBe('journal')
-      expect(useNavigationStore.getState().pageStack).toHaveLength(0)
+      expect(selectPageStack(useNavigationStore.getState())).toHaveLength(0)
     })
 
     it('New Page sidebar button shows error toast when creation fails', async () => {
@@ -958,7 +991,7 @@ describe('App', () => {
 
       // Navigation should NOT have changed
       expect(useNavigationStore.getState().currentView).toBe('journal')
-      expect(useNavigationStore.getState().pageStack).toHaveLength(0)
+      expect(selectPageStack(useNavigationStore.getState())).toHaveLength(0)
     })
 
     it('logs warning when listDrafts fails during boot recovery', async () => {

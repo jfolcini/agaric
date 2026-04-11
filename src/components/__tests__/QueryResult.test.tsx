@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { makeBlock } from '../../__tests__/fixtures'
-import { useNavigationStore } from '../../stores/navigation'
+import { selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { buildFilters, detectColumns, parseQueryExpression, QueryResult } from '../QueryResult'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
@@ -44,7 +44,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   useNavigationStore.setState({
     currentView: 'journal',
-    pageStack: [],
+    tabs: [{ id: '0', pageStack: [], label: '' }],
+    activeTabIndex: 0,
     selectedBlockId: null,
   })
 })
@@ -435,9 +436,9 @@ describe('QueryResult', () => {
 
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
-    expect(navState.pageStack).toHaveLength(1)
-    expect(navState.pageStack[0]?.pageId).toBe('P1')
-    expect(navState.pageStack[0]?.title).toBe('Resolved Page')
+    expect(selectPageStack(navState)).toHaveLength(1)
+    expect(selectPageStack(navState)[0]?.pageId).toBe('P1')
+    expect(selectPageStack(navState)[0]?.title).toBe('Resolved Page')
   })
 })
 

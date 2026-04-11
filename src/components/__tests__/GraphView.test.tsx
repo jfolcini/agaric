@@ -105,7 +105,8 @@ beforeEach(() => {
   clearGraphCache()
   useNavigationStore.setState({
     currentView: 'graph',
-    pageStack: [],
+    tabs: [{ id: '0', pageStack: [], label: '' }],
+    activeTabIndex: 0,
     selectedBlockId: null,
   })
 })
@@ -166,7 +167,8 @@ describe('GraphView', () => {
     const navigateToPage = vi.fn()
     useNavigationStore.setState({
       currentView: 'graph',
-      pageStack: [],
+      tabs: [{ id: '0', pageStack: [], label: '' }],
+      activeTabIndex: 0,
       selectedBlockId: null,
       navigateToPage,
     })
@@ -278,7 +280,8 @@ describe('GraphView', () => {
     const navigateToPage = vi.fn()
     useNavigationStore.setState({
       currentView: 'graph',
-      pageStack: [],
+      tabs: [{ id: '0', pageStack: [], label: '' }],
+      activeTabIndex: 0,
       selectedBlockId: null,
       navigateToPage,
     })

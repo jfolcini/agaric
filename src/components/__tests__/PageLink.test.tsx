@@ -9,14 +9,15 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import { useNavigationStore } from '../../stores/navigation'
+import { selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { PageLink } from '../PageLink'
 
 beforeEach(() => {
   vi.clearAllMocks()
   useNavigationStore.setState({
     currentView: 'journal',
-    pageStack: [],
+    tabs: [{ id: '0', pageStack: [], label: '' }],
+    activeTabIndex: 0,
     selectedBlockId: null,
   })
 })
@@ -43,8 +44,9 @@ describe('PageLink', () => {
 
     await user.click(screen.getByRole('link', { name: 'My Page' }))
 
-    const { currentView, pageStack } = useNavigationStore.getState()
-    expect(currentView).toBe('page-editor')
+    const state = useNavigationStore.getState()
+    const pageStack = selectPageStack(state)
+    expect(state.currentView).toBe('page-editor')
     expect(pageStack).toEqual([{ pageId: 'P1', title: 'My Page' }])
   })
 
@@ -55,8 +57,9 @@ describe('PageLink', () => {
     screen.getByRole('link', { name: 'My Page' }).focus()
     await user.keyboard('{Enter}')
 
-    const { currentView, pageStack } = useNavigationStore.getState()
-    expect(currentView).toBe('page-editor')
+    const state = useNavigationStore.getState()
+    const pageStack = selectPageStack(state)
+    expect(state.currentView).toBe('page-editor')
     expect(pageStack).toEqual([{ pageId: 'P1', title: 'My Page' }])
   })
 
@@ -67,8 +70,9 @@ describe('PageLink', () => {
     screen.getByRole('link', { name: 'My Page' }).focus()
     await user.keyboard(' ')
 
-    const { currentView, pageStack } = useNavigationStore.getState()
-    expect(currentView).toBe('page-editor')
+    const state = useNavigationStore.getState()
+    const pageStack = selectPageStack(state)
+    expect(state.currentView).toBe('page-editor')
     expect(pageStack).toEqual([{ pageId: 'P1', title: 'My Page' }])
   })
 

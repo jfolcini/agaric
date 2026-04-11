@@ -28,6 +28,8 @@ export function QueryResultList({
 }: QueryResultListProps): React.ReactElement {
   const { focusedIndex, handleKeyDown } = useListKeyboardNavigation({
     itemCount: results.length,
+    homeEnd: true,
+    pageUpDown: true,
     onSelect: (idx) => {
       onItemSelect?.(idx)
       const block = results[idx]

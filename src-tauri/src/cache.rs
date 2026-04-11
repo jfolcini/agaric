@@ -2251,6 +2251,95 @@ mod tests {
     }
 
     // ====================================================================
+    // agenda_cache — DONE blocks must still appear (B-50)
+    // ====================================================================
+
+    #[tokio::test]
+    async fn agenda_cache_includes_done_blocks_with_scheduled_date() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create a block with scheduled_date and todo_state = DONE
+        insert_block(&pool, "BLK_DONE", "content", "completed task").await;
+        sqlx::query("UPDATE blocks SET scheduled_date = '2025-06-15', todo_state = 'DONE' WHERE id = 'BLK_DONE'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT date, block_id, source FROM agenda_cache WHERE block_id = 'BLK_DONE'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            rows.len(),
+            1,
+            "DONE block with scheduled_date must be in agenda_cache"
+        );
+        assert_eq!(rows[0].0, "2025-06-15");
+        assert_eq!(rows[0].2, "column:scheduled_date");
+    }
+
+    #[tokio::test]
+    async fn agenda_cache_includes_done_blocks_with_due_date() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BLK_DONE2", "content", "completed due task").await;
+        sqlx::query(
+            "UPDATE blocks SET due_date = '2025-06-15', todo_state = 'DONE' WHERE id = 'BLK_DONE2'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT date, block_id, source FROM agenda_cache WHERE block_id = 'BLK_DONE2'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            rows.len(),
+            1,
+            "DONE block with due_date must be in agenda_cache"
+        );
+        assert_eq!(rows[0].0, "2025-06-15");
+        assert_eq!(rows[0].2, "column:due_date");
+    }
+
+    #[tokio::test]
+    async fn projected_cache_excludes_done_blocks() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BLK_DONE3", "content", "done repeating task").await;
+        sqlx::query("UPDATE blocks SET scheduled_date = '2025-06-15', todo_state = 'DONE' WHERE id = 'BLK_DONE3'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Set a repeat rule so projected cache has something to compute
+        set_property(&pool, "BLK_DONE3", "repeat", None).await;
+        sqlx::query("UPDATE block_properties SET value_text = 'daily' WHERE block_id = 'BLK_DONE3' AND key = 'repeat'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        rebuild_projected_agenda_cache(&pool).await.unwrap();
+
+        let count = count_rows(&pool, "projected_agenda_cache").await;
+        assert_eq!(
+            count, 0,
+            "DONE block must be excluded from projected agenda cache"
+        );
+    }
+
+    // ====================================================================
     // reindex_block_links — ((ULID)) block references (F-4)
     // ====================================================================
 

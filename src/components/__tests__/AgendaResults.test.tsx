@@ -58,7 +58,7 @@ vi.mock('@/components/ui/button', () => ({
 }))
 
 import type { BlockRow } from '../../lib/tauri'
-import { useNavigationStore } from '../../stores/navigation'
+import { selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { AgendaResults, type AgendaResultsProps } from '../AgendaResults'
 
 function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
@@ -101,7 +101,8 @@ describe('AgendaResults', () => {
     mockBatchResolve.mockResolvedValue([])
     useNavigationStore.setState({
       currentView: 'journal',
-      pageStack: [],
+      tabs: [{ id: '0', pageStack: [], label: '' }],
+      activeTabIndex: 0,
       selectedBlockId: null,
     })
   })
@@ -441,9 +442,9 @@ describe('AgendaResults', () => {
 
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
-    expect(navState.pageStack).toHaveLength(1)
-    expect(navState.pageStack[0]?.pageId).toBe('PAGE1')
-    expect(navState.pageStack[0]?.title).toBe('My Project Page')
+    expect(selectPageStack(navState)).toHaveLength(1)
+    expect(selectPageStack(navState)[0]?.pageId).toBe('PAGE1')
+    expect(selectPageStack(navState)[0]?.title).toBe('My Project Page')
   })
 
   // 15. Dependency indicator renders in metadata when block has blocked_by property

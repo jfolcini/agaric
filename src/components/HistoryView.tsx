@@ -102,6 +102,8 @@ export function HistoryView(): React.ReactElement {
     itemCount: entries.length,
     wrap: false,
     vim: true,
+    homeEnd: true,
+    pageUpDown: true,
   })
 
   // ── Multi-select (shared hook) ────────────────────────────────────
