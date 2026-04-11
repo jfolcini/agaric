@@ -1,5 +1,39 @@
 # Session Log
 
+## Session 343 — F-38 complete: all keyboard shortcuts configurable (2026-04-11)
+
+**F-38 fully resolved (all 5 phases). 8 files changed, ~+200 lines. 22 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| F-38 P1 | 8 TipTap editor shortcuts dynamically bound via configKeyToTipTap() | `use-roving-editor.ts`, `external-link.ts`, `keyboard-config.ts` |
+| F-38 P5 | 3 suggestion popup shortcuts (Escape/Space/Tab) read from config | `suggestion-renderer.ts` |
+
+### Implementation
+- New configKeyToTipTap() utility converts keyboard-config format to TipTap key format
+- 8 editor formatting shortcuts + 3 suggestion popup shortcuts added to DEFAULT_SHORTCUTS
+- Removed 4 duplicate entries from old "Editing" category
+- backspaceChip added as documentation entry (NodeView handler not wired)
+- 69 shortcuts now configurable (~95% of ~72 total)
+
+### F-38 Summary (all 5 phases)
+| Phase | Session | Shortcuts Added |
+|-------|---------|-----------------|
+| P2 | 340 | 8 block tree (Ctrl+Shift+D/P, Ctrl+1-6) |
+| P4 | 341 | 2 tab bar + journal |
+| P3 | 342 | 3 list selection (Space/Ctrl+A/Escape) |
+| P1 | 343 | 8 editor formatting + 1 backspace chip |
+| P5 | 343 | 3 suggestion popup |
+
+### Stats
+- 8 files changed (~+200 lines)
+- 22 new tests (10 shortcuts + 4 suggestions + 8 configKeyToTipTap)
+- 6251 frontend tests pass, all prek hooks pass
+
+---
+
 ## Session 342 — F-38 Phase 3: list selection shortcuts (2026-04-11)
 
 **F-38 Phase 3 complete. 5 files changed, ~+50 lines. 10 new tests.**
