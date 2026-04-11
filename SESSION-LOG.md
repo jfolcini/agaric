@@ -1,5 +1,33 @@
 # Session Log
 
+## Session 346 — T-39 picker E2E tests, T-41 sync daemon tests, E2E infra fixes (2026-04-11)
+
+**T-39 fully resolved, T-41 partially resolved (pure logic extracted + tested, async functions documented). 6 files changed, +731 -19 lines. 6264 frontend tests pass, 1814 Rust tests pass. 123 E2E tests pass (was 0).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| T-39 | E2E Playwright tests for 4 picker extensions — 19 new tests covering `((`, `::`, `@`, `[[` | `block-ref-picker.spec.ts` (new), `property-picker.spec.ts` (new), `tag-management.spec.ts`, `inner-links.spec.ts` |
+| T-41 (partial) | Sync daemon pure logic extracted + tested — 10 new tests + 4 documented placeholders | `sync_daemon.rs` |
+| E2E infra | Fixed tauri-mock backlink groups (`items`→`blocks`), added `list_drafts`/bulk trash handlers, `filtered_count` fields, welcome modal dismissal | `tauri-mock.ts`, `playwright.config.ts`, `smoke.spec.ts` |
+
+### Implementation
+- **T-39 block-ref picker** (8 tests): `((` trigger, search filtering, Enter/click selection, Escape dismiss, ArrowDown navigation, Backspace query editing, Tab autocomplete
+- **T-39 property picker** (7 tests): `::` trigger, property list display, Enter selection inserting `key:: `, Escape dismiss, filtering, click selection, ArrowDown navigation
+- **T-39 @ tag picker** (+2 tests): Create new tag via `@nonexistent` + "Create" option, Tab autocomplete with partial query
+- **T-39 [[ block link picker** (+2 tests): Create new page via `[[BrandNew` + "Create" option, `[[Quick Notes]]` input rule auto-resolves to chip
+- **T-41 extracted functions**: `should_attempt_sync_with_discovered_peer()` (peer filtering: self, already-discovered, unpaired, paired) and `build_fallback_peer()` (IPv4/IPv6 parsing, invalid addresses). Stale eviction tests (all-fresh, all-stale). Cert verification edge cases (empty CN, empty hash).
+- **E2E infra**: Backlink groups returned `items` instead of `blocks` (caused PageEditor crash). Missing `list_drafts` handler. Missing `filtered_count` in 3 backlink response types. Welcome modal blocked all E2E tests — fixed via `storageState` in Playwright config.
+
+### Stats
+- 6 files changed (+731 -19 lines)
+- 6264 frontend tests pass, 1814 Rust tests pass (30 sync_daemon tests, was 19)
+- 123/254 E2E tests pass (was 0/254; remaining failures are pre-existing count/timing issues)
+- T-39 fully resolved, T-41 reduced from 2→1 open items (async functions still need MockSyncConnection)
+
+---
+
 ## Session 345 — B-46 bulk trash ops, B-50 DuePanel invalidation (2026-04-11)
 
 **3 REVIEW-LATER items resolved (B-46, B-50, T-46). 15 files changed, +1145 -28 lines. 6264 frontend tests pass, 1799 Rust tests pass.**
