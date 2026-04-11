@@ -13,6 +13,16 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:5173',
     trace: 'on-first-retry',
+    // Dismiss welcome modal by marking onboarding as done before app loads
+    storageState: {
+      cookies: [],
+      origins: [
+        {
+          origin: 'http://localhost:5173',
+          localStorage: [{ name: 'agaric-onboarding-done', value: 'true' }],
+        },
+      ],
+    },
   },
   projects: [
     {

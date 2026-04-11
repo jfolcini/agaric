@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test'
 test.describe('Smoke tests', () => {
   test('app loads and shows Agaric branding', async ({ page }) => {
     await page.goto('/')
-    await expect(page.getByText('Agaric')).toBeVisible()
+    await expect(page.getByText('Agaric', { exact: true })).toBeVisible()
   })
 
   test('sidebar has all expected nav items', async ({ page }) => {
