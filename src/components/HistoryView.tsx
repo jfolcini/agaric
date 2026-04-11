@@ -19,6 +19,7 @@ import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '../hooks/useListMultiSelect'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { formatTimestamp } from '../lib/format'
+import { matchesShortcutBinding } from '../lib/keyboard-config'
 import type { HistoryEntry } from '../lib/tauri'
 import { listPageHistory, restorePageToOp, revertOps } from '../lib/tauri'
 import { CompactionCard } from './CompactionCard'
@@ -210,14 +211,14 @@ export function HistoryView(): React.ReactElement {
       }
 
       // Space — toggle checkbox on focused item
-      if (e.key === ' ' && focusedIndex >= 0) {
+      if (matchesShortcutBinding(e, 'listToggleSelection') && focusedIndex >= 0) {
         e.preventDefault()
         handleToggleSelection(focusedIndex)
         return
       }
 
       // Ctrl/Cmd+A — select all
-      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+      if (matchesShortcutBinding(e, 'listSelectAll')) {
         e.preventDefault()
         selectAll()
         return
@@ -231,7 +232,7 @@ export function HistoryView(): React.ReactElement {
       }
 
       // Escape — clear selection
-      if (e.key === 'Escape') {
+      if (matchesShortcutBinding(e, 'listClearSelection')) {
         e.preventDefault()
         clearSelection()
       }

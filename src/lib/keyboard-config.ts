@@ -267,13 +267,29 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     condition: 'keyboard.condition.outsideEditor',
   },
 
-  // History View
+  // List Selection (shared by Trash View & History View)
   {
-    id: 'histToggleSelection',
+    id: 'listToggleSelection',
     keys: 'Space',
-    category: 'keyboard.category.historyView',
-    description: 'keyboard.toggleSelection',
+    category: 'keyboard.category.listSelection',
+    description: 'keyboard.listToggleSelection',
+    condition: 'keyboard.condition.listItemFocused',
   },
+  {
+    id: 'listSelectAll',
+    keys: 'Ctrl + A',
+    category: 'keyboard.category.listSelection',
+    description: 'keyboard.listSelectAll',
+  },
+  {
+    id: 'listClearSelection',
+    keys: 'Escape',
+    category: 'keyboard.category.listSelection',
+    description: 'keyboard.listClearSelection',
+    condition: 'keyboard.condition.hasSelection',
+  },
+
+  // History View
   {
     id: 'histRangeSelect',
     keys: 'Shift + Click',
@@ -281,22 +297,10 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     description: 'keyboard.rangeSelect',
   },
   {
-    id: 'histSelectAll',
-    keys: 'Ctrl + A',
-    category: 'keyboard.category.historyView',
-    description: 'keyboard.selectAll',
-  },
-  {
     id: 'histRevertSelected',
     keys: 'Enter',
     category: 'keyboard.category.historyView',
     description: 'keyboard.revertSelected',
-  },
-  {
-    id: 'histClearSelection',
-    keys: 'Escape',
-    category: 'keyboard.category.historyView',
-    description: 'keyboard.clearSelection',
   },
   {
     id: 'histNavigateItems',
@@ -403,11 +407,12 @@ export function matchesShortcutBinding(
   const needsAlt = parts.includes('alt')
   const key =
     parts.filter((p) => p !== 'ctrl' && p !== 'shift' && p !== 'alt' && p !== 'meta')[0] ?? ''
+  const normalizedEventKey = e.key === ' ' ? 'space' : e.key.toLowerCase()
   return (
     (e.ctrlKey || e.metaKey) === needsCtrl &&
     e.shiftKey === needsShift &&
     e.altKey === needsAlt &&
-    e.key.toLowerCase() === key
+    normalizedEventKey === key
   )
 }
 

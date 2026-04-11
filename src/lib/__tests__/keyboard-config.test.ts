@@ -321,6 +321,44 @@ describe('keyboard-config', () => {
     })
   })
 
+  describe('List Selection shortcuts (F-38 Phase 3)', () => {
+    const listSelectionIds = ['listToggleSelection', 'listSelectAll', 'listClearSelection']
+
+    it('all 3 list selection shortcuts exist in DEFAULT_SHORTCUTS', () => {
+      for (const id of listSelectionIds) {
+        const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === id)
+        expect(shortcut, `shortcut "${id}" should exist`).toBeDefined()
+        expect(shortcut?.category).toBe('keyboard.category.listSelection')
+      }
+    })
+
+    it('listToggleSelection defaults to Space', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'listToggleSelection')
+      expect(s?.keys).toBe('Space')
+      expect(s?.description).toBe('keyboard.listToggleSelection')
+      expect(s?.condition).toBe('keyboard.condition.listItemFocused')
+    })
+
+    it('listSelectAll defaults to Ctrl + A', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'listSelectAll')
+      expect(s?.keys).toBe('Ctrl + A')
+      expect(s?.description).toBe('keyboard.listSelectAll')
+    })
+
+    it('listClearSelection defaults to Escape', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'listClearSelection')
+      expect(s?.keys).toBe('Escape')
+      expect(s?.description).toBe('keyboard.listClearSelection')
+      expect(s?.condition).toBe('keyboard.condition.hasSelection')
+    })
+
+    it('old hist* selection IDs no longer exist', () => {
+      expect(DEFAULT_SHORTCUTS.find((s) => s.id === 'histToggleSelection')).toBeUndefined()
+      expect(DEFAULT_SHORTCUTS.find((s) => s.id === 'histSelectAll')).toBeUndefined()
+      expect(DEFAULT_SHORTCUTS.find((s) => s.id === 'histClearSelection')).toBeUndefined()
+    })
+  })
+
   describe('matchesShortcutBinding', () => {
     function fakeEvent(
       key: string,
@@ -403,6 +441,30 @@ describe('keyboard-config', () => {
       ).toBe(true)
       expect(
         matchesShortcutBinding(fakeEvent('d', { ctrlKey: true, shiftKey: true }), 'openDatePicker'),
+      ).toBe(false)
+    })
+
+    it('matches Space key for listToggleSelection', () => {
+      expect(matchesShortcutBinding(fakeEvent(' '), 'listToggleSelection')).toBe(true)
+    })
+
+    it('does not match Space with modifiers for listToggleSelection', () => {
+      expect(matchesShortcutBinding(fakeEvent(' ', { ctrlKey: true }), 'listToggleSelection')).toBe(
+        false,
+      )
+    })
+
+    it('matches Ctrl+A for listSelectAll', () => {
+      expect(matchesShortcutBinding(fakeEvent('a', { ctrlKey: true }), 'listSelectAll')).toBe(true)
+    })
+
+    it('matches Escape for listClearSelection', () => {
+      expect(matchesShortcutBinding(fakeEvent('Escape'), 'listClearSelection')).toBe(true)
+    })
+
+    it('does not match Escape with modifiers for listClearSelection', () => {
+      expect(
+        matchesShortcutBinding(fakeEvent('Escape', { ctrlKey: true }), 'listClearSelection'),
       ).toBe(false)
     })
   })

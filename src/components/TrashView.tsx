@@ -25,6 +25,7 @@ import { useListMultiSelect } from '../hooks/useListMultiSelect'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
 import { formatTimestamp } from '../lib/format'
+import { matchesShortcutBinding } from '../lib/keyboard-config'
 import { logger } from '../lib/logger'
 import type { BlockRow, ResolvedBlock } from '../lib/tauri'
 import { batchResolve, listBlocks, purgeBlock, restoreBlock } from '../lib/tauri'
@@ -127,21 +128,21 @@ export function TrashView(): React.ReactElement {
         return
 
       // Space — toggle focused/first item (simplified: toggle last clicked)
-      if (e.key === ' ' && lastClickedId != null) {
+      if (matchesShortcutBinding(e, 'listToggleSelection') && lastClickedId != null) {
         e.preventDefault()
         toggleSelection(lastClickedId)
         return
       }
 
       // Ctrl/Cmd+A — select all visible
-      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+      if (matchesShortcutBinding(e, 'listSelectAll')) {
         e.preventDefault()
         selectAll()
         return
       }
 
       // Escape — clear selection
-      if (e.key === 'Escape' && selected.size > 0) {
+      if (matchesShortcutBinding(e, 'listClearSelection') && selected.size > 0) {
         e.preventDefault()
         clearSelection()
       }

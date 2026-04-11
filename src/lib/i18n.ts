@@ -640,6 +640,7 @@ const resources = {
       'keyboard.category.journal': 'Journal',
       'keyboard.category.blockSelection': 'Block Selection',
       'keyboard.category.undoRedo': 'Undo / Redo',
+      'keyboard.category.listSelection': 'List Selection',
       'keyboard.category.historyView': 'History View',
       'keyboard.category.global': 'Global',
 
@@ -652,6 +653,8 @@ const resources = {
       'keyboard.condition.notEditing': 'not editing',
       'keyboard.condition.withSelection': 'with selection',
       'keyboard.condition.outsideEditor': 'outside editor',
+      'keyboard.condition.listItemFocused': 'When a list item is focused',
+      'keyboard.condition.hasSelection': 'When items are selected',
 
       // Keyboard shortcuts — navigation descriptions
       'keyboard.moveToPreviousBlock': 'Move to previous block',
@@ -704,6 +707,11 @@ const resources = {
       // Keyboard shortcuts — undo/redo descriptions
       'keyboard.undoLastPageOp': 'Undo last page operation',
       'keyboard.redoLastUndoneOp': 'Redo last undone operation',
+
+      // Keyboard shortcuts — list selection descriptions
+      'keyboard.listToggleSelection': 'Toggle item selection',
+      'keyboard.listSelectAll': 'Select all items',
+      'keyboard.listClearSelection': 'Clear selection',
 
       // Keyboard shortcuts — history view descriptions
       'keyboard.toggleSelection': 'Toggle selection',
