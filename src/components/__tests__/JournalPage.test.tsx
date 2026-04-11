@@ -2716,7 +2716,7 @@ describe('JournalPage', () => {
       expect(dates[0]).toMatch(/^\d{4}-\d{2}-\d{2}$/)
     })
 
-    it('renders due-dot class for days with due date items', async () => {
+    it('renders due dots for days with due date items', async () => {
       const user = userEvent.setup()
       const today = new Date()
       const todayStr = formatDate(today)
@@ -2738,12 +2738,12 @@ describe('JournalPage', () => {
       await user.click(calButton)
 
       await waitFor(() => {
-        const dueDots = document.querySelectorAll('.has-due-dot')
+        const dueDots = document.querySelectorAll('.bg-date-due-foreground')
         expect(dueDots.length).toBeGreaterThan(0)
       })
     })
 
-    it('renders scheduled-dot class for days with scheduled date items', async () => {
+    it('renders scheduled dots for days with scheduled date items', async () => {
       const user = userEvent.setup()
       const today = new Date()
       const todayStr = formatDate(today)
@@ -2765,12 +2765,12 @@ describe('JournalPage', () => {
       await user.click(calButton)
 
       await waitFor(() => {
-        const scheduledDots = document.querySelectorAll('.has-scheduled-dot')
+        const scheduledDots = document.querySelectorAll('.bg-date-scheduled-foreground')
         expect(scheduledDots.length).toBeGreaterThan(0)
       })
     })
 
-    it('renders property-dot class for days with property date items', async () => {
+    it('renders property dots for days with property date items', async () => {
       const user = userEvent.setup()
       const today = new Date()
       const todayStr = formatDate(today)
@@ -2792,12 +2792,12 @@ describe('JournalPage', () => {
       await user.click(calButton)
 
       await waitFor(() => {
-        const propDots = document.querySelectorAll('.has-property-dot')
+        const propDots = document.querySelectorAll('.bg-date-property-foreground')
         expect(propDots.length).toBeGreaterThan(0)
       })
     })
 
-    it('renders multiple dot classes for days with multiple source types', async () => {
+    it('renders multiple dot types for days with multiple source types', async () => {
       const user = userEvent.setup()
       const today = new Date()
       const todayStr = formatDate(today)
@@ -2825,9 +2825,9 @@ describe('JournalPage', () => {
       await user.click(calButton)
 
       await waitFor(() => {
-        const dueDots = document.querySelectorAll('.has-due-dot')
-        const scheduledDots = document.querySelectorAll('.has-scheduled-dot')
-        const propDots = document.querySelectorAll('.has-property-dot')
+        const dueDots = document.querySelectorAll('.bg-date-due-foreground')
+        const scheduledDots = document.querySelectorAll('.bg-date-scheduled-foreground')
+        const propDots = document.querySelectorAll('.bg-date-property-foreground')
         expect(dueDots.length).toBeGreaterThan(0)
         expect(scheduledDots.length).toBeGreaterThan(0)
         expect(propDots.length).toBeGreaterThan(0)

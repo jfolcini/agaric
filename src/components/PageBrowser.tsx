@@ -6,7 +6,7 @@
  * Includes delete with confirmation dialog and toast error feedback.
  */
 
-import { Download, FileText, Plus, Search, Star, Trash2 } from 'lucide-react'
+import { FileText, Plus, Search, Star, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -31,7 +31,6 @@ import { getRecentPages } from '@/lib/recent-pages'
 import { getStarredPages, isStarred, toggleStarred } from '@/lib/starred-pages'
 import { usePageDelete } from '../hooks/usePageDelete'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
-import { downloadBlob, exportGraphAsZip } from '../lib/export-graph'
 import type { BlockRow } from '../lib/tauri'
 import { createBlock, listBlocks } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
@@ -89,7 +88,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const [showStarredOnly, setShowStarredOnly] = useState(false)
   const [starredRevision, setStarredRevision] = useState(0)
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
-  const [exporting, setExporting] = useState(false)
   const formRef = useRef<HTMLFormElement>(null)
 
   // Track load-more announcements for screen readers
@@ -134,19 +132,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     }
     setIsCreating(false)
   }, [newPageName, setPages, t, onPageSelect])
-
-  const handleExportAll = useCallback(async () => {
-    setExporting(true)
-    try {
-      const blob = await exportGraphAsZip()
-      const date = new Date().toISOString().slice(0, 10)
-      downloadBlob(blob, `agaric-export-${date}.zip`)
-      toast.success(t('pageBrowser.exportSuccess'))
-    } catch {
-      toast.error(t('pageBrowser.exportFailed'))
-    }
-    setExporting(false)
-  }, [t])
 
   const handleCreateUnder = useCallback((namespacePath: string) => {
     setNewPageName(`${namespacePath}/`)
@@ -399,17 +384,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         label={t('pageBrowser.loadMore')}
         loadingLabel={t('pageBrowser.loading')}
       />
-
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={exporting}
-        onClick={handleExportAll}
-        className="w-full"
-      >
-        <Download className="h-4 w-4 mr-1" />
-        {exporting ? t('pageBrowser.exporting') : t('pageBrowser.exportAll')}
-      </Button>
 
       <output className="sr-only" aria-live="polite">
         {loadMoreAnnouncement}

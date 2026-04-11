@@ -604,6 +604,10 @@ const resources = {
       'propertiesView.deadlineWarningDesc':
         'Show tasks approaching their deadline in the DuePanel. Set to 0 to disable.',
       'propertiesView.builtIn': 'Built-in',
+      'propertiesView.clearSearch': 'Clear search',
+      'propertiesView.deleteTooltip': 'Delete property',
+      'propertiesView.editOptionsTooltip': 'Edit options',
+      'propertiesView.noFilterResults': 'No properties match your search',
 
       // Tags
       'tags.loadFailed': 'Failed to load tags',
@@ -1473,6 +1477,7 @@ const resources = {
       'settings.tabProperties': 'Properties',
       'settings.tabAppearance': 'Appearance',
       'settings.tabSync': 'Sync & Devices',
+      'settings.tabData': 'Data',
       'settings.themeLabel': 'Theme',
       'settings.themeLight': 'Light',
       'settings.themeDark': 'Dark',
@@ -1553,6 +1558,19 @@ const resources = {
 
       // UX-121: Search panel
       'search.searchButton': 'Search',
+
+      // UX-144: Data settings tab (import/export)
+      'data.importTitle': 'Import',
+      'data.importDesc': 'Import Logseq or Markdown files as pages.',
+      'data.importButton': 'Choose Files',
+      'data.importingMessage': 'Importing...',
+      'data.importedMessage': 'Imported {{totalBlocks}} blocks from {{fileCount}} file(s)',
+      'data.exportTitle': 'Export All Pages',
+      'data.exportDesc': 'Download all pages as a ZIP of Markdown files.',
+      'data.exportButton': 'Export All',
+      'data.exporting': 'Exporting...',
+      'data.exportSuccess': 'Export complete',
+      'data.exportFailed': 'Export failed',
     },
   },
 }

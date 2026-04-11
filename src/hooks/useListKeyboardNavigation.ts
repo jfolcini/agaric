@@ -19,6 +19,10 @@ export interface UseListKeyboardNavigationOptions {
   vim?: boolean
   /** Enable Home/End keys (default: false) */
   homeEnd?: boolean
+  /** Enable PageUp/PageDown keys (default: false) */
+  pageUpDown?: boolean
+  /** Number of items to jump with PageUp/PageDown (default: 10) */
+  pageSize?: number
   /** Called when an item is selected (Enter or Space) */
   onSelect?: (index: number) => void
 }
@@ -42,6 +46,8 @@ export function useListKeyboardNavigation(
     wrap = true,
     vim = false,
     homeEnd = false,
+    pageUpDown = false,
+    pageSize = 10,
     onSelect,
   } = options
 
@@ -93,6 +99,20 @@ export function useListKeyboardNavigation(
     // End
     if (homeEnd && e.key === 'End') {
       setFocusedIndex(itemCount - 1)
+      return true
+    }
+
+    // PageUp
+    if (pageUpDown && e.key === 'PageUp') {
+      e.preventDefault()
+      setFocusedIndex((prev) => Math.max(0, prev - pageSize))
+      return true
+    }
+
+    // PageDown
+    if (pageUpDown && e.key === 'PageDown') {
+      e.preventDefault()
+      setFocusedIndex((prev) => Math.min(itemCount - 1, prev + pageSize))
       return true
     }
 

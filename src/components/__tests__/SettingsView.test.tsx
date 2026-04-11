@@ -44,6 +44,10 @@ vi.mock('../KeyboardSettingsTab', () => ({
   ),
 }))
 
+vi.mock('../DataSettingsTab', () => ({
+  DataSettingsTab: () => <div data-testid="data-settings-tab">Data Settings Content</div>,
+}))
+
 vi.mock('sonner', () => ({
   toast: {
     error: vi.fn(),
@@ -57,6 +61,7 @@ vi.mock('@/components/ui/select', () => {
   const React = require('react')
   const Ctx = React.createContext({})
 
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
   function Select({ value, onValueChange, children }: any) {
     const triggerPropsRef = React.useRef({})
     return React.createElement(
@@ -66,6 +71,7 @@ vi.mock('@/components/ui/select', () => {
     )
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
   function SelectTrigger({ size, className, ...props }: any) {
     const ctx = React.useContext(Ctx)
     Object.assign(ctx.triggerPropsRef.current, { size, className, ...props })
@@ -76,6 +82,7 @@ vi.mock('@/components/ui/select', () => {
     return null
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
   function SelectContent({ children }: any) {
     const ctx = React.useContext(Ctx)
     const tp = ctx.triggerPropsRef.current
@@ -83,6 +90,7 @@ vi.mock('@/components/ui/select', () => {
       'select',
       {
         value: ctx.value ?? '',
+        // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
         onChange: (e: any) => ctx.onValueChange?.(e.target.value),
         'aria-label': tp['aria-label'],
         id: tp.id,
@@ -91,6 +99,7 @@ vi.mock('@/components/ui/select', () => {
     )
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
   function SelectItem({ value, children }: any) {
     return React.createElement('option', { value }, children)
   }
@@ -107,16 +116,17 @@ beforeEach(() => {
 })
 
 describe('SettingsView', () => {
-  it('renders with 5 tabs', () => {
+  it('renders with 6 tabs', () => {
     render(<SettingsView />)
 
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(5)
+    expect(tabs).toHaveLength(6)
     expect(tabs[0]).toHaveTextContent('General')
     expect(tabs[1]).toHaveTextContent('Properties')
     expect(tabs[2]).toHaveTextContent('Appearance')
     expect(tabs[3]).toHaveTextContent('Keyboard')
-    expect(tabs[4]).toHaveTextContent('Sync & Devices')
+    expect(tabs[4]).toHaveTextContent('Data')
+    expect(tabs[5]).toHaveTextContent('Sync & Devices')
   })
 
   it('General tab shows task states section by default', () => {

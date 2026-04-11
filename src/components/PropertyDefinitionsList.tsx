@@ -5,7 +5,7 @@
  * and edit options for select-type properties.
  */
 
-import { Plus, Settings2, Trash2 } from 'lucide-react'
+import { Plus, Search, Settings2, Trash2, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -24,6 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
 import type { PropertyDefinition } from '../lib/tauri'
@@ -125,16 +126,34 @@ export function PropertyDefinitionsList(): React.ReactElement {
   )
 
   return (
-    <>
+    <div className="space-y-4">
       <h2 className="text-lg font-semibold">{t('propertiesView.title')}</h2>
 
       {/* Search input */}
-      <Input
-        value={searchFilter}
-        onChange={(e) => setSearchFilter(e.target.value)}
-        placeholder={t('propertiesView.search')}
-        aria-label={t('propertiesView.search')}
-      />
+      <div className="relative">
+        <Search
+          className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
+          aria-hidden="true"
+        />
+        <Input
+          value={searchFilter}
+          onChange={(e) => setSearchFilter(e.target.value)}
+          placeholder={t('propertiesView.search')}
+          aria-label={t('propertiesView.search')}
+          className="pl-8 pr-8"
+        />
+        {searchFilter && (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            aria-label={t('propertiesView.clearSearch')}
+            onClick={() => setSearchFilter('')}
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        )}
+      </div>
 
       {/* Create form */}
       <form
@@ -195,7 +214,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
       >
         {() =>
           filteredDefs.length > 0 ? (
-            <ul className="space-y-2">
+            <ul className="space-y-1">
               {filteredDefs.map((def) => (
                 <ListItem key={def.key}>
                   <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
@@ -213,7 +232,12 @@ export function PropertyDefinitionsList(): React.ReactElement {
                       }}
                     >
                       <PopoverTrigger asChild>
-                        <Button variant="ghost" size="sm">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label={t('propertiesView.editOptionsTooltip')}
+                        >
+                          <Settings2 className="h-3.5 w-3.5 mr-1" />
                           {t('propertiesView.editOptions')}
                         </Button>
                       </PopoverTrigger>
@@ -238,19 +262,28 @@ export function PropertyDefinitionsList(): React.ReactElement {
                       {t('propertiesView.builtIn')}
                     </Badge>
                   ) : (
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label={`Delete property ${def.key}`}
-                      className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
-                      onClick={() => setDeleteTarget(def.key)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label={`Delete property ${def.key}`}
+                            className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
+                            onClick={() => setDeleteTarget(def.key)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t('propertiesView.deleteTooltip')}</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   )}
                 </ListItem>
               ))}
             </ul>
+          ) : searchFilter ? (
+            <EmptyState icon={Search} message={t('propertiesView.noFilterResults')} compact />
           ) : null
         }
       </ListViewState>
@@ -267,6 +300,6 @@ export function PropertyDefinitionsList(): React.ReactElement {
         actionLabel={t('action.delete')}
         onAction={handleConfirmDelete}
       />
-    </>
+    </div>
   )
 }

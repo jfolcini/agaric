@@ -28,6 +28,7 @@ vi.mock('@/components/ui/select', () => {
   const React = require('react')
   const Ctx = React.createContext({})
 
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
   function Select({ value, onValueChange, children }: any) {
     const triggerPropsRef = React.useRef({})
     return React.createElement(
@@ -37,6 +38,7 @@ vi.mock('@/components/ui/select', () => {
     )
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
   function SelectTrigger({ size, className, ...props }: any) {
     const ctx = React.useContext(Ctx)
     Object.assign(ctx.triggerPropsRef.current, { size, className, ...props })
@@ -47,6 +49,7 @@ vi.mock('@/components/ui/select', () => {
     return null
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
   function SelectContent({ children }: any) {
     const ctx = React.useContext(Ctx)
     const tp = ctx.triggerPropsRef.current
@@ -54,6 +57,7 @@ vi.mock('@/components/ui/select', () => {
       'select',
       {
         value: ctx.value ?? '',
+        // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
         onChange: (e: any) => ctx.onValueChange?.(e.target.value),
         'aria-label': tp['aria-label'],
         id: tp.id,
@@ -62,6 +66,7 @@ vi.mock('@/components/ui/select', () => {
     )
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
   function SelectItem({ value, children }: any) {
     return React.createElement('option', { value }, children)
   }
@@ -385,5 +390,61 @@ describe('PropertyDefinitionsList', () => {
     expect(
       screen.getByRole('button', { name: /Delete property custom-field/i }),
     ).toBeInTheDocument()
+  })
+
+  it('search clear button clears the filter', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce([
+      makePropDef('status', 'select'),
+      makePropDef('priority', 'number'),
+    ])
+
+    render(<PropertyDefinitionsList />)
+
+    expect(await screen.findByText('Status')).toBeInTheDocument()
+
+    const searchInput = screen.getByPlaceholderText('Search properties...')
+    await user.type(searchInput, 'pri')
+
+    expect(screen.queryByText('Status')).not.toBeInTheDocument()
+    expect(screen.getByText('Priority')).toBeInTheDocument()
+
+    const clearBtn = screen.getByRole('button', { name: /Clear search/i })
+    await user.click(clearBtn)
+
+    expect(searchInput).toHaveValue('')
+    expect(screen.getByText('Status')).toBeInTheDocument()
+    expect(screen.getByText('Priority')).toBeInTheDocument()
+  })
+
+  it('shows empty state when filter matches nothing', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce([
+      makePropDef('status', 'select'),
+      makePropDef('priority', 'number'),
+    ])
+
+    render(<PropertyDefinitionsList />)
+
+    expect(await screen.findByText('Status')).toBeInTheDocument()
+
+    const searchInput = screen.getByPlaceholderText('Search properties...')
+    await user.type(searchInput, 'zzzznonexistent')
+
+    expect(screen.queryByText('Status')).not.toBeInTheDocument()
+    expect(screen.queryByText('Priority')).not.toBeInTheDocument()
+    expect(screen.getByText('No properties match your search')).toBeInTheDocument()
+  })
+
+  it('delete button has aria-label for tooltip accessibility', async () => {
+    mockedInvoke.mockResolvedValueOnce([makePropDef('my-prop', 'text')])
+
+    render(<PropertyDefinitionsList />)
+
+    expect(await screen.findByText('My Prop')).toBeInTheDocument()
+
+    const deleteBtn = screen.getByRole('button', { name: /Delete property my-prop/i })
+    expect(deleteBtn).toBeInTheDocument()
+    expect(deleteBtn).toHaveAttribute('aria-label', 'Delete property my-prop')
   })
 })

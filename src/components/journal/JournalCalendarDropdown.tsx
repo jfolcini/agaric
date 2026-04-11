@@ -1,6 +1,7 @@
 import { startOfWeek } from 'date-fns'
 import type React from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type ButtonHTMLAttributes, useEffect, useMemo, useRef, useState } from 'react'
+import type { CalendarDay, Modifiers } from 'react-day-picker'
 import { useTranslation } from 'react-i18next'
 import { Calendar } from '@/components/ui/calendar'
 import { logger } from '@/lib/logger'
@@ -47,6 +48,49 @@ export function computeSourceModifiers(data: Record<string, Record<string, numbe
     if (hasProp) datesWithProperty.push(d)
   }
   return { datesWithDue, datesWithScheduled, datesWithProperty }
+}
+
+/** Dot color classes in display order: page, due, scheduled, property. */
+const DOT_MODIFIERS = [
+  { key: 'hasContent', color: 'bg-primary' },
+  { key: 'hasDue', color: 'bg-date-due-foreground' },
+  { key: 'hasScheduled', color: 'bg-date-scheduled-foreground' },
+  { key: 'hasProperty', color: 'bg-date-property-foreground' },
+] as const
+
+/** Custom DayButton that renders real DOM dot indicators below the date number. */
+function CalendarDayButton({
+  day,
+  modifiers,
+  children,
+  className,
+  ...props
+}: {
+  day: CalendarDay
+  modifiers: Modifiers
+} & ButtonHTMLAttributes<HTMLButtonElement>) {
+  const dots = DOT_MODIFIERS.filter((d) => modifiers[d.key])
+
+  return (
+    <button className={cn(className, 'relative')} {...props}>
+      {children}
+      {dots.length > 0 && (
+        <span
+          className="absolute bottom-[2px] left-1/2 flex -translate-x-1/2 gap-[2px] pointer-events-none"
+          data-testid="calendar-dots"
+        >
+          {dots.map((d) => (
+            <span
+              key={d.key}
+              className={cn('h-[5px] w-[5px] rounded-full', d.color)}
+              role="img"
+              aria-hidden
+            />
+          ))}
+        </span>
+      )}
+    </button>
+  )
 }
 
 export interface JournalCalendarDropdownProps {
@@ -162,12 +206,7 @@ export function JournalCalendarDropdown({
             hasScheduled: datesWithScheduled,
             hasProperty: datesWithProperty,
           }}
-          modifiersClassNames={{
-            hasContent: 'has-content-dot',
-            hasDue: 'has-due-dot',
-            hasScheduled: 'has-scheduled-dot',
-            hasProperty: 'has-property-dot',
-          }}
+          components={{ DayButton: CalendarDayButton }}
         />
         {/* Color dot legend */}
         <div
@@ -191,31 +230,6 @@ export function JournalCalendarDropdown({
             {t('journal.legendProperty')}
           </span>
         </div>
-        <style>{`
-          .has-content-dot { position: relative; --dot-page: var(--primary); }
-          .has-due-dot { position: relative; --dot-due: var(--date-due-foreground); }
-          .has-scheduled-dot { position: relative; --dot-sched: var(--date-scheduled-foreground); }
-          .has-property-dot { position: relative; --dot-prop: var(--date-property-foreground); }
-          .has-content-dot::after,
-          .has-due-dot::after,
-          .has-scheduled-dot::after,
-          .has-property-dot::after {
-            content: '';
-            position: absolute;
-            bottom: 1px;
-            left: 50%;
-            width: 1px;
-            height: 1px;
-            border-radius: 50%;
-            transform: translateX(-50%);
-            pointer-events: none;
-            box-shadow:
-              -6px 0 0 1.5px var(--dot-page, transparent),
-              -2px 0 0 1.5px var(--dot-due, transparent),
-              2px 0 0 1.5px var(--dot-sched, transparent),
-              6px 0 0 1.5px var(--dot-prop, transparent);
-          }
-        `}</style>
       </div>
     </>
   )

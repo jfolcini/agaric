@@ -32,6 +32,7 @@ vi.mock('@/components/ui/select', () => {
   const React = require('react')
   const Ctx = React.createContext({})
 
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
   function Select({ value, onValueChange, children, disabled }: any) {
     const triggerPropsRef = React.useRef({})
     return React.createElement(
@@ -41,6 +42,7 @@ vi.mock('@/components/ui/select', () => {
     )
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
   function SelectTrigger({ size, className, ...props }: any) {
     const ctx = React.useContext(Ctx)
     Object.assign(ctx.triggerPropsRef.current, { size, className, ...props })
@@ -51,6 +53,7 @@ vi.mock('@/components/ui/select', () => {
     return null
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
   function SelectContent({ children }: any) {
     const ctx = React.useContext(Ctx)
     const tp = ctx.triggerPropsRef.current
@@ -58,6 +61,7 @@ vi.mock('@/components/ui/select', () => {
       'select',
       {
         value: ctx.value ?? '',
+        // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
         onChange: (e: any) => ctx.onValueChange?.(e.target.value),
         disabled: ctx.disabled,
         'aria-label': tp['aria-label'],
@@ -68,6 +72,7 @@ vi.mock('@/components/ui/select', () => {
     )
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
   function SelectItem({ value, children }: any) {
     return React.createElement('option', { value }, children)
   }
@@ -724,20 +729,6 @@ describe('PageBrowser', () => {
       await user.type(input, 'Another Page')
       expect(newPageBtn).toBeEnabled()
     })
-  })
-
-  it('renders Export all pages button', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makePage({ id: 'P1', content: 'A Page' })],
-      next_cursor: null,
-      has_more: false,
-    })
-
-    render(<PageBrowser />)
-
-    const exportBtn = await screen.findByRole('button', { name: /Export all pages/i })
-    expect(exportBtn).toBeInTheDocument()
-    expect(exportBtn).toBeEnabled()
   })
 
   describe('namespaced pages tree view', () => {

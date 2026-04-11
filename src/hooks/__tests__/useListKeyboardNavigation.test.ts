@@ -7,6 +7,7 @@
  *  - Wrapping behavior (wrap: true wraps, wrap: false clamps)
  *  - Vim keys (j/k) when vim: true
  *  - Home/End when homeEnd: true
+ *  - PageUp/PageDown when pageUpDown: true
  *  - onSelect called on Enter
  *  - focusedIndex resets when itemCount changes
  *  - Returns true for handled keys, false for unhandled
@@ -203,6 +204,150 @@ describe('useListKeyboardNavigation', () => {
         handled = result.current.handleKeyDown(keyEvent('End'))
       })
       expect(handled).toBe(false)
+    })
+  })
+
+  describe('PageUp/PageDown keys', () => {
+    it('PageDown jumps by pageSize (default 10)', () => {
+      const { result } = renderHook(() =>
+        useListKeyboardNavigation({ itemCount: 30, pageUpDown: true }),
+      )
+
+      expect(result.current.focusedIndex).toBe(0)
+
+      act(() => {
+        result.current.handleKeyDown(keyEvent('PageDown'))
+      })
+      expect(result.current.focusedIndex).toBe(10)
+    })
+
+    it('PageUp jumps by pageSize (default 10)', () => {
+      const { result } = renderHook(() =>
+        useListKeyboardNavigation({ itemCount: 30, pageUpDown: true }),
+      )
+
+      // Move to index 20
+      act(() => {
+        result.current.handleKeyDown(keyEvent('PageDown'))
+        result.current.handleKeyDown(keyEvent('PageDown'))
+      })
+      expect(result.current.focusedIndex).toBe(20)
+
+      act(() => {
+        result.current.handleKeyDown(keyEvent('PageUp'))
+      })
+      expect(result.current.focusedIndex).toBe(10)
+    })
+
+    it('PageDown clamps at the end (does not wrap)', () => {
+      const { result } = renderHook(() =>
+        useListKeyboardNavigation({ itemCount: 15, pageUpDown: true, wrap: true }),
+      )
+
+      // Move to index 10
+      act(() => {
+        result.current.handleKeyDown(keyEvent('PageDown'))
+      })
+      expect(result.current.focusedIndex).toBe(10)
+
+      // PageDown again — should clamp at 14, not wrap
+      act(() => {
+        result.current.handleKeyDown(keyEvent('PageDown'))
+      })
+      expect(result.current.focusedIndex).toBe(14)
+    })
+
+    it('PageUp clamps at 0 (does not wrap)', () => {
+      const { result } = renderHook(() =>
+        useListKeyboardNavigation({ itemCount: 15, pageUpDown: true, wrap: true }),
+      )
+
+      // Move to index 5 via arrow keys
+      act(() => {
+        result.current.handleKeyDown(keyEvent('ArrowDown'))
+        result.current.handleKeyDown(keyEvent('ArrowDown'))
+        result.current.handleKeyDown(keyEvent('ArrowDown'))
+        result.current.handleKeyDown(keyEvent('ArrowDown'))
+        result.current.handleKeyDown(keyEvent('ArrowDown'))
+      })
+      expect(result.current.focusedIndex).toBe(5)
+
+      // PageUp should clamp at 0, not wrap
+      act(() => {
+        result.current.handleKeyDown(keyEvent('PageUp'))
+      })
+      expect(result.current.focusedIndex).toBe(0)
+    })
+
+    it('PageDown with custom pageSize', () => {
+      const { result } = renderHook(() =>
+        useListKeyboardNavigation({ itemCount: 30, pageUpDown: true, pageSize: 5 }),
+      )
+
+      act(() => {
+        result.current.handleKeyDown(keyEvent('PageDown'))
+      })
+      expect(result.current.focusedIndex).toBe(5)
+
+      act(() => {
+        result.current.handleKeyDown(keyEvent('PageDown'))
+      })
+      expect(result.current.focusedIndex).toBe(10)
+    })
+
+    it('PageUp/PageDown ignored when pageUpDown: false', () => {
+      const { result } = renderHook(() =>
+        useListKeyboardNavigation({ itemCount: 30, pageUpDown: false }),
+      )
+
+      let handled = false
+      act(() => {
+        handled = result.current.handleKeyDown(keyEvent('PageDown'))
+      })
+      expect(handled).toBe(false)
+      expect(result.current.focusedIndex).toBe(0)
+
+      act(() => {
+        handled = result.current.handleKeyDown(keyEvent('PageUp'))
+      })
+      expect(handled).toBe(false)
+      expect(result.current.focusedIndex).toBe(0)
+    })
+
+    it('PageUp/PageDown work with small list (fewer items than pageSize)', () => {
+      const { result } = renderHook(() =>
+        useListKeyboardNavigation({ itemCount: 3, pageUpDown: true }),
+      )
+
+      // PageDown should clamp to last item
+      act(() => {
+        result.current.handleKeyDown(keyEvent('PageDown'))
+      })
+      expect(result.current.focusedIndex).toBe(2)
+
+      // PageUp should clamp to 0
+      act(() => {
+        result.current.handleKeyDown(keyEvent('PageUp'))
+      })
+      expect(result.current.focusedIndex).toBe(0)
+    })
+
+    it('handleKeyDown returns true for PageUp/PageDown when enabled', () => {
+      const { result } = renderHook(() =>
+        useListKeyboardNavigation({ itemCount: 30, pageUpDown: true }),
+      )
+
+      let handled = false
+
+      act(() => {
+        handled = result.current.handleKeyDown(keyEvent('PageDown'))
+      })
+      expect(handled).toBe(true)
+
+      act(() => {
+        handled = result.current.handleKeyDown(keyEvent('PageUp'))
+      })
+      expect(handled).toBe(true)
     })
   })
 

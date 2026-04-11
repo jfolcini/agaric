@@ -18,6 +18,7 @@ vi.mock('@/lib/logger', () => ({
 vi.mock('../ui/calendar', () => ({
   Calendar: (props: Record<string, unknown>) => {
     const modifiers = props.modifiers as Record<string, Date[]> | undefined
+    const components = props.components as Record<string, unknown> | undefined
     return (
       <div
         data-testid="mock-calendar"
@@ -25,6 +26,7 @@ vi.mock('../ui/calendar', () => ({
         data-has-due={modifiers?.hasDue?.length ?? 0}
         data-has-scheduled={modifiers?.hasScheduled?.length ?? 0}
         data-has-property={modifiers?.hasProperty?.length ?? 0}
+        data-has-day-button={components?.DayButton ? 'true' : 'false'}
       >
         Calendar
       </div>
@@ -251,15 +253,16 @@ describe('JournalCalendarDropdown', () => {
     Element.prototype.getBoundingClientRect = originalGBCR
   })
 
-  it('renders source-colored dot styles', () => {
+  it('passes custom DayButton component to Calendar instead of inline styles', () => {
     render(<JournalCalendarDropdown {...defaultProps} />)
 
+    // No inline <style> tag should be present
     const styleEl = document.querySelector('style')
-    expect(styleEl).not.toBeNull()
-    expect(styleEl?.textContent).toContain('has-content-dot')
-    expect(styleEl?.textContent).toContain('has-due-dot')
-    expect(styleEl?.textContent).toContain('has-scheduled-dot')
-    expect(styleEl?.textContent).toContain('has-property-dot')
+    expect(styleEl).toBeNull()
+
+    // Calendar should receive a custom DayButton component
+    const calendar = screen.getByTestId('mock-calendar')
+    expect(calendar).toHaveAttribute('data-has-day-button', 'true')
   })
 
   it('has no a11y violations', async () => {

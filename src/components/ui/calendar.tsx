@@ -22,7 +22,15 @@ export type CalendarProps = DayPickerProps & {
 
 const Calendar = React.forwardRef<HTMLDivElement, CalendarProps>(
   (
-    { className, classNames, showOutsideDays = true, onWeekNumberClick, onMonthClick, ...props },
+    {
+      className,
+      classNames,
+      showOutsideDays = true,
+      onWeekNumberClick,
+      onMonthClick,
+      components: componentsProp,
+      ...props
+    },
     ref,
   ) => {
     return (
@@ -111,6 +119,7 @@ const Calendar = React.forwardRef<HTMLDivElement, CalendarProps>(
                   },
                 }
               : {}),
+            ...componentsProp,
           }}
           {...props}
         />
