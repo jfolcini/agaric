@@ -1,5 +1,31 @@
 # Session Log
 
+## Session 339 — F-39 complete: reactive panel invalidation (2026-04-11)
+
+**F-39 fully resolved (all 3 phases). 10 files changed, +120 lines. 4 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| F-39 P2 | New useBlockPropertyEvents hook — listens for block:properties-changed events, 150ms debounce, monotonic invalidationKey | New `useBlockPropertyEvents.ts` + test |
+| F-39 P3 | Wired invalidationKey into useDuePanelData (4 effects), DonePanel, LinkedReferences, JournalCalendarDropdown | 4 source files + 4 test mocks |
+
+### Implementation
+- useBlockPropertyEvents hook: dynamic import of @tauri-apps/api/event, 150ms debounce, proper cleanup
+- useDuePanelData: all 4 useEffects (main, projected, overdue, upcoming) re-run on invalidation. Projected cache cleared.
+- DonePanel: main fetch effect re-runs on invalidation
+- LinkedReferences: fetchGroups useCallback re-created on invalidation → triggers useEffect
+- JournalCalendarDropdown: agenda fetch re-runs on invalidation
+- B-50 likely resolved — panels now refetch after set_todo_state changes
+
+### Stats
+- 10 files changed (+120 lines)
+- 4 new tests (useBlockPropertyEvents hook)
+- 6198 frontend tests pass, all prek hooks pass
+
+---
+
 ## Session 338 — F-39 Phase 1: backend property-changed events (2026-04-11)
 
 **F-39 Phase 1 complete. 2 Rust files changed, +60 lines. 1 new test.**
