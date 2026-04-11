@@ -625,6 +625,78 @@ Three levels of visual importance, consistently applied:
 
 Destructive buttons use `variant="destructive"` — reserved for purge, permanent delete, discard.
 
+### Icon System
+
+**Library:** Lucide React (`lucide-react`). Single icon library — never import from other packages.
+
+#### Semantic icon mapping
+
+Each user action has exactly one icon. Do not deviate.
+
+| Action | Icon | Notes |
+|--------|------|-------|
+| Delete / trash | `Trash2` | Permanent-feeling removal (blocks, pages, tags, attachments, properties definitions) |
+| Remove / close / dismiss / clear | `X` | Lightweight removal: close tabs, dismiss errors, remove chips/filters/aliases/tags, clear search, discard conflicts |
+| Add / create / new | `Plus` | New page, new block, add tag, add filter, add property, add option |
+| Edit / rename | `Pencil` | Edit shortcuts, rename tags/peers, edit query, edit options |
+| Search | `Search` | Search inputs across all views |
+| Filter trigger | `Filter` | Open/toggle filter panel (AgendaFilter, BacklinkFilter, SourcePageFilter) |
+| Filter adjust | `SlidersHorizontal` | Toggle advanced filter options (LinkedReferences) |
+| Configure | `Settings2` | Property definition options, block properties drawer |
+| Undo | `Undo2` | Page-level undo (edit history navigation) |
+| Redo | `Redo2` | Page-level redo |
+| Restore / revert | `RotateCcw` | Point-in-time restoration: trash restore, history revert |
+| Sync / refresh | `RefreshCw` | Device sync, conflict refresh (often with `animate-spin`) |
+| Expand / collapse | `ChevronToggle` | Use the shared component, not raw `ChevronDown`/`ChevronRight` |
+| Sort | `ArrowUpDown` | Sort controls in filter/agenda toolbars |
+| Favorite | `Star` | Page star toggle (`fill="currentColor"` when active) |
+| External link | `ExternalLink` | "View original", "open in new tab" style actions |
+| Drag handle | `GripVertical` | Block reordering drag handle |
+| History | `Clock` | Block/page history views and gutter button |
+| Task DONE status | `CheckCircle2` | Status indicator display |
+| Task DOING status | `Clock` | Status indicator display (with `text-task-doing` color) |
+| TODO cycle | `CheckSquare` | Context menu action to cycle TODO state |
+| Confirm / keep | `Check` | Checkbox done state, confirm edits, keep conflict |
+
+#### Icon sizing by context
+
+Icons inherit their size from the button's `[&_svg]:size-[1.2em]` rule when inside a `<Button>`. Only set explicit size classes when the icon is outside a Button or needs to override the default.
+
+When explicit sizing is needed, use these conventions:
+
+| Context | Size class | When |
+|---------|------------|------|
+| Inline/compact (property editor, filter pills, breadcrumbs) | `h-3 w-3` | Icons inside `size="xs"` or `size="icon-xs"` buttons, or inline text |
+| Toolbar / action buttons | `h-3.5 w-3.5` | Icons inside `size="sm"` or `size="icon-sm"` buttons, context menu items |
+| Headers / standalone | `h-4 w-4` | Search input prefixes, page header icons, gutter controls, status icons, card title icons |
+
+Pick the size that matches the button context. The same icon (e.g., `Plus`) will be different sizes in different contexts — that is correct. What matters is consistency within a context: all icons in the same toolbar should be the same size.
+
+#### When to use icons on buttons
+
+Not every button needs an icon. Follow these rules:
+
+- **Icon-only buttons** (e.g., gutter controls, header actions): Always. Must have `aria-label` and a `<Tooltip>`.
+- **Context menus / dropdown menus**: Always. Every menu item gets an icon for scannability.
+- **Sidebar navigation**: Always. Icon + text label.
+- **Toolbar buttons**: Always. Icon-only with tooltip, or icon + short label.
+- **Batch action buttons with semantic meaning** (Keep, Discard, Restore, Purge, Delete): Always. Icon + text.
+- **"Clear all" / "Clear selection" buttons**: Always use `X` icon + text for consistency.
+- **Dialog footer buttons** (Cancel / Save / Confirm): Text-only. Standard dialog convention — the label is self-evident.
+- **Date quick-picks** (Today, Tomorrow, Next week): Text-only. Short labels in compact popovers.
+- **Heading level selectors** (H1-H6): Text-only. The text IS the visual representation.
+- **Image resize presets** (25%, 50%, 75%): Text-only. Numeric values are clearer than icons.
+- **Error recovery buttons** (Retry, Reload): Icon (`RefreshCw`) + text. Consistent across all error boundaries.
+
+#### Anti-patterns
+
+- Importing icons from libraries other than `lucide-react`.
+- Using `Trash2` and `X` interchangeably — `Trash2` is for permanent deletion, `X` is for lightweight removal/dismissal.
+- Using raw `ChevronDown` with manual rotation instead of the shared `ChevronToggle` component.
+- Using different sizes for the same icon within the same component (e.g., two `Pencil` icons at `h-3` and `h-3.5` in the same file).
+- Adding icons to dialog footer buttons (Cancel/Save) or date quick-pick buttons.
+- Icon-only buttons without `aria-label` and `<Tooltip>`.
+
 ### Formatting Toolbar
 
 File: `src/components/FormattingToolbar.tsx`
