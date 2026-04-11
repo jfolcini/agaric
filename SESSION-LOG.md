@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 341 — F-38 Phase 4: tab bar + journal shortcuts (2026-04-11)
+
+**F-38 Phase 4 complete. 4 files changed, ~+40 lines. 8 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| F-38 P4 | Tab bar (Delete/Backspace) + journal (Enter/n) shortcuts migrated to DEFAULT_SHORTCUTS | `keyboard-config.ts`, `i18n.ts`, `TabBar.tsx`, `useJournalAutoCreate.ts` + tests |
+
+### Stats
+- 4 files changed (~+40 lines)
+- 8 new tests
+- 6219 frontend tests pass, all prek hooks pass
+- 57 shortcuts now configurable (was 55)
+
+---
+
 ## Session 340 — F-38 Phase 2: block tree configurable shortcuts (2026-04-11)
 
 **F-38 Phase 2 complete. 7 files changed, ~+180 lines. 13 new tests.**
