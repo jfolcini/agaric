@@ -77,33 +77,6 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     description: 'keyboard.collapseExpandChildren',
   },
   {
-    id: 'insertLink',
-    keys: 'Ctrl + K',
-    category: 'keyboard.category.editing',
-    description: 'keyboard.insertOrEditLink',
-  },
-  {
-    id: 'toggleCodeBlock',
-    keys: 'Ctrl + Shift + C',
-    category: 'keyboard.category.editing',
-    description: 'keyboard.toggleCodeBlock',
-    condition: 'keyboard.condition.inEditor',
-  },
-  {
-    id: 'toggleStrikethrough',
-    keys: 'Ctrl + Shift + S',
-    category: 'keyboard.category.editing',
-    description: 'keyboard.toggleStrikethrough',
-    condition: 'keyboard.condition.inEditor',
-  },
-  {
-    id: 'toggleHighlight',
-    keys: 'Ctrl + Shift + H',
-    category: 'keyboard.category.editing',
-    description: 'keyboard.toggleHighlight',
-    condition: 'keyboard.condition.inEditor',
-  },
-  {
     id: 'moveBlockUp',
     keys: 'Ctrl + Shift + Arrow Up',
     category: 'keyboard.category.editing',
@@ -389,7 +362,104 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     description: 'keyboard.closeTabOnFocus',
     condition: 'keyboard.condition.tabFocused',
   },
+
+  // Editor Formatting
+  {
+    id: 'inlineCode',
+    keys: 'Ctrl + E',
+    category: 'keyboard.category.editorFormatting',
+    description: 'keyboard.inlineCode',
+  },
+  {
+    id: 'strikethrough',
+    keys: 'Ctrl + Shift + S',
+    category: 'keyboard.category.editorFormatting',
+    description: 'keyboard.strikethrough',
+  },
+  {
+    id: 'highlight',
+    keys: 'Ctrl + Shift + H',
+    category: 'keyboard.category.editorFormatting',
+    description: 'keyboard.highlight',
+  },
+  {
+    id: 'codeBlock',
+    keys: 'Ctrl + Shift + C',
+    category: 'keyboard.category.editorFormatting',
+    description: 'keyboard.codeBlock',
+  },
+  {
+    id: 'priority1',
+    keys: 'Ctrl + Shift + 1',
+    category: 'keyboard.category.editorFormatting',
+    description: 'keyboard.priority1',
+  },
+  {
+    id: 'priority2',
+    keys: 'Ctrl + Shift + 2',
+    category: 'keyboard.category.editorFormatting',
+    description: 'keyboard.priority2',
+  },
+  {
+    id: 'priority3',
+    keys: 'Ctrl + Shift + 3',
+    category: 'keyboard.category.editorFormatting',
+    description: 'keyboard.priority3',
+  },
+  {
+    id: 'linkPopover',
+    keys: 'Ctrl + K',
+    category: 'keyboard.category.editorFormatting',
+    description: 'keyboard.linkPopover',
+  },
+  {
+    id: 'backspaceChip',
+    keys: 'Backspace',
+    category: 'keyboard.category.editorFormatting',
+    description: 'keyboard.backspaceChip',
+    condition: 'keyboard.condition.afterChip',
+  },
+
+  // Suggestion Popup
+  {
+    id: 'suggestionClose',
+    keys: 'Escape',
+    category: 'keyboard.category.suggestionPopup',
+    description: 'keyboard.suggestionClose',
+    condition: 'keyboard.condition.popupOpen',
+  },
+  {
+    id: 'suggestionPassSpace',
+    keys: 'Space',
+    category: 'keyboard.category.suggestionPopup',
+    description: 'keyboard.suggestionPassSpace',
+    condition: 'keyboard.condition.popupOpen',
+  },
+  {
+    id: 'suggestionAutocomplete',
+    keys: 'Tab',
+    category: 'keyboard.category.suggestionPopup',
+    description: 'keyboard.suggestionAutocomplete',
+    condition: 'keyboard.condition.popupOpen',
+  },
 ]
+
+/**
+ * Convert a keyboard-config key string to TipTap key format.
+ * e.g., 'Ctrl + E' → 'Mod-e', 'Ctrl + Shift + S' → 'Mod-Shift-s'
+ */
+export function configKeyToTipTap(configKey: string): string {
+  const parts = configKey.split('+').map((p) => p.trim())
+  return parts
+    .map((p) => {
+      const lower = p.toLowerCase()
+      if (lower === 'ctrl') return 'Mod'
+      if (lower === 'shift') return 'Shift'
+      if (lower === 'alt') return 'Alt'
+      return lower
+    })
+    .join('-')
+}
 
 /**
  * Parse a shortcut binding string and check if a KeyboardEvent matches it.

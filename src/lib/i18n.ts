@@ -1548,6 +1548,28 @@ const resources = {
       'keyboard.closeActiveTab': 'Close active tab',
       'keyboard.nextTab': 'Switch to next tab',
       'keyboard.previousTab': 'Switch to previous tab',
+      'keyboard.closeTabOnFocus': 'Close focused tab',
+      'keyboard.condition.tabFocused': 'When a tab is focused',
+
+      // Keyboard shortcuts — editor formatting
+      'keyboard.category.editorFormatting': 'Editor Formatting',
+      'keyboard.inlineCode': 'Toggle inline code',
+      'keyboard.strikethrough': 'Toggle strikethrough',
+      'keyboard.highlight': 'Toggle highlight',
+      'keyboard.codeBlock': 'Toggle code block',
+      'keyboard.priority1': 'Set priority 1 (high)',
+      'keyboard.priority2': 'Set priority 2 (medium)',
+      'keyboard.priority3': 'Set priority 3 (low)',
+      'keyboard.linkPopover': 'Insert/edit link',
+      'keyboard.backspaceChip': 'Re-expand chip for editing',
+      'keyboard.condition.afterChip': 'When cursor is after a chip',
+
+      // Keyboard shortcuts — suggestion popup
+      'keyboard.category.suggestionPopup': 'Suggestion Popup',
+      'keyboard.suggestionClose': 'Close popup',
+      'keyboard.suggestionPassSpace': 'Insert space in query',
+      'keyboard.suggestionAutocomplete': 'Autocomplete selection',
+      'keyboard.condition.popupOpen': 'When suggestion popup is open',
 
       // UX-121: Block Context (batch toolbar)
       'blockContext.selected': 'selected',

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  configKeyToTipTap,
   DEFAULT_SHORTCUTS,
   findConflicts,
   getCurrentShortcuts,
@@ -466,6 +467,136 @@ describe('keyboard-config', () => {
       expect(
         matchesShortcutBinding(fakeEvent('Escape', { ctrlKey: true }), 'listClearSelection'),
       ).toBe(false)
+    })
+  })
+
+  describe('Editor Formatting shortcuts (F-38 Phase 1)', () => {
+    const editorFormattingIds = [
+      'inlineCode',
+      'strikethrough',
+      'highlight',
+      'codeBlock',
+      'priority1',
+      'priority2',
+      'priority3',
+      'linkPopover',
+      'backspaceChip',
+    ]
+
+    it('all 9 editor formatting shortcuts exist in DEFAULT_SHORTCUTS', () => {
+      for (const id of editorFormattingIds) {
+        const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === id)
+        expect(shortcut, `shortcut "${id}" should exist`).toBeDefined()
+        expect(shortcut?.category).toBe('keyboard.category.editorFormatting')
+      }
+    })
+
+    it('inlineCode defaults to Ctrl + E', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'inlineCode')
+      expect(s?.keys).toBe('Ctrl + E')
+    })
+
+    it('strikethrough defaults to Ctrl + Shift + S', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'strikethrough')
+      expect(s?.keys).toBe('Ctrl + Shift + S')
+    })
+
+    it('highlight defaults to Ctrl + Shift + H', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'highlight')
+      expect(s?.keys).toBe('Ctrl + Shift + H')
+    })
+
+    it('codeBlock defaults to Ctrl + Shift + C', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'codeBlock')
+      expect(s?.keys).toBe('Ctrl + Shift + C')
+    })
+
+    it('priority1 defaults to Ctrl + Shift + 1', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'priority1')
+      expect(s?.keys).toBe('Ctrl + Shift + 1')
+    })
+
+    it('priority2 defaults to Ctrl + Shift + 2', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'priority2')
+      expect(s?.keys).toBe('Ctrl + Shift + 2')
+    })
+
+    it('priority3 defaults to Ctrl + Shift + 3', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'priority3')
+      expect(s?.keys).toBe('Ctrl + Shift + 3')
+    })
+
+    it('linkPopover defaults to Ctrl + K', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'linkPopover')
+      expect(s?.keys).toBe('Ctrl + K')
+    })
+
+    it('backspaceChip defaults to Backspace with afterChip condition', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'backspaceChip')
+      expect(s?.keys).toBe('Backspace')
+      expect(s?.condition).toBe('keyboard.condition.afterChip')
+    })
+  })
+
+  describe('Suggestion Popup shortcuts (F-38 Phase 1)', () => {
+    const suggestionIds = ['suggestionClose', 'suggestionPassSpace', 'suggestionAutocomplete']
+
+    it('all 3 suggestion popup shortcuts exist in DEFAULT_SHORTCUTS', () => {
+      for (const id of suggestionIds) {
+        const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === id)
+        expect(shortcut, `shortcut "${id}" should exist`).toBeDefined()
+        expect(shortcut?.category).toBe('keyboard.category.suggestionPopup')
+        expect(shortcut?.condition).toBe('keyboard.condition.popupOpen')
+      }
+    })
+
+    it('suggestionClose defaults to Escape', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'suggestionClose')
+      expect(s?.keys).toBe('Escape')
+    })
+
+    it('suggestionPassSpace defaults to Space', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'suggestionPassSpace')
+      expect(s?.keys).toBe('Space')
+    })
+
+    it('suggestionAutocomplete defaults to Tab', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'suggestionAutocomplete')
+      expect(s?.keys).toBe('Tab')
+    })
+  })
+
+  describe('configKeyToTipTap', () => {
+    it('converts Ctrl + E to Mod-e', () => {
+      expect(configKeyToTipTap('Ctrl + E')).toBe('Mod-e')
+    })
+
+    it('converts Ctrl + Shift + S to Mod-Shift-s', () => {
+      expect(configKeyToTipTap('Ctrl + Shift + S')).toBe('Mod-Shift-s')
+    })
+
+    it('converts Ctrl + K to Mod-k', () => {
+      expect(configKeyToTipTap('Ctrl + K')).toBe('Mod-k')
+    })
+
+    it('converts Ctrl + Shift + H to Mod-Shift-h', () => {
+      expect(configKeyToTipTap('Ctrl + Shift + H')).toBe('Mod-Shift-h')
+    })
+
+    it('converts Ctrl + Shift + C to Mod-Shift-c', () => {
+      expect(configKeyToTipTap('Ctrl + Shift + C')).toBe('Mod-Shift-c')
+    })
+
+    it('converts Ctrl + Shift + 1 to Mod-Shift-1', () => {
+      expect(configKeyToTipTap('Ctrl + Shift + 1')).toBe('Mod-Shift-1')
+    })
+
+    it('converts single key Backspace to backspace', () => {
+      expect(configKeyToTipTap('Backspace')).toBe('backspace')
+    })
+
+    it('converts Alt + T to Alt-t', () => {
+      expect(configKeyToTipTap('Alt + T')).toBe('Alt-t')
     })
   })
 })

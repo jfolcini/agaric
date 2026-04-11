@@ -13,11 +13,12 @@
  */
 
 import Link from '@tiptap/extension-link'
+import { configKeyToTipTap, getShortcutKeys } from '@/lib/keyboard-config'
 
 export const ExternalLink = Link.extend({
   addKeyboardShortcuts() {
     return {
-      'Mod-k': () => {
+      [configKeyToTipTap(getShortcutKeys('linkPopover'))]: () => {
         // Dispatch a custom event on the editor DOM element.
         // FormattingToolbar listens for this and opens the link popover.
         this.editor.view.dom.dispatchEvent(new CustomEvent('open-link-popover'))

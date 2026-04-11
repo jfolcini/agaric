@@ -31,6 +31,7 @@ import Text from '@tiptap/extension-text'
 import { type Editor, Extension, useEditor } from '@tiptap/react'
 import { common, createLowlight } from 'lowlight'
 import { useCallback, useRef } from 'react'
+import { configKeyToTipTap, getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { AtTagPicker } from './extensions/at-tag-picker'
 import { BlockLink } from './extensions/block-link'
@@ -77,39 +78,41 @@ export function shouldSplitOnBlur(markdown: string): boolean {
 
 const lowlight = createLowlight(common)
 
-/** Inline Code with Mod-e to toggle inline code. */
+/** Inline Code with configurable shortcut to toggle inline code. */
 const CodeWithShortcut = Code.extend({
   addKeyboardShortcuts() {
     return {
-      'Mod-e': () => this.editor.commands.toggleCode(),
+      [configKeyToTipTap(getShortcutKeys('inlineCode'))]: () => this.editor.commands.toggleCode(),
     }
   },
 })
 
-/** Strike with Mod-Shift-s to toggle strikethrough. */
+/** Strike with configurable shortcut to toggle strikethrough. */
 const StrikeWithShortcut = Strike.extend({
   addKeyboardShortcuts() {
     return {
-      'Mod-Shift-s': () => this.editor.commands.toggleStrike(),
+      [configKeyToTipTap(getShortcutKeys('strikethrough'))]: () =>
+        this.editor.commands.toggleStrike(),
     }
   },
 })
 
-/** Highlight with Mod-Shift-h to toggle highlight. */
+/** Highlight with configurable shortcut to toggle highlight. */
 const HighlightWithShortcut = Highlight.extend({
   addKeyboardShortcuts() {
     return {
-      'Mod-Shift-h': () => this.editor.commands.toggleHighlight(),
+      [configKeyToTipTap(getShortcutKeys('highlight'))]: () =>
+        this.editor.commands.toggleHighlight(),
     }
   },
 })
 
-/** CodeBlockLowlight with Mod-Shift-c to toggle code blocks. */
+/** CodeBlockLowlight with configurable shortcut to toggle code blocks. */
 const CodeBlockWithShortcut = CodeBlockLowlight.extend({
   addKeyboardShortcuts() {
     return {
       ...this.parent?.(),
-      'Mod-Shift-c': () => {
+      [configKeyToTipTap(getShortcutKeys('codeBlock'))]: () => {
         this.editor.chain().focus().toggleCodeBlock().run()
         return true
       },
@@ -127,15 +130,15 @@ const PriorityShortcuts = Extension.create({
   name: 'priorityShortcuts',
   addKeyboardShortcuts() {
     return {
-      'Mod-Shift-1': () => {
+      [configKeyToTipTap(getShortcutKeys('priority1'))]: () => {
         dispatchPriorityEvent(1)
         return true
       },
-      'Mod-Shift-2': () => {
+      [configKeyToTipTap(getShortcutKeys('priority2'))]: () => {
         dispatchPriorityEvent(2)
         return true
       },
-      'Mod-Shift-3': () => {
+      [configKeyToTipTap(getShortcutKeys('priority3'))]: () => {
         dispatchPriorityEvent(3)
         return true
       },

@@ -23,6 +23,17 @@ vi.mock('@floating-ui/dom', () => ({
   offset: vi.fn(() => ({})),
 }))
 
+vi.mock('../../lib/keyboard-config', () => ({
+  getShortcutKeys: vi.fn((id: string) => {
+    const defaults: Record<string, string> = {
+      suggestionClose: 'Escape',
+      suggestionPassSpace: 'Space',
+      suggestionAutocomplete: 'Tab',
+    }
+    return defaults[id] ?? ''
+  }),
+}))
+
 // Mock requestAnimationFrame to execute synchronously so updatePosition
 // doesn't leak callbacks across tests.
 vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {

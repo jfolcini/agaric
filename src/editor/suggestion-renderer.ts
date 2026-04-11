@@ -10,6 +10,7 @@ import { computePosition, flip, offset, shift } from '@floating-ui/dom'
 import type { Editor } from '@tiptap/core'
 import { ReactRenderer } from '@tiptap/react'
 import type { SuggestionKeyDownProps, SuggestionProps } from '@tiptap/suggestion'
+import { getShortcutKeys } from '../lib/keyboard-config'
 import { SuggestionList, type SuggestionListRef } from './SuggestionList'
 
 async function updatePosition(
@@ -122,7 +123,8 @@ export function createSuggestionRenderer(label?: string) {
     },
 
     onKeyDown({ event }: SuggestionKeyDownProps) {
-      if (event.key === 'Escape') {
+      const closeKey = getShortcutKeys('suggestionClose').toLowerCase()
+      if (event.key.toLowerCase() === closeKey) {
         cleanupListener()
         renderer?.destroy()
         renderer = null
@@ -133,11 +135,13 @@ export function createSuggestionRenderer(label?: string) {
       // Space: let it pass through to the editor so it's inserted as text
       // in the query (e.g. [[multi word page]]). Without this, the shared
       // useListKeyboardNavigation hook would treat Space as item selection.
-      if (event.key === ' ') {
+      const passKey = getShortcutKeys('suggestionPassSpace').toLowerCase()
+      if ((event.key === ' ' && passKey === 'space') || event.key.toLowerCase() === passKey) {
         return false
       }
       // Tab: autocomplete with the currently highlighted item (same as Enter)
-      if (event.key === 'Tab') {
+      const autocompleteKey = getShortcutKeys('suggestionAutocomplete').toLowerCase()
+      if (event.key.toLowerCase() === autocompleteKey) {
         const syntheticEnter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
         return renderer?.ref?.onKeyDown?.({ event: syntheticEnter }) ?? false
       }
