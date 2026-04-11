@@ -967,7 +967,7 @@ describe('SearchPanel', () => {
     expect(countSpan).toHaveClass('text-xs')
   })
 
-  it('highlights search query in result cards', async () => {
+  it('renders search results with rich content (no mark highlight)', async () => {
     mockedInvoke.mockResolvedValueOnce({
       items: [makeSearchResult({ content: 'the test content here' })],
       next_cursor: null,
@@ -983,9 +983,9 @@ describe('SearchPanel', () => {
       expect(screen.getByText(textContent('the test content here'))).toBeInTheDocument()
     })
 
+    // Rich content rendering replaces HighlightMatch; <mark> is no longer used
     const mark = document.querySelector('mark')
-    expect(mark).toBeInTheDocument()
-    expect(mark?.textContent).toBe('test')
+    expect(mark).not.toBeInTheDocument()
   })
 
   it('clicking page title in breadcrumb navigates to the page', async () => {

@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { useListMultiSelect } from '../hooks/useListMultiSelect'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
+import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
 import { formatTimestamp } from '../lib/format'
 import { logger } from '../lib/logger'
 import type { BlockRow, ResolvedBlock } from '../lib/tauri'
@@ -30,9 +31,11 @@ import { batchResolve, listBlocks, purgeBlock, restoreBlock } from '../lib/tauri
 import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
 import { ListViewState } from './ListViewState'
+import { renderRichContent } from './StaticBlock'
 
 export function TrashView(): React.ReactElement {
   const { t } = useTranslation()
+  const callbacks = useRichContentCallbacks()
   const queryFn = useCallback(
     (cursor?: string) =>
       listBlocks({ showDeleted: true, ...(cursor != null && { cursor }), limit: 50 }),
@@ -371,7 +374,12 @@ export function TrashView(): React.ReactElement {
                       </Badge>
                       <div className="flex flex-col min-w-0">
                         <span className="trash-item-text text-sm truncate">
-                          {block.content ?? t('trash.emptyContent')}
+                          {block.content
+                            ? renderRichContent(block.content, {
+                                interactive: false,
+                                ...callbacks,
+                              })
+                            : t('trash.emptyContent')}
                         </span>
                         <span className="trash-item-date text-xs text-muted-foreground">
                           Deleted:{' '}

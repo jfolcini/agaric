@@ -3,7 +3,7 @@
  *
  * Validates:
  *  - Renders op type badge for different operation types
- *  - Renders payload preview text
+ *  - Renders payload preview text via renderRichContent
  *  - Renders timestamp
  *  - Renders device ID (truncated to 8 chars)
  *  - Checkbox reflects selection state
@@ -19,6 +19,8 @@
  *  - Diff button click calls onToggleDiff
  *  - Focus ring shown when isFocused is true
  *  - Selected state adds bg-accent class
+ *  - Rich content rendering (ULID tokens resolved)
+ *  - Property op display (set_property/delete_property formatted)
  *  - a11y compliance
  */
 
@@ -39,6 +41,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { HistoryListItemProps } from '../HistoryListItem'
 import { HistoryListItem, opIcon } from '../HistoryListItem'
+
+vi.mock('../../hooks/useRichContentCallbacks', () => ({
+  useRichContentCallbacks: vi.fn(() => ({
+    resolveBlockTitle: vi.fn((id: string) => (id === 'PAGE1' ? 'My Page' : undefined)),
+    resolveBlockStatus: vi.fn(() => 'active' as const),
+    resolveTagName: vi.fn((id: string) => (id === 'TAG1' ? 'project' : undefined)),
+    resolveTagStatus: vi.fn(() => 'active' as const),
+  })),
+}))
 
 function makeEntry(
   seq: number,
@@ -589,6 +600,71 @@ describe('HistoryListItem', () => {
       renderInListbox(defaultProps({ onRowClick }))
       await user.click(screen.getByRole('button', { name: /restore to this point/i }))
       expect(onRowClick).not.toHaveBeenCalled()
+    })
+  })
+
+  // -- Rich content rendering (B-45) ----------------------------------------
+
+  describe('rich content rendering', () => {
+    it('renders preview with line-clamp-2 instead of truncate', () => {
+      renderInListbox(
+        defaultProps({
+          entry: makeEntry(1, 'edit_block', { to_text: 'Hello world' }),
+        }),
+      )
+
+      const preview = screen.getByText('Hello world').closest('.history-item-preview')
+      expect(preview).toHaveClass('line-clamp-2')
+    })
+
+    it('renders long content without string truncation', () => {
+      const longText = 'A'.repeat(200)
+      renderInListbox(
+        defaultProps({
+          entry: makeEntry(1, 'edit_block', { to_text: longText }),
+        }),
+      )
+
+      // Full text present (CSS handles truncation)
+      expect(screen.getByText(longText)).toBeInTheDocument()
+    })
+  })
+
+  // -- Property op display (UX-134) -----------------------------------------
+
+  describe('property op display', () => {
+    it('renders set_property with formatted name and value', () => {
+      renderInListbox(
+        defaultProps({
+          entry: makeEntry(1, 'set_property', { key: 'due_date', value: '2026-04-15' }),
+        }),
+      )
+
+      expect(screen.getByText(/Due Date/)).toBeInTheDocument()
+      expect(screen.getByText(/2026-04-15/)).toBeInTheDocument()
+    })
+
+    it('renders delete_property with formatted name only', () => {
+      renderInListbox(
+        defaultProps({
+          entry: makeEntry(1, 'delete_property', { key: 'due_date' }),
+        }),
+      )
+
+      expect(screen.getByText('Due Date')).toBeInTheDocument()
+      // No arrow/value
+      expect(screen.queryByText(/→/)).not.toBeInTheDocument()
+    })
+
+    it('falls back to raw content when property payload is invalid', () => {
+      renderInListbox(
+        defaultProps({
+          entry: makeEntry(1, 'set_property', { content: 'some text' }),
+        }),
+      )
+
+      // Should render content through renderRichContent
+      expect(screen.getByText('some text')).toBeInTheDocument()
     })
   })
 })

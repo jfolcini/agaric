@@ -8,14 +8,24 @@
  *  - Equal span renders as plain <span>
  *  - Mixed spans render in correct order
  *  - Edge cases: long text, empty strings, unicode
+ *  - Rich content rendering (ULID tokens resolved via renderRichContent)
  *  - a11y compliance
  */
 
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { DiffSpan } from '../../lib/tauri'
 import { DiffDisplay } from '../DiffDisplay'
+
+vi.mock('../../hooks/useRichContentCallbacks', () => ({
+  useRichContentCallbacks: vi.fn(() => ({
+    resolveBlockTitle: vi.fn((id: string) => (id === 'PAGE1' ? 'My Page' : undefined)),
+    resolveBlockStatus: vi.fn(() => 'active' as const),
+    resolveTagName: vi.fn((id: string) => (id === 'TAG1' ? 'project' : undefined)),
+    resolveTagStatus: vi.fn(() => 'active' as const),
+  })),
+}))
 
 function makeSpan(tag: DiffSpan['tag'], value: string): DiffSpan {
   return { tag, value }
@@ -127,9 +137,19 @@ describe('DiffDisplay', () => {
 
     const { container } = render(<DiffDisplay spans={spans} />)
 
-    expect(container.querySelector('del')).toHaveTextContent('🔥 fire')
-    expect(container.querySelector('ins')).toHaveTextContent('日本語テスト')
-    expect(container.querySelector('p.diff-display span')).toHaveTextContent('✅ done — «quoted»')
+    // renderRichContent wraps text in elements; check textContent on diff elements
+    const del = container.querySelector('del')
+    expect(del).not.toBeNull()
+    expect((del as Element).textContent).toContain('🔥 fire')
+
+    const ins = container.querySelector('ins')
+    expect(ins).not.toBeNull()
+    expect((ins as Element).textContent).toContain('日本語テスト')
+
+    // Equal spans are inside <span> within <p>
+    const p = container.querySelector('p.diff-display')
+    expect(p).not.toBeNull()
+    expect((p as Element).textContent).toContain('✅ done — «quoted»')
   })
 
   it('has no a11y violations', async () => {
@@ -143,5 +163,27 @@ describe('DiffDisplay', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // -- Rich content rendering (B-45) ----------------------------------------
+
+  it('renders diff spans through renderRichContent', () => {
+    const spans: DiffSpan[] = [
+      makeSpan('Equal', 'Check '),
+      makeSpan('Delete', 'old text'),
+      makeSpan('Insert', 'new text'),
+    ]
+
+    const { container } = render(<DiffDisplay spans={spans} />)
+
+    const p = container.querySelector('p.diff-display')
+    expect(p).not.toBeNull()
+    // Content is rendered through renderRichContent but plain text still appears
+    expect((p as Element).textContent).toContain('Check')
+    expect((p as Element).textContent).toContain('old text')
+    expect((p as Element).textContent).toContain('new text')
+    // Diff semantics preserved
+    expect((container.querySelector('del') as Element).textContent).toContain('old text')
+    expect((container.querySelector('ins') as Element).textContent).toContain('new text')
   })
 })

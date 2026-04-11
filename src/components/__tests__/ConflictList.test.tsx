@@ -38,6 +38,15 @@ vi.mock('../StaticBlock', () => ({
   renderRichContent: vi.fn((markdown: string) => markdown),
 }))
 
+vi.mock('../../hooks/useRichContentCallbacks', () => ({
+  useRichContentCallbacks: vi.fn(() => ({
+    resolveBlockTitle: vi.fn(() => undefined),
+    resolveBlockStatus: vi.fn(() => 'active' as const),
+    resolveTagName: vi.fn(() => undefined),
+    resolveTagStatus: vi.fn(() => 'active' as const),
+  })),
+}))
+
 vi.mock('sonner', () => ({
   toast: {
     error: vi.fn(),
@@ -1473,8 +1482,14 @@ describe('ConflictList', () => {
     render(<ConflictList />)
 
     await waitFor(() => {
-      expect(mockedRender).toHaveBeenCalledWith('**bold** text', { interactive: false })
-      expect(mockedRender).toHaveBeenCalledWith('*italic* content', { interactive: false })
+      expect(mockedRender).toHaveBeenCalledWith(
+        '**bold** text',
+        expect.objectContaining({ interactive: false }),
+      )
+      expect(mockedRender).toHaveBeenCalledWith(
+        '*italic* content',
+        expect.objectContaining({ interactive: false }),
+      )
     })
   })
 

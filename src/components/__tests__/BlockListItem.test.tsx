@@ -26,6 +26,19 @@ import { axe } from 'vitest-axe'
 
 const mockNavigateToPage = vi.fn()
 
+vi.mock('../StaticBlock', () => ({
+  renderRichContent: vi.fn((markdown: string) => markdown),
+}))
+
+vi.mock('../../hooks/useRichContentCallbacks', () => ({
+  useRichContentCallbacks: vi.fn(() => ({
+    resolveBlockTitle: vi.fn((id: string) => (id === 'PAGE1' ? 'My Page' : undefined)),
+    resolveBlockStatus: vi.fn(() => 'active' as const),
+    resolveTagName: vi.fn((id: string) => (id === 'TAG1' ? 'project' : undefined)),
+    resolveTagStatus: vi.fn(() => 'active' as const),
+  })),
+}))
+
 vi.mock('../PageLink', () => ({
   PageLink: ({ pageId, title }: { pageId: string; title: string; className?: string }) => (
     // biome-ignore lint/a11y/useSemanticElements: test mock for PageLink
@@ -223,7 +236,7 @@ describe('BlockListItem', () => {
     const contentSpan = screen.getByText('Test block content')
     expect(contentSpan.className).toContain('my-content-class')
     // Base classes still present
-    expect(contentSpan.className).toContain('truncate')
+    expect(contentSpan.className).toContain('line-clamp-2')
 
     const breadcrumbSpan = screen.getByText(/Page/).closest('span')
     // Go up to parent span that has the breadcrumb class (not the inner PageLink span)
@@ -243,7 +256,7 @@ describe('BlockListItem', () => {
   })
 
   // 11. Uses custom contentMaxLength and emptyContentFallback
-  it('truncates content at custom maxLength', () => {
+  it('renders full content with CSS line-clamp instead of string truncation', () => {
     const longContent = 'A'.repeat(50)
 
     render(
@@ -252,7 +265,9 @@ describe('BlockListItem', () => {
       </ul>,
     )
 
-    expect(screen.getByText('AAAAAAAAAA...')).toBeInTheDocument()
+    const contentSpan = screen.getByText(longContent)
+    expect(contentSpan).toBeInTheDocument()
+    expect(contentSpan.className).toContain('line-clamp-2')
   })
 
   it('shows custom emptyContentFallback for null content', () => {
@@ -389,15 +404,15 @@ describe('BlockListItem', () => {
     expect(li.getAttribute('data-testid')).toBeNull()
   })
 
-  // 19. Strips markdown from content via truncateContent
-  it('strips markdown formatting from content', () => {
+  // 19. Delegates content rendering to renderRichContent
+  it('renders content via renderRichContent (mock returns raw markdown)', () => {
     render(
       <ul>
         <BlockListItem {...defaultProps({ content: '**bold** and [[link]]' })} />
       </ul>,
     )
 
-    expect(screen.getByText('bold and link')).toBeInTheDocument()
+    expect(screen.getByText('**bold** and [[link]]')).toBeInTheDocument()
   })
 
   // 20. Draggable: li is not draggable when blockId is not provided

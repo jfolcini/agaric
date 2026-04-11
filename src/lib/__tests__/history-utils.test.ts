@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getPayloadPreview } from '../history-utils'
+import { getPayloadPreview, getPayloadRawContent, getPropertyPayload } from '../history-utils'
 import type { HistoryEntry } from '../tauri'
 
 function makeEntry(payload: string, opType = 'edit_block'): HistoryEntry {
@@ -65,5 +65,69 @@ describe('getPayloadPreview', () => {
     const text = 'a'.repeat(100)
     const entry = makeEntry(JSON.stringify({ to_text: text }))
     expect(getPayloadPreview(entry)).toBe(text)
+  })
+})
+
+describe('getPayloadRawContent', () => {
+  it('returns to_text without truncation', () => {
+    const longText = 'a'.repeat(500)
+    const entry = makeEntry(JSON.stringify({ to_text: longText }))
+    expect(getPayloadRawContent(entry)).toBe(longText)
+  })
+
+  it('returns content when to_text is absent', () => {
+    const entry = makeEntry(JSON.stringify({ content: 'New block' }), 'create_block')
+    expect(getPayloadRawContent(entry)).toBe('New block')
+  })
+
+  it('prefers to_text over content', () => {
+    const entry = makeEntry(JSON.stringify({ to_text: 'edit', content: 'create' }))
+    expect(getPayloadRawContent(entry)).toBe('edit')
+  })
+
+  it('returns null for invalid JSON', () => {
+    const entry = makeEntry('not json')
+    expect(getPayloadRawContent(entry)).toBeNull()
+  })
+
+  it('returns null when no text fields exist', () => {
+    const entry = makeEntry(JSON.stringify({ other: 'value' }))
+    expect(getPayloadRawContent(entry)).toBeNull()
+  })
+
+  it('preserves ULID tokens in raw content', () => {
+    const text = 'See [[01ARZ3NDEKTSV4RRFFQ69G5FAV]] and #[01CRZ3NDEKTSV4RRFFQ69G5FAV]'
+    const entry = makeEntry(JSON.stringify({ to_text: text }))
+    expect(getPayloadRawContent(entry)).toBe(text)
+  })
+})
+
+describe('getPropertyPayload', () => {
+  it('extracts key and value from set_property', () => {
+    const entry = makeEntry(
+      JSON.stringify({ key: 'due_date', value: '2026-04-15' }),
+      'set_property',
+    )
+    expect(getPropertyPayload(entry)).toEqual({ key: 'due_date', value: '2026-04-15' })
+  })
+
+  it('extracts key without value from delete_property', () => {
+    const entry = makeEntry(JSON.stringify({ key: 'due_date' }), 'delete_property')
+    expect(getPropertyPayload(entry)).toEqual({ key: 'due_date' })
+  })
+
+  it('returns null for non-property op types', () => {
+    const entry = makeEntry(JSON.stringify({ key: 'due_date' }), 'edit_block')
+    expect(getPropertyPayload(entry)).toBeNull()
+  })
+
+  it('returns null for invalid JSON', () => {
+    const entry = makeEntry('bad json', 'set_property')
+    expect(getPropertyPayload(entry)).toBeNull()
+  })
+
+  it('returns null when key is missing', () => {
+    const entry = makeEntry(JSON.stringify({ value: '2026-04-15' }), 'set_property')
+    expect(getPropertyPayload(entry)).toBeNull()
   })
 })

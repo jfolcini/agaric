@@ -29,6 +29,19 @@ vi.mock('../../lib/tauri', () => ({
   queryByProperty: vi.fn(),
 }))
 
+vi.mock('../StaticBlock', () => ({
+  renderRichContent: vi.fn((markdown: string) => markdown),
+}))
+
+vi.mock('../../hooks/useRichContentCallbacks', () => ({
+  useRichContentCallbacks: vi.fn(() => ({
+    resolveBlockTitle: vi.fn(() => undefined),
+    resolveBlockStatus: vi.fn(() => 'active' as const),
+    resolveTagName: vi.fn(() => undefined),
+    resolveTagStatus: vi.fn(() => 'active' as const),
+  })),
+}))
+
 vi.mock('lucide-react', () => ({
   ChevronRight: (props: Record<string, unknown>) => <svg data-testid="chevron-right" {...props} />,
   ChevronDown: (props: Record<string, unknown>) => <svg data-testid="chevron-down" {...props} />,

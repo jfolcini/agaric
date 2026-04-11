@@ -27,10 +27,13 @@ import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
 import { formatTimestamp } from '../lib/format'
-import { getPayloadPreview } from '../lib/history-utils'
+import { getPayloadRawContent, getPropertyPayload } from '../lib/history-utils'
+import { formatPropertyName } from '../lib/property-utils'
 import type { DiffSpan, HistoryEntry } from '../lib/tauri'
 import { DiffDisplay } from './DiffDisplay'
+import { renderRichContent } from './StaticBlock'
 
 // ---------------------------------------------------------------------------
 // Badge colour mapping
@@ -117,7 +120,9 @@ export function HistoryListItem({
   onRestoreToHere,
 }: HistoryListItemProps): React.ReactElement {
   const { t } = useTranslation()
-  const preview = getPayloadPreview(entry)
+  const rawContent = getPayloadRawContent(entry)
+  const propPayload = getPropertyPayload(entry)
+  const richCallbacks = useRichContentCallbacks()
 
   return (
     <div
@@ -174,7 +179,20 @@ export function HistoryListItem({
 
         {/* Content preview + timestamp */}
         <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-          {preview && <span className="history-item-preview text-sm truncate">{preview}</span>}
+          {propPayload && (
+            <span className="history-item-preview text-sm line-clamp-2">
+              {formatPropertyName(propPayload.key)}
+              {propPayload.value != null && ` → ${propPayload.value}`}
+            </span>
+          )}
+          {!propPayload && rawContent && (
+            <span className="history-item-preview text-sm line-clamp-2">
+              {renderRichContent(rawContent, {
+                interactive: false,
+                ...richCallbacks,
+              })}
+            </span>
+          )}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>

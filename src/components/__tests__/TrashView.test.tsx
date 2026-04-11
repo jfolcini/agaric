@@ -34,6 +34,19 @@ vi.mock('sonner', () => ({
   },
 }))
 
+vi.mock('../StaticBlock', () => ({
+  renderRichContent: vi.fn((markdown: string) => markdown),
+}))
+
+vi.mock('../../hooks/useRichContentCallbacks', () => ({
+  useRichContentCallbacks: vi.fn(() => ({
+    resolveBlockTitle: vi.fn(() => undefined),
+    resolveBlockStatus: vi.fn(() => 'active' as const),
+    resolveTagName: vi.fn(() => undefined),
+    resolveTagStatus: vi.fn(() => 'active' as const),
+  })),
+}))
+
 const mockedInvoke = vi.mocked(invoke)
 
 function makeBlock(id: string, content: string, deletedAt: string, parentId: string | null = null) {

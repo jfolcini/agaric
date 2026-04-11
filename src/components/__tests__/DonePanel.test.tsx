@@ -42,6 +42,19 @@ vi.mock('lucide-react', () => ({
   Loader2: (props: Record<string, unknown>) => <svg data-testid="loader-spinner" {...props} />,
 }))
 
+vi.mock('../StaticBlock', () => ({
+  renderRichContent: vi.fn((markdown: string) => markdown),
+}))
+
+vi.mock('../../hooks/useRichContentCallbacks', () => ({
+  useRichContentCallbacks: vi.fn(() => ({
+    resolveBlockTitle: vi.fn(() => undefined),
+    resolveBlockStatus: vi.fn(() => 'active' as const),
+    resolveTagName: vi.fn(() => undefined),
+    resolveTagStatus: vi.fn(() => 'active' as const),
+  })),
+}))
+
 vi.mock('@/components/ui/button', () => ({
   Button: ({
     children,

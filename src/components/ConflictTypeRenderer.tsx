@@ -13,6 +13,7 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { truncateId } from '@/lib/format'
+import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
 import type { BlockRow } from '../lib/tauri'
 import { renderRichContent } from './StaticBlock'
 
@@ -30,6 +31,7 @@ export function ConflictTypeRenderer({
   isExpanded,
 }: ConflictTypeRendererProps): React.ReactElement | null {
   const { t } = useTranslation()
+  const callbacks = useRichContentCallbacks()
   if (conflictType === 'Property' && original) {
     const diffs: React.ReactNode[] = []
     if (block.todo_state !== original.todo_state) {
@@ -122,7 +124,7 @@ export function ConflictTypeRenderer({
       <span className="font-medium text-muted-foreground">{t('conflict.currentLabel')}</span>{' '}
       {original ? (
         original.content ? (
-          <span>{renderRichContent(original.content, { interactive: false })}</span>
+          <span>{renderRichContent(original.content, { interactive: false, ...callbacks })}</span>
         ) : (
           t('conflict.emptyContent')
         )
@@ -137,7 +139,7 @@ export function ConflictTypeRenderer({
       <span className="font-medium">{t('conflict.incomingLabel')}</span>{' '}
       <span className="conflict-item-text">
         {block.content
-          ? renderRichContent(block.content, { interactive: false })
+          ? renderRichContent(block.content, { interactive: false, ...callbacks })
           : t('conflict.emptyContent')}
       </span>
     </>

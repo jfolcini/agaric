@@ -17,8 +17,10 @@ import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Spinner } from '@/components/ui/spinner'
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
+import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
 import { formatTimestamp } from '../lib/format'
-import { getPayloadPreview } from '../lib/history-utils'
+import { getPayloadRawContent, getPropertyPayload } from '../lib/history-utils'
+import { formatPropertyName } from '../lib/property-utils'
 import type { HistoryEntry } from '../lib/tauri'
 import { editBlock, getBlockHistory } from '../lib/tauri'
 import { DiffDisplay } from './DiffDisplay'
@@ -26,6 +28,7 @@ import { EmptyState } from './EmptyState'
 import { HistoryFilterBar } from './HistoryFilterBar'
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
+import { renderRichContent } from './StaticBlock'
 
 interface HistoryPanelProps {
   /** The block to show history for. */
@@ -44,6 +47,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   const { expandedKeys, diffCache, loadingDiffs, handleToggleDiff } = useHistoryDiffToggle<number>(
     (entry) => entry.seq,
   )
+  const richCallbacks = useRichContentCallbacks()
 
   const loadHistory = useCallback(
     async (cursor?: string) => {
@@ -119,7 +123,8 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         {(items) => (
           <ul className="history-list space-y-2 list-none p-0 m-0">
             {items.map((entry) => {
-              const preview = getPayloadPreview(entry)
+              const rawContent = getPayloadRawContent(entry)
+              const propPayload = getPropertyPayload(entry)
               const isEditBlock = entry.op_type === 'edit_block'
               return (
                 <li
@@ -140,9 +145,18 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
                           dev:{entry.device_id.slice(0, 8)}
                         </span>
                       </div>
-                      {preview && (
-                        <span className="history-item-preview text-sm text-muted-foreground truncate">
-                          {preview}
+                      {propPayload && (
+                        <span className="history-item-preview text-sm text-muted-foreground line-clamp-2">
+                          {formatPropertyName(propPayload.key)}
+                          {propPayload.value != null && ` → ${propPayload.value}`}
+                        </span>
+                      )}
+                      {!propPayload && rawContent && (
+                        <span className="history-item-preview text-sm text-muted-foreground line-clamp-2">
+                          {renderRichContent(rawContent, {
+                            interactive: false,
+                            ...richCallbacks,
+                          })}
                         </span>
                       )}
                     </div>
@@ -161,7 +175,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
                         {t('history.diffButton')}
                       </Button>
                     )}
-                    {isEditBlock && preview && (
+                    {isEditBlock && rawContent && (
                       <Button
                         variant="outline"
                         size="sm"

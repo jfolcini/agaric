@@ -2,13 +2,15 @@
  * Tests for ResultCard component.
  *
  * Validates:
- *  - Renders block content
+ *  - Renders block content via renderRichContent()
  *  - Shows badge for page/tag types
  *  - Calls onClick
  *  - Shows spinner when showSpinner=true
  *  - Renders children
  *  - Disabled state
  *  - Shows "(empty)" for empty content
+ *  - Rich content: tag refs and block links render as resolved pills
+ *  - highlightText prop accepted without crashing (API compat)
  *  - axe a11y audit
  */
 
@@ -18,6 +20,18 @@ import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { makeBlock } from '../../__tests__/fixtures'
 import { ResultCard } from '../ResultCard'
+
+const BLOCK_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
+const TAG_ID = '01CRZ3NDEKTSV4RRFFQ69G5FAV'
+
+vi.mock('../../hooks/useRichContentCallbacks', () => ({
+  useRichContentCallbacks: vi.fn(() => ({
+    resolveBlockTitle: vi.fn((id: string) => (id === BLOCK_ID ? 'My Page' : undefined)),
+    resolveBlockStatus: vi.fn(() => 'active' as const),
+    resolveTagName: vi.fn((id: string) => (id === TAG_ID ? 'project' : undefined)),
+    resolveTagStatus: vi.fn(() => 'active' as const),
+  })),
+}))
 
 describe('ResultCard', () => {
   it('renders block content', () => {
@@ -93,18 +107,32 @@ describe('ResultCard', () => {
   })
 
   it('applies contentClassName to the content span', () => {
-    render(
+    const { container } = render(
       <ResultCard
         block={makeBlock({ content: 'test content' })}
         onClick={() => {}}
-        contentClassName="line-clamp-2"
+        contentClassName="custom-class"
       />,
     )
-    const span = screen.getByText('test content')
-    expect(span).toHaveClass('line-clamp-2')
+    const span = container.querySelector('span.custom-class')
+    expect(span).toBeInTheDocument()
   })
 
-  it('highlights matching text when highlightText is provided', () => {
+  it('renders tag ref tokens as resolved pills', () => {
+    render(<ResultCard block={makeBlock({ content: `hello #[${TAG_ID}]` })} onClick={() => {}} />)
+    const chip = screen.getByTestId('tag-ref-chip')
+    expect(chip).toBeInTheDocument()
+    expect(chip.textContent).toBe('project')
+  })
+
+  it('renders block link tokens as resolved pills', () => {
+    render(<ResultCard block={makeBlock({ content: `see [[${BLOCK_ID}]]` })} onClick={() => {}} />)
+    const chip = screen.getByTestId('block-link-chip')
+    expect(chip).toBeInTheDocument()
+    expect(chip.textContent).toBe('My Page')
+  })
+
+  it('does not crash when highlightText is provided', () => {
     render(
       <ResultCard
         block={makeBlock({ content: 'hello world' })}
@@ -112,14 +140,15 @@ describe('ResultCard', () => {
         highlightText="world"
       />,
     )
-    const mark = document.querySelector('mark')
-    expect(mark).toBeInTheDocument()
-    expect(mark?.textContent).toBe('world')
+    expect(screen.getByText('hello world')).toBeInTheDocument()
   })
 
-  it('does not highlight when highlightText is not provided', () => {
-    render(<ResultCard block={makeBlock({ content: 'hello world' })} onClick={() => {}} />)
-    expect(document.querySelector('mark')).not.toBeInTheDocument()
+  it('applies line-clamp-2 by default on the content span', () => {
+    const { container } = render(
+      <ResultCard block={makeBlock({ content: 'test' })} onClick={() => {}} />,
+    )
+    const span = container.querySelector('span.line-clamp-2')
+    expect(span).toBeInTheDocument()
   })
 
   it('has no a11y violations', async () => {

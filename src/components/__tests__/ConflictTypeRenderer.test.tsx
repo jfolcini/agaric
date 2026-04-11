@@ -20,6 +20,15 @@ vi.mock('../StaticBlock', () => ({
   renderRichContent: vi.fn((markdown: string) => markdown),
 }))
 
+vi.mock('../../hooks/useRichContentCallbacks', () => ({
+  useRichContentCallbacks: vi.fn(() => ({
+    resolveBlockTitle: vi.fn((id: string) => (id === 'PAGE1' ? 'My Page' : undefined)),
+    resolveBlockStatus: vi.fn(() => 'active' as const),
+    resolveTagName: vi.fn((id: string) => (id === 'TAG1' ? 'project' : undefined)),
+    resolveTagStatus: vi.fn(() => 'active' as const),
+  })),
+}))
+
 const originalBlock = {
   id: 'ORIG001',
   block_type: 'content',

@@ -7,6 +7,8 @@
  *  - Renders history entries with op_type badge, timestamp, payload preview
  *  - Restore action calls editBlock with to_text from payload
  *  - Cursor-based pagination (Load more)
+ *  - Rich content rendering (ULID tokens resolved via renderRichContent)
+ *  - Property op display (set_property/delete_property formatted)
  *  - a11y compliance
  */
 
@@ -23,6 +25,15 @@ vi.mock('sonner', () => ({
     error: vi.fn(),
     success: vi.fn(),
   },
+}))
+
+vi.mock('../../hooks/useRichContentCallbacks', () => ({
+  useRichContentCallbacks: vi.fn(() => ({
+    resolveBlockTitle: vi.fn((id: string) => (id === 'PAGE1' ? 'My Page' : undefined)),
+    resolveBlockStatus: vi.fn(() => 'active' as const),
+    resolveTagName: vi.fn((id: string) => (id === 'TAG1' ? 'project' : undefined)),
+    resolveTagStatus: vi.fn(() => 'active' as const),
+  })),
 }))
 
 vi.mock('@/components/ui/select', () => {
@@ -156,7 +167,7 @@ describe('HistoryPanel', () => {
     expect(screen.getByText('Updated content')).toBeInTheDocument()
   })
 
-  it('truncates long payload previews to 100 chars', async () => {
+  it('renders long payload previews with line-clamp instead of truncation', async () => {
     const longText = 'A'.repeat(150)
     const page = {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: longText })],
@@ -167,8 +178,10 @@ describe('HistoryPanel', () => {
 
     render(<HistoryPanel blockId="BLOCK001" />)
 
-    const expected = `${'A'.repeat(100)}...`
-    expect(await screen.findByText(expected)).toBeInTheDocument()
+    // Full text is rendered (no string truncation); CSS line-clamp handles visual truncation
+    const previewEl = await screen.findByText(longText)
+    expect(previewEl).toBeInTheDocument()
+    expect(previewEl.closest('.history-item-preview')).toHaveClass('line-clamp-2')
   })
 
   it('shows Restore button for edit_block entries and calls editBlock', async () => {
@@ -606,5 +619,65 @@ describe('HistoryPanel', () => {
     // Empty state should be shown
     expect(screen.getByText('No history for this block')).toBeInTheDocument()
     expect(screen.queryByText('edited')).not.toBeInTheDocument()
+  })
+
+  // -- Rich content rendering (B-45) ----------------------------------------
+
+  it('renders content through renderRichContent for rich preview', async () => {
+    const page = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'Updated content' }, '2025-01-15T12:00:00Z'),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryPanel blockId="BLOCK001" />)
+
+    // Rich content rendering wraps text — check text is still present
+    expect(await screen.findByText('Updated content')).toBeInTheDocument()
+    // Preview container uses line-clamp-2
+    const preview = screen.getByText('Updated content').closest('.history-item-preview')
+    expect(preview).toHaveClass('line-clamp-2')
+  })
+
+  // -- Property op display (UX-134) -----------------------------------------
+
+  it('renders set_property with formatted property name and value', async () => {
+    const page = {
+      items: [
+        makeHistoryEntry(
+          1,
+          'set_property',
+          { key: 'due_date', value: '2026-04-15' },
+          '2025-01-15T12:00:00Z',
+        ),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryPanel blockId="BLOCK001" />)
+
+    expect(await screen.findByText('set_property')).toBeInTheDocument()
+    // formatPropertyName('due_date') → 'Due Date'
+    expect(screen.getByText(/Due Date/)).toBeInTheDocument()
+    expect(screen.getByText(/2026-04-15/)).toBeInTheDocument()
+  })
+
+  it('renders delete_property with formatted property name without value', async () => {
+    const page = {
+      items: [makeHistoryEntry(1, 'delete_property', { key: 'due_date' }, '2025-01-15T12:00:00Z')],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryPanel blockId="BLOCK001" />)
+
+    expect(await screen.findByText('delete_property')).toBeInTheDocument()
+    expect(screen.getByText('Due Date')).toBeInTheDocument()
   })
 })

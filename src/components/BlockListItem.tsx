@@ -12,11 +12,12 @@
 
 import type React from 'react'
 import { cn } from '@/lib/utils'
-import { truncateContent } from '../lib/text-utils'
+import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
 import { PageLink } from './PageLink'
+import { renderRichContent } from './StaticBlock'
 
 export interface BlockListItemProps {
-  /** Block content text — truncated via truncateContent. */
+  /** Block content text — truncated via CSS line-clamp. */
   content: string | null
   /** Max characters before truncation. Default 120. */
   contentMaxLength?: number
@@ -50,7 +51,7 @@ export interface BlockListItemProps {
 
 export function BlockListItem({
   content,
-  contentMaxLength = 120,
+  contentMaxLength: _contentMaxLength = 120,
   emptyContentFallback = '(empty)',
   metadata,
   pageId,
@@ -65,6 +66,7 @@ export function BlockListItem({
   testId,
   blockId,
 }: BlockListItemProps): React.ReactElement {
+  const callbacks = useRichContentCallbacks()
   return (
     <li
       className={cn(
@@ -88,9 +90,11 @@ export function BlockListItem({
       {/* Metadata slot: icons, badges, chips */}
       {metadata}
 
-      {/* Truncated block content */}
-      <span className={cn('text-sm min-w-0 flex-1 truncate', contentClassName)}>
-        {truncateContent(content, contentMaxLength, emptyContentFallback)}
+      {/* Block content */}
+      <span className={cn('text-sm min-w-0 flex-1 line-clamp-2', contentClassName)}>
+        {content
+          ? renderRichContent(content, { interactive: false, ...callbacks })
+          : emptyContentFallback}
       </span>
 
       {/* Source page breadcrumb */}

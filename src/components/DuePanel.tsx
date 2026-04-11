@@ -17,14 +17,15 @@ import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { getTodayString } from '@/lib/date-utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useDuePanelData } from '../hooks/useDuePanelData'
+import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
 import type { NavigateToPageFn } from '../lib/block-events'
-import { truncateContent } from '../lib/text-utils'
 import { BlockListItem } from './BlockListItem'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { DuePanelFilters } from './DuePanelFilters'
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { OverdueSection } from './OverdueSection'
+import { renderRichContent } from './StaticBlock'
 import { UpcomingSection } from './UpcomingSection'
 import { PriorityBadge } from './ui/priority-badge'
 
@@ -45,6 +46,7 @@ function priorityKey(p: string | null): number {
 
 export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.ReactElement | null {
   const { t } = useTranslation()
+  const callbacks = useRichContentCallbacks()
   const [collapsed, setCollapsed] = useState(false)
   const [sourceFilter, setSourceFilter] = useState<string | null>(null)
 
@@ -286,7 +288,12 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                             {entry.source === 'due_date' ? '\u23F0' : '\uD83D\uDCC5'}
                           </span>
                           <span className="min-w-0 flex-1 truncate">
-                            {truncateContent(entry.block.content, 80, t('duePanel.emptyContent'))}
+                            {entry.block.content
+                              ? renderRichContent(entry.block.content, {
+                                  interactive: false,
+                                  ...callbacks,
+                                })
+                              : t('duePanel.emptyContent')}
                           </span>
                           {entry.block.priority && (
                             <PriorityBadge priority={entry.block.priority} />

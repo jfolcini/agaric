@@ -25,6 +25,19 @@ vi.mock('lucide-react', () => ({
   Link2: (props: Record<string, unknown>) => <svg data-testid="icon-link2" {...props} />,
 }))
 
+vi.mock('../StaticBlock', () => ({
+  renderRichContent: vi.fn((markdown: string) => markdown),
+}))
+
+vi.mock('../../hooks/useRichContentCallbacks', () => ({
+  useRichContentCallbacks: vi.fn(() => ({
+    resolveBlockTitle: vi.fn(() => undefined),
+    resolveBlockStatus: vi.fn(() => 'active' as const),
+    resolveTagName: vi.fn(() => undefined),
+    resolveTagStatus: vi.fn(() => 'active' as const),
+  })),
+}))
+
 const mockGetProperties = vi.fn().mockResolvedValue([])
 const mockBatchResolve = vi.fn().mockResolvedValue([])
 
