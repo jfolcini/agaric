@@ -17,6 +17,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { logger } from '@/lib/logger'
 import { useBacklinkResolution } from '../hooks/useBacklinkResolution'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
+import { useBlockPropertyEvents } from '../hooks/useBlockPropertyEvents'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BacklinkFilter, BacklinkGroup, BacklinkSort } from '../lib/tauri'
 import { listBacklinksGrouped, listPropertyKeys, listTagsByPrefix } from '../lib/tauri'
@@ -37,6 +38,7 @@ export function LinkedReferences({
   onNavigateToPage,
 }: LinkedReferencesProps): React.ReactElement | null {
   const { t } = useTranslation()
+  const { invalidationKey } = useBlockPropertyEvents()
   const [groups, setGroups] = useState<BacklinkGroup[]>([])
   const [loading, setLoading] = useState(false)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
@@ -56,7 +58,7 @@ export function LinkedReferences({
   const { resolveBlockTitle, resolveBlockStatus, resolveTagName, clearCache } =
     useBacklinkResolution(groups)
 
-  // Fetch grouped backlinks
+  // biome-ignore lint/correctness/useExhaustiveDependencies: invalidationKey triggers refetch on property changes (F-39)
   const fetchGroups = useCallback(
     async (cursor?: string) => {
       setLoading(true)
@@ -128,7 +130,7 @@ export function LinkedReferences({
         setLoading(false)
       }
     },
-    [pageId, filters, sort, sourcePageIncluded, sourcePageExcluded, t],
+    [pageId, filters, sort, sourcePageIncluded, sourcePageExcluded, t, invalidationKey],
   )
 
   // Load property keys on mount

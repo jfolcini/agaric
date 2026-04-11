@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { Calendar } from '@/components/ui/calendar'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
+import { useBlockPropertyEvents } from '../../hooks/useBlockPropertyEvents'
 import { useWeekStart } from '../../hooks/useWeekStart'
 import { formatDate, getWeekOptions } from '../../lib/date-utils'
 import { countAgendaBatchBySource } from '../../lib/tauri'
@@ -112,6 +113,7 @@ export function JournalCalendarDropdown({
 }: JournalCalendarDropdownProps): React.ReactElement {
   const { t } = useTranslation()
   const { weekStartsOn } = useWeekStart()
+  const { invalidationKey } = useBlockPropertyEvents()
   const calRef = useRef<HTMLDivElement>(null)
   const [flipAbove, setFlipAbove] = useState(false)
   const [shiftLeft, setShiftLeft] = useState(0)
@@ -138,7 +140,7 @@ export function JournalCalendarDropdown({
     return () => {
       cancelled = true
     }
-  }, [monthKey])
+  }, [monthKey, invalidationKey])
 
   const { datesWithDue, datesWithScheduled, datesWithProperty } = useMemo(
     () => computeSourceModifiers(agendaBySource),

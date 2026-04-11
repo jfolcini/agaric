@@ -15,6 +15,7 @@ import { formatDate, getTodayString } from '@/lib/date-utils'
 import { logger } from '../lib/logger'
 import type { BlockRow, ProjectedAgendaEntry } from '../lib/tauri'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../lib/tauri'
+import { useBlockPropertyEvents } from './useBlockPropertyEvents'
 
 // ── Module-level cache for projected agenda (UX-114) ──────────────────
 const PROJECTED_CACHE_TTL_MS = 30_000 // 30 seconds
@@ -57,6 +58,7 @@ export function useDuePanelData({
   sourceFilter,
 }: UseDuePanelDataOptions): UseDuePanelDataReturn {
   const { t } = useTranslation()
+  const { invalidationKey } = useBlockPropertyEvents()
   const [blocks, setBlocks] = useState<BlockRow[]>([])
   const [loading, setLoading] = useState(false)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
@@ -293,6 +295,11 @@ export function useDuePanelData({
     let stale = false
     const cacheKey = date
 
+    // When invalidationKey changes, clear the projected cache so we refetch fresh data
+    if (invalidationKey > 0) {
+      projectedCache.clear()
+    }
+
     // Serve cached data immediately if available
     const cached = projectedCache.get(cacheKey)
     if (cached && Date.now() - cached.timestamp < PROJECTED_CACHE_TTL_MS) {
@@ -346,7 +353,7 @@ export function useDuePanelData({
     return () => {
       stale = true
     }
-  }, [date, t])
+  }, [date, t, invalidationKey])
 
   const loadMore = useCallback(() => {
     if (nextCursor) {

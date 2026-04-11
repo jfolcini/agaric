@@ -26,6 +26,10 @@ vi.mock('../../lib/tauri', () => ({
   batchResolve: vi.fn(),
 }))
 
+vi.mock('../../hooks/useBlockPropertyEvents', () => ({
+  useBlockPropertyEvents: vi.fn(() => ({ invalidationKey: 0 })),
+}))
+
 vi.mock('../../lib/logger', () => ({
   logger: {
     debug: vi.fn(),

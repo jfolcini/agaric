@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
+import { useBlockPropertyEvents } from '../hooks/useBlockPropertyEvents'
 import type { NavigateToPageFn } from '../lib/block-events'
 import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
@@ -30,6 +31,7 @@ export interface DonePanelProps {
 
 export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.ReactElement | null {
   const { t } = useTranslation()
+  const { invalidationKey } = useBlockPropertyEvents()
   const [blocks, setBlocks] = useState<BlockRow[]>([])
   const [loading, setLoading] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
@@ -79,7 +81,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
     [date, blocks, totalCount, pageTitles, t],
   )
 
-  // Fetch on mount and when date changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: invalidationKey triggers refetch on property changes (F-39)
   useEffect(() => {
     setBlocks([])
     setNextCursor(null)
@@ -132,7 +134,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
     return () => {
       cancelled = true
     }
-  }, [date, t])
+  }, [date, t, invalidationKey])
 
   const loadMore = useCallback(() => {
     if (nextCursor) {

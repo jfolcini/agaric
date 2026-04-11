@@ -38,6 +38,10 @@ vi.mock('sonner', () => ({
   },
 }))
 
+vi.mock('../../hooks/useBlockPropertyEvents', () => ({
+  useBlockPropertyEvents: vi.fn(() => ({ invalidationKey: 0 })),
+}))
+
 vi.mock('../SourcePageFilter', () => ({
   SourcePageFilter: (props: {
     sourcePages: unknown[]

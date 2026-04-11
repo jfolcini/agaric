@@ -26,6 +26,10 @@ vi.mock('../../lib/tauri', () => ({
   queryByProperty: vi.fn(),
 }))
 
+vi.mock('../useBlockPropertyEvents', () => ({
+  useBlockPropertyEvents: vi.fn(() => ({ invalidationKey: 0 })),
+}))
+
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../../lib/tauri'

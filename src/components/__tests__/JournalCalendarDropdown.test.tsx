@@ -15,6 +15,10 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
+vi.mock('../../hooks/useBlockPropertyEvents', () => ({
+  useBlockPropertyEvents: vi.fn(() => ({ invalidationKey: 0 })),
+}))
+
 vi.mock('../ui/calendar', () => ({
   Calendar: (props: Record<string, unknown>) => {
     const modifiers = props.modifiers as Record<string, Date[]> | undefined
