@@ -244,7 +244,9 @@ Type `/` in the editor to access the command palette. Commands are grouped by ca
 | | Ctrl+Shift+Up/Down | Move block up/down |
 | **Task** | Ctrl+Enter | Cycle TODO/DOING/DONE/none |
 | | Ctrl+Shift+1/2/3 | Priority 1/2/3 |
+| | Ctrl+Shift+D | Open date picker |
 | | Ctrl+Shift+P | Show block properties drawer |
+| | Ctrl+1-6 | Set heading level 1-6 |
 | **Collapse** | Ctrl+. | Toggle collapse/expand |
 | **Pickers** | @ | Tag picker |
 | | #[name] | Tag input rule (auto-resolve) |
@@ -263,7 +265,7 @@ Type `/` in the editor to access the command palette. Commands are grouped by ca
 | | Enter | Revert selected |
 | | j/k | Vim-style navigation |
 
-**Keyboard shortcut customization** (UX-86): All 41 shortcuts are configurable via Settings → Keyboard tab. `keyboard-config.ts` stores custom overrides in localStorage, merges with defaults. `KeyboardSettingsTab` component provides inline editing (pencil → input → save/cancel), conflict detection showing which shortcuts conflict, per-shortcut reset, and "Reset All to Defaults" with ConfirmDialog. `KeyboardShortcuts.tsx` help panel dynamically reads from `getCurrentShortcuts()` via `useMemo([open])` so it shows current (possibly customized) bindings when opened. 19 config + 13 settings tab + 1 dynamic panel tests.
+**Keyboard shortcut customization** (UX-86): All 55 shortcuts are configurable via Settings → Keyboard tab. `keyboard-config.ts` stores custom overrides in localStorage, merges with defaults. `KeyboardSettingsTab` component provides inline editing (pencil → input → save/cancel), conflict detection showing which shortcuts conflict, per-shortcut reset, and "Reset All to Defaults" with ConfirmDialog. `KeyboardShortcuts.tsx` help panel dynamically reads from `getCurrentShortcuts()` via `useMemo([open])` so it shows current (possibly customized) bindings when opened. 19 config + 13 settings tab + 1 dynamic panel tests.
 
 ---
 
@@ -488,7 +490,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **useScrollRestore** (`src/hooks/useScrollRestore.ts`): Saves and restores scroll position per view key on a scrollable container with requestAnimationFrame timing. Used by App.
 - **useTheme** (`src/hooks/useTheme.ts`): Theme preference hook with auto/dark/light cycle. Reads from localStorage (`theme-preference`), respects `prefers-color-scheme` for auto mode via `useSyncExternalStore`, applies `.dark` class on `document.documentElement`. Returns `{ theme, isDark, toggleTheme }`. Used by App (UX-43).
 - **useItemCount** (`src/hooks/useItemCount.ts`): Reusable polling count hook. Wraps `usePollingQuery` to poll a paginated command and return item count. Used by App for conflict/trash badge counts (UX-60).
-- **useBlockTreeKeyboardShortcuts** (`src/hooks/useBlockTreeKeyboardShortcuts.ts`): Document-level keyboard shortcut listeners extracted from BlockTree (M-16). Handles Mod+. collapse, Ctrl+A/Escape multi-selection, unfocused Escape, Ctrl+Enter task cycling, Ctrl+Shift+D date picker, Ctrl+1-6 headings. Used by BlockTree.
+- **useBlockTreeKeyboardShortcuts** (`src/hooks/useBlockTreeKeyboardShortcuts.ts`): Document-level keyboard shortcut listeners extracted from BlockTree (M-16). Handles Mod+. collapse, Ctrl+A/Escape multi-selection, unfocused Escape, Ctrl+Enter task cycling, Ctrl+Shift+D date picker, Ctrl+1-6 headings. Shortcuts read from `keyboard-config.ts` via `matchesShortcutBinding()` (F-38 Phase 2). Used by BlockTree.
 - **useBlockTreeEventListeners** (`src/hooks/useBlockTreeEventListeners.ts`): Custom DOM event listeners extracted from BlockTree (M-16). Handles DISCARD_BLOCK_EDIT, CYCLE_PRIORITY, SET_PRIORITY_1/2/3, date picker events, TOGGLE_TODO_STATE, OPEN_BLOCK_PROPERTIES. Used by BlockTree.
 - **useQueryExecution** (`src/hooks/useQueryExecution.ts`): Query dispatching + pagination hook extracted from QueryResult (M-24). Handles tag/property/filtered/backlinks queries, cursor-based pagination, page title resolution. Used by QueryResult.
 - **useQuerySorting** (`src/hooks/useQuerySorting.ts`): Sort state + memoized sorted results extracted from QueryResult (M-24). Returns sortedResults, sortKey, sortDir, handleColumnSort. Used by QueryResult.
@@ -509,7 +511,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **logger** (`src/lib/logger.ts`): Structured frontend logging with dual-write (console + Tauri IPC bridge), stack capture at call site, cause chain extraction (3-level deep), rate limiting (5 per 60s per module:message), and `safeStringify` for circular reference protection. Methods: `debug`, `info`, `warn`, `error`. Data parameter (structured context dict) serialized to backend log file. Global error/unhandledrejection handlers in `main.tsx`. Custom panic hook captures Rust panics in log file. Boot-time log retention removes files older than 30 days. Used by 24+ production files.
 - **format-relative-time** (`src/lib/format-relative-time.ts`): `formatRelativeTime(isoString, t)` returns human-readable relative time ("just now", "Xm ago", "Xh ago", "Xd ago"). Uses i18n `t()` for all strings. Used by App sidebar sync status (UX-76).
 - **file-utils** (`src/lib/file-utils.ts`): `guessMimeType(filename)` maps 20+ file extensions to MIME types (images, documents, office, media, archives). `extractFileInfo(file)` extracts filename, mimeType, sizeBytes, and Tauri-specific `fsPath` from a `File` object. Used by EditableBlock (drag-drop/paste), useBlockSlashCommands (/attach command). Re-exported from BlockTree for backward compat. 13 tests.
-- **keyboard-config** (`src/lib/keyboard-config.ts`): Keyboard shortcut configuration with localStorage persistence. `DEFAULT_SHORTCUTS` (40 entries across 8 categories), `getCustomOverrides()`, `setCustomShortcut()`, `resetShortcut()`, `resetAllShortcuts()`, `getCurrentShortcuts()` (merges defaults with overrides, marks `isCustom`), `findConflicts()` (same keys in same category). Used by KeyboardSettingsTab, KeyboardShortcuts. 19 tests.
+- **keyboard-config** (`src/lib/keyboard-config.ts`): Keyboard shortcut configuration with localStorage persistence. `DEFAULT_SHORTCUTS` (55 entries across 8 categories), `getCustomOverrides()`, `setCustomShortcut()`, `resetShortcut()`, `resetAllShortcuts()`, `getCurrentShortcuts()` (merges defaults with overrides, marks `isCustom`), `findConflicts()` (same keys in same category), `matchesShortcutBinding()` (resolves shortcut name to current key binding and matches against keyboard events — replaces inline key parsing in block-tree consumers). Used by KeyboardSettingsTab, KeyboardShortcuts, useBlockTreeKeyboardShortcuts, use-block-keyboard, PageHeader. 32 tests.
 - **block-utils** (`src/lib/block-utils.ts`): `processCheckboxSyntax(content)` detects markdown checkbox syntax (`- [ ] ` → TODO, `- [x] ` → DONE). Returns cleaned content and detected todo state. Extracted from BlockTree (M-16). Used by BlockTree.
 - **attachment-utils** (`src/lib/attachment-utils.ts`): `getAssetUrl(fsPath)` converts filesystem path to Tauri asset protocol URL (returns null outside Tauri runtime). `formatSize(bytes)` formats bytes as human-readable string. Extracted from StaticBlock (M-17). Used by AttachmentRenderer, StaticBlock.
 

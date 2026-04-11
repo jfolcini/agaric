@@ -1,5 +1,28 @@
 # Session Log
 
+## Session 340 — F-38 Phase 2: block tree configurable shortcuts (2026-04-11)
+
+**F-38 Phase 2 complete. 7 files changed, ~+180 lines. 13 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| F-38 P2 | 8 block-tree shortcuts migrated to DEFAULT_SHORTCUTS + new matchesShortcutBinding utility | `keyboard-config.ts`, `i18n.ts`, `useBlockTreeKeyboardShortcuts.ts`, `use-block-keyboard.ts`, `PageHeader.tsx` + tests |
+
+### Implementation
+- 8 new DEFAULT_SHORTCUTS entries: openDatePicker, openPropertiesDrawer, heading1-6
+- New matchesShortcutBinding() utility replaces inline key parsing in 3 consumers
+- PageHeader.tsx export shortcut refactored to use shared utility
+- 55 shortcuts now configurable (was 47)
+
+### Stats
+- 7 files changed (~+180 lines)
+- 13 new tests (4 shortcut existence + 9 matchesShortcutBinding)
+- 6211 frontend tests pass, all prek hooks pass
+
+---
+
 ## Session 339 — F-39 complete: reactive panel invalidation (2026-04-11)
 
 **F-39 fully resolved (all 3 phases). 10 files changed, +120 lines. 4 new tests.**
