@@ -827,6 +827,28 @@ async restorePageToOp(pageId: string, targetDeviceId: string, targetSeq: number)
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Tauri command: restore all soft-deleted blocks. Delegates to [`restore_all_deleted_inner`].
+ */
+async restoreAllDeleted() : Promise<Result<BulkTrashResponse, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("restore_all_deleted") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: permanently purge all soft-deleted blocks. Delegates to [`purge_all_deleted_inner`].
+ */
+async purgeAllDeleted() : Promise<Result<BulkTrashResponse, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("purge_all_deleted") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -880,6 +902,7 @@ export type BacklinkSort = { type: "Created"; dir: SortDir } | { type: "Property
  * Row returned by paginated block queries.
  */
 export type BlockRow = { id: string; block_type: string; content: string | null; parent_id: string | null; position: number | null; deleted_at: string | null; is_conflict: boolean; conflict_type: string | null; todo_state: string | null; priority: string | null; due_date: string | null; scheduled_date: string | null }
+export type BulkTrashResponse = { affected_count: number }
 /**
  * Result of an op log compaction, returned by [`compact_op_log_cmd`].
  */

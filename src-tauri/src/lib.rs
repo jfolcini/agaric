@@ -202,6 +202,9 @@ pub fn run() {
         commands::compact_op_log_cmd,
         // Point-in-time restore (F-26)
         commands::restore_page_to_op,
+        // Bulk trash operations (B-46)
+        commands::restore_all_deleted,
+        commands::purge_all_deleted,
     ]);
 
     tauri::Builder::default()
@@ -462,6 +465,9 @@ mod specta_tests {
             crate::commands::compact_op_log_cmd,
             // Point-in-time restore (F-26)
             crate::commands::restore_page_to_op,
+            // Bulk trash operations (B-46)
+            crate::commands::restore_all_deleted,
+            crate::commands::purge_all_deleted,
         ])
     }
 

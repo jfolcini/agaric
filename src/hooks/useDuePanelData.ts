@@ -83,6 +83,7 @@ export function useDuePanelData({
   const isToday = date === todayStr
 
   // Fetch overdue blocks when showing today
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — refetch on property change (B-50/F-39)
   useEffect(() => {
     if (!isToday) {
       setOverdueBlocks([])
@@ -124,9 +125,10 @@ export function useDuePanelData({
     return () => {
       stale = true
     }
-  }, [isToday, date])
+  }, [isToday, date, invalidationKey])
 
   // Fetch upcoming blocks (deadline approaching within warningDays)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — refetch on property change (B-50/F-39)
   useEffect(() => {
     if (!isToday || warningDays <= 0) {
       setUpcomingBlocks([])
@@ -185,7 +187,7 @@ export function useDuePanelData({
     return () => {
       stale = true
     }
-  }, [isToday, warningDays])
+  }, [isToday, warningDays, invalidationKey])
 
   // Fetch blocks due on the given date
   const fetchBlocks = useCallback(
@@ -234,6 +236,7 @@ export function useDuePanelData({
   )
 
   // Fetch on mount and when date or sourceFilter changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — refetch on property change (B-50/F-39)
   useEffect(() => {
     setBlocks([])
     setNextCursor(null)
@@ -288,7 +291,7 @@ export function useDuePanelData({
     return () => {
       cancelled = true
     }
-  }, [date, sourceFilter])
+  }, [date, sourceFilter, invalidationKey])
 
   // Fetch projected agenda entries with caching (UX-114)
   useEffect(() => {

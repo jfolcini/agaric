@@ -52,7 +52,8 @@ pub use attachments::{
 pub use blocks::{
     batch_resolve, batch_resolve_inner, create_block, create_block_inner, delete_block,
     delete_block_inner, edit_block, edit_block_inner, get_block, get_block_inner, list_blocks,
-    list_blocks_inner, move_block, move_block_inner, purge_block, purge_block_inner, restore_block,
+    list_blocks_inner, move_block, move_block_inner, purge_all_deleted, purge_all_deleted_inner,
+    purge_block, purge_block_inner, restore_all_deleted, restore_all_deleted_inner, restore_block,
     restore_block_inner,
 };
 pub use history::{
@@ -108,7 +109,8 @@ pub use attachments::{
 pub use blocks::{
     __specta__fn__batch_resolve, __specta__fn__create_block, __specta__fn__delete_block,
     __specta__fn__edit_block, __specta__fn__get_block, __specta__fn__list_blocks,
-    __specta__fn__move_block, __specta__fn__purge_block, __specta__fn__restore_block,
+    __specta__fn__move_block, __specta__fn__purge_all_deleted, __specta__fn__purge_block,
+    __specta__fn__restore_all_deleted, __specta__fn__restore_block,
 };
 #[doc(hidden)]
 pub use history::{
@@ -160,8 +162,8 @@ pub use attachments::{__cmd__add_attachment, __cmd__delete_attachment, __cmd__li
 #[doc(hidden)]
 pub use blocks::{
     __cmd__batch_resolve, __cmd__create_block, __cmd__delete_block, __cmd__edit_block,
-    __cmd__get_block, __cmd__list_blocks, __cmd__move_block, __cmd__purge_block,
-    __cmd__restore_block,
+    __cmd__get_block, __cmd__list_blocks, __cmd__move_block, __cmd__purge_all_deleted,
+    __cmd__purge_block, __cmd__restore_all_deleted, __cmd__restore_block,
 };
 #[doc(hidden)]
 pub use history::{
@@ -314,6 +316,11 @@ pub struct RestoreResponse {
 pub struct PurgeResponse {
     pub block_id: String,
     pub purged_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct BulkTrashResponse {
+    pub affected_count: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]

@@ -654,6 +654,259 @@ pub async fn purge_block_inner(
     })
 }
 
+/// Restore ALL soft-deleted blocks in a single transaction.
+///
+/// Finds root-level deleted blocks (those whose parent is not deleted with the
+/// same timestamp), creates a `RestoreBlock` op for each, then clears
+/// `deleted_at` on ALL deleted blocks. Recomputes tag inheritance afterward.
+pub async fn restore_all_deleted_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+) -> Result<BulkTrashResponse, AppError> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    // Find root-level deleted blocks for op-log entries.
+    // A "root" is a deleted block whose parent is either NULL, doesn't exist,
+    // or has a different deleted_at (i.e., wasn't cascade-deleted together).
+    let roots = sqlx::query!(
+        "SELECT b.id, b.deleted_at FROM blocks b \
+         WHERE b.deleted_at IS NOT NULL \
+         AND ( \
+           b.parent_id IS NULL \
+           OR NOT EXISTS ( \
+             SELECT 1 FROM blocks p \
+             WHERE p.id = b.parent_id \
+             AND p.deleted_at = b.deleted_at \
+           ) \
+         )"
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+
+    if roots.is_empty() {
+        return Ok(BulkTrashResponse { affected_count: 0 });
+    }
+
+    let now = now_rfc3339();
+    let mut op_records = Vec::new();
+    // Append one RestoreBlock op per root for sync compatibility
+    for root in &roots {
+        let deleted_at_ref = root.deleted_at.clone().unwrap_or_default();
+        let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: BlockId::from_trusted(&root.id),
+            deleted_at_ref,
+        });
+        let op_record =
+            op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
+        op_records.push(op_record);
+    }
+
+    // Bulk restore: clear deleted_at on ALL deleted blocks
+    let result = sqlx::query!("UPDATE blocks SET deleted_at = NULL WHERE deleted_at IS NOT NULL")
+        .execute(&mut *tx)
+        .await?;
+
+    let count = result.rows_affected();
+
+    // Recompute tag inheritance for all restored root blocks
+    for root in &roots {
+        crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &root.id).await?;
+    }
+
+    tx.commit().await?;
+
+    // Dispatch background cache tasks for each root
+    for op_record in &op_records {
+        if let Err(e) = materializer.dispatch_background(op_record) {
+            tracing::warn!(error = %e, "failed to dispatch background cache task");
+        }
+    }
+
+    Ok(BulkTrashResponse {
+        affected_count: count,
+    })
+}
+
+/// Permanently purge ALL soft-deleted blocks in a single transaction.
+///
+/// Creates `PurgeBlock` ops for root-level deleted blocks, then bulk-deletes
+/// all dependent rows and the blocks themselves. Irreversible.
+pub async fn purge_all_deleted_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+) -> Result<BulkTrashResponse, AppError> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    // Find root-level deleted blocks for op-log entries
+    let roots = sqlx::query!(
+        "SELECT b.id, b.deleted_at FROM blocks b \
+         WHERE b.deleted_at IS NOT NULL \
+         AND ( \
+           b.parent_id IS NULL \
+           OR NOT EXISTS ( \
+             SELECT 1 FROM blocks p \
+             WHERE p.id = b.parent_id \
+             AND p.deleted_at = b.deleted_at \
+           ) \
+         )"
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+
+    if roots.is_empty() {
+        return Ok(BulkTrashResponse { affected_count: 0 });
+    }
+
+    let now = now_rfc3339();
+    let mut op_records = Vec::new();
+    for root in &roots {
+        let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
+            block_id: BlockId::from_trusted(&root.id),
+        });
+        let op_record =
+            op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
+        op_records.push(op_record);
+    }
+
+    // Defer FK checks until commit
+    sqlx::query("PRAGMA defer_foreign_keys = ON")
+        .execute(&mut *tx)
+        .await?;
+
+    // The deleted block set — used for all cleanup queries below.
+    // Since we're purging ALL deleted blocks (and their descendants are also
+    // deleted), we can use a simple `deleted_at IS NOT NULL` predicate instead
+    // of per-block recursive CTEs.
+    let deleted_set = "SELECT id FROM blocks WHERE deleted_at IS NOT NULL";
+
+    // block_tags
+    sqlx::query(&format!(
+        "DELETE FROM block_tags WHERE block_id IN ({deleted_set}) OR tag_id IN ({deleted_set})"
+    ))
+    .execute(&mut *tx)
+    .await?;
+
+    // block_tag_inherited
+    sqlx::query(&format!(
+        "DELETE FROM block_tag_inherited WHERE block_id IN ({deleted_set}) OR inherited_from IN ({deleted_set})"
+    ))
+    .execute(&mut *tx)
+    .await?;
+
+    // block_properties: owned by deleted blocks
+    sqlx::query(&format!(
+        "DELETE FROM block_properties WHERE block_id IN ({deleted_set})"
+    ))
+    .execute(&mut *tx)
+    .await?;
+
+    // block_properties: value_ref pointing to deleted blocks
+    sqlx::query(&format!(
+        "UPDATE block_properties SET value_ref = NULL WHERE value_ref IN ({deleted_set})"
+    ))
+    .execute(&mut *tx)
+    .await?;
+
+    // block_links
+    sqlx::query(&format!(
+        "DELETE FROM block_links WHERE source_id IN ({deleted_set}) OR target_id IN ({deleted_set})"
+    ))
+    .execute(&mut *tx)
+    .await?;
+
+    // agenda_cache
+    sqlx::query(&format!(
+        "DELETE FROM agenda_cache WHERE block_id IN ({deleted_set})"
+    ))
+    .execute(&mut *tx)
+    .await?;
+
+    // tags_cache
+    sqlx::query(&format!(
+        "DELETE FROM tags_cache WHERE tag_id IN ({deleted_set})"
+    ))
+    .execute(&mut *tx)
+    .await?;
+
+    // pages_cache
+    sqlx::query(&format!(
+        "DELETE FROM pages_cache WHERE page_id IN ({deleted_set})"
+    ))
+    .execute(&mut *tx)
+    .await?;
+
+    // Collect attachment paths BEFORE deleting rows
+    let attachment_rows = sqlx::query_scalar::<_, String>(
+        "SELECT fs_path FROM attachments WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)",
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+
+    // attachments
+    sqlx::query(&format!(
+        "DELETE FROM attachments WHERE block_id IN ({deleted_set})"
+    ))
+    .execute(&mut *tx)
+    .await?;
+
+    // block_drafts
+    sqlx::query(&format!(
+        "DELETE FROM block_drafts WHERE block_id IN ({deleted_set})"
+    ))
+    .execute(&mut *tx)
+    .await?;
+
+    // Nullify conflict_source refs from non-deleted blocks
+    sqlx::query(&format!(
+        "UPDATE blocks SET conflict_source = NULL WHERE conflict_source IN ({deleted_set})"
+    ))
+    .execute(&mut *tx)
+    .await?;
+
+    // fts_blocks
+    sqlx::query(&format!(
+        "DELETE FROM fts_blocks WHERE block_id IN ({deleted_set})"
+    ))
+    .execute(&mut *tx)
+    .await?;
+
+    // Delete all deleted blocks
+    let result = sqlx::query!("DELETE FROM blocks WHERE deleted_at IS NOT NULL")
+        .execute(&mut *tx)
+        .await?;
+
+    let count = result.rows_affected();
+    tx.commit().await?;
+
+    // Post-commit: delete physical attachment files
+    for path in &attachment_rows {
+        let p = std::path::Path::new(path.as_str());
+        if p.is_absolute()
+            || p.components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            tracing::warn!(path, "skipping attachment deletion: unsafe path");
+            continue;
+        }
+        if let Err(e) = std::fs::remove_file(path) {
+            tracing::warn!(path, error = %e, "failed to remove attachment file after purge");
+        }
+    }
+
+    // Dispatch background cache tasks
+    for op_record in &op_records {
+        if let Err(e) = materializer.dispatch_background(op_record) {
+            tracing::warn!(error = %e, "failed to dispatch background cache task");
+        }
+    }
+
+    Ok(BulkTrashResponse {
+        affected_count: count,
+    })
+}
+
 /// Move a block to a new parent at a specific position.
 ///
 /// Validates the block and optional new parent exist, detects cycles via
@@ -1249,6 +1502,34 @@ pub async fn purge_block(
     block_id: String,
 ) -> Result<PurgeResponse, AppError> {
     purge_block_inner(&pool.0, device_id.as_str(), &materializer, block_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: restore all soft-deleted blocks. Delegates to [`restore_all_deleted_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn restore_all_deleted(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+) -> Result<BulkTrashResponse, AppError> {
+    restore_all_deleted_inner(&pool.0, device_id.as_str(), &materializer)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: permanently purge all soft-deleted blocks. Delegates to [`purge_all_deleted_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn purge_all_deleted(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+) -> Result<BulkTrashResponse, AppError> {
+    purge_all_deleted_inner(&pool.0, device_id.as_str(), &materializer)
         .await
         .map_err(sanitize_internal_error)
 }

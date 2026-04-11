@@ -91,6 +91,20 @@ export function purgeBlock(blockId: string): Promise<PurgeResponse> {
   return invoke('purge_block', { blockId })
 }
 
+export interface BulkTrashResponse {
+  affected_count: number
+}
+
+/** Restore all soft-deleted blocks. Returns count of restored blocks. */
+export function restoreAllDeleted(): Promise<BulkTrashResponse> {
+  return invoke('restore_all_deleted')
+}
+
+/** Permanently purge all soft-deleted blocks. Irreversible. */
+export function purgeAllDeleted(): Promise<BulkTrashResponse> {
+  return invoke('purge_all_deleted')
+}
+
 /** List blocks with optional filters and cursor-based pagination. */
 export function listBlocks(params?: {
   parentId?: string | undefined

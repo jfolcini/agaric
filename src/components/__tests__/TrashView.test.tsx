@@ -130,11 +130,11 @@ describe('TrashView', () => {
     expect(screen.getByText('deleted item 2')).toBeInTheDocument()
 
     // Each item should have a restore button
-    const restoreBtns = screen.getAllByRole('button', { name: /Restore/i })
+    const restoreBtns = screen.getAllByTestId('trash-restore-btn')
     expect(restoreBtns).toHaveLength(2)
 
     // Each item should have a purge button
-    const purgeBtns = screen.getAllByRole('button', { name: /Purge/i })
+    const purgeBtns = screen.getAllByTestId('trash-purge-btn')
     expect(purgeBtns).toHaveLength(2)
   })
 
@@ -150,7 +150,7 @@ describe('TrashView', () => {
 
     render(<TrashView />)
 
-    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    const restoreBtn = await screen.findByTestId('trash-restore-btn')
     await user.click(restoreBtn)
 
     // The second invoke call should be restore_block with the deleted_at_ref
@@ -306,7 +306,7 @@ describe('TrashView', () => {
 
     expect(await screen.findByText('to restore')).toBeInTheDocument()
 
-    const restoreBtn = screen.getByRole('button', { name: /Restore/i })
+    const restoreBtn = screen.getByTestId('trash-restore-btn')
     await user.click(restoreBtn)
 
     // Block should be removed from the list
@@ -346,7 +346,7 @@ describe('TrashView', () => {
 
     render(<TrashView />)
 
-    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    const restoreBtn = await screen.findByTestId('trash-restore-btn')
     await user.click(restoreBtn)
 
     // Block should still be in the list (restore failed, so don't remove it)
@@ -403,7 +403,7 @@ describe('TrashView', () => {
 
     render(<TrashView />)
 
-    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    const restoreBtn = await screen.findByTestId('trash-restore-btn')
     await user.click(restoreBtn)
 
     await waitFor(() => {
@@ -451,7 +451,7 @@ describe('TrashView', () => {
 
     render(<TrashView />)
 
-    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    const restoreBtn = await screen.findByTestId('trash-restore-btn')
     await user.click(restoreBtn)
 
     await waitFor(() => {
@@ -474,7 +474,7 @@ describe('TrashView', () => {
 
     render(<TrashView />)
 
-    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    const restoreBtn = await screen.findByTestId('trash-restore-btn')
     await user.click(restoreBtn)
 
     // Wait for the block to be removed from the list (restore succeeded)
@@ -592,7 +592,7 @@ describe('TrashView', () => {
     expect(within(toolbar).getByText('2 selected')).toBeInTheDocument()
   })
 
-  it('selection toolbar has Select all, Deselect all, Restore all, Purge all buttons', async () => {
+  it('selection toolbar has Select all, Deselect all, Restore selected, Purge selected buttons', async () => {
     const user = userEvent.setup()
     mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')])
 
@@ -604,8 +604,8 @@ describe('TrashView', () => {
 
     expect(screen.getByRole('button', { name: /^Select all$/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^Deselect all$/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^Restore all$/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^Purge all$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Restore selected$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Purge selected$/i })).toBeInTheDocument()
   })
 
   it('batch restore calls restoreBlock for each selected', async () => {
@@ -630,9 +630,9 @@ describe('TrashView', () => {
     await user.click(checkboxes[0] as HTMLElement)
     await user.click(checkboxes[1] as HTMLElement)
 
-    // Click Restore all
-    const restoreAllBtn = screen.getByRole('button', { name: /Restore all/i })
-    await user.click(restoreAllBtn)
+    // Click Restore selected
+    const restoreSelectedBtn = screen.getByRole('button', { name: /Restore selected/i })
+    await user.click(restoreSelectedBtn)
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('restore_block', {
@@ -673,9 +673,9 @@ describe('TrashView', () => {
     await user.click(checkboxes[0] as HTMLElement)
     await user.click(checkboxes[1] as HTMLElement)
 
-    // Click Purge all
-    const purgeAllBtn = screen.getByRole('button', { name: /Purge all/i })
-    await user.click(purgeAllBtn)
+    // Click Purge selected
+    const purgeSelectedBtn = screen.getByRole('button', { name: /Purge selected/i })
+    await user.click(purgeSelectedBtn)
 
     // Confirmation dialog should appear
     expect(screen.getByText(/Permanently delete 2 items\?/)).toBeInTheDocument()
@@ -1012,5 +1012,239 @@ describe('TrashView', () => {
       })
       expect(results).toHaveNoViolations()
     })
+  })
+
+  // ── Empty Trash / Restore All header buttons ───────────────────────
+
+  it('renders Empty Trash and Restore All header buttons when items exist', async () => {
+    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')])
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    expect(screen.getByTestId('trash-empty-trash-btn')).toBeInTheDocument()
+    expect(screen.getByTestId('trash-restore-all-btn')).toBeInTheDocument()
+  })
+
+  it('does not render Empty Trash and Restore All header buttons when trash is empty', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    render(<TrashView />)
+
+    await screen.findByText(/Nothing in trash/)
+    expect(screen.queryByTestId('trash-empty-trash-btn')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('trash-restore-all-btn')).not.toBeInTheDocument()
+  })
+
+  it('opens confirmation dialog when Empty Trash is clicked', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')])
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    const emptyTrashBtn = screen.getByTestId('trash-empty-trash-btn')
+    await user.click(emptyTrashBtn)
+
+    expect(screen.getByText('Empty trash?')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'This will permanently delete all items in the trash. This cannot be undone.',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('calls purgeAllDeleted on Empty Trash confirmation', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks')
+        return {
+          items: [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')],
+          next_cursor: null,
+          has_more: false,
+        }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'purge_all_deleted') return { affected_count: 5 }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    const emptyTrashBtn = screen.getByTestId('trash-empty-trash-btn')
+    await user.click(emptyTrashBtn)
+
+    // Confirm the dialog
+    const yesBtn = screen.getByRole('button', { name: /Yes/i })
+    await user.click(yesBtn)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('purge_all_deleted')
+    })
+  })
+
+  it('shows success toast with count after empty trash', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks')
+        return {
+          items: [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')],
+          next_cursor: null,
+          has_more: false,
+        }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'purge_all_deleted') return { affected_count: 5 }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-empty-trash-btn'))
+    await user.click(screen.getByRole('button', { name: /Yes/i }))
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Trash emptied (5 items permanently deleted)')
+    })
+  })
+
+  it('shows error toast on empty trash failure', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks')
+        return {
+          items: [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')],
+          next_cursor: null,
+          has_more: false,
+        }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'purge_all_deleted') throw new Error('DB error')
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-empty-trash-btn'))
+    await user.click(screen.getByRole('button', { name: /Yes/i }))
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to empty trash')
+    })
+  })
+
+  it('opens confirmation dialog when Restore All header is clicked', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')])
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    const restoreAllBtn = screen.getByTestId('trash-restore-all-btn')
+    await user.click(restoreAllBtn)
+
+    expect(screen.getByText('Restore all items?')).toBeInTheDocument()
+    expect(
+      screen.getByText('This will restore all items from the trash to their original locations.'),
+    ).toBeInTheDocument()
+  })
+
+  it('calls restoreAllDeleted on Restore All confirmation', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks')
+        return {
+          items: [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')],
+          next_cursor: null,
+          has_more: false,
+        }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'restore_all_deleted') return { affected_count: 3 }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    const restoreAllBtn = screen.getByTestId('trash-restore-all-btn')
+    await user.click(restoreAllBtn)
+
+    // Confirm the dialog
+    const dialog = screen.getByRole('alertdialog')
+    const restoreBtn = within(dialog).getByRole('button', { name: /^Restore$/i })
+    await user.click(restoreBtn)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('restore_all_deleted')
+    })
+  })
+
+  it('shows success toast with count after restore all', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks')
+        return {
+          items: [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')],
+          next_cursor: null,
+          has_more: false,
+        }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'restore_all_deleted') return { affected_count: 3 }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-restore-all-btn'))
+    const dialog = screen.getByRole('alertdialog')
+    await user.click(within(dialog).getByRole('button', { name: /^Restore$/i }))
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('3 items restored')
+    })
+  })
+
+  it('shows error toast on restore all failure', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks')
+        return {
+          items: [makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')],
+          next_cursor: null,
+          has_more: false,
+        }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'restore_all_deleted') throw new Error('DB error')
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-restore-all-btn'))
+    const dialog = screen.getByRole('alertdialog')
+    await user.click(within(dialog).getByRole('button', { name: /^Restore$/i }))
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to restore all items')
+    })
+  })
+
+  it('relabeled batch buttons say Restore Selected / Purge Selected', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([makeBlock('B1', 'item 1', '2025-01-15T00:00:00Z')])
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+
+    // Select an item to show the toolbar
+    const checkbox = screen.getByTestId('trash-item-checkbox')
+    await user.click(checkbox)
+
+    const toolbar = screen.getByRole('toolbar')
+    expect(within(toolbar).getByRole('button', { name: /^Restore selected$/i })).toBeInTheDocument()
+    expect(within(toolbar).getByRole('button', { name: /^Purge selected$/i })).toBeInTheDocument()
   })
 })

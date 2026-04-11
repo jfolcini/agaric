@@ -29,7 +29,14 @@ import { formatTimestamp } from '../lib/format'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 import { logger } from '../lib/logger'
 import type { BlockRow, ResolvedBlock } from '../lib/tauri'
-import { batchResolve, listBlocks, purgeBlock, restoreBlock } from '../lib/tauri'
+import {
+  batchResolve,
+  listBlocks,
+  purgeAllDeleted,
+  purgeBlock,
+  restoreAllDeleted,
+  restoreBlock,
+} from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
 import { ListViewState } from './ListViewState'
@@ -82,6 +89,8 @@ export function TrashView(): React.ReactElement {
       getItemId: (b: BlockRow) => b.id,
     })
   const [confirmBatchPurge, setConfirmBatchPurge] = useState(false)
+  const [confirmEmptyTrash, setConfirmEmptyTrash] = useState(false)
+  const [confirmRestoreAll, setConfirmRestoreAll] = useState(false)
 
   // ── List keyboard navigation ─────────────────────────────────────
   const {
@@ -280,6 +289,34 @@ export function TrashView(): React.ReactElement {
     }
   }, [selected, reload, clearSelection, t])
 
+  const handleEmptyTrash = useCallback(async () => {
+    try {
+      const result = await purgeAllDeleted()
+      reload()
+      clearSelection()
+      setConfirmEmptyTrash(false)
+      if (result.affected_count > 0) {
+        toast.success(t('trash.allPurged', { count: result.affected_count }))
+      }
+    } catch {
+      toast.error(t('trash.emptyTrashFailed'))
+    }
+  }, [reload, clearSelection, t])
+
+  const handleRestoreAll = useCallback(async () => {
+    try {
+      const result = await restoreAllDeleted()
+      reload()
+      clearSelection()
+      setConfirmRestoreAll(false)
+      if (result.affected_count > 0) {
+        toast.success(t('trash.allRestored', { count: result.affected_count }))
+      }
+    } catch {
+      toast.error(t('trash.restoreAllFailed'))
+    }
+  }, [reload, clearSelection, t])
+
   // ── Breadcrumb helper ────────────────────────────────────────────
 
   const getParentLabel = useCallback(
@@ -333,6 +370,30 @@ export function TrashView(): React.ReactElement {
         </div>
       )}
 
+      {/* Header actions — always visible when trash has items */}
+      {blocks.length > 0 && (
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setConfirmRestoreAll(true)}
+            data-testid="trash-restore-all-btn"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            {t('trash.restoreAllHeaderButton')}
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => setConfirmEmptyTrash(true)}
+            data-testid="trash-empty-trash-btn"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            {t('trash.emptyTrashButton')}
+          </Button>
+        </div>
+      )}
+
       {/* Filtered count */}
       {debouncedFilter && blocks.length > 0 && (
         <p className="text-sm text-muted-foreground" data-testid="trash-filter-count">
@@ -354,11 +415,11 @@ export function TrashView(): React.ReactElement {
           </Button>
           <Button variant="outline" size="sm" onClick={handleBatchRestore}>
             <RotateCcw className="h-3.5 w-3.5" />
-            {t('trash.restoreAllButton')}
+            {t('trash.restoreSelectedButton')}
           </Button>
           <Button variant="destructive" size="sm" onClick={() => setConfirmBatchPurge(true)}>
             <Trash2 className="h-3.5 w-3.5" />
-            {t('trash.purgeAllButton')}
+            {t('trash.purgeSelectedButton')}
           </Button>
         </BatchActionToolbar>
       )}
@@ -534,6 +595,7 @@ export function TrashView(): React.ReactElement {
         description={t('trash.permanentlyDeleteDescription')}
         cancelLabel={t('trash.noButton')}
         actionLabel={t('trash.yesDeleteButton')}
+        actionVariant="destructive"
         onAction={() => {
           if (confirmPurgeId) handlePurge(confirmPurgeId)
         }}
@@ -551,6 +613,31 @@ export function TrashView(): React.ReactElement {
         actionVariant="destructive"
         onAction={handleBatchPurge}
         className="trash-batch-purge-confirm"
+      />
+
+      {/* Empty trash confirmation dialog */}
+      <ConfirmDialog
+        open={confirmEmptyTrash}
+        onOpenChange={setConfirmEmptyTrash}
+        title={t('trash.emptyTrashTitle')}
+        description={t('trash.emptyTrashDescription')}
+        cancelLabel={t('trash.noButton')}
+        actionLabel={t('trash.yesDeleteButton')}
+        actionVariant="destructive"
+        onAction={handleEmptyTrash}
+        className="trash-empty-confirm"
+      />
+
+      {/* Restore all confirmation dialog */}
+      <ConfirmDialog
+        open={confirmRestoreAll}
+        onOpenChange={setConfirmRestoreAll}
+        title={t('trash.restoreAllTitle')}
+        description={t('trash.restoreAllDescription')}
+        cancelLabel={t('trash.noButton')}
+        actionLabel={t('trash.restoreButton')}
+        onAction={handleRestoreAll}
+        className="trash-restore-all-confirm"
       />
     </section>
   )

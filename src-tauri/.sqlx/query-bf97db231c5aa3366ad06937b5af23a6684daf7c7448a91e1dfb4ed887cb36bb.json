@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id, b.deleted_at FROM blocks b WHERE b.deleted_at IS NOT NULL AND ( b.parent_id IS NULL OR NOT EXISTS ( SELECT 1 FROM blocks p WHERE p.id = b.parent_id AND p.deleted_at = b.deleted_at ) )",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "deleted_at",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "bf97db231c5aa3366ad06937b5af23a6684daf7c7448a91e1dfb4ed887cb36bb"
+}

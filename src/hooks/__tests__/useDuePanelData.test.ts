@@ -26,19 +26,22 @@ vi.mock('../../lib/tauri', () => ({
   queryByProperty: vi.fn(),
 }))
 
+let mockInvalidationKey = 0
 vi.mock('../useBlockPropertyEvents', () => ({
-  useBlockPropertyEvents: vi.fn(() => ({ invalidationKey: 0 })),
+  useBlockPropertyEvents: vi.fn(() => ({ invalidationKey: mockInvalidationKey })),
 }))
 
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../../lib/tauri'
+import { useBlockPropertyEvents } from '../useBlockPropertyEvents'
 import { clearProjectedCache, useDuePanelData } from '../useDuePanelData'
 
 const mockedListBlocks = vi.mocked(listBlocks)
 const mockedBatchResolve = vi.mocked(batchResolve)
 const mockedListProjectedAgenda = vi.mocked(listProjectedAgenda)
 const mockedQueryByProperty = vi.mocked(queryByProperty)
+const mockedUseBlockPropertyEvents = vi.mocked(useBlockPropertyEvents)
 
 const emptyResponse = {
   items: [],
@@ -68,6 +71,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
   clearProjectedCache()
+  mockInvalidationKey = 0
   mockedListBlocks.mockResolvedValue(emptyResponse)
   mockedBatchResolve.mockResolvedValue([])
   mockedListProjectedAgenda.mockResolvedValue([])
@@ -314,5 +318,42 @@ describe('useDuePanelData', () => {
     expect(result.current.blocks[0]?.id).toBe('B1')
     expect(result.current.blocks[1]?.id).toBe('B5')
     expect(result.current.totalCount).toBe(2)
+  })
+
+  it('re-fetches blocks when invalidationKey changes (B-50/F-39)', async () => {
+    mockedListBlocks.mockResolvedValue({
+      items: [makeBlock({ id: 'B1', todo_state: 'TODO' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const { result, rerender } = renderHook(() =>
+      useDuePanelData({ date: '2025-06-15', sourceFilter: null }),
+    )
+
+    await waitFor(() => {
+      expect(result.current.blocks).toHaveLength(1)
+    })
+
+    // Clear and prepare updated response (block now DONE)
+    mockedListBlocks.mockClear()
+    mockedListBlocks.mockResolvedValue({
+      items: [makeBlock({ id: 'B1', todo_state: 'DONE' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    // Simulate property change event by bumping invalidationKey
+    mockInvalidationKey = 1
+    mockedUseBlockPropertyEvents.mockReturnValue({ invalidationKey: 1 })
+    rerender()
+
+    await waitFor(() => {
+      expect(mockedListBlocks).toHaveBeenCalled()
+    })
+
+    await waitFor(() => {
+      expect(result.current.blocks[0]?.todo_state).toBe('DONE')
+    })
   })
 })
