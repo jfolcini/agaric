@@ -13,6 +13,7 @@
 
 import type { MutableRefObject } from 'react'
 import { useEffect } from 'react'
+import { matchesShortcutBinding } from '../lib/keyboard-config'
 import { useBlockStore } from '../stores/blocks'
 import type { DatePickerMode } from './useBlockDatePicker'
 
@@ -130,10 +131,10 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     return () => document.removeEventListener('keydown', handleTaskKey)
   }, [focusedBlockId, handleToggleTodo])
 
-  // ── Keyboard shortcut: Ctrl+Shift+D -> open date picker ─────────────
+  // ── Keyboard shortcut: open date picker (configurable) ───────────────
   useEffect(() => {
     const handleDateShortcut = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'D') {
+      if (matchesShortcutBinding(e, 'openDatePicker')) {
         e.preventDefault()
         if (!focusedBlockId) return
         datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos ?? undefined
@@ -151,15 +152,17 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     setDatePickerOpen,
   ])
 
-  // ── Keyboard shortcut: Ctrl+1-6 -> toggle heading level ─────────────
+  // ── Keyboard shortcut: heading level (configurable) ──────────────────
   useEffect(() => {
     const handleHeadingShortcut = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return
-      if (e.key < '1' || e.key > '6') return
-      if (!focusedBlockId) return
-      e.preventDefault()
-      const level = Number.parseInt(e.key, 10)
-      handleSlashCommand({ id: `h${level}`, label: `Heading ${level}` })
+      for (let level = 1; level <= 6; level++) {
+        if (matchesShortcutBinding(e, `heading${level}`)) {
+          if (!focusedBlockId) return
+          e.preventDefault()
+          handleSlashCommand({ id: `h${level}`, label: `Heading ${level}` })
+          return
+        }
+      }
     }
     document.addEventListener('keydown', handleHeadingShortcut)
     return () => document.removeEventListener('keydown', handleHeadingShortcut)

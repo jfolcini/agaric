@@ -8,6 +8,7 @@
 
 import type { Editor } from '@tiptap/core'
 import { useCallback, useEffect } from 'react'
+import { matchesShortcutBinding } from '../lib/keyboard-config'
 
 /**
  * Check whether a suggestion popup (.suggestion-popup) is currently visible.
@@ -79,7 +80,10 @@ export interface EditorLike {
  * Extracted from the hook for direct unit testing.
  */
 export function handleBlockKeyDown(
-  event: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'ctrlKey' | 'metaKey' | 'preventDefault'>,
+  event: Pick<
+    KeyboardEvent,
+    'key' | 'shiftKey' | 'ctrlKey' | 'metaKey' | 'altKey' | 'preventDefault'
+  >,
   editor: EditorLike,
   callbacks: BlockKeyboardCallbacks,
 ): void {
@@ -136,8 +140,8 @@ export function handleBlockKeyDown(
     return
   }
 
-  // Ctrl/Cmd+Shift+P: show block properties drawer
-  if ((ctrlKey || metaKey) && shiftKey && (key === 'P' || key === 'p')) {
+  // Ctrl/Cmd+Shift+P: show block properties drawer (configurable)
+  if (matchesShortcutBinding(event, 'openPropertiesDrawer')) {
     event.preventDefault()
     callbacks.onShowProperties?.()
     return

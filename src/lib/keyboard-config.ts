@@ -123,6 +123,56 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     condition: 'keyboard.condition.inEditor',
   },
 
+  // Block Tree
+  {
+    id: 'openDatePicker',
+    keys: 'Ctrl + Shift + D',
+    category: 'keyboard.category.blockTree',
+    description: 'keyboard.openDatePicker',
+  },
+  {
+    id: 'openPropertiesDrawer',
+    keys: 'Ctrl + Shift + P',
+    category: 'keyboard.category.blockTree',
+    description: 'keyboard.openPropertiesDrawer',
+  },
+  {
+    id: 'heading1',
+    keys: 'Ctrl + 1',
+    category: 'keyboard.category.blockTree',
+    description: 'keyboard.heading1',
+  },
+  {
+    id: 'heading2',
+    keys: 'Ctrl + 2',
+    category: 'keyboard.category.blockTree',
+    description: 'keyboard.heading2',
+  },
+  {
+    id: 'heading3',
+    keys: 'Ctrl + 3',
+    category: 'keyboard.category.blockTree',
+    description: 'keyboard.heading3',
+  },
+  {
+    id: 'heading4',
+    keys: 'Ctrl + 4',
+    category: 'keyboard.category.blockTree',
+    description: 'keyboard.heading4',
+  },
+  {
+    id: 'heading5',
+    keys: 'Ctrl + 5',
+    category: 'keyboard.category.blockTree',
+    description: 'keyboard.heading5',
+  },
+  {
+    id: 'heading6',
+    keys: 'Ctrl + 6',
+    category: 'keyboard.category.blockTree',
+    description: 'keyboard.heading6',
+  },
+
   // Pickers
   {
     id: 'tagPicker',
@@ -322,6 +372,30 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     condition: 'keyboard.condition.inEditor',
   },
 ]
+
+/**
+ * Parse a shortcut binding string and check if a KeyboardEvent matches it.
+ * Handles Ctrl/Cmd + Shift + single key combinations.
+ */
+export function matchesShortcutBinding(
+  e: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey' | 'key'>,
+  shortcutId: string,
+): boolean {
+  const binding = getShortcutKeys(shortcutId)
+  if (!binding) return false
+  const parts = binding.split('+').map((p) => p.trim().toLowerCase())
+  const needsCtrl = parts.includes('ctrl')
+  const needsShift = parts.includes('shift')
+  const needsAlt = parts.includes('alt')
+  const key =
+    parts.filter((p) => p !== 'ctrl' && p !== 'shift' && p !== 'alt' && p !== 'meta')[0] ?? ''
+  return (
+    (e.ctrlKey || e.metaKey) === needsCtrl &&
+    e.shiftKey === needsShift &&
+    e.altKey === needsAlt &&
+    e.key.toLowerCase() === key
+  )
+}
 
 export function getCustomOverrides(): Record<string, string> {
   try {

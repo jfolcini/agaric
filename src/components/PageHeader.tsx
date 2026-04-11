@@ -14,7 +14,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { logger } from '@/lib/logger'
 import { useBlockTags } from '../hooks/useBlockTags'
-import { getShortcutKeys } from '../lib/keyboard-config'
+import { matchesShortcutBinding } from '../lib/keyboard-config'
 import { isStarred, toggleStarred } from '../lib/starred-pages'
 import {
   deleteBlock,
@@ -234,17 +234,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   // --- Keyboard shortcut for export (Ctrl+Shift+E) ---
   useEffect(() => {
     function handleExportShortcut(e: KeyboardEvent) {
-      const binding = getShortcutKeys('exportPageMarkdown')
-      if (!binding) return
-      const parts = binding.split('+').map((p) => p.trim().toLowerCase())
-      const needsCtrl = parts.includes('ctrl')
-      const needsShift = parts.includes('shift')
-      const key = parts.filter((p) => p !== 'ctrl' && p !== 'shift')[0] ?? ''
-      if (
-        (e.ctrlKey || e.metaKey) === needsCtrl &&
-        e.shiftKey === needsShift &&
-        e.key.toLowerCase() === key
-      ) {
+      if (matchesShortcutBinding(e, 'exportPageMarkdown')) {
         e.preventDefault()
         exportPageMarkdown(pageId)
           .then(async (markdown) => {

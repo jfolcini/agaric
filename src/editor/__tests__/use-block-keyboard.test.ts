@@ -64,13 +64,14 @@ function makeCallbacks(overrides: { isLastBlock?: () => boolean } = {}): BlockKe
 
 function makeEvent(
   key: string,
-  opts: Partial<{ shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }> = {},
-): Pick<KeyboardEvent, 'key' | 'shiftKey' | 'ctrlKey' | 'metaKey' | 'preventDefault'> {
+  opts: Partial<{ shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; altKey: boolean }> = {},
+): Pick<KeyboardEvent, 'key' | 'shiftKey' | 'ctrlKey' | 'metaKey' | 'altKey' | 'preventDefault'> {
   return {
     key,
     shiftKey: opts.shiftKey ?? false,
     ctrlKey: opts.ctrlKey ?? false,
     metaKey: opts.metaKey ?? false,
+    altKey: opts.altKey ?? false,
     preventDefault: vi.fn(),
   }
 }

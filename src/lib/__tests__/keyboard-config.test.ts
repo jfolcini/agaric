@@ -5,6 +5,7 @@ import {
   getCurrentShortcuts,
   getCustomOverrides,
   getShortcutKeys,
+  matchesShortcutBinding,
   resetAllShortcuts,
   resetShortcut,
   setCustomShortcut,
@@ -234,5 +235,129 @@ describe('keyboard-config', () => {
     )
 
     vi.restoreAllMocks()
+  })
+
+  describe('Block Tree shortcuts (F-38)', () => {
+    const blockTreeIds = [
+      'openDatePicker',
+      'openPropertiesDrawer',
+      'heading1',
+      'heading2',
+      'heading3',
+      'heading4',
+      'heading5',
+      'heading6',
+    ]
+
+    it('all 8 block tree shortcuts exist in DEFAULT_SHORTCUTS', () => {
+      for (const id of blockTreeIds) {
+        const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === id)
+        expect(shortcut, `shortcut "${id}" should exist`).toBeDefined()
+        expect(shortcut?.category).toBe('keyboard.category.blockTree')
+      }
+    })
+
+    it('openDatePicker defaults to Ctrl + Shift + D', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'openDatePicker')
+      expect(s?.keys).toBe('Ctrl + Shift + D')
+    })
+
+    it('openPropertiesDrawer defaults to Ctrl + Shift + P', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'openPropertiesDrawer')
+      expect(s?.keys).toBe('Ctrl + Shift + P')
+    })
+
+    it('heading1-6 default to Ctrl + 1 through Ctrl + 6', () => {
+      for (let level = 1; level <= 6; level++) {
+        const s = DEFAULT_SHORTCUTS.find((s) => s.id === `heading${level}`)
+        expect(s?.keys).toBe(`Ctrl + ${level}`)
+      }
+    })
+  })
+
+  describe('matchesShortcutBinding', () => {
+    function fakeEvent(
+      key: string,
+      opts: Partial<{
+        ctrlKey: boolean
+        metaKey: boolean
+        shiftKey: boolean
+        altKey: boolean
+      }> = {},
+    ): Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey' | 'key'> {
+      return {
+        key,
+        ctrlKey: opts.ctrlKey ?? false,
+        metaKey: opts.metaKey ?? false,
+        shiftKey: opts.shiftKey ?? false,
+        altKey: opts.altKey ?? false,
+      }
+    }
+
+    it('matches Ctrl+Shift+D for openDatePicker', () => {
+      expect(
+        matchesShortcutBinding(fakeEvent('D', { ctrlKey: true, shiftKey: true }), 'openDatePicker'),
+      ).toBe(true)
+      expect(
+        matchesShortcutBinding(fakeEvent('d', { ctrlKey: true, shiftKey: true }), 'openDatePicker'),
+      ).toBe(true)
+    })
+
+    it('matches Meta+Shift+D for openDatePicker (macOS)', () => {
+      expect(
+        matchesShortcutBinding(fakeEvent('D', { metaKey: true, shiftKey: true }), 'openDatePicker'),
+      ).toBe(true)
+    })
+
+    it('does not match Ctrl+D (missing Shift) for openDatePicker', () => {
+      expect(matchesShortcutBinding(fakeEvent('D', { ctrlKey: true }), 'openDatePicker')).toBe(
+        false,
+      )
+    })
+
+    it('matches Ctrl+1 through Ctrl+6 for heading shortcuts', () => {
+      for (let level = 1; level <= 6; level++) {
+        expect(
+          matchesShortcutBinding(fakeEvent(String(level), { ctrlKey: true }), `heading${level}`),
+        ).toBe(true)
+      }
+    })
+
+    it('does not match Ctrl+Shift+1 for heading1 (shift not in binding)', () => {
+      expect(
+        matchesShortcutBinding(fakeEvent('1', { ctrlKey: true, shiftKey: true }), 'heading1'),
+      ).toBe(false)
+    })
+
+    it('returns false for non-matching event', () => {
+      expect(matchesShortcutBinding(fakeEvent('x', { ctrlKey: true }), 'openDatePicker')).toBe(
+        false,
+      )
+    })
+
+    it('returns false for unknown shortcut id', () => {
+      expect(
+        matchesShortcutBinding(fakeEvent('D', { ctrlKey: true, shiftKey: true }), 'nonexistent'),
+      ).toBe(false)
+    })
+
+    it('matches Ctrl+Shift+P for openPropertiesDrawer', () => {
+      expect(
+        matchesShortcutBinding(
+          fakeEvent('p', { ctrlKey: true, shiftKey: true }),
+          'openPropertiesDrawer',
+        ),
+      ).toBe(true)
+    })
+
+    it('respects custom overrides', () => {
+      setCustomShortcut('openDatePicker', 'Ctrl + Shift + X')
+      expect(
+        matchesShortcutBinding(fakeEvent('x', { ctrlKey: true, shiftKey: true }), 'openDatePicker'),
+      ).toBe(true)
+      expect(
+        matchesShortcutBinding(fakeEvent('d', { ctrlKey: true, shiftKey: true }), 'openDatePicker'),
+      ).toBe(false)
+    })
   })
 })

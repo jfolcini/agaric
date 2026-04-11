@@ -635,6 +635,7 @@ const resources = {
       // Keyboard shortcuts — categories
       'keyboard.category.navigation': 'Navigation',
       'keyboard.category.editing': 'Editing',
+      'keyboard.category.blockTree': 'Block Tree',
       'keyboard.category.pickers': 'Pickers',
       'keyboard.category.journal': 'Journal',
       'keyboard.category.blockSelection': 'Block Selection',
@@ -671,6 +672,16 @@ const resources = {
       'keyboard.moveBlockUp': 'Move block up',
       'keyboard.moveBlockDown': 'Move block down',
       'keyboard.insertLineBreak': 'Insert line break (soft return)',
+
+      // Keyboard shortcuts — block tree descriptions
+      'keyboard.openDatePicker': 'Open date picker',
+      'keyboard.openPropertiesDrawer': 'Open block properties drawer',
+      'keyboard.heading1': 'Heading 1',
+      'keyboard.heading2': 'Heading 2',
+      'keyboard.heading3': 'Heading 3',
+      'keyboard.heading4': 'Heading 4',
+      'keyboard.heading5': 'Heading 5',
+      'keyboard.heading6': 'Heading 6',
 
       // Keyboard shortcuts — pickers descriptions
       'keyboard.tagPicker': 'Tag picker',
