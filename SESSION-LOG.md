@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 337 — Sync test coverage: 2 items resolved (2026-04-11)
+
+**2 items resolved. 2 Rust files changed, +604 lines. 8 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| T-30 | End-to-end mTLS handshake integration tests (4 tests: full handshake, cert pinning, wrong hash rejection, TOFU pattern) | `sync_net.rs` |
+| T-42 | File transfer protocol integration tests (4 tests: initiator receives, empty transfer, hash mismatch, large file chunking) | `sync_files.rs` |
+
+### Stats
+- 2 Rust files changed (+604 lines)
+- 8 new Rust integration tests
+- 1790 Rust tests pass, all prek hooks pass
+
+---
+
 ## Session 336 — Performance + maintainability: 3 items resolved (2026-04-11)
 
 **3 items resolved. 10 files changed, ~+60/-20 lines. 3 new tests.**
