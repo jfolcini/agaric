@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 333 — Frontend UX polish: 4 items resolved (2026-04-11)
+
+**4 items resolved (19→16 open). 18 files changed, +715/-323 lines. ~18 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| UX-141 | PropertyDefinitionsList design system polish — search icon, clear button, Tooltip, empty filter state | `PropertyDefinitionsList.tsx` + test, `i18n.ts` |
+| UX-150 | Calendar dots redesigned — real DOM elements via DayButton, removed box-shadow hack | `JournalCalendarDropdown.tsx`, `calendar.tsx` + tests, `JournalPage.test.tsx` |
+| UX-144 | Import/Export moved to new Data tab in Settings | New `DataSettingsTab.tsx` + test, `SettingsView.tsx`, `StatusPanel.tsx`, `PageBrowser.tsx` + tests, `i18n.ts` |
+| UX-138 P1 | PageUp/PageDown added to useListKeyboardNavigation hook | `useListKeyboardNavigation.ts` + test |
+
+### Additional fixes
+- Added biome-ignore lint/suspicious/noExplicitAny comments to 4 test files with pre-existing Select mock pattern (HistoryPanel, PropertyDefinitionsList, PageBrowser, SettingsView)
+- Fixed JournalPage.test.tsx dot assertions to use new Tailwind classes instead of old CSS class selectors
+
+### Stats
+- 18 files changed (+715 / -323 lines)
+- ~18 new tests (8 hook + 3 PropertyDefinitionsList + 7 DataSettingsTab)
+- 6181 frontend tests pass, all 20 prek hooks pass
+
+---
+
 ## Session 332 — Rich content consolidation: 5 items resolved (2026-04-11)
 
 **5 items resolved (24→19 open). 24 files changed, +754/-68 lines. ~36 new tests.**

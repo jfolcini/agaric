@@ -19,7 +19,7 @@ The default view — one page per day, created automatically.
 | **Monthly** | 7-column CSS Grid calendar with compact day cells; click a day to switch to daily |
 | **Agenda** | Tasks grouped by date (Overdue / Today / Tomorrow / future) with configurable sort and group controls |
 
-- Floating calendar picker for jumping to any date, with per-source colored dots (blue=page, orange=due, green=scheduled, purple=property)
+- Floating calendar picker for jumping to any date, with per-source colored dots (blue=page, orange=due, green=scheduled, purple=property) rendered as real DOM `<span>` elements (5px diameter, flex row, only active sources) via react-day-picker DayButton component, replacing previous box-shadow CSS hack
 - **Configurable week start** (UX-82): useWeekStart hook (localStorage). Applied to BlockDatePicker, JournalCalendarDropdown, date-utils. `useWeekStart.ts`, `date-utils.ts`.
 - **Color dot legend**: inline legend below calendar showing Page/Due/Scheduled/Property color dots with flex-wrap for narrow viewports (UX-57)
 - **Global date controls**: Today button and date picker available in all views (non-journal views navigate to journal first)
@@ -393,9 +393,9 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 
 ## 9. Import & Export
 
-- **Import**: Logseq/Markdown files as pages + blocks
-- **Export page**: Markdown with resolved tag names and page titles, YAML frontmatter for properties
-- **Export all**: ZIP of all pages as Markdown files
+- **Import**: Logseq/Markdown files as pages + blocks — available in Settings → Data tab
+- **Export page**: Markdown with resolved tag names and page titles, YAML frontmatter for properties (per-page export remains in page header menu)
+- **Export all**: ZIP of all pages as Markdown files — available in Settings → Data tab
 
 ## 10. Shared Components & Utilities
 
@@ -415,7 +415,8 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **PeerListItem** (`src/components/PeerListItem.tsx`): Peer card component with sync/rename/unpair actions. Shows device name, peer ID, connection status, last sync time, and ops sent/received. Extracted from DeviceManagement (R-16). Used by DeviceManagement.
 - **TaskStatesSection** (`src/components/TaskStatesSection.tsx`): Task state cycle editor. Manages custom task keywords with add/remove/reorder controls, persisted to localStorage. Extracted from PropertiesView (R-17). Used by PropertiesView.
 - **DeadlineWarningSection** (`src/components/DeadlineWarningSection.tsx`): Deadline warning days setting. Input for configuring days-before-due warning threshold, persisted to localStorage. Extracted from PropertiesView (R-17). Used by PropertiesView.
-- **PropertyDefinitionsList** (`src/components/PropertyDefinitionsList.tsx`): Property definitions CRUD with search, filter, inline editing, and delete confirmation. Extracted from PropertiesView (R-17). Used by PropertiesView.
+- **DataSettingsTab** (`src/components/DataSettingsTab.tsx`): Data management tab in Settings with Import (multi-file Markdown import) and Export All (ZIP download of all pages). Consolidates import from StatusPanel and export from PageBrowser into Settings → Data tab. Used by SettingsView.
+- **PropertyDefinitionsList** (`src/components/PropertyDefinitionsList.tsx`): Property definitions CRUD with search, filter, inline editing, and delete confirmation. Search input has search icon with clear button. Tooltip on action buttons. Empty filter state when search matches nothing. Extracted from PropertiesView (R-17). Used by PropertiesView.
 - **ResultCard** (`src/components/ResultCard.tsx`): Block result card button with rich content display via `renderRichContent()` — inline `#[ULID]` and `[[ULID]]` tokens rendered as resolved pills. Badge for page/tag types, optional spinner, optional children slot, `highlightText` prop accepted for API compat. CSS `line-clamp-2` truncation. Used by SearchPanel, TagFilterPanel.
 - **PageLink** (`src/components/PageLink.tsx`): Inline clickable page name (`<span role="link">`) that navigates via `navigateToPage`. Handles click/Enter/Space with stopPropagation. Uses `<span>` to allow nesting inside `<button>` containers. Used by CollapsibleGroupList, DonePanel, AgendaResults, DuePanel, SearchPanel, QueryResult.
 - **PropertyRow** (`src/components/BlockPropertyDrawer.tsx`): Extracted sub-component for property rows with badge+input+remove layout. Supports optional icon, date/text input types.
@@ -464,7 +465,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 
 ### Shared Hooks
 - **useBlockNavigation** (`src/hooks/useBlockNavigation.ts`): Returns `{ handleBlockClick, handleBlockKeyDown }` for block click + keyboard (Enter/Space) navigation. Accepts `NavigateToPageFn` type. Used by AgendaResults, DonePanel, DuePanel, LinkedReferences, UnlinkedReferences.
-- **useListKeyboardNavigation** (`src/hooks/useListKeyboardNavigation.ts`): Arrow key / vim key (j/k) navigation for lists. Supports `wrap` vs `clamp` modes, `Home`/`End` keys, `onSelect` callback. Used by SuggestionList, BlockContextMenu, HistoryView.
+- **useListKeyboardNavigation** (`src/hooks/useListKeyboardNavigation.ts`): Arrow key / vim key (j/k) navigation for lists. Supports `wrap` vs `clamp` modes, `Home`/`End` keys, `PageUp`/`PageDown` via `pageUpDown` and `pageSize` options (always-clamp behavior), `onSelect` callback. Used by SuggestionList, BlockContextMenu, HistoryView.
 - **usePaginatedQuery** (`src/hooks/usePaginatedQuery.ts`): Cursor-based pagination hook with `items`, `hasMore`, `loading`, `loadMore`, `reset` state. Supports `enabled` option for conditional fetching (preserves items when disabled, refetches on re-enable). Used by LinkedReferences, UnlinkedReferences, SearchPanel, TagFilterPanel, and others.
 - **useBatchCounts** (`src/hooks/useBatchCounts.ts`): Fetches agenda + backlink counts for date ranges. Returns both total counts and per-source breakdown (due/scheduled/properties). Used by WeeklyView, MonthlyView.
 - **useBacklinkResolution** (`src/hooks/useBacklinkResolution.ts`): TTL-cached ULID/tag resolution hook. Batch resolves page IDs and tag IDs to display names with configurable TTL (default 30s). Deduplicates concurrent requests. Extracted from LinkedReferences (R-15). Used by LinkedReferences.
@@ -552,7 +553,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **Divider blocks** (F-28): TipTap `HorizontalRule` extension. Markdown serializer parse (`---`) / serialize. StaticBlock renders `<hr>`. `/divider` slash command. `HorizontalRuleNode` type with `content?: undefined` for union compatibility. 10 parse/serialize tests + 4 component tests.
 
 ### Views (session 279)
-- **SettingsView** (`src/components/SettingsView.tsx`): Tabbed settings replacing `properties` sidebar item. 4 tabs: General (TaskStatesSection, DeadlineWarningSection), Properties (PropertyDefinitionsList), Appearance (theme toggle light/dark/system + font size small/medium/large), Sync & Devices (DeviceManagement). Custom ARIA tab implementation. `'settings'` added to navigation ViewName union. 9 tests.
+- **SettingsView** (`src/components/SettingsView.tsx`): Tabbed settings replacing `properties` sidebar item. 6 tabs: General (TaskStatesSection, DeadlineWarningSection), Properties (PropertyDefinitionsList), Appearance (theme toggle light/dark/system + font size small/medium/large), Keyboard (KeyboardSettingsTab), Data (DataSettingsTab — Import + Export All), Sync (DeviceManagement). Custom ARIA tab implementation. `'settings'` added to navigation ViewName union. 9 tests.
 
 ### Query Improvements (session 279)
 - **Query pagination** (F-25): Cursor-based load-more in QueryResult replacing hardcoded `limit: 50`. `PAGE_SIZE` constant + `LoadMoreButton`. Accumulates results across pages, merges page titles.
