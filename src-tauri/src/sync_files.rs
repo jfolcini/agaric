@@ -871,4 +871,314 @@ mod tests {
         let debug = format!("{:?}", ma);
         assert!(debug.contains("ATT1"));
     }
+
+    // ── File transfer protocol integration tests ─────────────────────────
+
+    /// Install the `ring` CryptoProvider for rustls (idempotent).
+    fn install_crypto_provider() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+
+    /// Set up a TLS server/client pair and return both connections + server handle.
+    async fn setup_tls_pair() -> (SyncConnection, SyncConnection, crate::sync_net::SyncServer) {
+        use crate::sync_net::{connect_to_peer, generate_self_signed_cert, SyncServer};
+
+        install_crypto_provider();
+        let server_cert = generate_self_signed_cert("responder").unwrap();
+        let client_cert = generate_self_signed_cert("initiator").unwrap();
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let tx = std::sync::Mutex::new(Some(tx));
+
+        let (server, port) = SyncServer::start(&server_cert, move |conn| {
+            if let Some(sender) = tx.lock().unwrap().take() {
+                let _ = sender.send(conn);
+            }
+        })
+        .await
+        .unwrap();
+
+        let client_conn = connect_to_peer(&format!("127.0.0.1:{port}"), None, &client_cert)
+            .await
+            .unwrap();
+
+        let server_conn = rx.await.unwrap();
+        (server_conn, client_conn, server)
+    }
+
+    /// Insert a block + attachment record for protocol tests.
+    async fn insert_test_attachment(pool: &SqlitePool, att_id: &str, fs_path: &str, size: i64) {
+        let blk_id = format!("BLK_{att_id}");
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', 'test')")
+            .bind(&blk_id)
+            .execute(pool)
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "INSERT INTO attachments \
+             (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES (?, ?, 'application/octet-stream', 'file.bin', ?, ?, datetime('now'))",
+        )
+        .bind(att_id)
+        .bind(&blk_id)
+        .bind(size)
+        .bind(fs_path)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn protocol_initiator_requests_and_receives_files() {
+        let initiator_dir = TempDir::new().unwrap();
+        let initiator_pool = init_pool(&initiator_dir.path().join("test.db"))
+            .await
+            .unwrap();
+
+        let responder_dir = TempDir::new().unwrap();
+        let responder_pool = init_pool(&responder_dir.path().join("test.db"))
+            .await
+            .unwrap();
+
+        let file_data = b"test photo data for protocol transfer";
+        let expected_hash = blake3::hash(file_data).to_hex().to_string();
+
+        // Both DBs have the same attachment record
+        insert_test_attachment(
+            &initiator_pool,
+            "ATT01",
+            "attachments/photo.jpg",
+            file_data.len() as i64,
+        )
+        .await;
+        insert_test_attachment(
+            &responder_pool,
+            "ATT01",
+            "attachments/photo.jpg",
+            file_data.len() as i64,
+        )
+        .await;
+
+        // File exists ONLY on the responder side
+        write_attachment_file(responder_dir.path(), "attachments/photo.jpg", file_data).unwrap();
+        assert!(!initiator_dir.path().join("attachments/photo.jpg").exists());
+
+        let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+
+        let (responder_result, initiator_result) = tokio::join!(
+            receive_request_and_send_files(&mut server_conn, &responder_pool, responder_dir.path(),),
+            request_and_receive_files(&mut client_conn, &initiator_pool, initiator_dir.path(),),
+        );
+
+        let sender_stats = responder_result.unwrap();
+        let receiver_stats = initiator_result.unwrap();
+
+        // File now exists in initiator's dir with correct data and hash
+        let (data, hash) =
+            read_attachment_file(initiator_dir.path(), "attachments/photo.jpg").unwrap();
+        assert_eq!(data, file_data);
+        assert_eq!(hash, expected_hash);
+
+        // Stats
+        assert_eq!(receiver_stats.files_received, 1);
+        assert_eq!(receiver_stats.bytes_received, file_data.len() as u64);
+        assert_eq!(sender_stats.files_sent, 1);
+        assert_eq!(sender_stats.bytes_sent, file_data.len() as u64);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn protocol_empty_transfer_when_no_missing_files() {
+        let initiator_dir = TempDir::new().unwrap();
+        let initiator_pool = init_pool(&initiator_dir.path().join("test.db"))
+            .await
+            .unwrap();
+
+        let responder_dir = TempDir::new().unwrap();
+        let responder_pool = init_pool(&responder_dir.path().join("test.db"))
+            .await
+            .unwrap();
+
+        let file_data = b"already present on both sides";
+
+        insert_test_attachment(
+            &initiator_pool,
+            "ATT01",
+            "attachments/photo.jpg",
+            file_data.len() as i64,
+        )
+        .await;
+        insert_test_attachment(
+            &responder_pool,
+            "ATT01",
+            "attachments/photo.jpg",
+            file_data.len() as i64,
+        )
+        .await;
+
+        // File exists on BOTH sides → nothing to transfer
+        write_attachment_file(initiator_dir.path(), "attachments/photo.jpg", file_data).unwrap();
+        write_attachment_file(responder_dir.path(), "attachments/photo.jpg", file_data).unwrap();
+
+        let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+
+        let (responder_result, initiator_result) = tokio::join!(
+            receive_request_and_send_files(&mut server_conn, &responder_pool, responder_dir.path(),),
+            request_and_receive_files(&mut client_conn, &initiator_pool, initiator_dir.path(),),
+        );
+
+        let sender_stats = responder_result.unwrap();
+        let receiver_stats = initiator_result.unwrap();
+
+        assert_eq!(receiver_stats.files_received, 0);
+        assert_eq!(receiver_stats.bytes_received, 0);
+        assert_eq!(sender_stats.files_sent, 0);
+        assert_eq!(sender_stats.bytes_sent, 0);
+        assert_eq!(receiver_stats.skipped_hash_mismatch, 0);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn protocol_hash_mismatch_skips_corrupt_file() {
+        let initiator_dir = TempDir::new().unwrap();
+        let initiator_pool = init_pool(&initiator_dir.path().join("test.db"))
+            .await
+            .unwrap();
+
+        let file_data = b"the actual file content";
+        let wrong_hash = "0".repeat(64); // deliberately wrong
+
+        // Initiator has the attachment record but NOT the file on disk
+        insert_test_attachment(
+            &initiator_pool,
+            "ATT01",
+            "attachments/photo.jpg",
+            file_data.len() as i64,
+        )
+        .await;
+
+        let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+
+        // Responder side: manually drive the protocol with a bad hash
+        let server_side = async move {
+            // 1. Receive FileRequest
+            let msg: SyncMessage = server_conn.recv_json().await.unwrap();
+            match msg {
+                SyncMessage::FileRequest { attachment_ids } => {
+                    assert_eq!(attachment_ids, vec!["ATT01".to_string()]);
+                }
+                other => panic!("expected FileRequest, got {other:?}"),
+            }
+
+            // 2. Send FileOffer with WRONG blake3_hash
+            server_conn
+                .send_json(&SyncMessage::FileOffer {
+                    attachment_id: "ATT01".into(),
+                    size_bytes: file_data.len() as u64,
+                    blake3_hash: wrong_hash,
+                })
+                .await
+                .unwrap();
+
+            // 3. Send binary data
+            server_conn.send_binary(file_data).await.unwrap();
+
+            // 4. Receive FileReceived ack (sent to keep protocol in sync)
+            let ack: SyncMessage = server_conn.recv_json().await.unwrap();
+            match ack {
+                SyncMessage::FileReceived { attachment_id } => {
+                    assert_eq!(attachment_id, "ATT01");
+                }
+                other => panic!("expected FileReceived, got {other:?}"),
+            }
+
+            // 5. Send FileTransferComplete
+            server_conn
+                .send_json(&SyncMessage::FileTransferComplete)
+                .await
+                .unwrap();
+        };
+
+        let (_, initiator_result) = tokio::join!(
+            server_side,
+            request_and_receive_files(&mut client_conn, &initiator_pool, initiator_dir.path(),),
+        );
+
+        let stats = initiator_result.unwrap();
+
+        // File must NOT have been written (hash mismatch)
+        assert!(
+            !initiator_dir.path().join("attachments/photo.jpg").exists(),
+            "corrupt file must not be written to disk"
+        );
+        assert_eq!(stats.skipped_hash_mismatch, 1);
+        assert_eq!(stats.files_received, 0);
+        assert_eq!(stats.bytes_received, 0);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn protocol_large_file_chunking() {
+        let initiator_dir = TempDir::new().unwrap();
+        let initiator_pool = init_pool(&initiator_dir.path().join("test.db"))
+            .await
+            .unwrap();
+
+        let responder_dir = TempDir::new().unwrap();
+        let responder_pool = init_pool(&responder_dir.path().join("test.db"))
+            .await
+            .unwrap();
+
+        // File larger than FILE_CHUNK_SIZE (5 MB) → will be chunked
+        let file_size = FILE_CHUNK_SIZE + 1_000_000; // 6 MB
+        let file_data: Vec<u8> = (0..file_size).map(|i| (i % 256) as u8).collect();
+        let expected_hash = blake3::hash(&file_data).to_hex().to_string();
+
+        insert_test_attachment(
+            &initiator_pool,
+            "ATT01",
+            "attachments/large.bin",
+            file_data.len() as i64,
+        )
+        .await;
+        insert_test_attachment(
+            &responder_pool,
+            "ATT01",
+            "attachments/large.bin",
+            file_data.len() as i64,
+        )
+        .await;
+
+        write_attachment_file(responder_dir.path(), "attachments/large.bin", &file_data).unwrap();
+        assert!(!initiator_dir.path().join("attachments/large.bin").exists());
+
+        let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+
+        let (responder_result, initiator_result) = tokio::join!(
+            receive_request_and_send_files(&mut server_conn, &responder_pool, responder_dir.path(),),
+            request_and_receive_files(&mut client_conn, &initiator_pool, initiator_dir.path(),),
+        );
+
+        let sender_stats = responder_result.unwrap();
+        let receiver_stats = initiator_result.unwrap();
+
+        // File received correctly despite chunking
+        let (data, hash) =
+            read_attachment_file(initiator_dir.path(), "attachments/large.bin").unwrap();
+        assert_eq!(data.len(), file_data.len());
+        assert_eq!(data, file_data);
+        assert_eq!(hash, expected_hash);
+
+        // Stats show correct byte counts
+        assert_eq!(receiver_stats.files_received, 1);
+        assert_eq!(receiver_stats.bytes_received, file_data.len() as u64);
+        assert_eq!(sender_stats.files_sent, 1);
+        assert_eq!(sender_stats.bytes_sent, file_data.len() as u64);
+
+        server.shutdown().await;
+    }
 }

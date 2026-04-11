@@ -1456,4 +1456,265 @@ mod tests {
             "AllowAnyCert must accept any valid certificate"
         );
     }
+
+    // -- 11. End-to-end mTLS handshake integration tests (T-30) -----------
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn mtls_full_handshake_both_sides_see_peer_identity() {
+        install_crypto_provider();
+
+        let cert_alice = generate_self_signed_cert("alice").unwrap();
+        let cert_bob = generate_self_signed_cert("bob").unwrap();
+
+        // Use a oneshot channel to extract the server-side SyncConnection.
+        let (server_conn_tx, server_conn_rx) = tokio::sync::oneshot::channel::<SyncConnection>();
+        let server_conn_tx = std::sync::Mutex::new(Some(server_conn_tx));
+
+        let (server, port) = SyncServer::start(&cert_alice, move |conn| {
+            if let Some(tx) = server_conn_tx.lock().unwrap().take() {
+                let _ = tx.send(conn);
+            }
+        })
+        .await
+        .unwrap();
+
+        let addr = format!("127.0.0.1:{port}");
+        let mut client_conn = connect_to_peer(&addr, None, &cert_bob).await.unwrap();
+
+        let mut server_conn =
+            tokio::time::timeout(std::time::Duration::from_secs(5), server_conn_rx)
+                .await
+                .expect("timeout waiting for server connection")
+                .expect("server connection channel closed");
+
+        // Server side: verify client identity
+        assert_eq!(
+            server_conn.peer_cert_hash().as_deref(),
+            Some(cert_bob.cert_hash.as_str()),
+            "server should see bob's cert hash"
+        );
+        assert_eq!(
+            server_conn.peer_cert_cn(),
+            Some("bob"),
+            "server should see bob's device ID from CN"
+        );
+
+        // Client side: verify server identity
+        assert_eq!(
+            client_conn.peer_cert_hash().as_deref(),
+            Some(cert_alice.cert_hash.as_str()),
+            "client should see alice's cert hash"
+        );
+
+        // Exchange a JSON message server → client to confirm the channel works
+        server_conn
+            .send_json(&SyncMessage::HeadExchange {
+                heads: vec![DeviceHead {
+                    device_id: "alice".into(),
+                    seq: 1,
+                    hash: "head_hash_alice".into(),
+                }],
+            })
+            .await
+            .unwrap();
+
+        let msg: SyncMessage = client_conn.recv_json().await.unwrap();
+        match msg {
+            SyncMessage::HeadExchange { heads } => {
+                assert_eq!(heads.len(), 1);
+                assert_eq!(heads[0].device_id, "alice");
+            }
+            other => panic!("expected HeadExchange from server, got {other:?}"),
+        }
+
+        // Reverse direction: client → server
+        client_conn
+            .send_json(&SyncMessage::HeadExchange {
+                heads: vec![DeviceHead {
+                    device_id: "bob".into(),
+                    seq: 2,
+                    hash: "head_hash_bob".into(),
+                }],
+            })
+            .await
+            .unwrap();
+
+        let msg: SyncMessage = server_conn.recv_json().await.unwrap();
+        match msg {
+            SyncMessage::HeadExchange { heads } => {
+                assert_eq!(heads.len(), 1);
+                assert_eq!(heads[0].device_id, "bob");
+            }
+            other => panic!("expected HeadExchange from client, got {other:?}"),
+        }
+
+        client_conn.close().await.ok();
+        server_conn.close().await.ok();
+        server.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn mtls_reconnection_with_correct_cert_hash_succeeds() {
+        install_crypto_provider();
+
+        let cert_alice = generate_self_signed_cert("alice").unwrap();
+        let cert_bob = generate_self_signed_cert("bob").unwrap();
+
+        // mpsc channel: we need two connections across the test.
+        let (server_conn_tx, mut server_conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(2);
+
+        let (server, port) = SyncServer::start(&cert_alice, move |conn| {
+            let tx = server_conn_tx.clone();
+            let _ = tx.try_send(conn);
+        })
+        .await
+        .unwrap();
+
+        let addr = format!("127.0.0.1:{port}");
+
+        // ── First connection: no pinning (initial pairing) ──
+        let client_conn1 = connect_to_peer(&addr, None, &cert_bob).await.unwrap();
+        let recorded_hash = client_conn1
+            .peer_cert_hash()
+            .expect("first connection should capture server cert hash");
+        assert_eq!(
+            recorded_hash, cert_alice.cert_hash,
+            "recorded hash should match server cert"
+        );
+
+        // Drain server-side connection and close everything
+        let server_conn1 =
+            tokio::time::timeout(std::time::Duration::from_secs(5), server_conn_rx.recv())
+                .await
+                .expect("timeout waiting for server connection 1")
+                .expect("server connection channel closed");
+        client_conn1.close().await.ok();
+        server_conn1.close().await.ok();
+
+        // ── Second connection: with pinning using recorded hash ──
+        let mut client_conn2 = connect_to_peer(&addr, Some(&recorded_hash), &cert_bob)
+            .await
+            .expect("reconnection with correct cert hash should succeed");
+
+        let mut server_conn2 =
+            tokio::time::timeout(std::time::Duration::from_secs(5), server_conn_rx.recv())
+                .await
+                .expect("timeout waiting for server connection 2")
+                .expect("server connection channel closed");
+
+        // Verify the pinned connection works: exchange a message
+        server_conn2
+            .send_json(&SyncMessage::SyncComplete {
+                our_last_hash: "hash_a".into(),
+                their_last_hash: "hash_b".into(),
+            })
+            .await
+            .unwrap();
+
+        let msg: SyncMessage = client_conn2.recv_json().await.unwrap();
+        match msg {
+            SyncMessage::SyncComplete {
+                our_last_hash,
+                their_last_hash,
+            } => {
+                assert_eq!(our_last_hash, "hash_a");
+                assert_eq!(their_last_hash, "hash_b");
+            }
+            other => panic!("expected SyncComplete, got {other:?}"),
+        }
+
+        client_conn2.close().await.ok();
+        server_conn2.close().await.ok();
+        server.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn mtls_reconnection_with_wrong_cert_hash_fails() {
+        install_crypto_provider();
+
+        let cert_alice = generate_self_signed_cert("alice").unwrap();
+        let cert_bob = generate_self_signed_cert("bob").unwrap();
+
+        let (server, port) = SyncServer::start(&cert_alice, |_conn| {}).await.unwrap();
+
+        let addr = format!("127.0.0.1:{port}");
+        let wrong_hash = "0000000000000000000000000000000000000000000000000000000000000000";
+
+        let result = connect_to_peer(&addr, Some(wrong_hash), &cert_bob).await;
+
+        let err_msg = match result {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("connection with wrong cert hash should fail (cert pinning rejection)"),
+        };
+        assert!(
+            err_msg.contains("cert")
+                || err_msg.contains("hash")
+                || err_msg.contains("tls")
+                || err_msg.contains("TLS")
+                || err_msg.contains("alert")
+                || err_msg.contains("pin"),
+            "error should indicate cert pinning rejection, got: {err_msg}"
+        );
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn mtls_tofu_store_and_verify_round_trip() {
+        install_crypto_provider();
+
+        // TOFU store: maps device_id → cert_hash
+        let mut tofu_store: HashMap<String, String> = HashMap::new();
+
+        // Generate original cert for "device-a" (acting as server)
+        let cert_device_a_v1 = generate_self_signed_cert("device-a").unwrap();
+        let client_cert = generate_self_signed_cert("tofu-client").unwrap();
+
+        // ── First connection: no pinning → learn the server's hash (TOFU) ──
+        let (server_v1, port_v1) = SyncServer::start(&cert_device_a_v1, |_conn| {})
+            .await
+            .unwrap();
+
+        let conn = connect_to_peer(&format!("127.0.0.1:{port_v1}"), None, &client_cert)
+            .await
+            .unwrap();
+
+        // Store the server's cert hash (Trust On First Use)
+        let stored_hash = conn
+            .peer_cert_hash()
+            .expect("should capture server cert hash on first use");
+        tofu_store.insert("device-a".to_string(), stored_hash.clone());
+        assert_eq!(stored_hash, cert_device_a_v1.cert_hash);
+
+        conn.close().await.ok();
+        server_v1.shutdown().await;
+
+        // ── Simulate device-a reinstall: generate a NEW cert ──
+        let cert_device_a_v2 = generate_self_signed_cert("device-a").unwrap();
+        assert_ne!(
+            cert_device_a_v2.cert_hash, cert_device_a_v1.cert_hash,
+            "reinstalled device should have a different cert hash"
+        );
+
+        // Start server with the NEW cert
+        let (server_v2, port_v2) = SyncServer::start(&cert_device_a_v2, |_conn| {})
+            .await
+            .unwrap();
+
+        // Attempt connection with the stored (old) hash → should fail
+        let pinned_hash = tofu_store.get("device-a").unwrap();
+        let result = connect_to_peer(
+            &format!("127.0.0.1:{port_v2}"),
+            Some(pinned_hash),
+            &client_cert,
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "TOFU verification should fail: stored hash doesn't match reinstalled device's new cert"
+        );
+
+        server_v2.shutdown().await;
+    }
 }
