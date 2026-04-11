@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 345 — B-46 bulk trash ops, B-50 DuePanel invalidation (2026-04-11)
+
+**3 REVIEW-LATER items resolved (B-46, B-50, T-46). 15 files changed, +1145 -28 lines. 6264 frontend tests pass, 1799 Rust tests pass.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| B-46 | Bulk trash operations — server-side `purge_all_deleted` + `restore_all_deleted` commands + frontend UI | `commands/blocks.rs`, `commands/mod.rs`, `lib.rs`, `TrashView.tsx`, `tauri.ts`, `i18n.ts`, `bindings.ts`, `.sqlx/` |
+| B-50 | DuePanel invalidation — add `invalidationKey` to 3 missing dependency arrays in `useDuePanelData.ts` | `useDuePanelData.ts` |
+| T-46 | Integration tests for bulk trash operations — 7 Rust tests + 11 frontend tests + 1 B-50 test | `command_integration_tests.rs`, `TrashView.test.tsx`, `useDuePanelData.test.ts` |
+
+### Implementation
+- **B-46 Backend**: Two new commands (`restore_all_deleted_inner`, `purge_all_deleted_inner`) operating in single `BEGIN IMMEDIATE` transactions. Root detection SQL finds deleted blocks whose parent was not cascade-deleted together (timestamp match). Restore creates `RestoreBlock` ops per root, clears `deleted_at`, recomputes tag inheritance. Purge creates `PurgeBlock` ops per root, cleans 13 dependent tables, deletes blocks, removes attachment files post-commit.
+- **B-46 Frontend**: "Empty trash" (destructive) and "Restore all" (outline) header buttons always visible when trash has items. Batch toolbar buttons relabeled to "Restore selected" / "Purge selected". ConfirmDialogs for both bulk operations. 12 new i18n keys. `BulkTrashResponse` IPC type.
+- **B-50**: Added `invalidationKey` from `useBlockPropertyEvents` to overdue, upcoming, and main blocks fetch effects. Panels now reactively refetch when `block:properties-changed` events fire. `biome-ignore` comments above `useEffect` calls.
+- **Review fixes**: Corrected purge root detection SQL (`p.deleted_at = b.deleted_at` not `IS NOT NULL`). Added `actionVariant="destructive"` to single purge ConfirmDialog.
+
+### Stats
+- 15 files changed (+1145 -28 lines)
+- 6264 frontend tests pass (was 6252), 1799 Rust tests pass
+- 3 REVIEW-LATER items resolved (5 → 2 open)
+
+---
+
 ## Session 344 — UX batch: touch reschedule, keyboard nav, responsive layout, alias search (2026-04-11)
 
 **5 UX items resolved (UX-118, UX-135, UX-138 Phase 3, UX-151, UX-153). 24 files changed, +1188 -376 lines. 6252 frontend tests pass.**

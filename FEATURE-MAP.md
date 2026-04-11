@@ -72,6 +72,7 @@ The default view — one page per day, created automatically.
 - Purge requires confirmation (non-reversible)
 - **Multi-select** (UX-78): Checkboxes on each item, Shift+Click range select, Ctrl+A select all. Selection toolbar with batch restore/purge (ConfirmDialog for destructive purge).
 - **Original location breadcrumbs** (UX-78): Each deleted block shows "from: Page Name" via batchResolve. Shows "(deleted page)" for missing parents.
+- **Bulk trash operations** (B-46): "Empty trash" and "Restore all" header buttons (always visible when trash has items) call server-side `purge_all_deleted` / `restore_all_deleted` commands that operate on ALL soft-deleted blocks in a single transaction, bypassing pagination. Selection toolbar buttons relabeled to "Restore selected" / "Purge selected". Both bulk operations require ConfirmDialog confirmation. Backend creates op-log entries per root-deleted block for sync compatibility.
 
 ### Status
 
