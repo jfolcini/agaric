@@ -692,6 +692,8 @@ const resources = {
       'keyboard.previousDayWeekMonth': 'Previous day / week / month',
       'keyboard.nextDayWeekMonth': 'Next day / week / month',
       'keyboard.goToToday': 'Go to today',
+      'keyboard.createJournalBlock': 'Create block in daily journal',
+      'keyboard.condition.emptyDaily': 'When daily page is empty',
 
       // Keyboard shortcuts — block selection descriptions
       'keyboard.toggleBlockSelection': 'Toggle block selection',

@@ -17,6 +17,7 @@ import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
+import { getShortcutKeys } from '../lib/keyboard-config'
 import { useNavigationStore } from '../stores/navigation'
 
 export function TabBar(): React.ReactElement | null {
@@ -60,7 +61,10 @@ export function TabBar(): React.ReactElement | null {
 
   function handleTabKeyDown(i: number, e: React.KeyboardEvent) {
     // Delete / Backspace on a tab closes it
-    if (e.key === 'Delete' || e.key === 'Backspace') {
+    const closeKeys = getShortcutKeys('closeTabOnFocus')
+      .split('/')
+      .map((k) => k.trim().toLowerCase())
+    if (closeKeys.includes(e.key.toLowerCase())) {
       e.preventDefault()
       closeTab(i)
       return

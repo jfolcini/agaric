@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { formatDate } from '../lib/date-utils'
+import { getShortcutKeys } from '../lib/keyboard-config'
 
 interface UseJournalAutoCreateOptions {
   loading: boolean
@@ -40,7 +41,10 @@ export function useJournalAutoCreate({
       const target = e.target as HTMLElement
       if (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')
         return
-      if (e.key === 'Enter' || e.key === 'n') {
+      const createKeys = getShortcutKeys('createJournalBlock')
+        .split('/')
+        .map((k) => k.trim().toLowerCase())
+      if (createKeys.includes(e.key.toLowerCase())) {
         e.preventDefault()
         handleAddBlock(dateStr)
       }

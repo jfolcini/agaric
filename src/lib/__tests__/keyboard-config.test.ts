@@ -275,6 +275,52 @@ describe('keyboard-config', () => {
     })
   })
 
+  describe('Tab bar shortcut — closeTabOnFocus (F-38 Phase 4)', () => {
+    it('closeTabOnFocus exists in DEFAULT_SHORTCUTS', () => {
+      const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'closeTabOnFocus')
+      expect(shortcut).toBeDefined()
+    })
+
+    it('closeTabOnFocus has correct category', () => {
+      const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'closeTabOnFocus')
+      expect(shortcut?.category).toBe('keyboard.category.tabs')
+    })
+
+    it('closeTabOnFocus has correct default keys', () => {
+      const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'closeTabOnFocus')
+      expect(shortcut?.keys).toBe('Delete / Backspace')
+    })
+
+    it('closeTabOnFocus has correct description and condition', () => {
+      const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'closeTabOnFocus')
+      expect(shortcut?.description).toBe('keyboard.closeTabOnFocus')
+      expect(shortcut?.condition).toBe('keyboard.condition.tabFocused')
+    })
+  })
+
+  describe('Journal shortcut — createJournalBlock (F-38 Phase 4)', () => {
+    it('createJournalBlock exists in DEFAULT_SHORTCUTS', () => {
+      const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'createJournalBlock')
+      expect(shortcut).toBeDefined()
+    })
+
+    it('createJournalBlock has correct category', () => {
+      const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'createJournalBlock')
+      expect(shortcut?.category).toBe('keyboard.category.journal')
+    })
+
+    it('createJournalBlock has correct default keys', () => {
+      const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'createJournalBlock')
+      expect(shortcut?.keys).toBe('Enter / n')
+    })
+
+    it('createJournalBlock has correct description and condition', () => {
+      const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'createJournalBlock')
+      expect(shortcut?.description).toBe('keyboard.createJournalBlock')
+      expect(shortcut?.condition).toBe('keyboard.condition.emptyDaily')
+    })
+  })
+
   describe('matchesShortcutBinding', () => {
     function fakeEvent(
       key: string,

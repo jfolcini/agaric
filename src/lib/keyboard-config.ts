@@ -215,6 +215,13 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.journal',
     description: 'keyboard.goToToday',
   },
+  {
+    id: 'createJournalBlock',
+    keys: 'Enter / n',
+    category: 'keyboard.category.journal',
+    description: 'keyboard.createJournalBlock',
+    condition: 'keyboard.condition.emptyDaily',
+  },
 
   // Block Selection
   {
@@ -370,6 +377,13 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.tabs',
     description: 'keyboard.previousTab',
     condition: 'keyboard.condition.inEditor',
+  },
+  {
+    id: 'closeTabOnFocus',
+    keys: 'Delete / Backspace',
+    category: 'keyboard.category.tabs',
+    description: 'keyboard.closeTabOnFocus',
+    condition: 'keyboard.condition.tabFocused',
   },
 ]
 
