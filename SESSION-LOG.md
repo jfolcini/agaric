@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 334 — Mixed fixes: 3 items resolved + 1 investigated (2026-04-11)
+
+**3 items resolved, 1 investigated. ~30 files changed, +820/-190 lines. ~16 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| M-49 | Navigation store dual state eliminated — selectPageStack() selector replaces stored pageStack | `navigation.ts`, `App.tsx`, `useUndoShortcuts.ts` + 15 test files |
+| UX-138 P2 | Enabled homeEnd + pageUpDown in SearchPanel, QueryResultList, HistoryView, SuggestionList | 4 source files + 4 test files |
+| UX-126 | Removed won't-fix item (biome requires the dep) | `REVIEW-LATER.md` |
+
+### Investigated
+
+| Item | Finding |
+|------|---------|
+| B-50 | Backend correctly includes DONE blocks in agenda_cache — 3 Rust tests confirm. Bug is frontend-only if it exists (materializer timing or panel invalidation gap per F-39). |
+
+### Stats
+- ~30 files changed (+820 / -190 lines)
+- ~16 new tests (3 Rust cache + 8 hook PageUp/PageDown + 10 view keyboard nav - some overlap)
+- 6191 frontend tests pass, 1782 Rust tests pass
+
+---
+
 ## Session 333 — Frontend UX polish: 4 items resolved (2026-04-11)
 
 **4 items resolved (19→16 open). 18 files changed, +715/-323 lines. ~18 new tests.**
