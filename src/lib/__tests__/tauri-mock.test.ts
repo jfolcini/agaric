@@ -401,6 +401,10 @@ describe('get_status', () => {
       total_background_dispatched: 0,
       fg_high_water: 0,
       bg_high_water: 0,
+      fg_errors: 0,
+      bg_errors: 0,
+      fg_panics: 0,
+      bg_panics: 0,
     })
   })
 })
@@ -627,53 +631,39 @@ describe('redo_page_op', () => {
 describe('add_tag + list_tags_for_block', () => {
   it('list_tags_for_block returns the tag after add_tag', () => {
     invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
-    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Array<
-      Record<string, unknown>
-    >
+    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as string[]
     expect(tags).toHaveLength(1)
-    expect(tags[0]?.tag_id).toBe(SEED_IDS.TAG_WORK)
-    expect(tags[0]?.name).toBe('work')
+    expect(tags[0]).toBe(SEED_IDS.TAG_WORK)
   })
 
   it('list_tags_for_block returns multiple tags', () => {
     invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
     invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_PERSONAL })
     invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_IDEA })
-    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Array<
-      Record<string, unknown>
-    >
+    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as string[]
     expect(tags).toHaveLength(3)
-    const tagIds = tags.map((t) => t.tag_id)
-    expect(tagIds).toContain(SEED_IDS.TAG_WORK)
-    expect(tagIds).toContain(SEED_IDS.TAG_PERSONAL)
-    expect(tagIds).toContain(SEED_IDS.TAG_IDEA)
+    expect(tags).toContain(SEED_IDS.TAG_WORK)
+    expect(tags).toContain(SEED_IDS.TAG_PERSONAL)
+    expect(tags).toContain(SEED_IDS.TAG_IDEA)
   })
 
   it('adding the same tag twice does not duplicate', () => {
     invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
     invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
-    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Array<
-      Record<string, unknown>
-    >
+    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as string[]
     expect(tags).toHaveLength(1)
   })
 
   it('returns empty array for block with no tags', () => {
-    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_2 }) as Array<
-      Record<string, unknown>
-    >
+    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_2 }) as string[]
     expect(tags).toHaveLength(0)
   })
 
-  it('returns TagCacheRow shape', () => {
+  it('returns string[] of tag IDs', () => {
     invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
-    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Array<
-      Record<string, unknown>
-    >
-    expect(tags[0]).toHaveProperty('tag_id')
-    expect(tags[0]).toHaveProperty('name')
-    expect(tags[0]).toHaveProperty('usage_count')
-    expect(tags[0]).toHaveProperty('updated_at')
+    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as string[]
+    expect(typeof tags[0]).toBe('string')
+    expect(tags[0]).toBe(SEED_IDS.TAG_WORK)
   })
 })
 
@@ -682,27 +672,21 @@ describe('remove_tag', () => {
     invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
     invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_PERSONAL })
     invoke('remove_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
-    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Array<
-      Record<string, unknown>
-    >
+    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as string[]
     expect(tags).toHaveLength(1)
-    expect(tags[0]?.tag_id).toBe(SEED_IDS.TAG_PERSONAL)
+    expect(tags[0]).toBe(SEED_IDS.TAG_PERSONAL)
   })
 
   it('removing non-existent tag is a no-op', () => {
     invoke('remove_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
-    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Array<
-      Record<string, unknown>
-    >
+    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as string[]
     expect(tags).toHaveLength(0)
   })
 
   it('removing the only tag leaves an empty list', () => {
     invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
     invoke('remove_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
-    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Array<
-      Record<string, unknown>
-    >
+    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as string[]
     expect(tags).toHaveLength(0)
   })
 })
@@ -1649,9 +1633,9 @@ describe('seed task blocks', () => {
   it('seed tag associations are in place', () => {
     const tags = invoke('list_tags_for_block', {
       blockId: SEED_IDS.BLOCK_PROJ_1,
-    }) as Array<Record<string, unknown>>
+    }) as string[]
     expect(tags).toHaveLength(1)
-    expect(tags[0]?.tag_id).toBe(SEED_IDS.TAG_WORK)
+    expect(tags[0]).toBe(SEED_IDS.TAG_WORK)
   })
 })
 

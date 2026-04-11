@@ -528,8 +528,19 @@ export function setupMock(): void {
         } else {
           items = [...blocks.values()].filter((b) => !(b.deleted_at as string | null))
         }
+        // Exclude conflict copies from normal queries (matches real backend).
+        // Conflicts are only returned via get_conflicts.
+        items = items.filter((b) => !b.is_conflict)
         if (a.blockType) items = items.filter((b) => b.block_type === a.blockType)
         if (a.parentId) items = items.filter((b) => b.parent_id === a.parentId)
+        // Tag filtering
+        if (a.tagId) {
+          const tagId = a.tagId as string
+          items = items.filter((b) => {
+            const tags = blockTags.get(b.id as string)
+            return tags?.has(tagId) ?? false
+          })
+        }
         // Agenda date filtering — matches blocks by due_date or scheduled_date
         if (a.agendaDate) {
           const dateStr = a.agendaDate as string
@@ -541,6 +552,19 @@ export function setupMock(): void {
           } else {
             items = items.filter((b) => b.due_date === dateStr || b.scheduled_date === dateStr)
           }
+        }
+        // Agenda date range filtering — for weekly/monthly views
+        if (a.agendaDateRange) {
+          const range = a.agendaDateRange as { start: string; end: string }
+          const source = (a.agendaSource as string | null) ?? null
+          items = items.filter((b) => {
+            const due = b.due_date as string | null
+            const sched = b.scheduled_date as string | null
+            const inRange = (d: string | null) => d != null && d >= range.start && d <= range.end
+            if (source === 'column:due_date') return inRange(due)
+            if (source === 'column:scheduled_date') return inRange(sched)
+            return inRange(due) || inRange(sched)
+          })
         }
         // Sort by position for consistent ordering (matches real backend)
         items.sort((x, y) => ((x.position as number) ?? 0) - ((y.position as number) ?? 0))
@@ -796,6 +820,10 @@ export function setupMock(): void {
           total_background_dispatched: 0,
           fg_high_water: 0,
           bg_high_water: 0,
+          fg_errors: 0,
+          bg_errors: 0,
+          fg_panics: 0,
+          bg_panics: 0,
         }
       }
 
@@ -876,15 +904,7 @@ export function setupMock(): void {
         const blockId = a.blockId as string
         const tagSet = blockTags.get(blockId)
         if (!tagSet || tagSet.size === 0) return []
-        return [...tagSet].map((tagId) => {
-          const tagBlock = blocks.get(tagId)
-          return {
-            tag_id: tagId,
-            name: tagBlock ? ((tagBlock.content as string) ?? '') : tagId,
-            usage_count: 0,
-            updated_at: new Date().toISOString(),
-          }
-        })
+        return [...tagSet]
       }
 
       case 'set_property': {
@@ -901,7 +921,8 @@ export function setupMock(): void {
           value_date: (a.valueDate as string | null) ?? null,
           value_ref: (a.valueRef as string | null) ?? null,
         })
-        return null
+        const b = blocks.get(blockId)
+        return b ? { ...b } : null
       }
 
       case 'delete_property': {
@@ -1278,9 +1299,23 @@ export function setupMock(): void {
         const a = args as Record<string, unknown>
         const pageId = a.pageId as string
         const page = blocks.get(pageId)
-        if (!page) return { groups: [], next_cursor: null, has_more: false, total_count: 0 }
+        if (!page)
+          return {
+            groups: [],
+            next_cursor: null,
+            has_more: false,
+            total_count: 0,
+            filtered_count: 0,
+          }
         const pageTitle = ((page.content as string) ?? '').toLowerCase()
-        if (!pageTitle) return { groups: [], next_cursor: null, has_more: false, total_count: 0 }
+        if (!pageTitle)
+          return {
+            groups: [],
+            next_cursor: null,
+            has_more: false,
+            total_count: 0,
+            filtered_count: 0,
+          }
         // Find blocks that mention the page title as text but don't have a [[link]]
         const LINK_RE_UL = /\[\[([0-9A-Z]{26})\]\]/g
         const unlinked = [...blocks.values()].filter((b) => {
@@ -1334,10 +1369,10 @@ export function setupMock(): void {
         // Simple word-level diff: mark all old as removed, all new as added
         const spans: Array<Record<string, unknown>> = []
         if (fromText.length > 0 && fromText[0] !== '') {
-          spans.push({ tag: 'delete', content: fromText.join(' ') })
+          spans.push({ tag: 'Delete', value: fromText.join(' ') })
         }
         if (toText.length > 0 && toText[0] !== '') {
-          spans.push({ tag: 'insert', content: toText.join(' ') })
+          spans.push({ tag: 'Insert', value: toText.join(' ') })
         }
         return spans
       }
@@ -1572,6 +1607,38 @@ export function setupMock(): void {
         }
         return pageLinks
       }
+
+      // -----------------------------------------------------------------------
+      // Logging commands (fire-and-forget)
+      // -----------------------------------------------------------------------
+
+      case 'log_frontend':
+        return null
+
+      case 'get_log_dir':
+        return '/mock/logs'
+
+      // -----------------------------------------------------------------------
+      // Op log compaction commands
+      // -----------------------------------------------------------------------
+
+      case 'get_compaction_status':
+        return {
+          total_ops: opLog.length,
+          oldest_op_date: opLog.length > 0 ? (opLog[0]?.created_at ?? null) : null,
+          eligible_ops: 0,
+          retention_days: 90,
+        }
+
+      case 'compact_op_log_cmd':
+        return { snapshot_id: null, ops_deleted: 0 }
+
+      // -----------------------------------------------------------------------
+      // Point-in-time restore
+      // -----------------------------------------------------------------------
+
+      case 'restore_page_to_op':
+        return { ops_reverted: 0, non_reversible_skipped: 0, results: [] }
 
       default:
         return null
