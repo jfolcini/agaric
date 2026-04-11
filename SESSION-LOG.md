@@ -1,5 +1,34 @@
 # Session Log
 
+## Session 335 — Icon consistency + color tokens: 10 items resolved (2026-04-11)
+
+**10 items resolved. 19 files changed, ~+150/-50 lines.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| UX-159 | Added Lucide icons to all 8 PageHeaderMenu kebab items | `PageHeaderMenu.tsx` + test |
+| UX-160 | Added RefreshCw icon to 3 error recovery buttons | `ErrorBoundary.tsx`, `FeatureErrorBoundary.tsx`, `BootGate.tsx` + tests |
+| UX-161 | Added X icon to 3 clear/clear-all buttons | `BacklinkFilterBuilder.tsx`, `HistorySelectionToolbar.tsx`, `TrashView.tsx` |
+| UX-162 | Added Trash2 icon to TrashView Purge All button | `TrashView.tsx` |
+| UX-163 | Added Upload/Download icons to DataSettingsTab buttons | `DataSettingsTab.tsx` |
+| UX-164 | Removed explicit Pencil sizing in PeerListItem (Button auto-sizes) | `PeerListItem.tsx` |
+| UX-165 | Fixed RotateCcw sizing in HistoryListItem (h-3 → h-3.5) | `HistoryListItem.tsx` |
+| UX-166 | Migrated ConflictListItem from raw ChevronDown to ChevronToggle | `ConflictListItem.tsx` |
+| UX-167 | Documented intentional larger Trash2 in SortableBlock swipe | `SortableBlock.tsx` |
+| UX-157 | Color token fix: amber → alert-warning-foreground, new block-ref tokens | `KeyboardSettingsTab.tsx`, `index.css` |
+
+### Additional fixes
+- Added biome-ignore lint/suspicious/noExplicitAny comments to BacklinkFilterBuilder.test.tsx Select mock (pre-existing pattern)
+- Added icon mocks to PageHeader.test.tsx, BootGate.test.tsx, ErrorBoundary.test.tsx
+
+### Stats
+- 19 files changed (~+150 / -50 lines)
+- 6191 frontend tests pass, all prek hooks pass
+
+---
+
 ## Session 334 — Mixed fixes: 3 items resolved + 1 investigated (2026-04-11)
 
 **3 items resolved, 1 investigated. ~30 files changed, +820/-190 lines. ~16 new tests.**

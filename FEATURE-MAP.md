@@ -123,6 +123,7 @@ Opens when navigating to any page:
 - Unlinked references (mentions not yet linked, with "Link it" button)
 - Zoom-in: focus on a block and its descendants with breadcrumb trail
 - Back navigation via page stack
+- **Page header kebab menu** (`PageHeaderMenu`): 8 actions (Open in New Tab, Add Alias, Add Tag, Add Property, Save/Remove Template, Set/Remove Journal Template, Export Markdown, Delete Page) — all with Lucide icons for scannability
 - **Page metadata bar** (UX-61): Collapsible footer showing word count, block count, and created date (from ULID). `PageMetadataBar.tsx`, `countWords()` utility.
 - **Image lightbox** (UX-84): Click inline images to open fullscreen Radix Dialog viewer (90vw/90vh). Close via Escape, click outside, or close button. "Open externally" fallback button. `ImageLightbox.tsx`.
 - **View transitions**: opacity fade (150ms) on view switch with per-view scroll position restoration
@@ -406,7 +407,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **LoadingSkeleton** (`src/components/LoadingSkeleton.tsx`): Skeleton loading placeholder with `count`/`height` props. Used by 7 components.
 - **Spinner** (`src/components/ui/spinner.tsx`): Animated loading indicator wrapping Loader2 with CVA size variants (`sm`=h-3.5, `md`=h-4, `lg`=h-5, `xl`=h-6). Default `md`. Used by 14 components.
 - **CloseButton** (`src/components/ui/close-button.tsx`): Shared `closeButtonClassName` constant + `CloseButtonIcon` component for overlay close buttons. Used by Dialog, Sheet.
-- **ChevronToggle** (`src/components/ui/chevron-toggle.tsx`): Reusable expand/collapse chevron with rotation transition. Props: `isExpanded`, `loading` (shows spinner), `size` (sm/md). Replaces duplicated ChevronRight rotation pattern across 7 consumers (UX-36). Used by CollapsiblePanelHeader, BlockInlineControls, PageTreeItem, QueryResult, CollapsibleGroupList, HistoryPanel, HistoryListItem.
+- **ChevronToggle** (`src/components/ui/chevron-toggle.tsx`): Reusable expand/collapse chevron with rotation transition. Props: `isExpanded`, `loading` (shows spinner), `size` (sm/md). Replaces duplicated ChevronRight rotation pattern across 8 consumers (UX-36). Used by CollapsiblePanelHeader, BlockInlineControls, PageTreeItem, QueryResult, CollapsibleGroupList, HistoryPanel, HistoryListItem, ConflictListItem.
 - **CardButton** (`src/components/ui/card-button.tsx`): Full-width card-style button with border, bg-card, hover:bg-accent/50, focus-visible ring. Used by ResultCard, SearchPanel.
 - **Label** (`src/components/ui/label.tsx`): Form label with CVA variants: `size` (sm/xs), `muted` (true/false). Used by HistoryView, AgendaFilterBuilder, PagePropertyTable, LinkEditPopover.
 - **ListItem** (`src/components/ui/list-item.tsx`): Interactive list item with group flex layout, gap-3, rounded-lg, hover:bg-accent/50. Used by TagList, PropertiesView.
