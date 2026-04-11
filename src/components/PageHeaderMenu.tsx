@@ -1,4 +1,16 @@
-import { LayoutTemplate, MoreVertical, Redo2, Undo2 } from 'lucide-react'
+import {
+  BookTemplate,
+  Download,
+  ExternalLink,
+  LayoutTemplate,
+  Link,
+  MoreVertical,
+  Redo2,
+  Settings2,
+  Tag,
+  Trash2,
+  Undo2,
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -92,9 +104,10 @@ export function PageHeaderMenu({
             <>
               <button
                 type="button"
-                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
                 onClick={onOpenInNewTab}
               >
+                <ExternalLink className="h-3.5 w-3.5" />
                 {t('tabs.openInNewTab')}
               </button>
               <hr className="my-1 h-px bg-border border-none" />
@@ -102,38 +115,43 @@ export function PageHeaderMenu({
           )}
           <button
             type="button"
-            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
             onClick={onAddAlias}
           >
+            <Link className="h-3.5 w-3.5" />
             {t('pageHeader.menuAddAlias')}
           </button>
           <button
             type="button"
-            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
             onClick={onAddTag}
           >
+            <Tag className="h-3.5 w-3.5" />
             {t('pageHeader.menuAddTag')}
           </button>
           <button
             type="button"
-            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
             onClick={onAddProperty}
           >
+            <Settings2 className="h-3.5 w-3.5" />
             {t('pageHeader.menuAddProperty')}
           </button>
           <hr className="my-1 h-px bg-border border-none" />
           <button
             type="button"
-            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
             onClick={onToggleTemplate}
           >
+            <LayoutTemplate className="h-3.5 w-3.5" />
             {isTemplate ? t('pageHeader.removeTemplate') : t('pageHeader.saveAsTemplate')}
           </button>
           <button
             type="button"
-            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
             onClick={onToggleJournalTemplate}
           >
+            <BookTemplate className="h-3.5 w-3.5" />
             {isJournalTemplate
               ? t('pageHeader.removeJournalTemplate')
               : t('pageHeader.setJournalTemplate')}
@@ -141,17 +159,19 @@ export function PageHeaderMenu({
           <hr className="my-1 h-px bg-border border-none" />
           <button
             type="button"
-            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
             onClick={onExport}
           >
+            <Download className="h-3.5 w-3.5" />
             {t('pageHeader.exportMarkdown')}
           </button>
           <hr className="my-1 h-px bg-border border-none" />
           <button
             type="button"
-            className="w-full rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
             onClick={onDeleteRequest}
           >
+            <Trash2 className="h-3.5 w-3.5" />
             {t('pageHeader.deletePage')}
           </button>
         </PopoverContent>

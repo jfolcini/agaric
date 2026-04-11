@@ -41,6 +41,7 @@ vi.mock('@/components/ui/select', () => {
   const React = require('react')
   const Ctx = React.createContext({})
 
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
   function Select({ value, onValueChange, children }: any) {
     const triggerPropsRef = React.useRef({})
     return React.createElement(
@@ -50,6 +51,7 @@ vi.mock('@/components/ui/select', () => {
     )
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
   function SelectTrigger({ size, className, ...props }: any) {
     const ctx = React.useContext(Ctx)
     Object.assign(ctx.triggerPropsRef.current, { size, className, ...props })
@@ -60,6 +62,7 @@ vi.mock('@/components/ui/select', () => {
     return null
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
   function SelectContent({ children }: any) {
     const ctx = React.useContext(Ctx)
     const tp = ctx.triggerPropsRef.current
@@ -67,6 +70,7 @@ vi.mock('@/components/ui/select', () => {
       'select',
       {
         value: ctx.value ?? '',
+        // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
         onChange: (e: any) => ctx.onValueChange?.(e.target.value),
         'aria-label': tp['aria-label'],
         className: tp.className,
@@ -76,6 +80,7 @@ vi.mock('@/components/ui/select', () => {
     )
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
   function SelectItem({ value, children }: any) {
     return React.createElement('option', { value }, children)
   }

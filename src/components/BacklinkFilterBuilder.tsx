@@ -8,7 +8,7 @@
  * `FilterSortControls`. Both were extracted for testability (#651-R4).
  */
 
-import { Filter } from 'lucide-react'
+import { Filter, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -607,6 +607,7 @@ export function BacklinkFilterBuilder({
             onClick={handleClearAll}
             aria-label={t('backlink.clearAllLabel')}
           >
+            <X className="h-3 w-3" />
             {t('backlink.clearAllButton')}
           </Button>
         )}

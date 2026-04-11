@@ -8,6 +8,9 @@ vi.mock('lucide-react', () => ({
   AlertCircle: (props: { className?: string }) => (
     <svg data-testid="alert-circle-icon" className={props.className} />
   ),
+  RefreshCw: (props: { className?: string }) => (
+    <svg data-testid="refresh-cw-icon" className={props.className} />
+  ),
 }))
 
 import { ErrorBoundary } from '../ErrorBoundary'

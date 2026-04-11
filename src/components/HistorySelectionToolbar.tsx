@@ -8,7 +8,7 @@
  * Extracted from HistoryView for testability.
  */
 
-import { RotateCcw } from 'lucide-react'
+import { RotateCcw, X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { BatchActionToolbar } from '@/components/BatchActionToolbar'
@@ -57,6 +57,7 @@ export function HistorySelectionToolbar({
         onClick={onClearSelection}
         disabled={reverting || selectedCount === 0}
       >
+        <X className="h-3 w-3" />
         {t('history.clearSelectionButton')}
       </Button>
       <span className="text-xs text-muted-foreground ml-auto hidden sm:inline">

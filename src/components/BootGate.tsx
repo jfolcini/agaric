@@ -1,4 +1,4 @@
-import { AlertCircle } from 'lucide-react'
+import { AlertCircle, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
@@ -63,7 +63,14 @@ export function BootGate({ children }: { children: React.ReactNode }) {
             }}
             disabled={retrying}
           >
-            {retrying ? <Spinner /> : 'Retry'}
+            {retrying ? (
+              <Spinner />
+            ) : (
+              <>
+                <RefreshCw className="h-3.5 w-3.5" />
+                Retry
+              </>
+            )}
           </Button>
         </div>
       </div>

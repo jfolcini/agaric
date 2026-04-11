@@ -7,7 +7,7 @@
  * Original location breadcrumbs via batchResolve.
  */
 
-import { RotateCcw, Search, Trash2 } from 'lucide-react'
+import { RotateCcw, Search, Trash2, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -299,6 +299,7 @@ export function TrashView(): React.ReactElement {
             {t('trash.restoreAllButton')}
           </Button>
           <Button variant="destructive" size="sm" onClick={() => setConfirmBatchPurge(true)}>
+            <Trash2 className="h-3.5 w-3.5" />
             {t('trash.purgeAllButton')}
           </Button>
         </BatchActionToolbar>
@@ -323,6 +324,7 @@ export function TrashView(): React.ReactElement {
                   onClick={clearFilter}
                   data-testid="trash-clear-filter-btn"
                 >
+                  <X className="h-3 w-3" />
                   {t('trash.clearFilter')}
                 </Button>
               }

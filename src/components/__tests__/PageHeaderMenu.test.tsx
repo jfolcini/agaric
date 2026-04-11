@@ -8,11 +8,26 @@ import { PageHeaderMenu } from '../PageHeaderMenu'
 import { TooltipProvider } from '../ui/tooltip'
 
 vi.mock('lucide-react', () => ({
+  BookTemplate: (props: React.SVGProps<SVGSVGElement>) => (
+    <svg data-testid="book-template-icon" {...props} />
+  ),
+  Download: (props: React.SVGProps<SVGSVGElement>) => (
+    <svg data-testid="download-icon" {...props} />
+  ),
+  ExternalLink: (props: React.SVGProps<SVGSVGElement>) => (
+    <svg data-testid="external-link-icon" {...props} />
+  ),
   LayoutTemplate: (props: React.SVGProps<SVGSVGElement>) => (
     <svg data-testid="layout-template-icon" {...props} />
   ),
+  Link: (props: React.SVGProps<SVGSVGElement>) => <svg data-testid="link-icon" {...props} />,
   MoreVertical: () => <svg data-testid="more-vertical-icon" />,
   Redo2: () => <svg data-testid="redo2-icon" />,
+  Settings2: (props: React.SVGProps<SVGSVGElement>) => (
+    <svg data-testid="settings2-icon" {...props} />
+  ),
+  Tag: (props: React.SVGProps<SVGSVGElement>) => <svg data-testid="tag-icon" {...props} />,
+  Trash2: (props: React.SVGProps<SVGSVGElement>) => <svg data-testid="trash2-icon" {...props} />,
   Undo2: () => <svg data-testid="undo2-icon" />,
 }))
 

@@ -103,7 +103,7 @@ export function PeerListItem({
                     name: peer.device_name || truncateId(peer.peer_id),
                   })}
                 >
-                  <Pencil className="h-3 w-3" />
+                  <Pencil />
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-64 p-3 space-y-2" align="start">
@@ -146,7 +146,7 @@ export function PeerListItem({
             name: peer.device_name || truncateId(peer.peer_id),
           })}
         >
-          {renamingPeerId === peer.peer_id ? <Spinner /> : <Pencil className="h-3.5 w-3.5" />}
+          {renamingPeerId === peer.peer_id ? <Spinner /> : <Pencil />}
         </Button>
         <Button
           variant="outline"

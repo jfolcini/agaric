@@ -228,7 +228,7 @@ export function KeyboardSettingsTab(): React.ReactElement {
 
                     {/* Conflict warning */}
                     {conflictNames && conflictNames.length > 0 && !isEditing && (
-                      <div className="text-xs text-amber-600 dark:text-amber-400">
+                      <div className="text-xs text-alert-warning-foreground">
                         {t('keyboard.settings.conflictWarning', {
                           shortcuts: conflictNames.join(', '),
                         })}

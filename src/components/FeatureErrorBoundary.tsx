@@ -1,4 +1,4 @@
-import { AlertCircle } from 'lucide-react'
+import { AlertCircle, RefreshCw } from 'lucide-react'
 import React from 'react'
 import { Button } from '@/components/ui/button'
 import i18n from '@/lib/i18n'
@@ -58,6 +58,7 @@ export class FeatureErrorBoundary extends React.Component<
             {this.state.error?.message ?? i18n.t('error.unexpected')}
           </p>
           <Button variant="outline" size="sm" onClick={this.handleRetry}>
+            <RefreshCw className="h-3.5 w-3.5" />
             {i18n.t('action.retry')}
           </Button>
         </div>

@@ -8,11 +8,12 @@
  * Extracted from ConflictList.tsx for testability (#651-R3).
  */
 
-import { Check, ChevronDown, ExternalLink, X } from 'lucide-react'
+import { Check, ExternalLink, X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { formatTimestamp, truncateId, ulidToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { BlockRow } from '../lib/tauri'
@@ -103,9 +104,7 @@ export function ConflictListItem({
         aria-label={isExpanded ? t('conflict.collapse') : t('conflict.expand')}
       >
         <div className="flex items-center gap-2 flex-wrap">
-          <ChevronDown
-            className={cn('h-4 w-4 shrink-0 transition-transform', isExpanded && 'rotate-180')}
-          />
+          <ChevronToggle isExpanded={isExpanded} size="md" />
           <Badge variant="secondary" className="conflict-item-type shrink-0">
             {block.block_type}
           </Badge>

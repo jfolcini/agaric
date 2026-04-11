@@ -305,6 +305,7 @@ function SortableBlockInner({
                 swipeReset()
               }}
             >
+              {/* Larger icon for swipe gesture affordance */}
               <Trash2 className="h-5 w-5" />
             </button>
           </div>

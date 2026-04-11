@@ -89,6 +89,9 @@
   --color-task-custom: var(--task-custom);
   /* Highlight/search */
   --color-highlight: var(--highlight);
+  /* Block reference chip */
+  --color-block-ref: var(--block-ref);
+  --color-block-ref-foreground: var(--block-ref-foreground);
   /* Scheduled/repeat indicator */
   --color-indicator-scheduled: var(--indicator-scheduled);
   --color-indicator-scheduled-foreground: var(--indicator-scheduled-foreground);
@@ -198,6 +201,9 @@
   --task-custom: oklch(0.7 0.18 53);
   /* Highlight/search */
   --highlight: oklch(0.95 0.13 102);
+  /* Block reference chip */
+  --block-ref: oklch(0.95 0.03 293);
+  --block-ref-foreground: oklch(0.45 0.2 293);
   /* Scheduled/repeat indicator */
   --indicator-scheduled: oklch(0.95 0.03 307);
   --indicator-scheduled-foreground: oklch(0.5 0.17 303);
@@ -322,6 +328,9 @@
   --task-custom: oklch(0.7 0.18 53);
   /* Highlight/search */
   --highlight: oklch(0.55 0.14 66);
+  /* Block reference chip */
+  --block-ref: oklch(0.25 0.04 293);
+  --block-ref-foreground: oklch(0.78 0.14 293);
   /* Scheduled/repeat indicator */
   --indicator-scheduled: oklch(0.22 0.04 305);
   --indicator-scheduled-foreground: oklch(0.71 0.17 302);
@@ -490,13 +499,13 @@
   @apply bg-accent/80;
 }
 
-/* Block ref chips — ((ULID)) rendered as content preview chips (violet tint) */
+/* Block ref chips — ((ULID)) rendered as content preview chips */
 .block-ref-chip {
-  @apply inline-flex items-center rounded-md bg-violet-500/10 text-violet-700 dark:text-violet-400 px-1.5 py-0.5 text-xs font-medium;
+  @apply inline-flex items-center rounded-md bg-block-ref text-block-ref-foreground px-1.5 py-0.5 text-xs font-medium;
 }
 .block-ref-chip:hover,
 .block-ref-chip:active {
-  @apply bg-violet-500/20;
+  @apply bg-block-ref/70;
 }
 
 @media (pointer: coarse) {

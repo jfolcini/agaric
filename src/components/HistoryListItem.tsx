@@ -242,7 +242,7 @@ export function HistoryListItem({
                   }}
                   aria-label={t('history.restoreToHereLabel')}
                 >
-                  <RotateCcw className="h-3 w-3" />
+                  <RotateCcw className="h-3.5 w-3.5" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>

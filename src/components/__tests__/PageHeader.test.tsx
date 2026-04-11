@@ -37,6 +37,7 @@ let pageStore: StoreApi<PageBlockState>
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
   ArrowLeft: () => <svg data-testid="arrow-left-icon" />,
+  BookTemplate: () => <svg data-testid="book-template-icon" />,
   CalendarCheck2: () => <svg data-testid="calendar-check2-icon" />,
   CalendarClock: () => <svg data-testid="calendar-clock-icon" />,
   CalendarPlus: () => <svg data-testid="calendar-plus-icon" />,
@@ -44,16 +45,22 @@ vi.mock('lucide-react', () => ({
   ChevronDown: () => <svg data-testid="chevron-down" />,
   ChevronRight: () => <svg data-testid="chevron-right" />,
   Clock: () => <svg data-testid="clock-icon" />,
+  Download: () => <svg data-testid="download-icon" />,
+  ExternalLink: () => <svg data-testid="external-link-icon" />,
   LayoutTemplate: (props: Record<string, unknown>) => (
     <svg data-testid="layout-template-icon" {...props} />
   ),
+  Link: () => <svg data-testid="link-icon" />,
   List: (props: Record<string, unknown>) => <svg data-testid="list-icon" {...props} />,
   MapPin: () => <svg data-testid="map-pin-icon" />,
   MoreVertical: () => <svg data-testid="more-vertical-icon" />,
   Plus: () => <svg data-testid="plus-icon" />,
   Redo2: () => <svg data-testid="redo2-icon" />,
   Repeat: () => <svg data-testid="repeat-icon" />,
+  Settings2: () => <svg data-testid="settings2-icon" />,
   Star: (props: Record<string, unknown>) => <svg data-testid="star-icon" {...props} />,
+  Tag: () => <svg data-testid="tag-icon" />,
+  Trash2: () => <svg data-testid="trash2-icon" />,
   Undo2: () => <svg data-testid="undo2-icon" />,
   User: () => <svg data-testid="user-icon" />,
   X: () => <svg data-testid="x-icon" />,

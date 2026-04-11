@@ -112,6 +112,7 @@ export function DataSettingsTab(): React.ReactElement {
               onClick={() => fileInputRef.current?.click()}
               disabled={importing}
             >
+              <Upload className="h-3.5 w-3.5" />{' '}
               {importing ? t('data.importingMessage') : t('data.importButton')}
             </Button>
           </div>
@@ -145,6 +146,7 @@ export function DataSettingsTab(): React.ReactElement {
         <CardContent>
           <p className="text-xs text-muted-foreground mb-3">{t('data.exportDesc')}</p>
           <Button variant="outline" size="sm" disabled={exporting} onClick={handleExportAll}>
+            <Download className="h-3.5 w-3.5" />{' '}
             {exporting ? t('data.exporting') : t('data.exportButton')}
           </Button>
         </CardContent>

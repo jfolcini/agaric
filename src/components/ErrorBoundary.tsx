@@ -1,4 +1,4 @@
-import { AlertCircle } from 'lucide-react'
+import { AlertCircle, RefreshCw } from 'lucide-react'
 import React from 'react'
 import { Button } from '@/components/ui/button'
 import { logger } from '@/lib/logger'
@@ -43,6 +43,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
               {this.state.error?.message ?? 'An unexpected error occurred'}
             </p>
             <Button variant="outline" onClick={() => window.location.reload()}>
+              <RefreshCw className="h-3.5 w-3.5" />
               Reload
             </Button>
           </div>

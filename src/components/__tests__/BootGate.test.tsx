@@ -25,6 +25,9 @@ vi.mock('lucide-react', () => ({
   Loader2: (props: { className?: string }) => (
     <svg data-testid="loader-icon" className={props.className} />
   ),
+  RefreshCw: (props: { className?: string }) => (
+    <svg data-testid="refresh-cw-icon" className={props.className} />
+  ),
 }))
 
 import { useBootStore } from '../../stores/boot'
