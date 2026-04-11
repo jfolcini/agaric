@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 338 — F-39 Phase 1: backend property-changed events (2026-04-11)
+
+**F-39 Phase 1 complete. 2 Rust files changed, +60 lines. 1 new test.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| F-39 P1 | Backend emits block:properties-changed Tauri event from 5 property commands | `sync_events.rs`, `commands/properties.rs` |
+
+### Implementation
+- New `PropertyChangedEvent` struct with `block_id` + `changed_keys` payload
+- `EVENT_PROPERTY_CHANGED` constant ("block:properties-changed")
+- `AppHandle` added to 5 command wrappers: set_property, set_todo_state, set_due_date, set_scheduled_date, delete_property
+- Events emitted after successful _inner calls only (not on error)
+- _inner functions unchanged (testable without Tauri runtime)
+
+### Stats
+- 2 Rust files changed (+60 lines)
+- 1 new test (serialization roundtrip)
+- 1791 Rust tests pass, all prek hooks pass
+
+---
+
 ## Session 337 — Sync test coverage: 2 items resolved (2026-04-11)
 
 **2 items resolved. 2 Rust files changed, +604 lines. 8 new tests.**

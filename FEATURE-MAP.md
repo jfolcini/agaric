@@ -300,6 +300,10 @@ Text, number, date, select, and reference (link to another block).
 
 When a repeating task is marked DONE, a new sibling is automatically created with shifted dates.
 
+### Property Change Events
+
+Backend property commands (`set_property`, `set_todo_state`, `set_due_date`, `set_scheduled_date`, `delete_property`) emit `block:properties-changed` Tauri events via `PropertyChangedEvent` struct (`block_id` + `changed_keys` payload) in `sync_events.rs`. Events fire after successful writes only. Enables frontend panel invalidation (F-39 Phase 1).
+
 ---
 
 ## 6. Agenda
