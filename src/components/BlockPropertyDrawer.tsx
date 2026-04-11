@@ -34,7 +34,7 @@ import {
   setProperty,
   setScheduledDate as setScheduledDateCmd,
 } from '../lib/tauri'
-import { usePageBlockStore, usePageBlockStoreApi } from '../stores/page-blocks'
+import { type PageBlockState, usePageBlockStore, usePageBlockStoreApi } from '../stores/page-blocks'
 import { AddPropertyPopover } from './AddPropertyPopover'
 import { BuiltinDateFields } from './BuiltinDateFields'
 import { PropertyRowEditor } from './PropertyRowEditor'
@@ -58,9 +58,11 @@ export function BlockPropertyDrawer({
   // Subscribe to built-in date fields from the block store so the drawer
   // updates reactively when dates are set via toolbar (H-12).
   const pageStore = usePageBlockStoreApi()
-  const block = usePageBlockStore((s) =>
-    blockId ? s.blocks.find((b) => b.id === blockId) : undefined,
+  const blockSelector = useCallback(
+    (s: PageBlockState) => (blockId ? s.blocks.find((b) => b.id === blockId) : undefined),
+    [blockId],
   )
+  const block = usePageBlockStore(blockSelector)
   const dueDate = block?.due_date ?? null
   const scheduledDate = block?.scheduled_date ?? null
 

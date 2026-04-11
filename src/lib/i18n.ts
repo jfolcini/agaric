@@ -705,6 +705,7 @@ const resources = {
       'keyboard.toggleSidebar': 'Toggle sidebar',
       'keyboard.createNewPage': 'Create new page',
       'keyboard.showKeyboardShortcuts': 'Show keyboard shortcuts',
+      'keyboard.exportPageMarkdown': 'Export page as Markdown',
       'keyboard.closeOverlays': 'Close overlays, cancel editing, clear selection',
 
       // Keyboard shortcuts — syntax descriptions

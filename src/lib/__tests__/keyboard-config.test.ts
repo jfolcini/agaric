@@ -47,6 +47,14 @@ describe('keyboard-config', () => {
     expect(uniqueIds.size).toBe(ids.length)
   })
 
+  it('DEFAULT_SHORTCUTS includes exportPageMarkdown with correct defaults', () => {
+    const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'exportPageMarkdown')
+    expect(shortcut).toBeDefined()
+    expect(shortcut?.keys).toBe('Ctrl + Shift + E')
+    expect(shortcut?.category).toBe('keyboard.category.global')
+    expect(shortcut?.description).toBe('keyboard.exportPageMarkdown')
+  })
+
   it('getCustomOverrides returns empty when nothing stored', () => {
     expect(getCustomOverrides()).toEqual({})
   })

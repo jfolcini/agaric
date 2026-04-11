@@ -38,7 +38,8 @@ export function MonthlyView({
   onAddBlock: _onAddBlock,
 }: MonthlyViewProps): React.ReactElement {
   const { t } = useTranslation()
-  const { currentDate, navigateToDate } = useJournalStore()
+  const currentDate = useJournalStore((s) => s.currentDate)
+  const navigateToDate = useJournalStore((s) => s.navigateToDate)
   const { weekStartsOn } = useWeekStart()
   const todayStr = formatDate(new Date())
 

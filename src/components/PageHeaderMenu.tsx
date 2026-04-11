@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { getShortcutKeys } from '../lib/keyboard-config'
 
 export interface PageHeaderMenuProps {
   canRedo: boolean
@@ -164,6 +165,9 @@ export function PageHeaderMenu({
           >
             <Download className="h-3.5 w-3.5" />
             {t('pageHeader.exportMarkdown')}
+            <span className="ml-auto text-xs text-muted-foreground">
+              {getShortcutKeys('exportPageMarkdown')}
+            </span>
           </button>
           <hr className="my-1 h-px bg-border border-none" />
           <button

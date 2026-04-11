@@ -334,3 +334,12 @@ describe('PageHeaderMenu template toggle button', () => {
     expect(results).toHaveNoViolations()
   })
 })
+
+describe('PageHeaderMenu export shortcut hint (UX-158)', () => {
+  it('shows Export as Markdown with keyboard shortcut hint', () => {
+    renderMenu({ kebabOpen: true })
+
+    expect(screen.getByText(/Export as Markdown/i)).toBeInTheDocument()
+    expect(screen.getByText('Ctrl + Shift + E')).toBeInTheDocument()
+  })
+})

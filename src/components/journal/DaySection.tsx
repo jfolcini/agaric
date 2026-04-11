@@ -48,7 +48,8 @@ export function DaySection({
   onAddBlock,
 }: DaySectionProps): React.ReactElement {
   const { t } = useTranslation()
-  const { navigateToDate, goToDateAndPanel } = useJournalStore()
+  const navigateToDate = useJournalStore((s) => s.navigateToDate)
+  const goToDateAndPanel = useJournalStore((s) => s.goToDateAndPanel)
   const todayStr = formatDate(new Date())
   const isToday = entry.dateStr === todayStr
   const Heading = headingLevel === 'h2' ? 'h2' : 'h3'

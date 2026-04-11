@@ -280,6 +280,12 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     description: 'keyboard.showKeyboardShortcuts',
   },
   {
+    id: 'exportPageMarkdown',
+    keys: 'Ctrl + Shift + E',
+    category: 'keyboard.category.global',
+    description: 'keyboard.exportPageMarkdown',
+  },
+  {
     id: 'closeOverlays',
     keys: 'Escape',
     category: 'keyboard.category.global',

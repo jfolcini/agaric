@@ -22,7 +22,7 @@ export function WeeklyView({
   onNavigateToPage,
   onAddBlock,
 }: WeeklyViewProps): React.ReactElement {
-  const { currentDate } = useJournalStore()
+  const currentDate = useJournalStore((s) => s.currentDate)
   const todayStr = formatDate(new Date())
 
   const entries = useMemo(

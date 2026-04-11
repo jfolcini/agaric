@@ -154,7 +154,10 @@ function useTrashCount(): number {
 
 function App() {
   const { t } = useTranslation()
-  const { currentView, setView, navigateToPage, goBack } = useNavigationStore()
+  const currentView = useNavigationStore((s) => s.currentView)
+  const setView = useNavigationStore((s) => s.setView)
+  const navigateToPage = useNavigationStore((s) => s.navigateToPage)
+  const goBack = useNavigationStore((s) => s.goBack)
   const pageStack = useNavigationStore(selectPageStack)
   const headerLabel = useHeaderLabel()
   const conflictCount = useConflictCount()

@@ -19,7 +19,7 @@ import { shouldSplitOnBlur } from '../editor/use-roving-editor'
 import { extractFileInfo } from '../lib/file-utils'
 import { addAttachment } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
-import { usePageBlockStore } from '../stores/page-blocks'
+import { type PageBlockState, usePageBlockStore } from '../stores/page-blocks'
 import { FormattingToolbar } from './FormattingToolbar'
 import { StaticBlock } from './StaticBlock'
 
@@ -111,9 +111,11 @@ function EditableBlockInner({
   const setFocused = useBlockStore((s) => s.setFocused)
   const edit = usePageBlockStore((s) => s.edit)
   const splitBlock = usePageBlockStore((s) => s.splitBlock)
-  const currentPriority = usePageBlockStore(
-    (s) => s.blocks.find((b) => b.id === blockId)?.priority ?? null,
+  const prioritySelector = useCallback(
+    (s: PageBlockState) => s.blocks.find((b) => b.id === blockId)?.priority ?? null,
+    [blockId],
   )
+  const currentPriority = usePageBlockStore(prioritySelector)
   const wrapperRef = useRef<HTMLElement>(null)
 
   // Stable refs for values the auto-mount effect needs to READ but should

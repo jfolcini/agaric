@@ -1367,6 +1367,40 @@ describe('PageHeader error paths', () => {
   })
 })
 
+// ── Keyboard shortcut for export (UX-158) ────────────────────────────────
+
+describe('PageHeader export keyboard shortcut (UX-158)', () => {
+  it('Ctrl+Shift+E triggers export', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') return []
+      if (cmd === 'export_page_markdown') return '# My Page\n\nSome content'
+      return null
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    // Simulate Ctrl+Shift+E
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'E',
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+      }),
+    )
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('export_page_markdown', {
+        pageId: 'PAGE_1',
+      })
+    })
+  })
+})
+
 // ── Star / favourite button (UX-156) ──────────────────────────────────────
 
 describe('PageHeader star button (UX-156)', () => {
