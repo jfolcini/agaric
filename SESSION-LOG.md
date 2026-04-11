@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 332 — Rich content consolidation: 5 items resolved (2026-04-11)
+
+**5 items resolved (24→19 open). 24 files changed, +754/-68 lines. ~36 new tests.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| M-51 | Consolidate rich content rendering — new useRichContentCallbacks hook | New `useRichContentCallbacks.ts` + test |
+| B-44 | BlockListItem renders resolved tag/link pills instead of plain text | `BlockListItem.tsx`, `DuePanel.tsx`, `TrashView.tsx`, `ConflictTypeRenderer.tsx` + 7 test files |
+| B-45 | History panel content/diff show resolved ULIDs via renderRichContent | `HistoryPanel.tsx`, `HistoryListItem.tsx`, `DiffDisplay.tsx`, `history-utils.ts` + 4 test files |
+| UX-134 | History property ops show formatted names via formatPropertyName | Bundled into B-45 (HistoryPanel + HistoryListItem) |
+| UX-148 | Search ResultCard renders rich content instead of plain text | `ResultCard.tsx` + `ResultCard.test.tsx`, `SearchPanel.test.tsx` |
+
+### Additional fixes
+- UX-126 investigated: biome's useExhaustiveDependencies requires `pageStore.getState` — cannot remove without lint failure. Won't fix.
+- BlockListItem.tsx outdated JSDoc comment updated (truncateContent → CSS line-clamp)
+
+### Stats
+- 24 files changed (+754 / -68 lines)
+- ~36 new tests (12 hook + 11 history-utils + 4 ResultCard + 3 HistoryPanel + 5 HistoryListItem + 1 DiffDisplay)
+- 6168 frontend tests pass, all 20 prek hooks pass
+
+---
+
 ## Session 331 — Hook extraction + test coverage: 4 items resolved (2026-04-10)
 
 **4 items resolved (28→24 open). 7 files changed, +1347/-182 lines. 56 new tests.**
