@@ -43,8 +43,6 @@ export interface SyncErrorPayload {
   remote_device_id: string
 }
 
-export type SyncEventPayload = SyncProgressPayload | SyncCompletePayload | SyncErrorPayload
-
 /** Map backend state strings to frontend SyncState enum. */
 export function mapBackendState(backendState: string): 'idle' | 'syncing' | 'error' {
   switch (backendState) {

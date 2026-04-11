@@ -136,8 +136,6 @@ export interface DocNode {
   readonly content?: readonly BlockLevelNode[]
 }
 
-export type PMNode = DocNode | BlockLevelNode | InlineNode
-
 // -- Builder helpers (for tests + internal use) -------------------------------
 
 export function text(t: string, marks?: readonly PMMark[]): TextNode {
