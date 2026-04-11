@@ -1,5 +1,32 @@
 # Session Log
 
+## Session 344 — UX batch: touch reschedule, keyboard nav, responsive layout, alias search (2026-04-11)
+
+**5 UX items resolved (UX-118, UX-135, UX-138 Phase 3, UX-151, UX-153). 24 files changed, +1188 -376 lines. 6252 frontend tests pass.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| UX-118 | Touch-friendly reschedule button (Popover+Calendar) on BlockListItem for coarse-pointer devices | `BlockListItem.tsx` |
+| UX-135 | Date chips overflow — subsumed by UX-151 | (resolved via UX-151) |
+| UX-138 P3 | Keyboard nav (Arrow/Home/End/PageUp/PageDown) added to 8 views | `PageBrowser.tsx`, `TrashView.tsx`, `TagFilterPanel.tsx`, `DuePanel.tsx`, `DonePanel.tsx`, `AgendaResults.tsx`, `LinkedReferences.tsx`, `UnlinkedReferences.tsx` |
+| UX-151 | Responsive block layout — `@media(pointer:coarse)` → `max-sm:` viewport breakpoints, removed overflow-hidden, added overflow-wrap | `SortableBlock.tsx`, `BlockInlineControls.tsx`, `index.css` |
+| UX-153 | Page alias search — PageBrowser filter matches aliases with (alias) badge; SearchPanel shows alias matches above FTS results | `PageBrowser.tsx`, `SearchPanel.tsx`, `i18n.ts` |
+
+### Implementation
+- **UX-118**: Added `onReschedule` and `isFocused` props to BlockListItem. CalendarDays button with Popover+Calendar visible on `@media(pointer:coarse)`. Smart date logic (scheduled_date if no due_date) matches RescheduleDropZone.
+- **UX-138 Phase 3**: All 8 views use `useListKeyboardNavigation` hook with `homeEnd: true, pageUpDown: true`. Consistent focus ring (`ring-2 ring-ring/50 bg-accent/30`). Scroll-into-view on focus change. TrashView integrates alongside existing multi-select (Space/Ctrl+A/Escape). TagFilterPanel has two separate nav hooks (matching tags + results). LinkedReferences uses DOM-based focus indicator (BacklinkGroupRenderer constraint).
+- **UX-151**: Replaced `@media(pointer:coarse)` with `max-sm:` viewport-width breakpoints in SortableBlock and BlockInlineControls. Removed `overflow-hidden` from block wrapper. BlockInlineControls now uses `flex-wrap` at narrow widths instead of `flex-col w-10`. Added `overflow-wrap: break-word` to ProseMirror and block-static CSS.
+- **UX-153**: PageBrowser calls `resolvePageByAlias(filterText)` to include alias-matched pages in filter results with "(alias)" badge. SearchPanel calls `resolvePageByAlias(debouncedQuery)` after FTS results and prepends alias-matched page with "via alias: X" annotation. Deduplication by page ID in both views.
+
+### Stats
+- 24 files changed (+1188 -376 lines)
+- 6252 frontend tests pass, all prek hooks pass
+- 5 REVIEW-LATER items resolved (10 → 5 open)
+
+---
+
 ## Session 343 — F-38 complete: all keyboard shortcuts configurable (2026-04-11)
 
 **F-38 fully resolved (all 5 phases). 8 files changed, ~+200 lines. 22 new tests.**
