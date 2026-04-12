@@ -78,8 +78,8 @@ export function shouldSplitOnBlur(markdown: string): boolean {
 
 const lowlight = createLowlight(common)
 
-/** Inline Code with configurable shortcut to toggle inline code. */
-const CodeWithShortcut = Code.extend({
+/** Inline Code with configurable shortcut to toggle inline code. @internal Exported for testing. */
+export const CodeWithShortcut = Code.extend({
   addKeyboardShortcuts() {
     return {
       [configKeyToTipTap(getShortcutKeys('inlineCode'))]: () => this.editor.commands.toggleCode(),
@@ -87,8 +87,8 @@ const CodeWithShortcut = Code.extend({
   },
 })
 
-/** Strike with configurable shortcut to toggle strikethrough. */
-const StrikeWithShortcut = Strike.extend({
+/** Strike with configurable shortcut to toggle strikethrough. @internal Exported for testing. */
+export const StrikeWithShortcut = Strike.extend({
   addKeyboardShortcuts() {
     return {
       [configKeyToTipTap(getShortcutKeys('strikethrough'))]: () =>
@@ -97,8 +97,8 @@ const StrikeWithShortcut = Strike.extend({
   },
 })
 
-/** Highlight with configurable shortcut to toggle highlight. */
-const HighlightWithShortcut = Highlight.extend({
+/** Highlight with configurable shortcut to toggle highlight. @internal Exported for testing. */
+export const HighlightWithShortcut = Highlight.extend({
   addKeyboardShortcuts() {
     return {
       [configKeyToTipTap(getShortcutKeys('highlight'))]: () =>
@@ -107,8 +107,8 @@ const HighlightWithShortcut = Highlight.extend({
   },
 })
 
-/** CodeBlockLowlight with configurable shortcut to toggle code blocks. */
-const CodeBlockWithShortcut = CodeBlockLowlight.extend({
+/** CodeBlockLowlight with configurable shortcut to toggle code blocks. @internal Exported for testing. */
+export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
   addKeyboardShortcuts() {
     return {
       ...this.parent?.(),
@@ -125,8 +125,8 @@ export function dispatchPriorityEvent(level: 1 | 2 | 3): void {
   document.dispatchEvent(new CustomEvent(`set-priority-${level}`))
 }
 
-/** Custom extension dispatching priority shortcut events. */
-const PriorityShortcuts = Extension.create({
+/** Custom extension dispatching priority shortcut events. @internal Exported for testing. */
+export const PriorityShortcuts = Extension.create({
   name: 'priorityShortcuts',
   addKeyboardShortcuts() {
     return {

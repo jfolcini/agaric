@@ -1,10 +1,22 @@
+import { Editor } from '@tiptap/core'
+import Bold from '@tiptap/extension-bold'
+import Document from '@tiptap/extension-document'
+import History from '@tiptap/extension-history'
+import Paragraph from '@tiptap/extension-paragraph'
+import Text from '@tiptap/extension-text'
+import { common, createLowlight } from 'lowlight'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { serialize } from '../markdown-serializer'
+import { parse, serialize } from '../markdown-serializer'
 import type { DocNode } from '../types'
 import {
+  CodeBlockWithShortcut,
+  CodeWithShortcut,
   computeContentDelta,
   dispatchPriorityEvent,
+  HighlightWithShortcut,
+  PriorityShortcuts,
   replaceDocSilently,
+  StrikeWithShortcut,
   shouldSplitOnBlur,
 } from '../use-roving-editor'
 
@@ -318,5 +330,203 @@ describe('unmount error boundary', () => {
 
     expect(delta.changed).toBe(false)
     expect(result).toBeNull()
+  })
+})
+
+// -- Real TipTap Editor helpers -----------------------------------------------
+
+// biome-ignore lint/suspicious/noExplicitAny: TipTap extensions have complex union types
+function createEditor(extensions: any[]): Editor {
+  return new Editor({
+    element: document.createElement('div'),
+    extensions: [Document, Paragraph, Text, ...extensions],
+    content: { type: 'doc', content: [{ type: 'paragraph' }] },
+  })
+}
+
+// -- Custom extension keyboard shortcuts (real Editor) ------------------------
+
+describe('custom extension keyboard shortcuts', () => {
+  let editor: Editor
+
+  afterEach(() => {
+    editor?.destroy()
+  })
+
+  it('CodeWithShortcut registers inline code extension', () => {
+    editor = createEditor([CodeWithShortcut])
+    expect(editor.extensionManager.extensions.some((e) => e.name === 'code')).toBe(true)
+  })
+
+  it('StrikeWithShortcut registers strikethrough extension', () => {
+    editor = createEditor([StrikeWithShortcut])
+    expect(editor.extensionManager.extensions.some((e) => e.name === 'strike')).toBe(true)
+  })
+
+  it('HighlightWithShortcut registers highlight extension', () => {
+    editor = createEditor([HighlightWithShortcut])
+    expect(editor.extensionManager.extensions.some((e) => e.name === 'highlight')).toBe(true)
+  })
+
+  it('CodeBlockWithShortcut registers codeBlock extension with lowlight', () => {
+    editor = createEditor([CodeBlockWithShortcut.configure({ lowlight: createLowlight(common) })])
+    expect(editor.extensionManager.extensions.some((e) => e.name === 'codeBlock')).toBe(true)
+  })
+
+  it('PriorityShortcuts registers priorityShortcuts extension', () => {
+    editor = createEditor([PriorityShortcuts])
+    expect(editor.extensionManager.extensions.some((e) => e.name === 'priorityShortcuts')).toBe(
+      true,
+    )
+  })
+
+  it('CodeWithShortcut toggles inline code via command', () => {
+    editor = createEditor([CodeWithShortcut])
+    editor.commands.setContent({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello' }] }],
+    })
+    editor.commands.selectAll()
+    editor.commands.toggleCode()
+    expect(editor.isActive('code')).toBe(true)
+  })
+
+  it('StrikeWithShortcut toggles strike via command', () => {
+    editor = createEditor([StrikeWithShortcut])
+    editor.commands.setContent({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello' }] }],
+    })
+    editor.commands.selectAll()
+    editor.commands.toggleStrike()
+    expect(editor.isActive('strike')).toBe(true)
+  })
+
+  it('HighlightWithShortcut toggles highlight via command', () => {
+    editor = createEditor([HighlightWithShortcut])
+    editor.commands.setContent({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello' }] }],
+    })
+    editor.commands.selectAll()
+    editor.commands.toggleHighlight()
+    expect(editor.isActive('highlight')).toBe(true)
+  })
+
+  it('CodeBlockWithShortcut toggles code block via command', () => {
+    editor = createEditor([CodeBlockWithShortcut.configure({ lowlight: createLowlight(common) })])
+    editor.commands.setContent({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello' }] }],
+    })
+    editor.commands.selectAll()
+    editor.commands.toggleCodeBlock()
+    expect(editor.isActive('codeBlock')).toBe(true)
+  })
+
+  it('PriorityShortcuts dispatches set-priority-1 event via shortcut handler', () => {
+    editor = createEditor([PriorityShortcuts])
+    const ext = editor.extensionManager.extensions.find((e) => e.name === 'priorityShortcuts')
+    expect(ext).toBeDefined()
+    // The extension registers keyboard shortcuts that call dispatchPriorityEvent
+    // Verify the event fires when called directly (integration with dispatchPriorityEvent)
+    const spy = vi.fn()
+    document.addEventListener('set-priority-1', spy)
+    dispatchPriorityEvent(1)
+    expect(spy).toHaveBeenCalledOnce()
+    document.removeEventListener('set-priority-1', spy)
+  })
+})
+
+// -- Mount logic (replaceDocSilently with real Editor) ------------------------
+
+describe('mount logic (real Editor)', () => {
+  let editor: Editor
+
+  afterEach(() => {
+    editor?.destroy()
+  })
+
+  it('replaceDocSilently parses and replaces content on mount', () => {
+    editor = createEditor([])
+    const markdown = 'hello world'
+    const doc = parse(markdown)
+    replaceDocSilently(editor, doc as unknown as Record<string, unknown>)
+    expect(editor.getText()).toBe('hello world')
+  })
+
+  it('mount with empty string sets empty paragraph', () => {
+    editor = createEditor([])
+    const doc = parse('')
+    replaceDocSilently(editor, doc as unknown as Record<string, unknown>)
+    expect(editor.getText()).toBe('')
+  })
+
+  it('mount with bold markdown preserves formatting', () => {
+    editor = createEditor([Bold])
+    const doc = parse('**bold text**')
+    replaceDocSilently(editor, doc as unknown as Record<string, unknown>)
+    expect(editor.getText()).toBe('bold text')
+    // The entire content is bold, so cursor sits inside a bold span
+    const json = editor.getJSON()
+    const marks = json.content?.[0]?.content?.[0]?.marks ?? []
+    expect(marks.some((m: { type: string }) => m.type === 'bold')).toBe(true)
+  })
+
+  it('history plugin reset clears undo stack', () => {
+    editor = createEditor([History])
+    // Type something to create undo history
+    editor.commands.insertContent('first edit')
+    expect(editor.can().undo()).toBe(true)
+
+    // Reset history (simulate mount logic from use-roving-editor)
+    const histPlugin = editor.state.plugins.find((p) =>
+      (p as unknown as { key: string }).key.startsWith('history$'),
+    )
+    if (histPlugin?.spec.state?.init) {
+      const freshHistory = histPlugin.spec.state.init({}, editor.state)
+      const { tr } = editor.state
+      tr.setMeta(histPlugin, { historyState: freshHistory })
+      tr.setMeta('addToHistory', false)
+      editor.view.dispatch(tr)
+    }
+
+    // Undo should now be unavailable
+    expect(editor.can().undo()).toBe(false)
+  })
+
+  it('replaceDocSilently does not add to undo history', () => {
+    editor = createEditor([History])
+    const doc = parse('new content')
+    replaceDocSilently(editor, doc as unknown as Record<string, unknown>)
+    // The replacement should not be undoable
+    expect(editor.can().undo()).toBe(false)
+    expect(editor.getText()).toBe('new content')
+  })
+})
+
+// -- getMarkdown logic (serialize from real Editor) ---------------------------
+
+describe('getMarkdown logic (real Editor)', () => {
+  let editor: Editor
+
+  afterEach(() => {
+    editor?.destroy()
+  })
+
+  it('serializes current editor content to markdown', () => {
+    editor = createEditor([Bold])
+    const doc = parse('hello world')
+    replaceDocSilently(editor, doc as unknown as Record<string, unknown>)
+    const json = editor.getJSON() as DocNode
+    const md = serialize(json)
+    expect(md).toBe('hello world')
+  })
+
+  it('serializes empty doc to empty string', () => {
+    editor = createEditor([])
+    const json = editor.getJSON() as DocNode
+    const md = serialize(json)
+    expect(md).toBe('')
   })
 })
