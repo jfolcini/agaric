@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 364 — T-16/T-17/T-18 resolved: test coverage gaps — 82 new tests (2026-04-12)
+
+**1 REVIEW-LATER item fully resolved (T-17). T-16 and T-18 partially resolved (unit-testable paths covered, network/integration gaps remain). 3 open items remain.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| T-17 | 15 boolean combinator tests for tag_query/resolve.rs | `resolve.rs` |
+| T-18 (partial) | 47 frontend tests for 4 of 5 components | `HeadingLevelSelector.test.tsx` (new), `BlockListItem.test.tsx`, `GraphView.test.tsx`, `block-ref-picker.test.ts` |
+| T-16 (partial) | 20 sync module unit tests across 4 files | `sync_events.rs`, `sync_files.rs`, `sync_net/tests.rs`, `sync_daemon/tests.rs` |
+
+### Implementation
+- **T-17**: 15 tests covering AND/OR/NOT with 3+ tags, NOT(AND), NOT(OR), NOT(NOT), mixed Prefix+Tag, AND(OR(a,b), NOT(c)), deep nesting (3 levels), empty intersection, deduplication, single-element AND/OR, nonexistent tag NOT, oracle validation for 9 expressions against `resolve_expr_cte` with `rebuild_all`.
+- **T-18**: HeadingLevelSelector — 18 new tests (rendering, interaction for all 7 buttons, paragraph conditional logic, active state styling, a11y). block-ref-picker — 6 new suggestion config + command tests. BlockListItem — 13 new tests (isFocused styling, reschedule button, handleDateSelect with Tauri IPC mocking, error paths, onReschedule callback, a11y). GraphView — 10 new tests (stale cache, partial failure, keyboard zoom +/-/0, Enter navigation, error logging, cleanup on unmount). use-roving-editor NOT addressed (requires full TipTap integration).
+- **T-16**: sync_events — 6 tests (PropertyChangedEvent serde, event name constants, Arc blanket impl, Progress/Error JSON, RecordingEventSink). sync_files — 3 tests (all-present attachments, hash determinism, nested dir creation). sync_net — 5 tests (mDNS constants, Error/FileRequest/SyncComplete roundtrips). sync_daemon/server — 6 tests (verify_peer_cert edge cases). Remaining gaps are network-dependent (daemon_loop, mDNS lifecycle, handle_incoming_sync).
+
+### Stats
+- 9 files changed (+1770 lines)
+- 1854 Rust tests pass (+35), 6352 frontend tests pass (+47), all 19 prek hooks pass
+- 1 REVIEW-LATER item resolved, 2 partially resolved (4 → 3 open)
+
+---
+
 ## Session 363 — M-14/M-15/M-17/T-19/UX-164 resolved: clippy lints + biome rules + deny targets + flaky test + ref warning (2026-04-12)
 
 **5 REVIEW-LATER items resolved (M-14, M-15, M-17, T-19, UX-164). M-16 attempted but reverted (too noisy — 801 errors). 4 open items remain.**
