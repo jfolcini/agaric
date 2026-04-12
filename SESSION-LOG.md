@@ -1,5 +1,35 @@
 # Session Log
 
+## Session 360 — T-9/T-11/T-12/M-14/UX-161/M-17 resolved: test coverage + maintenance (2026-04-12)
+
+**6 REVIEW-LATER items resolved (T-9, T-11, T-12, M-14, UX-161, M-17). 9 open items remain.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| T-9 | 8 list_page_history unit tests in pagination suite | `pagination/tests.rs` |
+| T-11 | Snapshot restore cache verification (documents B-57 gap) | `snapshot/tests.rs` |
+| T-12 | 2 agenda_cache source UPDATE path tests | `cache/tests.rs` |
+| M-14 | Replace debug_assert + string comparison with chrono parsing in resolve_property_conflict | `merge/resolve.rs`, `merge/tests.rs` |
+| UX-161 | Remove unused MAX_POOL_CONNECTIONS, inline in init_pool | `db.rs` |
+| M-17 | Empty number field returns valueNum: null (was valueText: '') | `property-save-utils.ts`, `property-save-utils.test.ts` |
+
+### Implementation
+- **T-9**: 8 tests covering basic pagination, empty result, cursor continuation, op type filter, global history, global pagination, global filter, nested children.
+- **T-11**: 1 test verifying all cache tables are empty after apply_snapshot() (documents B-57: caches wiped but not rebuilt).
+- **T-12**: 2 tests exercising the UPDATE path when agenda_cache source changes (column→property and property→property transitions).
+- **M-14**: Replaced `debug_assert!` + lexicographic string comparison with `chrono::DateTime::parse_from_rfc3339()` parsing. Handles mixed UTC suffixes (Z vs +00:00). Fallback to string comparison with `tracing::warn` on parse failure. 3 new tests.
+- **UX-161**: Removed `const MAX_POOL_CONNECTIONS: u32 = 5`, inlined `5` in `init_pool()`.
+- **M-17**: Changed `{ blockId, key, valueText: '' }` to `{ blockId, key, valueNum: null }` for empty number fields. Updated 2 test assertions.
+
+### Stats
+- 8 files changed (+851 -34 lines)
+- 1836 Rust tests pass (was 1823, +13 new), 6290 frontend tests pass, all 20 prek hooks pass
+- 6 REVIEW-LATER items resolved (15 -> 9 open)
+
+---
+
 ## Session 359 — B-62/B-63/M-15/UX-159/S-11/S-12/UX-160 resolved: materializer + sync fixes (2026-04-12)
 
 **7 REVIEW-LATER items resolved (B-62, B-63, M-15, UX-159, S-11, S-12, UX-160). 15 open items remain.**
