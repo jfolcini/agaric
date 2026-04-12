@@ -129,13 +129,15 @@ pub async fn eval_backlink_query(
     } else {
         0
     };
-    let filtered: Vec<&str> = sorted_ids[start_idx..].iter().map(|s| s.as_str()).collect();
+    let filtered: Vec<&str> = sorted_ids[start_idx..].iter().map(String::as_str).collect();
 
-    let fetch_limit = (page.limit + 1) as usize;
+    // page.limit is a validated positive pagination bound; safe to convert
+    let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
+    let fetch_limit = limit_usize.saturating_add(1);
     let page_ids: Vec<&str> = filtered.into_iter().take(fetch_limit).collect();
-    let has_more = page_ids.len() > page.limit as usize;
+    let has_more = page_ids.len() > limit_usize;
     let actual_ids: Vec<&str> = if has_more {
-        page_ids[..page.limit as usize].to_vec()
+        page_ids[..limit_usize].to_vec()
     } else {
         page_ids
     };

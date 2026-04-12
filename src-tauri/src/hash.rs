@@ -66,7 +66,11 @@ pub fn compute_op_hash(
         let mut cursor = std::io::Cursor::new(&mut seq_buf[..]);
         std::io::Write::write_fmt(&mut cursor, format_args!("{seq}"))
             .expect("i64 decimal fits in 20-byte buffer");
-        cursor.position() as usize
+        // cursor.position() is at most 20 (buffer size); always fits in usize
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            cursor.position() as usize
+        }
     };
 
     let mut hasher = blake3::Hasher::new();

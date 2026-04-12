@@ -1,3 +1,6 @@
+// Bench helpers cast small loop indices between usize/i64/u64 freely.
+#![allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+
 //! Criterion benchmarks for import/parsing:
 //!   1. `parse_logseq_markdown` — pure parsing, no DB
 //!   2. `import_markdown_inner`  — full pipeline: parse + create page + insert blocks

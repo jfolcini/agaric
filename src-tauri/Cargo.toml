@@ -24,6 +24,19 @@ ignored = [
 unsafe_code = "deny"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }
 
+[lints.clippy]
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+cast_possible_wrap = "warn"
+fallible_impl_from = "deny"
+needless_pass_by_value = "warn"
+redundant_closure_for_method_calls = "warn"
+manual_let_else = "warn"
+large_futures = "warn"
+default_trait_access = "warn"
+cloned_instead_of_copied = "warn"
+flat_map_option = "warn"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

@@ -128,7 +128,7 @@ pub fn parse_service_event(event: mdns_sd::ServiceEvent) -> Option<DiscoveredPee
             let addresses: Vec<IpAddr> = info
                 .get_addresses()
                 .iter()
-                .map(|scoped| scoped.to_ip_addr())
+                .map(mdns_sd::ScopedIp::to_ip_addr)
                 .collect();
             let port = info.get_port();
             Some(DiscoveredPeer {

@@ -25,7 +25,7 @@ export interface MermaidDiagramProps {
   code: string
 }
 
-export default function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElement {
+export function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElement {
   const { t } = useTranslation()
   const [svg, setSvg] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)

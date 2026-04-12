@@ -768,7 +768,8 @@ async fn large_op_log_sync_5000_ops() {
     // Get heads
     let heads_a = get_local_heads(&pool_a).await.unwrap();
     assert_eq!(
-        heads_a[0].seq, op_count as i64,
+        heads_a[0].seq,
+        i64::try_from(op_count).unwrap(),
         "A's head should be at {op_count}"
     );
 
@@ -844,7 +845,8 @@ async fn large_op_log_incremental_sync() {
     // Record B's heads after initial sync
     let heads_b = get_local_heads(&pool_b).await.unwrap();
     assert_eq!(
-        heads_b[0].seq, initial_count as i64,
+        heads_b[0].seq,
+        i64::try_from(initial_count).unwrap(),
         "B should be at seq {initial_count}"
     );
 

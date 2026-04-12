@@ -1,5 +1,5 @@
 import type React from 'react'
-import i18n from '../lib/i18n'
+import { i18n } from '../lib/i18n'
 
 export function ChoiceValuePicker({
   choices,

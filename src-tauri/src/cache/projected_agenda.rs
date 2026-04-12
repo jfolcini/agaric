@@ -75,6 +75,8 @@ pub async fn rebuild_projected_agenda_cache(pool: &SqlitePool) -> Result<(), App
             .as_deref()
             .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
 
+        // repeat_count and repeat_seq are non-negative f64 from SQLite; safe to truncate
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let remaining = match (repeat_count, repeat_seq) {
             (Some(count), Some(seq)) if count > seq => Some((count - seq) as usize),
             (Some(count), None) => Some(count as usize),
@@ -105,9 +107,8 @@ pub async fn rebuild_projected_agenda_cache(pool: &SqlitePool) -> Result<(), App
         .collect();
 
         for (source_name, date_str) in sources {
-            let base = match chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
-                Ok(d) => d,
-                Err(_) => continue,
+            let Ok(base) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") else {
+                continue;
             };
 
             // Determine starting point based on mode

@@ -5,7 +5,7 @@ import type React from 'react'
 import { lazy, Suspense } from 'react'
 import { parse } from '../editor/markdown-serializer'
 import type { BlockLevelNode, DocNode, InlineNode } from '../editor/types'
-import i18n from '../lib/i18n'
+import { i18n } from '../lib/i18n'
 import { openUrl } from '../lib/open-url'
 import { cn } from '../lib/utils'
 import { ScrollArea } from './ui/scroll-area'
@@ -13,7 +13,9 @@ import { Spinner } from './ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
 // Lazy-load MermaidDiagram to avoid bundling mermaid on initial load
-const LazyMermaidDiagram = lazy(() => import('./MermaidDiagram'))
+const LazyMermaidDiagram = lazy(() =>
+  import('./MermaidDiagram').then((m) => ({ default: m.MermaidDiagram })),
+)
 
 const lowlight = createLowlight(common)
 

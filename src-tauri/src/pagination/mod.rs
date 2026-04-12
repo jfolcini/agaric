@@ -193,9 +193,11 @@ pub(super) fn build_page_response<T: specta::Type>(
     limit: i64,
     cursor_from_last: impl FnOnce(&T) -> Cursor,
 ) -> Result<PageResponse<T>, AppError> {
-    let has_more = rows.len() as i64 > limit;
+    // limit is a validated positive pagination bound; safe to convert
+    let limit_usize = usize::try_from(limit).unwrap_or(usize::MAX);
+    let has_more = rows.len() > limit_usize;
     if has_more {
-        rows.truncate(limit as usize);
+        rows.truncate(limit_usize);
     }
     let next_cursor = if has_more {
         let last = rows.last().expect("has_more implies non-empty");

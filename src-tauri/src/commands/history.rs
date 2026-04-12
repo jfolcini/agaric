@@ -640,9 +640,8 @@ pub async fn compute_edit_diff_inner(
     .fetch_optional(pool)
     .await?;
 
-    let row = match row {
-        Some(r) => r,
-        None => return Err(AppError::NotFound(format!("op ({device_id}, {seq})"))),
+    let Some(row) = row else {
+        return Err(AppError::NotFound(format!("op ({device_id}, {seq})")));
     };
 
     if row.op_type != "edit_block" {

@@ -112,7 +112,7 @@ async fn concurrent_creates_from_multiple_devices_no_conflicts() {
                 "content".into(),
                 format!("{dev}-block-{i}"),
                 None,
-                Some((i + 1) as i64),
+                Some(i64::from(i + 1)),
             )
             .await
             .unwrap();
@@ -126,7 +126,7 @@ async fn concurrent_creates_from_multiple_devices_no_conflicts() {
         "15 total blocks created across 3 devices"
     );
 
-    let unique: HashSet<&str> = all_ids.iter().map(|s| s.as_str()).collect();
+    let unique: HashSet<&str> = all_ids.iter().map(String::as_str).collect();
     assert_eq!(unique.len(), 15, "all IDs must be unique across devices");
 
     // Verify each device's op_log is independent
@@ -138,7 +138,11 @@ async fn concurrent_creates_from_multiple_devices_no_conflicts() {
             "device {dev} must have exactly 5 ops in op_log"
         );
         for (i, op) in ops.iter().enumerate() {
-            assert_eq!(op.seq, (i + 1) as i64, "device {dev} seq must be monotonic");
+            assert_eq!(
+                op.seq,
+                i64::try_from(i + 1).unwrap(),
+                "device {dev} seq must be monotonic"
+            );
         }
     }
 }
@@ -159,7 +163,7 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
             "content".into(),
             format!("block {i}"),
             None,
-            Some((i + 1) as i64),
+            Some(i64::try_from(i + 1).unwrap()),
         )
         .await
         .unwrap();
@@ -201,7 +205,7 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
         "must collect all {TOTAL} blocks across pages"
     );
 
-    let unique: HashSet<&str> = all_ids.iter().map(|s| s.as_str()).collect();
+    let unique: HashSet<&str> = all_ids.iter().map(String::as_str).collect();
     assert_eq!(
         unique.len(),
         TOTAL,
@@ -209,7 +213,7 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
     );
 
     // Expected pages: ceil(50/7) = 8
-    let expected_pages = (TOTAL as i64 + PAGE_SIZE - 1) / PAGE_SIZE;
+    let expected_pages = (i64::try_from(TOTAL).unwrap() + PAGE_SIZE - 1) / PAGE_SIZE;
     assert_eq!(
         pages, expected_pages,
         "expected {expected_pages} pages for {TOTAL} items at page size {PAGE_SIZE}"

@@ -1,3 +1,6 @@
+// Bench helpers cast small loop indices between usize/i64 freely.
+#![allow(clippy::cast_possible_wrap)]
+
 //! Criterion benchmarks for `move_block_inner`.
 //!
 //! The command uses transactions with cycle detection CTEs and sibling

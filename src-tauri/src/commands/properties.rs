@@ -291,9 +291,9 @@ pub(crate) fn is_valid_iso_date(s: &str) -> bool {
     if bytes[4] != b'-' || bytes[7] != b'-' {
         return false;
     }
-    let all_digits = bytes[0..4].iter().all(|b| b.is_ascii_digit())
-        && bytes[5..7].iter().all(|b| b.is_ascii_digit())
-        && bytes[8..10].iter().all(|b| b.is_ascii_digit());
+    let all_digits = bytes[0..4].iter().all(u8::is_ascii_digit)
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
+        && bytes[8..10].iter().all(u8::is_ascii_digit);
     if !all_digits {
         return false;
     }

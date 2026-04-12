@@ -540,7 +540,7 @@ mod tests {
         let ids: Vec<BlockId> = (0..10)
             .map(|i| {
                 // Create ULIDs with increasing timestamps (ms apart)
-                let ulid = ulid::Ulid::from_parts((1_000_000 + i) as u64, 0);
+                let ulid = ulid::Ulid::from_parts(1_000_000_u64 + u64::try_from(i).unwrap(), 0);
                 BlockId::from_string(ulid.to_string()).unwrap()
             })
             .collect();
@@ -557,7 +557,7 @@ mod tests {
         }
 
         // Verify all are unique
-        let unique: std::collections::HashSet<&str> = ids.iter().map(|id| id.as_str()).collect();
+        let unique: std::collections::HashSet<&str> = ids.iter().map(BlockId::as_str).collect();
         assert_eq!(
             unique.len(),
             10,

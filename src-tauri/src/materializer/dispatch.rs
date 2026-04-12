@@ -11,7 +11,7 @@ impl Materializer {
     pub(super) fn fg_sender(&self) -> Result<mpsc::Sender<MaterializeTask>, AppError> {
         self.fg_tx
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
             .ok_or_else(|| AppError::Channel("foreground queue closed".into()))
     }
@@ -19,7 +19,7 @@ impl Materializer {
     pub(super) fn bg_sender(&self) -> Result<mpsc::Sender<MaterializeTask>, AppError> {
         self.bg_tx
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
             .ok_or_else(|| AppError::Channel("background queue closed".into()))
     }
@@ -112,6 +112,8 @@ impl Materializer {
                     .fts_edits_since_optimize
                     .fetch_add(1, Ordering::Relaxed)
                     + 1;
+                // Millis since epoch won't exceed u64 for millions of years
+                #[allow(clippy::cast_possible_truncation)]
                 let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()

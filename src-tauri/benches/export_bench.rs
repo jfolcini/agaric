@@ -1,3 +1,6 @@
+// Bench helpers cast small loop indices between usize/i64 freely.
+#![allow(clippy::cast_possible_wrap)]
+
 //! Criterion benchmark for Markdown export:
 //!   - `export_page_markdown_inner` — serialize a page with N child blocks
 

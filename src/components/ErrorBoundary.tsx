@@ -1,7 +1,7 @@
 import { AlertCircle, RefreshCw } from 'lucide-react'
 import React from 'react'
 import { Button } from '@/components/ui/button'
-import i18n from '@/lib/i18n'
+import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 
 interface ErrorBoundaryProps {

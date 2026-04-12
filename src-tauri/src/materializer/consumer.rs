@@ -35,9 +35,8 @@ pub(super) async fn run_foreground(
     metrics: Arc<QueueMetrics>,
 ) {
     loop {
-        let first_task = match rx.recv().await {
-            Some(t) => t,
-            None => break,
+        let Some(first_task) = rx.recv().await else {
+            break;
         };
         let mut batch = vec![first_task];
         while let Ok(task) = rx.try_recv() {
@@ -154,9 +153,8 @@ pub(super) async fn run_background(
     read_pool: Option<SqlitePool>,
 ) {
     loop {
-        let first = match rx.recv().await {
-            Some(t) => t,
-            None => break,
+        let Some(first) = rx.recv().await else {
+            break;
         };
         let mut batch = vec![first];
         while let Ok(task) = rx.try_recv() {

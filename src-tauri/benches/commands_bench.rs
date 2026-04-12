@@ -1,3 +1,6 @@
+// Bench helpers cast small loop indices between usize/i64 freely.
+#![allow(clippy::cast_possible_wrap)]
+
 //! Criterion benchmarks for the three hot-path Tauri command inner functions:
 //!   1. `create_block_inner`  — every new block
 //!   2. `edit_block_inner`    — every keystroke save

@@ -307,7 +307,10 @@ pub async fn search_fts(
         db_query = db_query.bind(tag_id);
     }
     if !active_tag_ids.is_empty() {
-        db_query = db_query.bind(active_tag_ids.len() as i64);
+        // active_tag_ids.len() is a small count; safe to convert
+        #[allow(clippy::cast_possible_wrap)]
+        let tag_count = active_tag_ids.len() as i64;
+        db_query = db_query.bind(tag_count);
     }
 
     let rows = db_query.fetch_all(pool).await.map_err(|e| {
@@ -324,9 +327,12 @@ pub async fn search_fts(
         }
     })?;
 
-    let has_more = rows.len() as i64 > effective_limit;
+    // effective_limit is a validated positive i64; safe to convert
+    let limit_usize = usize::try_from(effective_limit).unwrap_or(usize::MAX);
+    // rows.len() and limit_usize are both usize; direct comparison avoids cast
+    let has_more = rows.len() > limit_usize;
     let cursor_data = if has_more {
-        let last = &rows[effective_limit as usize - 1];
+        let last = &rows[limit_usize - 1];
         Some((last.id.clone(), last.search_rank))
     } else {
         None
@@ -350,7 +356,7 @@ pub async fn search_fts(
         .collect();
 
     if has_more {
-        block_rows.truncate(effective_limit as usize);
+        block_rows.truncate(limit_usize);
     }
 
     let next_cursor = if has_more {

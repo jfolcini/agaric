@@ -27,6 +27,9 @@
 //! 11. **Property lifecycle** — set, get, edit-preserves, delete, cascade on
 //!     block deletion.
 
+// Test helpers frequently cast small usize loop indices to i64 for SQL binds.
+#![allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+
 use crate::commands::*;
 use crate::db::init_pool;
 use crate::draft;
@@ -898,7 +901,7 @@ async fn cursor_pagination_walks_all_blocks_without_duplicates() {
     assert_eq!(all_ids.len(), TOTAL, "should collect all {TOTAL} blocks");
     assert!(page_count >= 2, "should require multiple pages");
 
-    let unique: HashSet<&str> = all_ids.iter().map(|s| s.as_str()).collect();
+    let unique: HashSet<&str> = all_ids.iter().map(String::as_str).collect();
     assert_eq!(unique.len(), TOTAL, "no duplicate blocks across pages");
 }
 

@@ -557,12 +557,14 @@ pub(crate) fn resolve_filter<'a>(
 pub(crate) fn parse_iso_to_ms(s: &str) -> Option<u64> {
     // Try full datetime parse first (e.g. "2025-01-15T12:00:00Z")
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
-        return Some(dt.timestamp_millis() as u64);
+        // Timestamps for valid dates are always non-negative
+        return Some(dt.timestamp_millis().cast_unsigned());
     }
     // Try date-only parse (e.g. "2025-01-15")
     if let Ok(date) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
         let dt = date.and_hms_opt(0, 0, 0)?;
-        return Some(dt.and_utc().timestamp_millis() as u64);
+        // Timestamps for valid dates are always non-negative
+        return Some(dt.and_utc().timestamp_millis().cast_unsigned());
     }
     None
 }

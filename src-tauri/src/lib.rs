@@ -342,9 +342,8 @@ pub fn run() {
 pub fn cleanup_old_log_files(dir: &std::path::Path, max_age_days: u32) {
     let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(max_age_days as i64);
 
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
     };
 
     for entry in entries.flatten() {
@@ -357,9 +356,8 @@ pub fn cleanup_old_log_files(dir: &std::path::Path, max_age_days: u32) {
             _ => continue,
         };
 
-        let file_date = match chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
-            Ok(d) => d,
-            Err(_) => continue,
+        let Ok(file_date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") else {
+            continue;
         };
 
         if file_date < cutoff {
@@ -499,7 +497,7 @@ mod specta_tests {
         let norm = |s: &str| -> String {
             let lines: Vec<&str> = s
                 .lines()
-                .map(|l| l.trim_end())
+                .map(str::trim_end)
                 .filter(|l| *l != "// @ts-nocheck")
                 .collect();
             // Trim leading and trailing empty lines

@@ -2001,7 +2001,10 @@ async fn lww_resolves_move_conflict_by_timestamp() {
         .expect("should have a resolution move_block op");
     let winner_payload: MoveBlockPayload = serde_json::from_str(&last_move.payload).unwrap();
     assert_eq!(
-        winner_payload.new_parent_id.as_ref().map(|id| id.as_str()),
+        winner_payload
+            .new_parent_id
+            .as_ref()
+            .map(super::super::ulid::BlockId::as_str),
         Some("PARENT-B"),
         "device B's move (later timestamp) should win"
     );

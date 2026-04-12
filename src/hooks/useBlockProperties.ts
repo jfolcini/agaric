@@ -14,7 +14,7 @@
 import { useCallback } from 'react'
 import { toast } from 'sonner'
 import { announce } from '../lib/announcer'
-import i18n from '../lib/i18n'
+import { i18n } from '../lib/i18n'
 import { setPriority as setPriorityCmd, setTodoState as setTodoStateCmd } from '../lib/tauri'
 import { usePageBlockStoreApi } from '../stores/page-blocks'
 import { useUndoStore } from '../stores/undo'

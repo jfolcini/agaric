@@ -173,16 +173,13 @@ pub async fn receive_request_and_send_files(
 
     // 2. For each requested attachment: send FileOffer + binary data
     for attachment_id in &attachment_ids {
-        let fs_path = match get_attachment_fs_path(pool, attachment_id).await? {
-            Some(p) => p,
-            None => {
-                tracing::warn!(
-                    attachment_id,
-                    "requested attachment not found in DB, skipping"
-                );
-                stats.skipped_not_found += 1;
-                continue;
-            }
+        let Some(fs_path) = get_attachment_fs_path(pool, attachment_id).await? else {
+            tracing::warn!(
+                attachment_id,
+                "requested attachment not found in DB, skipping"
+            );
+            stats.skipped_not_found += 1;
+            continue;
         };
 
         let (data, hash) = match read_attachment_file(app_data_dir, &fs_path) {
@@ -283,17 +280,14 @@ pub async fn request_and_receive_files(
                 blake3_hash,
             } => {
                 // Look up fs_path for this attachment
-                let fs_path = match get_attachment_fs_path(pool, &attachment_id).await? {
-                    Some(p) => p,
-                    None => {
-                        tracing::warn!(
-                            attachment_id,
-                            "received file offer for unknown attachment, skipping binary data"
-                        );
-                        // Still need to consume the binary data
-                        consume_binary_data(conn, size_bytes).await?;
-                        continue;
-                    }
+                let Some(fs_path) = get_attachment_fs_path(pool, &attachment_id).await? else {
+                    tracing::warn!(
+                        attachment_id,
+                        "received file offer for unknown attachment, skipping binary data"
+                    );
+                    // Still need to consume the binary data
+                    consume_binary_data(conn, size_bytes).await?;
+                    continue;
                 };
 
                 // Receive binary data (may be chunked)
@@ -357,7 +351,9 @@ async fn receive_binary_data(
     conn: &mut SyncConnection,
     size_bytes: u64,
 ) -> Result<Vec<u8>, AppError> {
-    let mut data = Vec::with_capacity(size_bytes as usize);
+    // size_bytes is a file size; on 32-bit targets large files would saturate
+    let capacity = usize::try_from(size_bytes).unwrap_or(usize::MAX);
+    let mut data = Vec::with_capacity(capacity);
     while (data.len() as u64) < size_bytes {
         let chunk = conn.recv_binary().await?;
         data.extend_from_slice(&chunk);
@@ -475,9 +471,12 @@ pub async fn app_data_dir_from_pool(pool: &SqlitePool) -> Result<PathBuf, AppErr
             .fetch_one(pool)
             .await?;
     let db_path = PathBuf::from(&row.0);
-    db_path.parent().map(|p| p.to_path_buf()).ok_or_else(|| {
-        AppError::InvalidOperation("cannot determine app data dir from database path".into())
-    })
+    db_path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| {
+            AppError::InvalidOperation("cannot determine app data dir from database path".into())
+        })
 }
 
 // ===========================================================================
@@ -485,6 +484,7 @@ pub async fn app_data_dir_from_pool(pool: &SqlitePool) -> Result<PathBuf, AppErr
 // ===========================================================================
 
 #[cfg(test)]
+#[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
 mod tests {
     use super::*;
     use crate::db::init_pool;

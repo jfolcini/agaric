@@ -316,9 +316,8 @@ pub(crate) async fn try_sync_with_peer(
     }
 
     // 2. Per-peer mutex (prevents concurrent syncs to the same peer)
-    let _guard = match scheduler.try_lock_peer(peer_id) {
-        Some(g) => g,
-        None => return, // already syncing with this peer
+    let Some(_guard) = scheduler.try_lock_peer(peer_id) else {
+        return; // already syncing with this peer
     };
 
     // 3. Resolve address from discovered peer info

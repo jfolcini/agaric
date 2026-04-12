@@ -1391,7 +1391,7 @@ async fn pagination_walk_all_pages_no_duplicates() {
     assert_eq!(all_ids.len(), 15, "must collect all 15 blocks across pages");
     assert_eq!(pages, 4, "15 blocks with limit 4 must produce 4 pages");
 
-    let unique: HashSet<&str> = all_ids.iter().map(|s| s.as_str()).collect();
+    let unique: HashSet<&str> = all_ids.iter().map(String::as_str).collect();
     assert_eq!(
         unique.len(),
         15,

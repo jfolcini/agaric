@@ -20,9 +20,8 @@ pub async fn flush_draft_inner(
     block_id: String,
 ) -> Result<(), AppError> {
     // 1. Look up the draft; if none exists, no-op.
-    let stored = match draft::get_draft(pool, &block_id).await? {
-        Some(d) => d,
-        None => return Ok(()),
+    let Some(stored) = draft::get_draft(pool, &block_id).await? else {
+        return Ok(());
     };
 
     // 2. Compute prev_edit from op_log (same logic as edit_block_inner).

@@ -48,7 +48,7 @@ async fn sort_by_property_text(
         return Ok(vec![]);
     }
 
-    let id_vec: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+    let id_vec: Vec<&str> = ids.iter().map(String::as_str).collect();
     let prop_map = fetch_text_props_for_ids(pool, key, &id_vec).await?;
 
     let mut sorted: Vec<String> = ids.iter().cloned().collect();
@@ -121,7 +121,7 @@ async fn sort_by_property_num(
         return Ok(vec![]);
     }
 
-    let id_vec: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+    let id_vec: Vec<&str> = ids.iter().map(String::as_str).collect();
     let prop_map = fetch_num_props_for_ids(pool, key, &id_vec).await?;
 
     let mut sorted: Vec<String> = ids.iter().cloned().collect();
@@ -194,7 +194,7 @@ async fn sort_by_property_date(
         return Ok(vec![]);
     }
 
-    let id_vec: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+    let id_vec: Vec<&str> = ids.iter().map(String::as_str).collect();
     let prop_map = fetch_date_props_for_ids(pool, key, &id_vec).await?;
 
     let mut sorted: Vec<String> = ids.iter().cloned().collect();

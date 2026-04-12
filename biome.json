@@ -5,19 +5,33 @@
     "enabled": true,
     "rules": {
       "recommended": true,
+      "complexity": {
+        "noExcessiveCognitiveComplexity": {
+          "level": "warn",
+          "options": { "maxAllowedComplexity": 25 }
+        }
+      },
       "correctness": {
         "noUnusedImports": "error",
         "noUnusedVariables": "error",
-        "noUndeclaredDependencies": "error"
+        "noUndeclaredDependencies": "error",
+        "noUnusedFunctionParameters": "error"
       },
       "suspicious": {
         "useAwait": "error",
-        "noEvolvingTypes": "error"
+        "noEvolvingTypes": "error",
+        "noConsole": {
+          "level": "warn",
+          "options": { "allow": ["warn", "error"] }
+        },
+        "noMisplacedAssertion": "error"
       },
       "style": {
         "noNonNullAssertion": "error",
         "useConst": "error",
-        "useExplicitLengthCheck": "error"
+        "useExplicitLengthCheck": "error",
+        "noDefaultExport": "error",
+        "useThrowOnlyError": "error"
       }
     }
   },
@@ -48,11 +62,22 @@
   },
   "overrides": [
     {
+      "includes": ["src/main.tsx", "*.config.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noDefaultExport": "off"
+          }
+        }
+      }
+    },
+    {
       "includes": ["**/__tests__/**", "**/*.test.ts", "**/*.test.tsx", "**/*.property.test.ts"],
       "linter": {
         "rules": {
           "suspicious": {
-            "useAwait": "off"
+            "useAwait": "off",
+            "noMisplacedAssertion": "off"
           }
         }
       }

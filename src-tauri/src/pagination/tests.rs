@@ -2608,8 +2608,8 @@ async fn list_children_optimized_matches_ifnull_oracle() {
             "page results must match between optimized and oracle query"
         );
 
-        new_ids.extend(new_page_ids.iter().map(|s| s.to_string()));
-        old_ids.extend(old_page_ids.iter().map(|s| s.to_string()));
+        new_ids.extend(new_page_ids.iter().map(ToString::to_string));
+        old_ids.extend(old_page_ids.iter().map(ToString::to_string));
 
         assert_eq!(
             new_resp.has_more, old_resp.has_more,

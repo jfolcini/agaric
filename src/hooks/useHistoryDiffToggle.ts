@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { toast } from 'sonner'
-import i18n from '../lib/i18n'
+import { i18n } from '../lib/i18n'
 import type { DiffSpan, HistoryEntry } from '../lib/tauri'
 import { computeEditDiff } from '../lib/tauri'
 

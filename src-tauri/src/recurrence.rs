@@ -72,6 +72,8 @@ pub(crate) fn shift_date_once(
                         .checked_add(month as i64 - 1)?
                         .checked_add(n)?;
                     let new_year_i64 = total_months.div_euclid(12);
+                    // rem_euclid(12) + 1 is in [1, 12]; always fits in u32
+                    #[allow(clippy::cast_possible_truncation)]
                     let new_month = (total_months.rem_euclid(12) + 1) as u32;
                     // Clamp to a reasonable calendar range; return None for
                     // extreme values instead of producing garbage dates.
@@ -182,9 +184,8 @@ pub(crate) async fn handle_recurrence(
     .fetch_optional(pool)
     .await?;
 
-    let rule = match repeat_rule {
-        Some(r) => r,
-        None => return Ok(false),
+    let Some(rule) = repeat_rule else {
+        return Ok(false);
     };
 
     // Fetch the original block (with updated DONE state)
@@ -238,7 +239,10 @@ pub(crate) async fn handle_recurrence(
     .await?;
 
     if let Some(count) = repeat_count {
+        // repeat_seq and repeat_count are non-negative whole numbers stored as f64
+        #[allow(clippy::cast_possible_truncation)]
         let current_seq = repeat_seq.unwrap_or(0.0) as i64;
+        #[allow(clippy::cast_possible_truncation)]
         let max_count = count as i64;
         if current_seq >= max_count {
             // Already exhausted the repeat count — stop recurring
@@ -378,6 +382,8 @@ pub(crate) async fn handle_recurrence(
 
     // Copy repeat-count and increment repeat-seq on new block
     if let Some(count) = repeat_count {
+        // repeat_seq is a non-negative whole number stored as f64; safe to truncate
+        #[allow(clippy::cast_possible_truncation)]
         let current_seq = repeat_seq.unwrap_or(0.0) as i64;
         let next_seq = current_seq + 1;
 

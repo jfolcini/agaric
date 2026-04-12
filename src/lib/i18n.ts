@@ -1719,4 +1719,4 @@ i18n.use(initReactI18next).init({
 /** Standalone translation function — safe to call outside React components. */
 export const t = i18n.t.bind(i18n)
 
-export default i18n
+export { i18n }

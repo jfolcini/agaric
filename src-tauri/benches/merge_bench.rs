@@ -1,3 +1,6 @@
+// Bench helpers cast small loop indices between usize/i64/u64 freely.
+#![allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+
 //! Criterion benchmarks for merge logic and conflict resolution:
 //!   1. `merge_text`                — three-way text merge at varying edit distances
 //!   2. `resolve_property_conflict` — LWW conflict resolution at scale

@@ -133,12 +133,14 @@ pub async fn eval_backlink_query_grouped(
             group_list.iter().collect()
         };
 
-    let fetch_limit = (page.limit + 1) as usize;
+    // page.limit is a validated positive pagination bound; safe to convert
+    let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
+    let fetch_limit = limit_usize.saturating_add(1);
     let page_groups_slice: Vec<&(String, Option<String>, Vec<String>)> =
         groups_after_cursor.into_iter().take(fetch_limit).collect();
-    let has_more = page_groups_slice.len() > page.limit as usize;
+    let has_more = page_groups_slice.len() > limit_usize;
     let actual_groups: Vec<&(String, Option<String>, Vec<String>)> = if has_more {
-        page_groups_slice[..page.limit as usize].to_vec()
+        page_groups_slice[..limit_usize].to_vec()
     } else {
         page_groups_slice
     };
@@ -162,7 +164,7 @@ pub async fn eval_backlink_query_grouped(
     let sorted_all = sort_ids(pool, &all_block_ids, &sort).await?;
 
     // 8. Fetch full BlockRow data for all blocks in one batch
-    let all_ids_vec: Vec<&str> = sorted_all.iter().map(|s| s.as_str()).collect();
+    let all_ids_vec: Vec<&str> = sorted_all.iter().map(String::as_str).collect();
     let fetched_rows = if all_ids_vec.is_empty() {
         vec![]
     } else {
@@ -380,12 +382,14 @@ pub async fn eval_unlinked_references(
             group_list.iter().collect()
         };
 
-    let fetch_limit = (page.limit + 1) as usize;
+    // page.limit is a validated positive pagination bound; safe to convert
+    let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
+    let fetch_limit = limit_usize.saturating_add(1);
     let page_groups_slice: Vec<&(String, Option<String>, Vec<String>)> =
         groups_after_cursor.into_iter().take(fetch_limit).collect();
-    let has_more = page_groups_slice.len() > page.limit as usize;
+    let has_more = page_groups_slice.len() > limit_usize;
     let actual_groups: Vec<&(String, Option<String>, Vec<String>)> = if has_more {
-        page_groups_slice[..page.limit as usize].to_vec()
+        page_groups_slice[..limit_usize].to_vec()
     } else {
         page_groups_slice
     };
@@ -405,7 +409,7 @@ pub async fn eval_unlinked_references(
         .iter()
         .flat_map(|(_, _, block_ids_in_group)| block_ids_in_group.iter().cloned())
         .collect();
-    let all_ids_vec: Vec<&str> = all_block_ids.iter().map(|s| s.as_str()).collect();
+    let all_ids_vec: Vec<&str> = all_block_ids.iter().map(String::as_str).collect();
     let fetched_rows = if all_ids_vec.is_empty() {
         vec![]
     } else {

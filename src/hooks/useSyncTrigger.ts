@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import i18n from '../lib/i18n'
+import { i18n } from '../lib/i18n'
 import { listPeerRefs, startSync } from '../lib/tauri'
 import { useSyncStore } from '../stores/sync'
 

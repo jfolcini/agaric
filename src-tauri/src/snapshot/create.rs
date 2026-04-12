@@ -173,7 +173,7 @@ pub async fn compact_op_log(
     device_id: &str,
     retention_days: u64,
 ) -> Result<Option<String>, AppError> {
-    let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days as i64);
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days.cast_signed());
     // Use to_rfc3339_opts with millis + Z-suffix for consistent comparison
     // with op_log.created_at timestamps (F03).
     let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
@@ -268,6 +268,8 @@ pub async fn get_latest_snapshot(pool: &SqlitePool) -> Result<Option<(String, Ve
 /// Also deletes any lingering 'pending' snapshots (crash leftovers).
 /// Returns the number of deleted rows.
 pub async fn cleanup_old_snapshots(pool: &SqlitePool, keep: usize) -> Result<u64, AppError> {
+    // keep is a small configuration value (typically < 100); safe to cast
+    #[allow(clippy::cast_possible_wrap)]
     let keep_i64 = keep as i64;
     let result = sqlx::query(
         "DELETE FROM log_snapshots WHERE status = 'pending' \

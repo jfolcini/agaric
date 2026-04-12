@@ -26,7 +26,7 @@ import { createContext, createElement, useContext, useEffect, useRef } from 'rea
 import { toast } from 'sonner'
 import { createStore, type StoreApi, useStore } from 'zustand'
 import { parse, serialize } from '../editor/markdown-serializer'
-import i18n from '../lib/i18n'
+import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import type { BlockRow, PageResponse } from '../lib/tauri'
 import { createBlock, deleteBlock, editBlock, listBlocks, moveBlock } from '../lib/tauri'

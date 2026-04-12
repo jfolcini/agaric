@@ -1,3 +1,6 @@
+// Bench helpers cast small loop indices between usize/i64 freely.
+#![allow(clippy::cast_possible_wrap)]
+
 //! Criterion benchmarks for property and task-state commands:
 //!   1. `set_property_inner`
 //!   2. `get_properties_inner`

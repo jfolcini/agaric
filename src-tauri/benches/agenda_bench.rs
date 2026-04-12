@@ -1,3 +1,6 @@
+// Bench helpers cast small loop indices between usize/i64 freely.
+#![allow(clippy::cast_possible_wrap)]
+
 //! Criterion benchmarks for the three agenda command inner functions:
 //!   1. `count_agenda_batch_inner`        — weekly badge counts
 //!   2. `count_agenda_batch_by_source_inner` — per-source badge counts

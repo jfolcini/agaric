@@ -1,3 +1,6 @@
+// Bench helpers cast small loop indices between usize/i64 freely.
+#![allow(clippy::cast_possible_wrap)]
+
 //! Criterion benchmarks for sync protocol hot-path functions:
 //!   - `get_local_heads`     — per-device head query
 //!   - `compute_ops_to_send` — delta computation against remote heads

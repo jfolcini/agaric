@@ -23,7 +23,7 @@ const mermaid = (await import('mermaid')).default
 const mockedRender = vi.mocked(mermaid.render)
 
 // Import after mocks are set up
-const { default: MermaidDiagram } = await import('../MermaidDiagram')
+const { MermaidDiagram } = await import('../MermaidDiagram')
 
 describe('MermaidDiagram', () => {
   it('shows loading state initially', () => {

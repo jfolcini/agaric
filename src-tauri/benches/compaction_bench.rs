@@ -1,3 +1,6 @@
+// Bench helpers cast small loop indices between usize/i64 freely.
+#![allow(clippy::cast_possible_wrap)]
+
 //! Criterion benchmarks for op log compaction (F-20):
 //!   1. `get_compaction_status` — query op log statistics at varying table sizes
 //!   2. `compact_op_log`        — full compaction (snapshot + purge) at varying sizes

@@ -1,3 +1,6 @@
+// Bench helpers cast small loop indices between usize/i64 freely.
+#![allow(clippy::cast_possible_wrap)]
+
 //! Criterion benchmarks for the page-alias subsystem:
 //!   1. `set_page_aliases_inner`     — replace all aliases for a page
 //!   2. `get_page_aliases_inner`     — read aliases for a single page

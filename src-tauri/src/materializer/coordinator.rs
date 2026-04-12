@@ -64,7 +64,7 @@ impl Materializer {
                 bg_rx,
                 s,
                 m,
-                Some(read_pool.clone()),
+                Some(read_pool),
             ));
         }
         Self {
@@ -159,8 +159,16 @@ impl Materializer {
 
     pub fn shutdown(&self) {
         self.shutdown_flag.store(true, Ordering::Release);
-        let _ = self.fg_tx.lock().unwrap_or_else(|e| e.into_inner()).take();
-        let _ = self.bg_tx.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let _ = self
+            .fg_tx
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        let _ = self
+            .bg_tx
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
     }
 
     pub async fn flush_foreground(&self) -> Result<(), AppError> {

@@ -31,7 +31,7 @@ impl std::fmt::Display for DeviceId {
 /// Extracted from a `map_err` closure so the formatting code is attributable
 /// by tarpaulin (closures inside `map_err` are unreliable for coverage).
 #[cfg(not(tarpaulin_include))]
-fn corrupt_device_id_error(config_path: &Path, e: uuid::Error) -> crate::error::AppError {
+fn corrupt_device_id_error(config_path: &Path, e: &uuid::Error) -> crate::error::AppError {
     crate::error::AppError::InvalidOperation(format!(
         "Corrupt device ID file '{}': {}",
         config_path.display(),
@@ -82,7 +82,7 @@ pub fn get_or_create_device_id(config_path: &Path) -> Result<String, crate::erro
             let content = fs::read_to_string(config_path)?;
             let id = content.trim().to_string();
             let parsed =
-                Uuid::parse_str(&id).map_err(|e| corrupt_device_id_error(config_path, e))?;
+                Uuid::parse_str(&id).map_err(|e| corrupt_device_id_error(config_path, &e))?;
             // Return normalized form
             Ok(parsed.to_string())
         }

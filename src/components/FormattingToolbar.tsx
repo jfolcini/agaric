@@ -15,8 +15,7 @@
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
 import { FileCode2, Heading, Link2 } from 'lucide-react'
-import type React from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { dispatchBlockEvent } from '@/lib/block-events'
 import type { ToolbarButtonConfig } from '@/lib/toolbar-config'
@@ -47,22 +46,19 @@ interface FormattingToolbarProps {
   currentPriority?: string | null
 }
 
-function Tip({
-  label,
-  children,
-}: {
-  label: string
-  children: React.ReactElement
-}): React.ReactElement {
-  return (
+const Tip = React.forwardRef<HTMLButtonElement, { label: string; children: React.ReactElement }>(
+  ({ label, children }, ref) => (
     <Tooltip>
-      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipTrigger asChild ref={ref}>
+        {children}
+      </TooltipTrigger>
       <TooltipContent side="bottom" sideOffset={6}>
         {label}
       </TooltipContent>
     </Tooltip>
-  )
-}
+  ),
+)
+Tip.displayName = 'Tip'
 
 function ToolbarButtonGroup({
   buttons,
@@ -182,8 +178,8 @@ export function FormattingToolbar({
           <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
           <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>
-            <Tip label={t('toolbar.linkTip')}>
-              <PopoverAnchor asChild>
+            <PopoverAnchor asChild>
+              <Tip label={t('toolbar.linkTip')}>
                 <Button
                   variant="ghost"
                   size="icon-xs"
@@ -197,8 +193,8 @@ export function FormattingToolbar({
                 >
                   <Link2 className="h-3.5 w-3.5" />
                 </Button>
-              </PopoverAnchor>
-            </Tip>
+              </Tip>
+            </PopoverAnchor>
             <PopoverContent align="start" className="w-72 p-3" data-editor-portal>
               <LinkEditPopover
                 editor={editor}
@@ -216,8 +212,8 @@ export function FormattingToolbar({
           />
 
           <Popover open={codeBlockPopoverOpen} onOpenChange={setCodeBlockPopoverOpen}>
-            <Tip label={t('toolbar.codeBlockLanguageTip')}>
-              <PopoverAnchor asChild>
+            <PopoverAnchor asChild>
+              <Tip label={t('toolbar.codeBlockLanguageTip')}>
                 <Button
                   variant="ghost"
                   size="icon-xs"
@@ -236,8 +232,8 @@ export function FormattingToolbar({
                     </span>
                   )}
                 </Button>
-              </PopoverAnchor>
-            </Tip>
+              </Tip>
+            </PopoverAnchor>
             <PopoverContent align="start" className="w-auto p-1" data-editor-portal>
               <CodeLanguageSelector
                 editor={editor}
@@ -249,8 +245,8 @@ export function FormattingToolbar({
           </Popover>
 
           <Popover open={headingPopoverOpen} onOpenChange={setHeadingPopoverOpen}>
-            <Tip label={t('toolbar.headingTip')}>
-              <PopoverAnchor asChild>
+            <PopoverAnchor asChild>
+              <Tip label={t('toolbar.headingTip')}>
                 <Button
                   variant="ghost"
                   size="icon-xs"
@@ -267,8 +263,8 @@ export function FormattingToolbar({
                     <span className="text-[10px] font-bold">{state.headingLevel}</span>
                   )}
                 </Button>
-              </PopoverAnchor>
-            </Tip>
+              </Tip>
+            </PopoverAnchor>
             <PopoverContent align="start" className="w-auto p-1" data-editor-portal>
               <HeadingLevelSelector
                 editor={editor}

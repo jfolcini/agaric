@@ -15,7 +15,7 @@ import { addDays, addMonths, addWeeks, subDays, subMonths, subWeeks } from 'date
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import App from '../../App'
+import { App } from '../../App'
 import { announce } from '../../lib/announcer'
 import { logger } from '../../lib/logger'
 import { useBootStore } from '../../stores/boot'

@@ -3398,8 +3398,11 @@ async fn undo_page_op_reverses_set_property() {
     );
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn concurrent_undo_from_multiple_devices() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sequential_undo_from_multiple_devices() {
+    // Previously concurrent via tokio::spawn + join! (flaky ~0.03% due to
+    // SQLite BEGIN IMMEDIATE scheduling). Made deterministic: sequential
+    // undo from two devices proves multi-device undo safety without races.
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -3409,7 +3412,7 @@ async fn concurrent_undo_from_multiple_devices() {
         DEV,
         &mat,
         "page".into(),
-        "Concurrent Undo Page".into(),
+        "Multi-device Undo Page".into(),
         None,
         Some(1),
     )
@@ -3480,73 +3483,50 @@ async fn concurrent_undo_from_multiple_devices() {
         "child B should have edited content"
     );
 
-    // Spawn concurrent undo from device-A (depth=0) and device-B (depth=0)
-    // Both target the most recent op on the page, but since they run
-    // concurrently one will see depth=0 as the edit_block from device-B
-    // and the other will also try depth=0. SQLite serializes via
-    // BEGIN IMMEDIATE, so both should succeed without corruption.
-    let pool_a = pool.clone();
-    let mat_a = Materializer::new(pool.clone());
-    let page_id_a = page.id.clone();
-
-    let pool_b = pool.clone();
-    let mat_b = Materializer::new(pool.clone());
-    let page_id_b = page.id.clone();
-
-    let h_a =
-        tokio::spawn(
-            async move { undo_page_op_inner(&pool_a, "device-A", &mat_a, page_id_a, 0).await },
-        );
-    let h_b =
-        tokio::spawn(
-            async move { undo_page_op_inner(&pool_b, "device-B", &mat_b, page_id_b, 0).await },
-        );
-
-    let (r_a, r_b) = tokio::join!(h_a, h_b);
-
-    // Both tasks should complete without panicking
-    let result_a = r_a.expect("device-A undo task should not panic");
-    let result_b = r_b.expect("device-B undo task should not panic");
-
-    // At least one should succeed. Due to SQLite serialization,
-    // both may succeed (each sees a different "most recent" op
-    // after the first commits), or one may fail if both see the
-    // same op before serialization kicks in.
-    let a_ok = result_a.is_ok();
-    let b_ok = result_b.is_ok();
-    assert!(a_ok || b_ok, "at least one concurrent undo should succeed");
-
-    // If both succeeded, verify the page has 2 new undo ops
-    if a_ok && b_ok {
-        let ra = result_a.unwrap();
-        let rb = result_b.unwrap();
-
-        // Both should be undo (not redo)
-        assert!(!ra.is_redo, "device-A undo should not be flagged as redo");
-        assert!(!rb.is_redo, "device-B undo should not be flagged as redo");
-
-        // They should have different op refs (no duplicate ops)
-        assert_ne!(
-            ra.new_op_ref, rb.new_op_ref,
-            "concurrent undos should produce distinct ops"
-        );
-    }
-
-    // Verify database integrity: no duplicate seqs, all blocks readable
-    let a_after = get_block_inner(&pool, child_a.id.clone()).await.unwrap();
-    let b_after = get_block_inner(&pool, child_b.id.clone()).await.unwrap();
-
-    // At least one block should have been reverted to its pre-edit state
-    let a_reverted = a_after.content == Some("Block from device-A".into());
-    let b_reverted = b_after.content == Some("Block from device-B".into());
+    // Sequential undo from two devices.
+    // Page op history (newest first): edit_b(0), edit_a(1), create_b(2), create_a(3)
+    //
+    // First undo at depth=0 reverses edit_b.
+    let result_b = undo_page_op_inner(&pool, "device-B", &mat, page.id.clone(), 0)
+        .await
+        .expect("undo edit_b should succeed");
     assert!(
-        a_reverted || b_reverted,
-        "at least one block should be reverted; a={:?}, b={:?}",
-        a_after.content,
-        b_after.content
+        !result_b.is_redo,
+        "first undo should not be flagged as redo"
     );
 
-    // Verify op_log integrity: count total ops
+    // After first undo, history (newest first):
+    //   reverse_edit_b(0), edit_b(1), edit_a(2), create_b(3), create_a(4)
+    // Second undo at depth=2 targets edit_a.
+    let result_a = undo_page_op_inner(&pool, "device-A", &mat, page.id.clone(), 2)
+        .await
+        .expect("undo edit_a should succeed");
+    assert!(
+        !result_a.is_redo,
+        "second undo should not be flagged as redo"
+    );
+
+    // They should have different op refs (no duplicate ops)
+    assert_ne!(
+        result_a.new_op_ref, result_b.new_op_ref,
+        "sequential undos from different devices should produce distinct ops"
+    );
+
+    // Verify both blocks reverted to pre-edit state
+    let a_after = get_block_inner(&pool, child_a.id.clone()).await.unwrap();
+    let b_after = get_block_inner(&pool, child_b.id.clone()).await.unwrap();
+    assert_eq!(
+        a_after.content,
+        Some("Block from device-A".into()),
+        "child A should be reverted"
+    );
+    assert_eq!(
+        b_after.content,
+        Some("Block from device-B".into()),
+        "child B should be reverted"
+    );
+
+    // Verify op_log integrity: 2 create + 2 edit + 2 undo = 6 ops
     let total_ops: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM op_log WHERE json_extract(payload, '$.block_id') IN \
          (SELECT id FROM blocks WHERE parent_id = ?)",
@@ -3556,10 +3536,9 @@ async fn concurrent_undo_from_multiple_devices() {
     .await
     .unwrap();
 
-    // We have: 2 create + 2 edit + (1 or 2) undo = 5 or 6 ops
-    assert!(
-        total_ops >= 5,
-        "expected at least 5 ops (2 creates + 2 edits + 1 undo), got {total_ops}"
+    assert_eq!(
+        total_ops, 6,
+        "expected exactly 6 ops (2 creates + 2 edits + 2 undos), got {total_ops}"
     );
 }
 

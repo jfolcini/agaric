@@ -54,8 +54,8 @@ pub async fn get_compaction_status_inner(pool: &SqlitePool) -> Result<Compaction
         .fetch_one(pool)
         .await?;
 
-    let cutoff =
-        chrono::Utc::now() - chrono::Duration::days(crate::snapshot::DEFAULT_RETENTION_DAYS as i64);
+    let cutoff = chrono::Utc::now()
+        - chrono::Duration::days(crate::snapshot::DEFAULT_RETENTION_DAYS.cast_signed());
     let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
     let eligible_ops: i64 = sqlx::query_scalar!(
@@ -94,7 +94,7 @@ pub async fn compact_op_log_cmd_inner(
     device_id: &str,
     retention_days: u64,
 ) -> Result<CompactionResult, AppError> {
-    let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days as i64);
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days.cast_signed());
     let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
     // Count eligible ops before compaction

@@ -332,9 +332,8 @@ async fn cert_pinning_wrong_hash_fails() {
         "connection with wrong cert hash should fail"
     );
 
-    let err = match result {
-        Err(e) => e,
-        Ok(_) => unreachable!("already asserted is_err"),
+    let Err(err) = result else {
+        unreachable!("already asserted is_err")
     };
     let err_msg = err.to_string();
     assert!(

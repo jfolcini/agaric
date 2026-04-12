@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import i18n from '../lib/i18n'
+import { i18n } from '../lib/i18n'
 import type { AttachmentRow } from '../lib/tauri'
 import { addAttachment, deleteAttachment, listAttachments } from '../lib/tauri'
 import { usePageBlockStoreApi } from '../stores/page-blocks'

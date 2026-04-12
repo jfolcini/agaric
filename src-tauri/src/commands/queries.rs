@@ -206,7 +206,8 @@ pub async fn count_backlinks_batch_inner(
     let rows = query.fetch_all(pool).await?;
     Ok(rows
         .into_iter()
-        .map(|(id, cnt)| (id, cnt as usize))
+        // cnt is a non-negative count from SQL; safe to convert
+        .map(|(id, cnt)| (id, usize::try_from(cnt).unwrap_or(0)))
         .collect())
 }
 

@@ -1,3 +1,6 @@
+// Bench helpers cast small loop indices between usize/i64 freely.
+#![allow(clippy::cast_possible_wrap)]
+
 //! Criterion benchmark for the graph-view link query:
 //!   - `list_page_links_inner` — rolls up content-block links to parent pages
 

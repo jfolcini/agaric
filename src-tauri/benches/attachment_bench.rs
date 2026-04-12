@@ -1,3 +1,6 @@
+// Bench helpers cast small loop indices between usize/i64/u64 freely.
+#![allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+
 //! Criterion benchmarks for attachment CRUD operations.
 //!
 //! Benches:

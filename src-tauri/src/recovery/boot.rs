@@ -103,6 +103,8 @@ pub async fn recover_at_boot(
         }
     }
 
+    // Elapsed millis for boot recovery won't exceed u64
+    #[allow(clippy::cast_possible_truncation)]
     let duration_ms = start.elapsed().as_millis() as u64;
 
     tracing::info!(

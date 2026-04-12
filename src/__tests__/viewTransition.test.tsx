@@ -9,7 +9,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import App from '../App'
+import { App } from '../App'
 import { useBootStore } from '../stores/boot'
 import { useNavigationStore } from '../stores/navigation'
 

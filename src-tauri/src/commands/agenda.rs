@@ -53,7 +53,8 @@ pub async fn count_agenda_batch_inner(
     let rows = query.fetch_all(pool).await?;
     Ok(rows
         .into_iter()
-        .map(|(date, cnt)| (date, cnt as usize))
+        // cnt is a non-negative count from SQL; safe to convert
+        .map(|(date, cnt)| (date, usize::try_from(cnt).unwrap_or(0)))
         .collect())
 }
 
@@ -96,7 +97,11 @@ pub async fn count_agenda_batch_by_source_inner(
     let rows = query.fetch_all(pool).await?;
     let mut result: HashMap<String, HashMap<String, usize>> = HashMap::new();
     for (date, source, cnt) in rows {
-        result.entry(date).or_default().insert(source, cnt as usize);
+        // cnt is a non-negative count from SQL; safe to convert
+        result
+            .entry(date)
+            .or_default()
+            .insert(source, usize::try_from(cnt).unwrap_or(0));
     }
     Ok(result)
 }
@@ -117,7 +122,8 @@ pub async fn list_projected_agenda_inner(
     validate_date_format(&start_date)?;
     validate_date_format(&end_date)?;
 
-    let cap = limit.unwrap_or(200).clamp(1, 500) as usize;
+    // limit is clamped to [1, 500], always positive; safe to convert
+    let cap = usize::try_from(limit.unwrap_or(200).clamp(1, 500)).unwrap_or(200);
 
     // Parse date range boundaries
     let range_start = chrono::NaiveDate::parse_from_str(&start_date, "%Y-%m-%d")
@@ -132,6 +138,8 @@ pub async fn list_projected_agenda_inner(
     }
 
     // Try cache first — a single query replaces the O(n*m) projection loop.
+    // cap is at most 500; fits in i64
+    #[allow(clippy::cast_possible_wrap)]
     let cache_limit = cap as i64;
     #[allow(clippy::type_complexity)]
     let cached: Vec<(
@@ -261,6 +269,8 @@ async fn list_projected_agenda_on_the_fly(
             .as_deref()
             .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
 
+        // repeat_count and repeat_seq are non-negative f64 from SQLite; safe to truncate
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let remaining = match (repeat_count, repeat_seq) {
             (Some(count), Some(seq)) if count > seq => Some((count - seq) as usize),
             (Some(count), None) => Some(count as usize),
@@ -297,9 +307,8 @@ async fn list_projected_agenda_on_the_fly(
                 break;
             }
 
-            let base = match chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
-                Ok(d) => d,
-                Err(_) => continue,
+            let Ok(base) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") else {
+                continue;
             };
 
             // Determine starting point based on mode

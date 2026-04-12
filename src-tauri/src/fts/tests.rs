@@ -1403,7 +1403,7 @@ async fn search_pagination_identical_ranks_no_duplicates_no_skips() {
             "content",
             "identical searchword",
             None,
-            Some(i as i64),
+            Some(i64::try_from(i).unwrap()),
         )
         .await;
     }
@@ -1433,7 +1433,7 @@ async fn search_pagination_identical_ranks_no_duplicates_no_skips() {
     }
 
     // Verify: exactly 6 results, no duplicates, all blocks present
-    let unique: std::collections::HashSet<&str> = all_ids.iter().map(|s| s.as_str()).collect();
+    let unique: std::collections::HashSet<&str> = all_ids.iter().map(String::as_str).collect();
     assert_eq!(
         all_ids.len(),
         6,
@@ -1538,7 +1538,7 @@ async fn search_cursor_round_trip_with_float_rank() {
         &result3.items[0].id,
     ]
     .into_iter()
-    .map(|s| s.as_str())
+    .map(String::as_str)
     .collect();
     let unique: std::collections::HashSet<&str> = all_ids.iter().copied().collect();
     assert_eq!(
@@ -1604,7 +1604,7 @@ async fn search_pagination_close_ranks_epsilon_boundary() {
         assert!(pages <= 5, "too many pages — possible infinite loop");
     }
 
-    let unique: std::collections::HashSet<&str> = all_ids.iter().map(|s| s.as_str()).collect();
+    let unique: std::collections::HashSet<&str> = all_ids.iter().map(String::as_str).collect();
     assert_eq!(all_ids.len(), 3, "all 3 blocks should be returned");
     assert_eq!(unique.len(), 3, "no duplicates across pages");
 }
@@ -1688,7 +1688,7 @@ async fn reindex_fts_references_batches_correctly() {
             "content",
             &format!("item {} about #[{tag_id}]", i + 1),
             None,
-            Some(i as i64 + 1),
+            Some(i64::try_from(i).unwrap() + 1),
         )
         .await;
         sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
@@ -1866,7 +1866,7 @@ async fn reindex_fts_references_batch_50_blocks() {
             "content",
             &format!("task {i} for #[{tag_id}]"),
             None,
-            Some(i as i64 + 1),
+            Some(i.cast_signed() + 1),
         )
         .await;
         sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")

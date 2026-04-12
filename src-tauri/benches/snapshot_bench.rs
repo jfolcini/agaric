@@ -1,3 +1,6 @@
+// Bench helpers cast small loop indices between usize/i64/u64 freely.
+#![allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+
 //! Criterion benchmarks for snapshot creation and application:
 //!   1. `create_snapshot`  — snapshot creation at varying DB sizes (10, 100, 1000 blocks)
 //!   2. `apply_snapshot`   — snapshot application to a fresh DB at varying sizes
