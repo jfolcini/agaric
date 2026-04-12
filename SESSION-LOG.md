@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 373 — T-16 RESOLVED: all 4 select! branches tested — Branch A extracted + 5 tests (2026-04-13)
+
+**T-16 RESOLVED — the last REVIEW-LATER item. All 4 daemon_loop select! branches now tested. REVIEW-LATER is empty (0 open items).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| T-16 (resolved) | Extract Branch A (mDNS discovery) + 5 tests + Branch B/C tests | `discovery.rs`, `orchestrator.rs`, `mod.rs`, `tests.rs` |
+
+### Implementation
+- **Branch A**: Extracted `process_discovery_event()` from inline logic — handles ServiceEvent parse, self-check, discovered-map update, pairing check. 5 tests with constructed `mdns_sd::ServiceEvent` values (non-resolved, self-discovery, already-discovered, unpaired, paired).
+- **Branch B**: (session 372) Local change notification triggers sync attempt with unreachable peer.
+- **Branch C**: (session 372) Resync timer first tick fires immediately for overdue peer.
+- **Branch D**: (session 371) Daemon start/shutdown smoke tests.
+- **Total T-16 tests across sessions 364-373**: 69 tests (20 unit + 14 handle_incoming_sync + 6 file transfer + 14 extracted functions + 5 cert verification + 4 daemon lifecycle + 2 branch B/C + 5 Branch A discovery = ~70).
+
+### Stats
+- 4 files changed (+164 -42 lines)
+- 1893 Rust tests pass (+5), all 19 prek hooks pass
+- T-16 resolved — REVIEW-LATER now has 0 open items
+
+---
+
 ## Session 372 — T-16 select! branch B + C tests + M-16 resolved (2026-04-13)
 
 **M-16 RESOLVED (815 TS errors fixed). T-16 Branches B + C now tested — 3 of 4 daemon_loop branches covered. Only Branch A (mDNS discovery) remains.**
