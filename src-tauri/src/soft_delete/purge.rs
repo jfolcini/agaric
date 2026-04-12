@@ -45,6 +45,21 @@ pub async fn purge_block(pool: &SqlitePool, block_id: &str) -> Result<u64, AppEr
              SELECT b.id FROM blocks b \
              INNER JOIN descendants d ON b.parent_id = d.id \
          ) \
+         DELETE FROM block_tag_inherited \
+         WHERE block_id IN (SELECT id FROM descendants) \
+            OR inherited_from IN (SELECT id FROM descendants)",
+        block_id,
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query!(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT id FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+         ) \
          DELETE FROM block_properties \
          WHERE block_id IN (SELECT id FROM descendants)",
         block_id,
@@ -187,6 +202,34 @@ pub async fn purge_block(pool: &SqlitePool, block_id: &str) -> Result<u64, AppEr
              INNER JOIN descendants d ON b.parent_id = d.id \
          ) \
          DELETE FROM fts_blocks \
+         WHERE block_id IN (SELECT id FROM descendants)",
+        block_id,
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query!(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT id FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+         ) \
+         DELETE FROM page_aliases \
+         WHERE page_id IN (SELECT id FROM descendants)",
+        block_id,
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query!(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT id FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+         ) \
+         DELETE FROM projected_agenda_cache \
          WHERE block_id IN (SELECT id FROM descendants)",
         block_id,
     )

@@ -858,6 +858,20 @@ pub async fn purge_all_deleted_inner(
     .execute(&mut *tx)
     .await?;
 
+    // page_aliases
+    sqlx::query(&format!(
+        "DELETE FROM page_aliases WHERE page_id IN ({deleted_set})"
+    ))
+    .execute(&mut *tx)
+    .await?;
+
+    // projected_agenda_cache
+    sqlx::query(&format!(
+        "DELETE FROM projected_agenda_cache WHERE block_id IN ({deleted_set})"
+    ))
+    .execute(&mut *tx)
+    .await?;
+
     // Delete all deleted blocks
     let result = sqlx::query!("DELETE FROM blocks WHERE deleted_at IS NOT NULL")
         .execute(&mut *tx)
