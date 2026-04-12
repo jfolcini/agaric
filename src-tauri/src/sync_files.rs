@@ -1273,4 +1273,299 @@ mod tests {
         );
         assert_eq!(std::fs::read(&full_path).unwrap(), content);
     }
+
+    // ── In-memory WebSocket file transfer integration tests ──────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn inmem_receive_request_empty_request() {
+        let dir = TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+        let app_data_dir = dir.path().to_path_buf();
+        let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+
+        let client_task = tokio::spawn(async move {
+            client_conn
+                .send_json(&SyncMessage::FileRequest {
+                    attachment_ids: vec![],
+                })
+                .await
+                .unwrap();
+            let msg: SyncMessage = client_conn.recv_json().await.unwrap();
+            assert!(matches!(msg, SyncMessage::FileTransferComplete));
+        });
+
+        let stats = receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir)
+            .await
+            .unwrap();
+        client_task.await.unwrap();
+
+        assert_eq!(stats.files_sent, 0);
+        assert_eq!(stats.bytes_sent, 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn inmem_receive_request_transfer_complete_instead() {
+        let dir = TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+        let app_data_dir = dir.path().to_path_buf();
+        let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+
+        let client_task = tokio::spawn(async move {
+            // Send FileTransferComplete instead of FileRequest
+            client_conn
+                .send_json(&SyncMessage::FileTransferComplete)
+                .await
+                .unwrap();
+            // Expect FileTransferComplete back from server
+            let msg: SyncMessage = client_conn.recv_json().await.unwrap();
+            assert!(matches!(msg, SyncMessage::FileTransferComplete));
+        });
+
+        let stats = receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir)
+            .await
+            .unwrap();
+        client_task.await.unwrap();
+
+        assert_eq!(stats.files_sent, 0);
+        assert_eq!(stats.bytes_sent, 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn inmem_receive_request_sends_one_file() {
+        let dir = TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+        let app_data_dir = dir.path().to_path_buf();
+
+        let file_data = b"attachment content for transfer test";
+        let expected_hash = blake3::hash(file_data).to_hex().to_string();
+        let expected_size = file_data.len() as u64;
+
+        // Insert block + attachment and create the file on disk
+        insert_test_attachment(
+            &pool,
+            "ATT_S1",
+            "attachments/send1.bin",
+            file_data.len() as i64,
+        )
+        .await;
+        write_attachment_file(dir.path(), "attachments/send1.bin", file_data).unwrap();
+
+        let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+
+        let client_task = tokio::spawn(async move {
+            // Send FileRequest requesting one attachment
+            client_conn
+                .send_json(&SyncMessage::FileRequest {
+                    attachment_ids: vec!["ATT_S1".into()],
+                })
+                .await
+                .unwrap();
+
+            // Receive FileOffer
+            let offer: SyncMessage = client_conn.recv_json().await.unwrap();
+            match offer {
+                SyncMessage::FileOffer {
+                    attachment_id,
+                    size_bytes,
+                    blake3_hash,
+                } => {
+                    assert_eq!(attachment_id, "ATT_S1");
+                    assert_eq!(size_bytes, expected_size);
+                    assert_eq!(blake3_hash, expected_hash);
+                }
+                other => panic!("expected FileOffer, got {other:?}"),
+            }
+
+            // Receive binary data
+            let data = client_conn.recv_binary().await.unwrap();
+            assert_eq!(data, file_data);
+
+            // Send FileReceived
+            client_conn
+                .send_json(&SyncMessage::FileReceived {
+                    attachment_id: "ATT_S1".into(),
+                })
+                .await
+                .unwrap();
+
+            // Receive FileTransferComplete
+            let msg: SyncMessage = client_conn.recv_json().await.unwrap();
+            assert!(matches!(msg, SyncMessage::FileTransferComplete));
+        });
+
+        let stats = receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir)
+            .await
+            .unwrap();
+        client_task.await.unwrap();
+
+        assert_eq!(stats.files_sent, 1);
+        assert_eq!(stats.bytes_sent, expected_size);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn inmem_request_receive_no_missing() {
+        let dir = TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+        let app_data_dir = dir.path().to_path_buf();
+
+        // Insert attachment and create file on disk so nothing is missing
+        let file_data = b"already present";
+        insert_test_attachment(
+            &pool,
+            "ATT_P1",
+            "attachments/present.bin",
+            file_data.len() as i64,
+        )
+        .await;
+        write_attachment_file(dir.path(), "attachments/present.bin", file_data).unwrap();
+
+        let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+
+        let server_task = tokio::spawn(async move {
+            // Receive empty FileRequest
+            let msg: SyncMessage = server_conn.recv_json().await.unwrap();
+            match msg {
+                SyncMessage::FileRequest { attachment_ids } => {
+                    assert!(attachment_ids.is_empty());
+                }
+                other => panic!("expected FileRequest, got {other:?}"),
+            }
+            // Send FileTransferComplete
+            server_conn
+                .send_json(&SyncMessage::FileTransferComplete)
+                .await
+                .unwrap();
+        });
+
+        let stats = request_and_receive_files(&mut client_conn, &pool, &app_data_dir)
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+
+        assert_eq!(stats.files_received, 0);
+        assert_eq!(stats.bytes_received, 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn inmem_request_receive_one_file() {
+        let dir = TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+        let app_data_dir = dir.path().to_path_buf();
+
+        let file_data = b"file content to receive over inmem connection";
+        let expected_hash = blake3::hash(file_data).to_hex().to_string();
+        let expected_size = file_data.len() as u64;
+
+        // Insert attachment record but do NOT create the file on disk (so it's missing)
+        insert_test_attachment(
+            &pool,
+            "ATT_R1",
+            "attachments/recv1.bin",
+            file_data.len() as i64,
+        )
+        .await;
+        assert!(!dir.path().join("attachments/recv1.bin").exists());
+
+        let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+
+        let hash_for_offer = expected_hash.clone();
+        let server_task = tokio::spawn(async move {
+            // Receive FileRequest
+            let msg: SyncMessage = server_conn.recv_json().await.unwrap();
+            match msg {
+                SyncMessage::FileRequest { attachment_ids } => {
+                    assert_eq!(attachment_ids, vec!["ATT_R1".to_string()]);
+                }
+                other => panic!("expected FileRequest, got {other:?}"),
+            }
+
+            // Send FileOffer
+            server_conn
+                .send_json(&SyncMessage::FileOffer {
+                    attachment_id: "ATT_R1".into(),
+                    size_bytes: expected_size,
+                    blake3_hash: hash_for_offer,
+                })
+                .await
+                .unwrap();
+
+            // Send binary data
+            server_conn.send_binary(file_data).await.unwrap();
+
+            // Receive FileReceived
+            let ack: SyncMessage = server_conn.recv_json().await.unwrap();
+            assert!(matches!(
+                ack,
+                SyncMessage::FileReceived { attachment_id } if attachment_id == "ATT_R1"
+            ));
+
+            // Send FileTransferComplete
+            server_conn
+                .send_json(&SyncMessage::FileTransferComplete)
+                .await
+                .unwrap();
+        });
+
+        let stats = request_and_receive_files(&mut client_conn, &pool, &app_data_dir)
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+
+        assert_eq!(stats.files_received, 1);
+        assert_eq!(stats.bytes_received, expected_size);
+
+        // Verify file was written to disk with correct content and hash
+        let (data, hash) = read_attachment_file(dir.path(), "attachments/recv1.bin").unwrap();
+        assert_eq!(data, file_data);
+        assert_eq!(hash, expected_hash);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn inmem_responder_bidirectional_no_files() {
+        let dir = TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+        let app_data_dir = dir.path().to_path_buf();
+
+        let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+
+        // Mock the initiator side.
+        // Responder does: receive_request_and_send_files then request_and_receive_files
+        // So initiator must:
+        //   Phase 1: send FileRequest [] -> receive FileTransferComplete
+        //   Phase 2: receive FileRequest [] -> send FileTransferComplete
+        let initiator_task = tokio::spawn(async move {
+            // Phase 1: Initiator sends FileRequest (no missing files)
+            client_conn
+                .send_json(&SyncMessage::FileRequest {
+                    attachment_ids: vec![],
+                })
+                .await
+                .unwrap();
+            // Responder receives it, has nothing to send, sends FileTransferComplete
+            let msg: SyncMessage = client_conn.recv_json().await.unwrap();
+            assert!(matches!(msg, SyncMessage::FileTransferComplete));
+
+            // Phase 2: Responder sends its own FileRequest (no missing files)
+            let msg2: SyncMessage = client_conn.recv_json().await.unwrap();
+            assert!(matches!(
+                msg2,
+                SyncMessage::FileRequest { attachment_ids } if attachment_ids.is_empty()
+            ));
+            // Initiator sends FileTransferComplete
+            client_conn
+                .send_json(&SyncMessage::FileTransferComplete)
+                .await
+                .unwrap();
+        });
+
+        let stats = run_file_transfer_responder(&mut server_conn, &pool, &app_data_dir)
+            .await
+            .unwrap();
+        initiator_task.await.unwrap();
+
+        assert_eq!(stats.files_sent, 0);
+        assert_eq!(stats.files_received, 0);
+        assert_eq!(stats.bytes_sent, 0);
+        assert_eq!(stats.bytes_received, 0);
+    }
 }
