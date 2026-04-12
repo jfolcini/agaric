@@ -1,5 +1,33 @@
 # Session Log
 
+## Session 354 — M-64/M-65/M-66/M-68/M-69 resolved: split 5 more Rust files into module directories (2026-04-12)
+
+**5 REVIEW-LATER items resolved (M-64, M-65, M-66, M-68, M-69). 4 MAINT items remain.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| M-64 | Split `reverse.rs` (1,880 LOC) → `reverse/` (block_ops, property_ops, tag_ops, attachment_ops) | 5 new files, 1 deleted |
+| M-65 | Split `tag_query.rs` (1,838 LOC) → `tag_query/` (query, resolve) | 3 new files, 1 deleted |
+| M-66 | Split `soft_delete.rs` (1,738 LOC) → `soft_delete/` (trash, restore, purge) | 4 new files, 1 deleted |
+| M-68 | Split `commands/blocks.rs` (1,616 LOC) → `commands/blocks/` (crud, move_ops, queries) | 4 new files, 1 deleted |
+| M-69 | Split `recovery.rs` (1,526 LOC) → `recovery/` (boot, draft_recovery, tests) | 4 new files, 1 deleted |
+
+### Implementation
+- Each split follows the established M-31/M-32/M-33 pattern: promote file to directory module, split by domain, `pub use` re-exports in mod.rs preserve all existing import paths.
+- `find_prior_text` re-exported as `pub(crate)` from `reverse/mod.rs` (used externally in `commands/history.rs`).
+- `is_safe_attachment_path` unit tests kept in `soft_delete/purge.rs` near the private function.
+- Recovery tests moved to dedicated `recovery/tests.rs` submodule (28 tests).
+- Block commands split into CRUD/move/query domains, each using `use super::super::*` for parent module access.
+
+### Stats
+- 20 new files, 5 deleted (net +15)
+- 1808 Rust tests pass, all 20 prek hooks pass
+- 5 REVIEW-LATER items resolved (9 → 4 open)
+
+---
+
 ## Session 353 — M-55/M-56/M-57/M-58/M-59/M-60 resolved: split 6 largest Rust files into module directories (2026-04-12)
 
 **6 REVIEW-LATER items resolved (M-55 through M-60). 9 MAINT items remain.**
