@@ -165,7 +165,8 @@ export function SearchPanel(): React.ReactElement {
           }
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        logger.warn('SearchPanel', 'alias resolution failed', { query: debouncedQuery.trim() }, err)
         if (!cancelled) {
           setAliasMatch(null)
           setAliasQuery('')
@@ -384,7 +385,7 @@ export function SearchPanel(): React.ReactElement {
             <button
               type="button"
               onClick={() => handleRemoveTag(index)}
-              className="ml-0.5 rounded-full hover:bg-muted-foreground/20 p-0.5"
+              className="ml-0.5 rounded-full hover:bg-muted-foreground/20 p-0.5 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]"
               aria-label={t('search.removeTagFilter', { name })}
             >
               <X className="h-3 w-3" />

@@ -14,6 +14,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { downloadBlob, exportGraphAsZip } from '../lib/export-graph'
+import { logger } from '../lib/logger'
 import type { ImportResult } from '../lib/tauri'
 import { importMarkdown } from '../lib/tauri'
 
@@ -45,7 +46,8 @@ export function DataSettingsTab(): React.ReactElement {
           totalProps += result.properties_set
           allWarnings.push(...result.warnings)
           lastTitle = result.page_title
-        } catch {
+        } catch (err) {
+          logger.warn('DataSettingsTab', 'file import failed', { fileName: file.name }, err)
           allWarnings.push(`Failed to import ${file.name}`)
         }
       }
@@ -75,7 +77,8 @@ export function DataSettingsTab(): React.ReactElement {
       const date = new Date().toISOString().slice(0, 10)
       downloadBlob(blob, `agaric-export-${date}.zip`)
       toast.success(t('data.exportSuccess'))
-    } catch {
+    } catch (err) {
+      logger.error('DataSettingsTab', 'export failed', undefined, err)
       toast.error(t('data.exportFailed'))
     }
     setExporting(false)

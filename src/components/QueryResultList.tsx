@@ -74,7 +74,7 @@ export function QueryResultList({
           >
             <div
               className={cn(
-                'flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted/40 transition-colors cursor-pointer',
+                'flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted/40 transition-colors cursor-pointer [@media(pointer:coarse)]:py-3',
                 index === focusedIndex && 'bg-accent',
               )}
             >

@@ -25,6 +25,7 @@ import {
   TAG_COLOR_PRESETS,
 } from '@/lib/tag-colors'
 import { cn } from '@/lib/utils'
+import { logger } from '../lib/logger'
 import type { TagCacheRow } from '../lib/tauri'
 import {
   createBlock,
@@ -61,6 +62,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       const resp = await listTagsByPrefix({ prefix: '', limit: 500 })
       setTags(resp)
     } catch (error) {
+      logger.warn('TagList', 'failed to load tags', undefined, error)
       toast.error(`Failed to load tags: ${String(error)}`)
     }
     setLoading(false)
@@ -91,6 +93,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       // Update resolve cache so tag_ref nodes display the name, not ULID
       useResolveStore.getState().set(resp.id, name, false)
     } catch (error) {
+      logger.warn('TagList', 'failed to create tag', { name }, error)
       toast.error(`Failed to create tag: ${String(error)}`)
     }
     setIsCreating(false)
@@ -102,6 +105,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       setTags((prev) => prev.filter((t) => t.tag_id !== tagId))
       useResolveStore.getState().set(tagId, '(deleted)', true)
     } catch (error) {
+      logger.error('TagList', 'failed to delete tag', { tagId }, error)
       toast.error(`Failed to delete tag: ${String(error)}`)
     }
   }, [])
@@ -130,6 +134,12 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         useResolveStore.getState().set(renameTarget.id, trimmed, false)
         toast.success(t('tags.renameSuccess'))
       } catch (error) {
+        logger.warn(
+          'TagList',
+          'failed to rename tag',
+          { tagId: renameTarget.id, newName: trimmed },
+          error,
+        )
         toast.error(`${t('tags.renameFailed')}: ${String(error)}`)
       }
     },

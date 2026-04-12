@@ -10,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { logger } from '../lib/logger'
 import { listPropertyKeys } from '../lib/tauri'
 
 export function PropertyValuePicker({
@@ -41,7 +42,10 @@ export function PropertyValuePicker({
   useEffect(() => {
     listPropertyKeys()
       .then(setPropertyKeys)
-      .catch(() => setPropertyKeys([]))
+      .catch((err) => {
+        logger.warn('PropertyValuePicker', 'failed to load property keys', undefined, err)
+        setPropertyKeys([])
+      })
   }, [])
 
   useEffect(() => {

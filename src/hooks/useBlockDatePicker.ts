@@ -51,9 +51,13 @@ export function useBlockDatePicker({
   const rovingEditorRef = useRef(rovingEditor)
   rovingEditorRef.current = rovingEditor
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: pagesListRef is a stable ref
+  const tRef = useRef(t)
+  tRef.current = t
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pagesListRef is a stable ref; pageStore is a stable StoreApi; t accessed via ref
   const handleDatePick = useCallback(
     async (d: Date) => {
+      const t = tRef.current
       setDatePickerOpen(false)
       const dd = String(d.getDate()).padStart(2, '0')
       const mm = String(d.getMonth() + 1).padStart(2, '0')

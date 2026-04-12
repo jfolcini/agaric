@@ -252,8 +252,8 @@ export function useDuePanelData({
           }
           setPageTitles(titleMap)
         }
-      } catch {
-        // Silently handle errors
+      } catch (err) {
+        logger.warn('useDuePanelData', 'fetchBlocks failed', { date }, err)
       } finally {
         setLoading(false)
       }

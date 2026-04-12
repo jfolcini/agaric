@@ -36,7 +36,7 @@ import {
 } from 'lucide-react'
 import { matchSorter } from 'match-sorter'
 import type { MutableRefObject } from 'react'
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import type { StoreApi } from 'zustand'
 import { serialize } from '../editor/markdown-serializer'
@@ -543,9 +543,21 @@ export function useBlockSlashCommands({
     Array<{ id: string; content: string; preview: string | null }>
   >([])
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: cursor position read at call time
+  const rootParentIdRef = useRef(rootParentId)
+  rootParentIdRef.current = rootParentId
+
+  const rovingEditorRef = useRef(rovingEditor)
+  rovingEditorRef.current = rovingEditor
+
+  const tRef = useRef(t)
+  tRef.current = t
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: datePickerCursorPos is a stable ref; pageStore is a stable StoreApi; setDatePickerMode/setDatePickerOpen are stable setters; rootParentId/rovingEditor/t accessed via refs
   const handleSlashCommand = useCallback(
     async (item: PickerItem) => {
+      const rootParentId = rootParentIdRef.current
+      const rovingEditor = rovingEditorRef.current
+      const t = tRef.current
       if (!focusedBlockId) return
 
       if (item.id === 'todo' || item.id === 'doing' || item.id === 'done') {

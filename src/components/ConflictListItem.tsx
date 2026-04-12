@@ -93,7 +93,7 @@ export function ConflictListItem({
           checked={isSelected}
           onChange={() => onToggleSelected(block.id)}
           aria-label={t('conflict.selectConflictLabel', { id: truncateId(block.id) })}
-          className="h-4 w-4 rounded border-muted-foreground/50"
+          className="h-4 w-4 rounded border-muted-foreground/50 [@media(pointer:coarse)]:size-11"
         />
       </label>
       <button

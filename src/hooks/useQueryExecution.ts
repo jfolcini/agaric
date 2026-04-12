@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { logger } from '@/lib/logger'
 import { parseDate } from '@/lib/parse-date'
 import { parseQueryExpression } from '@/lib/query-utils'
 import type { BlockRow } from '@/lib/tauri'
@@ -185,6 +186,7 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
           }
         }
       } catch (e) {
+        logger.warn('useQueryExecution', 'query execution failed', { expression }, e)
         if (!isLoadMore) {
           setError(e instanceof Error ? e.message : 'Query failed')
         }

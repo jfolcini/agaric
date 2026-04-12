@@ -154,7 +154,7 @@ export function HistoryListItem({
           disabled={isNonReversible}
           onChange={() => onToggleSelection(index)}
           onClick={(e) => e.stopPropagation()}
-          className="h-4 w-4 shrink-0 rounded border-border [@media(pointer:coarse)]:h-6 [@media(pointer:coarse)]:w-6"
+          className="h-4 w-4 shrink-0 rounded border-border [@media(pointer:coarse)]:size-11"
           aria-label={t('history.selectOperationLabel', {
             opType: entry.op_type,
             seq: entry.seq,

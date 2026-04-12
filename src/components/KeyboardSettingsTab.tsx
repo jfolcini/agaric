@@ -215,7 +215,7 @@ export function KeyboardSettingsTab(): React.ReactElement {
                       {shortcut.isCustom && !isEditing && (
                         <button
                           type="button"
-                          className="text-xs text-primary hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none active:underline rounded-sm"
+                          className="text-xs text-primary hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none active:underline rounded-sm [@media(pointer:coarse)]:min-h-[44px]"
                           onClick={() => handleReset(shortcut.id)}
                           aria-label={t('keyboard.settings.resetShortcutFor', {
                             action: t(shortcut.description),
