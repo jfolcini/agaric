@@ -1,5 +1,27 @@
 # Session Log
 
+## Session 366 — T-16 in-memory WebSocket test infrastructure + handle_incoming_sync tests (2026-04-13)
+
+**T-16 significantly advanced — built in-memory WebSocket test infrastructure and added 4 integration tests for handle_incoming_sync. Cost downgraded from L to M (infrastructure now exists).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| T-16 (further) | In-memory WebSocket pairs + 4 handle_incoming_sync tests | `connection.rs`, `sync_net/mod.rs`, `sync_daemon/tests.rs` |
+
+### Implementation
+- **Infrastructure**: Added `#[cfg(test)] InnerStream::Test(WebSocketStream<DuplexStream>)` variant to `InnerStream` enum. Updated `send_message`, `recv_message`, `close` to handle test variant. Added `test_connection_pair()` async helper creating bidirectional in-memory WebSocket pairs via `tokio::io::duplex(64KB)`.
+- **Tests**: 4 `handle_incoming_sync` integration tests: (1) self-sync rejection — HeadExchange with only local device head → Error "self", (2) unpaired device rejection — unknown device_id → Error "not paired", (3) lock contention — pre-acquired per-peer lock → Error "busy", (4) non-HeadExchange first message — SyncComplete as first msg → orchestrator rejection without panic.
+- **T-16 cost downgraded** from L to M — in-memory WebSocket infrastructure now exists, more tests can follow the pattern.
+
+### Stats
+- 3 files changed (+293 lines)
+- 1858 Rust tests pass (+4), all 19 prek hooks pass
+- T-16 updated in REVIEW-LATER (3 open items remain, T-16 cost L→M)
+
+---
+
 ## Session 365 — T-18 use-roving-editor: 17 new tests for custom extensions + mount/unmount (2026-04-12)
 
 **T-18 further improved — all unit-testable paths now covered. T-16 confirmed: all unit-testable paths were already covered in session 364. 3 open items remain (all require infrastructure beyond unit tests).**
