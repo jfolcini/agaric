@@ -507,7 +507,7 @@ mod tests {
         insert_tag_assoc(&pool, "PAGE_A", "TAG").await;
 
         let mut conn = pool.acquire().await.unwrap();
-        propagate_tag_to_descendants(&mut *conn, "PAGE_A", "TAG")
+        propagate_tag_to_descendants(&mut conn, "PAGE_A", "TAG")
             .await
             .unwrap();
 
@@ -529,7 +529,7 @@ mod tests {
         insert_tag_assoc(&pool, "PAGE", "TAG").await;
 
         let mut conn = pool.acquire().await.unwrap();
-        propagate_tag_to_descendants(&mut *conn, "PAGE", "TAG")
+        propagate_tag_to_descendants(&mut conn, "PAGE", "TAG")
             .await
             .unwrap();
 
@@ -552,7 +552,7 @@ mod tests {
         insert_tag_assoc(&pool, "PAGE", "TAG").await;
 
         let mut conn = pool.acquire().await.unwrap();
-        propagate_tag_to_descendants(&mut *conn, "PAGE", "TAG")
+        propagate_tag_to_descendants(&mut conn, "PAGE", "TAG")
             .await
             .unwrap();
 
@@ -575,11 +575,11 @@ mod tests {
         insert_tag_assoc(&pool, "PAGE", "TAG").await;
 
         let mut conn = pool.acquire().await.unwrap();
-        propagate_tag_to_descendants(&mut *conn, "PAGE", "TAG")
+        propagate_tag_to_descendants(&mut conn, "PAGE", "TAG")
             .await
             .unwrap();
         // Second call — INSERT OR IGNORE should be a no-op.
-        propagate_tag_to_descendants(&mut *conn, "PAGE", "TAG")
+        propagate_tag_to_descendants(&mut conn, "PAGE", "TAG")
             .await
             .unwrap();
 
@@ -606,7 +606,7 @@ mod tests {
         insert_tag_assoc(&pool, "PAGE", "TAG").await;
 
         let mut conn = pool.acquire().await.unwrap();
-        propagate_tag_to_descendants(&mut *conn, "PAGE", "TAG")
+        propagate_tag_to_descendants(&mut conn, "PAGE", "TAG")
             .await
             .unwrap();
         assert_eq!(get_inherited(&pool).await.len(), 1);
@@ -616,7 +616,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        remove_inherited_tag(&mut *conn, "PAGE", "TAG")
+        remove_inherited_tag(&mut conn, "PAGE", "TAG")
             .await
             .unwrap();
 
@@ -643,12 +643,12 @@ mod tests {
         let mut conn = pool.acquire().await.unwrap();
 
         // Propagate PARENT first so CHILD gets inherited_from = PARENT.
-        propagate_tag_to_descendants(&mut *conn, "PARENT", "TAG")
+        propagate_tag_to_descendants(&mut conn, "PARENT", "TAG")
             .await
             .unwrap();
         // Propagate GRAND — PARENT gets (PARENT, TAG, GRAND);
         // CHILD already has (CHILD, TAG) so INSERT OR IGNORE keeps PARENT.
-        propagate_tag_to_descendants(&mut *conn, "GRAND", "TAG")
+        propagate_tag_to_descendants(&mut conn, "GRAND", "TAG")
             .await
             .unwrap();
 
@@ -662,7 +662,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        remove_inherited_tag(&mut *conn, "PARENT", "TAG")
+        remove_inherited_tag(&mut conn, "PARENT", "TAG")
             .await
             .unwrap();
 
@@ -688,7 +688,7 @@ mod tests {
         insert_tag_assoc(&pool, "PAGE1", "TAG").await;
 
         let mut conn = pool.acquire().await.unwrap();
-        propagate_tag_to_descendants(&mut *conn, "PAGE1", "TAG")
+        propagate_tag_to_descendants(&mut conn, "PAGE1", "TAG")
             .await
             .unwrap();
 
@@ -701,7 +701,7 @@ mod tests {
             .await
             .unwrap();
 
-        recompute_subtree_inheritance(&mut *conn, "CHILD")
+        recompute_subtree_inheritance(&mut conn, "CHILD")
             .await
             .unwrap();
 
@@ -728,7 +728,7 @@ mod tests {
         insert_block(&pool, "CHILD", "content", "child", Some("PAGE")).await;
 
         let mut conn = pool.acquire().await.unwrap();
-        inherit_parent_tags(&mut *conn, "CHILD", Some("PAGE"))
+        inherit_parent_tags(&mut conn, "CHILD", Some("PAGE"))
             .await
             .unwrap();
 
@@ -743,9 +743,7 @@ mod tests {
         insert_block(&pool, "BLOCK", "page", "block", None).await;
 
         let mut conn = pool.acquire().await.unwrap();
-        inherit_parent_tags(&mut *conn, "BLOCK", None)
-            .await
-            .unwrap();
+        inherit_parent_tags(&mut conn, "BLOCK", None).await.unwrap();
 
         let rows = get_inherited(&pool).await;
         assert!(rows.is_empty(), "Root blocks should not inherit any tags");
@@ -767,13 +765,13 @@ mod tests {
         insert_tag_assoc(&pool, "PAGE", "TAG").await;
 
         let mut conn = pool.acquire().await.unwrap();
-        propagate_tag_to_descendants(&mut *conn, "PAGE", "TAG")
+        propagate_tag_to_descendants(&mut conn, "PAGE", "TAG")
             .await
             .unwrap();
         assert_eq!(get_inherited(&pool).await.len(), 2);
 
         // Remove the subtree rooted at CHILD.
-        remove_subtree_inherited(&mut *conn, "CHILD").await.unwrap();
+        remove_subtree_inherited(&mut conn, "CHILD").await.unwrap();
 
         let rows = get_inherited(&pool).await;
         assert!(
@@ -841,7 +839,7 @@ mod tests {
         soft_delete(&pool, "CHILD").await;
 
         let mut conn = pool.acquire().await.unwrap();
-        recompute_subtree_inheritance(&mut *conn, "PARENT")
+        recompute_subtree_inheritance(&mut conn, "PARENT")
             .await
             .unwrap();
 
@@ -886,7 +884,7 @@ mod tests {
         insert_tag_assoc(&pool, "PARENT", "TAG3").await;
 
         let mut conn = pool.acquire().await.unwrap();
-        recompute_subtree_inheritance(&mut *conn, "PARENT")
+        recompute_subtree_inheritance(&mut conn, "PARENT")
             .await
             .unwrap();
 
@@ -942,7 +940,7 @@ mod tests {
         insert_tag_assoc(&pool, "ROOT", "TAG").await;
 
         let mut conn = pool.acquire().await.unwrap();
-        propagate_tag_to_descendants(&mut *conn, "ROOT", "TAG")
+        propagate_tag_to_descendants(&mut conn, "ROOT", "TAG")
             .await
             .unwrap();
 
@@ -954,9 +952,7 @@ mod tests {
         assert!(rows_before.contains(&("CHILD2".into(), "TAG".into(), "ROOT".into())));
 
         // Remove the subtree rooted at PARENT
-        remove_subtree_inherited(&mut *conn, "PARENT")
-            .await
-            .unwrap();
+        remove_subtree_inherited(&mut conn, "PARENT").await.unwrap();
 
         let rows_after = get_inherited(&pool).await;
 
@@ -1133,7 +1129,7 @@ mod tests {
         insert_tag_assoc(&pool, "ROOT", "TAG").await;
 
         let mut conn = pool.acquire().await.unwrap();
-        propagate_tag_to_descendants(&mut *conn, "ROOT", "TAG")
+        propagate_tag_to_descendants(&mut conn, "ROOT", "TAG")
             .await
             .unwrap();
 

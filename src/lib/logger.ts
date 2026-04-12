@@ -140,6 +140,7 @@ function bridgeToBackend(
   try {
     if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
       const serializedData = data ? safeStringify(data) : undefined
+      // Fire-and-forget: logging to backend should not block or crash the app
       logFrontend(level, module, message, stack, context, serializedData).catch(() => {})
     }
   } catch {

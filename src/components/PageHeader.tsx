@@ -58,7 +58,6 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   }, [pageId])
 
   const starred = (() => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
     starredRevision
     return isStarred(pageId)
   })()

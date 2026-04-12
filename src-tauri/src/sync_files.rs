@@ -737,7 +737,7 @@ mod tests {
     #[test]
     fn file_chunk_size_is_under_max_msg_size() {
         // MAX_MSG_SIZE in SyncConnection is 10_000_000 (10 MB)
-        assert!(
+        const _: () = assert!(
             FILE_CHUNK_SIZE < 10_000_000,
             "FILE_CHUNK_SIZE must be under the 10 MB WebSocket frame limit"
         );

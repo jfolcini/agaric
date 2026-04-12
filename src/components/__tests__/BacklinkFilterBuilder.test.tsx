@@ -37,7 +37,6 @@ vi.mock('sonner', () => ({
 // SelectTrigger stores its props (aria-label, size, className) in a ref via context,
 // then SelectContent reads them and renders a native <select>.
 vi.mock('@/components/ui/select', () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require('react')
   const Ctx = React.createContext({})
 

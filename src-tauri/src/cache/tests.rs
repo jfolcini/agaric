@@ -2079,6 +2079,7 @@ async fn block_links_split_dangling_target_skipped() {
 // ====================================================================
 
 /// Helper: insert a repeating block with a due_date and repeat property.
+#[allow(clippy::too_many_arguments)] // test helper aggregating all repeat-related columns
 async fn insert_repeating_block(
     pool: &SqlitePool,
     id: &str,

@@ -57,7 +57,6 @@ vi.mock('sonner', () => ({
 
 // Mock the Select component (same pattern as PropertiesView tests)
 vi.mock('@/components/ui/select', () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require('react')
   const Ctx = React.createContext({})
 

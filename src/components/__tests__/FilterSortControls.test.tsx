@@ -21,7 +21,6 @@ import { FilterSortControls } from '../FilterSortControls'
 
 // Mock the Radix-based Select to render as native <select>/<option> for jsdom compatibility.
 vi.mock('@/components/ui/select', () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require('react')
   const Ctx = React.createContext({})
 

@@ -1986,7 +1986,7 @@ async fn remove_tag_handler_cleans_inherited() {
     // Propagate tag to descendants manually
     {
         let mut conn = pool.acquire().await.unwrap();
-        crate::tag_inheritance::propagate_tag_to_descendants(&mut *conn, "RT_PARENT", "RT_TAG")
+        crate::tag_inheritance::propagate_tag_to_descendants(&mut conn, "RT_PARENT", "RT_TAG")
             .await
             .unwrap();
     }

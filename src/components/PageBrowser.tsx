@@ -167,7 +167,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   }, [])
 
   const starredCount = useMemo(() => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
     starredRevision // subscribe to revision changes
     return getStarredPages().length
   }, [starredRevision])
@@ -181,7 +180,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       )
     }
     if (showStarredOnly) {
-      // eslint-disable-next-line @typescript-eslint/no-unused-expressions
       starredRevision // subscribe to revision changes
       const starred = getStarredPages()
       result = result.filter((p) => starred.includes(p.id))

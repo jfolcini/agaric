@@ -5,9 +5,6 @@ mod resolve;
 
 pub use query::{eval_tag_query, list_tags_by_prefix, list_tags_for_block};
 
-#[cfg(test)]
-pub(crate) use resolve::resolve_expr_cte;
-
 use serde::Serialize;
 
 /// Escape special LIKE pattern characters so user-supplied prefix strings

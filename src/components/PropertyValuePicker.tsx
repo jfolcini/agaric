@@ -55,7 +55,7 @@ export function PropertyValuePicker({
     } else {
       onChange([])
     }
-  }, [propertyKey, propertyValue, onChange]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [propertyKey, propertyValue, onChange])
 
   return (
     <div className="flex flex-col gap-2">

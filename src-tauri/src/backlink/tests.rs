@@ -1,14 +1,12 @@
 use super::filters::{
-    crockford_decode_char, escape_like, ms_to_ulid_prefix, parse_iso_to_ms, resolve_filter,
-    ulid_to_ms,
+    crockford_decode_char, ms_to_ulid_prefix, parse_iso_to_ms, resolve_filter, ulid_to_ms,
 };
 use super::grouped::{eval_backlink_query_grouped, eval_unlinked_references};
 use super::query::{eval_backlink_query, list_property_keys, resolve_root_pages};
-use super::sort::sort_ids;
 use super::types::*;
 use crate::db::init_pool;
 use crate::error::AppError;
-use crate::pagination::{BlockRow, Cursor, PageRequest};
+use crate::pagination::{Cursor, PageRequest};
 use rustc_hash::FxHashSet;
 use sqlx::SqlitePool;
 use tempfile::TempDir;

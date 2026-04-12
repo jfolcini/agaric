@@ -32,7 +32,6 @@ import { QueryBuilderModal } from '../QueryBuilderModal'
 
 // Mock Radix Select with native <select> for jsdom compatibility (same pattern as HistoryView)
 vi.mock('@/components/ui/select', () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require('react')
   const Ctx = React.createContext({})
 

@@ -16,8 +16,6 @@ use sqlx::SqlitePool;
 use tauri::State;
 
 use crate::db::ReadPool;
-#[cfg(test)]
-use crate::draft;
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::now_rfc3339;
@@ -25,8 +23,6 @@ use crate::op::{is_reserved_property_key, DeletePropertyPayload, OpPayload, Undo
 use crate::op_log;
 use crate::pagination::{self, BlockRow, HistoryEntry, PageResponse};
 use crate::pairing::PairingSession;
-#[cfg(test)]
-use crate::soft_delete;
 use crate::ulid::BlockId;
 
 // Domain sub-modules

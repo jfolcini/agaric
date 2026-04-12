@@ -4,7 +4,7 @@ use crate::dag;
 use crate::error::AppError;
 use crate::hash::compute_op_hash;
 use crate::op::*;
-use crate::op_log::{self, append_local_op_at, OpRecord};
+use crate::op_log::{append_local_op_at, OpRecord};
 use crate::pagination::NULL_POSITION_SENTINEL;
 use crate::ulid::BlockId;
 use sqlx::SqlitePool;

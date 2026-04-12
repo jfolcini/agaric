@@ -79,14 +79,6 @@ mod tests {
             .and_then(|r| r.deleted_at)
     }
 
-    async fn block_exists(pool: &SqlitePool, id: &str) -> bool {
-        let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id = ?", id)
-            .fetch_one(pool)
-            .await
-            .unwrap();
-        count > 0
-    }
-
     // ======================================================================
     // soft_delete_block
     // ======================================================================
