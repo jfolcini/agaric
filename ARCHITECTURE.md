@@ -1855,9 +1855,6 @@ empirically validated through bugs found, fixes applied, and alternatives reject
 - **Focus ring consistency: `ring-[3px] ring-ring/50`** is the standard across Button, Input, and
   most ui/ primitives. Six outliers remain in `filter-pill.tsx` (line 48) and `sidebar.tsx`
   (5 menu item locations) that use `ring-2` instead — should be standardized.
-- **BlockRef is missing Backspace re-expansion.** Both BlockLink and TagRef have
-  `addKeyboardShortcuts()` with Backspace handlers for re-editing chip content. BlockRef lacks
-  this, creating an inconsistent UX.
 - **Silent error catches persist in ~8 locations.** PropertyValuePicker, SearchPanel alias
   resolution, useQueryExecution, useDuePanelData, DataSettingsTab import, and TagList still
   have `.catch()` blocks without `logger.error()`/`logger.warn()`. Per conventions, all catch

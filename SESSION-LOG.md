@@ -1,5 +1,36 @@
 # Session Log
 
+## Session 358 — B-65/B-66/B-67/B-69/B-70/B-71 resolved: frontend fixes (2026-04-12)
+
+**6 REVIEW-LATER items resolved (B-65, B-66, B-67, B-69, B-70, B-71). 22 open items remain.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| B-65 | Guard early-persist with !shouldSplitOnBlur() in useEditorBlur Step 3 | `useEditorBlur.ts`, `useEditorBlur.test.ts` |
+| B-66 | Add Backspace re-expansion handler to BlockRef (matches BlockLink/TagRef) | `block-ref.ts`, `extensions.test.ts` |
+| B-67 | Add title tooltip on deleted BlockRef chips | `block-ref.ts`, `extensions.test.ts` |
+| B-69 | Replace void updatePosition() with .catch(logger.warn) in suggestion-renderer | `suggestion-renderer.ts` |
+| B-70 | Add cancelled check before setResolveVersion in useBacklinkResolution | `useBacklinkResolution.ts` |
+| B-71 | Expand parse-date year range from 1900-2099 to 100-9999 | `parse-date.ts` |
+
+### Implementation
+- **B-65**: Added `&& !shouldSplitOnBlur(content)` guard to Step 3 condition. Multi-paragraph content now skips early-persist and flows to Step 5 splitBlock(). 1 new test.
+- **B-66**: Added `addKeyboardShortcuts()` with Backspace handler matching BlockLink pattern. Uses `((content` syntax for block ref re-expansion. 2 new tests + 8 schema tests.
+- **B-67**: NodeView sets `title='Broken ref — target block deleted'` when status is deleted, removes on active. 3 new NodeView tests.
+- **B-69**: Two `void updatePosition()` calls replaced with `.catch(err => logger.warn(...))`. Added logger import.
+- **B-70**: Added `if (cancelled) return` before `setResolveVersion()` in `.then()` callback (`.catch()` already had it).
+- **B-71**: Changed `year <= 1900 || year >= 2100` to `year < 100 || year > 9999`. 33 parse-date tests still pass.
+- **ARCHITECTURE.md**: Removed BlockRef Backspace re-expansion known issue note.
+
+### Stats
+- 7 files changed (+248 -4 lines)
+- 6307 frontend tests pass (was 6290, +17 new), all 20 prek hooks pass
+- 6 REVIEW-LATER items resolved (28 -> 22 open)
+
+---
+
 ## Session 357 — B-58/B-59/B-64/T-10/T-13/T-14/T-15 resolved: history bugs + test quality (2026-04-12)
 
 **7 REVIEW-LATER items resolved (B-58, B-59, B-64, T-10, T-13, T-14, T-15). 28 open items remain.**
