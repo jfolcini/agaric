@@ -1373,3 +1373,79 @@ async fn s11_cancel_cleared_on_no_addresses_early_exit() {
 
     materializer.shutdown();
 }
+
+// ======================================================================
+// T-16 — verify_peer_cert unit tests
+// ======================================================================
+
+#[test]
+fn verify_peer_cert_both_none_returns_ok() {
+    let result = verify_peer_cert("any-device", None, None, None);
+    assert_eq!(
+        result,
+        CertVerifyResult::Ok,
+        "both cert_cn and stored_hash None → Ok"
+    );
+}
+
+#[test]
+fn verify_peer_cert_cn_match_returns_ok() {
+    let result = verify_peer_cert("dev-1", Some("dev-1"), None, None);
+    assert_eq!(
+        result,
+        CertVerifyResult::Ok,
+        "matching CN with no hash check → Ok"
+    );
+}
+
+#[test]
+fn verify_peer_cert_cn_mismatch_returns_cn_mismatch() {
+    let result = verify_peer_cert("dev-1", Some("dev-2"), None, None);
+    assert_eq!(
+        result,
+        CertVerifyResult::CnMismatch {
+            remote_id: "dev-1".into(),
+            cert_cn: "dev-2".into(),
+        },
+        "mismatching CN → CnMismatch"
+    );
+}
+
+#[test]
+fn verify_peer_cert_hash_match_returns_ok() {
+    let result = verify_peer_cert("dev-1", None, Some("hash123"), Some("hash123"));
+    assert_eq!(
+        result,
+        CertVerifyResult::Ok,
+        "matching hash with no CN → Ok"
+    );
+}
+
+#[test]
+fn verify_peer_cert_hash_mismatch_returns_hash_mismatch() {
+    let result = verify_peer_cert("dev-1", None, Some("hash_a"), Some("hash_b"));
+    assert_eq!(
+        result,
+        CertVerifyResult::HashMismatch {
+            remote_id: "dev-1".into(),
+        },
+        "mismatching hash with no CN → HashMismatch"
+    );
+}
+
+#[test]
+fn verify_peer_cert_cn_match_but_hash_mismatch() {
+    let result = verify_peer_cert(
+        "dev-1",
+        Some("dev-1"),    // CN matches
+        Some("observed"), // observed hash
+        Some("stored"),   // stored hash — different
+    );
+    assert_eq!(
+        result,
+        CertVerifyResult::HashMismatch {
+            remote_id: "dev-1".into(),
+        },
+        "CN match + hash mismatch → HashMismatch"
+    );
+}

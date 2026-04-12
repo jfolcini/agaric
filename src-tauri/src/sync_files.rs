@@ -1192,4 +1192,85 @@ mod tests {
 
         server.shutdown().await;
     }
+
+    // ── find_missing_attachments with all files present ──────────────────
+
+    #[tokio::test]
+    async fn find_missing_attachments_all_files_present() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content) VALUES ('BLK1', 'content', 'test')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Create both attachment files on disk
+        let att_dir = dir.path().join("attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
+        std::fs::write(att_dir.join("att1.png"), b"image data 1").unwrap();
+        std::fs::write(att_dir.join("att2.png"), b"image data 2").unwrap();
+
+        sqlx::query(
+            "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES ('ATT1', 'BLK1', 'image/png', 'photo1.png', 512, 'attachments/att1.png', '2025-01-15T12:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES ('ATT2', 'BLK1', 'image/png', 'photo2.png', 512, 'attachments/att2.png', '2025-01-15T12:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let missing = find_missing_attachments(&pool, dir.path()).await.unwrap();
+        assert!(
+            missing.is_empty(),
+            "all files present on disk → no missing attachments"
+        );
+    }
+
+    // ── read_attachment_file hash determinism ─────────────────────────────
+
+    #[test]
+    fn read_attachment_file_hash_determinism() {
+        let dir = TempDir::new().unwrap();
+        let content = b"deterministic hash content";
+
+        // Write the same content to two different paths
+        write_attachment_file(dir.path(), "file_a.bin", content).unwrap();
+        write_attachment_file(dir.path(), "file_b.bin", content).unwrap();
+
+        let (_, hash_a) = read_attachment_file(dir.path(), "file_a.bin").unwrap();
+        let (_, hash_b) = read_attachment_file(dir.path(), "file_b.bin").unwrap();
+
+        assert_eq!(
+            hash_a, hash_b,
+            "identical content must produce identical blake3 hashes regardless of path"
+        );
+    }
+
+    // ── write_attachment_file creates deeply nested parent dirs ───────────
+
+    #[test]
+    fn write_attachment_file_creates_deeply_nested_parent_dirs() {
+        let dir = TempDir::new().unwrap();
+        let content = b"deeply nested file content";
+
+        write_attachment_file(dir.path(), "subdir/subdir2/file.bin", content).unwrap();
+
+        let full_path = dir.path().join("subdir/subdir2/file.bin");
+        assert!(
+            full_path.exists(),
+            "deeply nested file should exist after write"
+        );
+        assert_eq!(std::fs::read(&full_path).unwrap(), content);
+    }
 }

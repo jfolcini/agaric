@@ -19,12 +19,69 @@
  * 15. A11y audit passes (axe)
  */
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 const mockNavigateToPage = vi.fn()
+
+// Mock sonner toast
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}))
+
+// Mock tauri IPC functions used by handleDateSelect
+const mockGetBlock = vi.fn()
+const mockSetDueDate = vi.fn()
+const mockSetScheduledDate = vi.fn()
+vi.mock('../../lib/tauri', () => ({
+  getBlock: (...args: unknown[]) => mockGetBlock(...args),
+  setDueDate: (...args: unknown[]) => mockSetDueDate(...args),
+  setScheduledDate: (...args: unknown[]) => mockSetScheduledDate(...args),
+}))
+
+// Mock Calendar to capture onSelect for simulated date selection
+let mockCalendarOnSelect: ((day: Date | undefined) => void) | undefined
+vi.mock('../ui/calendar', () => ({
+  Calendar: (props: { onSelect?: (day: Date | undefined) => void; 'data-testid'?: string }) => {
+    mockCalendarOnSelect = props.onSelect
+    return <div data-testid="mock-calendar">Calendar</div>
+  },
+}))
+
+// Mock Popover components — render children inline, controlled by open prop
+vi.mock('../ui/popover', () => ({
+  Popover: ({
+    children,
+    open,
+    onOpenChange: _onOpenChange,
+  }: {
+    children: React.ReactNode
+    open?: boolean
+    onOpenChange?: (open: boolean) => void
+  }) => (
+    <div data-testid="popover" data-open={String(!!open)}>
+      {children}
+    </div>
+  ),
+  PopoverTrigger: ({
+    children,
+    asChild: _asChild,
+  }: {
+    children: React.ReactNode
+    asChild?: boolean
+  }) => <>{children}</>,
+  PopoverContent: ({
+    children,
+  }: {
+    children: React.ReactNode
+    align?: string
+    className?: string
+    onClick?: (e: React.MouseEvent) => void
+    onKeyDown?: (e: React.KeyboardEvent) => void
+  }) => <div data-testid="popover-content">{children}</div>,
+}))
 
 vi.mock('../StaticBlock', () => ({
   renderRichContent: vi.fn((markdown: string) => markdown),
@@ -59,6 +116,7 @@ vi.mock('../PageLink', () => ({
   ),
 }))
 
+import { toast } from 'sonner'
 import { BlockListItem, type BlockListItemProps } from '../BlockListItem'
 
 function defaultProps(overrides: Partial<BlockListItemProps> = {}): BlockListItemProps {
@@ -67,6 +125,14 @@ function defaultProps(overrides: Partial<BlockListItemProps> = {}): BlockListIte
     ...overrides,
   }
 }
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  mockGetBlock.mockReset()
+  mockSetDueDate.mockReset()
+  mockSetScheduledDate.mockReset()
+  mockCalendarOnSelect = undefined
+})
 
 describe('BlockListItem', () => {
   // 1. Renders truncated content text
@@ -470,5 +536,249 @@ describe('BlockListItem', () => {
 
     expect(setData).toHaveBeenCalledWith('application/x-block-reschedule', 'block-xyz')
     expect(dataTransfer.effectAllowed).toBe('move')
+  })
+})
+
+// ─── isFocused prop ────────────────────────────────────────────────────────
+describe('BlockListItem — isFocused prop', () => {
+  it('applies ring styling when isFocused is true', () => {
+    render(
+      <ul>
+        <BlockListItem {...defaultProps({ isFocused: true })} />
+      </ul>,
+    )
+
+    const li = screen.getByRole('listitem')
+    expect(li.className).toContain('ring-2')
+    expect(li.className).toContain('bg-accent/30')
+  })
+
+  it('does not apply ring styling when isFocused is false', () => {
+    render(
+      <ul>
+        <BlockListItem {...defaultProps({ isFocused: false })} />
+      </ul>,
+    )
+
+    const li = screen.getByRole('listitem')
+    expect(li.className).not.toContain('ring-2')
+    expect(li.className).not.toContain('bg-accent/30')
+  })
+
+  it('does not apply ring styling by default (prop omitted)', () => {
+    render(
+      <ul>
+        <BlockListItem {...defaultProps()} />
+      </ul>,
+    )
+
+    const li = screen.getByRole('listitem')
+    expect(li.className).not.toContain('ring-2')
+    expect(li.className).not.toContain('bg-accent/30')
+  })
+})
+
+// ─── reschedule button ─────────────────────────────────────────────────────
+describe('BlockListItem — reschedule button', () => {
+  it('renders reschedule button when blockId is provided', () => {
+    render(
+      <ul>
+        <BlockListItem {...defaultProps({ blockId: 'block-1' })} />
+      </ul>,
+    )
+
+    expect(screen.getByTestId('reschedule-btn')).toBeInTheDocument()
+  })
+
+  it('does not render reschedule button when blockId is absent', () => {
+    render(
+      <ul>
+        <BlockListItem {...defaultProps()} />
+      </ul>,
+    )
+
+    expect(screen.queryByTestId('reschedule-btn')).not.toBeInTheDocument()
+  })
+
+  it('renders calendar popover content when blockId is provided', () => {
+    render(
+      <ul>
+        <BlockListItem {...defaultProps({ blockId: 'block-1' })} />
+      </ul>,
+    )
+
+    // The mocked Popover always renders children inline
+    expect(screen.getByTestId('mock-calendar')).toBeInTheDocument()
+  })
+})
+
+// ─── handleDateSelect ──────────────────────────────────────────────────────
+describe('BlockListItem — handleDateSelect', () => {
+  it('calls getBlock then setDueDate on date selection (block has due_date)', async () => {
+    mockGetBlock.mockResolvedValue({
+      id: 'block-1',
+      due_date: '2025-01-01',
+      scheduled_date: null,
+    })
+    mockSetDueDate.mockResolvedValue({})
+
+    render(
+      <ul>
+        <BlockListItem {...defaultProps({ blockId: 'block-1' })} />
+      </ul>,
+    )
+
+    // Simulate date selection via the captured Calendar onSelect
+    expect(mockCalendarOnSelect).toBeDefined()
+    await waitFor(async () => {
+      ;(mockCalendarOnSelect as (d: Date) => void)(new Date(2025, 5, 15))
+    })
+
+    await waitFor(() => {
+      expect(mockGetBlock).toHaveBeenCalledWith('block-1')
+      expect(mockSetDueDate).toHaveBeenCalledWith('block-1', '2025-06-15')
+      expect(mockSetScheduledDate).not.toHaveBeenCalled()
+    })
+  })
+
+  it('calls setScheduledDate when block has scheduled_date and no due_date', async () => {
+    mockGetBlock.mockResolvedValue({
+      id: 'block-1',
+      due_date: null,
+      scheduled_date: '2025-01-01',
+    })
+    mockSetScheduledDate.mockResolvedValue({})
+
+    render(
+      <ul>
+        <BlockListItem {...defaultProps({ blockId: 'block-1' })} />
+      </ul>,
+    )
+
+    expect(mockCalendarOnSelect).toBeDefined()
+    await waitFor(async () => {
+      ;(mockCalendarOnSelect as (d: Date) => void)(new Date(2025, 2, 10))
+    })
+
+    await waitFor(() => {
+      expect(mockGetBlock).toHaveBeenCalledWith('block-1')
+      expect(mockSetScheduledDate).toHaveBeenCalledWith('block-1', '2025-03-10')
+      expect(mockSetDueDate).not.toHaveBeenCalled()
+    })
+  })
+
+  it('shows success toast on successful reschedule', async () => {
+    mockGetBlock.mockResolvedValue({
+      id: 'block-1',
+      due_date: '2025-01-01',
+      scheduled_date: null,
+    })
+    mockSetDueDate.mockResolvedValue({})
+
+    render(
+      <ul>
+        <BlockListItem {...defaultProps({ blockId: 'block-1' })} />
+      </ul>,
+    )
+
+    expect(mockCalendarOnSelect).toBeDefined()
+    await waitFor(async () => {
+      ;(mockCalendarOnSelect as (d: Date) => void)(new Date(2025, 0, 20))
+    })
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.success)).toHaveBeenCalledWith(expect.stringContaining('2025-01-20'))
+    })
+  })
+
+  it('shows error toast when getBlock fails and setDueDate also fails', async () => {
+    mockGetBlock.mockRejectedValue(new Error('network error'))
+    // After getBlock fails, useScheduledDate stays false so setDueDate is called.
+    // Make setDueDate also fail to trigger the catch block.
+    mockSetDueDate.mockRejectedValue(new Error('set failed'))
+
+    render(
+      <ul>
+        <BlockListItem {...defaultProps({ blockId: 'block-1' })} />
+      </ul>,
+    )
+
+    expect(mockCalendarOnSelect).toBeDefined()
+    await waitFor(async () => {
+      ;(mockCalendarOnSelect as (d: Date) => void)(new Date(2025, 0, 1))
+    })
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalled()
+    })
+  })
+
+  it('shows error toast when setDueDate fails', async () => {
+    mockGetBlock.mockResolvedValue({
+      id: 'block-1',
+      due_date: '2025-01-01',
+      scheduled_date: null,
+    })
+    mockSetDueDate.mockRejectedValue(new Error('set due failed'))
+
+    render(
+      <ul>
+        <BlockListItem {...defaultProps({ blockId: 'block-1' })} />
+      </ul>,
+    )
+
+    expect(mockCalendarOnSelect).toBeDefined()
+    await waitFor(async () => {
+      ;(mockCalendarOnSelect as (d: Date) => void)(new Date(2025, 0, 5))
+    })
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalled()
+    })
+  })
+
+  it('calls onReschedule callback and skips IPC when provided', async () => {
+    const onReschedule = vi.fn()
+
+    render(
+      <ul>
+        <BlockListItem {...defaultProps({ blockId: 'block-1', onReschedule })} />
+      </ul>,
+    )
+
+    expect(mockCalendarOnSelect).toBeDefined()
+    await waitFor(async () => {
+      ;(mockCalendarOnSelect as (d: Date) => void)(new Date(2025, 7, 25))
+    })
+
+    await waitFor(() => {
+      expect(onReschedule).toHaveBeenCalledWith('block-1', '2025-08-25')
+    })
+
+    // IPC should NOT be called when onReschedule is provided
+    expect(mockGetBlock).not.toHaveBeenCalled()
+    expect(mockSetDueDate).not.toHaveBeenCalled()
+    expect(mockSetScheduledDate).not.toHaveBeenCalled()
+  })
+})
+
+// ─── a11y — reschedule ─────────────────────────────────────────────────────
+describe('BlockListItem — a11y reschedule', () => {
+  it('passes axe audit with reschedule button visible', async () => {
+    const { container } = render(
+      <ul>
+        <BlockListItem
+          {...defaultProps({
+            blockId: 'block-1',
+            metadata: <span>ICON</span>,
+            pageId: 'P1',
+            pageTitle: 'Test Page',
+          })}
+        />
+      </ul>,
+    )
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
   })
 })

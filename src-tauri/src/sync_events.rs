@@ -367,4 +367,101 @@ mod tests {
         assert!(json.contains("todo_state"));
         assert!(json.contains("completed_at"));
     }
+
+    #[test]
+    fn property_changed_event_serialization_roundtrip() {
+        let event = PropertyChangedEvent {
+            block_id: "block-42".to_string(),
+            changed_keys: vec!["title".to_string(), "priority".to_string()],
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["block_id"], "block-42", "block_id should roundtrip");
+        let keys = json["changed_keys"].as_array().unwrap();
+        assert_eq!(keys.len(), 2, "changed_keys should have 2 entries");
+        assert_eq!(keys[0], "title");
+        assert_eq!(keys[1], "priority");
+    }
+
+    #[test]
+    fn event_name_constants_have_expected_values() {
+        assert_eq!(EVENT_SYNC_PROGRESS, "sync:progress");
+        assert_eq!(EVENT_SYNC_COMPLETE, "sync:complete");
+        assert_eq!(EVENT_SYNC_ERROR, "sync:error");
+        assert_eq!(EVENT_PROPERTY_CHANGED, "block:properties-changed");
+    }
+
+    #[test]
+    fn arc_blanket_impl_forwards_events() {
+        use std::sync::Arc;
+        let sink = Arc::new(RecordingEventSink::new());
+        // Call on_sync_event through the Arc (exercises the blanket impl)
+        SyncEventSink::on_sync_event(
+            &sink,
+            SyncEvent::Progress {
+                state: "arc_test".into(),
+                remote_device_id: "DEV_ARC".into(),
+                ops_received: 1,
+                ops_sent: 2,
+            },
+        );
+        let events = sink.events();
+        assert_eq!(events.len(), 1, "Arc blanket impl should forward event");
+        match &events[0] {
+            SyncEvent::Progress {
+                state,
+                remote_device_id,
+                ops_received,
+                ops_sent,
+            } => {
+                assert_eq!(state, "arc_test");
+                assert_eq!(remote_device_id, "DEV_ARC");
+                assert_eq!(*ops_received, 1);
+                assert_eq!(*ops_sent, 2);
+            }
+            other => panic!("expected Progress, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn sync_event_progress_all_fields_in_json() {
+        let event = SyncEvent::Progress {
+            state: "streaming_ops".into(),
+            remote_device_id: "DEVICE_X".into(),
+            ops_received: 100,
+            ops_sent: 200,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["type"], "progress");
+        assert_eq!(json["state"], "streaming_ops");
+        assert_eq!(json["remote_device_id"], "DEVICE_X");
+        assert_eq!(json["ops_received"], 100);
+        assert_eq!(json["ops_sent"], 200);
+        // Verify exactly 5 fields (type, state, remote_device_id, ops_received, ops_sent)
+        let obj = json.as_object().unwrap();
+        assert_eq!(obj.len(), 5, "Progress JSON should have exactly 5 fields");
+    }
+
+    #[test]
+    fn sync_event_error_with_empty_message() {
+        let event = SyncEvent::Error {
+            message: "".into(),
+            remote_device_id: "DEV_EMPTY".into(),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["type"], "error");
+        assert_eq!(
+            json["message"], "",
+            "empty message should serialize as empty string"
+        );
+        assert_eq!(json["remote_device_id"], "DEV_EMPTY");
+    }
+
+    #[test]
+    fn recording_event_sink_new_starts_empty() {
+        let sink = RecordingEventSink::new();
+        assert!(
+            sink.events().is_empty(),
+            "fresh RecordingEventSink should have no events"
+        );
+    }
 }

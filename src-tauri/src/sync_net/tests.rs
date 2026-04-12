@@ -887,3 +887,65 @@ async fn mtls_tofu_store_and_verify_round_trip() {
 
     server_v2.shutdown().await;
 }
+
+// -- 12. mDNS constant value checks ------------------------------------
+
+#[test]
+fn mdns_service_type_constant_value() {
+    assert_eq!(
+        MDNS_SERVICE_TYPE, "_agaric._tcp.local.",
+        "MDNS_SERVICE_TYPE must equal '_agaric._tcp.local.'"
+    );
+}
+
+#[test]
+fn mdns_service_name_constant_value() {
+    assert_eq!(
+        MDNS_SERVICE_NAME, "BlockNotes",
+        "MDNS_SERVICE_NAME must equal 'BlockNotes'"
+    );
+}
+
+// -- 13. SyncMessage roundtrip edge cases ------------------------------
+
+#[test]
+fn sync_message_error_roundtrip_various_messages() {
+    for msg_str in &["", "network error", "emoji: \u{1f525}", "quotes: \"hello\""] {
+        let msg = SyncMessage::Error {
+            message: msg_str.to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: SyncMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed, msg,
+            "SyncMessage::Error roundtrip failed for: {msg_str}"
+        );
+    }
+}
+
+#[test]
+fn sync_message_file_request_roundtrip() {
+    let msg = SyncMessage::FileRequest {
+        attachment_ids: vec!["ATT_A".into(), "ATT_B".into()],
+    };
+    let json = serde_json::to_string(&msg).unwrap();
+    let parsed: SyncMessage = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, msg, "FileRequest must survive serde roundtrip");
+}
+
+#[test]
+fn sync_message_sync_complete_roundtrip_various() {
+    let long_hash = "a".repeat(64);
+    let hashes = ["", "abc123", &long_hash];
+    for hash in &hashes {
+        let msg = SyncMessage::SyncComplete {
+            last_hash: hash.to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: SyncMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed, msg,
+            "SyncComplete roundtrip failed for hash: {hash}"
+        );
+    }
+}

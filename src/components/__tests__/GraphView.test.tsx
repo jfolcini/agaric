@@ -11,7 +11,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { drag } from 'd3-drag'
 import { forceSimulation } from 'd3-force'
 import { select } from 'd3-selection'
@@ -77,9 +77,13 @@ vi.mock('d3-selection', () => ({
       call: vi.fn().mockReturnThis(),
       append: vi.fn().mockReturnThis(),
       style: vi.fn().mockReturnThis(),
+      transition: vi.fn().mockReturnThis(),
+      duration: vi.fn().mockReturnThis(),
     })),
     remove: vi.fn().mockReturnThis(),
     style: vi.fn().mockReturnThis(),
+    transition: vi.fn().mockReturnThis(),
+    duration: vi.fn().mockReturnThis(),
   })),
 }))
 
@@ -87,7 +91,10 @@ vi.mock('d3-zoom', () => ({
   zoom: vi.fn(() => ({
     scaleExtent: vi.fn().mockReturnThis(),
     on: vi.fn().mockReturnThis(),
+    scaleBy: vi.fn(),
+    transform: vi.fn(),
   })),
+  zoomIdentity: { k: 1, x: 0, y: 0 },
 }))
 
 vi.mock('d3-drag', () => ({
@@ -386,5 +393,299 @@ describe('GraphView', () => {
 
     const svg = screen.getByRole('img', { name: 'Page Relationships' })
     expect(svg).toHaveAttribute('tabindex', '0')
+  })
+
+  describe('data fetch edge cases', () => {
+    it('refetches when cache is stale', async () => {
+      const pagesResponse = {
+        items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+        next_cursor: null,
+        has_more: false,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      // First render populates cache
+      const { unmount } = render(<GraphView />)
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+      unmount()
+
+      // Make cache appear stale by advancing Date.now past TTL (6 minutes)
+      const realNow = Date.now()
+      const dateSpy = vi.spyOn(Date, 'now').mockReturnValue(realNow + 6 * 60 * 1000)
+
+      vi.clearAllMocks()
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      // Second render: stale cache → serves cached data but refetches in background
+      render(<GraphView />)
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalled()
+      })
+
+      dateSpy.mockRestore()
+    })
+
+    it('handles partial failure (listBlocks succeeds, listPageLinks fails)', async () => {
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks')
+          return Promise.resolve({
+            items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+            next_cursor: null,
+            has_more: false,
+          })
+        if (cmd === 'list_page_links') return Promise.reject(new Error('link fetch failed'))
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      const alert = await screen.findByRole('alert')
+      expect(alert).toHaveTextContent('Failed to load graph data')
+    })
+
+    it('handles pages with no links', async () => {
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks')
+          return Promise.resolve({
+            items: [
+              { id: 'page-1', content: 'Page One', block_type: 'page' },
+              { id: 'page-2', content: 'Page Two', block_type: 'page' },
+            ],
+            next_cursor: null,
+            has_more: false,
+          })
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      // Simulation was called with nodes even though there are no edges
+      expect(forceSimulation).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'page-1' }),
+          expect.objectContaining({ id: 'page-2' }),
+        ]),
+      )
+    })
+  })
+
+  describe('keyboard navigation', () => {
+    it('Enter key on focused node navigates to page', async () => {
+      const navigateToPage = vi.fn()
+      useNavigationStore.setState({
+        currentView: 'graph',
+        tabs: [{ id: '0', pageStack: [], label: '' }],
+        activeTabIndex: 0,
+        selectedBlockId: null,
+        navigateToPage,
+      })
+
+      const pagesResponse = {
+        items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+        next_cursor: null,
+        has_more: false,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      // Access the d3 mock chain to extract the keydown handler on node groups
+      // biome-ignore lint/suspicious/noExplicitAny: d3 mock chain access in test
+      const svgSel = vi.mocked(select).mock.results[0]?.value as any
+      // biome-ignore lint/suspicious/noExplicitAny: d3 mock chain access in test
+      const g = svgSel.append.mock.results[0]?.value as any
+      const keydownCall = g.on.mock.calls.find((c: unknown[]) => c[0] === 'keydown')
+      expect(keydownCall).toBeDefined()
+
+      // Invoke the captured handler with an Enter key event and node data
+      const handler = (keydownCall as unknown[])[1] as (event: unknown, d: unknown) => void
+      const mockEvent = { key: 'Enter', preventDefault: vi.fn() }
+      handler(mockEvent, { id: 'page-1', label: 'Page One' })
+
+      expect(mockEvent.preventDefault).toHaveBeenCalled()
+      expect(navigateToPage).toHaveBeenCalledWith('page-1', 'Page One')
+    })
+
+    it('+ key zooms in', async () => {
+      const pagesResponse = {
+        items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+        next_cursor: null,
+        has_more: false,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      const svg = screen.getByRole('img', { name: 'Page Relationships' })
+      fireEvent.keyDown(svg, { key: '+' })
+
+      // biome-ignore lint/suspicious/noExplicitAny: d3 zoom mock access in test
+      const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
+      expect(zoomInstance.scaleBy).toHaveBeenCalledWith(expect.anything(), 1.3)
+    })
+
+    it('- key zooms out', async () => {
+      const pagesResponse = {
+        items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+        next_cursor: null,
+        has_more: false,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      const svg = screen.getByRole('img', { name: 'Page Relationships' })
+      fireEvent.keyDown(svg, { key: '-' })
+
+      // biome-ignore lint/suspicious/noExplicitAny: d3 zoom mock access in test
+      const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
+      expect(zoomInstance.scaleBy).toHaveBeenCalledWith(expect.anything(), 1 / 1.3)
+    })
+
+    it('0 key resets zoom', async () => {
+      const pagesResponse = {
+        items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+        next_cursor: null,
+        has_more: false,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      const svg = screen.getByRole('img', { name: 'Page Relationships' })
+      fireEvent.keyDown(svg, { key: '0' })
+
+      // biome-ignore lint/suspicious/noExplicitAny: d3 zoom mock access in test
+      const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
+      expect(zoomInstance.transform).toHaveBeenCalled()
+    })
+  })
+
+  describe('error handling', () => {
+    it('logs error when data fetch fails', async () => {
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.reject(new Error('network failure'))
+        if (cmd === 'list_page_links') return Promise.reject(new Error('network failure'))
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      await screen.findByRole('alert')
+
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'GraphView',
+        'failed to load graph data',
+        undefined,
+        expect.any(Error),
+      )
+    })
+
+    it('does not crash on empty response', async () => {
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(emptyPage)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      expect(await screen.findByText('No pages to visualize')).toBeInTheDocument()
+    })
+  })
+
+  describe('cleanup', () => {
+    it('cancels fetch on unmount', async () => {
+      let resolveBlocks!: (v: unknown) => void
+      let resolveLinks!: (v: unknown) => void
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks')
+          return new Promise((resolve) => {
+            resolveBlocks = resolve
+          })
+        if (cmd === 'list_page_links')
+          return new Promise((resolve) => {
+            resolveLinks = resolve
+          })
+        return Promise.resolve(null)
+      })
+
+      const { unmount } = render(<GraphView />)
+
+      // Wait until invoke has been called (fetch started)
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalled()
+      })
+
+      // Unmount before data resolves (triggers cleanup setting cancelled=true)
+      unmount()
+
+      // Resolve pending promises after unmount
+      resolveBlocks({
+        items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+        next_cursor: null,
+        has_more: false,
+      })
+      resolveLinks([])
+
+      // Allow microtasks to flush
+      await new Promise((r) => setTimeout(r, 0))
+
+      // No errors logged — cancelled flag prevented state updates and error handling
+      expect(vi.mocked(logger.error)).not.toHaveBeenCalled()
+    })
   })
 })
