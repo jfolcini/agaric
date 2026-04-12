@@ -69,7 +69,7 @@ describe('buildPropertyParams', () => {
     const result = buildPropertyParams('B1', 'priority', '', 'number')
     expect(result).toEqual({
       ok: true,
-      params: { blockId: 'B1', key: 'priority', valueText: '' },
+      params: { blockId: 'B1', key: 'priority', valueNum: null },
     })
   })
 
@@ -77,7 +77,7 @@ describe('buildPropertyParams', () => {
     const result = buildPropertyParams('B1', 'priority', '   ', 'number')
     expect(result).toEqual({
       ok: true,
-      params: { blockId: 'B1', key: 'priority', valueText: '' },
+      params: { blockId: 'B1', key: 'priority', valueNum: null },
     })
   })
 

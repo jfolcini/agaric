@@ -2,10 +2,6 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 use sqlx::SqlitePool;
 use std::path::Path;
 
-/// Maximum number of connections in the SQLite pool.
-/// WAL mode allows concurrent readers plus one writer.
-const MAX_POOL_CONNECTIONS: u32 = 5;
-
 /// Separated read/write connection pools for SQLite.
 ///
 /// WAL mode allows concurrent readers alongside a single writer.
@@ -102,7 +98,7 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool, crate::error::AppEr
     let connect_options = base_connect_options(db_path);
 
     let pool = SqlitePoolOptions::new()
-        .max_connections(MAX_POOL_CONNECTIONS)
+        .max_connections(5)
         .connect_with(connect_options)
         .await?;
 

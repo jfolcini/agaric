@@ -2337,6 +2337,452 @@ async fn list_children_optimized_matches_ifnull_oracle() {
 }
 
 // ====================================================================
+// list_page_history
+// ====================================================================
+
+#[tokio::test]
+async fn test_list_page_history_basic_pagination() {
+    let (pool, _dir) = test_pool().await;
+
+    // Create a page and a child block
+    insert_block(&pool, "PH_PAGE1", "page", "history page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "PH_CHILD",
+        "content",
+        "child block",
+        Some("PH_PAGE1"),
+        Some(1),
+    )
+    .await;
+
+    // Insert op_log entries for blocks in the page subtree
+    let payload_page = r#"{"block_id":"PH_PAGE1","block_type":"page","content":"history page"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        1,
+        "create_block",
+        payload_page,
+        "2025-01-01T00:00:00Z",
+    )
+    .await;
+    let payload_child = r#"{"block_id":"PH_CHILD","block_type":"content","content":"child block"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        2,
+        "create_block",
+        payload_child,
+        "2025-01-02T00:00:00Z",
+    )
+    .await;
+    let edit_payload = r#"{"block_id":"PH_CHILD","to_text":"updated child"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        3,
+        "edit_block",
+        edit_payload,
+        "2025-01-03T00:00:00Z",
+    )
+    .await;
+
+    let page = PageRequest::new(None, Some(2)).unwrap();
+    let resp = list_page_history(&pool, "PH_PAGE1", None, &page)
+        .await
+        .unwrap();
+
+    assert_eq!(resp.items.len(), 2, "page size must be respected");
+    assert!(resp.has_more, "more items remain");
+    assert!(
+        resp.next_cursor.is_some(),
+        "cursor must be provided when has_more"
+    );
+    // Ordered by created_at DESC, seq DESC → newest first
+    assert_eq!(
+        resp.items[0].seq, 3,
+        "first item should be the most recent op"
+    );
+    assert_eq!(
+        resp.items[1].seq, 2,
+        "second item should be the second most recent op"
+    );
+}
+
+#[tokio::test]
+async fn test_list_page_history_empty_result() {
+    let (pool, _dir) = test_pool().await;
+
+    // Page exists but has no ops in op_log
+    insert_block(&pool, "PH_EMPTY", "page", "empty page", None, Some(1)).await;
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_page_history(&pool, "PH_EMPTY", None, &page)
+        .await
+        .unwrap();
+
+    assert!(
+        resp.items.is_empty(),
+        "page with no history must return empty"
+    );
+    assert!(
+        !resp.has_more,
+        "empty result should not indicate more pages"
+    );
+    assert!(
+        resp.next_cursor.is_none(),
+        "empty result should have no cursor"
+    );
+}
+
+#[tokio::test]
+async fn test_list_page_history_cursor_continuation() {
+    let (pool, _dir) = test_pool().await;
+
+    // Create a page with child blocks
+    insert_block(&pool, "PH_PAG2", "page", "page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "PH_CHD2",
+        "content",
+        "child",
+        Some("PH_PAG2"),
+        Some(1),
+    )
+    .await;
+
+    // Insert 5 ops for blocks in the subtree
+    for i in 1..=5_i64 {
+        let payload = format!(r#"{{"block_id":"PH_CHD2","to_text":"edit {i}"}}"#);
+        let ts = format!("2025-01-{i:02}T00:00:00Z");
+        insert_op_log_entry(&pool, "device-1", i, "edit_block", &payload, &ts).await;
+    }
+
+    // Page 1: limit=2
+    let r1 = list_page_history(
+        &pool,
+        "PH_PAG2",
+        None,
+        &PageRequest::new(None, Some(2)).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r1.items.len(), 2, "page 1 should return 2 items");
+    assert!(r1.has_more, "page 1 should indicate more");
+    // Ordered by created_at DESC → seq 5, 4
+    assert_eq!(r1.items[0].seq, 5, "page 1 first item: newest op");
+    assert_eq!(r1.items[1].seq, 4, "page 1 second item");
+
+    // Page 2: continue from cursor
+    let r2 = list_page_history(
+        &pool,
+        "PH_PAG2",
+        None,
+        &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r2.items.len(), 2, "page 2 should return 2 items");
+    assert!(r2.has_more, "page 2 should indicate more");
+    assert_eq!(r2.items[0].seq, 3, "page 2 first item");
+    assert_eq!(r2.items[1].seq, 2, "page 2 second item");
+
+    // Page 3 (last): remaining items
+    let r3 = list_page_history(
+        &pool,
+        "PH_PAG2",
+        None,
+        &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r3.items.len(), 1, "last page should return 1 item");
+    assert!(!r3.has_more, "last page should not indicate more");
+    assert!(r3.next_cursor.is_none(), "last page should have no cursor");
+    assert_eq!(r3.items[0].seq, 1, "last page: oldest op");
+}
+
+#[tokio::test]
+async fn test_list_page_history_op_type_filter() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "PH_PAG3", "page", "page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "PH_CHD3",
+        "content",
+        "child",
+        Some("PH_PAG3"),
+        Some(1),
+    )
+    .await;
+
+    // Insert mixed op types
+    let create_payload = r#"{"block_id":"PH_CHD3","block_type":"content","content":"child"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        1,
+        "create_block",
+        create_payload,
+        "2025-01-01T00:00:00Z",
+    )
+    .await;
+    let edit_payload = r#"{"block_id":"PH_CHD3","to_text":"edited"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        2,
+        "edit_block",
+        edit_payload,
+        "2025-01-02T00:00:00Z",
+    )
+    .await;
+    let tag_payload = r#"{"block_id":"PH_CHD3","tag_id":"TAG01"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        3,
+        "add_tag",
+        tag_payload,
+        "2025-01-03T00:00:00Z",
+    )
+    .await;
+
+    // Filter by edit_block only
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_page_history(&pool, "PH_PAG3", Some("edit_block"), &page)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.items.len(),
+        1,
+        "only edit_block ops should be returned"
+    );
+    assert_eq!(
+        resp.items[0].op_type, "edit_block",
+        "returned op must be edit_block"
+    );
+    assert_eq!(resp.items[0].seq, 2, "edit_block op is seq 2");
+
+    // Filter by create_block only
+    let resp2 = list_page_history(&pool, "PH_PAG3", Some("create_block"), &page)
+        .await
+        .unwrap();
+    assert_eq!(
+        resp2.items.len(),
+        1,
+        "only create_block ops should be returned"
+    );
+    assert_eq!(
+        resp2.items[0].op_type, "create_block",
+        "must be create_block"
+    );
+
+    // No filter → all 3
+    let resp_all = list_page_history(&pool, "PH_PAG3", None, &page)
+        .await
+        .unwrap();
+    assert_eq!(resp_all.items.len(), 3, "no filter returns all op types");
+}
+
+#[tokio::test]
+async fn test_list_page_history_global_all_pages() {
+    let (pool, _dir) = test_pool().await;
+
+    // Insert ops for different blocks (global history doesn't need subtree)
+    let payload_a = r#"{"block_id":"GLOB_A","block_type":"page","content":"page A"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        1,
+        "create_block",
+        payload_a,
+        "2025-01-01T00:00:00Z",
+    )
+    .await;
+    let payload_b = r#"{"block_id":"GLOB_B","block_type":"page","content":"page B"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        2,
+        "create_block",
+        payload_b,
+        "2025-01-02T00:00:00Z",
+    )
+    .await;
+    let payload_c = r#"{"block_id":"GLOB_C","block_type":"content","content":"content C"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        3,
+        "create_block",
+        payload_c,
+        "2025-01-03T00:00:00Z",
+    )
+    .await;
+
+    // Use __all__ sentinel for global history
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_page_history(&pool, "__all__", None, &page)
+        .await
+        .unwrap();
+
+    assert_eq!(resp.items.len(), 3, "global history should return all ops");
+    // Ordered by created_at DESC → seq 3, 2, 1
+    assert_eq!(resp.items[0].seq, 3, "newest op first");
+    assert_eq!(resp.items[1].seq, 2, "second newest");
+    assert_eq!(resp.items[2].seq, 1, "oldest op last");
+}
+
+#[tokio::test]
+async fn test_list_page_history_global_pagination() {
+    let (pool, _dir) = test_pool().await;
+
+    // Insert 5 ops for global history
+    for i in 1..=5_i64 {
+        let payload =
+            format!(r#"{{"block_id":"GP_BLK{i}","block_type":"content","content":"b{i}"}}"#);
+        let ts = format!("2025-01-{i:02}T00:00:00Z");
+        insert_op_log_entry(&pool, "device-1", i, "create_block", &payload, &ts).await;
+    }
+
+    // Walk all pages with limit=2
+    let mut all_seqs = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = PageRequest::new(cursor, Some(2)).unwrap();
+        let resp = list_page_history(&pool, "__all__", None, &page)
+            .await
+            .unwrap();
+        for entry in &resp.items {
+            all_seqs.push(entry.seq);
+        }
+        if !resp.has_more {
+            break;
+        }
+        cursor = resp.next_cursor;
+    }
+
+    assert_eq!(
+        all_seqs,
+        vec![5, 4, 3, 2, 1],
+        "exhaustive walk of global history must return all ops newest-first"
+    );
+}
+
+#[tokio::test]
+async fn test_list_page_history_global_op_type_filter() {
+    let (pool, _dir) = test_pool().await;
+
+    let create_payload = r#"{"block_id":"GF_BLK1","block_type":"content","content":"c"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        1,
+        "create_block",
+        create_payload,
+        "2025-01-01T00:00:00Z",
+    )
+    .await;
+    let edit_payload = r#"{"block_id":"GF_BLK1","to_text":"edited"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        2,
+        "edit_block",
+        edit_payload,
+        "2025-01-02T00:00:00Z",
+    )
+    .await;
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_page_history(&pool, "__all__", Some("edit_block"), &page)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.items.len(),
+        1,
+        "global filter should return only matching op type"
+    );
+    assert_eq!(resp.items[0].op_type, "edit_block", "must be edit_block");
+}
+
+#[tokio::test]
+async fn test_list_page_history_includes_nested_children() {
+    let (pool, _dir) = test_pool().await;
+
+    // Create nested page → child → grandchild
+    insert_block(&pool, "PH_ROOT", "page", "root page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "PH_LVL1",
+        "content",
+        "level 1",
+        Some("PH_ROOT"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "PH_LVL2",
+        "content",
+        "level 2",
+        Some("PH_LVL1"),
+        Some(1),
+    )
+    .await;
+
+    // Ops for each level
+    let p_root = r#"{"block_id":"PH_ROOT","block_type":"page","content":"root page"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        1,
+        "create_block",
+        p_root,
+        "2025-01-01T00:00:00Z",
+    )
+    .await;
+
+    let p_lvl1 = r#"{"block_id":"PH_LVL1","block_type":"content","content":"level 1"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        2,
+        "create_block",
+        p_lvl1,
+        "2025-01-02T00:00:00Z",
+    )
+    .await;
+
+    let p_lvl2 = r#"{"block_id":"PH_LVL2","block_type":"content","content":"level 2"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        3,
+        "create_block",
+        p_lvl2,
+        "2025-01-03T00:00:00Z",
+    )
+    .await;
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_page_history(&pool, "PH_ROOT", None, &page)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.items.len(),
+        3,
+        "page history must include ops for nested descendants"
+    );
+}
+
+// ====================================================================
 // Proptest tests
 // ====================================================================
 

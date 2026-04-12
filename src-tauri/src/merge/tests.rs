@@ -1908,21 +1908,54 @@ async fn merge_text_broken_chain_no_create_block_returns_error() {
 }
 
 // =====================================================================
-// 16. #208: debug_assert fires on non-Z timestamps (implicit test)
+// 16. M-14: Timestamp LWW uses proper chrono parsing (not debug_assert)
 // =====================================================================
 
-/// The debug_assert! in resolve_property_conflict verifies timestamps
-/// end with 'Z'. This test confirms valid Z-suffix timestamps pass
-/// without panicking, serving as a smoke test for the assertion.
+/// Normal Z-suffix timestamps are compared correctly via chrono parsing.
 #[test]
-fn resolve_property_conflict_z_timestamps_pass_debug_assert() {
+fn resolve_property_conflict_z_timestamps_parsed_correctly() {
     let op_a = make_prop_record(DEV_A, 1, "2025-06-01T10:00:00Z", "B1", "key", "val_a");
     let op_b = make_prop_record(DEV_B, 1, "2025-06-01T11:00:00Z", "B1", "key", "val_b");
 
-    // Should not panic — both timestamps end with 'Z'
     let result = resolve_property_conflict(&op_a, &op_b).unwrap();
     assert_eq!(
         result.winner_device, DEV_B,
         "later Z-suffix timestamp should win"
+    );
+}
+
+/// Timestamps with different UTC suffixes (`Z` vs `+00:00`) that represent
+/// the same instant must be treated as equal, falling through to tiebreakers.
+#[test]
+fn resolve_property_conflict_mixed_utc_suffixes_treated_as_equal() {
+    // Both represent the exact same instant: 2025-06-01T10:00:00 UTC
+    let op_a = make_prop_record(DEV_A, 1, "2025-06-01T10:00:00Z", "B1", "key", "val_a");
+    let op_b = make_prop_record(DEV_B, 1, "2025-06-01T10:00:00+00:00", "B1", "key", "val_b");
+
+    // Same instant → timestamps equal → tiebreaker: DEV_B > DEV_A lexicographically
+    let result = resolve_property_conflict(&op_a, &op_b).unwrap();
+    assert_eq!(
+        result.winner_device, DEV_B,
+        "equal timestamps with mixed Z/+00:00 should fall through to device_id tiebreaker"
+    );
+
+    // Verify commutativity: swapping op order gives same winner
+    let result_ba = resolve_property_conflict(&op_b, &op_a).unwrap();
+    assert_eq!(
+        result_ba.winner_device, DEV_B,
+        "commutativity: same winner regardless of argument order"
+    );
+}
+
+/// Timestamps with `+00:00` suffix where one is strictly later than the other.
+#[test]
+fn resolve_property_conflict_plus_zero_offset_later_wins() {
+    let op_a = make_prop_record(DEV_A, 1, "2025-06-01T10:00:00+00:00", "B1", "key", "val_a");
+    let op_b = make_prop_record(DEV_B, 1, "2025-06-01T11:00:00+00:00", "B1", "key", "val_b");
+
+    let result = resolve_property_conflict(&op_a, &op_b).unwrap();
+    assert_eq!(
+        result.winner_device, DEV_B,
+        "later +00:00 timestamp should win"
     );
 }

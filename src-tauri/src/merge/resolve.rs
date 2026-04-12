@@ -1,3 +1,4 @@
+use chrono::DateTime;
 use sqlx::SqlitePool;
 
 use crate::error::AppError;
@@ -93,16 +94,13 @@ pub async fn create_conflict_copy(
 /// Last-Writer-Wins resolution for concurrent property changes.
 ///
 /// Compares two `set_property` ops and returns the winning op's info.
-/// - Primary: later `created_at` timestamp wins (lexicographic string comparison).
+/// - Primary: later `created_at` timestamp wins (parsed via `chrono::DateTime::parse_from_rfc3339`).
 /// - Tiebreaker 1: lexicographically larger `device_id` wins.
 /// - Tiebreaker 2: larger `seq` wins.
 ///
-/// Timestamps are compared as strings via lexicographic ordering, which is
-/// correct for RFC 3339 timestamps **only when they share the same UTC
-/// suffix** (all `Z` or all `+00:00`).  The `now_rfc3339()` helper always
-/// emits `Z`, so production data is consistent.  If mixed-format timestamps
-/// are ever ingested from remote devices, this comparison may need to parse
-/// via `chrono::DateTime::parse_from_rfc3339` instead.            (F05)
+/// Timestamps are parsed as RFC 3339 values, so mixed UTC suffixes
+/// (`Z` vs `+00:00`) are handled correctly.  If parsing fails, falls
+/// back to lexicographic string comparison with a warning.
 #[must_use = "conflict resolution result must be applied"]
 pub fn resolve_property_conflict(
     op_a: &OpRecord,
@@ -126,20 +124,28 @@ pub fn resolve_property_conflict(
     let payload_a: SetPropertyPayload = serde_json::from_str(&op_a.payload)?;
     let payload_b: SetPropertyPayload = serde_json::from_str(&op_b.payload)?;
 
-    // Compare timestamps (ISO 8601 sorts lexicographically)
+    // Compare timestamps by parsing them as RFC 3339 DateTimes.  This handles
+    // mixed UTC suffixes (`Z` vs `+00:00`) correctly, unlike the previous
+    // lexicographic string comparison which was only valid when all timestamps
+    // shared the same suffix format.
     let ts_ours = &op_a.created_at;
     let ts_theirs = &op_b.created_at;
-    debug_assert!(
-        ts_ours.ends_with('Z'),
-        "Timestamp must be UTC Z format: {}",
-        ts_ours
-    );
-    debug_assert!(
-        ts_theirs.ends_with('Z'),
-        "Timestamp must be UTC Z format: {}",
-        ts_theirs
-    );
-    let winner_is_b = match ts_ours.cmp(ts_theirs) {
+    let ts_cmp = match (
+        DateTime::parse_from_rfc3339(ts_ours),
+        DateTime::parse_from_rfc3339(ts_theirs),
+    ) {
+        (Ok(a), Ok(b)) => a.cmp(&b),
+        (Err(e), _) | (_, Err(e)) => {
+            tracing::warn!(
+                ts_a = %ts_ours,
+                ts_b = %ts_theirs,
+                error = %e,
+                "failed to parse RFC 3339 timestamp in LWW comparison; falling back to lexicographic order"
+            );
+            ts_ours.cmp(ts_theirs)
+        }
+    };
+    let winner_is_b = match ts_cmp {
         std::cmp::Ordering::Less => true,     // B is later
         std::cmp::Ordering::Greater => false, // A is later
         std::cmp::Ordering::Equal => {

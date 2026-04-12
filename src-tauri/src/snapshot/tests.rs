@@ -2334,3 +2334,221 @@ fn snapshot_version_3_rejected() {
         "error should mention unsupported version, got: {err_msg}"
     );
 }
+
+// =======================================================================
+// Snapshot restore cache verification (T-11 / B-57)
+// =======================================================================
+
+/// After `apply_snapshot()`, cache tables should be EMPTY because the
+/// restore wipes them and does NOT trigger a cache rebuild — the caller
+/// is expected to rebuild caches after restore. This test documents the
+/// current behavior; see B-57 for the follow-up to trigger automatic
+/// cache rebuilds after restore.
+#[tokio::test]
+async fn apply_snapshot_caches_are_empty_after_restore() {
+    let (pool, _dir) = test_pool().await;
+
+    // Build a snapshot that has blocks, block_tags, and block_properties
+    // (which would normally seed tags_cache, pages_cache, agenda_cache).
+    let data = SnapshotData {
+        schema_version: SCHEMA_VERSION,
+        snapshot_device_id: "dev-cache".to_string(),
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: "cache-test".to_string(),
+        tables: SnapshotTables {
+            blocks: vec![
+                BlockSnapshot {
+                    id: "page-1".to_string(),
+                    block_type: "page".to_string(),
+                    content: Some("My Page".to_string()),
+                    parent_id: None,
+                    position: Some(1),
+                    deleted_at: None,
+                    is_conflict: 0,
+                    conflict_source: None,
+                    todo_state: None,
+                    priority: None,
+                    due_date: Some("2025-06-01".to_string()),
+                    scheduled_date: None,
+                },
+                BlockSnapshot {
+                    id: "tag-work".to_string(),
+                    block_type: "tag".to_string(),
+                    content: Some("work".to_string()),
+                    parent_id: None,
+                    position: None,
+                    deleted_at: None,
+                    is_conflict: 0,
+                    conflict_source: None,
+                    todo_state: None,
+                    priority: None,
+                    due_date: None,
+                    scheduled_date: None,
+                },
+                BlockSnapshot {
+                    id: "blk-child".to_string(),
+                    block_type: "content".to_string(),
+                    content: Some("tagged child".to_string()),
+                    parent_id: Some("page-1".to_string()),
+                    position: Some(1),
+                    deleted_at: None,
+                    is_conflict: 0,
+                    conflict_source: None,
+                    todo_state: None,
+                    priority: None,
+                    due_date: None,
+                    scheduled_date: None,
+                },
+            ],
+            block_tags: vec![BlockTagSnapshot {
+                block_id: "blk-child".to_string(),
+                tag_id: "tag-work".to_string(),
+            }],
+            block_properties: vec![BlockPropertySnapshot {
+                block_id: "page-1".to_string(),
+                key: "due".to_string(),
+                value_text: None,
+                value_num: None,
+                value_date: Some("2025-06-01".to_string()),
+                value_ref: None,
+            }],
+            block_links: vec![],
+            attachments: vec![],
+        },
+    };
+
+    // Pre-populate caches so we can verify they get wiped.
+    // (Simulate state before a restore where caches had data.)
+    // First, insert dummy blocks that the cache FKs reference.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, is_conflict) \
+         VALUES ('stale-tag', 'tag', 'stale', 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, is_conflict) \
+         VALUES ('stale-page', 'page', 'Stale Page', 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO tags_cache (tag_id, name, usage_count, updated_at) \
+         VALUES ('stale-tag', 'stale', 0, '2025-01-01T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO pages_cache (page_id, title, updated_at) \
+         VALUES ('stale-page', 'Stale Page', '2025-01-01T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Verify pre-populate worked
+    let tags_before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM tags_cache")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(tags_before, 1, "pre-condition: tags_cache has stale data");
+
+    let pages_before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM pages_cache")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(pages_before, 1, "pre-condition: pages_cache has stale data");
+
+    // Apply snapshot
+    let encoded = encode_snapshot(&data).unwrap();
+    let restored = apply_snapshot(&pool, &encoded).await.unwrap();
+
+    // Verify core tables are restored correctly
+    assert_eq!(
+        restored.tables.blocks.len(),
+        3,
+        "restored snapshot should have 3 blocks"
+    );
+    assert_eq!(
+        restored.tables.block_tags.len(),
+        1,
+        "restored snapshot should have 1 block_tag"
+    );
+
+    // Verify blocks are in the DB
+    let block_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        block_count, 3,
+        "database should have 3 blocks after restore"
+    );
+
+    // Verify block_tags are in the DB
+    let tag_assoc_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_tags")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        tag_assoc_count, 1,
+        "database should have 1 block_tag after restore"
+    );
+
+    // === Cache verification ===
+    // tags_cache should be EMPTY after restore (wiped, not rebuilt).
+    // Cache rebuild should be triggered by caller — see B-57.
+    let tags_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM tags_cache")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        tags_after, 0,
+        "tags_cache must be empty after restore (cache rebuild not triggered — B-57)"
+    );
+
+    // pages_cache should be EMPTY after restore (wiped, not rebuilt).
+    // Cache rebuild should be triggered by caller — see B-57.
+    let pages_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM pages_cache")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        pages_after, 0,
+        "pages_cache must be empty after restore (cache rebuild not triggered — B-57)"
+    );
+
+    // agenda_cache should be EMPTY after restore (wiped, not rebuilt).
+    // Cache rebuild should be triggered by caller — see B-57.
+    let agenda_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM agenda_cache")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        agenda_after, 0,
+        "agenda_cache must be empty after restore (cache rebuild not triggered — B-57)"
+    );
+
+    // block_tag_inherited should be EMPTY (no materializer has run).
+    let inherited_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_tag_inherited")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        inherited_after, 0,
+        "block_tag_inherited must be empty after restore (no materializer run)"
+    );
+
+    // projected_agenda_cache should be EMPTY (no materializer has run).
+    let projected_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM projected_agenda_cache")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        projected_after, 0,
+        "projected_agenda_cache must be empty after restore (no materializer run)"
+    );
+}

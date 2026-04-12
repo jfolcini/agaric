@@ -78,8 +78,8 @@ export function buildPropertyParams(
     if (value.trim()) {
       return { ok: false, error: 'invalidNumber' }
     }
-    // Empty number field — clear the value
-    return { ok: true, params: { blockId, key, valueText: '' } }
+    // Empty number field — clear the value using the correct typed field
+    return { ok: true, params: { blockId, key, valueNum: null } }
   }
   if (valueType === 'date') {
     return { ok: true, params: { blockId, key, valueDate: value || null } }

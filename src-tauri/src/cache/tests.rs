@@ -2601,3 +2601,121 @@ async fn projected_cache_done_blocks_excluded() {
 
     assert_eq!(count, 0, "DONE blocks must produce 0 projected entries");
 }
+
+// ====================================================================
+// agenda_cache — source UPDATE path (T-12)
+// ====================================================================
+
+/// The incremental rebuild has an UPDATE path for when a `(date, block_id)`
+/// PK exists in agenda_cache but the `source` value has changed. This test
+/// verifies the UPDATE path is exercised (not just INSERT OR IGNORE).
+#[tokio::test]
+async fn agenda_cache_source_update_path() {
+    let (pool, _dir) = test_pool().await;
+
+    // Step 1: Insert a block with a due_date column (source = 'column:due_date')
+    insert_block(&pool, "UPD_BLK", "content", "update test block").await;
+    sqlx::query("UPDATE blocks SET due_date = '2025-08-01' WHERE id = 'UPD_BLK'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Step 2: Trigger agenda cache rebuild → creates entry with source = 'column:due_date'
+    rebuild_agenda_cache(&pool).await.unwrap();
+
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT date, block_id, source FROM agenda_cache WHERE block_id = 'UPD_BLK'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1, "baseline: one agenda entry for UPD_BLK");
+    assert_eq!(rows[0].0, "2025-08-01", "baseline date must be 2025-08-01");
+    assert_eq!(
+        rows[0].2, "column:due_date",
+        "baseline source must be column:due_date"
+    );
+
+    // Step 3: Add a block_property with the SAME date. Properties appear
+    // first in the UNION ALL query, so `property:scheduled` will win
+    // deduplication (first-wins via .or_insert) over `column:due_date`.
+    set_property(&pool, "UPD_BLK", "scheduled", Some("2025-08-01")).await;
+
+    // Step 4: Trigger rebuild again → the PK (2025-08-01, UPD_BLK) already
+    // exists but source should UPDATE from 'column:due_date' to 'property:scheduled'.
+    rebuild_agenda_cache(&pool).await.unwrap();
+
+    let rows_after: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT date, block_id, source FROM agenda_cache WHERE block_id = 'UPD_BLK'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    // PK deduplication means only 1 row for (2025-08-01, UPD_BLK)
+    assert_eq!(
+        rows_after.len(),
+        1,
+        "still exactly one entry for (2025-08-01, UPD_BLK) after source change"
+    );
+    assert_eq!(
+        rows_after[0].2, "property:scheduled",
+        "source must be UPDATED to property:scheduled (not stale column:due_date)"
+    );
+}
+
+/// Verify the UPDATE path also works when source changes within the
+/// same category (e.g., from one property key to another).
+#[tokio::test]
+async fn agenda_cache_source_update_property_key_change() {
+    let (pool, _dir) = test_pool().await;
+
+    // Block with a 'due' property
+    insert_block(&pool, "UPD_BLK2", "content", "prop key change").await;
+    set_property(&pool, "UPD_BLK2", "due", Some("2025-09-15")).await;
+
+    rebuild_agenda_cache(&pool).await.unwrap();
+
+    let source_before: String = sqlx::query_scalar(
+        "SELECT source FROM agenda_cache WHERE block_id = 'UPD_BLK2' AND date = '2025-09-15'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        source_before, "property:due",
+        "baseline source must be property:due"
+    );
+
+    // Remove the 'due' property and add 'deadline' for the same date.
+    // Properties are ordered by UNION ALL position (properties first),
+    // and within properties by insertion order. We delete 'due' and add
+    // 'deadline' so that 'deadline' is the only property source.
+    sqlx::query("DELETE FROM block_properties WHERE block_id = 'UPD_BLK2' AND key = 'due'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    set_property(&pool, "UPD_BLK2", "deadline", Some("2025-09-15")).await;
+
+    rebuild_agenda_cache(&pool).await.unwrap();
+
+    let source_after: String = sqlx::query_scalar(
+        "SELECT source FROM agenda_cache WHERE block_id = 'UPD_BLK2' AND date = '2025-09-15'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        source_after, "property:deadline",
+        "source must be UPDATED from property:due to property:deadline"
+    );
+
+    // Still exactly one row
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agenda_cache WHERE block_id = 'UPD_BLK2' AND date = '2025-09-15'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 1, "PK dedup: still exactly one row");
+}
