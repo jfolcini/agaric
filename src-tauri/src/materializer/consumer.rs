@@ -1,0 +1,243 @@
+//! Consumer loops for the materializer foreground and background queues.
+
+use sqlx::SqlitePool;
+use std::mem;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tokio::sync::mpsc;
+
+use super::dedup::{dedup_tasks, group_tasks_by_block_id};
+use super::handlers::{handle_background_task, handle_foreground_task};
+use super::metrics::QueueMetrics;
+use super::MaterializeTask;
+use super::FOREGROUND_CAPACITY;
+
+#[cfg(not(tarpaulin_include))]
+pub(super) fn log_consumer_result(
+    label: &str,
+    result: &Result<Result<(), crate::error::AppError>, tokio::task::JoinError>,
+) {
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            tracing::error!(label, error = %e, "error processing materializer task");
+        }
+        Err(e) => {
+            tracing::error!(label, error = %e, "materializer task panicked");
+        }
+    }
+}
+
+pub(super) async fn run_foreground(
+    pool: SqlitePool,
+    mut rx: mpsc::Receiver<MaterializeTask>,
+    shutdown_flag: Arc<AtomicBool>,
+    metrics: Arc<QueueMetrics>,
+) {
+    loop {
+        let first_task = match rx.recv().await {
+            Some(t) => t,
+            None => break,
+        };
+        let mut batch = vec![first_task];
+        while let Ok(task) = rx.try_recv() {
+            batch.push(task);
+            if batch.len() >= FOREGROUND_CAPACITY {
+                break;
+            }
+        }
+        let mut segment: Vec<MaterializeTask> = Vec::new();
+        for task in batch {
+            if matches!(task, MaterializeTask::Barrier(_)) {
+                if !segment.is_empty() {
+                    process_foreground_segment(&pool, mem::take(&mut segment), &metrics).await;
+                }
+                process_single_foreground_task(&pool, task, &metrics).await;
+            } else {
+                segment.push(task);
+            }
+        }
+        if !segment.is_empty() {
+            process_foreground_segment(&pool, segment, &metrics).await;
+        }
+        if shutdown_flag.load(Ordering::Acquire) {
+            break;
+        }
+    }
+    tracing::info!("foreground queue closed");
+}
+
+async fn process_foreground_segment(
+    pool: &SqlitePool,
+    tasks: Vec<MaterializeTask>,
+    metrics: &Arc<QueueMetrics>,
+) {
+    let groups = group_tasks_by_block_id(tasks);
+    if groups.len() <= 1 {
+        for (_block_id, group_tasks) in groups {
+            for task in group_tasks {
+                process_single_foreground_task(pool, task, metrics).await;
+            }
+        }
+        return;
+    }
+    let mut join_set = tokio::task::JoinSet::new();
+    for (_block_id, group_tasks) in groups {
+        let pool = pool.clone();
+        let metrics = Arc::clone(metrics);
+        join_set.spawn(async move {
+            for task in group_tasks {
+                process_single_foreground_task(&pool, task, &metrics).await;
+            }
+        });
+    }
+    while let Some(result) = join_set.join_next().await {
+        if let Err(e) = result {
+            tracing::error!("foreground group task panicked: {e}");
+        }
+    }
+}
+
+pub(super) async fn process_single_foreground_task(
+    pool: &SqlitePool,
+    task: MaterializeTask,
+    metrics: &Arc<QueueMetrics>,
+) {
+    if matches!(&task, MaterializeTask::Barrier(_)) {
+        let pool_clone = pool.clone();
+        let metrics_clone = Arc::clone(metrics);
+        let result = tokio::task::spawn(async move {
+            handle_foreground_task(&pool_clone, &task, &metrics_clone).await
+        })
+        .await;
+        log_consumer_result("fg", &result);
+        metrics.fg_processed.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    let retry_task = task.clone();
+    let pool_clone = pool.clone();
+    let metrics_clone = Arc::clone(metrics);
+    let result = tokio::task::spawn(async move {
+        handle_foreground_task(&pool_clone, &task, &metrics_clone).await
+    })
+    .await;
+    match &result {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) => {
+            log_consumer_result("fg", &result);
+            tracing::info!("retrying failed foreground task after 100ms backoff");
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let pool_clone2 = pool.clone();
+            let metrics_clone2 = Arc::clone(metrics);
+            let retry_result = tokio::task::spawn(async move {
+                handle_foreground_task(&pool_clone2, &retry_task, &metrics_clone2).await
+            })
+            .await;
+            log_consumer_result("fg-retry", &retry_result);
+            if matches!(&retry_result, Ok(Err(_)) | Err(_)) {
+                metrics.fg_errors.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        Err(_) => {
+            log_consumer_result("fg", &result);
+            metrics.fg_panics.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    metrics.fg_processed.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(super) async fn run_background(
+    pool: SqlitePool,
+    mut rx: mpsc::Receiver<MaterializeTask>,
+    shutdown_flag: Arc<AtomicBool>,
+    metrics: Arc<QueueMetrics>,
+    read_pool: Option<SqlitePool>,
+) {
+    loop {
+        let first = match rx.recv().await {
+            Some(t) => t,
+            None => break,
+        };
+        let mut batch = vec![first];
+        while let Ok(task) = rx.try_recv() {
+            batch.push(task);
+        }
+        let total_before = batch.len();
+        let deduped = dedup_tasks(batch);
+        let dedup_count = (total_before - deduped.len()) as u64;
+        for task in deduped {
+            let rp_ref = read_pool.as_ref();
+            if matches!(&task, MaterializeTask::Barrier(_)) {
+                let pool_clone = pool.clone();
+                let result = tokio::task::spawn(async move {
+                    handle_background_task(&pool_clone, &task, None).await
+                })
+                .await;
+                log_consumer_result("bg", &result);
+                metrics.bg_processed.fetch_add(1, Ordering::Relaxed);
+                continue;
+            }
+            const MAX_RETRIES: u32 = 2;
+            const INITIAL_BACKOFF_MS: u64 = 50;
+            let mut succeeded = false;
+            let mut panicked = false;
+            let task_clone = task.clone();
+            let pool_clone = pool.clone();
+            let rp_clone = rp_ref.cloned();
+            let result = tokio::task::spawn(async move {
+                handle_background_task(&pool_clone, &task_clone, rp_clone.as_ref()).await
+            })
+            .await;
+            match &result {
+                Ok(Ok(())) => {
+                    succeeded = true;
+                }
+                Ok(Err(_)) => {
+                    log_consumer_result("bg", &result);
+                    for attempt in 1..=MAX_RETRIES {
+                        let backoff_ms = INITIAL_BACKOFF_MS * (1 << (attempt - 1));
+                        tracing::warn!(task = ?format!("{:?}", std::mem::discriminant(&task)), retry = attempt, backoff_ms, "retrying failed background task after {backoff_ms}ms backoff");
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                        let retry_task = task.clone();
+                        let pool_clone2 = pool.clone();
+                        let rp_clone2 = rp_ref.cloned();
+                        let retry_result = tokio::task::spawn(async move {
+                            handle_background_task(&pool_clone2, &retry_task, rp_clone2.as_ref())
+                                .await
+                        })
+                        .await;
+                        match &retry_result {
+                            Ok(Ok(())) => {
+                                succeeded = true;
+                                break;
+                            }
+                            Ok(Err(_)) => {
+                                log_consumer_result(&format!("bg-retry-{attempt}"), &retry_result);
+                            }
+                            Err(_) => {
+                                log_consumer_result(&format!("bg-retry-{attempt}"), &retry_result);
+                                panicked = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    log_consumer_result("bg", &result);
+                    panicked = true;
+                }
+            }
+            if panicked {
+                metrics.bg_panics.fetch_add(1, Ordering::Relaxed);
+            } else if !succeeded {
+                metrics.bg_errors.fetch_add(1, Ordering::Relaxed);
+            }
+            metrics.bg_processed.fetch_add(1, Ordering::Relaxed);
+        }
+        metrics.bg_deduped.fetch_add(dedup_count, Ordering::Relaxed);
+        if shutdown_flag.load(Ordering::Acquire) {
+            break;
+        }
+    }
+    tracing::info!("background queue closed");
+}

@@ -1034,12 +1034,6 @@ results: UndoResult[] }
  * Sort direction.
  */
 export type SortDir = "Asc" | "Desc"
-/**
- * Serializable status snapshot of the materializer queues.
- *
- * Built from [`QueueMetrics`] (atomic counters) and channel capacity info.
- * Exposed by the `get_status` command.
- */
 export type StatusInfo = { foreground_queue_depth: number; background_queue_depth: number; total_ops_dispatched: number; total_background_dispatched: number; fg_high_water: number; bg_high_water: number; fg_errors: number; bg_errors: number; fg_panics: number; bg_panics: number }
 /**
  * Response payload returned by [`start_sync`].
