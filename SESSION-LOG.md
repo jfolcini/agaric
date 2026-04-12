@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 348 — B-55 ULID resolve + M-30/M-34 Rust file splitting (2026-04-12)
+
+**3 REVIEW-LATER items resolved (B-55, M-30, M-34). 10 files changed, +1091 -915 lines. 6273 frontend tests pass, 1809 Rust tests pass.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| B-55 | Overdue/upcoming/projected effects now resolve content ULIDs via `extractUlidRefs()` pattern | `useDuePanelData.ts`, `useDuePanelData.test.ts` |
+| M-30 | Extract 4 command domains from `commands/mod.rs` — drafts, compaction, journal, logging | New: `drafts.rs`, `compaction.rs`, `journal.rs`, `logging.rs`; Modified: `commands/mod.rs` |
+| M-34 | Extract materializer handler functions to `materializer_handlers.rs` | New: `materializer_handlers.rs`; Modified: `materializer.rs`, `lib.rs` |
+
+### Implementation
+- **B-55**: Applied `extractUlidRefs()` to 3 additional effects in `useDuePanelData.ts`. Overdue/upcoming use `b.content`, projected uses `e.block.content` (nested structure). Combined with parent IDs via `new Set()` and passed to `batchResolve`. 3 new tests covering each effect.
+- **M-30**: Created 4 domain modules. Drafts: 6 functions (95 lines). Compaction: 4 types + 4 functions (163 lines). Journal: 2 inner-only functions (71 lines). Logging: 2 functions (50 lines). mod.rs updated with `mod` declarations, `pub use`, `__specta__fn__`, and `__cmd__` re-exports. mod.rs drops ~270 lines of code.
+- **M-34**: Extracted `apply_op()` (380 lines), `handle_foreground_task()`, `handle_background_task()`, `cleanup_orphaned_attachments()` to `materializer_handlers.rs` (533 lines). All made `pub(crate)`. `materializer.rs` imports handlers via `use crate::materializer_handlers::*`. No circular dependencies — handlers import only types from materializer, materializer imports only functions from handlers. materializer.rs drops ~530 lines.
+
+### Stats
+- 10 files changed (+1091 -915 lines)
+- 6273 frontend tests pass (was 6270), 1809 Rust tests pass, all 20 prek hooks pass
+- 3 REVIEW-LATER items resolved (8 → 5 open)
+
+---
+
 ## Session 347 — Bug batch: DuePanel, parser, pill rendering (2026-04-12)
 
 **5 REVIEW-LATER items resolved (B-51, B-52, B-53, B-54, UX-154). 7 files changed, +185 -17 lines. 6270 frontend tests pass.**
