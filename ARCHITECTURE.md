@@ -160,6 +160,16 @@ all its descendants via a recursive CTE. A single op covers the entire subtree.
   original timestamp. Independently deleted descendants are left soft-deleted.
 - **Permanent delete:** `purge_block` physically removes the block and descendants. Triggered by
   explicit user action or automatically after 30 days in Trash.
+
+  **Purge table cleanup inventory** (a complete purge must clean all of these):
+  `block_tags`, `block_tag_inherited`, `block_properties` (both as target and as `value_ref`
+  source), `block_links`, `agenda_cache`, `tags_cache`, `pages_cache`, `attachments`,
+  `block_drafts`, `fts_blocks`, `page_aliases`, `projected_agenda_cache`, `blocks`
+  (`conflict_source` nullification), `blocks` (final DELETE).
+  **Known gap (B-63):** `purge_block_inner` (command layer) and the materializer's `PurgeBlock`
+  handler both clean only 12 of these — they miss `page_aliases` and `projected_agenda_cache`.
+  Only `purge_all_deleted_inner` cleans all tables. `soft_delete/purge.rs` has the complete
+  implementation but is unused dead code.
 - Deleting a tag block does NOT cascade to content blocks that reference it. The materializer
   removes `block_tags` rows; `#[ULID]` tokens render as "deleted tag" decoration.
 
@@ -371,7 +381,10 @@ immediately. The materializer never duplicates local writes because its idempote
 
 - **Foreground queue** (capacity 256): Applies remote ops to core tables (`blocks`, `block_tags`,
   `block_properties`). Also handles `BatchApplyOps` for sync. Low latency for viewport
-  responsiveness.
+  responsiveness. **Known issue (B-62):** `BatchApplyOps` applies ops sequentially without a
+  wrapping transaction — partial failure + retry can re-apply already-committed ops. Most
+  handlers are idempotent (`INSERT OR IGNORE`) but `EditBlock` re-application could overwrite
+  correct state.
 - **Background queue** (capacity 1024): Cache rebuilds, FTS indexing, maintenance. Stale-while-
   revalidate — never blocks the UI.
 
@@ -672,6 +685,14 @@ consistency even if the materializer lags. Helper functions (`find_prior_text`,
 
 **Batch revert:** `revert_ops` accepts multiple `OpRef`s, validates all are reversible, sorts
 newest-first, and applies all reverses in a single `IMMEDIATE` transaction.
+
+**Known issues (discovered in code review session 305):**
+- **(B-58)** `revert_ops_inner` applies then appends; `undo_page_op_inner` / `redo_page_op_inner`
+  append then apply. Both are within an `IMMEDIATE` transaction so atomicity is preserved, but
+  the ordering inconsistency is a maintenance hazard.
+- **(B-59)** `restore_page_to_op_inner` does NOT include `delete_attachment` ops in its page-scoped
+  query (they lack `$.block_id` in the payload). Compare to `undo_page_op_inner` which has an
+  explicit `OR (op_type = 'delete_attachment' AND EXISTS ...)` clause.
 
 **History views:** `HistoryPanel` shows per-block edit history. `HistoryView` shows the global
 op log with multi-select, op-type filtering, and batch revert.
@@ -1085,8 +1106,16 @@ SnapshotData {
 }
 ```
 
-Cache tables (`tags_cache`, `pages_cache`, `agenda_cache`, FTS5) are **not included** — they
-rebuild from core tables on first boot after a RESET.
+Cache tables (`tags_cache`, `pages_cache`, `agenda_cache`, `block_tag_inherited`,
+`projected_agenda_cache`, FTS5) are **not included** — they rebuild from core tables on first
+materializer dispatch after a RESET. Note: `apply_snapshot()` currently only deletes 4 of these
+6 cache tables (`tags_cache`, `pages_cache`, `agenda_cache`, `fts_blocks`); `block_tag_inherited`
+and `projected_agenda_cache` are left with stale data until the materializer rebuilds them.
+
+**Known gap (B-57):** `property_definitions` and `page_aliases` are NOT captured in snapshots.
+Restoring a snapshot loses property type metadata and page aliases. `apply_snapshot()` docstring
+says "caller is responsible for triggering cache rebuilds" but no current caller does — cache
+tables are left empty until the next materializer dispatch.
 
 **Rejected:** SQLite backup API dump (large, version-coupled), full op replay from op 1 (correct
 but slow), JSON instead of CBOR (2–5x larger).
@@ -1805,11 +1834,15 @@ empirically validated through bugs found, fixes applied, and alternatives reject
   `block_properties` rows. This eliminates N+1 queries for agenda/filter operations.
 
 ### Sync
-
 - **Idempotent guards on merge operations.** Compare current state with winner before creating
   new ops. Without this, merge queries match all historical ops causing infinite re-resolution.
+  **Known gap (B-60):** The `edit_block` divergence case in `operations.rs` lacks an idempotency
+  guard — property and move conflicts have guards but text merge does not.
 - **`INSERT OR IGNORE` for remote ops.** Duplicate delivery is safe due to composite PK.
   No renumbering, no collision.
+- **Cancel flag cleanup (B-61):** `try_sync_with_peer()` clears the cancel flag only after
+  `run_sync_session()` completes. Early-exit paths (connection failure, backoff gate, address
+  resolution) do NOT clear it, which can prevent future sync attempts.
 - **Merge preload pattern.** Pre-load tag/page name maps via `load_ref_maps` before batch
   operations. O(N×3) → O(2+N) for FTS reindex.
 

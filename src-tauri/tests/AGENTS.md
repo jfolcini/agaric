@@ -426,3 +426,11 @@ criterion_main!(benches);
 21. **`is_builtin_property_key()` guards on delete** — Built-in property keys (11 keys: `todo_state`, `priority`, `due_date`, `scheduled_date`, `created_at`, `completed_at`, `repeat`, `repeat-until`, `repeat-count`, `repeat-seq`, `repeat-origin`) cannot be deleted by users. The `delete_property_inner` command validates against `is_builtin_property_key()` and returns `Validation` error. Tests must verify this guard rejects built-in keys.
 
 22. **`total_count` must use post-filter count** — When a query filters results after the initial fetch (e.g., self-reference filtering in backlinks), `total_count` must be set from the filtered length, not the pre-filter length. Session 196 caught this bug: `matching_ids.len()` was used before filtering, causing inflated counts.
+
+23. **Purge tests must verify ALL 14 cleanup tables** — When adding a new table with FK to `blocks`, add a test case in `purge_block` tests verifying rows are cleaned. Session 305 code review discovered that `page_aliases` and `projected_agenda_cache` are missing from both `purge_block_inner` and the materializer's `PurgeBlock` handler. See ARCHITECTURE.md purge table inventory.
+
+24. **`list_agenda_range` and `list_page_history` have zero unit tests in pagination/tests.rs** — All other pagination functions have comprehensive unit tests. Session 305 code review flagged these as critical test gaps.
+
+25. **`edge_case_tests.rs` false-positive assertion** — `assert!(count >= 0)` at line 147 of `f13_sql_injection_block_type_returns_validation_error` always passes because `COUNT(*)` is never negative. Replace with `assert!(count >= 1)` or a schema existence check.
+
+26. **Snapshot restore must be followed by cache rebuild** — `apply_snapshot()` wipes cache tables (`tags_cache`, `pages_cache`, `agenda_cache`, `fts_blocks`) but does NOT rebuild them. No current caller triggers cache rebuilds after restore. Test snapshots should verify cache state post-restore or explicitly rebuild.
