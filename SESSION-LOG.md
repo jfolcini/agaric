@@ -1,5 +1,37 @@
 # Session Log
 
+## Session 362 — B-57/S-10/T-8/M-12/M-13/UX-162 resolved: snapshot + sync + tests + maintenance + i18n (2026-04-12)
+
+**6 REVIEW-LATER items resolved (B-57, S-10, T-8, M-12, M-13, UX-162). 0 open items remain.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| B-57 | Snapshot now captures property_definitions and page_aliases; all 6 cache tables deleted on restore; schema v3 | `snapshot/types.rs`, `snapshot/create.rs`, `snapshot/restore.rs`, `snapshot/tests.rs` |
+| S-10 | edit_block merge idempotency guard via dag::has_merge_for_heads() | `dag.rs`, `sync_protocol/operations.rs` |
+| T-8 | 7 comprehensive tests for list_agenda_range pagination | `pagination/tests.rs` |
+| M-12 | Removed dead soft_delete::purge_block (replaced by inline in crud.rs/handlers.rs) | `soft_delete/purge.rs` (deleted), `soft_delete/mod.rs` |
+| M-13 | Conflict copy position uses MAX(position)+1 to avoid collision | `merge/resolve.rs`, `merge/tests.rs` |
+| UX-162 | Replaced ~45 hardcoded English strings with i18n t() calls across 19 components | `i18n.ts`, 19 component files, 3 test files |
+
+### Implementation
+- **B-57**: Added PropertyDefinitionSnapshot/PageAliasSnapshot structs. collect_tables() queries both new tables. apply_snapshot() deletes all 6 cache tables (was 4) and inserts both new tables. SCHEMA_VERSION=3 with #[serde(default)] for v2 backward compat.
+- **S-10**: New has_merge_for_heads() in dag.rs checks parent_seqs for their_head via instr(). Guard in operations.rs skips merge_block() if already integrated.
+- **T-8**: 7 tests: first page, cursor continuation, last page, empty range, soft-delete exclusion, source filter, exhaustive walk.
+- **M-12**: Deleted purge.rs (310 lines). Removed 16 purge_block tests from mod.rs. Production purge_block_inner in crud.rs already cleans all 14 tables.
+- **M-13**: resolve.rs now queries MAX(position) among siblings with `parent_id IS ?` (handles NULL). New collision test with 3 siblings verifies position=4 not 3.
+- **UX-162**: Added ~45 i18n keys (boot.*, announce.*, device.*, status.sync*, filter.*, group.*, property.error*, etc.). Updated 19 components + 3 test files.
+- **ARCHITECTURE.md**: Updated snapshot format (added property_definitions, page_aliases), removed B-57 known gap, updated cache table note, removed B-60 known gap, updated sync idempotency note.
+- **UX.md**: Removed "Known i18n gaps" paragraph.
+
+### Stats
+- 38 files changed (+666 -802 lines)
+- 1820 Rust tests pass, 6305 frontend tests pass, all 19 prek hooks pass
+- 6 REVIEW-LATER items resolved (6 → 0 open)
+
+---
+
 ## Session 361 — B-68/M-16/UX-163 resolved: hook deps, error logging, touch targets (2026-04-12)
 
 **3 REVIEW-LATER items resolved (B-68, M-16, UX-163). 6 open items remain.**
