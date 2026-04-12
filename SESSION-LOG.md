@@ -1,5 +1,33 @@
 # Session Log
 
+## Session 355 — M-61/M-62/M-63/M-67 resolved: split final 4 Rust files into module directories (2026-04-12)
+
+**4 REVIEW-LATER items resolved (M-61, M-62, M-63, M-67). REVIEW-LATER backlog fully cleared (0 open items).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| M-61 | Split `snapshot.rs` (2,936 LOC) → `snapshot/` (types, codec, create, restore, tests) | 6 new files, 1 deleted |
+| M-62 | Split `merge.rs` (2,332 LOC) → `merge/` (types, detect, resolve, apply, tests) | 6 new files, 1 deleted |
+| M-63 | Split `sync_daemon.rs` (2,166 LOC) → `sync_daemon/` (discovery, orchestrator, server, tests) | 5 new files, 1 deleted |
+| M-67 | Split `sync_net.rs` (1,720 LOC) → `sync_net/` (tls, websocket, connection, tests) | 5 new files, 1 deleted |
+
+### Implementation
+- Each split follows the established pattern: promote file to directory module, split by domain, `pub use` re-exports in mod.rs preserve all existing import paths.
+- M-62 (merge): `merge_block` orchestrator in `apply.rs`, conflict detection in `detect.rs`, resolution in `resolve.rs`. Types (`MergeResult`, `MergeOutcome`, `PropertyConflictResolution`) in `types.rs`.
+- M-63 (sync_daemon): `SyncDaemon` struct + `SharedEventSink` in mod.rs, mDNS discovery in `discovery.rs`, sync orchestration in `orchestrator.rs`, TLS server in `server.rs`. `pub(crate)` visibility for internal functions used in tests.
+- M-67 (sync_net): TLS cert/config in `tls.rs`, mDNS/WebSocket server in `websocket.rs`, connection management in `connection.rs`.
+- Reviewer flagged pre-existing duplicate type definitions (`SyncMessage`, `DeviceHead`, `OpTransfer`) in both `sync_net` and `sync_protocol` — not introduced by the split, deferred.
+
+### Stats
+- 22 new files, 4 deleted (net +18)
+- 1808 Rust tests pass, all 20 prek hooks pass
+- 4 REVIEW-LATER items resolved (4 → 0 open)
+- **REVIEW-LATER MAINT backlog fully cleared** — all 15 file-splitting items (M-55 through M-69) resolved across sessions 353-355
+
+---
+
 ## Session 354 — M-64/M-65/M-66/M-68/M-69 resolved: split 5 more Rust files into module directories (2026-04-12)
 
 **5 REVIEW-LATER items resolved (M-64, M-65, M-66, M-68, M-69). 4 MAINT items remain.**
