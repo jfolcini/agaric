@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 367 — T-16 cert verification + TOFU + happy-path sync tests (2026-04-13)
+
+**T-16 further advanced — 4 more handle_incoming_sync integration tests covering cert verification and happy-path flows. server.rs now has 8 tests covering all validation branches.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| T-16 (further) | 4 cert + happy-path tests + set_test_cert helper | `connection.rs`, `sync_daemon/tests.rs` |
+
+### Implementation
+- **set_test_cert()**: Added `#[cfg(test)]` method on `SyncConnection` for cert field injection from test modules outside `sync_net`.
+- **B-34 CN mismatch**: Sets server CN to "wrong-device" for paired "REMOTE_PAIRED" → Error "certificate".
+- **B-33 hash mismatch**: Inserts peer_ref with stored hash, sets different observed hash → Error "hash mismatch".
+- **TOFU cert storage**: Peer_ref without cert_hash, connection provides hash → after sync, queries verify cert_hash stored in DB.
+- **Happy-path empty sync**: Full concurrent client/server flow — HeadExchange → OpBatch(is_last) → SyncComplete → Ok. Required pre-inserting ops to pass `check_reset_required`.
+- **T-16 impact downgraded** MED→LOW — remaining gaps are daemon lifecycle and mDNS, not core data flow.
+
+### Stats
+- 2 files changed (+410 lines)
+- 1862 Rust tests pass (+4), all 19 prek hooks pass
+- T-16 updated in REVIEW-LATER (3 open items remain, T-16 impact MED→LOW)
+
+---
+
 ## Session 366 — T-16 in-memory WebSocket test infrastructure + handle_incoming_sync tests (2026-04-13)
 
 **T-16 significantly advanced — built in-memory WebSocket test infrastructure and added 4 integration tests for handle_incoming_sync. Cost downgraded from L to M (infrastructure now exists).**
