@@ -1,5 +1,28 @@
 # Session Log
 
+## Session 351 — UX-155 resolved: faint border around journal content panel (2026-04-12)
+
+**1 REVIEW-LATER item resolved (UX-155). REVIEW-LATER backlog is now empty (0 open items).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| UX-155 | Remove `rounded-lg` from journal today section — eliminates card-like faint border | `DaySection.tsx` |
+
+### Implementation
+- **Investigation**: Chrome MCP used to navigate Vite frontend, dismiss welcome modal, inspect computed styles on all content-area elements. Confirmed `SidebarInset` shadow (`md:peer-data-[variant=inset]:shadow-sm`) is NOT active — sidebar variant is `sidebar`, not `inset`. Identified the today section's `bg-accent/[0.08] border-l-2 border-accent rounded-lg px-3 py-2 -mx-3` as the source: the 8% opacity accent background + 10px border radius created a visible card-like boundary.
+- **Fix**: Removed `rounded-lg` from DaySection.tsx line 63. Keeps the left accent bar (`border-l-2 border-accent`) and faint background (`bg-accent/[0.08]`) for today highlighting, but eliminates the rounded corners that made it look like a bordered panel.
+- **Verification**: Chrome MCP screenshot comparison confirmed `borderRadius: 0px` after fix.
+
+### Stats
+- 1 file changed (+1 -3 lines)
+- 6273 frontend tests pass, 1817 Rust tests pass, all 20 prek hooks pass
+- 1 REVIEW-LATER item resolved (1 → 0 open)
+- **REVIEW-LATER backlog fully cleared** — all items resolved across sessions 347-351
+
+---
+
 ## Session 350 — T-41 sync daemon tests + UX-155 investigation (2026-04-12)
 
 **1 REVIEW-LATER item resolved (T-41), 1 investigated (UX-155). 1 file changed, +558 -31 lines. 1817 Rust tests pass.**
