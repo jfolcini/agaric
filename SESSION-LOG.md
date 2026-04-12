@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 361 — B-68/M-16/UX-163 resolved: hook deps, error logging, touch targets (2026-04-12)
+
+**3 REVIEW-LATER items resolved (B-68, M-16, UX-163). 6 open items remain.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| B-68 | Fix incomplete hook dep arrays with useRef + local alias pattern | `useBlockSlashCommands.ts`, `useBlockDatePicker.ts` |
+| M-16 | Add logger.warn/error to ~10 silent .catch() blocks | `PropertyValuePicker.tsx`, `SearchPanel.tsx`, `useQueryExecution.ts`, `useDuePanelData.ts`, `DataSettingsTab.tsx`, `TagList.tsx` |
+| UX-163 | Add [@media(pointer:coarse)] touch targets to 6 components | `HistoryListItem.tsx`, `KeyboardSettingsTab.tsx`, `ConflictListItem.tsx`, `SearchPanel.tsx`, `QueryResultList.tsx`, `QueryResultTable.tsx` |
+
+### Implementation
+- **B-68**: Added useRef wrappers for rootParentId, rovingEditor, t in useBlockSlashCommands; tRef in useBlockDatePicker. Local aliases at callback top shadow outer scope. Updated biome-ignore justifications to cover all omissions.
+- **M-16**: Added logger.warn (non-critical) or logger.error (data-loss) to 10 catch blocks. Kept existing behavior (toasts, fallbacks). Added logger import where missing.
+- **UX-163**: Checkboxes → `[@media(pointer:coarse)]:size-11`. Buttons → `min-h-[44px]`. List/table rows → `py-3`. All meet 44px WCAG 2.5.8.
+- **ARCHITECTURE.md**: Removed silent-catches known issue note.
+
+### Stats
+- 13 files changed (+51 -15 lines)
+- 6290 frontend tests pass, all 20 prek hooks pass
+- 3 REVIEW-LATER items resolved (9 -> 6 open)
+
+---
+
 ## Session 360 — T-9/T-11/T-12/M-14/UX-161/M-17 resolved: test coverage + maintenance (2026-04-12)
 
 **6 REVIEW-LATER items resolved (T-9, T-11, T-12, M-14, UX-161, M-17). 9 open items remain.**
