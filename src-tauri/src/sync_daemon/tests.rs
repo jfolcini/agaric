@@ -2454,3 +2454,133 @@ async fn two_daemons_start_on_different_ports() {
     mat1.shutdown();
     mat2.shutdown();
 }
+
+// ======================================================================
+// T-16f — Test daemon_loop select! branches B and C
+// ======================================================================
+
+/// Branch B: A local-change notification triggers the debounced change
+/// path in daemon_loop, which resolves paired peers by last_address and
+/// calls try_sync_with_peer.  With an unreachable address the connection
+/// fails and the scheduler records a failure.
+///
+/// Approach: start the daemon with NO peer refs (so Branch C's immediate
+/// first tick finds nothing), then insert a peer ref with an unreachable
+/// last_address, fire notify_change(), and verify that a failure is
+/// recorded for the peer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn daemon_branch_b_local_change_triggers_sync_attempt() {
+    install_crypto_provider();
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    // Use a short debounce window (100 ms) so the test doesn't wait 3 s.
+    let scheduler = Arc::new(SyncScheduler::with_intervals(
+        std::time::Duration::from_millis(100),
+        std::time::Duration::from_secs(60),
+    ));
+    let sink = Arc::new(RecordingEventSink::new());
+    let sink_dyn: Arc<dyn SyncEventSink> = sink.clone();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let cert = crate::sync_net::generate_self_signed_cert("BRANCH_B_DEV").unwrap();
+
+    // Start daemon with NO peer refs — Branch C's first tick finds nothing.
+    let daemon = SyncDaemon::start(
+        pool.clone(),
+        "BRANCH_B_DEV".into(),
+        mat.clone(),
+        scheduler.clone(),
+        cert,
+        sink_dyn,
+        cancel,
+    )
+    .await
+    .unwrap();
+
+    // Let startup complete and Branch C's first tick pass (no peers → no-op).
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    // Insert a peer ref with an unreachable last_address (port 1).
+    peer_refs::upsert_peer_ref(&pool, "REMOTE_PEER")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE peer_refs SET last_address = '127.0.0.1:1' WHERE peer_id = 'REMOTE_PEER'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Trigger Branch B by notifying a local change.
+    scheduler.notify_change();
+
+    // Wait for debounce window (100 ms) + connection attempt + margin.
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+    // Verify the scheduler recorded a failure for REMOTE_PEER
+    // (try_sync_with_peer couldn't connect → record_failure was called).
+    let failure_count = scheduler.failure_count("REMOTE_PEER");
+    assert!(
+        failure_count >= 1,
+        "Branch B should have triggered a sync attempt that failed, got failure_count={failure_count}"
+    );
+
+    daemon.shutdown();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    mat.shutdown();
+}
+
+/// Branch C: The periodic resync timer (30 s interval, first tick fires
+/// immediately) calls peers_due_for_resync and attempts sync with overdue
+/// peers.  A peer whose synced_at is NULL is always overdue.
+///
+/// Approach: insert a peer ref that has never synced (synced_at IS NULL)
+/// with an unreachable last_address, start the daemon, and verify that
+/// the immediate first tick triggers a sync attempt (failure recorded).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn daemon_branch_c_resync_timer_attempts_overdue_peer() {
+    install_crypto_provider();
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let sink = Arc::new(RecordingEventSink::new());
+    let sink_dyn: Arc<dyn SyncEventSink> = sink.clone();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let cert = crate::sync_net::generate_self_signed_cert("BRANCH_C_DEV").unwrap();
+
+    // Insert a peer ref that has NEVER synced (synced_at IS NULL → always due)
+    // with a last_address so resolve_peer_address can find it.
+    peer_refs::upsert_peer_ref(&pool, "OVERDUE_PEER")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE peer_refs SET last_address = '127.0.0.1:1' WHERE peer_id = 'OVERDUE_PEER'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Start daemon — the first resync tick fires immediately.
+    let daemon = SyncDaemon::start(
+        pool.clone(),
+        "BRANCH_C_DEV".into(),
+        mat.clone(),
+        scheduler.clone(),
+        cert,
+        sink_dyn,
+        cancel,
+    )
+    .await
+    .unwrap();
+
+    // Wait for the first resync tick to fire + sync attempt.
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+    // Check if a sync was attempted (failure recorded since port 1 is unreachable).
+    let failure_count = scheduler.failure_count("OVERDUE_PEER");
+    assert!(
+        failure_count >= 1,
+        "Branch C should have triggered a resync attempt for overdue peer, got failure_count={failure_count}"
+    );
+
+    daemon.shutdown();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    mat.shutdown();
+}
