@@ -151,18 +151,26 @@ export function useBlockKeyboardHandlers({
 
   const handleMoveUpById = useCallback(
     (id: string) => {
+      const content = id === focusedBlockId ? (rovingEditorRef.current.getMarkdown?.() ?? '') : null
       handleFlush()
       moveUp(id)
+      if (content !== null) {
+        rovingEditorRef.current.mount(id, content)
+      }
     },
-    [handleFlush, moveUp],
+    [focusedBlockId, handleFlush, moveUp],
   )
 
   const handleMoveDownById = useCallback(
     (id: string) => {
+      const content = id === focusedBlockId ? (rovingEditorRef.current.getMarkdown?.() ?? '') : null
       handleFlush()
       moveDown(id)
+      if (content !== null) {
+        rovingEditorRef.current.mount(id, content)
+      }
     },
-    [handleFlush, moveDown],
+    [focusedBlockId, handleFlush, moveDown],
   )
 
   const handleMergeWithPrev = useCallback(async () => {
@@ -292,6 +300,7 @@ export function useBlockKeyboardHandlers({
       }
 
       setFocused(prevBlock.id)
+      rovingEditorRef.current.mount(prevBlock.id, mergedContent)
     },
     [collapsedVisible, focusedBlockId, edit, remove, setFocused, t],
   )

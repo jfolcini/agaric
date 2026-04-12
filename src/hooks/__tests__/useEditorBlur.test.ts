@@ -70,7 +70,7 @@ describe('useEditorBlur', () => {
     it('includes expected selectors', () => {
       expect(EDITOR_PORTAL_SELECTORS).toContain('.suggestion-popup')
       expect(EDITOR_PORTAL_SELECTORS).toContain('.date-picker-popup')
-      expect(EDITOR_PORTAL_SELECTORS).toContain('[data-radix-popper-content-wrapper]')
+      expect(EDITOR_PORTAL_SELECTORS).toContain('[data-editor-portal]')
       expect(EDITOR_PORTAL_SELECTORS).toContain('.block-context-menu')
     })
   })
@@ -138,7 +138,7 @@ describe('useEditorBlur', () => {
 
       expect(mockUnmount).toHaveBeenCalledOnce()
       expect(mockEdit).not.toHaveBeenCalled()
-      expect(mockDiscardDraft).not.toHaveBeenCalled()
+      expect(mockDiscardDraft).toHaveBeenCalledOnce()
       expect(mockSetFocused).toHaveBeenCalledWith(null)
     })
   })
@@ -203,7 +203,7 @@ describe('useEditorBlur', () => {
 
       // Simulate a visible Radix popover in the DOM
       const portal = document.createElement('div')
-      portal.setAttribute('data-radix-popper-content-wrapper', '')
+      portal.setAttribute('data-editor-portal', '')
       ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       document.body.appendChild(portal)
 
@@ -237,7 +237,7 @@ describe('useEditorBlur', () => {
 
       // Simulate a hidden Radix popover in the DOM
       const portal = document.createElement('div')
-      portal.setAttribute('data-radix-popper-content-wrapper', '')
+      portal.setAttribute('data-editor-portal', '')
       ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => false
       document.body.appendChild(portal)
 
@@ -494,7 +494,7 @@ describe('useEditorBlur', () => {
       expect(mockDiscardDraft).toHaveBeenCalledOnce()
     })
 
-    it('does not call discardDraft when content is unchanged', () => {
+    it('calls discardDraft even when content is unchanged (clears stale drafts)', () => {
       const mockUnmount = vi.fn<() => string | null>(() => null)
       const mockDiscardDraft = vi.fn()
 
@@ -518,7 +518,7 @@ describe('useEditorBlur', () => {
         result.current.handleBlur(makeFocusEvent())
       })
 
-      expect(mockDiscardDraft).not.toHaveBeenCalled()
+      expect(mockDiscardDraft).toHaveBeenCalledOnce()
     })
   })
 

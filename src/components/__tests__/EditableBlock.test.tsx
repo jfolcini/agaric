@@ -539,7 +539,7 @@ describe('EditableBlock', () => {
 
       // Simulate a Radix popover being open AND visible in the DOM
       const portal = document.createElement('div')
-      portal.setAttribute('data-radix-popper-content-wrapper', '')
+      portal.setAttribute('data-editor-portal', '')
       ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       document.body.appendChild(portal)
 
@@ -566,7 +566,7 @@ describe('EditableBlock', () => {
 
       // Simulate a Radix popover that is in the DOM but hidden
       const portal = document.createElement('div')
-      portal.setAttribute('data-radix-popper-content-wrapper', '')
+      portal.setAttribute('data-editor-portal', '')
       ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => false
       document.body.appendChild(portal)
 
@@ -596,7 +596,7 @@ describe('EditableBlock', () => {
 
       // Simulate relatedTarget being inside a Radix popover
       const portal = document.createElement('div')
-      portal.setAttribute('data-radix-popper-content-wrapper', '')
+      portal.setAttribute('data-editor-portal', '')
       const input = document.createElement('input')
       portal.appendChild(input)
       document.body.appendChild(portal)
@@ -701,7 +701,7 @@ describe('EditableBlock', () => {
     it('includes expected selectors for suggestion popup and date picker', () => {
       expect(EDITOR_PORTAL_SELECTORS).toContain('.suggestion-popup')
       expect(EDITOR_PORTAL_SELECTORS).toContain('.date-picker-popup')
-      expect(EDITOR_PORTAL_SELECTORS).toContain('[data-radix-popper-content-wrapper]')
+      expect(EDITOR_PORTAL_SELECTORS).toContain('[data-editor-portal]')
     })
 
     it('includes .block-context-menu selector (B-15)', () => {

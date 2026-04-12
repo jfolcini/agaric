@@ -26,7 +26,7 @@ export const EDITOR_PORTAL_SELECTORS = [
   '.suggestion-popup',
   '.suggestion-list',
   '.formatting-toolbar',
-  '[data-radix-popper-content-wrapper]',
+  '[data-editor-portal]',
   '.rdp',
   '.date-picker-popup',
   '.property-key-editor',
@@ -114,8 +114,10 @@ export function useEditorBlur(params: {
             edit(blockId, changed)
           })
         }
-        discardDraft()
       }
+      // Always discard draft on blur — even when content is unchanged, a
+      // stale draft from a previous autosave cycle may exist in the database.
+      discardDraft()
       setFocused(null)
     },
     [blockId, edit, splitBlock, setFocused, discardDraft],

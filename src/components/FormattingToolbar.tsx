@@ -199,7 +199,7 @@ export function FormattingToolbar({
                 </Button>
               </PopoverAnchor>
             </Tip>
-            <PopoverContent align="start" className="w-72 p-3">
+            <PopoverContent align="start" className="w-72 p-3" data-editor-portal>
               <LinkEditPopover
                 editor={editor}
                 isEditing={state.link}
@@ -238,7 +238,7 @@ export function FormattingToolbar({
                 </Button>
               </PopoverAnchor>
             </Tip>
-            <PopoverContent align="start" className="w-auto p-1">
+            <PopoverContent align="start" className="w-auto p-1" data-editor-portal>
               <CodeLanguageSelector
                 editor={editor}
                 isCodeBlock={state.codeBlock}
@@ -269,7 +269,7 @@ export function FormattingToolbar({
                 </Button>
               </PopoverAnchor>
             </Tip>
-            <PopoverContent align="start" className="w-auto p-1">
+            <PopoverContent align="start" className="w-auto p-1" data-editor-portal>
               <HeadingLevelSelector
                 editor={editor}
                 headingLevel={state.headingLevel}
