@@ -10,6 +10,7 @@
  *  - No active block: blur with no active block is ignored
  *  - New-block early persist: saves typed content for empty originalMarkdown
  *  - discardDraft is called after successful unmount with changes
+ *  - B-56: internal portals (inside editor wrapper) do not prevent save
  */
 
 import { act, renderHook } from '@testing-library/react'
@@ -40,8 +41,11 @@ function makeRovingEditor(
 }
 
 /** Create a minimal React.FocusEvent-like object for the hook's handleBlur. */
-function makeFocusEvent(relatedTarget: HTMLElement | null = null) {
-  return { relatedTarget } as unknown as React.FocusEvent
+function makeFocusEvent(
+  relatedTarget: HTMLElement | null = null,
+  currentTarget: HTMLElement | null = null,
+) {
+  return { relatedTarget, currentTarget } as unknown as React.FocusEvent
 }
 
 describe('useEditorBlur', () => {
@@ -57,9 +61,13 @@ describe('useEditorBlur', () => {
         el.remove()
       }
     }
+    // Clean up wrapper elements
+    for (const el of document.querySelectorAll('[data-testid="editor-wrapper"]')) {
+      el.remove()
+    }
   })
 
-  // ── EDITOR_PORTAL_SELECTORS constant ─────────────────────────────────
+  // -- EDITOR_PORTAL_SELECTORS constant -----------------------------------
 
   describe('EDITOR_PORTAL_SELECTORS', () => {
     it('is exported and contains at least 5 entries', () => {
@@ -75,7 +83,7 @@ describe('useEditorBlur', () => {
     })
   })
 
-  // ── Happy path: blur triggers edit ──────────────────────────────────
+  // -- Happy path: blur triggers edit -------------------------------------
 
   describe('happy path', () => {
     it('unmounts and saves when content changed', () => {
@@ -143,7 +151,7 @@ describe('useEditorBlur', () => {
     })
   })
 
-  // ── Portal guard ───────────────────────────────────────────────────
+  // -- Portal guard -------------------------------------------------------
 
   describe('portal guard', () => {
     it('does not unmount when relatedTarget is inside a portal selector', () => {
@@ -181,7 +189,7 @@ describe('useEditorBlur', () => {
       expect(mockEdit).not.toHaveBeenCalled()
     })
 
-    it('does not unmount when a visible portal element is in the DOM', () => {
+    it('does not unmount when a visible portal element is in the DOM outside the wrapper', () => {
       const mockUnmount = vi.fn<() => string | null>(() => 'changed')
       const mockEdit = vi.fn()
 
@@ -201,14 +209,19 @@ describe('useEditorBlur', () => {
         }),
       )
 
-      // Simulate a visible Radix popover in the DOM
+      // Create wrapper element (simulates the editor <section>)
+      const wrapper = document.createElement('div')
+      wrapper.setAttribute('data-testid', 'editor-wrapper')
+      document.body.appendChild(wrapper)
+
+      // Simulate a visible Radix popover in the DOM OUTSIDE the wrapper
       const portal = document.createElement('div')
       portal.setAttribute('data-editor-portal', '')
       ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       document.body.appendChild(portal)
 
       act(() => {
-        result.current.handleBlur(makeFocusEvent())
+        result.current.handleBlur(makeFocusEvent(null, wrapper))
       })
 
       expect(mockUnmount).not.toHaveBeenCalled()
@@ -235,6 +248,11 @@ describe('useEditorBlur', () => {
         }),
       )
 
+      // Create wrapper element
+      const wrapper = document.createElement('div')
+      wrapper.setAttribute('data-testid', 'editor-wrapper')
+      document.body.appendChild(wrapper)
+
       // Simulate a hidden Radix popover in the DOM
       const portal = document.createElement('div')
       portal.setAttribute('data-editor-portal', '')
@@ -242,7 +260,7 @@ describe('useEditorBlur', () => {
       document.body.appendChild(portal)
 
       act(() => {
-        result.current.handleBlur(makeFocusEvent())
+        result.current.handleBlur(makeFocusEvent(null, wrapper))
       })
 
       expect(mockUnmount).toHaveBeenCalledOnce()
@@ -250,7 +268,7 @@ describe('useEditorBlur', () => {
     })
   })
 
-  // ── Split ──────────────────────────────────────────────────────────
+  // -- Split --------------------------------------------------------------
 
   describe('split', () => {
     it('calls splitBlock when content has multiple paragraphs', () => {
@@ -320,7 +338,7 @@ describe('useEditorBlur', () => {
     })
   })
 
-  // ── Stale blur ─────────────────────────────────────────────────────
+  // -- Stale blur ---------------------------------------------------------
 
   describe('stale blur', () => {
     it('ignores blur when editor has moved to a different block', () => {
@@ -384,7 +402,7 @@ describe('useEditorBlur', () => {
     })
   })
 
-  // ── New block early persist ────────────────────────────────────────
+  // -- New block early persist --------------------------------------------
 
   describe('new block early persist', () => {
     it('saves new block content before portal check', () => {
@@ -399,7 +417,12 @@ describe('useEditorBlur', () => {
         originalMarkdown: '',
       })
 
-      // Add a visible popup to trigger portal guard (early return after persist)
+      // Create wrapper element
+      const wrapper = document.createElement('div')
+      wrapper.setAttribute('data-testid', 'editor-wrapper')
+      document.body.appendChild(wrapper)
+
+      // Add a visible popup OUTSIDE the wrapper to trigger portal guard
       const popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
       ;(popup as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
@@ -417,7 +440,7 @@ describe('useEditorBlur', () => {
       )
 
       act(() => {
-        result.current.handleBlur(makeFocusEvent())
+        result.current.handleBlur(makeFocusEvent(null, wrapper))
       })
 
       // Early persist should have fired
@@ -437,7 +460,12 @@ describe('useEditorBlur', () => {
         originalMarkdown: 'original',
       })
 
-      // Add a visible popup to trigger portal guard (early return)
+      // Create wrapper element
+      const wrapper = document.createElement('div')
+      wrapper.setAttribute('data-testid', 'editor-wrapper')
+      document.body.appendChild(wrapper)
+
+      // Add a visible popup OUTSIDE the wrapper to trigger portal guard
       const popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
       ;(popup as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
@@ -455,7 +483,7 @@ describe('useEditorBlur', () => {
       )
 
       act(() => {
-        result.current.handleBlur(makeFocusEvent())
+        result.current.handleBlur(makeFocusEvent(null, wrapper))
       })
 
       // originalMarkdown is not empty, so early-save guard should NOT fire
@@ -464,7 +492,7 @@ describe('useEditorBlur', () => {
     })
   })
 
-  // ── discardDraft ───────────────────────────────────────────────────
+  // -- discardDraft -------------------------------------------------------
 
   describe('discardDraft', () => {
     it('calls discardDraft after unmount with changes', () => {
@@ -522,7 +550,7 @@ describe('useEditorBlur', () => {
     })
   })
 
-  // ── Call ordering ──────────────────────────────────────────────────
+  // -- Call ordering ------------------------------------------------------
 
   describe('call ordering', () => {
     it('calls edit before setFocused(null) so store is updated before unmount', () => {
@@ -581,6 +609,145 @@ describe('useEditorBlur', () => {
       })
 
       expect(callOrder).toEqual(['splitBlock', 'setFocused'])
+    })
+  })
+
+  // -- B-56: internal vs external portals ---------------------------------
+
+  describe('B-56: internal vs external portals', () => {
+    it('visible portal INSIDE editor wrapper does not prevent save', () => {
+      const mockUnmount = vi.fn<() => string | null>(() => 'saved content')
+      const mockEdit = vi.fn()
+      const mockDiscardDraft = vi.fn()
+      const mockSetFocused = vi.fn()
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: mockUnmount,
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: mockSetFocused,
+          discardDraft: mockDiscardDraft,
+        }),
+      )
+
+      // Create wrapper (simulates the editor <section>)
+      const wrapper = document.createElement('section')
+      wrapper.setAttribute('data-testid', 'editor-wrapper')
+      document.body.appendChild(wrapper)
+
+      // Place a visible formatting toolbar INSIDE the wrapper
+      const toolbar = document.createElement('div')
+      toolbar.classList.add('formatting-toolbar')
+      ;(toolbar as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
+      wrapper.appendChild(toolbar)
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent(null, wrapper))
+      })
+
+      // Internal portal should be ignored -- blur proceeds to save
+      expect(mockUnmount).toHaveBeenCalledOnce()
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'saved content')
+      expect(mockDiscardDraft).toHaveBeenCalledOnce()
+      expect(mockSetFocused).toHaveBeenCalledWith(null)
+    })
+
+    it('visible portal OUTSIDE editor wrapper prevents save', () => {
+      const mockUnmount = vi.fn<() => string | null>(() => 'changed')
+      const mockEdit = vi.fn()
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: mockUnmount,
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft: vi.fn(),
+        }),
+      )
+
+      // Create wrapper (simulates the editor <section>)
+      const wrapper = document.createElement('section')
+      wrapper.setAttribute('data-testid', 'editor-wrapper')
+      document.body.appendChild(wrapper)
+
+      // Place a visible date picker OUTSIDE the wrapper (in document.body)
+      const picker = document.createElement('div')
+      picker.classList.add('date-picker-popup')
+      ;(picker as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
+      document.body.appendChild(picker)
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent(null, wrapper))
+      })
+
+      // External portal is visible -- blur should bail (no save)
+      expect(mockUnmount).not.toHaveBeenCalled()
+      expect(mockEdit).not.toHaveBeenCalled()
+    })
+
+    it('clicking outside with only internal portal visible triggers save (B-56 scenario)', () => {
+      const mockUnmount = vi.fn<() => string | null>(() => 'edited text')
+      const mockEdit = vi.fn()
+      const mockDiscardDraft = vi.fn()
+      const mockSetFocused = vi.fn()
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: mockUnmount,
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: mockSetFocused,
+          discardDraft: mockDiscardDraft,
+        }),
+      )
+
+      // Create wrapper (simulates the editor <section>)
+      const wrapper = document.createElement('section')
+      wrapper.setAttribute('data-testid', 'editor-wrapper')
+      document.body.appendChild(wrapper)
+
+      // Formatting toolbar is visible INSIDE the wrapper (the B-56 trigger)
+      const toolbar = document.createElement('div')
+      toolbar.classList.add('formatting-toolbar')
+      ;(toolbar as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
+      wrapper.appendChild(toolbar)
+
+      // relatedTarget is an external element (e.g. sidebar button)
+      const sidebar = document.createElement('button')
+      sidebar.textContent = 'Sidebar'
+      document.body.appendChild(sidebar)
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent(sidebar, wrapper))
+      })
+
+      // B-56 fix: internal toolbar should NOT prevent save
+      expect(mockUnmount).toHaveBeenCalledOnce()
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'edited text')
+      expect(mockDiscardDraft).toHaveBeenCalledOnce()
+      expect(mockSetFocused).toHaveBeenCalledWith(null)
+
+      sidebar.remove()
     })
   })
 })

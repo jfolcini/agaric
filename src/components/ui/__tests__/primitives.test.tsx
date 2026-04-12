@@ -418,6 +418,7 @@ describe('Input', () => {
     const el = screen.getByTestId('test-input')
     expect(el.className).toContain('focus-visible:ring-[3px]')
     expect(el.className).toContain('focus-visible:ring-ring/50')
+    expect(el.className).toContain('focus-visible:outline-hidden')
   })
 
   it('forwards ref', () => {

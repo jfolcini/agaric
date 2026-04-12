@@ -2,11 +2,16 @@
  * useEditorBlur — extracted blur-handling hook for the roving TipTap editor.
  *
  * Implements the 5-step guard chain:
- *   1. No active block → bail
- *   2. Stale blur (editor moved to a different block) → bail
+ *   1. No active block -> bail
+ *   2. Stale blur (editor moved to a different block) -> bail
  *   3. Early-persist for newly created (empty) blocks
  *   4. Portal / transient-UI guard (relatedTarget + visible-element scan)
- *   5. Unmount → save-or-split → discard draft → clear focus
+ *   5. Unmount -> save-or-split -> discard draft -> clear focus
+ *
+ * B-56: Step 4b now scopes the portal scan to elements OUTSIDE the editor
+ * wrapper (`e.currentTarget`). Elements inside the wrapper (e.g. the
+ * formatting toolbar) are part of the editor lifecycle and must not prevent
+ * save on external blur.
  *
  * Extracted from EditableBlock (M-42) for testability and reuse.
  */
@@ -53,10 +58,10 @@ export function useEditorBlur(params: {
 
   const handleBlur = useCallback(
     (e: React.FocusEvent) => {
-      // Step 1: No active block → bail
+      // Step 1: No active block -> bail
       if (!rovingEditorRef.current.activeBlockId) return
 
-      // Step 2: Stale blur (editor already moved to different block) → bail
+      // Step 2: Stale blur (editor already moved to different block) -> bail
       // If the editor has already moved to a different block (e.g.
       // handleFocus called mount on another block), this blur is stale —
       // ignore it to prevent saving the wrong block's content to this one.
@@ -85,24 +90,32 @@ export function useEditorBlur(params: {
       }
 
       // Step 4b: Also check if a suggestion popup, date picker, or popover is
-      // currently visible in the DOM. Radix leaves wrapper elements mounted when
-      // closed (with visibility:hidden or opacity:0), so we use checkVisibility()
-      // which detects display:none, visibility:hidden, and opacity:0. Falls back
-      // to offsetParent for older browsers.
+      // currently visible in the DOM OUTSIDE the editor wrapper. Elements inside
+      // the wrapper (e.g. formatting toolbar) are managed by the editor lifecycle
+      // and must not prevent save on external blur (B-56). Radix leaves wrapper
+      // elements mounted when closed (with visibility:hidden or opacity:0), so
+      // we use checkVisibility() which detects display:none, visibility:hidden,
+      // and opacity:0. Falls back to offsetParent for older browsers.
+      const wrapper = e.currentTarget as HTMLElement
       if (
         EDITOR_PORTAL_SELECTORS.some((sel) => {
-          const el = document.querySelector(sel) as HTMLElement | null
-          if (!el) return false
-          if (typeof el.checkVisibility === 'function') {
-            return el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+          const els = document.querySelectorAll(sel)
+          for (const el of els) {
+            if (wrapper.contains(el)) continue
+            const htmlEl = el as HTMLElement
+            if (typeof htmlEl.checkVisibility === 'function') {
+              if (htmlEl.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }))
+                return true
+            } else if (htmlEl.offsetParent !== null) {
+              return true
+            }
           }
-          // Fallback: offsetParent is null for display:none and hidden ancestors
-          return el.offsetParent !== null
+          return false
         })
       )
         return
 
-      // Step 5: Unmount → save or split → discard draft → clear focus
+      // Step 5: Unmount -> save or split -> discard draft -> clear focus
       const changed = rovingEditorRef.current.unmount()
       if (changed !== null) {
         if (shouldSplitOnBlur(changed)) {

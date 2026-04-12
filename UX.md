@@ -892,8 +892,12 @@ t('agenda.overdue')              // "Overdue"
 - Keys are namespaced by component/feature: `pageBrowser.*`, `agenda.*`, `conflict.*`, `property.*`, `search.*`, `sidebar.*`, `editor.*`, `toolbar.*`, `slash.*`, `block.*`, etc.
 - Toast messages, ARIA labels, empty state text, button labels, placeholders — all go through i18n.
 - When adding a new feature, add keys to `src/i18n.ts` in the English resources object. Group with existing namespaces.
+- **`announce()` calls must use i18n.** Screen reader announcements via `announce()` are user-facing text and must use `t()` keys, not hardcoded English strings.
+- **Class components use `i18n.t()` directly.** Error boundaries are class components and cannot use `useTranslation()`. Import `i18n` from `@/lib/i18n` and call `i18n.t('key')`. FeatureErrorBoundary demonstrates this pattern.
 
-**Agent guidance:** This is a non-negotiable requirement. Every user-visible string — including toast messages, ARIA labels, button text, placeholders, empty state copy, and error messages — must use `t('key')`. Hard-coded strings will be caught in review.
+**Agent guidance:** This is a non-negotiable requirement. Every user-visible string — including toast messages, ARIA labels, button text, placeholders, empty state copy, error messages, and `announce()` calls — must use `t('key')`. Hard-coded strings will be caught in review.
+
+**Known i18n gaps (audit 2026-04):** ~20 locations with hardcoded English strings remain across BootGate, ErrorBoundary, App.tsx announce() calls, DaySection aria-labels, HistoryPanel restore description, ConflictList announce() messages, UnpairConfirmDialog, BlockDatePicker placeholder, PropertyDefinitionsList error messages, StatusPanel sync labels, BatchActionToolbar "selected", FilterPillRow filterSummary(), RichContentRenderer CALLOUT_CONFIG labels, CollapsibleGroupList aria-labels, TaskStatesSection "none" badge, DeadlineWarningSection, DuePanel "Untitled", TrashView "Deleted:", TagList "Add Tag".
 
 ## Two-Tier Undo/Redo Model
 
