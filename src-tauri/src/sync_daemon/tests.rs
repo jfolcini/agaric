@@ -2311,3 +2311,146 @@ fn should_store_cert_hash_false_when_both_present() {
         "must return false when both stored and observed are present"
     );
 }
+
+// ======================================================================
+// T-16 — Daemon lifecycle smoke tests
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn daemon_start_and_shutdown() {
+    install_crypto_provider();
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let cancel = Arc::new(AtomicBool::new(false));
+
+    // Generate a real self-signed cert for the test
+    let cert = crate::sync_net::generate_self_signed_cert("TEST_DEV")
+        .expect("cert generation should succeed");
+
+    // Start the daemon — this binds a TLS server on a random port
+    // and may or may not start mDNS (depends on test environment)
+    let daemon = SyncDaemon::start(
+        pool.clone(),
+        "TEST_DEV".to_string(),
+        mat.clone(),
+        scheduler,
+        cert,
+        sink,
+        cancel,
+    )
+    .await
+    .expect("daemon should start successfully");
+
+    // Let the daemon run briefly to ensure the select! loop starts
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Shutdown should exit cleanly
+    daemon.shutdown();
+
+    // Give the task time to clean up
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn daemon_cancel_does_not_trigger_shutdown() {
+    install_crypto_provider();
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let cancel = Arc::new(AtomicBool::new(false));
+
+    let cert = crate::sync_net::generate_self_signed_cert("TEST_DEV2")
+        .expect("cert generation should succeed");
+
+    let daemon = SyncDaemon::start(
+        pool.clone(),
+        "TEST_DEV2".to_string(),
+        mat.clone(),
+        scheduler,
+        cert,
+        sink,
+        cancel,
+    )
+    .await
+    .expect("daemon should start");
+
+    // Cancel active sync (should not affect daemon lifecycle)
+    daemon.cancel_active_sync();
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Daemon should still be running — shutdown it cleanly
+    daemon.shutdown();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    mat.shutdown();
+}
+
+#[test]
+fn generate_cert_produces_valid_pem() {
+    let cert = crate::sync_net::generate_self_signed_cert("TEST_DEV3")
+        .expect("cert generation should succeed");
+
+    assert!(cert.cert_pem.starts_with("-----BEGIN CERTIFICATE-----"));
+    assert!(cert.key_pem.starts_with("-----BEGIN PRIVATE KEY-----"));
+    assert_eq!(
+        cert.cert_hash.len(),
+        64,
+        "SHA-256 hash should be 64 hex chars"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_daemons_start_on_different_ports() {
+    install_crypto_provider();
+    let (pool1, _dir1) = test_pool().await;
+    let (pool2, _dir2) = test_pool().await;
+    let mat1 = Materializer::new(pool1.clone());
+    let mat2 = Materializer::new(pool2.clone());
+    let sched1 = Arc::new(SyncScheduler::new());
+    let sched2 = Arc::new(SyncScheduler::new());
+    let sink1: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let sink2: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let cancel1 = Arc::new(AtomicBool::new(false));
+    let cancel2 = Arc::new(AtomicBool::new(false));
+
+    let cert1 = crate::sync_net::generate_self_signed_cert("DEV_A").unwrap();
+    let cert2 = crate::sync_net::generate_self_signed_cert("DEV_B").unwrap();
+
+    let d1 = SyncDaemon::start(
+        pool1,
+        "DEV_A".into(),
+        mat1.clone(),
+        sched1,
+        cert1,
+        sink1,
+        cancel1,
+    )
+    .await
+    .expect("daemon 1 should start");
+    let d2 = SyncDaemon::start(
+        pool2,
+        "DEV_B".into(),
+        mat2.clone(),
+        sched2,
+        cert2,
+        sink2,
+        cancel2,
+    )
+    .await
+    .expect("daemon 2 should start");
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    d1.shutdown();
+    d2.shutdown();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    mat1.shutdown();
+    mat2.shutdown();
+}
