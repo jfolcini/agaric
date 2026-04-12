@@ -1187,9 +1187,9 @@ async fn handle_incoming_sync_rejects_unpaired_device() {
     materializer.shutdown();
 }
 
-/// Verify that cancel flag is cleared after try_sync_with_peer's
-/// session ends (success or failure path), confirming the cleanup
-/// at line 555 is reachable.
+/// S-11: Verify that cancel flag is cleared after try_sync_with_peer
+/// exits via the connection-failure path.  The CancelGuard (scope guard)
+/// ensures cleanup on ALL exit paths, including early returns.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn try_sync_with_peer_clears_cancel_flag_after_connection_failure() {
     install_crypto_provider();
@@ -1227,18 +1227,149 @@ async fn try_sync_with_peer_clears_cancel_flag_after_connection_failure() {
 
     assert!(result.is_ok(), "must complete within timeout");
 
-    // Connection failure path does NOT reach the cancel-clear code
-    // (cancel is only cleared after run_sync_session returns, but
-    // connection failure returns before reaching run_sync_session).
-    // The cancel flag should still be true here — the clear only
-    // happens on the success/sync-error path, not connection failure.
-    //
-    // This test documents the current behavior: cancel is NOT cleared
-    // when connection fails before reaching run_sync_session.
+    // S-11: CancelGuard clears the flag even on the connection-failure path
+    assert!(
+        !cancel.load(Ordering::Acquire),
+        "S-11: cancel flag must be cleared after connection failure early-exit"
+    );
 
     // Verify we got the error event (connection failed)
     let events = sink.events();
     assert_eq!(events.len(), 2, "should emit connecting + error events");
+
+    materializer.shutdown();
+}
+
+// ======================================================================
+// S-11 — Cancel flag cleared on ALL early-exit paths
+// ======================================================================
+
+/// S-11: Cancel flag must be cleared when the backoff gate triggers
+/// an early return.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn s11_cancel_cleared_on_backoff_early_exit() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let sink = Arc::new(RecordingEventSink::new());
+    let event_sink: Arc<dyn SyncEventSink> = sink.clone();
+    let cancel = AtomicBool::new(true); // cancel is set
+    let cert = sync_net::generate_self_signed_cert("LOCAL").unwrap();
+
+    let peer = sync_net::DiscoveredPeer {
+        device_id: "PEER_BACKOFF".to_string(),
+        addresses: vec!["192.168.1.100".parse().unwrap()],
+        port: 9999,
+    };
+    let refs = vec![make_peer_ref("PEER_BACKOFF")];
+
+    // Put peer in backoff so the gate triggers
+    scheduler.record_failure("PEER_BACKOFF");
+    assert!(
+        !scheduler.may_retry("PEER_BACKOFF"),
+        "peer must be in backoff"
+    );
+
+    try_sync_with_peer(
+        &pool,
+        "LOCAL",
+        &materializer,
+        &scheduler,
+        &event_sink,
+        &peer,
+        &refs,
+        &cancel,
+        &cert,
+    )
+    .await;
+
+    assert!(
+        !cancel.load(Ordering::Acquire),
+        "S-11: cancel flag must be cleared after backoff early-exit"
+    );
+
+    materializer.shutdown();
+}
+
+/// S-11: Cancel flag must be cleared when the per-peer lock is already
+/// held (already-syncing early return).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn s11_cancel_cleared_on_already_syncing_early_exit() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let sink = Arc::new(RecordingEventSink::new());
+    let event_sink: Arc<dyn SyncEventSink> = sink.clone();
+    let cancel = AtomicBool::new(true); // cancel is set
+    let cert = sync_net::generate_self_signed_cert("LOCAL").unwrap();
+
+    let peer = sync_net::DiscoveredPeer {
+        device_id: "PEER_LOCKED".to_string(),
+        addresses: vec!["192.168.1.1".parse().unwrap()],
+        port: 9999,
+    };
+    let refs = vec![make_peer_ref("PEER_LOCKED")];
+
+    // Hold the per-peer lock so the function returns early
+    let _lock = scheduler.try_lock_peer("PEER_LOCKED").unwrap();
+
+    try_sync_with_peer(
+        &pool,
+        "LOCAL",
+        &materializer,
+        &scheduler,
+        &event_sink,
+        &peer,
+        &refs,
+        &cancel,
+        &cert,
+    )
+    .await;
+
+    assert!(
+        !cancel.load(Ordering::Acquire),
+        "S-11: cancel flag must be cleared after already-syncing early-exit"
+    );
+
+    materializer.shutdown();
+}
+
+/// S-11: Cancel flag must be cleared when the peer has no addresses
+/// (no-address early return).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn s11_cancel_cleared_on_no_addresses_early_exit() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let sink = Arc::new(RecordingEventSink::new());
+    let event_sink: Arc<dyn SyncEventSink> = sink.clone();
+    let cancel = AtomicBool::new(true); // cancel is set
+    let cert = sync_net::generate_self_signed_cert("LOCAL").unwrap();
+
+    let peer = sync_net::DiscoveredPeer {
+        device_id: "PEER_NOADDR".to_string(),
+        addresses: vec![], // no addresses → early return
+        port: 9999,
+    };
+    let refs = vec![make_peer_ref("PEER_NOADDR")];
+
+    try_sync_with_peer(
+        &pool,
+        "LOCAL",
+        &materializer,
+        &scheduler,
+        &event_sink,
+        &peer,
+        &refs,
+        &cancel,
+        &cert,
+    )
+    .await;
+
+    assert!(
+        !cancel.load(Ordering::Acquire),
+        "S-11: cancel flag must be cleared after no-addresses early-exit"
+    );
 
     materializer.shutdown();
 }

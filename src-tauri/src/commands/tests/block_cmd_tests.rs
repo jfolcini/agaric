@@ -971,6 +971,100 @@ async fn purge_block_not_deleted_returns_invalid_operation() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_block_inner_cleans_page_aliases() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block(
+        &pool,
+        "PURGE_PA_CMD",
+        "page",
+        "page with alias",
+        None,
+        Some(1),
+    )
+    .await;
+    sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES (?, ?)")
+        .bind("PURGE_PA_CMD")
+        .bind("my-alias")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM page_aliases WHERE page_id = 'PURGE_PA_CMD'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 1, "alias should exist before purge");
+
+    soft_delete::cascade_soft_delete(&pool, "PURGE_PA_CMD")
+        .await
+        .unwrap();
+
+    purge_block_inner(&pool, DEV, &mat, "PURGE_PA_CMD".into())
+        .await
+        .unwrap();
+
+    let alias_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM page_aliases WHERE page_id = 'PURGE_PA_CMD'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        alias_count, 0,
+        "page_aliases should be cleaned after purge_block_inner"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_block_inner_cleans_projected_agenda_cache() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block(&pool, "PURGE_PAC_CMD", "content", "task", None, Some(1)).await;
+    sqlx::query(
+        "INSERT INTO projected_agenda_cache (block_id, projected_date, source) VALUES (?, ?, ?)",
+    )
+    .bind("PURGE_PAC_CMD")
+    .bind("2025-06-15")
+    .bind("due_date")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM projected_agenda_cache WHERE block_id = 'PURGE_PAC_CMD'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 1,
+        "projected_agenda_cache row should exist before purge"
+    );
+
+    soft_delete::cascade_soft_delete(&pool, "PURGE_PAC_CMD")
+        .await
+        .unwrap();
+
+    purge_block_inner(&pool, DEV, &mat, "PURGE_PAC_CMD".into())
+        .await
+        .unwrap();
+
+    let cache_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM projected_agenda_cache WHERE block_id = 'PURGE_PAC_CMD'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        cache_count, 0,
+        "projected_agenda_cache should be cleaned after purge_block_inner"
+    );
+}
+
 // ======================================================================
 // list_blocks
 // ======================================================================

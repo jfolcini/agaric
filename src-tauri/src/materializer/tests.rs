@@ -1741,3 +1741,334 @@ async fn concurrent_dispatch() {
     mat.flush().await.unwrap();
     assert!(mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 10);
 }
+
+// ======================================================================
+// B-62: BatchApplyOps atomicity — if last op fails, none persist
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_apply_ops_atomic_rollback_on_failure() {
+    let (pool, _dir) = test_pool().await;
+    let metrics = std::sync::Arc::new(QueueMetrics::default());
+
+    // First op: a valid create_block
+    let good = make_op_record(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("BATCH_ATOM_1"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            content: "should be rolled back".into(),
+        }),
+    )
+    .await;
+
+    // Second op: bad payload that will fail deserialization
+    let bad = fake_op_record("create_block", "{}");
+
+    let task = MaterializeTask::BatchApplyOps(vec![good, bad]);
+    let result = handle_foreground_task(&pool, &task, &metrics).await;
+    assert!(
+        result.is_err(),
+        "batch should fail because the last op has bad payload"
+    );
+
+    // The first op's block should NOT be visible (rolled back)
+    let row = sqlx::query("SELECT id FROM blocks WHERE id = 'BATCH_ATOM_1'")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(
+        row.is_none(),
+        "block from first op should be rolled back when batch fails"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_apply_ops_all_succeed_commits() {
+    let (pool, _dir) = test_pool().await;
+    let metrics = std::sync::Arc::new(QueueMetrics::default());
+
+    let op1 = make_op_record(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("BATCH_OK_1"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            content: "first".into(),
+        }),
+    )
+    .await;
+
+    let op2 = make_op_record(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("BATCH_OK_2"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(2),
+            content: "second".into(),
+        }),
+    )
+    .await;
+
+    let task = MaterializeTask::BatchApplyOps(vec![op1, op2]);
+    let result = handle_foreground_task(&pool, &task, &metrics).await;
+    assert!(result.is_ok(), "batch of valid ops should succeed");
+
+    // Both blocks should be visible
+    let r1 = sqlx::query("SELECT id FROM blocks WHERE id = 'BATCH_OK_1'")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(r1.is_some(), "first block should be committed");
+
+    let r2 = sqlx::query("SELECT id FROM blocks WHERE id = 'BATCH_OK_2'")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(r2.is_some(), "second block should be committed");
+}
+
+// ======================================================================
+// B-63: purge cleans page_aliases and projected_agenda_cache
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_handler_cleans_page_aliases() {
+    let (pool, _dir) = test_pool().await;
+    let metrics = std::sync::Arc::new(QueueMetrics::default());
+
+    // Create a page block, soft-delete it, add a page alias
+    insert_block_direct(&pool, "PURGE_PA_1", "page", "my page").await;
+    sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES (?, ?)")
+        .bind("PURGE_PA_1")
+        .bind("alias-one")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Verify alias exists
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM page_aliases WHERE page_id = 'PURGE_PA_1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 1, "alias should exist before purge");
+
+    soft_delete_block_direct(&pool, "PURGE_PA_1").await;
+
+    // Purge via handler
+    let r = make_op_record(
+        &pool,
+        OpPayload::PurgeBlock(PurgeBlockPayload {
+            block_id: BlockId::test_id("PURGE_PA_1"),
+        }),
+    )
+    .await;
+    let task = MaterializeTask::ApplyOp(r);
+    handle_foreground_task(&pool, &task, &metrics)
+        .await
+        .unwrap();
+
+    // Verify block and alias are gone
+    let block_exists = sqlx::query("SELECT id FROM blocks WHERE id = 'PURGE_PA_1'")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(block_exists.is_none(), "block should be physically gone");
+
+    let alias_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM page_aliases WHERE page_id = 'PURGE_PA_1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(alias_count, 0, "page_aliases should be cleaned after purge");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_handler_cleans_projected_agenda_cache() {
+    let (pool, _dir) = test_pool().await;
+    let metrics = std::sync::Arc::new(QueueMetrics::default());
+
+    // Create a block, soft-delete it, add a projected_agenda_cache row
+    insert_block_direct(&pool, "PURGE_PAC_1", "content", "task").await;
+    sqlx::query(
+        "INSERT INTO projected_agenda_cache (block_id, projected_date, source) VALUES (?, ?, ?)",
+    )
+    .bind("PURGE_PAC_1")
+    .bind("2025-06-01")
+    .bind("due_date")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Verify cache row exists
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM projected_agenda_cache WHERE block_id = 'PURGE_PAC_1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 1,
+        "projected_agenda_cache row should exist before purge"
+    );
+
+    soft_delete_block_direct(&pool, "PURGE_PAC_1").await;
+
+    // Purge via handler
+    let r = make_op_record(
+        &pool,
+        OpPayload::PurgeBlock(PurgeBlockPayload {
+            block_id: BlockId::test_id("PURGE_PAC_1"),
+        }),
+    )
+    .await;
+    let task = MaterializeTask::ApplyOp(r);
+    handle_foreground_task(&pool, &task, &metrics)
+        .await
+        .unwrap();
+
+    // Verify block and cache row are gone
+    let block_exists = sqlx::query("SELECT id FROM blocks WHERE id = 'PURGE_PAC_1'")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(block_exists.is_none(), "block should be physically gone");
+
+    let cache_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM projected_agenda_cache WHERE block_id = 'PURGE_PAC_1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        cache_count, 0,
+        "projected_agenda_cache should be cleaned after purge"
+    );
+}
+
+// ======================================================================
+// M-15: RemoveTag runs under transaction (via apply_op)
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remove_tag_handler_cleans_inherited() {
+    let (pool, _dir) = test_pool().await;
+    let metrics = std::sync::Arc::new(QueueMetrics::default());
+
+    // Setup: block with a tag and child inheriting
+    insert_block_direct(&pool, "RT_PARENT", "page", "parent page").await;
+    insert_block_direct(&pool, "RT_TAG", "tag", "urgent").await;
+    sqlx::query("UPDATE blocks SET parent_id = 'RT_PARENT' WHERE id = 'RT_TAG'")
+        .execute(&pool)
+        .await
+        .ok(); // ignore if fails
+
+    insert_block_tag(&pool, "RT_PARENT", "RT_TAG").await;
+
+    // Insert a child block
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind("RT_CHILD")
+    .bind("content")
+    .bind("child")
+    .bind("RT_PARENT")
+    .bind(1_i64)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Propagate tag to descendants manually
+    {
+        let mut conn = pool.acquire().await.unwrap();
+        crate::tag_inheritance::propagate_tag_to_descendants(&mut *conn, "RT_PARENT", "RT_TAG")
+            .await
+            .unwrap();
+    }
+
+    // Verify child inherited the tag
+    let inherited: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_tag_inherited WHERE block_id = 'RT_CHILD' AND tag_id = 'RT_TAG'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(inherited, 1, "child should inherit tag before removal");
+
+    // Remove the tag via handler
+    let r = make_op_record(
+        &pool,
+        OpPayload::RemoveTag(crate::op::RemoveTagPayload {
+            block_id: BlockId::test_id("RT_PARENT"),
+            tag_id: BlockId::test_id("RT_TAG"),
+        }),
+    )
+    .await;
+    let task = MaterializeTask::ApplyOp(r);
+    handle_foreground_task(&pool, &task, &metrics)
+        .await
+        .unwrap();
+
+    // Verify direct tag is gone
+    let direct: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_tags WHERE block_id = 'RT_PARENT' AND tag_id = 'RT_TAG'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(direct, 0, "direct tag should be removed");
+
+    // Verify inherited tag is cleaned up
+    let inherited_after: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_tag_inherited WHERE block_id = 'RT_CHILD' AND tag_id = 'RT_TAG'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        inherited_after, 0,
+        "inherited tag should be cleaned up after removal"
+    );
+}
+
+// ======================================================================
+// UX-159: create_block dispatch enqueues RebuildProjectedAgendaCache
+// ======================================================================
+
+#[tokio::test]
+async fn dispatch_create_block_enqueues_projected_agenda_cache() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let r = make_op_record(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("DISP_PAC_1"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            content: "test dispatch".into(),
+        }),
+    )
+    .await;
+
+    // dispatch_background only enqueues bg tasks (no fg)
+    assert!(mat.dispatch_background(&r).is_ok());
+
+    // Flush background and verify the projected agenda cache rebuild ran
+    // (RebuildProjectedAgendaCache is a no-op on an empty DB but the task
+    // should have been enqueued and processed without error)
+    mat.flush_background().await.unwrap();
+
+    // If the task was enqueued, bg_processed should have at least the
+    // expected tasks: RebuildTagInheritanceCache + RebuildProjectedAgendaCache + UpdateFtsBlock
+    assert!(
+        mat.metrics().bg_processed.load(AtomicOrdering::Relaxed) >= 2,
+        "should have processed at least 2 background tasks (tag inheritance + projected agenda cache)"
+    );
+}

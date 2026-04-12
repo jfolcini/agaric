@@ -65,6 +65,7 @@ impl Materializer {
                     })?;
                 }
                 self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
+                self.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache)?;
             }
             "edit_block" => {
                 let hint: BlockIdHint = serde_json::from_str(&record.payload)?;

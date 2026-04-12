@@ -298,6 +298,18 @@ pub(crate) async fn try_sync_with_peer(
 ) {
     let peer_id = &peer.device_id;
 
+    // Scope guard: always clear the cancel flag when this function returns,
+    // regardless of which path is taken (backoff, lock, no-address, connect
+    // failure, or after a completed/failed sync session).  Without this,
+    // early-exit paths would leave the flag permanently set (S-11).
+    struct CancelGuard<'a>(&'a AtomicBool);
+    impl Drop for CancelGuard<'_> {
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::Release);
+        }
+    }
+    let _cancel_guard = CancelGuard(cancel);
+
     // 1. Backoff gate
     if !scheduler.may_retry(peer_id) {
         return;
@@ -396,8 +408,7 @@ pub(crate) async fn try_sync_with_peer(
         }
     }
 
-    // Clear cancel flag after session completes (whether by success, error, or cancellation)
-    cancel.store(false, Ordering::Release);
+    // Cancel flag is cleared by `_cancel_guard` (Drop) on all exit paths.
 
     let _ = conn.close().await.map_err(|e| {
         tracing::debug!("failed to close sync connection: {e}");

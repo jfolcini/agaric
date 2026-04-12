@@ -329,7 +329,7 @@ pub async fn request_and_receive_files(
                 }
 
                 stats.files_received += 1;
-                stats.bytes_received += size_bytes;
+                stats.bytes_received += data.len() as u64;
 
                 conn.send_json(&SyncMessage::FileReceived { attachment_id })
                     .await?;
@@ -352,7 +352,7 @@ pub async fn request_and_receive_files(
 }
 
 /// Receive binary data for a file, accumulating chunks until the expected
-/// size is reached.
+/// size is reached. Rejects data that exceeds the declared size.
 async fn receive_binary_data(
     conn: &mut SyncConnection,
     size_bytes: u64,
@@ -361,6 +361,13 @@ async fn receive_binary_data(
     while (data.len() as u64) < size_bytes {
         let chunk = conn.recv_binary().await?;
         data.extend_from_slice(&chunk);
+        if data.len() as u64 > size_bytes {
+            return Err(AppError::InvalidOperation(format!(
+                "received {} bytes but expected {}",
+                data.len(),
+                size_bytes
+            )));
+        }
     }
     Ok(data)
 }
@@ -396,12 +403,14 @@ pub async fn run_file_transfer_initiator(
     stats.files_received += recv_stats.files_received;
     stats.bytes_received += recv_stats.bytes_received;
     stats.skipped_hash_mismatch += recv_stats.skipped_hash_mismatch;
+    stats.skipped_not_found += recv_stats.skipped_not_found;
 
     // Phase 2: Respond to responder's file request
     let send_stats = receive_request_and_send_files(conn, pool, app_data_dir).await?;
     stats.files_sent += send_stats.files_sent;
     stats.bytes_sent += send_stats.bytes_sent;
     stats.skipped_not_found += send_stats.skipped_not_found;
+    stats.skipped_hash_mismatch += send_stats.skipped_hash_mismatch;
 
     if stats.files_received > 0 || stats.files_sent > 0 {
         tracing::info!(
@@ -433,12 +442,14 @@ pub async fn run_file_transfer_responder(
     stats.files_sent += send_stats.files_sent;
     stats.bytes_sent += send_stats.bytes_sent;
     stats.skipped_not_found += send_stats.skipped_not_found;
+    stats.skipped_hash_mismatch += send_stats.skipped_hash_mismatch;
 
     // Phase 2: Request our missing files from initiator
     let recv_stats = request_and_receive_files(conn, pool, app_data_dir).await?;
     stats.files_received += recv_stats.files_received;
     stats.bytes_received += recv_stats.bytes_received;
     stats.skipped_hash_mismatch += recv_stats.skipped_hash_mismatch;
+    stats.skipped_not_found += recv_stats.skipped_not_found;
 
     if stats.files_received > 0 || stats.files_sent > 0 {
         tracing::info!(

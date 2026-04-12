@@ -616,6 +616,24 @@ pub async fn purge_block_inner(
     .execute(&mut *tx)
     .await?;
 
+    // page_aliases
+    sqlx::query(&format!(
+        "{DESC_CTE} DELETE FROM page_aliases \
+         WHERE page_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&block_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // projected_agenda_cache
+    sqlx::query(&format!(
+        "{DESC_CTE} DELETE FROM projected_agenda_cache \
+         WHERE block_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&block_id)
+    .execute(&mut *tx)
+    .await?;
+
     // Delete blocks (deferred FK allows single-statement batch)
     let result = sqlx::query(&format!(
         "{DESC_CTE} DELETE FROM blocks \
