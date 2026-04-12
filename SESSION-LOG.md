@@ -1,5 +1,26 @@
 # Session Log
 
+## Session 365 — T-18 use-roving-editor: 17 new tests for custom extensions + mount/unmount (2026-04-12)
+
+**T-18 further improved — all unit-testable paths now covered. T-16 confirmed: all unit-testable paths were already covered in session 364. 3 open items remain (all require infrastructure beyond unit tests).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| T-18 (further) | 17 new tests: 10 custom extension + 5 mount logic + 2 getMarkdown | `use-roving-editor.ts` (5 exports), `use-roving-editor.test.ts` |
+
+### Implementation
+- **T-18**: Exported 5 custom TipTap extensions (CodeWithShortcut, StrikeWithShortcut, HighlightWithShortcut, CodeBlockWithShortcut, PriorityShortcuts) with `@internal` JSDoc. Added 10 extension tests using real Editor instances verifying registration + toggle commands. Added 5 mount tests (content replacement, empty string, bold markdown, history reset, addToHistory:false). Added 2 getMarkdown round-trip tests. Total: 41 tests (up from 24). Remaining gap is useEditor hook lifecycle (renderHook + TipTap not established in this codebase).
+- **T-16**: Investigation confirmed all pure functions in sync modules (discovery.rs, server.rs, operations.rs, types.rs) are comprehensively tested. No additional unit-testable paths exist — remaining gaps require multi-peer async infrastructure.
+
+### Stats
+- 2 files changed (+221 -11 lines)
+- 6369 frontend tests pass (+17), all 19 prek hooks pass
+- T-18 and T-16 updated in REVIEW-LATER (3 open items remain)
+
+---
+
 ## Session 364 — T-16/T-17/T-18 resolved: test coverage gaps — 82 new tests (2026-04-12)
 
 **1 REVIEW-LATER item fully resolved (T-17). T-16 and T-18 partially resolved (unit-testable paths covered, network/integration gaps remain). 3 open items remain.**
