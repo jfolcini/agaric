@@ -1,0 +1,473 @@
+//! Grouped backlink queries and unlinked reference detection.
+
+use futures_util::future::try_join_all;
+use rustc_hash::FxHashSet;
+use sqlx::SqlitePool;
+
+use super::filters::resolve_filter;
+use super::query::resolve_root_pages;
+use super::sort::sort_ids;
+use super::types::*;
+use crate::error::AppError;
+use crate::fts::sanitize_fts_query;
+use crate::pagination::{BlockRow, Cursor, PageRequest};
+
+// ---------------------------------------------------------------------------
+// Public: eval_backlink_query_grouped
+// ---------------------------------------------------------------------------
+
+/// Evaluate a grouped backlink query — backlinks organized by source page.
+///
+/// ## Algorithm
+///
+/// 1. Get base backlink set.
+/// 2. Apply filters.
+/// 3. Resolve root pages for all filtered IDs.
+/// 4. Group blocks by root page.
+/// 5. Sort groups alphabetically by page title.
+/// 6. Apply cursor pagination on groups.
+/// 7. Sort blocks within each group, fetch full BlockRow data.
+/// 8. Return `GroupedBacklinkResponse`.
+pub async fn eval_backlink_query_grouped(
+    pool: &SqlitePool,
+    block_id: &str,
+    filters: Option<Vec<BacklinkFilter>>,
+    sort: Option<BacklinkSort>,
+    page: &PageRequest,
+) -> Result<GroupedBacklinkResponse, AppError> {
+    // 1. Get base backlink set
+    let base_ids: FxHashSet<String> = sqlx::query_scalar::<_, String>(
+        "SELECT bl.source_id FROM block_links bl \
+         JOIN blocks b ON b.id = bl.source_id \
+         WHERE bl.target_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
+    )
+    .bind(block_id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .collect();
+
+    let total_count = base_ids.len();
+
+    if base_ids.is_empty() {
+        return Ok(GroupedBacklinkResponse {
+            groups: vec![],
+            next_cursor: None,
+            has_more: false,
+            total_count: 0,
+            filtered_count: 0,
+        });
+    }
+
+    // 2. Apply filters (AND semantics at top level)
+    let filtered_ids = if let Some(ref filter_list) = filters {
+        if filter_list.is_empty() {
+            base_ids
+        } else {
+            let futures = filter_list.iter().map(|f| resolve_filter(pool, f, 0));
+            let results = try_join_all(futures).await?;
+            let mut result = base_ids;
+            for set in results {
+                result.retain(|id| set.contains(id));
+            }
+            result
+        }
+    } else {
+        base_ids
+    };
+
+    let filtered_count = filtered_ids.len();
+
+    if filtered_count == 0 {
+        return Ok(GroupedBacklinkResponse {
+            groups: vec![],
+            next_cursor: None,
+            has_more: false,
+            total_count,
+            filtered_count: 0,
+        });
+    }
+
+    // 3. Resolve root pages for all filtered IDs
+    let root_map = resolve_root_pages(pool, &filtered_ids).await?;
+
+    // 4. Group blocks by root page (skip orphans with no page ancestor)
+    let mut page_groups: std::collections::HashMap<String, (Option<String>, Vec<String>)> =
+        std::collections::HashMap::new();
+    for block_id_item in &filtered_ids {
+        if let Some((page_id, page_title)) = root_map.get(block_id_item) {
+            page_groups
+                .entry(page_id.clone())
+                .or_insert_with(|| (page_title.clone(), Vec::new()))
+                .1
+                .push(block_id_item.clone());
+        }
+    }
+
+    // 5. Sort groups alphabetically by page_title (None sorts last)
+    let mut group_list: Vec<(String, Option<String>, Vec<String>)> = page_groups
+        .into_iter()
+        .map(|(pid, (title, blocks))| (pid, title, blocks))
+        .collect();
+    group_list.sort_by(|a, b| {
+        let ta = a.1.as_deref();
+        let tb = b.1.as_deref();
+        match (ta, tb) {
+            (Some(a_title), Some(b_title)) => a_title.cmp(b_title).then_with(|| a.0.cmp(&b.0)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.0.cmp(&b.0),
+        }
+    });
+
+    // 6. Apply cursor pagination on groups
+    let start_after = page.after.as_ref().map(|c| c.id.as_str());
+    let groups_after_cursor: Vec<&(String, Option<String>, Vec<String>)> =
+        if let Some(after_id) = start_after {
+            group_list
+                .iter()
+                .skip_while(|(pid, _, _)| pid.as_str() != after_id)
+                .skip(1)
+                .collect()
+        } else {
+            group_list.iter().collect()
+        };
+
+    let fetch_limit = (page.limit + 1) as usize;
+    let page_groups_slice: Vec<&(String, Option<String>, Vec<String>)> =
+        groups_after_cursor.into_iter().take(fetch_limit).collect();
+    let has_more = page_groups_slice.len() > page.limit as usize;
+    let actual_groups: Vec<&(String, Option<String>, Vec<String>)> = if has_more {
+        page_groups_slice[..page.limit as usize].to_vec()
+    } else {
+        page_groups_slice
+    };
+
+    if actual_groups.is_empty() {
+        return Ok(GroupedBacklinkResponse {
+            groups: vec![],
+            next_cursor: None,
+            has_more: false,
+            total_count,
+            filtered_count,
+        });
+    }
+
+    // 7. Sort all block IDs across groups by the user-specified sort, then distribute
+    let sort = sort.unwrap_or(BacklinkSort::Created { dir: SortDir::Asc });
+    let all_block_ids: FxHashSet<String> = actual_groups
+        .iter()
+        .flat_map(|(_, _, block_ids_in_group)| block_ids_in_group.iter().cloned())
+        .collect();
+    let sorted_all = sort_ids(pool, &all_block_ids, &sort).await?;
+
+    // 8. Fetch full BlockRow data for all blocks in one batch
+    let all_ids_vec: Vec<&str> = sorted_all.iter().map(|s| s.as_str()).collect();
+    let fetched_rows = if all_ids_vec.is_empty() {
+        vec![]
+    } else {
+        let placeholders = all_ids_vec
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
+        let query_str = format!(
+            "SELECT id, block_type, content, parent_id, position, \
+             deleted_at, is_conflict, conflict_type, \
+             todo_state, priority, due_date, scheduled_date \
+             FROM blocks WHERE id IN ({placeholders})"
+        );
+        let mut query = sqlx::query_as::<_, BlockRow>(&query_str);
+        for id in &all_ids_vec {
+            query = query.bind(*id);
+        }
+        query.fetch_all(pool).await?
+    };
+
+    // Build a lookup map from id -> BlockRow
+    let row_map: std::collections::HashMap<&str, &BlockRow> =
+        fetched_rows.iter().map(|r| (r.id.as_str(), r)).collect();
+
+    // Build a position map from sorted order
+    let sort_order: std::collections::HashMap<&str, usize> = sorted_all
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.as_str(), i))
+        .collect();
+
+    // 9. Distribute fetched rows back into groups, maintaining sort order
+    let mut groups: Vec<BacklinkGroup> = Vec::with_capacity(actual_groups.len());
+    for (page_id, page_title, block_ids_in_group) in &actual_groups {
+        let mut blocks: Vec<(&str, usize)> = block_ids_in_group
+            .iter()
+            .filter_map(|bid| sort_order.get(bid.as_str()).map(|&pos| (bid.as_str(), pos)))
+            .collect();
+        blocks.sort_by_key(|&(_, pos)| pos);
+
+        let block_rows: Vec<BlockRow> = blocks
+            .iter()
+            .filter_map(|&(bid, _)| row_map.get(bid).map(|r| (*r).clone()))
+            .collect();
+
+        groups.push(BacklinkGroup {
+            page_id: page_id.clone(),
+            page_title: page_title.clone(),
+            blocks: block_rows,
+        });
+    }
+
+    // 10. Build cursor from last group's page_id if has_more
+    let next_cursor = if has_more {
+        let last = actual_groups.last().expect("has_more implies non-empty");
+        Some(
+            Cursor {
+                id: last.0.clone(),
+                position: None,
+                deleted_at: None,
+                seq: None,
+                rank: None,
+            }
+            .encode()?,
+        )
+    } else {
+        None
+    };
+
+    Ok(GroupedBacklinkResponse {
+        groups,
+        next_cursor,
+        has_more,
+        total_count,
+        filtered_count,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Public: eval_unlinked_references
+// ---------------------------------------------------------------------------
+
+/// Find blocks that mention a page's title text without having a `[[link]]`
+/// to it. Powers the "Unlinked References" UI feature.
+///
+/// ## Algorithm
+///
+/// 1. Fetch the page title.
+/// 2. Sanitize title for FTS5.
+/// 3. FTS5 query to find blocks mentioning the title, excluding blocks
+///    that have a `block_links` row with `target_id = page_id`.
+/// 4. Resolve root pages for all matching blocks.
+/// 5. Exclude blocks whose root page is the target page itself.
+/// 6. Group by source page, sort groups alphabetically by `page_title`.
+/// 7. Apply cursor pagination on groups.
+/// 8. Fetch full `BlockRow` data for the paginated groups.
+/// 9. Return `GroupedBacklinkResponse`.
+pub async fn eval_unlinked_references(
+    pool: &SqlitePool,
+    page_id: &str,
+    page: &PageRequest,
+) -> Result<GroupedBacklinkResponse, AppError> {
+    // 1. Fetch the page title
+    let title: Option<String> = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE id = ?1 AND block_type = 'page' AND deleted_at IS NULL",
+    )
+    .bind(page_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let title = match title {
+        Some(ref t) if !t.is_empty() => t.clone(),
+        _ => {
+            return Ok(GroupedBacklinkResponse {
+                groups: vec![],
+                next_cursor: None,
+                has_more: false,
+                total_count: 0,
+                filtered_count: 0,
+            });
+        }
+    };
+
+    // 2. Sanitize title for FTS5
+    let fts_query = sanitize_fts_query(&title);
+    if fts_query.is_empty() {
+        return Ok(GroupedBacklinkResponse {
+            groups: vec![],
+            next_cursor: None,
+            has_more: false,
+            total_count: 0,
+            filtered_count: 0,
+        });
+    }
+
+    // 3. FTS5 query to find blocks mentioning the title, excluding linked blocks
+    let matching_ids: FxHashSet<String> = sqlx::query_scalar::<_, String>(
+        "SELECT fb.block_id \
+         FROM fts_blocks fb \
+         JOIN blocks b ON b.id = fb.block_id \
+         WHERE fts_blocks MATCH ?1 \
+           AND b.deleted_at IS NULL \
+           AND b.is_conflict = 0 \
+           AND fb.block_id NOT IN ( \
+             SELECT source_id FROM block_links WHERE target_id = ?2 \
+           )",
+    )
+    .bind(&fts_query)
+    .bind(page_id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .collect();
+
+    if matching_ids.is_empty() {
+        return Ok(GroupedBacklinkResponse {
+            groups: vec![],
+            next_cursor: None,
+            has_more: false,
+            total_count: 0,
+            filtered_count: 0,
+        });
+    }
+
+    // 4. Resolve root pages for all matching IDs
+    let root_map = resolve_root_pages(pool, &matching_ids).await?;
+
+    // 5. Group blocks by root page, excluding blocks whose root page is the target page
+    let mut page_groups: std::collections::HashMap<String, (Option<String>, Vec<String>)> =
+        std::collections::HashMap::new();
+    for block_id_item in &matching_ids {
+        if let Some((root_page_id, page_title)) = root_map.get(block_id_item) {
+            // Exclude self-references
+            if root_page_id == page_id {
+                continue;
+            }
+            page_groups
+                .entry(root_page_id.clone())
+                .or_insert_with(|| (page_title.clone(), Vec::new()))
+                .1
+                .push(block_id_item.clone());
+        }
+    }
+
+    let filtered_count = page_groups.values().map(|(_, blocks)| blocks.len()).sum();
+    let total_count = filtered_count;
+
+    // 6. Sort groups alphabetically by page_title (None sorts last)
+    let mut group_list: Vec<(String, Option<String>, Vec<String>)> = page_groups
+        .into_iter()
+        .map(|(pid, (title, blocks))| (pid, title, blocks))
+        .collect();
+    group_list.sort_by(|a, b| {
+        let ta = a.1.as_deref();
+        let tb = b.1.as_deref();
+        match (ta, tb) {
+            (Some(a_title), Some(b_title)) => a_title.cmp(b_title).then_with(|| a.0.cmp(&b.0)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.0.cmp(&b.0),
+        }
+    });
+
+    // 7. Apply cursor pagination on groups
+    let start_after = page.after.as_ref().map(|c| c.id.as_str());
+    let groups_after_cursor: Vec<&(String, Option<String>, Vec<String>)> =
+        if let Some(after_id) = start_after {
+            group_list
+                .iter()
+                .skip_while(|(pid, _, _)| pid.as_str() != after_id)
+                .skip(1)
+                .collect()
+        } else {
+            group_list.iter().collect()
+        };
+
+    let fetch_limit = (page.limit + 1) as usize;
+    let page_groups_slice: Vec<&(String, Option<String>, Vec<String>)> =
+        groups_after_cursor.into_iter().take(fetch_limit).collect();
+    let has_more = page_groups_slice.len() > page.limit as usize;
+    let actual_groups: Vec<&(String, Option<String>, Vec<String>)> = if has_more {
+        page_groups_slice[..page.limit as usize].to_vec()
+    } else {
+        page_groups_slice
+    };
+
+    if actual_groups.is_empty() {
+        return Ok(GroupedBacklinkResponse {
+            groups: vec![],
+            next_cursor: None,
+            has_more: false,
+            total_count,
+            filtered_count,
+        });
+    }
+
+    // 8. Fetch full BlockRow data for all blocks in one batch
+    let all_block_ids: Vec<String> = actual_groups
+        .iter()
+        .flat_map(|(_, _, block_ids_in_group)| block_ids_in_group.iter().cloned())
+        .collect();
+    let all_ids_vec: Vec<&str> = all_block_ids.iter().map(|s| s.as_str()).collect();
+    let fetched_rows = if all_ids_vec.is_empty() {
+        vec![]
+    } else {
+        let placeholders = all_ids_vec
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
+        let query_str = format!(
+            "SELECT id, block_type, content, parent_id, position, \
+             deleted_at, is_conflict, conflict_type, \
+             todo_state, priority, due_date, scheduled_date \
+             FROM blocks WHERE id IN ({placeholders})"
+        );
+        let mut query = sqlx::query_as::<_, BlockRow>(&query_str);
+        for id in &all_ids_vec {
+            query = query.bind(*id);
+        }
+        query.fetch_all(pool).await?
+    };
+
+    // Build a lookup map from id -> BlockRow
+    let row_map: std::collections::HashMap<&str, &BlockRow> =
+        fetched_rows.iter().map(|r| (r.id.as_str(), r)).collect();
+
+    // 9. Distribute fetched rows back into groups
+    let mut groups: Vec<BacklinkGroup> = Vec::with_capacity(actual_groups.len());
+    for (group_page_id, page_title, block_ids_in_group) in &actual_groups {
+        let block_rows: Vec<BlockRow> = block_ids_in_group
+            .iter()
+            .filter_map(|bid| row_map.get(bid.as_str()).map(|r| (*r).clone()))
+            .collect();
+
+        groups.push(BacklinkGroup {
+            page_id: group_page_id.clone(),
+            page_title: page_title.clone(),
+            blocks: block_rows,
+        });
+    }
+
+    // 10. Build cursor from last group's page_id if has_more
+    let next_cursor = if has_more {
+        let last = actual_groups.last().expect("has_more implies non-empty");
+        Some(
+            Cursor {
+                id: last.0.clone(),
+                position: None,
+                deleted_at: None,
+                seq: None,
+                rank: None,
+            }
+            .encode()?,
+        )
+    } else {
+        None
+    };
+
+    Ok(GroupedBacklinkResponse {
+        groups,
+        next_cursor,
+        has_more,
+        total_count,
+        filtered_count,
+    })
+}

@@ -1,5 +1,5 @@
 use super::common::*;
-use crate::backlink_query::{BacklinkFilter, BacklinkSort, CompareOp, SortDir};
+use crate::backlink::{BacklinkFilter, BacklinkSort, CompareOp, SortDir};
 use std::collections::HashSet;
 
 // ======================================================================

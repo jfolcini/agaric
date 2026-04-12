@@ -6,7 +6,7 @@ use sqlx::SqlitePool;
 
 use tauri::State;
 
-use crate::backlink_query::{
+use crate::backlink::{
     self, BacklinkFilter, BacklinkQueryResponse, BacklinkSort, GroupedBacklinkResponse,
 };
 use crate::db::ReadPool;
@@ -129,7 +129,7 @@ pub async fn query_backlinks_filtered_inner(
         return Err(AppError::Validation("block_id must not be empty".into()));
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
-    backlink_query::eval_backlink_query(pool, &block_id, filters, sort, &page).await
+    backlink::eval_backlink_query(pool, &block_id, filters, sort, &page).await
 }
 
 /// Query backlinks grouped by source page.
@@ -148,7 +148,7 @@ pub async fn list_backlinks_grouped_inner(
         return Err(AppError::Validation("block_id must not be empty".into()));
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
-    backlink_query::eval_backlink_query_grouped(pool, &block_id, filters, sort, &page).await
+    backlink::eval_backlink_query_grouped(pool, &block_id, filters, sort, &page).await
 }
 
 /// Query unlinked references for a page — blocks that mention the page's
@@ -166,7 +166,7 @@ pub async fn list_unlinked_references_inner(
         return Err(AppError::Validation("page_id must not be empty".into()));
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
-    backlink_query::eval_unlinked_references(pool, page_id, &page).await
+    backlink::eval_unlinked_references(pool, page_id, &page).await
 }
 
 /// Count backlinks per target page for a batch of page IDs in a single query.

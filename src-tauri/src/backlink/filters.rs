@@ -5,7 +5,7 @@ use futures_util::future::try_join_all;
 use rustc_hash::FxHashSet;
 use sqlx::SqlitePool;
 
-use crate::backlink_types::{BacklinkFilter, CompareOp};
+use super::types::{BacklinkFilter, CompareOp};
 use crate::error::AppError;
 use crate::fts::sanitize_fts_query;
 

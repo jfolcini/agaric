@@ -4,7 +4,7 @@
 use rustc_hash::FxHashSet;
 use sqlx::SqlitePool;
 
-use crate::backlink_types::{BacklinkSort, SortDir};
+use super::types::{BacklinkSort, SortDir};
 use crate::error::AppError;
 
 /// Sort a set of block IDs according to the given sort mode.

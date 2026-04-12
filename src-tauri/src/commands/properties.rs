@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use sqlx::SqlitePool;
 use tauri::State;
 
-use crate::backlink_query;
+use crate::backlink;
 use crate::db::{ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
@@ -16,7 +16,7 @@ use super::*;
 
 /// List all distinct property keys currently in use across all blocks.
 pub async fn list_property_keys_inner(pool: &SqlitePool) -> Result<Vec<String>, AppError> {
-    backlink_query::list_property_keys(pool).await
+    backlink::list_property_keys(pool).await
 }
 
 /// Set (upsert) a property on a block.

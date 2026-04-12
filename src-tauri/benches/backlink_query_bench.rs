@@ -5,7 +5,7 @@
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use agaric_lib::backlink_query::{
+use agaric_lib::backlink::{
     eval_backlink_query, list_property_keys, BacklinkFilter, BacklinkSort, CompareOp, SortDir,
 };
 use agaric_lib::commands::{count_backlinks_batch_inner, list_unlinked_references_inner};
