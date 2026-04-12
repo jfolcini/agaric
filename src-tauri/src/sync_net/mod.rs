@@ -32,6 +32,8 @@ pub(crate) fn pem_to_der(pem: &str) -> Result<Vec<u8>, AppError> {
         .map_err(|e| sync_err(format!("invalid PEM: {e}")))
 }
 
+#[cfg(test)]
+pub use connection::test_connection_pair;
 pub use connection::{connect_to_peer, SyncConnection};
 pub use tls::{generate_self_signed_cert, SyncCert};
 pub use websocket::{

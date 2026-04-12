@@ -80,6 +80,8 @@ pub async fn connect_to_peer(
 pub enum InnerStream {
     Server(WebSocketStream<tokio_rustls::server::TlsStream<tokio::net::TcpStream>>),
     Client(WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>),
+    #[cfg(test)]
+    Test(WebSocketStream<tokio::io::DuplexStream>),
 }
 
 /// A bidirectional WebSocket connection used by the sync protocol.
@@ -170,6 +172,11 @@ impl SyncConnection {
                 .close(None)
                 .await
                 .map_err(|e| sync_err(format!("close: {e}"))),
+            #[cfg(test)]
+            InnerStream::Test(mut ws) => ws
+                .close(None)
+                .await
+                .map_err(|e| sync_err(format!("close: {e}"))),
         }
     }
 
@@ -195,6 +202,11 @@ impl SyncConnection {
                 .send(msg)
                 .await
                 .map_err(|e| sync_err(format!("send: {e}"))),
+            #[cfg(test)]
+            InnerStream::Test(ws) => ws
+                .send(msg)
+                .await
+                .map_err(|e| sync_err(format!("send: {e}"))),
         }
     }
 
@@ -202,6 +214,8 @@ impl SyncConnection {
         let result = match &mut self.inner {
             InnerStream::Server(ws) => timeout(Self::RECV_TIMEOUT, ws.next()).await,
             InnerStream::Client(ws) => timeout(Self::RECV_TIMEOUT, ws.next()).await,
+            #[cfg(test)]
+            InnerStream::Test(ws) => timeout(Self::RECV_TIMEOUT, ws.next()).await,
         };
         match result {
             Ok(Some(Ok(msg))) => Ok(msg),
@@ -210,4 +224,35 @@ impl SyncConnection {
             Err(_elapsed) => Err(sync_err("recv timed out after 30s")),
         }
     }
+}
+
+/// Create an in-memory WebSocket pair for testing sync protocol flows.
+#[cfg(test)]
+pub async fn test_connection_pair() -> (SyncConnection, SyncConnection) {
+    let (a, b) = tokio::io::duplex(64 * 1024);
+    let ws_a = WebSocketStream::from_raw_socket(
+        a,
+        tokio_tungstenite::tungstenite::protocol::Role::Server,
+        None,
+    )
+    .await;
+    let ws_b = WebSocketStream::from_raw_socket(
+        b,
+        tokio_tungstenite::tungstenite::protocol::Role::Client,
+        None,
+    )
+    .await;
+
+    (
+        SyncConnection {
+            inner: InnerStream::Test(ws_a),
+            peer_cert_hash_val: None,
+            peer_cert_cn_val: None,
+        },
+        SyncConnection {
+            inner: InnerStream::Test(ws_b),
+            peer_cert_hash_val: None,
+            peer_cert_cn_val: None,
+        },
+    )
 }

@@ -1449,3 +1449,249 @@ fn verify_peer_cert_cn_match_but_hash_mismatch() {
         "CN match + hash mismatch → HashMismatch"
     );
 }
+
+// ======================================================================
+// T-16 — In-memory WebSocket tests for handle_incoming_sync
+// ======================================================================
+
+/// T-16 Test 1: Sending a HeadExchange containing only the local device's
+/// head triggers the self-sync rejection branch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_handle_incoming_sync_rejects_self() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+
+    let pool_clone = pool.clone();
+    let mat_clone = materializer.clone();
+    let sched_clone = scheduler.clone();
+    let sink_clone = event_sink.clone();
+    let handle = tokio::spawn(async move {
+        handle_incoming_sync(
+            server_conn,
+            pool_clone,
+            "LOCAL_DEV".to_string(),
+            mat_clone,
+            sched_clone,
+            sink_clone,
+        )
+        .await
+    });
+
+    // Send HeadExchange with only the local device's head → remote_id
+    // resolves to "" (no head with device_id != "LOCAL_DEV"), triggering
+    // the self-sync rejection.
+    client_conn
+        .send_json(&SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "LOCAL_DEV".to_string(),
+                seq: 0,
+                hash: "fakehash".to_string(),
+            }],
+        })
+        .await
+        .unwrap();
+
+    let response: SyncMessage = client_conn.recv_json().await.unwrap();
+    match response {
+        SyncMessage::Error { message } => {
+            assert!(
+                message.contains("self"),
+                "error should mention self-sync, got: {message}"
+            );
+        }
+        other => panic!("expected SyncMessage::Error, got {:?}", other),
+    }
+
+    let result = handle.await.unwrap();
+    assert!(
+        result.is_ok(),
+        "handle_incoming_sync should return Ok after rejecting self-sync"
+    );
+
+    materializer.shutdown();
+}
+
+/// T-16 Test 2: Sending a HeadExchange from a device not present in
+/// the peer_refs table triggers the unpaired-device rejection branch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_handle_incoming_sync_rejects_unpaired() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    // No peer_refs entries → any remote device is "unpaired"
+    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+
+    let pool_clone = pool.clone();
+    let mat_clone = materializer.clone();
+    let sched_clone = scheduler.clone();
+    let sink_clone = event_sink.clone();
+    let handle = tokio::spawn(async move {
+        handle_incoming_sync(
+            server_conn,
+            pool_clone,
+            "LOCAL_DEV".to_string(),
+            mat_clone,
+            sched_clone,
+            sink_clone,
+        )
+        .await
+    });
+
+    client_conn
+        .send_json(&SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "UNKNOWN_DEVICE".to_string(),
+                seq: 0,
+                hash: "fakehash".to_string(),
+            }],
+        })
+        .await
+        .unwrap();
+
+    let response: SyncMessage = client_conn.recv_json().await.unwrap();
+    match response {
+        SyncMessage::Error { message } => {
+            assert!(
+                message.contains("not paired"),
+                "error should mention unpaired, got: {message}"
+            );
+        }
+        other => panic!(
+            "expected SyncMessage::Error for unpaired device, got {:?}",
+            other
+        ),
+    }
+
+    let result = handle.await.unwrap();
+    assert!(
+        result.is_ok(),
+        "handle_incoming_sync should return Ok after rejecting unpaired device"
+    );
+
+    materializer.shutdown();
+}
+
+/// T-16 Test 3: When the per-peer lock is already held (e.g. an outbound
+/// session is in progress), the responder sends "busy" and returns Ok.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_handle_incoming_sync_rejects_busy_peer() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    // Insert a peer ref so the device is "paired"
+    peer_refs::upsert_peer_ref(&pool, "REMOTE_DEV")
+        .await
+        .unwrap();
+
+    // Pre-acquire the per-peer lock to simulate a concurrent session
+    let _guard = scheduler.try_lock_peer("REMOTE_DEV").unwrap();
+
+    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+
+    let pool_clone = pool.clone();
+    let mat_clone = materializer.clone();
+    let sched_clone = scheduler.clone();
+    let sink_clone = event_sink.clone();
+    let handle = tokio::spawn(async move {
+        handle_incoming_sync(
+            server_conn,
+            pool_clone,
+            "LOCAL_DEV".to_string(),
+            mat_clone,
+            sched_clone,
+            sink_clone,
+        )
+        .await
+    });
+
+    client_conn
+        .send_json(&SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "REMOTE_DEV".to_string(),
+                seq: 0,
+                hash: "fakehash".to_string(),
+            }],
+        })
+        .await
+        .unwrap();
+
+    let response: SyncMessage = client_conn.recv_json().await.unwrap();
+    match response {
+        SyncMessage::Error { message } => {
+            assert!(
+                message.contains("busy"),
+                "error should mention busy, got: {message}"
+            );
+        }
+        other => panic!("expected SyncMessage::Error for busy peer, got {:?}", other),
+    }
+
+    let result = handle.await.unwrap();
+    assert!(
+        result.is_ok(),
+        "handle_incoming_sync should return Ok after rejecting busy peer"
+    );
+
+    materializer.shutdown();
+}
+
+/// T-16 Test 4: Sending a non-HeadExchange message (SyncComplete) as
+/// the first message skips peer validation and goes straight to
+/// orch.handle_message(), which rejects it as out-of-order.
+/// Verify the function completes without panicking.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_handle_incoming_sync_non_head_exchange_first_msg() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+
+    let pool_clone = pool.clone();
+    let mat_clone = materializer.clone();
+    let sched_clone = scheduler.clone();
+    let sink_clone = event_sink.clone();
+    let handle = tokio::spawn(async move {
+        handle_incoming_sync(
+            server_conn,
+            pool_clone,
+            "LOCAL_DEV".to_string(),
+            mat_clone,
+            sched_clone,
+            sink_clone,
+        )
+        .await
+    });
+
+    // Send SyncComplete as the first message — no HeadExchange
+    client_conn
+        .send_json(&SyncMessage::SyncComplete {
+            last_hash: "fakehash".to_string(),
+        })
+        .await
+        .unwrap();
+
+    // The handler should complete (likely with an error from the
+    // orchestrator rejecting SyncComplete in Idle state) but must
+    // not panic.
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+        .await
+        .expect("handle_incoming_sync must complete within timeout");
+
+    // The spawned task itself must not panic
+    assert!(
+        result.is_ok(),
+        "spawned task must not panic (JoinError would indicate a panic)"
+    );
+
+    materializer.shutdown();
+}
