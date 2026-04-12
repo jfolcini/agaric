@@ -145,7 +145,7 @@ Markdown-based WYSIWYG editing:
 - **Code block language selector** (UX-62): Popover in FormattingToolbar with 17 language choices. Short labels on active button. `FormattingToolbar.tsx`, tested in `FormattingToolbar.test.tsx`.
 - Tables (pipe-delimited)
 - Blockquotes (`>`)
-- External links (Ctrl+K, autolink, paste detection)
+- External links (Ctrl+K, autolink, paste detection). **Paste-to-link** (F-40): pasting a bare URL with empty selection inserts linked text (custom `handlePaste` ProseMirror plugin in `ExternalLink` extension). Selected-text paste uses TipTap's built-in `linkOnPaste`.
 
 ### Block Operations
 

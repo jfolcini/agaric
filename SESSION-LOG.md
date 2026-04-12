@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 356 — F-40/B-56/UX-158 resolved: URL paste auto-link, blur save fix, focus ring (2026-04-12)
+
+**3 REVIEW-LATER items resolved (F-40, B-56, UX-158). 24 open items remain.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| F-40 | Pasting a bare URL with empty selection auto-converts to external link | `external-link.ts`, `external-link.test.ts` (new) |
+| B-56 | Clicking outside a focused block now saves content (was discarding) | `useEditorBlur.ts`, `useEditorBlur.test.ts` |
+| UX-158 | Date picker input focus ring suppressed (outline-hidden on focus-visible) | `input.tsx`, `primitives.test.tsx` |
+
+### Implementation
+- **F-40**: Extracted `isValidHttpUrl()` pure function from inline validation. Added `addProseMirrorPlugins()` with custom `handlePaste` to the ExternalLink extension — checks empty selection + valid HTTP URL, inserts text node with link mark. Parent plugins preserved via `this.parent?.()`. `.configure()` `validate` option now delegates to shared function. 14 new tests (9 URL validation + 5 paste behavior using direct plugin invocation).
+- **B-56**: Root cause: Step 4b's DOM scan used `document.querySelector()` globally — found `.formatting-toolbar` inside the editor `<section>` wrapper (always visible when editing), incorrectly preventing save. Fix: changed to `document.querySelectorAll()` with `wrapper.contains(el)` skip — internal portal elements no longer block save on external blur. 3 new tests + all 17 existing tests updated with `currentTarget` parameter (20 total).
+- **UX-158**: Added `focus-visible:outline-hidden` to Input component's focus-visible classes. Browser UA `:focus-visible` outline was stacking on top of Tailwind ring classes. Matches pattern already used in Calendar component buttons. 1 test assertion added.
+
+### Stats
+- 6 files changed (+457 -44 lines), 1 new file
+- 6290 frontend tests pass (was 6273, +17 new), all 20 prek hooks pass
+- 3 REVIEW-LATER items resolved (27 -> 24 open)
+
+---
+
 ## Session 355 — M-61/M-62/M-63/M-67 resolved: split final 4 Rust files into module directories (2026-04-12)
 
 **4 REVIEW-LATER items resolved (M-61, M-62, M-63, M-67). REVIEW-LATER backlog fully cleared (0 open items).**
