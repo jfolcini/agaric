@@ -1,0 +1,56 @@
+//! Soft-delete: `soft_delete_block`, `cascade_soft_delete`.
+
+use sqlx::SqlitePool;
+
+use crate::error::AppError;
+
+/// Soft-delete a single block (no cascade).
+pub async fn soft_delete_block(
+    pool: &SqlitePool,
+    block_id: &str,
+) -> Result<Option<String>, AppError> {
+    let now = crate::now_rfc3339();
+    let result = sqlx::query!(
+        "UPDATE blocks SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
+        now,
+        block_id
+    )
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(now))
+    }
+}
+
+/// Cascade soft-delete: sets `deleted_at` on the block and all non-deleted
+/// descendants via recursive CTE.
+pub async fn cascade_soft_delete(
+    pool: &SqlitePool,
+    block_id: &str,
+) -> Result<(String, u64), AppError> {
+    let now = crate::now_rfc3339();
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    let result = sqlx::query!(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT id FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+             WHERE b.deleted_at IS NULL \
+         ) \
+         UPDATE blocks SET deleted_at = ? \
+         WHERE id IN (SELECT id FROM descendants) \
+           AND deleted_at IS NULL",
+        block_id,
+        now,
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    let count = result.rows_affected();
+    tx.commit().await?;
+    Ok((now, count))
+}
