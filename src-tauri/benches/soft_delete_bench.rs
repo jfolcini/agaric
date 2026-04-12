@@ -1,7 +1,9 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
+use agaric_lib::commands::purge_block_inner;
 use agaric_lib::db::init_pool;
-use agaric_lib::soft_delete::{cascade_soft_delete, purge_block, restore_block};
+use agaric_lib::materializer::Materializer;
+use agaric_lib::soft_delete::{cascade_soft_delete, restore_block};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
@@ -91,16 +93,24 @@ fn bench_purge_block(c: &mut Criterion) {
                 b.iter_batched(
                     || {
                         let dir = TempDir::new().unwrap();
-                        let pool = rt.block_on(async {
+                        let (pool, materializer) = rt.block_on(async {
                             let p = init_pool(&dir.path().join("b.db")).await.unwrap();
                             seed_tree(&p, d, w).await;
                             // Soft-delete first so purge exercises the full path.
                             cascade_soft_delete(&p, ROOT_ID).await.unwrap();
-                            p
+                            let m = Materializer::new(p.clone());
+                            (p, m)
                         });
-                        (pool, dir)
+                        (pool, dir, materializer)
                     },
-                    |(pool, _dir)| rt.block_on(purge_block(&pool, ROOT_ID)),
+                    |(pool, _dir, materializer)| {
+                        let _ = rt.block_on(purge_block_inner(
+                            &pool,
+                            "dev-bench",
+                            &materializer,
+                            ROOT_ID.to_string(),
+                        ));
+                    },
                     criterion::BatchSize::SmallInput,
                 );
             },
