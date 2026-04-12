@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 372 — T-16 select! branch B + C tests + M-16 resolved (2026-04-13)
+
+**M-16 RESOLVED (815 TS errors fixed). T-16 Branches B + C now tested — 3 of 4 daemon_loop branches covered. Only Branch A (mDNS discovery) remains.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| M-16 | noPropertyAccessFromIndexSignature: 815 TS4111 errors fixed across 54 files | tsconfig files + 52 source files |
+| T-16 (further) | Branch B (local change) + Branch C (resync timer) integration tests | `sync_daemon/tests.rs` |
+
+### Implementation
+- **M-16**: 5 parallel subagents fixed all 815 TS4111 errors. Enabled in both tsconfigs. All changes `obj.key` → `obj["key"]`.
+- **T-16 Branch B**: Start daemon, insert peer ref with bad address, call `scheduler.notify_change()`, verify `scheduler.failure_count() >= 1` (sync was attempted).
+- **T-16 Branch C**: Insert overdue peer ref (synced_at IS NULL) before daemon start, first resync tick fires immediately, verify failure_count >= 1.
+- T-16 now has 3/4 select! branches tested (B, C, D). Only Branch A (mDNS discovery events) remains.
+
+### Stats
+- 56 files changed (+1145 -749 lines)
+- 1888 Rust tests pass (+2), 6375 frontend tests pass, all 19 prek hooks pass
+- M-16 resolved, T-16 updated to single remaining gap (1 open item)
+
+---
+
 ## Session 371 — T-16 daemon lifecycle smoke tests + M-16 noPropertyAccessFromIndexSignature (2026-04-13)
 
 **M-16 RESOLVED — 815 TS4111 errors fixed across 54 files. T-16 daemon lifecycle now smoke-tested. 1 open item remains (select! loop branches).**
