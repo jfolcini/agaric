@@ -139,12 +139,11 @@ async fn f13_sql_injection_block_type_returns_validation_error() {
         "SQL injection in block_type should return Validation error, got: {result:?}"
     );
 
-    // Verify blocks table still exists
-    let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
+    // Verify blocks table still exists (SELECT COUNT(*) succeeds = table exists)
+    let _count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
         .fetch_one(&pool)
         .await
-        .unwrap();
-    assert!(count >= 0, "blocks table should still exist");
+        .expect("blocks table should still exist after SQL injection attempt");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -82,7 +82,9 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
             SyncEvent::Complete { .. } => EVENT_SYNC_COMPLETE,
             SyncEvent::Error { .. } => EVENT_SYNC_ERROR,
         };
-        let _ = self.0.emit(event_name, &event);
+        if let Err(e) = self.0.emit(event_name, &event) {
+            tracing::warn!(%event_name, error = %e, "Failed to emit sync event");
+        }
     }
 }
 

@@ -106,6 +106,10 @@ pub async fn apply_reverse_in_tx(
                 )));
             }
         }
+        // AddTag and RemoveTag are intentionally idempotent: INSERT OR IGNORE
+        // silently handles duplicates, and the DELETE below does not check
+        // rows_affected.  During sync replays the same undo/redo sequence can
+        // be applied more than once, so both directions must be lenient.
         OpPayload::AddTag(p) => {
             sqlx::query("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)")
                 .bind(p.block_id.as_str())
@@ -114,17 +118,11 @@ pub async fn apply_reverse_in_tx(
                 .await?;
         }
         OpPayload::RemoveTag(p) => {
-            let result = sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")
+            sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")
                 .bind(p.block_id.as_str())
                 .bind(p.tag_id.as_str())
                 .execute(&mut **tx)
                 .await?;
-            if result.rows_affected() == 0 {
-                return Err(AppError::NotFound(format!(
-                    "tag association ({}, {}) not found during undo",
-                    p.block_id, p.tag_id
-                )));
-            }
         }
         OpPayload::SetProperty(p) => {
             sqlx::query(
@@ -258,13 +256,18 @@ pub async fn revert_ops_inner(
     for (op_ref, reverse_payload, _created_at) in reverses {
         let new_op_type = reverse_payload.op_type_str().to_owned();
 
-        // Apply to blocks/tags/properties tables (borrows)
-        apply_reverse_in_tx(&mut tx, &reverse_payload).await?;
+        // Append reverse op to log first, then apply — same order as
+        // undo_page_op_inner / redo_page_op_inner.  The clone is needed
+        // because append_local_op_in_tx consumes the payload.
+        let op_record = op_log::append_local_op_in_tx(
+            &mut tx,
+            device_id,
+            reverse_payload.clone(),
+            now_rfc3339(),
+        )
+        .await?;
 
-        // Append reverse op to log (consumes)
-        let op_record =
-            op_log::append_local_op_in_tx(&mut tx, device_id, reverse_payload, now_rfc3339())
-                .await?;
+        apply_reverse_in_tx(&mut tx, &reverse_payload).await?;
 
         results.push(UndoResult {
             reversed_op: op_ref,
@@ -331,7 +334,14 @@ pub async fn restore_page_to_op_inner(
                SELECT b.id FROM blocks b JOIN page_blocks pb ON b.parent_id = pb.id \
              ) \
              SELECT o.device_id, o.seq, o.op_type FROM op_log o \
-             WHERE json_extract(o.payload, '$.block_id') IN (SELECT id FROM page_blocks) \
+             WHERE ( \
+               json_extract(o.payload, '$.block_id') IN (SELECT id FROM page_blocks) \
+               OR (o.op_type = 'delete_attachment' AND EXISTS ( \
+                   SELECT 1 FROM attachments a \
+                   WHERE a.id = json_extract(o.payload, '$.attachment_id') \
+                   AND a.block_id IN (SELECT id FROM page_blocks) \
+               )) \
+             ) \
              AND (o.created_at > ?2 OR (o.created_at = ?2 AND (o.seq > ?3 OR (o.seq = ?3 AND o.device_id > ?4)))) \
              ORDER BY o.created_at DESC, o.seq DESC, o.device_id DESC",
         )

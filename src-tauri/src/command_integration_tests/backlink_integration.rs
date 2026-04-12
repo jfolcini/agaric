@@ -1498,6 +1498,7 @@ async fn batch_resolve_marks_deleted_block() {
     delete_block_inner(&pool, DEV, &mat, block.id.clone())
         .await
         .unwrap();
+    settle(&mat).await;
 
     let resolved = batch_resolve_inner(&pool, vec![block.id.clone()])
         .await

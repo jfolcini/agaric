@@ -397,6 +397,71 @@ async fn revert_ops_reverses_multiple_ops_in_correct_order() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn revert_ops_appends_op_log_entry() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Create and edit a block
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "before".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "after".into())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let ops_before = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let count_before = ops_before.len();
+    let edit_op = ops_before
+        .iter()
+        .find(|o| o.op_type == "edit_block")
+        .unwrap();
+
+    // Revert the edit
+    let results = revert_ops_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![OpRef {
+            device_id: DEV.into(),
+            seq: edit_op.seq,
+        }],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(results.len(), 1, "should produce one result");
+
+    // Verify the reverse op was appended to the op log
+    let ops_after = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    assert_eq!(
+        ops_after.len(),
+        count_before + 1,
+        "revert_ops_inner should append exactly one reverse op to the op log"
+    );
+
+    let reverse_op = ops_after.last().unwrap();
+    assert_eq!(
+        reverse_op.op_type, "edit_block",
+        "reverse of edit_block should be edit_block"
+    );
+    assert_eq!(
+        reverse_op.seq, results[0].new_op_ref.seq,
+        "appended op seq should match the result's new_op_ref"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn revert_ops_rejects_non_reversible_op() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -1154,6 +1219,131 @@ async fn restore_page_to_op_skips_delete_attachment() {
     assert_eq!(
         result.non_reversible_skipped, 1,
         "should count exactly 1 non-reversible op (delete_attachment)"
+    );
+    assert_eq!(
+        result.ops_reverted, 1,
+        "should revert exactly 1 reversible op (edit_block)"
+    );
+    assert_eq!(
+        get_block_inner(&pool, child.id).await.unwrap().content,
+        Some("child block".into()),
+        "child block content should revert to original"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Create a page with a child block
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child block".into(),
+        Some(page.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Add an attachment to the child block BEFORE the target point
+    let att_id = "ATT_B59_001";
+    let att_ts = now_rfc3339();
+    sqlx::query(
+        "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(att_id)
+    .bind(&child.id)
+    .bind("image/png")
+    .bind("photo.png")
+    .bind(1024_i64)
+    .bind("/tmp/photo.png")
+    .bind(&att_ts)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    op_log::append_local_op_at(
+        &pool,
+        DEV,
+        OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
+            attachment_id: att_id.into(),
+            block_id: BlockId::from_trusted(&child.id),
+            mime_type: "image/png".into(),
+            filename: "photo.png".into(),
+            size_bytes: 1024,
+            fs_path: "/tmp/photo.png".into(),
+        }),
+        att_ts.clone(),
+    )
+    .await
+    .unwrap();
+
+    // Record target seq AFTER the add_attachment
+    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let target_seq = ops.last().unwrap().seq;
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+    // Delete the attachment AFTER the target point (soft-delete, keeping the
+    // row so the attachments-based EXISTS subquery can still resolve it).
+    let del_ts = now_rfc3339();
+    op_log::append_local_op_at(
+        &pool,
+        DEV,
+        OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
+            attachment_id: att_id.into(),
+        }),
+        del_ts.clone(),
+    )
+    .await
+    .unwrap();
+
+    sqlx::query("UPDATE attachments SET deleted_at = ? WHERE id = ?")
+        .bind(&del_ts)
+        .bind(att_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+    // Also edit the child block after target (reversible)
+    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "child edited".into())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // PAGE-SCOPED restore (not __all__) — before B-59 fix, the
+    // delete_attachment op was silently missed because it has
+    // $.attachment_id instead of $.block_id.
+    let result =
+        restore_page_to_op_inner(&pool, DEV, &mat, page.id.clone(), DEV.into(), target_seq)
+            .await
+            .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // delete_attachment is in the non_reversible list, so it should be
+    // discovered (counted as skipped) rather than silently missed.
+    assert_eq!(
+        result.non_reversible_skipped, 1,
+        "page-scoped restore should find the delete_attachment op (B-59 fix)"
     );
     assert_eq!(
         result.ops_reverted, 1,
@@ -3400,7 +3590,7 @@ async fn undo_rejects_negative_depth() {
 // ── #129: rows_affected checks in apply_reverse_in_tx ────────────
 
 #[tokio::test]
-async fn apply_reverse_remove_tag_on_nonexistent_returns_not_found() {
+async fn apply_reverse_remove_tag_on_nonexistent_is_idempotent() {
     let (pool, _dir) = test_pool().await;
     let mut tx = pool.begin().await.unwrap();
 
@@ -3410,9 +3600,11 @@ async fn apply_reverse_remove_tag_on_nonexistent_returns_not_found() {
     });
     let result = apply_reverse_in_tx(&mut tx, &payload).await;
 
+    // RemoveTag is intentionally idempotent (B-64): deleting a nonexistent
+    // association is a harmless no-op, symmetric with AddTag's INSERT OR IGNORE.
     assert!(
-        matches!(result, Err(AppError::NotFound(_))),
-        "removing a nonexistent tag association should return NotFound, got: {result:?}"
+        result.is_ok(),
+        "removing a nonexistent tag association should succeed (idempotent), got: {result:?}"
     );
 }
 
