@@ -1,5 +1,28 @@
 # Session Log
 
+## Session 370 — M-16 resolved: noPropertyAccessFromIndexSignature enabled — 815 errors fixed across 54 files (2026-04-13)
+
+**M-16 RESOLVED — the last strict TypeScript flag is now enabled. 815 TS4111 errors fixed across 54 files with 5 parallel subagents. 1 open item remains (T-16 daemon lifecycle).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| M-16 | Enable noPropertyAccessFromIndexSignature + fix all 815 TS4111 errors | `tsconfig.app.json`, `tsconfig.node.json`, 52 source/test files |
+
+### Implementation
+- Enabled `noPropertyAccessFromIndexSignature: true` in both `tsconfig.app.json` and `tsconfig.node.json`.
+- 5 parallel subagents, each handling non-overlapping file sets: tauri-mock.ts (282), tauri-mock.test.ts (194), editor/ (123 across 6 files), components/ (114 across 23 files), remaining lib/hooks/config (95 across 17 files). Plus 5 stragglers fixed by orchestrator.
+- All changes are mechanical `obj.key` → `obj["key"]` for index-signature accesses. No types, interfaces, or logic modified.
+- Previously attempted in session 363 and reverted as "too noisy" — now completed with parallel subagent strategy.
+
+### Stats
+- 54 files changed (+772 -749 lines)
+- 6375 frontend tests pass, all 19 prek hooks pass
+- M-16 resolved (2 → 1 open items)
+
+---
+
 ## Session 369 — T-16/T-18 orchestrator extraction + renderHook breakthrough — 20 new tests (2026-04-13)
 
 **T-18 RESOLVED — renderHook + useRovingEditor works in jsdom (previously thought impossible). T-16 advanced with 4 extracted pure functions from orchestrator. 2 open items remain.**
