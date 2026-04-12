@@ -161,6 +161,17 @@ impl SyncConnection {
         self.peer_cert_cn_val.as_deref()
     }
 
+    /// Set the test certificate fields (CN and hash) on this connection.
+    ///
+    /// Only available in test builds.  Use this after calling
+    /// [`test_connection_pair()`] to inject cert values for the cert
+    /// verification branches in `handle_incoming_sync`.
+    #[cfg(test)]
+    pub fn set_test_cert(&mut self, cn: Option<String>, hash: Option<String>) {
+        self.peer_cert_cn_val = cn;
+        self.peer_cert_hash_val = hash;
+    }
+
     /// Close the connection gracefully.
     pub async fn close(self) -> Result<(), AppError> {
         match self.inner {

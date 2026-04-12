@@ -1695,3 +1695,402 @@ async fn inmem_handle_incoming_sync_non_head_exchange_first_msg() {
 
     materializer.shutdown();
 }
+
+/// T-16c Test 5 (B-34): When the TLS certificate CN doesn't match the
+/// remote device ID claimed in HeadExchange, the responder sends an
+/// error about "certificate" and closes the connection.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_handle_incoming_sync_rejects_cert_cn_mismatch() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    // Insert peer ref so the device is "paired"
+    peer_refs::upsert_peer_ref(&pool, "REMOTE_PAIRED")
+        .await
+        .unwrap();
+
+    let (mut server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+
+    // Set CN to a WRONG value — doesn't match remote_id "REMOTE_PAIRED"
+    server_conn.set_test_cert(Some("wrong-device".to_string()), None);
+
+    let pool_clone = pool.clone();
+    let mat_clone = materializer.clone();
+    let sched_clone = scheduler.clone();
+    let sink_clone = event_sink.clone();
+    let handle = tokio::spawn(async move {
+        handle_incoming_sync(
+            server_conn,
+            pool_clone,
+            "LOCAL_DEV".to_string(),
+            mat_clone,
+            sched_clone,
+            sink_clone,
+        )
+        .await
+    });
+
+    // Send HeadExchange from REMOTE_PAIRED (include local head too)
+    client_conn
+        .send_json(&SyncMessage::HeadExchange {
+            heads: vec![
+                DeviceHead {
+                    device_id: "REMOTE_PAIRED".to_string(),
+                    seq: 0,
+                    hash: "fakehash".to_string(),
+                },
+                DeviceHead {
+                    device_id: "LOCAL_DEV".to_string(),
+                    seq: 0,
+                    hash: "fakehash".to_string(),
+                },
+            ],
+        })
+        .await
+        .unwrap();
+
+    // Receive rejection response
+    let response: SyncMessage = client_conn.recv_json().await.unwrap();
+    match response {
+        SyncMessage::Error { message } => {
+            assert!(
+                message.contains("certificate"),
+                "error should mention certificate, got: {message}"
+            );
+        }
+        other => panic!(
+            "expected SyncMessage::Error for CN mismatch, got {:?}",
+            other
+        ),
+    }
+
+    let result = handle.await.unwrap();
+    assert!(
+        result.is_ok(),
+        "handle_incoming_sync should return Ok after rejecting CN mismatch"
+    );
+
+    materializer.shutdown();
+}
+
+/// T-16c Test 6 (B-33): When the TLS certificate hash doesn't match the
+/// stored cert_hash for this peer, the responder sends an error about
+/// "hash mismatch" and closes the connection.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_handle_incoming_sync_rejects_cert_hash_mismatch() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    // Insert peer ref WITH a stored cert hash
+    peer_refs::upsert_peer_ref_with_cert(&pool, "REMOTE_PAIRED", "stored_hash_abc")
+        .await
+        .unwrap();
+
+    let (mut server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+
+    // Set CN to match (passes B-34) but hash to a DIFFERENT value (fails B-33)
+    server_conn.set_test_cert(
+        Some("REMOTE_PAIRED".to_string()),
+        Some("different_hash_xyz".to_string()),
+    );
+
+    let pool_clone = pool.clone();
+    let mat_clone = materializer.clone();
+    let sched_clone = scheduler.clone();
+    let sink_clone = event_sink.clone();
+    let handle = tokio::spawn(async move {
+        handle_incoming_sync(
+            server_conn,
+            pool_clone,
+            "LOCAL_DEV".to_string(),
+            mat_clone,
+            sched_clone,
+            sink_clone,
+        )
+        .await
+    });
+
+    // Send HeadExchange from REMOTE_PAIRED
+    client_conn
+        .send_json(&SyncMessage::HeadExchange {
+            heads: vec![
+                DeviceHead {
+                    device_id: "REMOTE_PAIRED".to_string(),
+                    seq: 0,
+                    hash: "fakehash".to_string(),
+                },
+                DeviceHead {
+                    device_id: "LOCAL_DEV".to_string(),
+                    seq: 0,
+                    hash: "fakehash".to_string(),
+                },
+            ],
+        })
+        .await
+        .unwrap();
+
+    // Receive rejection response
+    let response: SyncMessage = client_conn.recv_json().await.unwrap();
+    match response {
+        SyncMessage::Error { message } => {
+            assert!(
+                message.contains("hash mismatch"),
+                "error should mention hash mismatch, got: {message}"
+            );
+        }
+        other => panic!(
+            "expected SyncMessage::Error for hash mismatch, got {:?}",
+            other
+        ),
+    }
+
+    let result = handle.await.unwrap();
+    assert!(
+        result.is_ok(),
+        "handle_incoming_sync should return Ok after rejecting hash mismatch"
+    );
+
+    materializer.shutdown();
+}
+
+/// T-16c Test 7 (TOFU): When a paired peer has no stored cert_hash yet,
+/// the responder stores the observed cert hash on first authenticated
+/// connection (trust-on-first-use).
+///
+/// The TOFU store happens during cert verification (before protocol
+/// message processing), so even if the orchestrator enters ResetRequired
+/// because the fresh server DB has no ops for the remote's claimed head,
+/// the cert hash should already be persisted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_handle_incoming_sync_tofu_stores_cert_hash() {
+    use crate::op::{CreateBlockPayload, OpPayload};
+    use crate::op_log::append_local_op_at;
+    use crate::ulid::BlockId;
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    // Insert peer ref WITHOUT a cert hash (just the device_id)
+    peer_refs::upsert_peer_ref(&pool, "REMOTE_PAIRED")
+        .await
+        .unwrap();
+
+    // Verify cert_hash starts as None
+    let peer_before = peer_refs::get_peer_ref(&pool, "REMOTE_PAIRED")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        peer_before.cert_hash.is_none(),
+        "cert_hash must be None before TOFU"
+    );
+
+    // Insert one op for REMOTE_PAIRED into the server's DB so that
+    // check_reset_required won't trigger ResetRequired.
+    let op = append_local_op_at(
+        &pool,
+        "REMOTE_PAIRED",
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("TOFU_BLK"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(0),
+            content: "tofu test".into(),
+        }),
+        "2025-01-15T12:00:00+00:00".into(),
+    )
+    .await
+    .unwrap();
+
+    let (mut server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+
+    // Set CN to match and provide a new cert hash for TOFU
+    server_conn.set_test_cert(
+        Some("REMOTE_PAIRED".to_string()),
+        Some("new_hash_123".to_string()),
+    );
+
+    let pool_clone = pool.clone();
+    let mat_clone = materializer.clone();
+    let sched_clone = scheduler.clone();
+    let sink_clone = event_sink.clone();
+
+    // Run client side in a separate task since both sides send/receive
+    let client_task = tokio::spawn(async move {
+        // Client sends HeadExchange referencing the op we inserted
+        client_conn
+            .send_json(&SyncMessage::HeadExchange {
+                heads: vec![DeviceHead {
+                    device_id: "REMOTE_PAIRED".to_string(),
+                    seq: op.seq,
+                    hash: op.hash.clone(),
+                }],
+            })
+            .await
+            .unwrap();
+
+        // Client receives the server's response (OpBatch)
+        let resp: SyncMessage = client_conn.recv_json().await.unwrap();
+        match resp {
+            SyncMessage::OpBatch { is_last, .. } => {
+                if is_last {
+                    client_conn
+                        .send_json(&SyncMessage::SyncComplete {
+                            last_hash: "".to_string(),
+                        })
+                        .await
+                        .unwrap();
+                }
+            }
+            _ => {
+                // ResetRequired or other — just let the session end
+            }
+        }
+    });
+
+    // Run server-side handler
+    let result = handle_incoming_sync(
+        server_conn,
+        pool_clone,
+        "LOCAL_DEV".to_string(),
+        mat_clone,
+        sched_clone,
+        sink_clone,
+    )
+    .await;
+
+    // Wait for client task to finish
+    client_task.await.expect("client task must not panic");
+
+    assert!(
+        result.is_ok(),
+        "handle_incoming_sync should return Ok for TOFU path, got: {:?}",
+        result
+    );
+
+    // Verify the cert hash was stored (TOFU)
+    let peer_after = peer_refs::get_peer_ref(&pool, "REMOTE_PAIRED")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        peer_after.cert_hash.as_deref(),
+        Some("new_hash_123"),
+        "TOFU: cert_hash must be stored after first authenticated connection"
+    );
+
+    materializer.shutdown();
+}
+
+/// T-16c Test 8: Happy path — a complete sync session between two peers
+/// with no ops to exchange.  Both sides reach terminal state normally.
+///
+/// We pre-insert one op for REMOTE_PAIRED so that the server's
+/// `check_reset_required` passes (it verifies claimed head seqs exist).
+/// The server has no LOCAL_DEV ops, so OpBatch is empty.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_handle_incoming_sync_happy_path_empty_sync() {
+    use crate::op::{CreateBlockPayload, OpPayload};
+    use crate::op_log::append_local_op_at;
+    use crate::ulid::BlockId;
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    // Insert peer ref so the device is "paired"
+    peer_refs::upsert_peer_ref(&pool, "REMOTE_PAIRED")
+        .await
+        .unwrap();
+
+    // Insert one op for REMOTE_PAIRED so check_reset_required passes.
+    let op = append_local_op_at(
+        &pool,
+        "REMOTE_PAIRED",
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("HAPPY_BLK"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(0),
+            content: "happy path".into(),
+        }),
+        "2025-01-15T12:00:00+00:00".into(),
+    )
+    .await
+    .unwrap();
+
+    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+
+    let pool_clone = pool.clone();
+    let mat_clone = materializer.clone();
+    let sched_clone = scheduler.clone();
+    let sink_clone = event_sink.clone();
+
+    // Run client side in a separate task since both sides need to
+    // send/receive concurrently.
+    let client_task = tokio::spawn(async move {
+        // Client sends HeadExchange referencing the known op
+        client_conn
+            .send_json(&SyncMessage::HeadExchange {
+                heads: vec![DeviceHead {
+                    device_id: "REMOTE_PAIRED".to_string(),
+                    seq: op.seq,
+                    hash: op.hash.clone(),
+                }],
+            })
+            .await
+            .unwrap();
+
+        // Client receives response (OpBatch with is_last=true for empty sync;
+        // server has no LOCAL_DEV ops to send)
+        let resp: SyncMessage = client_conn.recv_json().await.unwrap();
+        match resp {
+            SyncMessage::OpBatch { is_last, ops } => {
+                assert!(
+                    ops.is_empty(),
+                    "empty sync should produce no ops, got {}",
+                    ops.len()
+                );
+                assert!(is_last, "single batch should be the last one");
+            }
+            other => panic!("expected OpBatch from server, got {:?}", other),
+        }
+
+        // Client sends SyncComplete to end the session
+        client_conn
+            .send_json(&SyncMessage::SyncComplete {
+                last_hash: "".to_string(),
+            })
+            .await
+            .unwrap();
+    });
+
+    // Run the server-side handler
+    let result = handle_incoming_sync(
+        server_conn,
+        pool_clone,
+        "LOCAL_DEV".to_string(),
+        mat_clone,
+        sched_clone,
+        sink_clone,
+    )
+    .await;
+
+    // Wait for client task to finish
+    client_task.await.expect("client task must not panic");
+
+    assert!(
+        result.is_ok(),
+        "handle_incoming_sync should return Ok for happy-path empty sync, got: {:?}",
+        result
+    );
+
+    materializer.shutdown();
+}
