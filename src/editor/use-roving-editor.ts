@@ -387,9 +387,25 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       const json = editor.getJSON() as DocNode
       delta = computeContentDelta(originalMarkdownRef.current, json)
     } catch (err) {
-      logger.warn('editor', 'serialize failed during unmount', {
+      // Serialization failed — try plain text fallback to avoid data loss.
+      // The editor state is about to be wiped in the finally block, so we
+      // must capture SOMETHING here.
+      logger.error('editor', 'serialize failed during unmount — attempting plain text fallback', {
         error: err instanceof Error ? err.message : String(err),
       })
+      try {
+        const plainText = editor.getText()
+        if (plainText && plainText !== originalMarkdownRef.current) {
+          delta = {
+            newMarkdown: plainText,
+            changed: true,
+            originalMarkdown: originalMarkdownRef.current,
+          }
+        }
+      } catch {
+        // Even plain text extraction failed — content is lost
+        logger.error('editor', 'plain text fallback also failed — content lost')
+      }
     } finally {
       // Always reset editor state
       replaceDocSilently(editor, { type: 'doc', content: [{ type: 'paragraph' }] })

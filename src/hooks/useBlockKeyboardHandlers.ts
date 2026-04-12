@@ -295,7 +295,17 @@ export function useBlockKeyboardHandlers({
   const enterSaveInProgress = useRef(false)
 
   const handleEnterSave = useCallback(async () => {
-    if (!focusedBlockId || enterSaveInProgress.current) return
+    if (!focusedBlockId) return
+    if (enterSaveInProgress.current) {
+      logger.warn(
+        'useBlockKeyboardHandlers',
+        'Enter press dropped — previous save still in progress',
+        {
+          blockId: focusedBlockId,
+        },
+      )
+      return
+    }
     enterSaveInProgress.current = true
     try {
       // Capture content before flush so we can re-mount on failure
