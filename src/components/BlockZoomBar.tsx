@@ -11,7 +11,9 @@ import { Fragment } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { BreadcrumbItem } from '../hooks/useBlockZoom'
+import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
 import { cn } from '../lib/utils'
+import { renderRichContent } from './StaticBlock'
 
 export interface BlockZoomBarProps {
   breadcrumbs: BreadcrumbItem[]
@@ -27,6 +29,7 @@ export function BlockZoomBar({
   onZoomToRoot,
 }: BlockZoomBarProps): React.ReactElement | null {
   const { t } = useTranslation()
+  const richCallbacks = useRichContentCallbacks()
 
   if (breadcrumbs.length === 0) return null
 
@@ -55,7 +58,9 @@ export function BlockZoomBar({
               )}
               onClick={() => (i === breadcrumbs.length - 1 ? undefined : onNavigate(item.id))}
             >
-              {item.content || t('block.untitled')}
+              {item.content
+                ? renderRichContent(item.content, { interactive: false, ...richCallbacks })
+                : t('block.untitled')}
             </button>
           </Fragment>
         ))}

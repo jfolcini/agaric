@@ -487,7 +487,9 @@
 
 /* Block link chips — [[ULID]] rendered as clickable page title chips */
 .block-link-chip {
-  @apply inline-flex items-center rounded-md bg-primary/10 text-primary px-1.5 py-0.5 text-xs font-medium;
+  @apply inline-flex items-center rounded-md bg-primary/10 text-primary font-semibold;
+  font-size: 0.85em;
+  padding: 0.15em 0.5em;
 }
 .block-link-chip:hover,
 .block-link-chip:active {
@@ -496,7 +498,9 @@
 
 /* Tag reference chips — #[ULID] rendered as tag name pills */
 .tag-ref-chip {
-  @apply inline-flex items-center rounded-md bg-accent px-1.5 py-0.5 text-xs font-medium text-accent-foreground;
+  @apply inline-flex items-center rounded-md bg-accent font-semibold text-accent-foreground;
+  font-size: 0.85em;
+  padding: 0.15em 0.5em;
 }
 .tag-ref-chip:hover,
 .tag-ref-chip:active {
@@ -505,7 +509,9 @@
 
 /* Block ref chips — ((ULID)) rendered as content preview chips */
 .block-ref-chip {
-  @apply inline-flex items-center rounded-md bg-block-ref text-block-ref-foreground px-1.5 py-0.5 text-xs font-medium;
+  @apply inline-flex items-center rounded-md bg-block-ref text-block-ref-foreground font-semibold;
+  font-size: 0.85em;
+  padding: 0.15em 0.5em;
 }
 .block-ref-chip:hover,
 .block-ref-chip:active {
@@ -516,7 +522,8 @@
   .block-link-chip,
   .block-ref-chip,
   .tag-ref-chip {
-    @apply px-2.5 py-1 text-sm;
+    font-size: 0.9em;
+    padding: 0.25em 0.75em;
   }
 }
 

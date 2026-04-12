@@ -556,7 +556,7 @@ function flushText(buf: string, marks: readonly PMMark[], nodes: InlineNode[]): 
 }
 
 export function parse(markdown: string): DocNode {
-  if (markdown.length === 0) return { type: 'doc' }
+  if (markdown.length === 0) return { type: 'doc', content: [{ type: 'paragraph' }] }
 
   const lines = markdown.split('\n')
   const blocks: BlockLevelNode[] = []

@@ -17,6 +17,22 @@ import type { BlockRow, ProjectedAgendaEntry } from '../lib/tauri'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../lib/tauri'
 import { useBlockPropertyEvents } from './useBlockPropertyEvents'
 
+// ── ULID reference extraction (B-53) ──────────────────────────────────
+/** Matches [[ULID]], #[ULID], and ((ULID)) refs inside block content. */
+const ULID_REF_RE = /(?:\[\[|#\[|\(\()([0-9A-Z]{26})(?:\]\]|\]|\)\))/g
+
+/** Extract all ULID references from a string. */
+export function extractUlidRefs(text: string): string[] {
+  const ids: string[] = []
+  let m: RegExpExecArray | null
+  // biome-ignore lint/suspicious/noAssignInExpressions: standard regex exec loop
+  while ((m = ULID_REF_RE.exec(text)) !== null) {
+    const id = m[1] as string
+    ids.push(id)
+  }
+  return ids
+}
+
 // ── Module-level cache for projected agenda (UX-114) ──────────────────
 const PROJECTED_CACHE_TTL_MS = 30_000 // 30 seconds
 
@@ -238,6 +254,7 @@ export function useDuePanelData({
   // Fetch on mount and when date or sourceFilter changes
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — refetch on property change (B-50/F-39)
   useEffect(() => {
+    setLoading(true)
     setBlocks([])
     setNextCursor(null)
     setHasMore(false)
@@ -246,7 +263,6 @@ export function useDuePanelData({
 
     let cancelled = false
     const doFetch = async () => {
-      setLoading(true)
       try {
         const effectiveSource = sourceFilter === 'property:' ? null : sourceFilter
         const resp = await listBlocks({
@@ -266,14 +282,18 @@ export function useDuePanelData({
         setHasMore(resp.has_more)
         setTotalCount(nonEmptyItems.length)
 
-        // Resolve parent page titles
-        const uniqueParentIds = [
-          ...new Set(
-            nonEmptyItems.map((b) => b.parent_id).filter((id): id is string => id != null),
-          ),
+        // Resolve parent page titles + inline ULID refs (B-53)
+        const contentRefs = nonEmptyItems.flatMap((b) =>
+          b.content ? extractUlidRefs(b.content) : [],
+        )
+        const idsToResolve = [
+          ...new Set([
+            ...nonEmptyItems.map((b) => b.parent_id).filter((id): id is string => id != null),
+            ...contentRefs,
+          ]),
         ]
-        if (uniqueParentIds.length > 0) {
-          const resolved = await batchResolve(uniqueParentIds)
+        if (idsToResolve.length > 0) {
+          const resolved = await batchResolve(idsToResolve)
           if (cancelled) return
           const titleMap = new Map<string, string>()
           for (const r of resolved) {

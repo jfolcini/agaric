@@ -8,15 +8,16 @@
  * - Clicking a non-last breadcrumb calls onNavigate
  * - Last breadcrumb does not navigate
  * - Untitled blocks show fallback text
+ * - Renders [[ULID]] content as pill chips via renderRichContent
  * - a11y compliance (axe)
  */
 
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { BreadcrumbItem } from '../../hooks/useBlockZoom'
-import { BlockZoomBar } from '../BlockZoomBar'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -30,6 +31,44 @@ vi.mock('react-i18next', () => ({
     },
   }),
 }))
+
+vi.mock('../StaticBlock', () => ({
+  renderRichContent: vi.fn((markdown: string, _opts?: unknown): React.ReactNode => {
+    // Simulate pill rendering for [[ULID]] tokens
+    const parts: React.ReactNode[] = []
+    const re = /\[\[([^\]]+)\]\]/g
+    let lastIndex = 0
+    let match: RegExpExecArray | null = null
+    let key = 0
+    // biome-ignore lint/suspicious/noAssignInExpressions: standard regex exec loop
+    while ((match = re.exec(markdown)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(markdown.slice(lastIndex, match.index))
+      }
+      parts.push(
+        <span key={`chip-${key++}`} className="block-link-chip" data-testid="block-link-chip">
+          {match[1]}
+        </span>,
+      )
+      lastIndex = re.lastIndex
+    }
+    if (lastIndex < markdown.length) {
+      parts.push(markdown.slice(lastIndex))
+    }
+    return parts.length > 0 ? parts : markdown
+  }),
+}))
+
+vi.mock('../../hooks/useRichContentCallbacks', () => ({
+  useRichContentCallbacks: vi.fn(() => ({
+    resolveBlockTitle: vi.fn((id: string) => (id === 'PAGE1' ? 'My Page' : undefined)),
+    resolveBlockStatus: vi.fn(() => 'active' as const),
+    resolveTagName: vi.fn((id: string) => (id === 'TAG1' ? 'project' : undefined)),
+    resolveTagStatus: vi.fn(() => 'active' as const),
+  })),
+}))
+
+import { BlockZoomBar } from '../BlockZoomBar'
 
 describe('BlockZoomBar', () => {
   const breadcrumbs: BreadcrumbItem[] = [
@@ -106,6 +145,20 @@ describe('BlockZoomBar', () => {
     render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
     const firstButton = screen.getByText('Page')
     expect(firstButton.className).not.toContain('font-medium')
+  })
+
+  it('renders [[ULID]] content as a pill chip instead of raw text', () => {
+    const items: BreadcrumbItem[] = [{ id: 'Z', content: 'See [[01JFAKE00000000000000ULID]]' }]
+    render(<BlockZoomBar breadcrumbs={items} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
+
+    // The mock renderRichContent produces a span.block-link-chip for [[…]] tokens
+    const chip = screen.getByTestId('block-link-chip')
+    expect(chip).toBeInTheDocument()
+    expect(chip.className).toContain('block-link-chip')
+    expect(chip.textContent).toBe('01JFAKE00000000000000ULID')
+
+    // Raw ULID text should not appear outside the chip
+    expect(screen.queryByText('[[01JFAKE00000000000000ULID]]')).not.toBeInTheDocument()
   })
 
   it('passes axe a11y audit', async () => {

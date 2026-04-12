@@ -35,7 +35,7 @@ vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../../lib/tauri'
 import { useBlockPropertyEvents } from '../useBlockPropertyEvents'
-import { clearProjectedCache, useDuePanelData } from '../useDuePanelData'
+import { clearProjectedCache, extractUlidRefs, useDuePanelData } from '../useDuePanelData'
 
 const mockedListBlocks = vi.mocked(listBlocks)
 const mockedBatchResolve = vi.mocked(batchResolve)
@@ -355,5 +355,83 @@ describe('useDuePanelData', () => {
     await waitFor(() => {
       expect(result.current.blocks[0]?.todo_state).toBe('DONE')
     })
+  })
+
+  it('sets loading=true synchronously when sourceFilter changes (B-51)', async () => {
+    // First render: return blocks so loading settles to false
+    mockedListBlocks.mockResolvedValueOnce({
+      items: [makeBlock({ id: 'B1' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const { result, rerender } = renderHook(
+      ({ sourceFilter }) => useDuePanelData({ date: '2025-06-15', sourceFilter }),
+      { initialProps: { sourceFilter: null as string | null } },
+    )
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+      expect(result.current.blocks).toHaveLength(1)
+    })
+
+    // Mock listBlocks to return a never-resolving promise so we can observe
+    // the intermediate synchronous state before the async fetch completes.
+    mockedListBlocks.mockReturnValue(new Promise(() => {}) as ReturnType<typeof listBlocks>)
+
+    // Change the filter — the useEffect should setLoading(true) synchronously
+    rerender({ sourceFilter: 'column:due_date' })
+
+    // On the very next render, loading must be true even though the async
+    // doFetch hasn't run yet. This prevents the panel from disappearing.
+    expect(result.current.loading).toBe(true)
+  })
+
+  it('includes ULID refs from block content in batchResolve call (B-53)', async () => {
+    const ULID_A = '01ABCDEFGHJKLMNPQRSTUVWXYZ'
+    const ULID_B = '01ZYXWVUTSRQPNMLKJHGFEDCBA'
+
+    mockedListBlocks.mockResolvedValue({
+      items: [
+        makeBlock({
+          id: 'B1',
+          parent_id: 'PAGE1',
+          content: `Link to [[${ULID_A}]] and tag #[${ULID_B}]`,
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+    mockedBatchResolve.mockResolvedValue([
+      { id: 'PAGE1', title: 'Parent Page', block_type: 'page', deleted: false },
+      { id: ULID_A, title: 'Linked Page', block_type: 'page', deleted: false },
+      { id: ULID_B, title: 'Tag Page', block_type: 'page', deleted: false },
+    ])
+
+    renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
+
+    await waitFor(() => {
+      expect(mockedBatchResolve).toHaveBeenCalled()
+    })
+
+    const resolvedIds = mockedBatchResolve.mock.calls[0]?.[0] as string[]
+    expect(resolvedIds).toContain('PAGE1')
+    expect(resolvedIds).toContain(ULID_A)
+    expect(resolvedIds).toContain(ULID_B)
+  })
+
+  it('extractUlidRefs extracts all reference types', () => {
+    const content =
+      'See [[01ABCDEFGHJKLMNPQRSTUVWXYZ]] and #[01ZYXWVUTSRQPNMLKJHGFEDCBA] and ((01AAAAAAAAAAAAAAAAAAAAAAAA))'
+    const refs = extractUlidRefs(content)
+    expect(refs).toHaveLength(3)
+    expect(refs).toContain('01ABCDEFGHJKLMNPQRSTUVWXYZ')
+    expect(refs).toContain('01ZYXWVUTSRQPNMLKJHGFEDCBA')
+    expect(refs).toContain('01AAAAAAAAAAAAAAAAAAAAAAAA')
+  })
+
+  it('extractUlidRefs returns empty array for content without refs', () => {
+    expect(extractUlidRefs('plain text content')).toHaveLength(0)
+    expect(extractUlidRefs('')).toHaveLength(0)
   })
 })

@@ -376,7 +376,12 @@ describe('serialize', () => {
 describe('parse', () => {
   describe('plain text', () => {
     it('empty string', () => {
-      expect(parse('')).toEqual({ type: 'doc' })
+      expect(parse('')).toEqual({ type: 'doc', content: [{ type: 'paragraph' }] })
+    })
+
+    it('empty string roundtrips', () => {
+      const doc = parse('')
+      expect(serialize(doc)).toBe('')
     })
 
     it('plain text', () => {
