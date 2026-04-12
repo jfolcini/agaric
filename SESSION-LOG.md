@@ -1,5 +1,28 @@
 # Session Log
 
+## Session 368 — T-16 sync_files file transfer integration tests (2026-04-13)
+
+**T-16 further advanced — 6 file transfer protocol integration tests using in-memory WebSocket pairs. sync_files.rs now has comprehensive protocol coverage.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| T-16 (further) | 6 file transfer protocol integration tests | `sync_files.rs` |
+
+### Implementation
+- **receive_request_and_send_files**: 3 tests — empty request, FileTransferComplete shortcut, single-file transfer with binary data + FileReceived ack.
+- **request_and_receive_files**: 2 tests — no missing files (empty request), single-file receive with blake3 hash verification + disk write.
+- **run_file_transfer_responder**: 1 test — full bidirectional round-trip (no files on either side), exercising both phases (receive_request_and_send + request_and_receive).
+- Tests exercise the complete FileRequest → FileOffer → binary → FileReceived → FileTransferComplete protocol flow.
+
+### Stats
+- 1 file changed (+295 lines)
+- 1868 Rust tests pass (+6), all 19 prek hooks pass
+- T-16 updated in REVIEW-LATER
+
+---
+
 ## Session 367 — T-16 cert verification + TOFU + happy-path sync tests (2026-04-13)
 
 **T-16 further advanced — 4 more handle_incoming_sync integration tests covering cert verification and happy-path flows. server.rs now has 8 tests covering all validation branches.**
