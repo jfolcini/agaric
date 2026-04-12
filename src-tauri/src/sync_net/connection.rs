@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
@@ -210,53 +210,4 @@ impl SyncConnection {
             Err(_elapsed) => Err(sync_err("recv timed out after 30s")),
         }
     }
-}
-
-// =========================================================================
-// 6. Sync Message Types
-// =========================================================================
-
-/// Messages exchanged over a sync connection.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum SyncMessage {
-    /// Step 1: Exchange heads.
-    HeadExchange { heads: Vec<DeviceHead> },
-    /// Step 2: Request ops after a certain sequence number.
-    RequestOps { device_id: String, after_seq: i64 },
-    /// Step 3: Stream ops in batches.
-    OpBatch { ops: Vec<OpTransfer>, is_last: bool },
-    /// Step 4: Reset required (hash-chain divergence).
-    ResetRequired { reason: String },
-    /// Snapshot offer (for the RESET flow).
-    SnapshotOffer { size_bytes: u64 },
-    /// Snapshot accept / reject.
-    SnapshotResponse { accepted: bool },
-    /// Sync complete acknowledgement.
-    SyncComplete {
-        our_last_hash: String,
-        their_last_hash: String,
-    },
-    /// Error during sync.
-    Error { message: String },
-}
-
-/// A device's current head in the op-log DAG.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DeviceHead {
-    pub device_id: String,
-    pub seq: i64,
-    pub hash: String,
-}
-
-/// A single operation transferred during sync.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct OpTransfer {
-    pub device_id: String,
-    pub seq: i64,
-    pub parent_seqs: Option<String>,
-    pub hash: String,
-    pub op_type: String,
-    pub payload: String,
-    pub created_at: String,
 }

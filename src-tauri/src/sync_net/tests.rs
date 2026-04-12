@@ -1,5 +1,6 @@
 use super::tls::{AllowAnyCert, PinningCertVerifier};
 use super::*;
+use crate::sync_protocol::{DeviceHead, OpTransfer, SyncMessage};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -111,18 +112,13 @@ fn sync_message_roundtrip_reset_required() {
 #[test]
 fn sync_message_roundtrip_sync_complete() {
     let msg = SyncMessage::SyncComplete {
-        our_last_hash: "aaa".into(),
-        their_last_hash: "bbb".into(),
+        last_hash: "aaa".into(),
     };
     let json = serde_json::to_string(&msg).unwrap();
     let parsed: SyncMessage = serde_json::from_str(&json).unwrap();
     match parsed {
-        SyncMessage::SyncComplete {
-            our_last_hash,
-            their_last_hash,
-        } => {
-            assert_eq!(our_last_hash, "aaa");
-            assert_eq!(their_last_hash, "bbb");
+        SyncMessage::SyncComplete { last_hash } => {
+            assert_eq!(last_hash, "aaa");
         }
         other => panic!("expected SyncComplete, got {other:?}"),
     }
@@ -785,20 +781,15 @@ async fn mtls_reconnection_with_correct_cert_hash_succeeds() {
     // Verify the pinned connection works: exchange a message
     server_conn2
         .send_json(&SyncMessage::SyncComplete {
-            our_last_hash: "hash_a".into(),
-            their_last_hash: "hash_b".into(),
+            last_hash: "hash_a".into(),
         })
         .await
         .unwrap();
 
     let msg: SyncMessage = client_conn2.recv_json().await.unwrap();
     match msg {
-        SyncMessage::SyncComplete {
-            our_last_hash,
-            their_last_hash,
-        } => {
-            assert_eq!(our_last_hash, "hash_a");
-            assert_eq!(their_last_hash, "hash_b");
+        SyncMessage::SyncComplete { last_hash } => {
+            assert_eq!(last_hash, "hash_a");
         }
         other => panic!("expected SyncComplete, got {other:?}"),
     }

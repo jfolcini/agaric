@@ -38,6 +38,3 @@ pub use websocket::{
     parse_service_event, DiscoveredPeer, MdnsService, SyncServer, MDNS_BROWSE_TIMEOUT,
     MDNS_SERVICE_NAME, MDNS_SERVICE_TYPE,
 };
-
-// Re-export types used by sync_protocol and sync_daemon
-pub use connection::{DeviceHead, OpTransfer, SyncMessage};
