@@ -1,5 +1,27 @@
 # Session Log
 
+## Session 371 — T-16 daemon lifecycle smoke tests + M-16 noPropertyAccessFromIndexSignature (2026-04-13)
+
+**M-16 RESOLVED — 815 TS4111 errors fixed across 54 files. T-16 daemon lifecycle now smoke-tested. 1 open item remains (select! loop branches).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| M-16 | Enable noPropertyAccessFromIndexSignature + fix 815 TS4111 errors | `tsconfig.app.json`, `tsconfig.node.json`, 52 source/test files |
+| T-16 (further) | 4 daemon lifecycle smoke tests | `sync_daemon/tests.rs` |
+
+### Implementation
+- **M-16**: Enabled the last strict TS flag. 5 parallel subagents fixed 815 errors across 54 files (tauri-mock 282, tauri-mock.test 194, editor 123, components 114, remaining 95 + 5 stragglers). All changes are mechanical `obj.key` → `obj["key"]`.
+- **T-16**: 4 smoke tests — daemon start/shutdown (real TLS server + mDNS fallback), cancel independence, cert generation validation, multi-daemon concurrent start. These cover daemon_loop startup path and mod.rs lifecycle.
+
+### Stats
+- 55 files changed (+1015 -749 lines)
+- 1886 Rust tests pass (+4), 6375 frontend tests pass, all 19 prek hooks pass
+- M-16 resolved, T-16 updated (2 → 1 open items)
+
+---
+
 ## Session 370 — M-16 resolved: noPropertyAccessFromIndexSignature enabled — 815 errors fixed across 54 files (2026-04-13)
 
 **M-16 RESOLVED — the last strict TypeScript flag is now enabled. 815 TS4111 errors fixed across 54 files with 5 parallel subagents. 1 open item remains (T-16 daemon lifecycle).**
