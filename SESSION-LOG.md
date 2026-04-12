@@ -1,5 +1,26 @@
 # Session Log
 
+## Session 350 — T-41 sync daemon tests + UX-155 investigation (2026-04-12)
+
+**1 REVIEW-LATER item resolved (T-41), 1 investigated (UX-155). 1 file changed, +558 -31 lines. 1817 Rust tests pass.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| T-41 | Sync daemon async function tests — 8 new tests (4 placeholder replacements + 4 edge cases) | `sync_daemon.rs` |
+
+### Implementation
+- **T-41**: Changed `try_sync_with_peer`, `run_sync_session`, `handle_incoming_sync` to `pub(crate)` for test access. Used real loopback TLS WebSocket connections instead of mock infrastructure — tests create `SyncServer` on port 0 (auto-assigned), connect via `connect_to_peer`, and exchange real `SyncMessage` values. Added `test_pool()` and `install_crypto_provider()` helpers. Tests cover: backoff gate (no connection attempt), connection failure events, self-sync rejection, cancel flag, empty addresses, peer lock, unpaired device rejection, cancel + connection failure interaction.
+- **UX-155 investigation**: Chrome MCP inspection confirmed `SidebarInset` shadow (`md:peer-data-[variant=inset]:shadow-sm`) is NOT active — sidebar variant is `sidebar`, not `inset`. Likely culprit is today section's `bg-accent/[0.08] border-l-2 border-accent rounded-lg`. Updated REVIEW-LATER with findings; full `cargo tauri dev` needed to confirm.
+
+### Stats
+- 1 file changed (+558 -31 lines)
+- 1817 Rust tests pass (was 1809, +8 sync daemon tests), 6273 frontend tests pass, all 20 prek hooks pass
+- 1 REVIEW-LATER item resolved (2 → 1 open)
+
+---
+
 ## Session 349 — M-31/M-32/M-33: split 3 monolithic Rust files (2026-04-12)
 
 **3 REVIEW-LATER items resolved (M-31, M-32, M-33). 38 files changed, +23541 -23426 lines. 1809 Rust tests pass, 6273 frontend tests pass.**
