@@ -913,19 +913,18 @@ async fn delete_property_clears_reserved_key_column() {
         "priority should be set before delete"
     );
 
-    // Delete the reserved key property — should be rejected (built-in)
-    let result = delete_property_inner(&pool, DEV, &mat, block.id.clone(), "priority".into()).await;
-    assert!(
-        matches!(result, Err(AppError::Validation(_))),
-        "deleting a built-in property should return Validation error, got: {result:?}"
-    );
+    // Delete the reserved key property — should succeed and NULL the column
+    delete_property_inner(&pool, DEV, &mat, block.id.clone(), "priority".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
 
-    // Verify column is NOT cleared
+    // Verify column IS cleared
     let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
-    assert_eq!(
-        fetched.priority.as_deref(),
-        Some("2"),
-        "built-in property must remain after rejected delete"
+    assert!(
+        fetched.priority.is_none(),
+        "priority should be NULL after delete, got: {:?}",
+        fetched.priority
     );
 
     mat.shutdown();
@@ -1061,20 +1060,18 @@ async fn thin_commands_survive_delete_property_cycle() {
         "todo_state should be TODO before delete"
     );
 
-    // Delete the todo_state property — should be rejected (built-in)
-    let result =
-        delete_property_inner(&pool, DEV, &mat, block.id.clone(), "todo_state".into()).await;
-    assert!(
-        matches!(result, Err(AppError::Validation(_))),
-        "deleting a built-in property should return Validation error, got: {result:?}"
-    );
+    // Delete the todo_state property — should succeed and NULL the column
+    delete_property_inner(&pool, DEV, &mat, block.id.clone(), "todo_state".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
 
-    // Verify todo_state is still set
+    // Verify todo_state is cleared
     let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
-    assert_eq!(
-        fetched.todo_state.as_deref(),
-        Some("TODO"),
-        "built-in property must remain after rejected delete"
+    assert!(
+        fetched.todo_state.is_none(),
+        "todo_state should be NULL after delete, got: {:?}",
+        fetched.todo_state
     );
 
     mat.shutdown();

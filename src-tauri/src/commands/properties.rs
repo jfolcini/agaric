@@ -10,7 +10,6 @@ use crate::db::{ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::op::is_builtin_property_key;
 
 use super::*;
 
@@ -317,12 +316,6 @@ pub async fn delete_property_inner(
     block_id: String,
     key: String,
 ) -> Result<(), AppError> {
-    if is_builtin_property_key(&key) {
-        return Err(AppError::Validation(format!(
-            "built-in property '{key}' cannot be deleted"
-        )));
-    }
-
     delete_property_core(pool, device_id, materializer, block_id, key).await
 }
 

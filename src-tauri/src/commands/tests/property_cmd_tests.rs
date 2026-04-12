@@ -206,7 +206,7 @@ async fn delete_property_removes_property() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn delete_property_rejects_builtin_key() {
+async fn delete_property_allows_builtin_key() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -239,12 +239,16 @@ async fn delete_property_rejects_builtin_key() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    // Attempt to delete the built-in property — should fail
-    let result =
-        delete_property_inner(&pool, DEV, &mat, block.id.clone(), "created_at".into()).await;
+    // Deleting a built-in property should now succeed
+    delete_property_inner(&pool, DEV, &mat, block.id.clone(), "created_at".into())
+        .await
+        .unwrap();
+
+    // Verify it's gone
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     assert!(
-        matches!(result, Err(AppError::Validation(_))),
-        "deleting a built-in property should return Validation error, got: {result:?}"
+        !props.iter().any(|p| p.key == "created_at"),
+        "created_at should be deleted, got: {props:?}"
     );
 
     // Deleting a user-settable property like "effort" should work
@@ -286,6 +290,55 @@ async fn delete_property_rejects_builtin_key() {
     delete_property_inner(&pool, DEV, &mat, block.id.clone(), "my_custom".into())
         .await
         .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_clears_reserved_column_key() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "test block".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Set due_date (a reserved column key)
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        Some("2026-06-01".into()),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Verify it's set
+    let b = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    assert_eq!(b.due_date.as_deref(), Some("2026-06-01"));
+
+    // Delete the reserved property via delete_property_inner
+    delete_property_inner(&pool, DEV, &mat, block.id.clone(), "due_date".into())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Verify the column is NULLed
+    let b = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    assert!(
+        b.due_date.is_none(),
+        "due_date should be NULL after delete, got: {:?}",
+        b.due_date
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
