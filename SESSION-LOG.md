@@ -1,5 +1,45 @@
 # Session Log
 
+## Session 353 — M-55/M-56/M-57/M-58/M-59/M-60 resolved: split 6 largest Rust files into module directories (2026-04-12)
+
+**6 REVIEW-LATER items resolved (M-55 through M-60). 9 MAINT items remain.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| M-55 | Split `materializer.rs` (4,294 LOC) + `materializer_handlers.rs` (533 LOC) → `materializer/` (8 submodules) | `materializer/{mod,metrics,coordinator,consumer,dispatch,dedup,handlers,tests}.rs`, `lib.rs` |
+| M-56 | Consolidate `backlink_query.rs` (4,239 LOC) + 3 companion files → `backlink/` (7 submodules) | `backlink/{mod,types,filters,sort,query,grouped,tests}.rs`, `lib.rs`, `commands/{properties,queries}.rs`, `command_integration_tests/backlink_integration.rs`, `benches/backlink_query_bench.rs` |
+| M-57 | Split `sync_protocol.rs` (3,794 LOC) → `sync_protocol/` (4 submodules) | `sync_protocol/{mod,types,operations,orchestrator,tests}.rs` |
+| M-58 | Split `cache.rs` (3,439 LOC) → `cache/` (6 submodules) | `cache/{mod,tags,pages,agenda,block_links,projected_agenda,tests}.rs` |
+| M-59 | Split `pagination.rs` (3,275 LOC) → `pagination/` (9 submodules) | `pagination/{mod,hierarchy,trash,tags,properties,agenda,links,history,tests}.rs` |
+| M-60 | Split `fts.rs` (2,947 LOC) → `fts/` (4 submodules) | `fts/{mod,strip,index,search,tests}.rs` |
+
+### Implementation
+
+All 6 splits follow the same pattern established by M-31/M-32/M-33 (session 349):
+- Promote single file to directory module (`file.rs` → `file/mod.rs` + submodules)
+- `mod.rs` declares submodules and re-exports public API (preserving `crate::module::Item` paths)
+- Private functions promoted to `pub(super)` where submodules need cross-access
+- Tests extracted to dedicated `tests.rs` file within the module directory
+- Insta snapshot files renamed to match new module paths
+
+**Key decisions per module:**
+- **M-55 (materializer):** Absorbed `materializer_handlers.rs` into `materializer/handlers.rs`. Struct fields `pub(super)` for cross-module `impl` blocks in `dispatch.rs`. Consumer functions are standalone `pub(super)` async fns (not methods).
+- **M-56 (backlink):** Consolidated 4 scattered files (`backlink_{query,filters,sort,types}.rs`) into a cohesive `backlink/` module. Updated 3 external importers (`commands/properties.rs`, `commands/queries.rs`, `command_integration_tests/backlink_integration.rs`) + 1 benchmark file.
+- **M-57 (sync_protocol):** Used `operations.rs` (not `core.rs`) to avoid Rust keyword conflict. `SyncOrchestrator.state` field changed to `pub(crate)` for test access.
+- **M-58 (cache):** Each cache type in its own file (tags, pages, agenda, block_links, projected_agenda). ULID regex and `rebuild_all_caches()` wrapper stay in `mod.rs`.
+- **M-59 (pagination):** Types + cursor codec + `build_page_response()` helper in `mod.rs`. 7 query submodules grouped by domain. Proptest module preserved as nested module in `tests.rs`.
+- **M-60 (fts):** `strip_for_fts_with_maps` and `load_ref_maps` promoted from private to `pub(crate)` for cross-module access from `index.rs`.
+
+### Stats
+- 50+ files changed, ~22,000 LOC reorganized (no logic changes)
+- 1808 Rust tests pass, all 20 prek hooks pass
+- 6 REVIEW-LATER items resolved (15 → 9 open)
+- 2 commits: M-56/M-57/M-58/M-59/M-60 (parallel batch), M-55 (redo after parallel conflict)
+
+---
+
 ## Session 352 — UX-156/UX-157 resolved: calendar nav arrows + dot contrast (2026-04-12)
 
 **2 REVIEW-LATER items resolved (UX-156, UX-157). REVIEW-LATER backlog fully cleared (0 open items).**
