@@ -166,10 +166,6 @@ all its descendants via a recursive CTE. A single op covers the entire subtree.
   source), `block_links`, `agenda_cache`, `tags_cache`, `pages_cache`, `attachments`,
   `block_drafts`, `fts_blocks`, `page_aliases`, `projected_agenda_cache`, `blocks`
   (`conflict_source` nullification), `blocks` (final DELETE).
-  **Known gap (B-63):** `purge_block_inner` (command layer) and the materializer's `PurgeBlock`
-  handler both clean only 12 of these — they miss `page_aliases` and `projected_agenda_cache`.
-  Only `purge_all_deleted_inner` cleans all tables. `soft_delete/purge.rs` has the complete
-  implementation but is unused dead code.
 - Deleting a tag block does NOT cascade to content blocks that reference it. The materializer
   removes `block_tags` rows; `#[ULID]` tokens render as "deleted tag" decoration.
 
@@ -380,11 +376,8 @@ immediately. The materializer never duplicates local writes because its idempote
 ### Queue architecture
 
 - **Foreground queue** (capacity 256): Applies remote ops to core tables (`blocks`, `block_tags`,
-  `block_properties`). Also handles `BatchApplyOps` for sync. Low latency for viewport
-  responsiveness. **Known issue (B-62):** `BatchApplyOps` applies ops sequentially without a
-  wrapping transaction — partial failure + retry can re-apply already-committed ops. Most
-  handlers are idempotent (`INSERT OR IGNORE`) but `EditBlock` re-application could overwrite
-  correct state.
+  `block_properties`). Also handles `BatchApplyOps` for sync (transaction-wrapped for atomicity).
+  Low latency for viewport responsiveness.
 - **Background queue** (capacity 1024): Cache rebuilds, FTS indexing, maintenance. Stale-while-
   revalidate — never blocks the UI.
 
@@ -1832,9 +1825,6 @@ empirically validated through bugs found, fixes applied, and alternatives reject
   guard — property and move conflicts have guards but text merge does not.
 - **`INSERT OR IGNORE` for remote ops.** Duplicate delivery is safe due to composite PK.
   No renumbering, no collision.
-- **Cancel flag cleanup (B-61):** `try_sync_with_peer()` clears the cancel flag only after
-  `run_sync_session()` completes. Early-exit paths (connection failure, backoff gate, address
-  resolution) do NOT clear it, which can prevent future sync attempts.
 - **Merge preload pattern.** Pre-load tag/page name maps via `load_ref_maps` before batch
   operations. O(N×3) → O(2+N) for FTS reindex.
 

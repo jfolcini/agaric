@@ -1,5 +1,38 @@
 # Session Log
 
+## Session 359 — B-62/B-63/M-15/UX-159/S-11/S-12/UX-160 resolved: materializer + sync fixes (2026-04-12)
+
+**7 REVIEW-LATER items resolved (B-62, B-63, M-15, UX-159, S-11, S-12, UX-160). 15 open items remain.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| B-62 | Wrap BatchApplyOps in transaction (extracted apply_op_tx shared core) | `materializer/handlers.rs`, `materializer/tests.rs` |
+| B-63 | Add page_aliases + projected_agenda_cache cleanup to purge | `commands/blocks/crud.rs`, `materializer/handlers.rs`, `block_cmd_tests.rs`, `materializer/tests.rs` |
+| M-15 | RemoveTag handler now runs in transaction (via apply_op_tx refactoring) | `materializer/handlers.rs`, `materializer/tests.rs` |
+| UX-159 | Add RebuildProjectedAgendaCache to create_block dispatch | `materializer/dispatch.rs`, `materializer/tests.rs` |
+| S-11 | CancelGuard scope guard in try_sync_with_peer — clears cancel on all paths | `sync_daemon/orchestrator.rs`, `sync_daemon/tests.rs` |
+| S-12 | Reject oversized data in receive_binary_data + fix stats accuracy | `sync_files.rs` |
+| UX-160 | Accumulate all 4 stats counters from both phases in file transfer | `sync_files.rs` |
+
+### Implementation
+- **B-62**: Extracted `apply_op_tx(conn: &mut SqliteConnection, record)` from `apply_op`. BatchApplyOps wraps loop in `pool.begin()` → per-record apply_op_tx → `tx.commit()`. Single-op `apply_op` also wraps in tx (M-15 benefit). 2 new tests (atomic rollback, all-succeed commit).
+- **B-63**: Added 2 DELETE statements (page_aliases by page_id, projected_agenda_cache by block_id) to both `purge_block_inner` and PurgeBlock handler. 4 new tests (2 materializer, 2 command).
+- **M-15**: Inherited from B-62 refactoring — all apply_op calls go through transaction. 1 new test verifying inherited tag cleanup atomicity.
+- **UX-159**: Single line: `self.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache)?;` in create_block dispatch. 1 new test.
+- **S-11**: Added `CancelGuard` Drop struct at top of `try_sync_with_peer()`. Guarantees cancel flag cleared on ALL exit paths including backoff, peer-lock, no-addresses, connection-failure. 3 new tests + 1 updated.
+- **S-12**: Added `data.len() > size_bytes` overflow check in receive_binary_data. Changed `stats.bytes_received` from declared size to actual data.len().
+- **UX-160**: Both initiator and responder now accumulate all 4 counters (files/bytes sent/received, skipped_not_found, skipped_hash_mismatch) from both phases.
+- **ARCHITECTURE.md**: Removed B-62 (BatchApplyOps known issue), B-63 (purge known gap), B-61/S-11 (cancel flag cleanup) notes.
+
+### Stats
+- 8 Rust files changed (+687 -94 lines)
+- 1823 Rust tests pass (was 1812, +11 new), all 20 prek hooks pass
+- 7 REVIEW-LATER items resolved (22 -> 15 open)
+
+---
+
 ## Session 358 — B-65/B-66/B-67/B-69/B-70/B-71 resolved: frontend fixes (2026-04-12)
 
 **6 REVIEW-LATER items resolved (B-65, B-66, B-67, B-69, B-70, B-71). 22 open items remain.**
