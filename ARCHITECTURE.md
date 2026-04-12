@@ -686,14 +686,6 @@ consistency even if the materializer lags. Helper functions (`find_prior_text`,
 **Batch revert:** `revert_ops` accepts multiple `OpRef`s, validates all are reversible, sorts
 newest-first, and applies all reverses in a single `IMMEDIATE` transaction.
 
-**Known issues (discovered in code review session 305):**
-- **(B-58)** `revert_ops_inner` applies then appends; `undo_page_op_inner` / `redo_page_op_inner`
-  append then apply. Both are within an `IMMEDIATE` transaction so atomicity is preserved, but
-  the ordering inconsistency is a maintenance hazard.
-- **(B-59)** `restore_page_to_op_inner` does NOT include `delete_attachment` ops in its page-scoped
-  query (they lack `$.block_id` in the payload). Compare to `undo_page_op_inner` which has an
-  explicit `OR (op_type = 'delete_attachment' AND EXISTS ...)` clause.
-
 **History views:** `HistoryPanel` shows per-block edit history. `HistoryView` shows the global
 op log with multi-select, op-type filtering, and batch revert.
 

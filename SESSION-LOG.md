@@ -1,5 +1,38 @@
 # Session Log
 
+## Session 357 — B-58/B-59/B-64/T-10/T-13/T-14/T-15 resolved: history bugs + test quality (2026-04-12)
+
+**7 REVIEW-LATER items resolved (B-58, B-59, B-64, T-10, T-13, T-14, T-15). 28 open items remain.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| B-58 | Standardize append-before-apply ordering in revert_ops_inner | `commands/history.rs` |
+| B-59 | Add delete_attachment OR clause to restore_page_to_op_inner | `commands/history.rs` |
+| B-64 | Make RemoveTag idempotent in apply_reverse_in_tx (symmetric with AddTag) | `commands/history.rs` |
+| T-10 | Fix false-positive assertion in SQL injection test | `commands/tests/edge_case_tests.rs` |
+| T-13 | Add missing settle() in backlink_integration test | `command_integration_tests/backlink_integration.rs` |
+| T-14 | Tighten inequality assertions to exact values | `command_integration_tests/block_integration.rs` |
+| T-15 | Replace silent `let _ = emit()` with tracing::warn | `sync_events.rs` |
+
+### Implementation
+- **B-58**: Reordered `revert_ops_inner` to call `append_local_op_in_tx` before `apply_reverse_in_tx`, matching undo/redo pattern. Added `.clone()` on consumed `reverse_payload`. New test verifies op log entry is appended.
+- **B-59**: Added `OR (o.op_type = 'delete_attachment' AND EXISTS ...)` clause to non-`__all__` query in `restore_page_to_op_inner`, matching existing pattern in `undo_page_op_inner`. New test verifies delete_attachment ops found in page-scoped restore.
+- **B-64**: Removed `rows_affected() == 0 -> NotFound` check from RemoveTag in `apply_reverse_in_tx`. Both AddTag and RemoveTag now idempotent for sync replay safety. Comment added explaining rationale. Updated test asserts `Ok(())`.
+- **T-10**: Changed false-positive `assert!(count >= 0)` to `.expect()` on query success (table exists = query succeeds; count 0 is valid for empty table).
+- **T-13**: Added `settle(&mat).await;` between `delete_block_inner` and `batch_resolve_inner`.
+- **T-14**: `assert!(restored_count >= 1)` -> `assert_eq!(restored_count, 1)`, `assert!(pages >= 2)` -> `assert_eq!(pages, 4)`.
+- **T-15**: `let _ = self.0.emit()` -> `if let Err(e) = ... { tracing::warn!(...) }`.
+- **ARCHITECTURE.md**: Removed B-58/B-59 known issue notes from undo/redo section.
+
+### Stats
+- 6 Rust files changed (+227 -23 lines)
+- 1812 Rust tests pass (was 1810, +2 new), all 20 prek hooks pass
+- 7 REVIEW-LATER items resolved (35 -> 28 open)
+
+---
+
 ## Session 356 — F-40/B-56/UX-158 resolved: URL paste auto-link, blur save fix, focus ring (2026-04-12)
 
 **3 REVIEW-LATER items resolved (F-40, B-56, UX-158). 24 open items remain.**
