@@ -1,5 +1,33 @@
 # Session Log
 
+## Session 347 — Bug batch: DuePanel, parser, pill rendering (2026-04-12)
+
+**5 REVIEW-LATER items resolved (B-51, B-52, B-53, B-54, UX-154). 7 files changed, +185 -17 lines. 6270 frontend tests pass.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| B-51 | DuePanel filter tabs disappear — moved `setLoading(true)` to synchronous position before `setBlocks([])` | `useDuePanelData.ts` |
+| B-52 | ArrowRight at end of block empties editor — `parse("")` now returns `{ type: 'doc', content: [{ type: 'paragraph' }] }` | `markdown-serializer.ts`, `markdown-serializer.test.ts` |
+| B-53 | DuePanel block links show raw ULID — extract `[[ULID]]`/`#[ULID]`/`((ULID))` refs from block content and include in `batchResolve` | `useDuePanelData.ts`, `useDuePanelData.test.ts` |
+| B-54 | Block zoom breadcrumb shows raw ULID, pills don't scale — `BlockZoomBar` uses `renderRichContent()`; pill CSS switched to em-based sizing | `BlockZoomBar.tsx`, `BlockZoomBar.test.tsx`, `index.css` |
+| UX-154 | Inline pills stronger font weight — `font-medium` → `font-semibold` on all 3 chip classes | `index.css` |
+
+### Implementation
+- **B-51**: `setLoading(true)` moved from inside async `doFetch()` to first synchronous statement in useEffect body. Prevents intermediate render where `loading=false` and `blocks=[]` triggering DuePanel's early return.
+- **B-52**: `parse("")` returns valid ProseMirror doc with empty paragraph node. `replaceDocSilently()` no longer receives `undefined` content. Roundtrip test added (`parse('') → serialize() → ''`).
+- **B-53**: New `extractUlidRefs()` helper with `ULID_REF_RE` regex extracts all inline references from block content. Combined with parent page IDs and passed to single `batchResolve` call, populating resolve store for `renderRichContent`.
+- **B-54**: BlockZoomBar imports `useRichContentCallbacks` + `renderRichContent` from StaticBlock. Pill CSS changed from fixed `text-xs px-1.5 py-0.5` to relative `font-size: 0.85em; padding: 0.15em 0.5em` so pills scale with parent font context. Touch media query similarly updated.
+- **UX-154**: All 3 chip classes (`.block-link-chip`, `.tag-ref-chip`, `.block-ref-chip`) bumped from `font-medium` (500) to `font-semibold` (600).
+
+### Stats
+- 7 files changed (+185 -17 lines)
+- 6270 frontend tests pass (was 6265), all 20 prek hooks pass
+- 5 REVIEW-LATER items resolved (12 → 7 open)
+
+---
+
 ## Session 346 — T-39 picker E2E tests, T-41 sync daemon tests, E2E infra fixes (2026-04-11)
 
 **T-39 fully resolved, T-41 partially resolved (pure logic extracted + tested, async functions documented). 6 files changed, +731 -19 lines. 6264 frontend tests pass, 1814 Rust tests pass. 123 E2E tests pass (was 0).**
