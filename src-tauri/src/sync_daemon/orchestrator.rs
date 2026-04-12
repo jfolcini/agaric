@@ -14,8 +14,8 @@ use crate::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState};
 use crate::sync_scheduler::SyncScheduler;
 
 use super::discovery::{
-    format_peer_address, get_peer_cert_hash, resolve_peer_address,
-    should_attempt_sync_with_discovered_peer, should_store_cert_hash,
+    format_peer_address, get_peer_cert_hash, process_discovery_event, resolve_peer_address,
+    should_store_cert_hash,
 };
 use super::server::handle_incoming_sync;
 use super::SharedEventSink;
@@ -129,43 +129,26 @@ pub(crate) async fn daemon_loop(
         tokio::select! {
             // Branch A: mDNS peer-discovery event (event-driven, no polling)
             Some(event) = mdns_rx.recv() => {
-                if let Some(peer) = sync_net::parse_service_event(event) {
-                    if peer.device_id != device_id {
-                        let already_discovered = discovered.contains_key(&peer.device_id);
-                        discovered.insert(peer.device_id.clone(), (peer.clone(), tokio::time::Instant::now()));
-                        if !already_discovered {
-                            tracing::info!(
-                                peer_id = %peer.device_id,
-                                "discovered new peer via mDNS"
-                            );
-                            // If this peer is already paired, sync immediately
-                            let refs = peer_refs::list_peer_refs(&pool)
-                                .await
-                                .unwrap_or_else(|e| {
-                                    tracing::warn!("list_peer_refs failed: {e}");
-                                    vec![]
-                                });
-                            if should_attempt_sync_with_discovered_peer(
-                                &peer.device_id,
-                                &device_id,
-                                already_discovered,
-                                &refs,
-                            ) {
-                                try_sync_with_peer(
-                                    &pool,
-                                    &device_id,
-                                    &materializer,
-                                    &scheduler,
-                                    &event_sink,
-                                    &peer,
-                                    &refs,
-                                    &cancel,
-                                    &cert,
-                                )
-                                .await;
-                            }
-                        }
-                    }
+                let refs = peer_refs::list_peer_refs(&pool).await.unwrap_or_else(|e| {
+                    tracing::warn!("list_peer_refs failed: {e}");
+                    vec![]
+                });
+                if let Some(peer) = process_discovery_event(
+                    event, &device_id, &mut discovered, &refs,
+                ) {
+                    tracing::info!(peer_id = %peer.device_id, "discovered new peer via mDNS");
+                    try_sync_with_peer(
+                        &pool,
+                        &device_id,
+                        &materializer,
+                        &scheduler,
+                        &event_sink,
+                        &peer,
+                        &refs,
+                        &cancel,
+                        &cert,
+                    )
+                    .await;
                 }
             }
 

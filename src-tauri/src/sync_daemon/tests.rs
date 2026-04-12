@@ -2584,3 +2584,103 @@ async fn daemon_branch_c_resync_timer_attempts_overdue_peer() {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     mat.shutdown();
 }
+
+// ======================================================================
+// T-16g — process_discovery_event (Branch A extraction)
+// ======================================================================
+
+/// Helper to construct a `ServiceEvent::ServiceResolved` event with the
+/// given device_id and port, suitable for unit-testing `process_discovery_event`.
+fn make_resolved_event(device_id: &str, port: u16) -> mdns_sd::ServiceEvent {
+    let mut props = HashMap::new();
+    props.insert("device_id".to_string(), device_id.to_string());
+
+    let info = mdns_sd::ServiceInfo::new(
+        "_agaric._tcp.local.",
+        device_id,
+        &format!("{device_id}.local."),
+        "127.0.0.1",
+        port,
+        Some(props),
+    )
+    .unwrap();
+
+    mdns_sd::ServiceEvent::ServiceResolved(Box::new(info.as_resolved_service()))
+}
+
+#[test]
+fn process_discovery_non_resolved_returns_none() {
+    let event = mdns_sd::ServiceEvent::ServiceFound(
+        "_agaric._tcp.local.".into(),
+        "test._agaric._tcp.local.".into(),
+    );
+    let mut discovered = HashMap::new();
+    assert!(
+        process_discovery_event(event, "LOCAL", &mut discovered, &[]).is_none(),
+        "non-resolved event must return None"
+    );
+    assert!(
+        discovered.is_empty(),
+        "discovered map must remain empty for non-resolved event"
+    );
+}
+
+#[test]
+fn process_discovery_self_returns_none() {
+    let event = make_resolved_event("LOCAL_DEV", 8443);
+    let mut discovered = HashMap::new();
+    assert!(
+        process_discovery_event(event, "LOCAL_DEV", &mut discovered, &[]).is_none(),
+        "self-discovery must return None"
+    );
+}
+
+#[test]
+fn process_discovery_already_discovered_returns_none() {
+    let event1 = make_resolved_event("PEER_A", 8443);
+    let event2 = make_resolved_event("PEER_A", 8443);
+    let mut discovered = HashMap::new();
+
+    // First discovery (unpaired -> None, but added to discovered)
+    assert!(
+        process_discovery_event(event1, "LOCAL", &mut discovered, &[]).is_none(),
+        "first discovery of unpaired peer must return None"
+    );
+    assert_eq!(discovered.len(), 1, "peer must be added to discovered map");
+
+    // Second discovery -> already discovered -> None
+    assert!(
+        process_discovery_event(event2, "LOCAL", &mut discovered, &[]).is_none(),
+        "already-discovered peer must return None"
+    );
+    assert_eq!(
+        discovered.len(),
+        1,
+        "discovered map must still have one entry"
+    );
+}
+
+#[test]
+fn process_discovery_unpaired_returns_none() {
+    let event = make_resolved_event("UNKNOWN_PEER", 8443);
+    let mut discovered = HashMap::new();
+    let result = process_discovery_event(event, "LOCAL", &mut discovered, &[]);
+    assert!(result.is_none(), "unpaired peer should not trigger sync");
+    assert_eq!(
+        discovered.len(),
+        1,
+        "peer should still be added to discovered map"
+    );
+}
+
+#[test]
+fn process_discovery_paired_returns_some() {
+    let event = make_resolved_event("PAIRED_PEER", 8443);
+    let mut discovered = HashMap::new();
+    let peer_refs = vec![make_peer_ref("PAIRED_PEER")];
+    let result = process_discovery_event(event, "LOCAL", &mut discovered, &peer_refs);
+    assert!(result.is_some(), "new paired peer should trigger sync");
+    let peer = result.unwrap();
+    assert_eq!(peer.device_id, "PAIRED_PEER");
+    assert_eq!(discovered.len(), 1);
+}

@@ -1,5 +1,7 @@
+use std::collections::HashMap;
+
 use crate::peer_refs::PeerRef;
-use crate::sync_net::DiscoveredPeer;
+use crate::sync_net::{self, DiscoveredPeer};
 
 /// Determine whether a newly discovered mDNS peer should trigger an
 /// immediate sync attempt.
@@ -74,4 +76,41 @@ pub fn get_peer_cert_hash(peer_id: &str, peer_refs: &[PeerRef]) -> Option<String
 /// observed certificate hash.
 pub fn should_store_cert_hash(stored_hash: Option<&str>, observed_hash: Option<&str>) -> bool {
     stored_hash.is_none() && observed_hash.is_some()
+}
+
+/// Process an mDNS discovery event. Updates the `discovered` map and
+/// returns the peer to sync with (if it's a new, paired peer).
+///
+/// Returns `None` when:
+/// - The event is not a ServiceResolved event
+/// - The peer is the local device (self-discovery)
+/// - The peer was already discovered (timestamp updated, no new sync)
+/// - The peer is not in the paired peer_refs list
+pub fn process_discovery_event(
+    event: mdns_sd::ServiceEvent,
+    device_id: &str,
+    discovered: &mut HashMap<String, (DiscoveredPeer, tokio::time::Instant)>,
+    peer_refs: &[PeerRef],
+) -> Option<DiscoveredPeer> {
+    let peer = sync_net::parse_service_event(event)?;
+    if peer.device_id == device_id {
+        return None; // Self-discovery
+    }
+    let already_discovered = discovered.contains_key(&peer.device_id);
+    discovered.insert(
+        peer.device_id.clone(),
+        (peer.clone(), tokio::time::Instant::now()),
+    );
+    if already_discovered {
+        return None; // Already known, just updated timestamp
+    }
+    if !should_attempt_sync_with_discovered_peer(
+        &peer.device_id,
+        device_id,
+        already_discovered,
+        peer_refs,
+    ) {
+        return None; // Not paired
+    }
+    Some(peer)
 }

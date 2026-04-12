@@ -35,8 +35,8 @@ use crate::sync_scheduler::SyncScheduler;
 
 // Re-export submodule items
 pub use discovery::{
-    build_fallback_peer, format_peer_address, get_peer_cert_hash, resolve_peer_address,
-    should_attempt_sync_with_discovered_peer, should_store_cert_hash,
+    build_fallback_peer, format_peer_address, get_peer_cert_hash, process_discovery_event,
+    resolve_peer_address, should_attempt_sync_with_discovered_peer, should_store_cert_hash,
 };
 #[allow(unused_imports)]
 pub(crate) use orchestrator::{run_sync_session, try_sync_with_peer};
