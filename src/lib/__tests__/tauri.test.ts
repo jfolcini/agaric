@@ -298,14 +298,14 @@ describe('listBlocks', () => {
 
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
     // Tauri 2 requires null for Option<T>, not undefined
-    expect(args.parentId).toBeNull()
-    expect(args.tagId).toBeNull()
-    expect(args.showDeleted).toBeNull()
-    expect(args.agendaDate).toBeNull()
-    expect(args.cursor).toBeNull()
-    expect(args.limit).toBeNull()
+    expect(args['parentId']).toBeNull()
+    expect(args['tagId']).toBeNull()
+    expect(args['showDeleted']).toBeNull()
+    expect(args['agendaDate']).toBeNull()
+    expect(args['cursor']).toBeNull()
+    expect(args['limit']).toBeNull()
     // blockType should be the value we passed
-    expect(args.blockType).toBe('page')
+    expect(args['blockType']).toBe('page')
   })
 })
 

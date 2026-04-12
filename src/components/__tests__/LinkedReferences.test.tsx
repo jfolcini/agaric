@@ -967,7 +967,8 @@ describe('LinkedReferences', () => {
     // Instead, verify the first call was without filters:
     const firstCall = mockedInvoke.mock.calls.find(
       (c) =>
-        c[0] === 'list_backlinks_grouped' && (c[1] as Record<string, unknown>)?.filters === null,
+        c[0] === 'list_backlinks_grouped' &&
+        (c[1] as Record<string, unknown>)?.['filters'] === null,
     )
     expect(firstCall).toBeTruthy()
   })

@@ -108,7 +108,7 @@ vi.mock('../AgendaResults', () => ({
 // ── Mock MonthlyDayCell (UX-83) ─────────────────────────────────────
 vi.mock('../journal/MonthlyDayCell', () => ({
   MonthlyDayCell: (props: Record<string, unknown>) => {
-    const entry = props.entry as { dateStr: string; displayDate: string }
+    const entry = props['entry'] as { dateStr: string; displayDate: string }
     return (
       // biome-ignore lint/a11y/useFocusableInteractive: test mock
       // biome-ignore lint/a11y/useSemanticElements: test mock for gridcell
@@ -116,12 +116,12 @@ vi.mock('../journal/MonthlyDayCell', () => ({
       <div
         role="gridcell"
         data-testid={`monthly-cell-${entry.dateStr}`}
-        data-is-today={String(!!props.isToday)}
-        data-is-current-month={String(!!props.isCurrentMonth)}
-        data-agenda-count={String(props.agendaCount)}
-        data-backlink-count={String(props.backlinkCount)}
+        data-is-today={String(!!props['isToday'])}
+        data-is-current-month={String(!!props['isCurrentMonth'])}
+        data-agenda-count={String(props['agendaCount'])}
+        data-backlink-count={String(props['backlinkCount'])}
         aria-label={entry.displayDate}
-        onClick={() => (props.onNavigateToDate as (d: string) => void)?.(entry.dateStr)}
+        onClick={() => (props['onNavigateToDate'] as (d: string) => void)?.(entry.dateStr)}
       >
         {new Date(`${entry.dateStr}T12:00:00`).getDate()}
       </div>

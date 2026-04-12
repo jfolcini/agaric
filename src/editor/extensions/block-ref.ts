@@ -50,7 +50,7 @@ export const BlockRef = Node.create<BlockRefOptions>({
       id: {
         default: null,
         parseHTML: (el) => el.getAttribute('data-id'),
-        renderHTML: (attrs) => ({ 'data-id': attrs.id as string }),
+        renderHTML: (attrs) => ({ 'data-id': attrs['id'] as string }),
       },
     }
   },
@@ -60,7 +60,7 @@ export const BlockRef = Node.create<BlockRefOptions>({
   },
 
   renderHTML({ node, HTMLAttributes }) {
-    const content = this.options.resolveContent(node.attrs.id as string)
+    const content = this.options.resolveContent(node.attrs['id'] as string)
     return [
       'span',
       mergeAttributes(HTMLAttributes, {
@@ -77,7 +77,7 @@ export const BlockRef = Node.create<BlockRefOptions>({
     const extension = this
     return ({ node }) => {
       const dom = document.createElement('span')
-      let currentId = node.attrs.id as string
+      let currentId = node.attrs['id'] as string
 
       function render(blockId: string) {
         currentId = blockId
@@ -117,7 +117,7 @@ export const BlockRef = Node.create<BlockRefOptions>({
         dom,
         update(updatedNode) {
           if (updatedNode.type.name !== 'block_ref') return false
-          render(updatedNode.attrs.id as string)
+          render(updatedNode.attrs['id'] as string)
           return true
         },
         destroy() {
@@ -145,7 +145,7 @@ export const BlockRef = Node.create<BlockRefOptions>({
         const nodeBefore = $from.nodeBefore
         if (!nodeBefore || nodeBefore.type.name !== 'block_ref') return false
 
-        const id = nodeBefore.attrs.id as string
+        const id = nodeBefore.attrs['id'] as string
         const content = this.options.resolveContent(id)
         const nodeSize = nodeBefore.nodeSize
         const from = $from.pos - nodeSize

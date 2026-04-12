@@ -253,9 +253,9 @@ function seedBlocks(): void {
     SEED_IDS.PAGE_DAILY,
     2,
   )
-  daily3.todo_state = 'TODO'
-  daily3.priority = '1'
-  daily3.due_date = today
+  daily3['todo_state'] = 'TODO'
+  daily3['priority'] = '1'
+  daily3['due_date'] = today
   blocks.set(SEED_IDS.BLOCK_DAILY_3, daily3)
 
   const daily4 = makeBlock(
@@ -265,9 +265,9 @@ function seedBlocks(): void {
     SEED_IDS.PAGE_DAILY,
     3,
   )
-  daily4.todo_state = 'DOING'
-  daily4.priority = '2'
-  daily4.due_date = today
+  daily4['todo_state'] = 'DOING'
+  daily4['priority'] = '2'
+  daily4['due_date'] = today
   blocks.set(SEED_IDS.BLOCK_DAILY_4, daily4)
 
   const daily5 = makeBlock(
@@ -277,9 +277,9 @@ function seedBlocks(): void {
     SEED_IDS.PAGE_DAILY,
     4,
   )
-  daily5.todo_state = 'DONE'
-  daily5.priority = '3'
-  daily5.due_date = today
+  daily5['todo_state'] = 'DONE'
+  daily5['priority'] = '3'
+  daily5['due_date'] = today
   blocks.set(SEED_IDS.BLOCK_DAILY_5, daily5)
 
   // Projects page children — mixed states and dates
@@ -290,10 +290,10 @@ function seedBlocks(): void {
     SEED_IDS.PAGE_PROJECTS,
     0,
   )
-  proj1.todo_state = 'TODO'
-  proj1.priority = '1'
-  proj1.due_date = tomorrow
-  proj1.scheduled_date = today
+  proj1['todo_state'] = 'TODO'
+  proj1['priority'] = '1'
+  proj1['due_date'] = tomorrow
+  proj1['scheduled_date'] = today
   blocks.set(SEED_IDS.BLOCK_PROJ_1, proj1)
 
   const proj2 = makeBlock(
@@ -303,9 +303,9 @@ function seedBlocks(): void {
     SEED_IDS.PAGE_PROJECTS,
     1,
   )
-  proj2.todo_state = 'DOING'
-  proj2.priority = '1'
-  proj2.due_date = today
+  proj2['todo_state'] = 'DOING'
+  proj2['priority'] = '1'
+  proj2['due_date'] = today
   blocks.set(SEED_IDS.BLOCK_PROJ_2, proj2)
 
   const proj3 = makeBlock(
@@ -315,7 +315,7 @@ function seedBlocks(): void {
     SEED_IDS.PAGE_PROJECTS,
     2,
   )
-  proj3.todo_state = 'DONE'
+  proj3['todo_state'] = 'DONE'
   blocks.set(SEED_IDS.BLOCK_PROJ_3, proj3)
 
   const proj4 = makeBlock(
@@ -325,10 +325,10 @@ function seedBlocks(): void {
     SEED_IDS.PAGE_PROJECTS,
     3,
   )
-  proj4.todo_state = 'TODO'
-  proj4.priority = '2'
-  proj4.due_date = nextWeek
-  proj4.scheduled_date = tomorrow
+  proj4['todo_state'] = 'TODO'
+  proj4['priority'] = '2'
+  proj4['due_date'] = nextWeek
+  proj4['scheduled_date'] = tomorrow
   blocks.set(SEED_IDS.BLOCK_PROJ_4, proj4)
 
   // Meetings page children — with custom properties
@@ -349,9 +349,9 @@ function seedBlocks(): void {
     SEED_IDS.PAGE_PROJECTS,
     4,
   )
-  overdue1.todo_state = 'TODO'
-  overdue1.priority = '1'
-  overdue1.due_date = yesterday
+  overdue1['todo_state'] = 'TODO'
+  overdue1['priority'] = '1'
+  overdue1['due_date'] = yesterday
   blocks.set(SEED_IDS.BLOCK_OVERDUE_1, overdue1)
 
   // Tags
@@ -367,7 +367,7 @@ function seedBlocks(): void {
     SEED_IDS.BLOCK_GS_1,
     0,
   )
-  conflict1.is_conflict = true
+  conflict1['is_conflict'] = true
   blocks.set(SEED_IDS.CONFLICT_01, conflict1)
 
   // Content blocks — children of "Quick Notes" (with backlink to Getting Started)
@@ -523,43 +523,45 @@ export function setupMock(): void {
       case 'list_blocks': {
         const a = args as Record<string, unknown>
         let items: Record<string, unknown>[]
-        if (a.showDeleted) {
-          items = [...blocks.values()].filter((b) => b.deleted_at)
+        if (a['showDeleted']) {
+          items = [...blocks.values()].filter((b) => b['deleted_at'])
         } else {
-          items = [...blocks.values()].filter((b) => !(b.deleted_at as string | null))
+          items = [...blocks.values()].filter((b) => !(b['deleted_at'] as string | null))
         }
         // Exclude conflict copies from normal queries (matches real backend).
         // Conflicts are only returned via get_conflicts.
-        items = items.filter((b) => !b.is_conflict)
-        if (a.blockType) items = items.filter((b) => b.block_type === a.blockType)
-        if (a.parentId) items = items.filter((b) => b.parent_id === a.parentId)
+        items = items.filter((b) => !b['is_conflict'])
+        if (a['blockType']) items = items.filter((b) => b['block_type'] === a['blockType'])
+        if (a['parentId']) items = items.filter((b) => b['parent_id'] === a['parentId'])
         // Tag filtering
-        if (a.tagId) {
-          const tagId = a.tagId as string
+        if (a['tagId']) {
+          const tagId = a['tagId'] as string
           items = items.filter((b) => {
-            const tags = blockTags.get(b.id as string)
+            const tags = blockTags.get(b['id'] as string)
             return tags?.has(tagId) ?? false
           })
         }
         // Agenda date filtering — matches blocks by due_date or scheduled_date
-        if (a.agendaDate) {
-          const dateStr = a.agendaDate as string
-          const source = (a.agendaSource as string | null) ?? null
+        if (a['agendaDate']) {
+          const dateStr = a['agendaDate'] as string
+          const source = (a['agendaSource'] as string | null) ?? null
           if (source === 'column:due_date') {
-            items = items.filter((b) => b.due_date === dateStr)
+            items = items.filter((b) => b['due_date'] === dateStr)
           } else if (source === 'column:scheduled_date') {
-            items = items.filter((b) => b.scheduled_date === dateStr)
+            items = items.filter((b) => b['scheduled_date'] === dateStr)
           } else {
-            items = items.filter((b) => b.due_date === dateStr || b.scheduled_date === dateStr)
+            items = items.filter(
+              (b) => b['due_date'] === dateStr || b['scheduled_date'] === dateStr,
+            )
           }
         }
         // Agenda date range filtering — for weekly/monthly views
-        if (a.agendaDateRange) {
-          const range = a.agendaDateRange as { start: string; end: string }
-          const source = (a.agendaSource as string | null) ?? null
+        if (a['agendaDateRange']) {
+          const range = a['agendaDateRange'] as { start: string; end: string }
+          const source = (a['agendaSource'] as string | null) ?? null
           items = items.filter((b) => {
-            const due = b.due_date as string | null
-            const sched = b.scheduled_date as string | null
+            const due = b['due_date'] as string | null
+            const sched = b['scheduled_date'] as string | null
             const inRange = (d: string | null) => d != null && d >= range.start && d <= range.end
             if (source === 'column:due_date') return inRange(due)
             if (source === 'column:scheduled_date') return inRange(sched)
@@ -567,26 +569,26 @@ export function setupMock(): void {
           })
         }
         // Sort by position for consistent ordering (matches real backend)
-        items.sort((x, y) => ((x.position as number) ?? 0) - ((y.position as number) ?? 0))
+        items.sort((x, y) => ((x['position'] as number) ?? 0) - ((y['position'] as number) ?? 0))
         return { items, next_cursor: null, has_more: false }
       }
 
       case 'create_block': {
         const a = args as Record<string, unknown>
         const id = fakeId()
-        const parentId = (a.parentId as string) ?? null
+        const parentId = (a['parentId'] as string) ?? null
         // Compute position: if not provided, append after existing siblings
-        let position = a.position as number | undefined
+        let position = a['position'] as number | undefined
         if (position == null) {
           const siblings = [...blocks.values()].filter(
-            (b) => b.parent_id === parentId && !b.deleted_at,
+            (b) => b['parent_id'] === parentId && !b['deleted_at'],
           )
           position = siblings.length
         }
         const row = {
           id,
-          block_type: a.blockType as string,
-          content: (a.content as string) ?? null,
+          block_type: a['blockType'] as string,
+          content: (a['content'] as string) ?? null,
           parent_id: parentId,
           position,
           deleted_at: null,
@@ -610,21 +612,25 @@ export function setupMock(): void {
 
       case 'edit_block': {
         const a = args as Record<string, unknown>
-        const b = blocks.get(a.blockId as string)
+        const b = blocks.get(a['blockId'] as string)
         if (!b) throw new Error('not found')
-        const oldContent = b.content as string | null
-        b.content = a.toText as string
-        pushOp('edit_block', { block_id: a.blockId, to_text: a.toText, from_text: oldContent })
+        const oldContent = b['content'] as string | null
+        b['content'] = a['toText'] as string
+        pushOp('edit_block', {
+          block_id: a['blockId'],
+          to_text: a['toText'],
+          from_text: oldContent,
+        })
         return b
       }
 
       case 'delete_block': {
         const a = args as Record<string, unknown>
-        const b = blocks.get(a.blockId as string)
-        if (b) b.deleted_at = new Date().toISOString()
-        pushOp('delete_block', { block_id: a.blockId })
+        const b = blocks.get(a['blockId'] as string)
+        if (b) b['deleted_at'] = new Date().toISOString()
+        pushOp('delete_block', { block_id: a['blockId'] })
         return {
-          block_id: a.blockId,
+          block_id: a['blockId'],
           deleted_at: new Date().toISOString(),
           descendants_affected: 0,
         }
@@ -632,23 +638,23 @@ export function setupMock(): void {
 
       case 'restore_block': {
         const a = args as Record<string, unknown>
-        const b = blocks.get(a.blockId as string)
-        if (b) b.deleted_at = null
-        pushOp('restore_block', { block_id: a.blockId })
-        return { block_id: a.blockId, restored_count: 1 }
+        const b = blocks.get(a['blockId'] as string)
+        if (b) b['deleted_at'] = null
+        pushOp('restore_block', { block_id: a['blockId'] })
+        return { block_id: a['blockId'], restored_count: 1 }
       }
 
       case 'purge_block': {
         const a = args as Record<string, unknown>
-        blocks.delete(a.blockId as string)
-        return { block_id: a.blockId, purged_count: 1 }
+        blocks.delete(a['blockId'] as string)
+        return { block_id: a['blockId'], purged_count: 1 }
       }
 
       case 'restore_all_deleted': {
         let count = 0
         for (const b of blocks.values()) {
-          if (b.deleted_at) {
-            b.deleted_at = null
+          if (b['deleted_at']) {
+            b['deleted_at'] = null
             count++
           }
         }
@@ -658,7 +664,7 @@ export function setupMock(): void {
       case 'purge_all_deleted': {
         let count = 0
         for (const [id, b] of blocks.entries()) {
-          if (b.deleted_at) {
+          if (b['deleted_at']) {
             blocks.delete(id)
             count++
           }
@@ -668,47 +674,51 @@ export function setupMock(): void {
 
       case 'get_block': {
         const a = args as Record<string, unknown>
-        const b = blocks.get(a.blockId as string)
+        const b = blocks.get(a['blockId'] as string)
         if (!b) throw new Error('not found')
         return b
       }
 
       case 'batch_resolve': {
         const a = args as Record<string, unknown>
-        const ids = a.ids as string[]
+        const ids = a['ids'] as string[]
         return ids
           .map((id) => blocks.get(id))
           .filter(Boolean)
           .map((b) => ({
-            id: b?.id as string,
-            title: (b?.content as string | null) ?? null,
-            block_type: b?.block_type as string,
-            deleted: b?.deleted_at !== null,
+            id: b?.['id'] as string,
+            title: (b?.['content'] as string | null) ?? null,
+            block_type: b?.['block_type'] as string,
+            deleted: b?.['deleted_at'] !== null,
           }))
       }
 
       case 'move_block': {
         const a = args as Record<string, unknown>
-        const b = blocks.get(a.blockId as string)
+        const b = blocks.get(a['blockId'] as string)
         if (!b) throw new Error('not found')
-        const oldParentId = b.parent_id
-        const oldPosition = b.position
-        b.parent_id = a.newParentId as string | null
-        b.position = a.newPosition as number
+        const oldParentId = b['parent_id']
+        const oldPosition = b['position']
+        b['parent_id'] = a['newParentId'] as string | null
+        b['position'] = a['newPosition'] as number
         pushOp('move_block', {
-          block_id: a.blockId,
-          new_parent_id: b.parent_id,
-          new_position: b.position,
+          block_id: a['blockId'],
+          new_parent_id: b['parent_id'],
+          new_position: b['position'],
           old_parent_id: oldParentId,
           old_position: oldPosition,
         })
-        return { block_id: a.blockId, new_parent_id: b.parent_id, new_position: b.position }
+        return {
+          block_id: a['blockId'],
+          new_parent_id: b['parent_id'],
+          new_position: b['position'],
+        }
       }
 
       case 'add_tag': {
         const a = args as Record<string, unknown>
-        const blockId = a.blockId as string
-        const tagId = a.tagId as string
+        const blockId = a['blockId'] as string
+        const tagId = a['tagId'] as string
         if (!blockTags.has(blockId)) blockTags.set(blockId, new Set())
         blockTags.get(blockId)?.add(tagId)
         pushOp('add_tag', { block_id: blockId, tag_id: tagId })
@@ -717,8 +727,8 @@ export function setupMock(): void {
 
       case 'remove_tag': {
         const a = args as Record<string, unknown>
-        const blockId = a.blockId as string
-        const tagId = a.tagId as string
+        const blockId = a['blockId'] as string
+        const tagId = a['tagId'] as string
         blockTags.get(blockId)?.delete(tagId)
         pushOp('remove_tag', { block_id: blockId, tag_id: tagId })
         return { block_id: blockId, tag_id: tagId }
@@ -726,12 +736,12 @@ export function setupMock(): void {
 
       case 'get_backlinks': {
         const a = args as Record<string, unknown>
-        const targetId = a.blockId as string
+        const targetId = a['blockId'] as string
         // Scan all blocks for [[ULID]] tokens matching the target
         const LINK_RE = /\[\[([0-9A-Z]{26})\]\]/g
         const backlinkItems = [...blocks.values()].filter((b) => {
-          if (b.deleted_at) return false
-          const content = (b.content as string) ?? ''
+          if (b['deleted_at']) return false
+          const content = (b['content'] as string) ?? ''
           for (const m of content.matchAll(LINK_RE)) {
             if (m[1] === targetId) return true
           }
@@ -757,7 +767,7 @@ export function setupMock(): void {
 
       case 'revert_ops': {
         const a = args as Record<string, unknown>
-        const ops = a.ops as Array<{ device_id: string; seq: number }>
+        const ops = a['ops'] as Array<{ device_id: string; seq: number }>
         const results: Array<Record<string, unknown>> = []
 
         const sorted = [...ops].sort((x, y) => y.seq - x.seq)
@@ -769,23 +779,23 @@ export function setupMock(): void {
           const payload = JSON.parse(target.payload) as Record<string, unknown>
 
           if (target.op_type === 'create_block') {
-            const b = blocks.get(payload.block_id as string)
-            if (b) b.deleted_at = new Date().toISOString()
+            const b = blocks.get(payload['block_id'] as string)
+            if (b) b['deleted_at'] = new Date().toISOString()
           } else if (target.op_type === 'delete_block') {
-            const b = blocks.get(payload.block_id as string)
-            if (b) b.deleted_at = null
+            const b = blocks.get(payload['block_id'] as string)
+            if (b) b['deleted_at'] = null
           } else if (target.op_type === 'edit_block') {
-            const b = blocks.get(payload.block_id as string)
-            if (b) b.content = (payload.from_text as string | null) ?? null
+            const b = blocks.get(payload['block_id'] as string)
+            if (b) b['content'] = (payload['from_text'] as string | null) ?? null
           } else if (target.op_type === 'move_block') {
-            const b = blocks.get(payload.block_id as string)
+            const b = blocks.get(payload['block_id'] as string)
             if (b) {
-              b.parent_id = payload.old_parent_id as string | null
-              b.position = payload.old_position as number
+              b['parent_id'] = payload['old_parent_id'] as string | null
+              b['position'] = payload['old_position'] as number
             }
           } else if (target.op_type === 'restore_block') {
-            const b = blocks.get(payload.block_id as string)
-            if (b) b.deleted_at = new Date().toISOString()
+            const b = blocks.get(payload['block_id'] as string)
+            if (b) b['deleted_at'] = new Date().toISOString()
           }
 
           const newOp = pushOp(`revert_${target.op_type}`, { reverted: target })
@@ -796,18 +806,20 @@ export function setupMock(): void {
       }
 
       case 'get_conflicts': {
-        const items = [...blocks.values()].filter((b) => b.is_conflict === true && !b.deleted_at)
+        const items = [...blocks.values()].filter(
+          (b) => b['is_conflict'] === true && !b['deleted_at'],
+        )
         return { items, next_cursor: null, has_more: false }
       }
 
       case 'search_blocks': {
         const a = args as Record<string, unknown>
-        const query = ((a.query as string) ?? '').toLowerCase()
+        const query = ((a['query'] as string) ?? '').toLowerCase()
         if (!query) return { items: [], next_cursor: null, has_more: false }
         const items = [...blocks.values()].filter(
           (b) =>
-            !(b.deleted_at as string | null) &&
-            ((b.content as string) ?? '').toLowerCase().includes(query),
+            !(b['deleted_at'] as string | null) &&
+            ((b['content'] as string) ?? '').toLowerCase().includes(query),
         )
         return { items, next_cursor: null, has_more: false }
       }
@@ -829,17 +841,17 @@ export function setupMock(): void {
 
       case 'query_by_property': {
         const a = args as Record<string, unknown>
-        const key = a.key as string
-        const valueText = (a.valueText as string | null) ?? null
-        const valueDate = (a.valueDate as string | null) ?? null
+        const key = a['key'] as string
+        const valueText = (a['valueText'] as string | null) ?? null
+        const valueDate = (a['valueDate'] as string | null) ?? null
         const items = [...blocks.values()].filter((b) => {
-          if (b.deleted_at) return false
-          const blockProps = properties.get(b.id as string)
+          if (b['deleted_at']) return false
+          const blockProps = properties.get(b['id'] as string)
           if (!blockProps) return false
           const prop = blockProps.get(key)
           if (!prop) return false
-          if (valueText !== null) return prop.value_text === valueText
-          if (valueDate !== null) return prop.value_date === valueDate
+          if (valueText !== null) return prop['value_text'] === valueText
+          if (valueDate !== null) return prop['value_date'] === valueDate
           return true
         })
         return { items, next_cursor: null, has_more: false }
@@ -847,9 +859,9 @@ export function setupMock(): void {
 
       case 'query_by_tags': {
         const a = args as Record<string, unknown>
-        const tagIds = (a.tagIds as string[]) ?? []
-        const prefixes = (a.prefixes as string[] | null) ?? []
-        const mode = ((a.mode as string) ?? 'and').toLowerCase()
+        const tagIds = (a['tagIds'] as string[]) ?? []
+        const prefixes = (a['prefixes'] as string[] | null) ?? []
+        const mode = ((a['mode'] as string) ?? 'and').toLowerCase()
 
         // Resolve prefixes to tag IDs by matching tag block content
         const resolvedFromPrefix: string[] = []
@@ -857,11 +869,11 @@ export function setupMock(): void {
           const lp = prefix.toLowerCase()
           for (const [, b] of blocks) {
             if (
-              b.block_type === 'tag' &&
-              !b.deleted_at &&
-              ((b.content as string) ?? '').toLowerCase().startsWith(lp)
+              b['block_type'] === 'tag' &&
+              !b['deleted_at'] &&
+              ((b['content'] as string) ?? '').toLowerCase().startsWith(lp)
             ) {
-              resolvedFromPrefix.push(b.id as string)
+              resolvedFromPrefix.push(b['id'] as string)
             }
           }
         }
@@ -869,8 +881,8 @@ export function setupMock(): void {
         const allTagIds = [...tagIds, ...resolvedFromPrefix]
 
         const items = [...blocks.values()].filter((b) => {
-          if (b.deleted_at) return false
-          const tags = blockTags.get(b.id as string)
+          if (b['deleted_at']) return false
+          const tags = blockTags.get(b['id'] as string)
           if (!tags || tags.size === 0) return false
           if (allTagIds.length === 0) return false
           if (mode === 'or') {
@@ -884,16 +896,16 @@ export function setupMock(): void {
 
       case 'list_tags_by_prefix': {
         const a = args as Record<string, unknown>
-        const prefix = ((a.prefix as string) ?? '').toLowerCase()
+        const prefix = ((a['prefix'] as string) ?? '').toLowerCase()
         const tagBlocks = [...blocks.values()].filter(
           (b) =>
-            b.block_type === 'tag' &&
-            !(b.deleted_at as string | null) &&
-            ((b.content as string) ?? '').toLowerCase().startsWith(prefix),
+            b['block_type'] === 'tag' &&
+            !(b['deleted_at'] as string | null) &&
+            ((b['content'] as string) ?? '').toLowerCase().startsWith(prefix),
         )
         return tagBlocks.map((b) => ({
-          tag_id: b.id as string,
-          name: (b.content as string) ?? '',
+          tag_id: b['id'] as string,
+          name: (b['content'] as string) ?? '',
           usage_count: 0,
           updated_at: new Date().toISOString(),
         }))
@@ -901,7 +913,7 @@ export function setupMock(): void {
 
       case 'list_tags_for_block': {
         const a = args as Record<string, unknown>
-        const blockId = a.blockId as string
+        const blockId = a['blockId'] as string
         const tagSet = blockTags.get(blockId)
         if (!tagSet || tagSet.size === 0) return []
         return [...tagSet]
@@ -909,17 +921,17 @@ export function setupMock(): void {
 
       case 'set_property': {
         const a = args as Record<string, unknown>
-        const blockId = a.blockId as string
-        const key = a.key as string
+        const blockId = a['blockId'] as string
+        const key = a['key'] as string
         if (!properties.has(blockId)) {
           properties.set(blockId, new Map())
         }
         properties.get(blockId)?.set(key, {
           key,
-          value_text: (a.valueText as string | null) ?? null,
-          value_num: (a.valueNum as number | null) ?? null,
-          value_date: (a.valueDate as string | null) ?? null,
-          value_ref: (a.valueRef as string | null) ?? null,
+          value_text: (a['valueText'] as string | null) ?? null,
+          value_num: (a['valueNum'] as number | null) ?? null,
+          value_date: (a['valueDate'] as string | null) ?? null,
+          value_ref: (a['valueRef'] as string | null) ?? null,
         })
         const b = blocks.get(blockId)
         return b ? { ...b } : null
@@ -927,8 +939,8 @@ export function setupMock(): void {
 
       case 'delete_property': {
         const a = args as Record<string, unknown>
-        const blockId = a.blockId as string
-        const key = a.key as string
+        const blockId = a['blockId'] as string
+        const key = a['key'] as string
         const blockProps = properties.get(blockId)
         if (blockProps) blockProps.delete(key)
         return null
@@ -936,7 +948,7 @@ export function setupMock(): void {
 
       case 'get_properties': {
         const a = args as Record<string, unknown>
-        const blockId = a.blockId as string
+        const blockId = a['blockId'] as string
         const blockProps = properties.get(blockId)
         if (!blockProps) return []
         return [...blockProps.values()]
@@ -944,7 +956,7 @@ export function setupMock(): void {
 
       case 'get_batch_properties': {
         const a = args as Record<string, unknown>
-        const blockIds = a.blockIds as string[]
+        const blockIds = a['blockIds'] as string[]
         const result: Record<string, Record<string, unknown>[]> = {}
         for (const id of blockIds) {
           const blockProps = properties.get(id)
@@ -955,7 +967,7 @@ export function setupMock(): void {
 
       case 'undo_page_op': {
         const a = args as Record<string, unknown>
-        const undoDepth = (a.undoDepth as number) ?? 0
+        const undoDepth = (a['undoDepth'] as number) ?? 0
 
         const undoableOps = opLog.filter(
           (o) => !o.op_type.startsWith('undo_') && !o.op_type.startsWith('redo_'),
@@ -968,27 +980,27 @@ export function setupMock(): void {
         const payload = JSON.parse(target.payload) as Record<string, unknown>
         let reverseOpType = 'edit_block'
         if (target.op_type === 'create_block') {
-          const b = blocks.get(payload.block_id as string)
-          if (b) b.deleted_at = new Date().toISOString()
+          const b = blocks.get(payload['block_id'] as string)
+          if (b) b['deleted_at'] = new Date().toISOString()
           reverseOpType = 'delete_block'
         } else if (target.op_type === 'delete_block') {
-          const b = blocks.get(payload.block_id as string)
-          if (b) b.deleted_at = null
+          const b = blocks.get(payload['block_id'] as string)
+          if (b) b['deleted_at'] = null
           reverseOpType = 'restore_block'
         } else if (target.op_type === 'edit_block') {
-          const b = blocks.get(payload.block_id as string)
-          if (b) b.content = (payload.from_text as string | null) ?? null
+          const b = blocks.get(payload['block_id'] as string)
+          if (b) b['content'] = (payload['from_text'] as string | null) ?? null
           reverseOpType = 'edit_block'
         } else if (target.op_type === 'move_block') {
-          const b = blocks.get(payload.block_id as string)
+          const b = blocks.get(payload['block_id'] as string)
           if (b) {
-            b.parent_id = payload.old_parent_id as string | null
-            b.position = payload.old_position as number
+            b['parent_id'] = payload['old_parent_id'] as string | null
+            b['position'] = payload['old_position'] as number
           }
           reverseOpType = 'move_block'
         } else if (target.op_type === 'restore_block') {
-          const b = blocks.get(payload.block_id as string)
-          if (b) b.deleted_at = new Date().toISOString()
+          const b = blocks.get(payload['block_id'] as string)
+          if (b) b['deleted_at'] = new Date().toISOString()
           reverseOpType = 'delete_block'
         }
 
@@ -1003,7 +1015,7 @@ export function setupMock(): void {
 
       case 'redo_page_op': {
         const a = args as Record<string, unknown>
-        const undoSeq = a.undoSeq as number
+        const undoSeq = a['undoSeq'] as number
 
         // The frontend stores reversed_op (the original op's ref) in the redo
         // stack, so undoSeq is the original op's seq. Find and re-apply it.
@@ -1014,27 +1026,27 @@ export function setupMock(): void {
 
         let redoOpType = 'edit_block'
         if (originalOp.op_type === 'create_block') {
-          const b = blocks.get(payload.block_id as string)
-          if (b) b.deleted_at = null
+          const b = blocks.get(payload['block_id'] as string)
+          if (b) b['deleted_at'] = null
           redoOpType = 'create_block'
         } else if (originalOp.op_type === 'delete_block') {
-          const b = blocks.get(payload.block_id as string)
-          if (b) b.deleted_at = new Date().toISOString()
+          const b = blocks.get(payload['block_id'] as string)
+          if (b) b['deleted_at'] = new Date().toISOString()
           redoOpType = 'delete_block'
         } else if (originalOp.op_type === 'edit_block') {
-          const b = blocks.get(payload.block_id as string)
-          if (b) b.content = (payload.to_text as string | null) ?? null
+          const b = blocks.get(payload['block_id'] as string)
+          if (b) b['content'] = (payload['to_text'] as string | null) ?? null
           redoOpType = 'edit_block'
         } else if (originalOp.op_type === 'move_block') {
-          const b = blocks.get(payload.block_id as string)
+          const b = blocks.get(payload['block_id'] as string)
           if (b) {
-            b.parent_id = payload.new_parent_id as string | null
-            b.position = payload.new_position as number
+            b['parent_id'] = payload['new_parent_id'] as string | null
+            b['position'] = payload['new_position'] as number
           }
           redoOpType = 'move_block'
         } else if (originalOp.op_type === 'restore_block') {
-          const b = blocks.get(payload.block_id as string)
-          if (b) b.deleted_at = null
+          const b = blocks.get(payload['block_id'] as string)
+          if (b) b['deleted_at'] = null
           redoOpType = 'restore_block'
         }
 
@@ -1049,14 +1061,14 @@ export function setupMock(): void {
 
       case 'query_backlinks_filtered': {
         const a = args as Record<string, unknown>
-        const targetId = a.blockId as string
-        const filterList = (a.filters as Array<Record<string, unknown>> | null) ?? []
+        const targetId = a['blockId'] as string
+        const filterList = (a['filters'] as Array<Record<string, unknown>> | null) ?? []
 
         // Scan all blocks for [[ULID]] tokens matching the target
         const LINK_RE_F = /\[\[([0-9A-Z]{26})\]\]/g
         let backlinkItems = [...blocks.values()].filter((b) => {
-          if (b.deleted_at) return false
-          const content = (b.content as string) ?? ''
+          if (b['deleted_at']) return false
+          const content = (b['content'] as string) ?? ''
           for (const m of content.matchAll(LINK_RE_F)) {
             if (m[1] === targetId) return true
           }
@@ -1065,24 +1077,24 @@ export function setupMock(): void {
 
         // Apply simple filter support
         for (const filter of filterList) {
-          const type = filter.type as string
+          const type = filter['type'] as string
           if (type === 'BlockType') {
-            const bt = filter.block_type as string
-            backlinkItems = backlinkItems.filter((b) => b.block_type === bt)
+            const bt = filter['block_type'] as string
+            backlinkItems = backlinkItems.filter((b) => b['block_type'] === bt)
           } else if (type === 'Contains') {
-            const query = ((filter.query as string) ?? '').toLowerCase()
+            const query = ((filter['query'] as string) ?? '').toLowerCase()
             backlinkItems = backlinkItems.filter((b) =>
-              ((b.content as string) ?? '').toLowerCase().includes(query),
+              ((b['content'] as string) ?? '').toLowerCase().includes(query),
             )
           } else if (type === 'PropertyText') {
-            const key = filter.key as string
-            const value = filter.value as string
+            const key = filter['key'] as string
+            const value = filter['value'] as string
             backlinkItems = backlinkItems.filter((b) => {
-              const blockProps = properties.get(b.id as string)
+              const blockProps = properties.get(b['id'] as string)
               if (!blockProps) return false
               const prop = blockProps.get(key)
               if (!prop) return false
-              return (prop.value_text as string | null) === value
+              return (prop['value_text'] as string | null) === value
             })
           }
           // Unsupported filter types are ignored (graceful degradation)
@@ -1149,7 +1161,7 @@ export function setupMock(): void {
         return {
           state: 'syncing',
           local_device_id: 'mock-device-id-0000',
-          remote_device_id: a.peerId,
+          remote_device_id: a['peerId'],
           ops_received: 0,
           ops_sent: 0,
         }
@@ -1161,37 +1173,37 @@ export function setupMock(): void {
 
       case 'set_todo_state': {
         const a = args as Record<string, unknown>
-        const b = blocks.get(a.blockId as string)
+        const b = blocks.get(a['blockId'] as string)
         if (!b) throw new Error('not found')
-        b.todo_state = (a.state as string | null) ?? null
-        pushOp('set_todo_state', { block_id: a.blockId, state: b.todo_state })
+        b['todo_state'] = (a['state'] as string | null) ?? null
+        pushOp('set_todo_state', { block_id: a['blockId'], state: b['todo_state'] })
         return { ...b }
       }
 
       case 'set_priority': {
         const a = args as Record<string, unknown>
-        const b = blocks.get(a.blockId as string)
+        const b = blocks.get(a['blockId'] as string)
         if (!b) throw new Error('not found')
-        b.priority = (a.level as string | null) ?? null
-        pushOp('set_priority', { block_id: a.blockId, level: b.priority })
+        b['priority'] = (a['level'] as string | null) ?? null
+        pushOp('set_priority', { block_id: a['blockId'], level: b['priority'] })
         return { ...b }
       }
 
       case 'set_due_date': {
         const a = args as Record<string, unknown>
-        const b = blocks.get(a.blockId as string)
+        const b = blocks.get(a['blockId'] as string)
         if (!b) throw new Error('not found')
-        b.due_date = (a.date as string | null) ?? null
-        pushOp('set_due_date', { block_id: a.blockId, date: b.due_date })
+        b['due_date'] = (a['date'] as string | null) ?? null
+        pushOp('set_due_date', { block_id: a['blockId'], date: b['due_date'] })
         return { ...b }
       }
 
       case 'set_scheduled_date': {
         const a = args as Record<string, unknown>
-        const b = blocks.get(a.blockId as string)
+        const b = blocks.get(a['blockId'] as string)
         if (!b) throw new Error('not found')
-        b.scheduled_date = (a.date as string | null) ?? null
-        pushOp('set_scheduled_date', { block_id: a.blockId, date: b.scheduled_date })
+        b['scheduled_date'] = (a['date'] as string | null) ?? null
+        pushOp('set_scheduled_date', { block_id: a['blockId'], date: b['scheduled_date'] })
         return { ...b }
       }
 
@@ -1201,13 +1213,13 @@ export function setupMock(): void {
 
       case 'count_agenda_batch': {
         const a = args as Record<string, unknown>
-        const dates = a.dates as string[]
+        const dates = a['dates'] as string[]
         const result: Record<string, number> = {}
         for (const dateStr of dates) {
           const count = [...blocks.values()].filter(
             (b) =>
-              !(b.deleted_at as string | null) &&
-              (b.due_date === dateStr || b.scheduled_date === dateStr),
+              !(b['deleted_at'] as string | null) &&
+              (b['due_date'] === dateStr || b['scheduled_date'] === dateStr),
           ).length
           result[dateStr] = count
         }
@@ -1216,16 +1228,16 @@ export function setupMock(): void {
 
       case 'count_agenda_batch_by_source': {
         const a = args as Record<string, unknown>
-        const dates = a.dates as string[]
+        const dates = a['dates'] as string[]
         const result: Record<string, Record<string, number>> = {}
         for (const dateStr of dates) {
           const sources: Record<string, number> = {}
           for (const b of blocks.values()) {
-            if (b.deleted_at as string | null) continue
-            if (b.due_date === dateStr) {
+            if (b['deleted_at'] as string | null) continue
+            if (b['due_date'] === dateStr) {
               sources['column:due_date'] = (sources['column:due_date'] ?? 0) + 1
             }
-            if (b.scheduled_date === dateStr) {
+            if (b['scheduled_date'] === dateStr) {
               sources['column:scheduled_date'] = (sources['column:scheduled_date'] ?? 0) + 1
             }
           }
@@ -1238,13 +1250,13 @@ export function setupMock(): void {
 
       case 'count_backlinks_batch': {
         const a = args as Record<string, unknown>
-        const pageIds = a.pageIds as string[]
+        const pageIds = a['pageIds'] as string[]
         const LINK_RE_BATCH = /\[\[([0-9A-Z]{26})\]\]/g
         const result: Record<string, number> = {}
         for (const pid of pageIds) {
           const count = [...blocks.values()].filter((b) => {
-            if (b.deleted_at) return false
-            const content = (b.content as string) ?? ''
+            if (b['deleted_at']) return false
+            const content = (b['content'] as string) ?? ''
             for (const m of content.matchAll(LINK_RE_BATCH)) {
               if (m[1] === pid) return true
             }
@@ -1261,11 +1273,11 @@ export function setupMock(): void {
 
       case 'list_backlinks_grouped': {
         const a = args as Record<string, unknown>
-        const targetId = a.blockId as string
+        const targetId = a['blockId'] as string
         const LINK_RE_G = /\[\[([0-9A-Z]{26})\]\]/g
         const backlinkItems = [...blocks.values()].filter((b) => {
-          if (b.deleted_at) return false
-          const content = (b.content as string) ?? ''
+          if (b['deleted_at']) return false
+          const content = (b['content'] as string) ?? ''
           for (const m of content.matchAll(LINK_RE_G)) {
             if (m[1] === targetId) return true
           }
@@ -1274,7 +1286,7 @@ export function setupMock(): void {
         // Group by parent_id (source page)
         const groupMap = new Map<string, Record<string, unknown>[]>()
         for (const item of backlinkItems) {
-          const pid = (item.parent_id as string) ?? '__orphan__'
+          const pid = (item['parent_id'] as string) ?? '__orphan__'
           if (!groupMap.has(pid)) groupMap.set(pid, [])
           groupMap.get(pid)?.push(item)
         }
@@ -1282,7 +1294,7 @@ export function setupMock(): void {
           const page = blocks.get(pageId)
           return {
             page_id: pageId,
-            page_title: page ? ((page.content as string) ?? null) : null,
+            page_title: page ? ((page['content'] as string) ?? null) : null,
             blocks: items,
           }
         })
@@ -1297,7 +1309,7 @@ export function setupMock(): void {
 
       case 'list_unlinked_references': {
         const a = args as Record<string, unknown>
-        const pageId = a.pageId as string
+        const pageId = a['pageId'] as string
         const page = blocks.get(pageId)
         if (!page)
           return {
@@ -1307,7 +1319,7 @@ export function setupMock(): void {
             total_count: 0,
             filtered_count: 0,
           }
-        const pageTitle = ((page.content as string) ?? '').toLowerCase()
+        const pageTitle = ((page['content'] as string) ?? '').toLowerCase()
         if (!pageTitle)
           return {
             groups: [],
@@ -1319,10 +1331,10 @@ export function setupMock(): void {
         // Find blocks that mention the page title as text but don't have a [[link]]
         const LINK_RE_UL = /\[\[([0-9A-Z]{26})\]\]/g
         const unlinked = [...blocks.values()].filter((b) => {
-          if (b.deleted_at) return false
-          if (b.id === pageId) return false
-          if (b.parent_id === pageId) return false
-          const content = (b.content as string) ?? ''
+          if (b['deleted_at']) return false
+          if (b['id'] === pageId) return false
+          if (b['parent_id'] === pageId) return false
+          const content = (b['content'] as string) ?? ''
           if (!content.toLowerCase().includes(pageTitle)) return false
           // Exclude if it already has a [[link]] to this page
           for (const m of content.matchAll(LINK_RE_UL)) {
@@ -1332,7 +1344,7 @@ export function setupMock(): void {
         })
         const groupMap = new Map<string, Record<string, unknown>[]>()
         for (const item of unlinked) {
-          const pid = (item.parent_id as string) ?? '__orphan__'
+          const pid = (item['parent_id'] as string) ?? '__orphan__'
           if (!groupMap.has(pid)) groupMap.set(pid, [])
           groupMap.get(pid)?.push(item)
         }
@@ -1340,7 +1352,7 @@ export function setupMock(): void {
           const p = blocks.get(pid)
           return {
             page_id: pid,
-            page_title: p ? ((p.content as string) ?? null) : null,
+            page_title: p ? ((p['content'] as string) ?? null) : null,
             blocks: items,
           }
         })
@@ -1359,13 +1371,13 @@ export function setupMock(): void {
 
       case 'compute_edit_diff': {
         const a = args as Record<string, unknown>
-        const deviceId = a.deviceId as string
-        const seq = a.seq as number
+        const deviceId = a['deviceId'] as string
+        const seq = a['seq'] as number
         const target = opLog.find((o) => o.device_id === deviceId && o.seq === seq)
         if (!target || target.op_type !== 'edit_block') return null
         const payload = JSON.parse(target.payload) as Record<string, unknown>
-        const fromText = ((payload.from_text as string) ?? '').split(/\s+/)
-        const toText = ((payload.to_text as string) ?? '').split(/\s+/)
+        const fromText = ((payload['from_text'] as string) ?? '').split(/\s+/)
+        const toText = ((payload['to_text'] as string) ?? '').split(/\s+/)
         // Simple word-level diff: mark all old as removed, all new as added
         const spans: Array<Record<string, unknown>> = []
         if (fromText.length > 0 && fromText[0] !== '') {
@@ -1383,11 +1395,11 @@ export function setupMock(): void {
 
       case 'create_property_def': {
         const a = args as Record<string, unknown>
-        const key = a.key as string
+        const key = a['key'] as string
         const def = {
           key,
-          value_type: a.valueType as string,
-          options: (a.options as string | null) ?? null,
+          value_type: a['valueType'] as string,
+          options: (a['options'] as string | null) ?? null,
           created_at: new Date().toISOString(),
         }
         propertyDefs.set(key, def)
@@ -1400,16 +1412,16 @@ export function setupMock(): void {
 
       case 'update_property_def_options': {
         const a = args as Record<string, unknown>
-        const key = a.key as string
+        const key = a['key'] as string
         const def = propertyDefs.get(key)
         if (!def) throw new Error('property definition not found')
-        def.options = a.options as string
+        def['options'] = a['options'] as string
         return { ...def }
       }
 
       case 'delete_property_def': {
         const a = args as Record<string, unknown>
-        const key = a.key as string
+        const key = a['key'] as string
         propertyDefs.delete(key)
         return undefined
       }
@@ -1428,25 +1440,25 @@ export function setupMock(): void {
 
       case 'set_page_aliases': {
         const a = args as Record<string, unknown>
-        const pid = a.pageId as string
-        const aliases = a.aliases as string[]
+        const pid = a['pageId'] as string
+        const aliases = a['aliases'] as string[]
         pageAliases.set(pid, aliases)
         return aliases
       }
 
       case 'get_page_aliases': {
         const a = args as Record<string, unknown>
-        const pid = a.pageId as string
+        const pid = a['pageId'] as string
         return pageAliases.get(pid) ?? []
       }
 
       case 'resolve_page_by_alias': {
         const a = args as Record<string, unknown>
-        const alias = (a.alias as string).toLowerCase()
+        const alias = (a['alias'] as string).toLowerCase()
         for (const [pid, aliases] of pageAliases.entries()) {
           if (aliases.some((al) => al.toLowerCase() === alias)) {
             const page = blocks.get(pid)
-            return [pid, page ? ((page.content as string) ?? null) : null]
+            return [pid, page ? ((page['content'] as string) ?? null) : null]
           }
         }
         return null
@@ -1458,15 +1470,15 @@ export function setupMock(): void {
 
       case 'export_page_markdown': {
         const a = args as Record<string, unknown>
-        const pid = a.pageId as string
+        const pid = a['pageId'] as string
         const page = blocks.get(pid)
         if (!page) throw new Error('not found')
         const children = [...blocks.values()]
-          .filter((b) => b.parent_id === pid && !(b.deleted_at as string | null))
-          .sort((x, y) => ((x.position as number) ?? 0) - ((y.position as number) ?? 0))
-        let md = `# ${(page.content as string) ?? 'Untitled'}\n\n`
+          .filter((b) => b['parent_id'] === pid && !(b['deleted_at'] as string | null))
+          .sort((x, y) => ((x['position'] as number) ?? 0) - ((y['position'] as number) ?? 0))
+        let md = `# ${(page['content'] as string) ?? 'Untitled'}\n\n`
         for (const child of children) {
-          md += `- ${(child.content as string) ?? ''}\n`
+          md += `- ${(child['content'] as string) ?? ''}\n`
         }
         return md
       }
@@ -1477,8 +1489,8 @@ export function setupMock(): void {
 
       case 'import_markdown': {
         const a = args as Record<string, unknown>
-        const content = (a.content as string) ?? ''
-        const filename = (a.filename as string | null) ?? null
+        const content = (a['content'] as string) ?? ''
+        const filename = (a['filename'] as string | null) ?? null
 
         // Derive page title from filename (strip .md extension) or first heading
         let pageTitle = 'Untitled'
@@ -1535,11 +1547,11 @@ export function setupMock(): void {
         const a = args as Record<string, unknown>
         return {
           id: fakeId(),
-          block_id: a.blockId as string,
-          filename: a.filename as string,
-          mime_type: a.mimeType as string,
-          size_bytes: a.sizeBytes as number,
-          fs_path: a.fsPath as string,
+          block_id: a['blockId'] as string,
+          filename: a['filename'] as string,
+          mime_type: a['mimeType'] as string,
+          size_bytes: a['sizeBytes'] as number,
+          fs_path: a['fsPath'] as string,
           created_at: new Date().toISOString(),
         }
       }
@@ -1584,18 +1596,18 @@ export function setupMock(): void {
         const linkSet = new Set<string>()
         const pageLinks: Array<{ source_id: string; target_id: string }> = []
         for (const b of blocks.values()) {
-          if (b.deleted_at) continue
-          const parentId = b.parent_id as string | null
+          if (b['deleted_at']) continue
+          const parentId = b['parent_id'] as string | null
           if (!parentId) continue
           // Only consider blocks whose parent is a page
           const parentBlock = blocks.get(parentId)
-          if (!parentBlock || parentBlock.block_type !== 'page') continue
-          const content = (b.content as string) ?? ''
+          if (!parentBlock || parentBlock['block_type'] !== 'page') continue
+          const content = (b['content'] as string) ?? ''
           for (const m of content.matchAll(LINK_RE_PL)) {
             const targetPageId = m[1] as string
             // Ensure target is an existing non-deleted page
             const targetBlock = blocks.get(targetPageId)
-            if (!targetBlock || targetBlock.block_type !== 'page' || targetBlock.deleted_at)
+            if (!targetBlock || targetBlock['block_type'] !== 'page' || targetBlock['deleted_at'])
               continue
             // Deduplicate edges
             const key = `${parentId}→${targetPageId}`
@@ -1647,6 +1659,6 @@ export function setupMock(): void {
 
   // Expose error injection to E2E tests via window globals
   const w = window as unknown as Record<string, unknown>
-  w.__injectMockError = injectMockError
-  w.__clearMockErrors = clearMockErrors
+  w['__injectMockError'] = injectMockError
+  w['__clearMockErrors'] = clearMockErrors
 }

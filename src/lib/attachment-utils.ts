@@ -8,7 +8,7 @@ export function getAssetUrl(fsPath: string): string | null {
   try {
     if (
       typeof window !== 'undefined' &&
-      (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
+      (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__']
     ) {
       return convertFileSrc(fsPath)
     }

@@ -134,7 +134,7 @@ export function QueryResult({
   const { sortedResults, sortKey, sortDir, handleColumnSort } = useQuerySorting({ results })
 
   const { params } = parseQueryExpression(expression)
-  const tableMode = params.table === 'true'
+  const tableMode = params['table'] === 'true'
 
   const columns = useMemo(() => detectColumns(results), [results])
 

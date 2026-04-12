@@ -13,19 +13,19 @@ import { formatSize, getAssetUrl } from '../attachment-utils'
 describe('attachment-utils', () => {
   describe('getAssetUrl', () => {
     it('returns null when not in Tauri environment', () => {
-      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
+      delete (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__']
       expect(getAssetUrl('/path/to/file.png')).toBeNull()
     })
 
     it('returns asset URL when in Tauri environment', () => {
-      ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+      ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
       const result = getAssetUrl('/path/to/file.png')
       expect(result).not.toBeNull()
       expect(mockedConvertFileSrc).toHaveBeenCalledWith('/path/to/file.png')
     })
 
     it('returns null when convertFileSrc throws', () => {
-      ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+      ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
       mockedConvertFileSrc.mockImplementationOnce(() => {
         throw new Error('Not available')
       })

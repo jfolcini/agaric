@@ -257,11 +257,11 @@ describe('buildFilters', () => {
 
 describe('OPERATOR_SYMBOLS', () => {
   it('maps all operator names to display symbols', () => {
-    expect(OPERATOR_SYMBOLS.eq).toBe('=')
-    expect(OPERATOR_SYMBOLS.neq).toBe('≠')
-    expect(OPERATOR_SYMBOLS.lt).toBe('<')
-    expect(OPERATOR_SYMBOLS.gt).toBe('>')
-    expect(OPERATOR_SYMBOLS.lte).toBe('≤')
-    expect(OPERATOR_SYMBOLS.gte).toBe('≥')
+    expect(OPERATOR_SYMBOLS['eq']).toBe('=')
+    expect(OPERATOR_SYMBOLS['neq']).toBe('≠')
+    expect(OPERATOR_SYMBOLS['lt']).toBe('<')
+    expect(OPERATOR_SYMBOLS['gt']).toBe('>')
+    expect(OPERATOR_SYMBOLS['lte']).toBe('≤')
+    expect(OPERATOR_SYMBOLS['gte']).toBe('≥')
   })
 })

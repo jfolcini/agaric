@@ -23,23 +23,26 @@ const daySectionProps = vi.hoisted(() => ({
 vi.mock('../DaySection', () => ({
   DaySection: (props: Record<string, unknown>) => {
     daySectionProps.captured.push(props)
-    const entry = props.entry as DayEntry
+    const entry = props['entry'] as DayEntry
     return (
       <section
         data-testid="day-section"
         data-date={entry.dateStr}
-        data-heading-level={props.headingLevel as string}
-        data-hide-heading={String(props.hideHeading)}
-        data-mode={props.mode as string}
+        data-heading-level={props['headingLevel'] as string}
+        data-hide-heading={String(props['hideHeading'])}
+        data-mode={props['mode'] as string}
         aria-label={`Journal for ${entry.displayDate}`}
       >
         <span>{entry.displayDate}</span>
-        {!!props.onNavigateToPage && (
+        {!!props['onNavigateToPage'] && (
           <button
             type="button"
             data-testid="navigate-btn"
             onClick={() =>
-              (props.onNavigateToPage as (pageId: string, title?: string) => void)('PAGE_1', 'Test')
+              (props['onNavigateToPage'] as (pageId: string, title?: string) => void)(
+                'PAGE_1',
+                'Test',
+              )
             }
           >
             Navigate
@@ -48,7 +51,7 @@ vi.mock('../DaySection', () => ({
         <button
           type="button"
           data-testid="add-block-btn"
-          onClick={() => (props.onAddBlock as (dateStr: string) => void)(entry.dateStr)}
+          onClick={() => (props['onAddBlock'] as (dateStr: string) => void)(entry.dateStr)}
         >
           Add block
         </button>

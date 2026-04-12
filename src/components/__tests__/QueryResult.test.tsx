@@ -1286,8 +1286,8 @@ describe('QueryResult – operator syntax', () => {
     // Verify "today" was resolved to an ISO date string
     const call = mockedInvoke.mock.calls.find((c) => c[0] === 'query_by_property')
     const args = call?.[1] as Record<string, unknown>
-    expect(args.valueDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-    expect(args.valueText).toBeNull()
+    expect(args['valueDate']).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(args['valueText']).toBeNull()
   })
 
   it('passes operator "lte" to query_by_property for property:due_date<=2025-12-31', async () => {
@@ -1356,8 +1356,8 @@ describe('QueryResult – operator syntax', () => {
       expect(call).toBeDefined()
       const args = call?.[1] as Record<string, unknown>
       // "today" should be resolved to an ISO date (YYYY-MM-DD)
-      expect(args.valueDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-      expect(args.valueText).toBeNull()
+      expect(args['valueDate']).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+      expect(args['valueText']).toBeNull()
     })
   })
 

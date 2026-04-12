@@ -55,7 +55,7 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
         let responseHasMore = false
 
         if (type === 'tag') {
-          const tagExpr = params.expr ?? ''
+          const tagExpr = params['expr'] ?? ''
           const resp = await queryByTags({
             tagIds: [],
             prefixes: tagExpr ? [tagExpr] : [],
@@ -67,14 +67,14 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
           nextCursor = resp.next_cursor
           responseHasMore = resp.has_more
         } else if (type === 'property') {
-          if (!params.key) {
+          if (!params['key']) {
             setError('Property query requires key:NAME parameter')
             return
           }
           const resp = await queryByProperty({
-            key: params.key,
-            ...(params.value != null && { valueText: params.value }),
-            ...(params.date != null && { valueDate: params.date }),
+            key: params['key'],
+            ...(params['value'] != null && { valueText: params['value'] }),
+            ...(params['date'] != null && { valueDate: params['date'] }),
             cursor: pageCursor,
             limit: PAGE_SIZE,
           })
@@ -140,12 +140,12 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
               .slice(0, 50)
           }
         } else if (type === 'backlinks') {
-          if (!params.target) {
+          if (!params['target']) {
             setError('Backlinks query requires target:ULID parameter')
             return
           }
           const resp = await listBlocks({
-            parentId: params.target,
+            parentId: params['target'],
             cursor: pageCursor,
             limit: PAGE_SIZE,
           })

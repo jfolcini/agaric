@@ -40,13 +40,13 @@ function makeCallbacks(overrides: { isLastBlock?: () => boolean } = {}): BlockKe
     onFocusPrev: track('onFocusPrev'),
     onFocusNext: track('onFocusNext'),
     onDeleteBlock: (opts: DeleteBlockOpts) => {
-      _calls.onDeleteBlock = (_calls.onDeleteBlock ?? 0) + 1
+      _calls['onDeleteBlock'] = (_calls['onDeleteBlock'] ?? 0) + 1
       _deleteBlockArgs.push(opts)
     },
     onIndent: track('onIndent'),
     onDedent: track('onDedent'),
     onFlush: () => {
-      _calls.onFlush = (_calls.onFlush ?? 0) + 1
+      _calls['onFlush'] = (_calls['onFlush'] ?? 0) + 1
       return null
     },
     onMergeWithPrev: track('onMergeWithPrev'),
@@ -88,9 +88,9 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onFlush).toBe(1)
-      expect(cbs._calls.onFocusPrev).toBe(1)
-      expect(cbs._calls.onFocusNext).toBeUndefined()
+      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onFocusPrev']).toBe(1)
+      expect(cbs._calls['onFocusNext']).toBeUndefined()
     })
 
     it('ArrowLeft at from=0 calls onFlush + onFocusPrev', () => {
@@ -101,8 +101,8 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onFlush).toBe(1)
-      expect(cbs._calls.onFocusPrev).toBe(1)
+      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onFocusPrev']).toBe(1)
     })
 
     it('ArrowUp at from=1 (with docSize=2 for empty doc) triggers', () => {
@@ -112,7 +112,7 @@ describe('handleBlockKeyDown', () => {
 
       handleBlockKeyDown(event, editor, cbs)
 
-      expect(cbs._calls.onFocusPrev).toBe(1)
+      expect(cbs._calls['onFocusPrev']).toBe(1)
     })
 
     it('ArrowUp NOT at start does nothing', () => {
@@ -123,8 +123,8 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).not.toHaveBeenCalled()
-      expect(cbs._calls.onFocusPrev).toBeUndefined()
-      expect(cbs._calls.onFlush).toBeUndefined()
+      expect(cbs._calls['onFocusPrev']).toBeUndefined()
+      expect(cbs._calls['onFlush']).toBeUndefined()
     })
 
     it('ArrowLeft with non-empty selection does nothing', () => {
@@ -135,7 +135,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).not.toHaveBeenCalled()
-      expect(cbs._calls.onFocusPrev).toBeUndefined()
+      expect(cbs._calls['onFocusPrev']).toBeUndefined()
     })
   })
 
@@ -148,9 +148,9 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onFlush).toBe(1)
-      expect(cbs._calls.onFocusNext).toBe(1)
-      expect(cbs._calls.onFocusPrev).toBeUndefined()
+      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onFocusNext']).toBe(1)
+      expect(cbs._calls['onFocusPrev']).toBeUndefined()
     })
 
     it('ArrowRight at end calls onFlush + onFocusNext', () => {
@@ -161,8 +161,8 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onFlush).toBe(1)
-      expect(cbs._calls.onFocusNext).toBe(1)
+      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onFocusNext']).toBe(1)
     })
 
     it('ArrowDown NOT at end does nothing', () => {
@@ -173,7 +173,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).not.toHaveBeenCalled()
-      expect(cbs._calls.onFocusNext).toBeUndefined()
+      expect(cbs._calls['onFocusNext']).toBeUndefined()
     })
 
     it('ArrowRight with non-empty selection at end does nothing', () => {
@@ -184,7 +184,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).not.toHaveBeenCalled()
-      expect(cbs._calls.onFocusNext).toBeUndefined()
+      expect(cbs._calls['onFocusNext']).toBeUndefined()
     })
   })
 
@@ -197,9 +197,9 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onFlush).toBe(1)
-      expect(cbs._calls.onIndent).toBe(1)
-      expect(cbs._calls.onDedent).toBeUndefined()
+      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onIndent']).toBe(1)
+      expect(cbs._calls['onDedent']).toBeUndefined()
     })
 
     it('Ctrl+Shift+ArrowLeft calls onFlush + onDedent', () => {
@@ -210,9 +210,9 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onFlush).toBe(1)
-      expect(cbs._calls.onDedent).toBe(1)
-      expect(cbs._calls.onIndent).toBeUndefined()
+      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onDedent']).toBe(1)
+      expect(cbs._calls['onIndent']).toBeUndefined()
     })
 
     it('Meta+Shift+ArrowRight calls onIndent (macOS)', () => {
@@ -223,7 +223,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onIndent).toBe(1)
+      expect(cbs._calls['onIndent']).toBe(1)
     })
 
     it('Meta+Shift+ArrowLeft calls onDedent (macOS)', () => {
@@ -234,7 +234,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onDedent).toBe(1)
+      expect(cbs._calls['onDedent']).toBe(1)
     })
 
     it('Tab does NOT call onIndent (Tab freed for focus navigation)', () => {
@@ -245,8 +245,8 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).not.toHaveBeenCalled()
-      expect(cbs._calls.onIndent).toBeUndefined()
-      expect(cbs._calls.onDedent).toBeUndefined()
+      expect(cbs._calls['onIndent']).toBeUndefined()
+      expect(cbs._calls['onDedent']).toBeUndefined()
     })
 
     it('Ctrl+ArrowRight without Shift does NOT call onIndent', () => {
@@ -256,7 +256,7 @@ describe('handleBlockKeyDown', () => {
 
       handleBlockKeyDown(event, editor, cbs)
 
-      expect(cbs._calls.onIndent).toBeUndefined()
+      expect(cbs._calls['onIndent']).toBeUndefined()
     })
   })
 
@@ -269,7 +269,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onDeleteBlock).toBe(1)
+      expect(cbs._calls['onDeleteBlock']).toBe(1)
       expect(cbs._deleteBlockArgs[0]).toEqual({ cursorPlacement: 'end' })
     })
 
@@ -281,8 +281,8 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).not.toHaveBeenCalled()
-      expect(cbs._calls.onDeleteBlock).toBeUndefined()
-      expect(cbs._calls.onMergeWithPrev).toBeUndefined()
+      expect(cbs._calls['onDeleteBlock']).toBeUndefined()
+      expect(cbs._calls['onMergeWithPrev']).toBeUndefined()
     })
 
     it('Backspace on empty does not flush (nothing to flush)', () => {
@@ -292,7 +292,7 @@ describe('handleBlockKeyDown', () => {
 
       handleBlockKeyDown(event, editor, cbs)
 
-      expect(cbs._calls.onFlush).toBeUndefined()
+      expect(cbs._calls['onFlush']).toBeUndefined()
     })
 
     it('Backspace on sole remaining block is a no-op (last-block guard)', () => {
@@ -303,7 +303,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onDeleteBlock).toBeUndefined()
+      expect(cbs._calls['onDeleteBlock']).toBeUndefined()
       expect(cbs._deleteBlockArgs).toHaveLength(0)
     })
 
@@ -315,7 +315,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onDeleteBlock).toBe(1)
+      expect(cbs._calls['onDeleteBlock']).toBe(1)
       expect(cbs._deleteBlockArgs[0]).toEqual({ cursorPlacement: 'end' })
     })
 
@@ -326,7 +326,7 @@ describe('handleBlockKeyDown', () => {
 
       handleBlockKeyDown(event, editor, cbs)
 
-      expect(cbs._calls.onDeleteBlock).toBe(1)
+      expect(cbs._calls['onDeleteBlock']).toBe(1)
       expect(cbs._deleteBlockArgs[0]).toEqual({ cursorPlacement: 'end' })
     })
   })
@@ -340,7 +340,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onEnterSave).toBe(1)
+      expect(cbs._calls['onEnterSave']).toBe(1)
     })
 
     it('Shift+Enter does nothing (TipTap default handles line break)', () => {
@@ -351,7 +351,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).not.toHaveBeenCalled()
-      expect(cbs._calls.onEnterSave).toBeUndefined()
+      expect(cbs._calls['onEnterSave']).toBeUndefined()
     })
   })
 
@@ -364,7 +364,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onEscapeCancel).toBe(1)
+      expect(cbs._calls['onEscapeCancel']).toBe(1)
     })
   })
 
@@ -390,7 +390,7 @@ describe('handleBlockKeyDown', () => {
 
       handleBlockKeyDown(event, editor, cbs)
 
-      expect(cbs._calls.onFocusPrev).toBe(1)
+      expect(cbs._calls['onFocusPrev']).toBe(1)
     })
 
     it('empty doc (docSize=2): cursor at 1 is both at start and end — ArrowDown → next', () => {
@@ -403,7 +403,7 @@ describe('handleBlockKeyDown', () => {
 
       handleBlockKeyDown(event, editor, cbs)
 
-      expect(cbs._calls.onFocusNext).toBe(1)
+      expect(cbs._calls['onFocusNext']).toBe(1)
     })
   })
 
@@ -423,8 +423,8 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onMergeWithPrev).toBe(1)
-      expect(cbs._calls.onDeleteBlock).toBeUndefined()
+      expect(cbs._calls['onMergeWithPrev']).toBe(1)
+      expect(cbs._calls['onDeleteBlock']).toBeUndefined()
     })
 
     it('Backspace at position 0 of non-empty block calls onMergeWithPrev', () => {
@@ -441,7 +441,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onMergeWithPrev).toBe(1)
+      expect(cbs._calls['onMergeWithPrev']).toBe(1)
     })
 
     it('Backspace on empty block still calls onDeleteBlock with cursorPlacement end (no regression)', () => {
@@ -452,9 +452,9 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onDeleteBlock).toBe(1)
+      expect(cbs._calls['onDeleteBlock']).toBe(1)
       expect(cbs._deleteBlockArgs[0]).toEqual({ cursorPlacement: 'end' })
-      expect(cbs._calls.onMergeWithPrev).toBeUndefined()
+      expect(cbs._calls['onMergeWithPrev']).toBeUndefined()
     })
 
     it('Backspace in middle of text does NOT trigger merge', () => {
@@ -471,8 +471,8 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).not.toHaveBeenCalled()
-      expect(cbs._calls.onMergeWithPrev).toBeUndefined()
-      expect(cbs._calls.onDeleteBlock).toBeUndefined()
+      expect(cbs._calls['onMergeWithPrev']).toBeUndefined()
+      expect(cbs._calls['onDeleteBlock']).toBeUndefined()
     })
 
     it('Backspace at start with selection does NOT trigger merge', () => {
@@ -489,7 +489,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).not.toHaveBeenCalled()
-      expect(cbs._calls.onMergeWithPrev).toBeUndefined()
+      expect(cbs._calls['onMergeWithPrev']).toBeUndefined()
     })
   })
 
@@ -502,8 +502,8 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onToggleTodo).toBe(1)
-      expect(cbs._calls.onEnterSave).toBeUndefined()
+      expect(cbs._calls['onToggleTodo']).toBe(1)
+      expect(cbs._calls['onEnterSave']).toBeUndefined()
     })
 
     it('Meta+Enter calls onToggleTodo (macOS)', () => {
@@ -514,8 +514,8 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onToggleTodo).toBe(1)
-      expect(cbs._calls.onEnterSave).toBeUndefined()
+      expect(cbs._calls['onToggleTodo']).toBe(1)
+      expect(cbs._calls['onEnterSave']).toBeUndefined()
     })
 
     it('plain Enter does NOT call onToggleTodo', () => {
@@ -525,8 +525,8 @@ describe('handleBlockKeyDown', () => {
 
       handleBlockKeyDown(event, editor, cbs)
 
-      expect(cbs._calls.onToggleTodo).toBeUndefined()
-      expect(cbs._calls.onEnterSave).toBe(1)
+      expect(cbs._calls['onToggleTodo']).toBeUndefined()
+      expect(cbs._calls['onEnterSave']).toBe(1)
     })
   })
 
@@ -539,7 +539,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onToggleCollapse).toBe(1)
+      expect(cbs._calls['onToggleCollapse']).toBe(1)
     })
 
     it('Meta+. calls onToggleCollapse (macOS)', () => {
@@ -550,7 +550,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onToggleCollapse).toBe(1)
+      expect(cbs._calls['onToggleCollapse']).toBe(1)
     })
 
     it('plain . does NOT call onToggleCollapse', () => {
@@ -561,7 +561,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).not.toHaveBeenCalled()
-      expect(cbs._calls.onToggleCollapse).toBeUndefined()
+      expect(cbs._calls['onToggleCollapse']).toBeUndefined()
     })
   })
 
@@ -574,8 +574,8 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onFlush).toBe(1)
-      expect(cbs._calls.onMoveUp).toBe(1)
+      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onMoveUp']).toBe(1)
     })
 
     it('Ctrl+Shift+ArrowDown calls onFlush + onMoveDown', () => {
@@ -586,8 +586,8 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onFlush).toBe(1)
-      expect(cbs._calls.onMoveDown).toBe(1)
+      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onMoveDown']).toBe(1)
     })
 
     it('Meta+Shift+ArrowUp calls onMoveUp (macOS)', () => {
@@ -598,7 +598,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onMoveUp).toBe(1)
+      expect(cbs._calls['onMoveUp']).toBe(1)
     })
 
     it('Meta+Shift+ArrowDown calls onMoveDown (macOS)', () => {
@@ -609,7 +609,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onMoveDown).toBe(1)
+      expect(cbs._calls['onMoveDown']).toBe(1)
     })
 
     it('Ctrl+ArrowUp without Shift does NOT call onMoveUp', () => {
@@ -619,7 +619,7 @@ describe('handleBlockKeyDown', () => {
 
       handleBlockKeyDown(event, editor, cbs)
 
-      expect(cbs._calls.onMoveUp).toBeUndefined()
+      expect(cbs._calls['onMoveUp']).toBeUndefined()
     })
   })
 
@@ -648,8 +648,8 @@ describe('handleBlockKeyDown', () => {
 
       handleBlockKeyDown(event, editor, cbs)
 
-      expect(cbs._calls.onFocusPrev).toBeUndefined()
-      expect(cbs._calls.onFlush).toBeUndefined()
+      expect(cbs._calls['onFocusPrev']).toBeUndefined()
+      expect(cbs._calls['onFlush']).toBeUndefined()
       expect(event.preventDefault).not.toHaveBeenCalled()
     })
 
@@ -661,8 +661,8 @@ describe('handleBlockKeyDown', () => {
 
       handleBlockKeyDown(event, editor, cbs)
 
-      expect(cbs._calls.onFocusNext).toBeUndefined()
-      expect(cbs._calls.onFlush).toBeUndefined()
+      expect(cbs._calls['onFocusNext']).toBeUndefined()
+      expect(cbs._calls['onFlush']).toBeUndefined()
       expect(event.preventDefault).not.toHaveBeenCalled()
     })
 
@@ -674,8 +674,8 @@ describe('handleBlockKeyDown', () => {
 
       handleBlockKeyDown(event, editor, cbs)
 
-      expect(cbs._calls.onFocusPrev).toBe(1)
-      expect(cbs._calls.onFlush).toBe(1)
+      expect(cbs._calls['onFocusPrev']).toBe(1)
+      expect(cbs._calls['onFlush']).toBe(1)
       expect(event.preventDefault).toHaveBeenCalled()
     })
   })

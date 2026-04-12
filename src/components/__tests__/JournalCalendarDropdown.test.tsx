@@ -21,16 +21,16 @@ vi.mock('../../hooks/useBlockPropertyEvents', () => ({
 
 vi.mock('../ui/calendar', () => ({
   Calendar: (props: Record<string, unknown>) => {
-    const modifiers = props.modifiers as Record<string, Date[]> | undefined
-    const components = props.components as Record<string, unknown> | undefined
+    const modifiers = props['modifiers'] as Record<string, Date[]> | undefined
+    const components = props['components'] as Record<string, unknown> | undefined
     return (
       <div
         data-testid="mock-calendar"
-        data-has-content={modifiers?.hasContent?.length ?? 0}
-        data-has-due={modifiers?.hasDue?.length ?? 0}
-        data-has-scheduled={modifiers?.hasScheduled?.length ?? 0}
-        data-has-property={modifiers?.hasProperty?.length ?? 0}
-        data-has-day-button={components?.DayButton ? 'true' : 'false'}
+        data-has-content={modifiers?.['hasContent']?.length ?? 0}
+        data-has-due={modifiers?.['hasDue']?.length ?? 0}
+        data-has-scheduled={modifiers?.['hasScheduled']?.length ?? 0}
+        data-has-property={modifiers?.['hasProperty']?.length ?? 0}
+        data-has-day-button={components?.['DayButton'] ? 'true' : 'false'}
       >
         Calendar
       </div>

@@ -41,7 +41,7 @@ function makeAttachment(
 describe('AttachmentRenderer', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
+    delete (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__']
   })
 
   it('returns null when attachments array is empty', () => {
@@ -61,7 +61,7 @@ describe('AttachmentRenderer', () => {
   })
 
   it('renders image attachment with correct width when Tauri is available', () => {
-    ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+    ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
     const { container } = render(
       <AttachmentRenderer
         blockId="B1"
@@ -82,7 +82,7 @@ describe('AttachmentRenderer', () => {
   })
 
   it('shows image resize toolbar when imageHovered is true', () => {
-    ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+    ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
     render(
       <AttachmentRenderer
         blockId="B1"
@@ -99,7 +99,7 @@ describe('AttachmentRenderer', () => {
   })
 
   it('hides image resize toolbar when imageHovered is false', () => {
-    ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+    ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
     render(
       <AttachmentRenderer
         blockId="B1"
@@ -116,7 +116,7 @@ describe('AttachmentRenderer', () => {
   })
 
   it('calls onImageHoveredChange on mouse enter/leave', () => {
-    ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+    ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
     const onHoveredChange = vi.fn()
     const { container } = render(
       <AttachmentRenderer
@@ -163,7 +163,7 @@ describe('AttachmentRenderer', () => {
   })
 
   it('PDF attachment click triggers onPdfOpen when Tauri available', () => {
-    ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+    ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
     const onPdfOpen = vi.fn()
     render(
       <AttachmentRenderer
@@ -190,7 +190,7 @@ describe('AttachmentRenderer', () => {
   })
 
   it('image click triggers onLightboxOpen', () => {
-    ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+    ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
     const onLightboxOpen = vi.fn()
     const { container } = render(
       <AttachmentRenderer
@@ -254,7 +254,7 @@ describe('AttachmentRenderer', () => {
   })
 
   it('has no a11y violations with image attachment (Tauri available)', async () => {
-    ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+    ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
     const { container } = render(
       <AttachmentRenderer
         blockId="B1"

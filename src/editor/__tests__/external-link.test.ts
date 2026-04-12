@@ -121,7 +121,7 @@ describe('ExternalLink paste-to-link (F-40)', () => {
 
     const linkMark = textNode.marks.find((m) => m.type.name === 'link')
     expect(linkMark).toBeDefined()
-    expect(linkMark?.attrs.href).toBe('https://example.com')
+    expect(linkMark?.attrs['href']).toBe('https://example.com')
   })
 
   it('pasting non-URL text with empty selection does not create a link', () => {
@@ -143,7 +143,7 @@ describe('ExternalLink paste-to-link (F-40)', () => {
 
     const linkMark = textNode.marks.find((m) => m.type.name === 'link')
     expect(linkMark).toBeDefined()
-    expect(linkMark?.attrs.href).toBe('https://example.com/path')
+    expect(linkMark?.attrs['href']).toBe('https://example.com/path')
   })
 
   it('pasting a URL with non-empty selection returns false (delegates to linkOnPaste)', () => {

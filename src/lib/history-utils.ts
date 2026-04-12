@@ -7,12 +7,12 @@ import type { HistoryEntry } from './tauri'
 export function getPayloadPreview(entry: HistoryEntry, maxLen = 100): string | null {
   try {
     const parsed = JSON.parse(entry.payload) as Record<string, unknown>
-    if (typeof parsed.to_text === 'string') {
-      const text = parsed.to_text
+    if (typeof parsed['to_text'] === 'string') {
+      const text = parsed['to_text']
       return text.length > maxLen ? `${text.slice(0, maxLen)}...` : text
     }
-    if (typeof parsed.content === 'string') {
-      const text = parsed.content
+    if (typeof parsed['content'] === 'string') {
+      const text = parsed['content']
       return text.length > maxLen ? `${text.slice(0, maxLen)}...` : text
     }
   } catch {
@@ -29,8 +29,8 @@ export function getPayloadPreview(entry: HistoryEntry, maxLen = 100): string | n
 export function getPayloadRawContent(entry: HistoryEntry): string | null {
   try {
     const parsed = JSON.parse(entry.payload) as Record<string, unknown>
-    if (typeof parsed.to_text === 'string') return parsed.to_text
-    if (typeof parsed.content === 'string') return parsed.content
+    if (typeof parsed['to_text'] === 'string') return parsed['to_text']
+    if (typeof parsed['content'] === 'string') return parsed['content']
   } catch {
     // Invalid JSON
   }
@@ -47,10 +47,10 @@ export function getPropertyPayload(entry: HistoryEntry): { key: string; value?: 
   }
   try {
     const parsed = JSON.parse(entry.payload) as Record<string, unknown>
-    if (typeof parsed.key === 'string') {
+    if (typeof parsed['key'] === 'string') {
       return {
-        key: parsed.key,
-        ...(typeof parsed.value === 'string' ? { value: parsed.value } : {}),
+        key: parsed['key'],
+        ...(typeof parsed['value'] === 'string' ? { value: parsed['value'] } : {}),
       }
     }
   } catch {

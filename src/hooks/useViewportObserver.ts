@@ -36,7 +36,7 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
           const next = new Set(prev)
           let changed = false
           for (const entry of entries) {
-            const id = (entry.target as HTMLElement).dataset.blockId
+            const id = (entry.target as HTMLElement).dataset['blockId']
             if (!id) continue
             if (entry.isIntersecting && next.has(id)) {
               next.delete(id)

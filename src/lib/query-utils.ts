@@ -77,7 +77,7 @@ export function parseQueryExpression(expr: string): {
     return { type: 'filtered', params, propertyFilters, tagFilters }
   }
 
-  const explicitType = params.type as 'tag' | 'property' | 'backlinks' | undefined
+  const explicitType = params['type'] as 'tag' | 'property' | 'backlinks' | undefined
   return { type: explicitType ?? 'unknown', params, propertyFilters, tagFilters }
 }
 

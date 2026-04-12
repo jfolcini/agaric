@@ -80,17 +80,17 @@ export function QueryBuilderModal({
     const parsed = parseQueryExpression(initialExpression)
     if (parsed.type === 'tag') {
       setQueryType('tag')
-      setTagExpr(parsed.params.expr ?? '')
+      setTagExpr(parsed.params['expr'] ?? '')
     } else if (parsed.type === 'property') {
       setQueryType('property')
-      setPropertyKey(parsed.params.key ?? '')
-      setPropertyValue(parsed.params.value ?? '')
-      setPropertyOperator(parsed.params.operator ?? 'eq')
+      setPropertyKey(parsed.params['key'] ?? '')
+      setPropertyValue(parsed.params['value'] ?? '')
+      setPropertyOperator(parsed.params['operator'] ?? 'eq')
     } else if (parsed.type === 'backlinks') {
       setQueryType('backlinks')
-      setBacklinkTarget(parsed.params.target ?? '')
+      setBacklinkTarget(parsed.params['target'] ?? '')
     }
-    setShowAsTable(parsed.params.table === 'true')
+    setShowAsTable(parsed.params['table'] === 'true')
   }, [initialExpression])
 
   // ---- Expression generation ----

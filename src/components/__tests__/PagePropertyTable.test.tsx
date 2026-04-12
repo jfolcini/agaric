@@ -129,11 +129,11 @@ function setupMock(props: PropertyRow[] = [], defs: PropertyDefinition[] = []) {
     if (cmd === 'set_property') return undefined
     if (cmd === 'delete_property') return undefined
     if (cmd === 'create_property_def') {
-      return makeDef((a?.key as string) ?? 'new', (a?.valueType as string) ?? 'text')
+      return makeDef((a?.['key'] as string) ?? 'new', (a?.['valueType'] as string) ?? 'text')
     }
     if (cmd === 'update_property_def_options') {
-      const d = defs.find((def) => def.key === a?.key)
-      return { ...d, key: a?.key as string, options: a?.options as string }
+      const d = defs.find((def) => def.key === a?.['key'])
+      return { ...d, key: a?.['key'] as string, options: a?.['options'] as string }
     }
     // PageHeader also calls these in integration
     if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
@@ -532,7 +532,7 @@ describe('PagePropertyTable add property flow', () => {
       if (cmd === 'get_properties') return [...props]
       if (cmd === 'list_property_defs') return [...defs]
       if (cmd === 'create_property_def') {
-        const newDef = makeDef(a?.key as string, (a?.valueType as string) ?? 'text')
+        const newDef = makeDef(a?.['key'] as string, (a?.['valueType'] as string) ?? 'text')
         defs.push(newDef)
         return newDef
       }
@@ -797,7 +797,7 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
       if (cmd === 'list_property_defs') return []
       if (cmd === 'create_property_def') {
         const err: Record<string, unknown> = new Error() as unknown as Record<string, unknown>
-        err.message = undefined
+        err['message'] = undefined
         throw err
       }
       return null
@@ -833,7 +833,7 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
       if (cmd === 'get_properties') return []
       if (cmd === 'list_property_defs') return []
       if (cmd === 'create_property_def')
-        return makeDef((a?.key as string) ?? 'myprop', (a?.valueType as string) ?? 'text')
+        return makeDef((a?.['key'] as string) ?? 'myprop', (a?.['valueType'] as string) ?? 'text')
       if (cmd === 'set_property') throw new Error('set failed after create')
       return null
     })

@@ -257,7 +257,7 @@ describe('AgendaFilterBuilder', () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'list_tags_by_prefix') {
         const a = args as Record<string, unknown>
-        const prefix = ((a.prefix as string) ?? '').toLowerCase()
+        const prefix = ((a['prefix'] as string) ?? '').toLowerCase()
         return [
           { tag_id: 'TAG_1', name: 'work', usage_count: 5 },
           { tag_id: 'TAG_2', name: 'workout', usage_count: 2 },

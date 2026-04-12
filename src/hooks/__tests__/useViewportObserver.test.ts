@@ -139,7 +139,7 @@ describe('useViewportObserver', () => {
     const { result, unmount } = renderHook(() => useViewportObserver())
 
     const el = document.createElement('div')
-    el.dataset.blockId = 'BLOCK_A'
+    el.dataset['blockId'] = 'BLOCK_A'
     result.current.observeRef(el)
 
     const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
@@ -164,7 +164,7 @@ describe('useViewportObserver', () => {
     const { result, unmount } = renderHook(() => useViewportObserver())
 
     const el = document.createElement('div')
-    el.dataset.blockId = 'BLOCK_A'
+    el.dataset['blockId'] = 'BLOCK_A'
     result.current.observeRef(el)
 
     const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
@@ -187,7 +187,7 @@ describe('useViewportObserver', () => {
     const { result, unmount } = renderHook(() => useViewportObserver())
 
     const el = document.createElement('div')
-    el.dataset.blockId = 'BLOCK_A'
+    el.dataset['blockId'] = 'BLOCK_A'
     result.current.observeRef(el)
 
     const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
@@ -210,7 +210,7 @@ describe('useViewportObserver', () => {
     const { result, unmount } = renderHook(() => useViewportObserver())
 
     const el = document.createElement('div')
-    el.dataset.blockId = 'BLOCK_A'
+    el.dataset['blockId'] = 'BLOCK_A'
     result.current.observeRef(el)
 
     const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
@@ -277,9 +277,9 @@ describe('useViewportObserver', () => {
     const { result, unmount } = renderHook(() => useViewportObserver())
 
     const elA = document.createElement('div')
-    elA.dataset.blockId = 'A'
+    elA.dataset['blockId'] = 'A'
     const elB = document.createElement('div')
-    elB.dataset.blockId = 'B'
+    elB.dataset['blockId'] = 'B'
 
     result.current.observeRef(elA)
     result.current.observeRef(elB)
@@ -313,7 +313,7 @@ describe('useViewportObserver', () => {
     const { result, unmount } = renderHook(() => useViewportObserver())
 
     const el = document.createElement('div')
-    el.dataset.blockId = 'A'
+    el.dataset['blockId'] = 'A'
     result.current.observeRef(el)
 
     const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver

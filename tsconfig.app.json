@@ -26,6 +26,7 @@
     "noUncheckedSideEffectImports": true,
     "exactOptionalPropertyTypes": true,
     "noImplicitReturns": true,
+    "noPropertyAccessFromIndexSignature": true,
 
     /* Path aliases */
     "baseUrl": ".",

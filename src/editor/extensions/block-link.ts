@@ -50,7 +50,7 @@ export const BlockLink = Node.create<BlockLinkOptions>({
       id: {
         default: null,
         parseHTML: (el) => el.getAttribute('data-id'),
-        renderHTML: (attrs) => ({ 'data-id': attrs.id as string }),
+        renderHTML: (attrs) => ({ 'data-id': attrs['id'] as string }),
       },
     }
   },
@@ -60,7 +60,7 @@ export const BlockLink = Node.create<BlockLinkOptions>({
   },
 
   renderHTML({ node, HTMLAttributes }) {
-    const title = this.options.resolveTitle(node.attrs.id as string)
+    const title = this.options.resolveTitle(node.attrs['id'] as string)
     return [
       'span',
       mergeAttributes(HTMLAttributes, {
@@ -77,7 +77,7 @@ export const BlockLink = Node.create<BlockLinkOptions>({
     const extension = this
     return ({ node, editor: nodeEditor, getPos }) => {
       const dom = document.createElement('span')
-      let currentId = node.attrs.id as string
+      let currentId = node.attrs['id'] as string
 
       function render(blockId: string) {
         currentId = blockId
@@ -126,7 +126,7 @@ export const BlockLink = Node.create<BlockLinkOptions>({
         dom,
         update(updatedNode) {
           if (updatedNode.type.name !== 'block_link') return false
-          render(updatedNode.attrs.id as string)
+          render(updatedNode.attrs['id'] as string)
           return true
         },
         destroy() {
@@ -154,7 +154,7 @@ export const BlockLink = Node.create<BlockLinkOptions>({
         const nodeBefore = $from.nodeBefore
         if (!nodeBefore || nodeBefore.type.name !== 'block_link') return false
 
-        const id = nodeBefore.attrs.id as string
+        const id = nodeBefore.attrs['id'] as string
         const title = this.options.resolveTitle(id)
         const nodeSize = nodeBefore.nodeSize
         const from = $from.pos - nodeSize

@@ -35,30 +35,30 @@ vi.mock('../../../hooks/useBatchCounts', () => ({
 // ── Mock DaySection ─────────────────────────────────────────────────
 vi.mock('../DaySection', () => ({
   DaySection: (props: Record<string, unknown>) => {
-    const entry = props.entry as DayEntry
+    const entry = props['entry'] as DayEntry
     return (
       <section
         data-testid={`day-section-${entry.dateStr}`}
-        data-heading-level={props.headingLevel as string}
-        data-compact={String(!!props.compact)}
-        data-mode={props.mode as string}
-        data-has-navigate={String(!!props.onNavigateToPage)}
+        data-heading-level={props['headingLevel'] as string}
+        data-compact={String(!!props['compact'])}
+        data-mode={props['mode'] as string}
+        data-has-navigate={String(!!props['onNavigateToPage'])}
         aria-label={`Journal for ${entry.displayDate}`}
       >
         <span>{entry.displayDate}</span>
         <button
           type="button"
           data-testid={`add-block-${entry.dateStr}`}
-          onClick={() => (props.onAddBlock as (dateStr: string) => void)(entry.dateStr)}
+          onClick={() => (props['onAddBlock'] as (dateStr: string) => void)(entry.dateStr)}
         >
           Add block
         </button>
-        {!!props.onNavigateToPage && (
+        {!!props['onNavigateToPage'] && (
           <button
             type="button"
             data-testid={`navigate-${entry.dateStr}`}
             onClick={() =>
-              (props.onNavigateToPage as (pageId: string, title?: string) => void)(
+              (props['onNavigateToPage'] as (pageId: string, title?: string) => void)(
                 `page-${entry.dateStr}`,
                 entry.dateStr,
               )

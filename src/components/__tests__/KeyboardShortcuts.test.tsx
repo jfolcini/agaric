@@ -186,7 +186,7 @@ describe('KeyboardShortcuts', () => {
     render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
 
     const table = screen.getByTestId('shortcuts-table')
-    expect(table.dataset.slot).toBe('scroll-area')
+    expect(table.dataset['slot']).toBe('scroll-area')
   })
 
   it('individual keys are rendered as separate kbd elements', () => {

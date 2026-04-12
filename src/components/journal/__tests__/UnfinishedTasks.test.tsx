@@ -476,7 +476,7 @@ describe('UnfinishedTasks', () => {
 // Mock DaySection — vi.mock is hoisted above imports automatically
 vi.mock('../DaySection', () => ({
   DaySection: (props: Record<string, unknown>) => {
-    const entry = props.entry as { dateStr: string; displayDate: string }
+    const entry = props['entry'] as { dateStr: string; displayDate: string }
     return (
       <section data-testid="day-section" data-date={entry.dateStr}>
         <span>{entry.displayDate}</span>

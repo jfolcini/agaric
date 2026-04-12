@@ -44,7 +44,7 @@ describe('seed data', () => {
       items: Record<string, unknown>[]
     }
     expect(result.items).toHaveLength(6)
-    const titles = result.items.map((b) => b.content)
+    const titles = result.items.map((b) => b['content'])
     expect(titles).toContain('Getting Started')
     expect(titles).toContain('Quick Notes')
     expect(titles).toContain('Projects')
@@ -57,7 +57,7 @@ describe('seed data', () => {
       items: Record<string, unknown>[]
     }
     expect(result.items).toHaveLength(3)
-    const names = result.items.map((b) => b.content)
+    const names = result.items.map((b) => b['content'])
     expect(names).toContain('work')
     expect(names).toContain('personal')
     expect(names).toContain('idea')
@@ -67,8 +67,8 @@ describe('seed data', () => {
     const today = new Date()
     const expected = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
     const block = invoke('get_block', { blockId: SEED_IDS.PAGE_DAILY }) as Record<string, unknown>
-    expect(block.content).toBe(expected)
-    expect(block.block_type).toBe('page')
+    expect(block['content']).toBe(expected)
+    expect(block['block_type']).toBe('page')
   })
 
   it('populates children of Getting Started page', () => {
@@ -76,7 +76,7 @@ describe('seed data', () => {
       items: Record<string, unknown>[]
     }
     expect(result.items).toHaveLength(5)
-    expect(result.items[0]?.content as string).toContain('Welcome')
+    expect(result.items[0]?.['content'] as string).toContain('Welcome')
   })
 
   it('populates children of daily page', () => {
@@ -84,7 +84,7 @@ describe('seed data', () => {
       items: Record<string, unknown>[]
     }
     expect(result.items).toHaveLength(5)
-    expect(result.items[0]?.content as string).toContain('standup')
+    expect(result.items[0]?.['content'] as string).toContain('standup')
   })
 
   it('resetMock re-seeds the store', () => {
@@ -94,7 +94,7 @@ describe('seed data', () => {
       string,
       unknown
     >
-    expect(changed.content).toBe('Changed')
+    expect(changed['content']).toBe('Changed')
 
     // Reset and verify original seed is back
     resetMock()
@@ -102,7 +102,7 @@ describe('seed data', () => {
       string,
       unknown
     >
-    expect(restored.content).toBe('Getting Started')
+    expect(restored['content']).toBe('Getting Started')
   })
 })
 
@@ -134,14 +134,14 @@ describe('get_block', () => {
 
   it('returns correct data for a child block (parent lookup)', () => {
     const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
-    expect(block.parent_id).toBe(SEED_IDS.PAGE_GETTING_STARTED)
-    expect(block.block_type).toBe('content')
+    expect(block['parent_id']).toBe(SEED_IDS.PAGE_GETTING_STARTED)
+    expect(block['block_type']).toBe('content')
   })
 
   it('returns correct data for a tag block', () => {
     const block = invoke('get_block', { blockId: SEED_IDS.TAG_WORK }) as Record<string, unknown>
-    expect(block.block_type).toBe('tag')
-    expect(block.content).toBe('work')
+    expect(block['block_type']).toBe('tag')
+    expect(block['content']).toBe('work')
   })
 
   it('throws for non-existent block ID', () => {
@@ -154,12 +154,12 @@ describe('get_block', () => {
       content: 'dynamic',
       parentId: SEED_IDS.PAGE_QUICK_NOTES,
     }) as Record<string, unknown>
-    const fetched = invoke('get_block', { blockId: created.id as string }) as Record<
+    const fetched = invoke('get_block', { blockId: created['id'] as string }) as Record<
       string,
       unknown
     >
-    expect(fetched.content).toBe('dynamic')
-    expect(fetched.parent_id).toBe(SEED_IDS.PAGE_QUICK_NOTES)
+    expect(fetched['content']).toBe('dynamic')
+    expect(fetched['parent_id']).toBe(SEED_IDS.PAGE_QUICK_NOTES)
   })
 })
 
@@ -174,7 +174,7 @@ describe('list_blocks with parentId', () => {
     }
     expect(result.items).toHaveLength(5)
     for (const item of result.items) {
-      expect(item.parent_id).toBe(SEED_IDS.PAGE_GETTING_STARTED)
+      expect(item['parent_id']).toBe(SEED_IDS.PAGE_GETTING_STARTED)
     }
   })
 
@@ -184,7 +184,7 @@ describe('list_blocks with parentId', () => {
     }
     expect(result.items).toHaveLength(2)
     for (const item of result.items) {
-      expect(item.parent_id).toBe(SEED_IDS.PAGE_QUICK_NOTES)
+      expect(item['parent_id']).toBe(SEED_IDS.PAGE_QUICK_NOTES)
     }
   })
 
@@ -192,7 +192,7 @@ describe('list_blocks with parentId', () => {
     const result = invoke('list_blocks', { parentId: SEED_IDS.PAGE_GETTING_STARTED }) as {
       items: Record<string, unknown>[]
     }
-    const positions = result.items.map((b) => b.position as number)
+    const positions = result.items.map((b) => b['position'] as number)
     expect(positions).toEqual([0, 1, 2, 3, 4])
   })
 
@@ -208,7 +208,7 @@ describe('list_blocks with parentId', () => {
     }
     // 2 seed children + 1 dynamically created
     expect(result.items).toHaveLength(3)
-    expect(result.items.some((b) => b.content === 'new child')).toBe(true)
+    expect(result.items.some((b) => b['content'] === 'new child')).toBe(true)
   })
 
   it('combines parentId and blockType filters', () => {
@@ -246,8 +246,8 @@ describe('list_tags_by_prefix', () => {
       Record<string, unknown>
     >
     expect(result).toHaveLength(1)
-    expect(result[0]?.name).toBe('personal')
-    expect(result[0]?.tag_id).toBe(SEED_IDS.TAG_PERSONAL)
+    expect(result[0]?.['name']).toBe('personal')
+    expect(result[0]?.['tag_id']).toBe(SEED_IDS.TAG_PERSONAL)
   })
 
   it('returns TagCacheRow shape', () => {
@@ -273,7 +273,7 @@ describe('list_tags_by_prefix', () => {
       Record<string, unknown>
     >
     expect(result).toHaveLength(1)
-    expect(result[0]?.name).toBe('work')
+    expect(result[0]?.['name']).toBe('work')
   })
 
   it('includes dynamically created tags', () => {
@@ -282,7 +282,7 @@ describe('list_tags_by_prefix', () => {
       Record<string, unknown>
     >
     expect(result).toHaveLength(1)
-    expect(result[0]?.name).toBe('project-alpha')
+    expect(result[0]?.['name']).toBe('project-alpha')
   })
 })
 
@@ -296,7 +296,7 @@ describe('search_blocks', () => {
       items: Record<string, unknown>[]
     }
     expect(result.items.length).toBeGreaterThanOrEqual(1)
-    expect((result.items[0]?.content as string).toLowerCase()).toContain('knowledge base')
+    expect((result.items[0]?.['content'] as string).toLowerCase()).toContain('knowledge base')
   })
 
   it('search is case-insensitive', () => {
@@ -347,7 +347,7 @@ describe('edit_block', () => {
       string,
       unknown
     >
-    expect(block.content).toBe('New Title')
+    expect(block['content']).toBe('New Title')
   })
 
   it('returns the updated block', () => {
@@ -355,8 +355,8 @@ describe('edit_block', () => {
       blockId: SEED_IDS.BLOCK_GS_1,
       toText: 'Updated content',
     }) as Record<string, unknown>
-    expect(result.content).toBe('Updated content')
-    expect(result.id).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result['content']).toBe('Updated content')
+    expect(result['id']).toBe(SEED_IDS.BLOCK_GS_1)
   })
 
   it('edited content appears in search results', () => {
@@ -368,7 +368,7 @@ describe('edit_block', () => {
       items: Record<string, unknown>[]
     }
     expect(result.items).toHaveLength(1)
-    expect(result.items[0]?.id).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result.items[0]?.['id']).toBe(SEED_IDS.BLOCK_GS_1)
   })
 
   it('edited page title persists across list_blocks', () => {
@@ -376,8 +376,8 @@ describe('edit_block', () => {
     const result = invoke('list_blocks', { blockType: 'page' }) as {
       items: Record<string, unknown>[]
     }
-    const page = result.items.find((b) => b.id === SEED_IDS.PAGE_GETTING_STARTED)
-    expect(page?.content).toBe('Renamed Page')
+    const page = result.items.find((b) => b['id'] === SEED_IDS.PAGE_GETTING_STARTED)
+    expect(page?.['content']).toBe('Renamed Page')
   })
 
   it('throws for non-existent block', () => {
@@ -420,13 +420,13 @@ describe('move_block', () => {
       newParentId: SEED_IDS.PAGE_QUICK_NOTES,
       newPosition: 99,
     }) as Record<string, unknown>
-    expect(result.block_id).toBe(SEED_IDS.BLOCK_GS_1)
-    expect(result.new_parent_id).toBe(SEED_IDS.PAGE_QUICK_NOTES)
-    expect(result.new_position).toBe(99)
+    expect(result['block_id']).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result['new_parent_id']).toBe(SEED_IDS.PAGE_QUICK_NOTES)
+    expect(result['new_position']).toBe(99)
     // verify persisted
     const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
-    expect(block.parent_id).toBe(SEED_IDS.PAGE_QUICK_NOTES)
-    expect(block.position).toBe(99)
+    expect(block['parent_id']).toBe(SEED_IDS.PAGE_QUICK_NOTES)
+    expect(block['position']).toBe(99)
   })
 
   it('throws for non-existent block', () => {
@@ -446,9 +446,9 @@ describe('delete_block', () => {
       string,
       unknown
     >
-    expect(result.block_id).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result['block_id']).toBe(SEED_IDS.BLOCK_GS_1)
     const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
-    expect(block.deleted_at).not.toBeNull()
+    expect(block['deleted_at']).not.toBeNull()
   })
 
   it('deleted blocks excluded from list_blocks', () => {
@@ -456,7 +456,7 @@ describe('delete_block', () => {
     const result = invoke('list_blocks', { parentId: SEED_IDS.PAGE_GETTING_STARTED }) as {
       items: Record<string, unknown>[]
     }
-    expect(result.items.find((b) => b.id === SEED_IDS.BLOCK_GS_1)).toBeUndefined()
+    expect(result.items.find((b) => b['id'] === SEED_IDS.BLOCK_GS_1)).toBeUndefined()
   })
 
   it('deleted blocks excluded from search', () => {
@@ -512,7 +512,7 @@ describe('property commands', () => {
       unknown
     >[]
     expect(props).toHaveLength(1)
-    expect(props[0]?.value_text).toBe('2')
+    expect(props[0]?.['value_text']).toBe('2')
   })
 
   it('delete_property removes a property', () => {
@@ -700,7 +700,7 @@ describe('query_by_tags', () => {
     }
     // 2 dynamically added + 3 seed associations (PROJ_1, PROJ_2, MTG_1) = 5
     expect(result.items.length).toBeGreaterThanOrEqual(5)
-    const ids = result.items.map((b) => b.id)
+    const ids = result.items.map((b) => b['id'])
     expect(ids).toContain(SEED_IDS.BLOCK_GS_1)
     expect(ids).toContain(SEED_IDS.BLOCK_GS_2)
   })
@@ -721,7 +721,7 @@ describe('query_by_tags', () => {
       tagIds: [SEED_IDS.TAG_WORK, SEED_IDS.TAG_PERSONAL],
     }) as { items: Record<string, unknown>[] }
     expect(result.items).toHaveLength(1)
-    expect(result.items[0]?.id).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result.items[0]?.['id']).toBe(SEED_IDS.BLOCK_GS_1)
   })
 
   it('excludes deleted blocks', () => {
@@ -731,7 +731,7 @@ describe('query_by_tags', () => {
       items: Record<string, unknown>[]
     }
     // BLOCK_GS_1 deleted, but seed associations (PROJ_1, PROJ_2, MTG_1) still there
-    const ids = result.items.map((b) => b.id)
+    const ids = result.items.map((b) => b['id'])
     expect(ids).not.toContain(SEED_IDS.BLOCK_GS_1)
   })
 
@@ -754,20 +754,20 @@ describe('restore_block', () => {
   it('un-soft-deletes a deleted block', () => {
     invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
     const deleted = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
-    expect(deleted.deleted_at).not.toBeNull()
+    expect(deleted['deleted_at']).not.toBeNull()
 
     const result = invoke('restore_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<
       string,
       unknown
     >
-    expect(result.block_id).toBe(SEED_IDS.BLOCK_GS_1)
-    expect(result.restored_count).toBe(1)
+    expect(result['block_id']).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result['restored_count']).toBe(1)
 
     const restored = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<
       string,
       unknown
     >
-    expect(restored.deleted_at).toBeNull()
+    expect(restored['deleted_at']).toBeNull()
   })
 
   it('is idempotent — restoring a non-deleted block still works', () => {
@@ -775,11 +775,11 @@ describe('restore_block', () => {
       string,
       unknown
     >
-    expect(result.block_id).toBe(SEED_IDS.BLOCK_GS_1)
-    expect(result.restored_count).toBe(1)
+    expect(result['block_id']).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result['restored_count']).toBe(1)
 
     const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
-    expect(block.deleted_at).toBeNull()
+    expect(block['deleted_at']).toBeNull()
   })
 
   it('restored block reappears in list_blocks', () => {
@@ -788,7 +788,7 @@ describe('restore_block', () => {
     const result = invoke('list_blocks', { parentId: SEED_IDS.PAGE_GETTING_STARTED }) as {
       items: Record<string, unknown>[]
     }
-    expect(result.items.find((b) => b.id === SEED_IDS.BLOCK_GS_1)).toBeDefined()
+    expect(result.items.find((b) => b['id'] === SEED_IDS.BLOCK_GS_1)).toBeDefined()
   })
 })
 
@@ -803,8 +803,8 @@ describe('purge_block', () => {
       string,
       unknown
     >
-    expect(result.block_id).toBe(SEED_IDS.BLOCK_GS_1)
-    expect(result.purged_count).toBe(1)
+    expect(result['block_id']).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result['purged_count']).toBe(1)
 
     expect(() => invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 })).toThrow('not found')
   })
@@ -814,7 +814,7 @@ describe('purge_block', () => {
     const result = invoke('list_blocks', { parentId: SEED_IDS.PAGE_GETTING_STARTED }) as {
       items: Record<string, unknown>[]
     }
-    expect(result.items.find((b) => b.id === SEED_IDS.BLOCK_GS_1)).toBeUndefined()
+    expect(result.items.find((b) => b['id'] === SEED_IDS.BLOCK_GS_1)).toBeUndefined()
   })
 
   it('purging a parent does not automatically purge children, but parent is gone', () => {
@@ -825,7 +825,7 @@ describe('purge_block', () => {
     )
     // Children still exist (orphaned) — mock doesn't cascade purge
     const child = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
-    expect(child.parent_id).toBe(SEED_IDS.PAGE_GETTING_STARTED)
+    expect(child['parent_id']).toBe(SEED_IDS.PAGE_GETTING_STARTED)
   })
 })
 
@@ -840,16 +840,16 @@ describe('batch_resolve', () => {
     }) as Array<Record<string, unknown>>
     expect(result).toHaveLength(2)
 
-    const page = result.find((b) => b.id === SEED_IDS.PAGE_GETTING_STARTED)
+    const page = result.find((b) => b['id'] === SEED_IDS.PAGE_GETTING_STARTED)
     expect(page).toBeDefined()
-    expect(page?.title).toBe('Getting Started')
-    expect(page?.block_type).toBe('page')
-    expect(page?.deleted).toBe(false)
+    expect(page?.['title']).toBe('Getting Started')
+    expect(page?.['block_type']).toBe('page')
+    expect(page?.['deleted']).toBe(false)
 
-    const tag = result.find((b) => b.id === SEED_IDS.TAG_WORK)
+    const tag = result.find((b) => b['id'] === SEED_IDS.TAG_WORK)
     expect(tag).toBeDefined()
-    expect(tag?.title).toBe('work')
-    expect(tag?.block_type).toBe('tag')
+    expect(tag?.['title']).toBe('work')
+    expect(tag?.['block_type']).toBe('tag')
   })
 
   it('omits non-existing IDs from the result', () => {
@@ -858,7 +858,7 @@ describe('batch_resolve', () => {
     }) as Array<Record<string, unknown>>
     // Non-existing IDs are filtered out
     expect(result).toHaveLength(2)
-    const ids = result.map((b) => b.id)
+    const ids = result.map((b) => b['id'])
     expect(ids).toContain(SEED_IDS.PAGE_GETTING_STARTED)
     expect(ids).toContain(SEED_IDS.TAG_IDEA)
   })
@@ -870,11 +870,11 @@ describe('batch_resolve', () => {
     }) as Array<Record<string, unknown>>
     expect(result).toHaveLength(2)
 
-    const deletedEntry = result.find((b) => b.id === SEED_IDS.BLOCK_GS_1)
-    expect(deletedEntry?.deleted).toBe(true)
+    const deletedEntry = result.find((b) => b['id'] === SEED_IDS.BLOCK_GS_1)
+    expect(deletedEntry?.['deleted']).toBe(true)
 
-    const liveEntry = result.find((b) => b.id === SEED_IDS.BLOCK_GS_2)
-    expect(liveEntry?.deleted).toBe(false)
+    const liveEntry = result.find((b) => b['id'] === SEED_IDS.BLOCK_GS_2)
+    expect(liveEntry?.['deleted']).toBe(false)
   })
 
   it('returns empty array for all-nonexistent IDs', () => {
@@ -896,7 +896,7 @@ describe('get_backlinks', () => {
       items: Record<string, unknown>[]
     }
     expect(result.items.length).toBeGreaterThanOrEqual(1)
-    const ids = result.items.map((b) => b.id)
+    const ids = result.items.map((b) => b['id'])
     expect(ids).toContain(SEED_IDS.BLOCK_QN_1)
   })
 
@@ -906,7 +906,7 @@ describe('get_backlinks', () => {
       items: Record<string, unknown>[]
     }
     expect(result.items.length).toBeGreaterThanOrEqual(1)
-    const ids = result.items.map((b) => b.id)
+    const ids = result.items.map((b) => b['id'])
     expect(ids).toContain(SEED_IDS.BLOCK_GS_2)
   })
 
@@ -922,7 +922,7 @@ describe('get_backlinks', () => {
     const result = invoke('get_backlinks', { blockId: SEED_IDS.PAGE_GETTING_STARTED }) as {
       items: Record<string, unknown>[]
     }
-    const ids = result.items.map((b) => b.id)
+    const ids = result.items.map((b) => b['id'])
     expect(ids).not.toContain(SEED_IDS.BLOCK_QN_1)
   })
 
@@ -936,7 +936,7 @@ describe('get_backlinks', () => {
       items: Record<string, unknown>[]
     }
     expect(result.items).toHaveLength(1)
-    expect(result.items[0]?.id).toBe(created.id)
+    expect(result.items[0]?.['id']).toBe(created['id'])
   })
 
   it('returns PageResponse shape', () => {
@@ -961,7 +961,7 @@ describe('query_backlinks_filtered', () => {
       blockId: SEED_IDS.PAGE_GETTING_STARTED,
     }) as { items: Record<string, unknown>[] }
     expect(result.items.length).toBeGreaterThanOrEqual(1)
-    const ids = result.items.map((b) => b.id)
+    const ids = result.items.map((b) => b['id'])
     expect(ids).toContain(SEED_IDS.BLOCK_QN_1)
   })
 
@@ -984,9 +984,9 @@ describe('query_backlinks_filtered', () => {
       filters: [{ type: 'BlockType', block_type: 'page' }],
     }) as { items: Record<string, unknown>[] }
     for (const item of result.items) {
-      expect(item.block_type).toBe('page')
+      expect(item['block_type']).toBe('page')
     }
-    const ids = result.items.map((b) => b.id)
+    const ids = result.items.map((b) => b['id'])
     expect(ids).not.toContain(SEED_IDS.BLOCK_QN_1)
   })
 
@@ -1002,7 +1002,7 @@ describe('query_backlinks_filtered', () => {
       filters: [{ type: 'Contains', query: 'xylophone' }],
     }) as { items: Record<string, unknown>[] }
     expect(result.items).toHaveLength(1)
-    expect((result.items[0]?.content as string).toLowerCase()).toContain('xylophone')
+    expect((result.items[0]?.['content'] as string).toLowerCase()).toContain('xylophone')
   })
 
   it('returns correct total_count', () => {
@@ -1068,20 +1068,20 @@ describe('get_conflicts', () => {
   it('returns seed conflict block', () => {
     const result = invoke('get_conflicts') as { items: Record<string, unknown>[] }
     expect(result.items.length).toBeGreaterThanOrEqual(1)
-    const ids = result.items.map((b) => b.id)
+    const ids = result.items.map((b) => b['id'])
     expect(ids).toContain(SEED_IDS.CONFLICT_01)
   })
 
   it('conflict block has is_conflict true', () => {
     const result = invoke('get_conflicts') as { items: Record<string, unknown>[] }
-    const conflict = result.items.find((b) => b.id === SEED_IDS.CONFLICT_01)
+    const conflict = result.items.find((b) => b['id'] === SEED_IDS.CONFLICT_01)
     expect(conflict).toBeDefined()
-    expect(conflict?.is_conflict).toBe(true)
+    expect(conflict?.['is_conflict']).toBe(true)
   })
 
   it('excludes non-conflict blocks', () => {
     const result = invoke('get_conflicts') as { items: Record<string, unknown>[] }
-    const ids = result.items.map((b) => b.id)
+    const ids = result.items.map((b) => b['id'])
     expect(ids).not.toContain(SEED_IDS.PAGE_GETTING_STARTED)
     expect(ids).not.toContain(SEED_IDS.BLOCK_GS_1)
   })
@@ -1089,7 +1089,7 @@ describe('get_conflicts', () => {
   it('excludes deleted conflict blocks', () => {
     invoke('delete_block', { blockId: SEED_IDS.CONFLICT_01 })
     const result = invoke('get_conflicts') as { items: Record<string, unknown>[] }
-    const ids = result.items.map((b) => b.id)
+    const ids = result.items.map((b) => b['id'])
     expect(ids).not.toContain(SEED_IDS.CONFLICT_01)
   })
 
@@ -1116,41 +1116,44 @@ describe('revert_ops', () => {
     // Get the op log entry for this create
     const history = invoke('list_page_history', {}) as { items: Array<Record<string, unknown>> }
     const createOp = history.items.find((o) => {
-      const p = JSON.parse(o.payload as string) as Record<string, unknown>
-      return o.op_type === 'create_block' && p.block_id === created.id
+      const p = JSON.parse(o['payload'] as string) as Record<string, unknown>
+      return o['op_type'] === 'create_block' && p['block_id'] === created['id']
     })
     expect(createOp).toBeDefined()
 
     const results = invoke('revert_ops', {
-      ops: [{ device_id: createOp?.device_id, seq: createOp?.seq }],
+      ops: [{ device_id: createOp?.['device_id'], seq: createOp?.['seq'] }],
     }) as Array<Record<string, unknown>>
     expect(results).toHaveLength(1)
 
-    const block = invoke('get_block', { blockId: created.id as string }) as Record<string, unknown>
-    expect(block.deleted_at).not.toBeNull()
+    const block = invoke('get_block', { blockId: created['id'] as string }) as Record<
+      string,
+      unknown
+    >
+    expect(block['deleted_at']).not.toBeNull()
   })
 
   it('reverts a delete_block op → block becomes restored', () => {
     invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_3 })
     const deleted = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_3 }) as Record<string, unknown>
-    expect(deleted.deleted_at).not.toBeNull()
+    expect(deleted['deleted_at']).not.toBeNull()
 
     const history = invoke('list_page_history', {}) as { items: Array<Record<string, unknown>> }
     const deleteOp = history.items.find((o) => {
-      const p = JSON.parse(o.payload as string) as Record<string, unknown>
-      return o.op_type === 'delete_block' && p.block_id === SEED_IDS.BLOCK_GS_3
+      const p = JSON.parse(o['payload'] as string) as Record<string, unknown>
+      return o['op_type'] === 'delete_block' && p['block_id'] === SEED_IDS.BLOCK_GS_3
     })
     expect(deleteOp).toBeDefined()
 
     invoke('revert_ops', {
-      ops: [{ device_id: deleteOp?.device_id, seq: deleteOp?.seq }],
+      ops: [{ device_id: deleteOp?.['device_id'], seq: deleteOp?.['seq'] }],
     })
 
     const restored = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_3 }) as Record<
       string,
       unknown
     >
-    expect(restored.deleted_at).toBeNull()
+    expect(restored['deleted_at']).toBeNull()
   })
 
   it('reverts an edit_block op → content reverts to previous value', () => {
@@ -1158,26 +1161,26 @@ describe('revert_ops', () => {
       string,
       unknown
     >
-    const originalContent = original.content
+    const originalContent = original['content']
 
     invoke('edit_block', { blockId: SEED_IDS.BLOCK_GS_4, toText: 'changed content' })
 
     const history = invoke('list_page_history', {}) as { items: Array<Record<string, unknown>> }
     const editOp = history.items.find((o) => {
-      const p = JSON.parse(o.payload as string) as Record<string, unknown>
-      return o.op_type === 'edit_block' && p.block_id === SEED_IDS.BLOCK_GS_4
+      const p = JSON.parse(o['payload'] as string) as Record<string, unknown>
+      return o['op_type'] === 'edit_block' && p['block_id'] === SEED_IDS.BLOCK_GS_4
     })
     expect(editOp).toBeDefined()
 
     invoke('revert_ops', {
-      ops: [{ device_id: editOp?.device_id, seq: editOp?.seq }],
+      ops: [{ device_id: editOp?.['device_id'], seq: editOp?.['seq'] }],
     })
 
     const reverted = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_4 }) as Record<
       string,
       unknown
     >
-    expect(reverted.content).toBe(originalContent)
+    expect(reverted['content']).toBe(originalContent)
   })
 
   it('returns empty array when no matching ops found', () => {
@@ -1198,11 +1201,11 @@ describe('list_blocks with showDeleted', () => {
     const result = invoke('list_blocks', { showDeleted: true }) as {
       items: Record<string, unknown>[]
     }
-    const ids = result.items.map((b) => b.id)
+    const ids = result.items.map((b) => b['id'])
     expect(ids).toContain(SEED_IDS.BLOCK_GS_1)
     // All returned items should have deleted_at set
     for (const item of result.items) {
-      expect(item.deleted_at).not.toBeNull()
+      expect(item['deleted_at']).not.toBeNull()
     }
   })
 
@@ -1211,7 +1214,7 @@ describe('list_blocks with showDeleted', () => {
     const result = invoke('list_blocks', {}) as {
       items: Record<string, unknown>[]
     }
-    const ids = result.items.map((b) => b.id)
+    const ids = result.items.map((b) => b['id'])
     expect(ids).not.toContain(SEED_IDS.BLOCK_GS_1)
   })
 
@@ -1221,10 +1224,10 @@ describe('list_blocks with showDeleted', () => {
       items: Record<string, unknown>[]
     }
     for (const item of result.items) {
-      expect(item.block_type).toBe('content')
-      expect(item.deleted_at).not.toBeNull()
+      expect(item['block_type']).toBe('content')
+      expect(item['deleted_at']).not.toBeNull()
     }
-    const ids = result.items.map((b) => b.id)
+    const ids = result.items.map((b) => b['id'])
     expect(ids).toContain(SEED_IDS.BLOCK_GS_1)
   })
 
@@ -1264,11 +1267,13 @@ describe('undo_page_op edge cases', () => {
   it('undo of edit_block restores previous content', () => {
     invoke('edit_block', { blockId: SEED_IDS.BLOCK_GS_5, toText: 'Edited for undo test' })
     const edited = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_5 }) as Record<string, unknown>
-    expect(edited.content).toBe('Edited for undo test')
+    expect(edited['content']).toBe('Edited for undo test')
 
     invoke('undo_page_op', { pageId: SEED_IDS.PAGE_GETTING_STARTED, undoDepth: 0 })
     const undone = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_5 }) as Record<string, unknown>
-    expect(undone.content).toBe('**Use the search panel** to find anything across all your pages.')
+    expect(undone['content']).toBe(
+      '**Use the search panel** to find anything across all your pages.',
+    )
   })
 })
 
@@ -1289,7 +1294,7 @@ describe('redo_page_op edge cases', () => {
       content: 'redo-me',
       parentId: SEED_IDS.PAGE_GETTING_STARTED,
     }) as Record<string, unknown>
-    const createdId = created.id as string
+    const createdId = created['id'] as string
 
     // Undo the create → block becomes deleted
     const undoResult = invoke('undo_page_op', {
@@ -1298,7 +1303,7 @@ describe('redo_page_op edge cases', () => {
     }) as { reversed_op: { device_id: string; seq: number } }
 
     const afterUndo = invoke('get_block', { blockId: createdId }) as Record<string, unknown>
-    expect(afterUndo.deleted_at).not.toBeNull()
+    expect(afterUndo['deleted_at']).not.toBeNull()
 
     // Redo → block is restored
     invoke('redo_page_op', {
@@ -1307,7 +1312,7 @@ describe('redo_page_op edge cases', () => {
     })
 
     const afterRedo = invoke('get_block', { blockId: createdId }) as Record<string, unknown>
-    expect(afterRedo.deleted_at).toBeNull()
+    expect(afterRedo['deleted_at']).toBeNull()
   })
 })
 
@@ -1353,7 +1358,7 @@ describe('query_by_property', () => {
       items: Record<string, unknown>[]
     }
     expect(result.items.length).toBeGreaterThanOrEqual(1)
-    expect(result.items.some((b) => b.id === SEED_IDS.BLOCK_GS_1)).toBe(true)
+    expect(result.items.some((b) => b['id'] === SEED_IDS.BLOCK_GS_1)).toBe(true)
   })
 
   it('filters by valueText when provided', () => {
@@ -1377,8 +1382,8 @@ describe('query_by_property', () => {
     const result = invoke('query_by_property', { key: 'todo', valueText: 'TODO' }) as {
       items: Record<string, unknown>[]
     }
-    expect(result.items.some((b) => b.id === SEED_IDS.BLOCK_GS_1)).toBe(true)
-    expect(result.items.some((b) => b.id === SEED_IDS.BLOCK_GS_2)).toBe(false)
+    expect(result.items.some((b) => b['id'] === SEED_IDS.BLOCK_GS_1)).toBe(true)
+    expect(result.items.some((b) => b['id'] === SEED_IDS.BLOCK_GS_2)).toBe(false)
   })
 
   it('excludes deleted blocks', () => {
@@ -1396,7 +1401,7 @@ describe('query_by_property', () => {
     const result = invoke('query_by_property', { key: 'status', valueText: null }) as {
       items: Record<string, unknown>[]
     }
-    expect(result.items.some((b) => b.id === SEED_IDS.BLOCK_GS_1)).toBe(false)
+    expect(result.items.some((b) => b['id'] === SEED_IDS.BLOCK_GS_1)).toBe(false)
   })
 
   it('returns PageResponse shape', () => {
@@ -1421,19 +1426,19 @@ describe('fixed-field commands', () => {
       state: 'TODO',
     }) as Record<string, unknown>
 
-    expect(result.todo_state).toBe('TODO')
-    expect(result.id).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result['todo_state']).toBe('TODO')
+    expect(result['id']).toBe(SEED_IDS.BLOCK_GS_1)
 
     // Verify persisted
     const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
-    expect(block.todo_state).toBe('TODO')
+    expect(block['todo_state']).toBe('TODO')
   })
 
   it('set_todo_state with null clears todo_state', () => {
     // First set a state
     invoke('set_todo_state', { blockId: SEED_IDS.BLOCK_GS_1, state: 'TODO' })
     const before = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
-    expect(before.todo_state).toBe('TODO')
+    expect(before['todo_state']).toBe('TODO')
 
     // Now clear it
     const result = invoke('set_todo_state', {
@@ -1441,10 +1446,10 @@ describe('fixed-field commands', () => {
       state: null,
     }) as Record<string, unknown>
 
-    expect(result.todo_state).toBeNull()
+    expect(result['todo_state']).toBeNull()
 
     const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
-    expect(block.todo_state).toBeNull()
+    expect(block['todo_state']).toBeNull()
   })
 
   it('set_priority updates block priority column', () => {
@@ -1453,27 +1458,27 @@ describe('fixed-field commands', () => {
       level: '2',
     }) as Record<string, unknown>
 
-    expect(result.priority).toBe('2')
-    expect(result.id).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result['priority']).toBe('2')
+    expect(result['id']).toBe(SEED_IDS.BLOCK_GS_1)
 
     const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
-    expect(block.priority).toBe('2')
+    expect(block['priority']).toBe('2')
   })
 
   it('set_priority with null clears priority', () => {
     invoke('set_priority', { blockId: SEED_IDS.BLOCK_GS_1, level: '1' })
     const before = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
-    expect(before.priority).toBe('1')
+    expect(before['priority']).toBe('1')
 
     const result = invoke('set_priority', {
       blockId: SEED_IDS.BLOCK_GS_1,
       level: null,
     }) as Record<string, unknown>
 
-    expect(result.priority).toBeNull()
+    expect(result['priority']).toBeNull()
 
     const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
-    expect(block.priority).toBeNull()
+    expect(block['priority']).toBeNull()
   })
 
   it('set_due_date updates block due_date column', () => {
@@ -1482,27 +1487,27 @@ describe('fixed-field commands', () => {
       date: '2026-06-15',
     }) as Record<string, unknown>
 
-    expect(result.due_date).toBe('2026-06-15')
-    expect(result.id).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result['due_date']).toBe('2026-06-15')
+    expect(result['id']).toBe(SEED_IDS.BLOCK_GS_1)
 
     const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
-    expect(block.due_date).toBe('2026-06-15')
+    expect(block['due_date']).toBe('2026-06-15')
   })
 
   it('set_due_date with null clears due_date', () => {
     invoke('set_due_date', { blockId: SEED_IDS.BLOCK_GS_1, date: '2026-06-15' })
     const before = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
-    expect(before.due_date).toBe('2026-06-15')
+    expect(before['due_date']).toBe('2026-06-15')
 
     const result = invoke('set_due_date', {
       blockId: SEED_IDS.BLOCK_GS_1,
       date: null,
     }) as Record<string, unknown>
 
-    expect(result.due_date).toBeNull()
+    expect(result['due_date']).toBeNull()
 
     const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
-    expect(block.due_date).toBeNull()
+    expect(block['due_date']).toBeNull()
   })
 })
 
@@ -1530,7 +1535,7 @@ describe('error injection', () => {
       string,
       unknown
     >
-    expect(block.content).toBe('Getting Started')
+    expect(block['content']).toBe('Getting Started')
   })
 
   it('only the injected command throws; others still work', () => {
@@ -1540,7 +1545,7 @@ describe('error injection', () => {
       string,
       unknown
     >
-    expect(block.content).toBe('Getting Started')
+    expect(block['content']).toBe('Getting Started')
     // edit_block should throw
     expect(() =>
       invoke('edit_block', { blockId: SEED_IDS.PAGE_GETTING_STARTED, toText: 'nope' }),
@@ -1555,7 +1560,7 @@ describe('error injection', () => {
       string,
       unknown
     >
-    expect(block.content).toBe('Getting Started')
+    expect(block['content']).toBe('Getting Started')
   })
 })
 
@@ -1569,9 +1574,9 @@ describe('seed task blocks', () => {
       string,
       unknown
     >
-    expect(block.todo_state).toBe('TODO')
-    expect(block.priority).toBe('1')
-    expect(block.due_date).not.toBeNull()
+    expect(block['todo_state']).toBe('TODO')
+    expect(block['priority']).toBe('1')
+    expect(block['due_date']).not.toBeNull()
   })
 
   it('daily page has DOING block', () => {
@@ -1579,8 +1584,8 @@ describe('seed task blocks', () => {
       string,
       unknown
     >
-    expect(block.todo_state).toBe('DOING')
-    expect(block.priority).toBe('2')
+    expect(block['todo_state']).toBe('DOING')
+    expect(block['priority']).toBe('2')
   })
 
   it('daily page has DONE block', () => {
@@ -1588,13 +1593,13 @@ describe('seed task blocks', () => {
       string,
       unknown
     >
-    expect(block.todo_state).toBe('DONE')
+    expect(block['todo_state']).toBe('DONE')
   })
 
   it('projects page has blocks with scheduled dates', () => {
     const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_PROJ_1 }) as Record<string, unknown>
-    expect(block.scheduled_date).not.toBeNull()
-    expect(block.due_date).not.toBeNull()
+    expect(block['scheduled_date']).not.toBeNull()
+    expect(block['due_date']).not.toBeNull()
   })
 
   it('overdue block has yesterday due date', () => {
@@ -1602,12 +1607,12 @@ describe('seed task blocks', () => {
       string,
       unknown
     >
-    expect(block.todo_state).toBe('TODO')
-    expect(block.due_date).not.toBeNull()
+    expect(block['todo_state']).toBe('TODO')
+    expect(block['due_date']).not.toBeNull()
     // Due date should be before today (string comparison works for YYYY-MM-DD)
     const today = new Date()
     const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-    expect((block.due_date as string) < todayStr).toBe(true)
+    expect((block['due_date'] as string) < todayStr).toBe(true)
   })
 
   it('seed properties include completed_at on DONE blocks', () => {
@@ -1615,9 +1620,9 @@ describe('seed task blocks', () => {
       blockId: SEED_IDS.BLOCK_DAILY_5,
     }) as Record<string, unknown>[]
     expect(props.length).toBeGreaterThanOrEqual(1)
-    const completedAt = props.find((p) => p.key === 'completed_at')
+    const completedAt = props.find((p) => p['key'] === 'completed_at')
     expect(completedAt).toBeDefined()
-    expect(completedAt?.value_date).not.toBeNull()
+    expect(completedAt?.['value_date']).not.toBeNull()
   })
 
   it('seed properties include custom props on meeting blocks', () => {
@@ -1625,7 +1630,7 @@ describe('seed task blocks', () => {
       blockId: SEED_IDS.BLOCK_MTG_1,
     }) as Record<string, unknown>[]
     expect(props).toHaveLength(2)
-    const keys = props.map((p) => p.key)
+    const keys = props.map((p) => p['key'])
     expect(keys).toContain('context')
     expect(keys).toContain('project')
   })
@@ -1653,7 +1658,7 @@ describe('list_blocks with agendaDate', () => {
     // Should include blocks with due_date=today OR scheduled_date=today
     expect(result.items.length).toBeGreaterThanOrEqual(1)
     for (const item of result.items) {
-      expect(item.due_date === todayStr || item.scheduled_date === todayStr).toBe(true)
+      expect(item['due_date'] === todayStr || item['scheduled_date'] === todayStr).toBe(true)
     }
   })
 
@@ -1665,7 +1670,7 @@ describe('list_blocks with agendaDate', () => {
       agendaSource: 'column:due_date',
     }) as { items: Record<string, unknown>[] }
     for (const item of result.items) {
-      expect(item.due_date).toBe(todayStr)
+      expect(item['due_date']).toBe(todayStr)
     }
   })
 
@@ -1677,10 +1682,10 @@ describe('list_blocks with agendaDate', () => {
       agendaSource: 'column:scheduled_date',
     }) as { items: Record<string, unknown>[] }
     for (const item of result.items) {
-      expect(item.scheduled_date).toBe(todayStr)
+      expect(item['scheduled_date']).toBe(todayStr)
     }
     // BLOCK_PROJ_1 is scheduled for today
-    const ids = result.items.map((b) => b.id)
+    const ids = result.items.map((b) => b['id'])
     expect(ids).toContain(SEED_IDS.BLOCK_PROJ_1)
   })
 
@@ -1705,7 +1710,7 @@ describe('query_by_property with valueDate', () => {
       valueDate: todayStr,
     }) as { items: Record<string, unknown>[] }
     expect(result.items.length).toBeGreaterThanOrEqual(2)
-    const ids = result.items.map((b) => b.id)
+    const ids = result.items.map((b) => b['id'])
     expect(ids).toContain(SEED_IDS.BLOCK_DAILY_5)
     expect(ids).toContain(SEED_IDS.BLOCK_PROJ_3)
   })
@@ -1729,10 +1734,10 @@ describe('set_scheduled_date', () => {
       blockId: SEED_IDS.BLOCK_GS_1,
       date: '2026-07-01',
     }) as Record<string, unknown>
-    expect(result.scheduled_date).toBe('2026-07-01')
+    expect(result['scheduled_date']).toBe('2026-07-01')
 
     const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
-    expect(block.scheduled_date).toBe('2026-07-01')
+    expect(block['scheduled_date']).toBe('2026-07-01')
   })
 
   it('clears scheduled_date with null', () => {
@@ -1741,7 +1746,7 @@ describe('set_scheduled_date', () => {
       blockId: SEED_IDS.BLOCK_GS_1,
       date: null,
     }) as Record<string, unknown>
-    expect(result.scheduled_date).toBeNull()
+    expect(result['scheduled_date']).toBeNull()
   })
 
   it('throws for non-existent block', () => {
@@ -1831,7 +1836,7 @@ describe('list_unlinked_references', () => {
       content: 'Xyzzyspoon',
     }) as Record<string, unknown>
     const result = invoke('list_unlinked_references', {
-      pageId: page.id as string,
+      pageId: page['id'] as string,
     }) as { total_count: number }
     expect(result.total_count).toBe(0)
   })
@@ -1845,12 +1850,12 @@ describe('compute_edit_diff', () => {
   it('returns diff spans for an edit_block op', () => {
     invoke('edit_block', { blockId: SEED_IDS.BLOCK_GS_5, toText: 'New content here' })
     const history = invoke('list_page_history', {}) as { items: Array<Record<string, unknown>> }
-    const editOp = history.items.find((o) => o.op_type === 'edit_block')
+    const editOp = history.items.find((o) => o['op_type'] === 'edit_block')
     expect(editOp).toBeDefined()
 
     const spans = invoke('compute_edit_diff', {
-      deviceId: editOp?.device_id,
-      seq: editOp?.seq,
+      deviceId: editOp?.['device_id'],
+      seq: editOp?.['seq'],
     }) as Array<Record<string, unknown>>
     expect(spans.length).toBeGreaterThanOrEqual(1)
   })
@@ -1862,11 +1867,11 @@ describe('compute_edit_diff', () => {
       parentId: SEED_IDS.PAGE_GETTING_STARTED,
     })
     const history = invoke('list_page_history', {}) as { items: Array<Record<string, unknown>> }
-    const createOp = history.items.find((o) => o.op_type === 'create_block')
+    const createOp = history.items.find((o) => o['op_type'] === 'create_block')
 
     const result = invoke('compute_edit_diff', {
-      deviceId: createOp?.device_id,
-      seq: createOp?.seq,
+      deviceId: createOp?.['device_id'],
+      seq: createOp?.['seq'],
     })
     expect(result).toBeNull()
   })
@@ -1880,7 +1885,7 @@ describe('property definition commands', () => {
   it('list_property_defs returns seed definitions', () => {
     const defs = invoke('list_property_defs') as Array<Record<string, unknown>>
     expect(defs.length).toBeGreaterThanOrEqual(2)
-    const keys = defs.map((d) => d.key)
+    const keys = defs.map((d) => d['key'])
     expect(keys).toContain('context')
     expect(keys).toContain('project')
   })
@@ -1891,11 +1896,11 @@ describe('property definition commands', () => {
       valueType: 'number',
       options: null,
     }) as Record<string, unknown>
-    expect(def.key).toBe('effort')
-    expect(def.value_type).toBe('number')
+    expect(def['key']).toBe('effort')
+    expect(def['value_type']).toBe('number')
 
     const defs = invoke('list_property_defs') as Array<Record<string, unknown>>
-    expect(defs.some((d) => d.key === 'effort')).toBe(true)
+    expect(defs.some((d) => d['key'] === 'effort')).toBe(true)
   })
 
   it('update_property_def_options updates options', () => {
@@ -1908,7 +1913,7 @@ describe('property definition commands', () => {
       key: 'status',
       options: JSON.stringify(['open', 'in-progress', 'closed']),
     }) as Record<string, unknown>
-    expect(updated.options).toBe(JSON.stringify(['open', 'in-progress', 'closed']))
+    expect(updated['options']).toBe(JSON.stringify(['open', 'in-progress', 'closed']))
   })
 
   it('update_property_def_options throws for non-existent key', () => {
@@ -1921,7 +1926,7 @@ describe('property definition commands', () => {
     invoke('create_property_def', { key: 'temp', valueType: 'text' })
     invoke('delete_property_def', { key: 'temp' })
     const defs = invoke('list_property_defs') as Array<Record<string, unknown>>
-    expect(defs.some((d) => d.key === 'temp')).toBe(false)
+    expect(defs.some((d) => d['key'] === 'temp')).toBe(false)
   })
 })
 
@@ -2016,7 +2021,7 @@ describe('get_block_history', () => {
     expect(result).toHaveProperty('items')
     expect(result).toHaveProperty('next_cursor', null)
     expect(result).toHaveProperty('has_more', false)
-    expect(result.items).toEqual([])
+    expect(result['items']).toEqual([])
   })
 })
 
@@ -2050,7 +2055,7 @@ describe('list_page_history', () => {
     }
     expect(result.items.length).toBeGreaterThanOrEqual(2)
     // Most recent op should be first
-    const seqs = result.items.map((o) => o.seq as number)
+    const seqs = result.items.map((o) => o['seq'] as number)
     expect(seqs[0] ?? 0).toBeGreaterThan(seqs[1] ?? 0)
   })
 
@@ -2107,9 +2112,9 @@ describe('start_pairing', () => {
     expect(result).toHaveProperty('passphrase')
     expect(result).toHaveProperty('qr_svg')
     expect(result).toHaveProperty('port')
-    expect(typeof result.passphrase).toBe('string')
-    expect(typeof result.qr_svg).toBe('string')
-    expect(typeof result.port).toBe('number')
+    expect(typeof result['passphrase']).toBe('string')
+    expect(typeof result['qr_svg']).toBe('string')
+    expect(typeof result['port']).toBe('number')
   })
 
   it('returns expected default values', () => {
@@ -2150,7 +2155,7 @@ describe('start_sync', () => {
 
   it('echoes back the provided peerId as remote_device_id', () => {
     const result = invoke('start_sync', { peerId: 'other-peer' }) as Record<string, unknown>
-    expect(result.remote_device_id).toBe('other-peer')
+    expect(result['remote_device_id']).toBe('other-peer')
   })
 })
 
@@ -2182,11 +2187,11 @@ describe('add_attachment', () => {
       fsPath: '/tmp/test.pdf',
     }) as Record<string, unknown>
     expect(result).toHaveProperty('id')
-    expect(result.block_id).toBe(SEED_IDS.BLOCK_GS_1)
-    expect(result.filename).toBe('test.pdf')
-    expect(result.mime_type).toBe('application/pdf')
-    expect(result.size_bytes).toBe(1024)
-    expect(result.fs_path).toBe('/tmp/test.pdf')
+    expect(result['block_id']).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result['filename']).toBe('test.pdf')
+    expect(result['mime_type']).toBe('application/pdf')
+    expect(result['size_bytes']).toBe(1024)
+    expect(result['fs_path']).toBe('/tmp/test.pdf')
     expect(result).toHaveProperty('created_at')
   })
 
@@ -2205,7 +2210,7 @@ describe('add_attachment', () => {
       sizeBytes: 200,
       fsPath: '/tmp/b.png',
     }) as Record<string, unknown>
-    expect(a1.id).not.toBe(a2.id)
+    expect(a1['id']).not.toBe(a2['id'])
   })
 })
 
@@ -2295,10 +2300,10 @@ describe('import_markdown', () => {
     }) as Record<string, unknown>
     expect(result).toHaveProperty('page_title', 'My Imported Page')
     expect(result).toHaveProperty('blocks_created')
-    expect(result.blocks_created).toBeGreaterThanOrEqual(2)
+    expect(result['blocks_created']).toBeGreaterThanOrEqual(2)
     expect(result).toHaveProperty('properties_set', 0)
     expect(result).toHaveProperty('warnings')
-    expect(Array.isArray(result.warnings)).toBe(true)
+    expect(Array.isArray(result['warnings'])).toBe(true)
   })
 
   it('derives page title from filename when no heading present', () => {
@@ -2306,7 +2311,7 @@ describe('import_markdown', () => {
       content: 'Some content without a heading',
       filename: 'my-notes.md',
     }) as Record<string, unknown>
-    expect(result.page_title).toBe('my-notes')
+    expect(result['page_title']).toBe('my-notes')
   })
 
   it('prefers heading over filename for page title', () => {
@@ -2314,7 +2319,7 @@ describe('import_markdown', () => {
       content: '# Heading Title\n\nContent here',
       filename: 'fallback.md',
     }) as Record<string, unknown>
-    expect(result.page_title).toBe('Heading Title')
+    expect(result['page_title']).toBe('Heading Title')
   })
 
   it('strips list markers from content lines', () => {
@@ -2322,7 +2327,7 @@ describe('import_markdown', () => {
       content: '# List Page\n- Item one\n- Item two\n* Item three',
       filename: null,
     }) as Record<string, unknown>
-    expect(result.blocks_created).toBe(3)
+    expect(result['blocks_created']).toBe(3)
   })
 
   it('skips empty lines', () => {
@@ -2330,7 +2335,7 @@ describe('import_markdown', () => {
       content: '# Sparse\n\n\nOnly one line\n\n',
       filename: null,
     }) as Record<string, unknown>
-    expect(result.blocks_created).toBe(1)
+    expect(result['blocks_created']).toBe(1)
   })
 
   it('imported page is accessible via list_blocks', () => {
@@ -2341,6 +2346,6 @@ describe('import_markdown', () => {
     const pages = invoke('list_blocks', { blockType: 'page' }) as {
       items: Record<string, unknown>[]
     }
-    expect(pages.items.some((p) => p.content === 'Unique Import Test')).toBe(true)
+    expect(pages.items.some((p) => p['content'] === 'Unique Import Test')).toBe(true)
   })
 })

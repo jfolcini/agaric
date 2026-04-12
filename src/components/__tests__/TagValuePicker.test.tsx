@@ -40,7 +40,7 @@ function mockTagSearch() {
   mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
     if (cmd === 'list_tags_by_prefix') {
       const a = args as Record<string, unknown>
-      const prefix = ((a.prefix as string) ?? '').toLowerCase()
+      const prefix = ((a['prefix'] as string) ?? '').toLowerCase()
       return mockTags.filter((t) => t.name.toLowerCase().startsWith(prefix))
     }
     return []

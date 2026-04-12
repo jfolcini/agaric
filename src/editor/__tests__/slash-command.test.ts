@@ -42,7 +42,7 @@ function getLifecycle() {
   }
   // biome-ignore lint/suspicious/noExplicitAny: test helper — call with mock context
   ;(SlashCommand as any).addProseMirrorPlugins.call(ctx)
-  const render = capturedSuggestionConfig.render as () => {
+  const render = capturedSuggestionConfig['render'] as () => {
     onStart: (props: Record<string, unknown>) => void
     onUpdate: (props: Record<string, unknown>) => void
     onKeyDown: (props: Record<string, unknown>) => boolean

@@ -15,10 +15,10 @@ import { formatRelativeTime } from '../format-relative-time'
 // Simple mock t() that returns the key with interpolated values
 function mockT(key: string, opts?: Record<string, unknown>): string {
   if (opts && 'count' in opts) {
-    return `${key}:${opts.count}`
+    return `${key}:${opts['count']}`
   }
   if (opts && 'time' in opts) {
-    return `${key}:${opts.time}`
+    return `${key}:${opts['time']}`
   }
   return key
 }

@@ -713,7 +713,7 @@ describe('App', () => {
   describe('trash badge', () => {
     it('shows trash badge with count when listBlocks (showDeleted) returns items', async () => {
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-        if (cmd === 'list_blocks' && (args as Record<string, unknown>)?.showDeleted) {
+        if (cmd === 'list_blocks' && (args as Record<string, unknown>)?.['showDeleted']) {
           return {
             items: [
               {

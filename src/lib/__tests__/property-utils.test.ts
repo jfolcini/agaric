@@ -49,11 +49,11 @@ describe('BUILTIN_PROPERTY_ICONS', () => {
   })
 
   it('returns undefined for custom properties', () => {
-    expect(BUILTIN_PROPERTY_ICONS.my_custom_prop).toBeUndefined()
+    expect(BUILTIN_PROPERTY_ICONS['my_custom_prop']).toBeUndefined()
   })
 
   it('returns undefined for non-iconic built-in keys', () => {
-    expect(BUILTIN_PROPERTY_ICONS.todo_state).toBeUndefined()
-    expect(BUILTIN_PROPERTY_ICONS.priority).toBeUndefined()
+    expect(BUILTIN_PROPERTY_ICONS['todo_state']).toBeUndefined()
+    expect(BUILTIN_PROPERTY_ICONS['priority']).toBeUndefined()
   })
 })

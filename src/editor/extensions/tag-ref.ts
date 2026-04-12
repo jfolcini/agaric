@@ -48,7 +48,7 @@ export const TagRef = Node.create<TagRefOptions>({
       id: {
         default: null,
         parseHTML: (el) => el.getAttribute('data-id'),
-        renderHTML: (attrs) => ({ 'data-id': attrs.id as string }),
+        renderHTML: (attrs) => ({ 'data-id': attrs['id'] as string }),
       },
     }
   },
@@ -58,7 +58,7 @@ export const TagRef = Node.create<TagRefOptions>({
   },
 
   renderHTML({ node, HTMLAttributes }) {
-    const name = this.options.resolveName(node.attrs.id as string)
+    const name = this.options.resolveName(node.attrs['id'] as string)
     return [
       'span',
       mergeAttributes(HTMLAttributes, {
@@ -75,7 +75,7 @@ export const TagRef = Node.create<TagRefOptions>({
     const extension = this
     return ({ node }) => {
       const dom = document.createElement('span')
-      let currentId = node.attrs.id as string
+      let currentId = node.attrs['id'] as string
 
       function render(tagId: string) {
         currentId = tagId
@@ -107,7 +107,7 @@ export const TagRef = Node.create<TagRefOptions>({
         dom,
         update(updatedNode) {
           if (updatedNode.type.name !== 'tag_ref') return false
-          render(updatedNode.attrs.id as string)
+          render(updatedNode.attrs['id'] as string)
           return true
         },
       }
@@ -132,7 +132,7 @@ export const TagRef = Node.create<TagRefOptions>({
         const nodeBefore = $from.nodeBefore
         if (!nodeBefore || nodeBefore.type.name !== 'tag_ref') return false
 
-        const id = nodeBefore.attrs.id as string
+        const id = nodeBefore.attrs['id'] as string
         const name = this.options.resolveName(id)
         const nodeSize = nodeBefore.nodeSize
         const from = $from.pos - nodeSize

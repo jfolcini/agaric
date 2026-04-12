@@ -49,7 +49,7 @@ export const ExternalLink = Link.extend({
 
   addProseMirrorPlugins() {
     const parentPlugins = this.parent?.() ?? []
-    const linkType = this.editor.schema.marks.link
+    const linkType = this.editor.schema.marks['link']
     if (!linkType) return parentPlugins
 
     parentPlugins.push(

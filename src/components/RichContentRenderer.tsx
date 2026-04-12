@@ -342,7 +342,7 @@ export function renderRichContent(
     } else if (block.type === 'blockquote') {
       const calloutType = block.attrs?.calloutType
       const calloutConfig = calloutType
-        ? (CALLOUT_CONFIG[calloutType] ?? CALLOUT_CONFIG.note)
+        ? (CALLOUT_CONFIG[calloutType] ?? CALLOUT_CONFIG['note'])
         : null
       const bqKey = `bq-${keyIdx++}`
       const bqChildren: React.ReactNode[] = []

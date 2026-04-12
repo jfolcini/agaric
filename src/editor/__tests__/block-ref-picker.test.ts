@@ -40,7 +40,7 @@ vi.mock('@tiptap/suggestion', () => ({
   Suggestion: (opts: Record<string, unknown>) => {
     capturedSuggestionOpts = opts
     // Return a minimal ProseMirror plugin stub
-    return { key: opts.pluginKey }
+    return { key: opts['pluginKey'] }
   },
 }))
 
@@ -58,17 +58,17 @@ describe('BlockRefPicker suggestion config', () => {
 
   it('suggestion char is "(("', () => {
     const { opts } = buildPlugins()
-    expect(opts.char).toBe('((')
+    expect(opts['char']).toBe('((')
   })
 
   it('allowSpaces is true', () => {
     const { opts } = buildPlugins()
-    expect(opts.allowSpaces).toBe(true)
+    expect(opts['allowSpaces']).toBe(true)
   })
 
   it('allowedPrefixes is null', () => {
     const { opts } = buildPlugins()
-    expect(opts.allowedPrefixes).toBeNull()
+    expect(opts['allowedPrefixes']).toBeNull()
   })
 
   it('command calls deleteRange with the range', () => {
@@ -88,7 +88,7 @@ describe('BlockRefPicker suggestion config', () => {
     const props = { id: 'BLOCK_1', label: 'Test Block' }
 
     // biome-ignore lint/complexity/noBannedTypes: test needs direct invocation of captured command
-    ;(opts.command as Function)({ editor: mockEditor, range, props })
+    ;(opts['command'] as Function)({ editor: mockEditor, range, props })
 
     expect(mockDeleteRange).toHaveBeenCalledWith(range)
   })
@@ -110,7 +110,7 @@ describe('BlockRefPicker suggestion config', () => {
     const props = { id: 'BLOCK_42', label: 'My Block' }
 
     // biome-ignore lint/complexity/noBannedTypes: test needs direct invocation of captured command
-    ;(opts.command as Function)({ editor: mockEditor, range, props })
+    ;(opts['command'] as Function)({ editor: mockEditor, range, props })
 
     expect(mockInsertBlockRef).toHaveBeenCalledWith('BLOCK_42')
   })
@@ -135,7 +135,7 @@ describe('BlockRefPicker suggestion config', () => {
     const props = { id: 'BLOCK_99', label: 'Another Block' }
 
     // biome-ignore lint/complexity/noBannedTypes: test needs direct invocation of captured command
-    ;(opts.command as Function)({ editor: mockEditor, range, props })
+    ;(opts['command'] as Function)({ editor: mockEditor, range, props })
 
     expect(mockChain).toHaveBeenCalled()
     expect(mockFocus).toHaveBeenCalled()

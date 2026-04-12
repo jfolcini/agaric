@@ -1771,8 +1771,8 @@ describe('BlockTree resolve cache preload', () => {
     const pageCalls = mockedInvoke.mock.calls.filter(
       ([cmd, args]) =>
         cmd === 'list_blocks' &&
-        (args as Record<string, unknown>)?.blockType === 'page' &&
-        (args as Record<string, unknown>)?.limit === 1000,
+        (args as Record<string, unknown>)?.['blockType'] === 'page' &&
+        (args as Record<string, unknown>)?.['limit'] === 1000,
     )
     expect(pageCalls).toHaveLength(0)
 
@@ -1801,7 +1801,7 @@ describe('BlockTree resolve cache preload', () => {
       if (cmd === 'list_blocks') {
         if (args?.blockType === 'page') return emptyPage
         const a = args as Record<string, unknown> | undefined
-        if (a?.parentId === 'PAGE_1')
+        if (a?.['parentId'] === 'PAGE_1')
           return { items: [blockWithLink], next_cursor: null, has_more: false }
         return emptyPage
       }
@@ -2934,7 +2934,7 @@ describe('BlockTree schedule slash command', () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'list_blocks') {
         const a = args as Record<string, unknown> | undefined
-        if (a?.parentId === 'PAGE_1')
+        if (a?.['parentId'] === 'PAGE_1')
           return { items: [tree[0]], next_cursor: null, has_more: false }
         return emptyPage
       }
@@ -2989,7 +2989,7 @@ describe('BlockTree schedule slash command', () => {
     // Verify block store was updated optimistically
     await waitFor(() => {
       const block = pageStore.getState().blocks.find((b) => b.id === 'A')
-      expect((block as unknown as Record<string, unknown>)?.scheduled_date).toBe('2025-03-15')
+      expect((block as unknown as Record<string, unknown>)?.['scheduled_date']).toBe('2025-03-15')
     })
 
     // Verify it did NOT call create_block (no date page created)
@@ -3563,12 +3563,12 @@ describe('BlockTree handleMergeWithPrev', () => {
     renderBlockTree()
 
     await waitFor(() => {
-      const handler = capturedBlockKeyboardOpts?.onMergeWithPrev
+      const handler = capturedBlockKeyboardOpts?.['onMergeWithPrev']
       expect(handler).toBeDefined()
     })
 
     act(() => {
-      ;(capturedBlockKeyboardOpts?.onMergeWithPrev as () => void)?.()
+      ;(capturedBlockKeyboardOpts?.['onMergeWithPrev'] as () => void)?.()
     })
 
     // Should edit previous block with concatenated content
@@ -3600,12 +3600,12 @@ describe('BlockTree handleMergeWithPrev', () => {
     renderBlockTree()
 
     await waitFor(() => {
-      const handler = capturedBlockKeyboardOpts?.onMergeWithPrev
+      const handler = capturedBlockKeyboardOpts?.['onMergeWithPrev']
       expect(handler).toBeDefined()
     })
 
     act(() => {
-      ;(capturedBlockKeyboardOpts?.onMergeWithPrev as () => void)?.()
+      ;(capturedBlockKeyboardOpts?.['onMergeWithPrev'] as () => void)?.()
     })
 
     // No edit_block or delete_block should be called
@@ -3638,12 +3638,12 @@ describe('BlockTree handleIndent / handleDedent', () => {
     renderBlockTree()
 
     await waitFor(() => {
-      const handler = capturedBlockKeyboardOpts?.onIndent
+      const handler = capturedBlockKeyboardOpts?.['onIndent']
       expect(handler).toBeDefined()
     })
 
     act(() => {
-      ;(capturedBlockKeyboardOpts?.onIndent as () => void)?.()
+      ;(capturedBlockKeyboardOpts?.['onIndent'] as () => void)?.()
     })
 
     await waitFor(() => {
@@ -3668,12 +3668,12 @@ describe('BlockTree handleIndent / handleDedent', () => {
     renderBlockTree()
 
     await waitFor(() => {
-      const handler = capturedBlockKeyboardOpts?.onDedent
+      const handler = capturedBlockKeyboardOpts?.['onDedent']
       expect(handler).toBeDefined()
     })
 
     act(() => {
-      ;(capturedBlockKeyboardOpts?.onDedent as () => void)?.()
+      ;(capturedBlockKeyboardOpts?.['onDedent'] as () => void)?.()
     })
 
     await waitFor(() => {
@@ -3695,12 +3695,12 @@ describe('BlockTree handleIndent / handleDedent', () => {
     renderBlockTree()
 
     await waitFor(() => {
-      const handler = capturedBlockKeyboardOpts?.onIndent
+      const handler = capturedBlockKeyboardOpts?.['onIndent']
       expect(handler).toBeDefined()
     })
 
     act(() => {
-      ;(capturedBlockKeyboardOpts?.onIndent as () => void)?.()
+      ;(capturedBlockKeyboardOpts?.['onIndent'] as () => void)?.()
     })
 
     // No move_block should be called
@@ -3718,12 +3718,12 @@ describe('BlockTree handleIndent / handleDedent', () => {
     renderBlockTree()
 
     await waitFor(() => {
-      const handler = capturedBlockKeyboardOpts?.onDedent
+      const handler = capturedBlockKeyboardOpts?.['onDedent']
       expect(handler).toBeDefined()
     })
 
     act(() => {
-      ;(capturedBlockKeyboardOpts?.onDedent as () => void)?.()
+      ;(capturedBlockKeyboardOpts?.['onDedent'] as () => void)?.()
     })
 
     // No move_block should be called (already at root)
@@ -3870,7 +3870,7 @@ describe('BlockTree handleDatePick date format', () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'list_blocks') {
         const a = args as Record<string, unknown> | undefined
-        if (a?.parentId === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
+        if (a?.['parentId'] === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
         return emptyPage
       }
       return emptyPage
@@ -3940,7 +3940,7 @@ describe('BlockTree handleDatePick date format', () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'list_blocks') {
         const a = args as Record<string, unknown> | undefined
-        if (a?.parentId === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
+        if (a?.['parentId'] === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
         return emptyPage
       }
       return emptyPage
@@ -4003,7 +4003,7 @@ describe('BlockTree handleDatePick date format', () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'list_blocks') {
         const a = args as Record<string, unknown> | undefined
-        if (a?.parentId === 'PAGE_1')
+        if (a?.['parentId'] === 'PAGE_1')
           return { items: [tree[0]], next_cursor: null, has_more: false }
         return emptyPage
       }
@@ -4447,7 +4447,7 @@ describe('DatePickerOverlay text input', () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'list_blocks') {
         const a = args as Record<string, unknown> | undefined
-        if (a?.parentId === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
+        if (a?.['parentId'] === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
         return emptyPage
       }
       return emptyPage
@@ -4483,7 +4483,7 @@ describe('DatePickerOverlay text input', () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'list_blocks') {
         const a = args as Record<string, unknown> | undefined
-        if (a?.parentId === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
+        if (a?.['parentId'] === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
         return emptyPage
       }
       return emptyPage
@@ -4522,7 +4522,7 @@ describe('DatePickerOverlay text input', () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'list_blocks') {
         const a = args as Record<string, unknown> | undefined
-        if (a?.parentId === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
+        if (a?.['parentId'] === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
         return emptyPage
       }
       return emptyPage
@@ -4559,7 +4559,7 @@ describe('DatePickerOverlay text input', () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'list_blocks') {
         const a = args as Record<string, unknown> | undefined
-        if (a?.parentId === 'PAGE_1')
+        if (a?.['parentId'] === 'PAGE_1')
           return { items: [tree[0]], next_cursor: null, has_more: false }
         return emptyPage
       }
@@ -4659,7 +4659,7 @@ describe('BlockTree Enter creates new sibling block', () => {
     renderBlockTree()
 
     await waitFor(() => {
-      expect(capturedBlockKeyboardOpts?.onEnterSave).toBeDefined()
+      expect(capturedBlockKeyboardOpts?.['onEnterSave']).toBeDefined()
     })
 
     await act(async () => {
@@ -4718,7 +4718,7 @@ describe('BlockTree Enter creates new sibling block', () => {
     renderBlockTree()
 
     await waitFor(() => {
-      expect(capturedBlockKeyboardOpts?.onEnterSave).toBeDefined()
+      expect(capturedBlockKeyboardOpts?.['onEnterSave']).toBeDefined()
     })
 
     // Create new block via Enter
@@ -4777,7 +4777,7 @@ describe('BlockTree Enter creates new sibling block', () => {
     renderBlockTree()
 
     await waitFor(() => {
-      expect(capturedBlockKeyboardOpts?.onEnterSave).toBeDefined()
+      expect(capturedBlockKeyboardOpts?.['onEnterSave']).toBeDefined()
     })
 
     // Create new block via Enter
@@ -4989,7 +4989,7 @@ describe('BlockTree Ctrl+Shift+P keyboard shortcut', () => {
       expect(capturedBlockKeyboardOpts).toBeDefined()
     })
 
-    expect(typeof capturedBlockKeyboardOpts?.onShowProperties).toBe('function')
+    expect(typeof capturedBlockKeyboardOpts?.['onShowProperties']).toBe('function')
   })
 })
 
@@ -5213,7 +5213,7 @@ describe('BlockTree multi-selection (#657)', () => {
 
     renderBlockTree()
     const block = await screen.findByTestId('sortable-block-A')
-    expect(block.dataset.selected).toBe('true')
+    expect(block.dataset['selected']).toBe('true')
   })
 
   it('unselected block has data-selected=false', async () => {
@@ -5226,7 +5226,7 @@ describe('BlockTree multi-selection (#657)', () => {
 
     renderBlockTree()
     const block = await screen.findByTestId('sortable-block-A')
-    expect(block.dataset.selected).toBe('false')
+    expect(block.dataset['selected']).toBe('false')
   })
 
   it('Escape clears selection when not editing', async () => {
@@ -5637,7 +5637,7 @@ describe('H-9: auto-create first block on empty page', () => {
       if (cmd === 'create_block') return newBlock
       if (cmd === 'list_blocks') {
         const a = args as Record<string, unknown> | undefined
-        if (a?.parentId === 'PAGE_1')
+        if (a?.['parentId'] === 'PAGE_1')
           return { items: [newBlock], next_cursor: null, has_more: false }
         return emptyPage
       }
@@ -5667,7 +5667,7 @@ describe('H-9: auto-create first block on empty page', () => {
     pageStore.setState({ blocks: [existing], loading: false })
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
       const a = args as Record<string, unknown> | undefined
-      if (cmd === 'list_blocks' && a?.parentId === 'PAGE_1')
+      if (cmd === 'list_blocks' && a?.['parentId'] === 'PAGE_1')
         return { items: [existing], next_cursor: null, has_more: false }
       return emptyPage
     })

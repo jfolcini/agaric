@@ -1139,8 +1139,8 @@ describe('ConflictList', () => {
     const expandedIncoming = container.querySelector('.conflict-incoming')
     expect(expandedOriginal?.className).not.toContain('truncate')
     expect(expandedIncoming?.className).not.toContain('truncate')
-    expect((expandedOriginal as HTMLElement)?.dataset.slot).toBe('scroll-area')
-    expect((expandedIncoming as HTMLElement)?.dataset.slot).toBe('scroll-area')
+    expect((expandedOriginal as HTMLElement)?.dataset['slot']).toBe('scroll-area')
+    expect((expandedIncoming as HTMLElement)?.dataset['slot']).toBe('scroll-area')
 
     // Click again to collapse
     await user.click(expandBtn)

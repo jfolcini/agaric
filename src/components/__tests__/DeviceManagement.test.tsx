@@ -610,11 +610,11 @@ describe('DeviceManagement', () => {
           },
         ]
       if (cmd === 'start_sync') {
-        syncCalls.push((args as Record<string, string>).peerId as string)
+        syncCalls.push((args as Record<string, string>)['peerId'] as string)
         return {
           state: 'completed',
           local_device_id: 'device-123',
-          remote_device_id: (args as Record<string, string>).peerId as string,
+          remote_device_id: (args as Record<string, string>)['peerId'] as string,
           ops_received: 0,
           ops_sent: 0,
         }
@@ -688,7 +688,7 @@ describe('DeviceManagement', () => {
           },
         ]
       if (cmd === 'start_sync') {
-        const peerId = (args as Record<string, string>).peerId as string
+        const peerId = (args as Record<string, string>)['peerId'] as string
         syncCalls.push(peerId)
         if (peerId === 'peer-1') throw new Error('Connection refused')
         return {

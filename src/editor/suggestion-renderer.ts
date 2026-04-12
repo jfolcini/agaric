@@ -91,7 +91,7 @@ export function createSuggestionRenderer(label?: string) {
 
       popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
-      popup.dataset.testid = 'suggestion-popup'
+      popup.dataset['testid'] = 'suggestion-popup'
       popup.setAttribute('role', 'region')
       popup.setAttribute('aria-label', label ?? 'Suggestions')
       // Start off-screen to avoid flash at (0,0) before positioning settles

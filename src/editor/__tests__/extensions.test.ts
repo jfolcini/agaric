@@ -25,7 +25,7 @@ const schema = getSchema([
 // -- TagRef -------------------------------------------------------------------
 
 describe('TagRef extension', () => {
-  const nodeType = schema.nodes.tag_ref as unknown as NodeType
+  const nodeType = schema.nodes['tag_ref'] as unknown as NodeType
 
   it('exists in the schema', () => {
     expect(nodeType).toBeDefined()
@@ -45,11 +45,11 @@ describe('TagRef extension', () => {
 
   it('has an id attribute', () => {
     expect(nodeType.spec.attrs).toBeDefined()
-    expect(nodeType.spec.attrs?.id).toBeDefined()
+    expect(nodeType.spec.attrs?.['id']).toBeDefined()
   })
 
   it('id attribute defaults to null', () => {
-    expect(nodeType.spec.attrs?.id?.default).toBeNull()
+    expect(nodeType.spec.attrs?.['id']?.default).toBeNull()
   })
 
   it('renders as a span with data-type="tag-ref"', () => {
@@ -67,8 +67,8 @@ describe('TagRef extension', () => {
     const attrs = arr[1] as Record<string, string>
     expect(attrs['data-type']).toBe('tag-ref')
     expect(attrs['data-id']).toBe('01ARZ3NDEKTSV4RRFFQ69G5FAV')
-    expect(attrs.contenteditable).toBe('false')
-    expect(attrs.class).toBe('tag-ref-chip')
+    expect(attrs['contenteditable']).toBe('false')
+    expect(attrs['class']).toBe('tag-ref-chip')
   })
 
   it('parses from span[data-type="tag-ref"]', () => {
@@ -82,7 +82,7 @@ describe('TagRef extension', () => {
 // -- BlockLink ----------------------------------------------------------------
 
 describe('BlockLink extension', () => {
-  const nodeType = schema.nodes.block_link as unknown as NodeType
+  const nodeType = schema.nodes['block_link'] as unknown as NodeType
 
   it('exists in the schema', () => {
     expect(nodeType).toBeDefined()
@@ -102,11 +102,11 @@ describe('BlockLink extension', () => {
 
   it('has an id attribute', () => {
     expect(nodeType.spec.attrs).toBeDefined()
-    expect(nodeType.spec.attrs?.id).toBeDefined()
+    expect(nodeType.spec.attrs?.['id']).toBeDefined()
   })
 
   it('id attribute defaults to null', () => {
-    expect(nodeType.spec.attrs?.id?.default).toBeNull()
+    expect(nodeType.spec.attrs?.['id']?.default).toBeNull()
   })
 
   it('renders as a span with data-type="block-link"', () => {
@@ -119,8 +119,8 @@ describe('BlockLink extension', () => {
     const attrs = arr[1] as Record<string, string>
     expect(attrs['data-type']).toBe('block-link')
     expect(attrs['data-id']).toBe('01ARZ3NDEKTSV4RRFFQ69G5FAV')
-    expect(attrs.contenteditable).toBe('false')
-    expect(attrs.class).toBe('block-link-chip')
+    expect(attrs['contenteditable']).toBe('false')
+    expect(attrs['class']).toBe('block-link-chip')
   })
 
   it('parses from span[data-type="block-link"]', () => {
@@ -136,37 +136,37 @@ describe('BlockLink extension', () => {
 describe('Schema integration', () => {
   it('tag_ref can be content of paragraph', () => {
     // Paragraph allows inline content — tag_ref is inline group
-    const tagType = schema.nodes.tag_ref as unknown as NodeType
+    const tagType = schema.nodes['tag_ref'] as unknown as NodeType
     const tagNode = tagType.create({ id: 'TEST00000000000000000000' })
     // Should not throw when creating a paragraph with tag_ref content
-    const paraType = schema.nodes.paragraph as unknown as NodeType
+    const paraType = schema.nodes['paragraph'] as unknown as NodeType
     const para = paraType.create(null, tagNode)
     expect(para.content.childCount).toBe(1)
     expect(para.content.child(0).type.name).toBe('tag_ref')
   })
 
   it('block_link can be content of paragraph', () => {
-    const linkType = schema.nodes.block_link as unknown as NodeType
+    const linkType = schema.nodes['block_link'] as unknown as NodeType
     const linkNode = linkType.create({ id: 'TEST00000000000000000000' })
-    const paraType = schema.nodes.paragraph as unknown as NodeType
+    const paraType = schema.nodes['paragraph'] as unknown as NodeType
     const para = paraType.create(null, linkNode)
     expect(para.content.childCount).toBe(1)
     expect(para.content.child(0).type.name).toBe('block_link')
   })
 
   it('block_ref can be content of paragraph', () => {
-    const refType = schema.nodes.block_ref as unknown as NodeType
+    const refType = schema.nodes['block_ref'] as unknown as NodeType
     const refNode = refType.create({ id: 'TEST00000000000000000000' })
-    const paraType = schema.nodes.paragraph as unknown as NodeType
+    const paraType = schema.nodes['paragraph'] as unknown as NodeType
     const para = paraType.create(null, refNode)
     expect(para.content.childCount).toBe(1)
     expect(para.content.child(0).type.name).toBe('block_ref')
   })
 
   it('tag_ref and block_link can coexist with text in a paragraph', () => {
-    const tagType = schema.nodes.tag_ref as unknown as NodeType
-    const linkType = schema.nodes.block_link as unknown as NodeType
-    const paraType = schema.nodes.paragraph as unknown as NodeType
+    const tagType = schema.nodes['tag_ref'] as unknown as NodeType
+    const linkType = schema.nodes['block_link'] as unknown as NodeType
+    const paraType = schema.nodes['paragraph'] as unknown as NodeType
     const nodes: PmNode[] = [
       schema.text('before '),
       tagType.create({ id: 'TAG00000000000000000000000' }),
@@ -308,11 +308,11 @@ describe('ExternalLink extension', () => {
 
   it('has external-link CSS class in HTMLAttributes', () => {
     expect(ExternalLink.options.HTMLAttributes).toBeDefined()
-    expect(ExternalLink.options.HTMLAttributes.class).toBe('external-link')
+    expect(ExternalLink.options.HTMLAttributes['class']).toBe('external-link')
   })
 
   it('has noopener noreferrer rel attribute', () => {
-    expect(ExternalLink.options.HTMLAttributes.rel).toBe('noopener noreferrer')
+    expect(ExternalLink.options.HTMLAttributes['rel']).toBe('noopener noreferrer')
   })
 })
 
@@ -345,7 +345,7 @@ describe('ExternalLink URL validation', () => {
 // -- BlockRef -----------------------------------------------------------------
 
 describe('BlockRef extension', () => {
-  const nodeType = schema.nodes.block_ref as unknown as NodeType
+  const nodeType = schema.nodes['block_ref'] as unknown as NodeType
 
   it('exists in the schema', () => {
     expect(nodeType).toBeDefined()
@@ -365,11 +365,11 @@ describe('BlockRef extension', () => {
 
   it('has an id attribute', () => {
     expect(nodeType.spec.attrs).toBeDefined()
-    expect(nodeType.spec.attrs?.id).toBeDefined()
+    expect(nodeType.spec.attrs?.['id']).toBeDefined()
   })
 
   it('id attribute defaults to null', () => {
-    expect(nodeType.spec.attrs?.id?.default).toBeNull()
+    expect(nodeType.spec.attrs?.['id']?.default).toBeNull()
   })
 
   it('renders as a span with data-type="block-ref"', () => {
@@ -382,8 +382,8 @@ describe('BlockRef extension', () => {
     const attrs = arr[1] as Record<string, string>
     expect(attrs['data-type']).toBe('block-ref')
     expect(attrs['data-id']).toBe('01ARZ3NDEKTSV4RRFFQ69G5FAV')
-    expect(attrs.contenteditable).toBe('false')
-    expect(attrs.class).toBe('block-ref-chip')
+    expect(attrs['contenteditable']).toBe('false')
+    expect(attrs['class']).toBe('block-ref-chip')
   })
 
   it('parses from span[data-type="block-ref"]', () => {
@@ -416,8 +416,8 @@ describe('BlockRef Backspace handler (B-66)', () => {
       options: ext.options,
     })
     expect(shortcuts).toBeDefined()
-    expect(shortcuts.Backspace).toBeDefined()
-    expect(typeof shortcuts.Backspace).toBe('function')
+    expect(shortcuts['Backspace']).toBeDefined()
+    expect(typeof shortcuts['Backspace']).toBe('function')
   })
 })
 

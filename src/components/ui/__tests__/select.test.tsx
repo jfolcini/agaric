@@ -57,12 +57,12 @@ function renderSelect(
   } = {},
 ) {
   const selectProps: Record<string, unknown> = {}
-  if (props.value !== undefined) selectProps.value = props.value
-  if (props.onValueChange !== undefined) selectProps.onValueChange = props.onValueChange
+  if (props.value !== undefined) selectProps['value'] = props.value
+  if (props.onValueChange !== undefined) selectProps['onValueChange'] = props.onValueChange
 
   const triggerProps: Record<string, unknown> = { 'aria-label': 'Test select' }
-  if (props.size !== undefined) triggerProps.size = props.size
-  if (props.disabled !== undefined) triggerProps.disabled = props.disabled
+  if (props.size !== undefined) triggerProps['size'] = props.size
+  if (props.disabled !== undefined) triggerProps['disabled'] = props.disabled
 
   return render(
     <Select {...selectProps}>

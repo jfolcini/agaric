@@ -23,7 +23,8 @@
     "noUncheckedIndexedAccess": true,
     "noUncheckedSideEffectImports": true,
     "exactOptionalPropertyTypes": true,
-    "noImplicitReturns": true
+    "noImplicitReturns": true,
+    "noPropertyAccessFromIndexSignature": true
   },
   "include": ["vite.config.ts", "vitest.config.ts", "playwright.config.ts"]
 }

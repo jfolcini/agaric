@@ -88,10 +88,10 @@ describe('executeAgendaFilters', () => {
 
       mockedInvoke.mockImplementation(async (_cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
-        if (a.key === 'due_date') {
+        if (a['key'] === 'due_date') {
           return { items: [dueBlock], next_cursor: null, has_more: false }
         }
-        if (a.key === 'scheduled_date') {
+        if (a['key'] === 'scheduled_date') {
           return { items: [schedBlock], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -137,10 +137,10 @@ describe('executeAgendaFilters', () => {
 
       mockedInvoke.mockImplementation(async (_cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
-        if (a.key === 'todo_state' && a.valueText === 'TODO') {
+        if (a['key'] === 'todo_state' && a['valueText'] === 'TODO') {
           return { items: [todoBlock], next_cursor: null, has_more: false }
         }
-        if (a.key === 'todo_state' && a.valueText === 'DOING') {
+        if (a['key'] === 'todo_state' && a['valueText'] === 'DOING') {
           return { items: [doingBlock], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -175,10 +175,10 @@ describe('executeAgendaFilters', () => {
 
       mockedInvoke.mockImplementation(async (_cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
-        if (a.key === 'priority' && a.valueText === '1') {
+        if (a['key'] === 'priority' && a['valueText'] === '1') {
           return { items: [p1Block], next_cursor: null, has_more: false }
         }
-        if (a.key === 'priority' && a.valueText === '2') {
+        if (a['key'] === 'priority' && a['valueText'] === '2') {
           return { items: [p2Block], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -375,7 +375,7 @@ describe('executeAgendaFilters', () => {
 
       mockedInvoke.mockImplementation(async (_cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
-        if (a.key === 'completed_at' && a.valueDate === '2025-03-15') {
+        if (a['key'] === 'completed_at' && a['valueDate'] === '2025-03-15') {
           return { items: [block], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -413,7 +413,7 @@ describe('executeAgendaFilters', () => {
 
       mockedInvoke.mockImplementation(async (_cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
-        if (a.key === 'created_at' && a.valueDate === '2025-03-15') {
+        if (a['key'] === 'created_at' && a['valueDate'] === '2025-03-15') {
           return { items: [block], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -441,12 +441,12 @@ describe('executeAgendaFilters', () => {
       mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
         if (cmd === 'list_tags_by_prefix') {
-          if (a.prefix === 'tag-abc') {
+          if (a['prefix'] === 'tag-abc') {
             return [{ tag_id: 'TAG_ID_ABC', name: 'tag-abc', usage_count: 1 }]
           }
           return []
         }
-        if (cmd === 'list_blocks' && a.tagId === 'TAG_ID_ABC') {
+        if (cmd === 'list_blocks' && a['tagId'] === 'TAG_ID_ABC') {
           return { items: [block], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -473,14 +473,14 @@ describe('executeAgendaFilters', () => {
       mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
         if (cmd === 'list_tags_by_prefix') {
-          if (a.prefix === 'tag-1') return [{ tag_id: 'TID_1', name: 'tag-1', usage_count: 1 }]
-          if (a.prefix === 'tag-2') return [{ tag_id: 'TID_2', name: 'tag-2', usage_count: 1 }]
+          if (a['prefix'] === 'tag-1') return [{ tag_id: 'TID_1', name: 'tag-1', usage_count: 1 }]
+          if (a['prefix'] === 'tag-2') return [{ tag_id: 'TID_2', name: 'tag-2', usage_count: 1 }]
           return []
         }
-        if (cmd === 'list_blocks' && a.tagId === 'TID_1') {
+        if (cmd === 'list_blocks' && a['tagId'] === 'TID_1') {
           return { items: [block1], next_cursor: null, has_more: false }
         }
-        if (cmd === 'list_blocks' && a.tagId === 'TID_2') {
+        if (cmd === 'list_blocks' && a['tagId'] === 'TID_2') {
           return { items: [block2], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -498,7 +498,7 @@ describe('executeAgendaFilters', () => {
 
       mockedInvoke.mockImplementation(async (_cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
-        if (a.key === 'assignee' && a.valueText === 'Alice') {
+        if (a['key'] === 'assignee' && a['valueText'] === 'Alice') {
           return { items: [block], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -517,7 +517,7 @@ describe('executeAgendaFilters', () => {
 
       mockedInvoke.mockImplementation(async (_cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
-        if (a.key === 'custom_key' && a.valueText === null) {
+        if (a['key'] === 'custom_key' && a['valueText'] === null) {
           return { items: [block], next_cursor: null, has_more: false }
         }
         return emptyPage
@@ -537,14 +537,14 @@ describe('executeAgendaFilters', () => {
 
       mockedInvoke.mockImplementation(async (_cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
-        if (a.key === 'todo_state' && a.valueText === 'TODO') {
+        if (a['key'] === 'todo_state' && a['valueText'] === 'TODO') {
           return {
             items: [sharedBlock, todoOnlyBlock],
             next_cursor: null,
             has_more: false,
           }
         }
-        if (a.key === 'priority' && a.valueText === '1') {
+        if (a['key'] === 'priority' && a['valueText'] === '1') {
           return {
             items: [sharedBlock, prioOnlyBlock],
             next_cursor: null,
@@ -570,10 +570,10 @@ describe('executeAgendaFilters', () => {
 
       mockedInvoke.mockImplementation(async (_cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
-        if (a.key === 'todo_state') {
+        if (a['key'] === 'todo_state') {
           return { items: [todoBlock], next_cursor: null, has_more: false }
         }
-        if (a.key === 'priority') {
+        if (a['key'] === 'priority') {
           return { items: [prioBlock], next_cursor: null, has_more: false }
         }
         return emptyPage

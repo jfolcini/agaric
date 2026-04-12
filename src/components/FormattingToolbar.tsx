@@ -114,7 +114,7 @@ export function FormattingToolbar({
       link: ctx.editor.isActive('link'),
       codeBlock: ctx.editor.isActive('codeBlock'),
       codeBlockLanguage: ctx.editor.isActive('codeBlock')
-        ? ((ctx.editor.getAttributes('codeBlock').language as string) ?? '')
+        ? ((ctx.editor.getAttributes('codeBlock')['language'] as string) ?? '')
         : '',
       blockquote: ctx.editor.isActive('blockquote'),
       headingLevel: ctx.editor.isActive('heading', { level: 1 })
@@ -145,7 +145,7 @@ export function FormattingToolbar({
     return () => dom.removeEventListener('open-link-popover', handler)
   }, [editor])
 
-  const currentUrl = state.link ? ((editor.getAttributes('link').href as string) ?? '') : ''
+  const currentUrl = state.link ? ((editor.getAttributes('link')['href'] as string) ?? '') : ''
 
   const handleLinkPopoverClose = useCallback(() => {
     setLinkPopoverOpen(false)

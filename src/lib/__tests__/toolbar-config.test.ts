@@ -86,11 +86,11 @@ describe('LANG_SHORT', () => {
   })
 
   it('maps javascript to JS', () => {
-    expect(LANG_SHORT.javascript).toBe('JS')
+    expect(LANG_SHORT['javascript']).toBe('JS')
   })
 
   it('maps typescript to TS', () => {
-    expect(LANG_SHORT.typescript).toBe('TS')
+    expect(LANG_SHORT['typescript']).toBe('TS')
   })
 })
 
