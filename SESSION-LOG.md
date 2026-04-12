@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 349 — M-31/M-32/M-33: split 3 monolithic Rust files (2026-04-12)
+
+**3 REVIEW-LATER items resolved (M-31, M-32, M-33). 38 files changed, +23541 -23426 lines. 1809 Rust tests pass, 6273 frontend tests pass.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| M-31 | Split `commands/mod.rs` test block (13,860 lines, 302 tests) into 13 per-domain files under `commands/tests/` | 16 new files (tests/ dir), mod.rs modified |
+| M-32 | Convert `command_integration_tests.rs` (8,625 lines, 202 tests) to directory module with 9 domain files | 11 new files, original deleted |
+| M-33 | Extract `backlink_query.rs` into layered modules: types, filters, sort | 3 new files, backlink_query.rs + lib.rs modified |
+
+### Implementation
+- **M-31**: Python script parsed 53 section headers, grouped 302 tests into 13 domain files. Shared helpers (`DEV`, `FIXED_TS`, `test_pool`, `insert_block`) extracted to `commands/tests/common.rs`. Insta snapshot files moved to `tests/snapshots/` with corrected module-path filenames. mod.rs reduced from 14,506 → 647 lines.
+- **M-32**: Python script split 202 tests into 9 domain files. Shared helpers (`DEV`, `test_pool`, `test_materializer`, `insert_block`, `settle`) extracted to `command_integration_tests/common.rs`. Largest files: block_integration.rs (54 tests), backlink_integration.rs (40 tests), property_integration.rs (36 tests).
+- **M-33**: Extracted `backlink_types.rs` (141 lines, 7 types), `backlink_filters.rs` (568 lines, resolve_filter + ULID utilities), `backlink_sort.rs` (254 lines, sort_ids + property fetch). `backlink_query.rs` keeps query execution + tests, re-exports types via `pub use crate::backlink_types::*`. No circular dependencies.
+
+### Stats
+- 38 files changed (+23541 -23426 lines, net +115)
+- 1809 Rust tests pass, 6273 frontend tests pass, all 20 prek hooks pass
+- 3 REVIEW-LATER items resolved (5 → 2 open)
+
+---
+
 ## Session 348 — B-55 ULID resolve + M-30/M-34 Rust file splitting (2026-04-12)
 
 **3 REVIEW-LATER items resolved (B-55, M-30, M-34). 10 files changed, +1091 -915 lines. 6273 frontend tests pass, 1809 Rust tests pass.**
