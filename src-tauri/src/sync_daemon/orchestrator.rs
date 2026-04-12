@@ -13,7 +13,10 @@ use crate::sync_net::{self, DiscoveredPeer, MdnsService, SyncCert, SyncConnectio
 use crate::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState};
 use crate::sync_scheduler::SyncScheduler;
 
-use super::discovery::{build_fallback_peer, should_attempt_sync_with_discovered_peer};
+use super::discovery::{
+    format_peer_address, get_peer_cert_hash, resolve_peer_address,
+    should_attempt_sync_with_discovered_peer, should_store_cert_hash,
+};
 use super::server::handle_incoming_sync;
 use super::SharedEventSink;
 
@@ -173,35 +176,23 @@ pub(crate) async fn daemon_loop(
                     vec![]
                 });
                 for peer_ref in &refs {
-                    if let Some((dp, _)) = discovered.get(&peer_ref.peer_id) {
+                    if let Some(peer) = resolve_peer_address(
+                        &peer_ref.peer_id,
+                        peer_ref.last_address.as_deref(),
+                        &discovered,
+                    ) {
                         try_sync_with_peer(
                             &pool,
                             &device_id,
                             &materializer,
                             &scheduler,
                             &event_sink,
-                            dp,
+                            &peer,
                             &refs,
                             &cancel,
                             &cert,
                         )
                         .await;
-                    } else if let Some(ref addr) = peer_ref.last_address {
-                        // Fallback: use last-known address (manual IP / stored from previous sync)
-                        if let Some(fallback_peer) = build_fallback_peer(&peer_ref.peer_id, addr) {
-                            try_sync_with_peer(
-                                &pool,
-                                &device_id,
-                                &materializer,
-                                &scheduler,
-                                &event_sink,
-                                &fallback_peer,
-                                &refs,
-                                &cancel,
-                                &cert,
-                            )
-                            .await;
-                        }
                     }
                 }
             }
@@ -224,35 +215,20 @@ pub(crate) async fn daemon_loop(
                 let refs_by_id: std::collections::HashMap<&str, &peer_refs::PeerRef> =
                     refs.iter().map(|r| (r.peer_id.as_str(), r)).collect();
                 for pid in due {
-                    if let Some((dp, _)) = discovered.get(&pid) {
+                    let last_addr = refs_by_id.get(pid.as_str()).and_then(|r| r.last_address.as_deref());
+                    if let Some(peer) = resolve_peer_address(&pid, last_addr, &discovered) {
                         try_sync_with_peer(
                             &pool,
                             &device_id,
                             &materializer,
                             &scheduler,
                             &event_sink,
-                            dp,
+                            &peer,
                             &refs,
                             &cancel,
                             &cert,
                         )
                         .await;
-                    } else if let Some(ref addr) = refs_by_id.get(pid.as_str()).and_then(|r| r.last_address.clone()) {
-                        // Fallback: use last-known address (manual IP / stored from previous sync)
-                        if let Some(fallback_peer) = build_fallback_peer(&pid, addr) {
-                            try_sync_with_peer(
-                                &pool,
-                                &device_id,
-                                &materializer,
-                                &scheduler,
-                                &event_sink,
-                                &fallback_peer,
-                                &refs,
-                                &cancel,
-                                &cert,
-                            )
-                            .await;
-                        }
                     }
                 }
             }
@@ -321,19 +297,13 @@ pub(crate) async fn try_sync_with_peer(
     };
 
     // 3. Resolve address from discovered peer info
-    let addr = match peer.addresses.first() {
-        Some(ip) => format!("{ip}:{}", peer.port),
-        None => {
-            tracing::warn!(peer_id, "peer has no addresses, skipping sync");
-            return;
-        }
+    let Some(addr) = format_peer_address(peer) else {
+        tracing::warn!(peer_id, "peer has no addresses, skipping sync");
+        return;
     };
 
     // 4. Look up cert hash for TLS certificate pinning
-    let cert_hash = peer_refs
-        .iter()
-        .find(|p| p.peer_id == *peer_id)
-        .and_then(|p| p.cert_hash.clone());
+    let cert_hash = get_peer_cert_hash(peer_id, peer_refs);
 
     // 5. Emit "connecting" progress event
     event_sink.on_sync_event(SyncEvent::Progress {
@@ -371,7 +341,7 @@ pub(crate) async fn try_sync_with_peer(
                 tracing::warn!("failed to save peer address: {e}");
             }
             // TOFU: Store observed cert hash if none was stored (initiator side)
-            if cert_hash.is_none() {
+            if should_store_cert_hash(cert_hash.as_deref(), conn.peer_cert_hash().as_deref()) {
                 if let Some(ref observed) = conn.peer_cert_hash() {
                     if let Err(e) =
                         peer_refs::upsert_peer_ref_with_cert(pool, peer_id, observed).await

@@ -2094,3 +2094,220 @@ async fn inmem_handle_incoming_sync_happy_path_empty_sync() {
 
     materializer.shutdown();
 }
+
+// ======================================================================
+// T-16e — resolve_peer_address tests
+// ======================================================================
+
+#[test]
+fn resolve_peer_address_returns_discovered_peer() {
+    use tokio::time::Instant;
+
+    let mut discovered: HashMap<String, (sync_net::DiscoveredPeer, Instant)> = HashMap::new();
+    let dp = sync_net::DiscoveredPeer {
+        device_id: "PEER_A".into(),
+        addresses: vec!["10.0.0.1".parse().unwrap()],
+        port: 9443,
+    };
+    discovered.insert("PEER_A".into(), (dp, Instant::now()));
+
+    let result = resolve_peer_address("PEER_A", Some("192.168.1.1:8080"), &discovered);
+    assert!(result.is_some(), "must return discovered peer");
+    let peer = result.unwrap();
+    assert_eq!(peer.device_id, "PEER_A");
+    assert_eq!(
+        peer.port, 9443,
+        "must use discovered peer's port, not fallback"
+    );
+    assert_eq!(
+        peer.addresses[0].to_string(),
+        "10.0.0.1",
+        "must use discovered peer's address"
+    );
+}
+
+#[test]
+fn resolve_peer_address_falls_back_to_cached_address() {
+    use tokio::time::Instant;
+
+    let discovered: HashMap<String, (sync_net::DiscoveredPeer, Instant)> = HashMap::new();
+
+    let result = resolve_peer_address("PEER_B", Some("192.168.1.42:9443"), &discovered);
+    assert!(
+        result.is_some(),
+        "must fall back to cached address when not discovered"
+    );
+    let peer = result.unwrap();
+    assert_eq!(peer.device_id, "PEER_B");
+    assert_eq!(peer.port, 9443);
+    assert_eq!(peer.addresses[0].to_string(), "192.168.1.42");
+}
+
+#[test]
+fn resolve_peer_address_returns_none_when_both_unavailable() {
+    use tokio::time::Instant;
+
+    let discovered: HashMap<String, (sync_net::DiscoveredPeer, Instant)> = HashMap::new();
+
+    let result = resolve_peer_address("PEER_C", None, &discovered);
+    assert!(
+        result.is_none(),
+        "must return None when neither discovered nor cached"
+    );
+}
+
+#[test]
+fn resolve_peer_address_prefers_discovered_over_fallback() {
+    use tokio::time::Instant;
+
+    let mut discovered: HashMap<String, (sync_net::DiscoveredPeer, Instant)> = HashMap::new();
+    let dp = sync_net::DiscoveredPeer {
+        device_id: "PEER_D".into(),
+        addresses: vec!["10.0.0.99".parse().unwrap()],
+        port: 5555,
+    };
+    discovered.insert("PEER_D".into(), (dp, Instant::now()));
+
+    let result = resolve_peer_address("PEER_D", Some("192.168.1.1:8080"), &discovered);
+    assert!(result.is_some(), "must return discovered peer");
+    let peer = result.unwrap();
+    assert_eq!(
+        peer.port, 5555,
+        "must prefer discovered (port 5555) over fallback (port 8080)"
+    );
+    assert_eq!(
+        peer.addresses[0].to_string(),
+        "10.0.0.99",
+        "must prefer discovered address over fallback"
+    );
+}
+
+// ======================================================================
+// T-16e — format_peer_address tests
+// ======================================================================
+
+#[test]
+fn format_peer_address_formats_single_ipv4() {
+    let peer = sync_net::DiscoveredPeer {
+        device_id: "DEV".into(),
+        addresses: vec!["192.168.1.10".parse().unwrap()],
+        port: 9443,
+    };
+    let result = format_peer_address(&peer);
+    assert_eq!(
+        result,
+        Some("192.168.1.10:9443".to_string()),
+        "must format as ip:port"
+    );
+}
+
+#[test]
+fn format_peer_address_returns_none_for_empty_addresses() {
+    let peer = sync_net::DiscoveredPeer {
+        device_id: "DEV".into(),
+        addresses: vec![],
+        port: 9443,
+    };
+    let result = format_peer_address(&peer);
+    assert!(result.is_none(), "must return None for empty addresses");
+}
+
+#[test]
+fn format_peer_address_uses_first_address_when_multiple() {
+    let peer = sync_net::DiscoveredPeer {
+        device_id: "DEV".into(),
+        addresses: vec!["192.168.1.10".parse().unwrap(), "10.0.0.1".parse().unwrap()],
+        port: 8080,
+    };
+    let result = format_peer_address(&peer);
+    assert_eq!(
+        result,
+        Some("192.168.1.10:8080".to_string()),
+        "must use the first address when multiple are available"
+    );
+}
+
+// ======================================================================
+// T-16e — get_peer_cert_hash tests
+// ======================================================================
+
+fn make_peer_ref_with_cert(peer_id: &str, cert_hash: Option<&str>) -> PeerRef {
+    PeerRef {
+        peer_id: peer_id.to_string(),
+        last_hash: None,
+        last_sent_hash: None,
+        synced_at: None,
+        reset_count: 0,
+        last_reset_at: None,
+        cert_hash: cert_hash.map(String::from),
+        device_name: None,
+        last_address: None,
+    }
+}
+
+#[test]
+fn get_peer_cert_hash_returns_hash_when_present() {
+    let refs = vec![make_peer_ref_with_cert("PEER_A", Some("deadbeef"))];
+    let result = get_peer_cert_hash("PEER_A", &refs);
+    assert_eq!(
+        result,
+        Some("deadbeef".to_string()),
+        "must return the stored cert hash"
+    );
+}
+
+#[test]
+fn get_peer_cert_hash_returns_none_when_no_hash() {
+    let refs = vec![make_peer_ref_with_cert("PEER_A", None)];
+    let result = get_peer_cert_hash("PEER_A", &refs);
+    assert!(
+        result.is_none(),
+        "must return None when peer has no cert hash"
+    );
+}
+
+#[test]
+fn get_peer_cert_hash_returns_none_when_peer_not_found() {
+    let refs = vec![make_peer_ref_with_cert("PEER_A", Some("deadbeef"))];
+    let result = get_peer_cert_hash("PEER_UNKNOWN", &refs);
+    assert!(
+        result.is_none(),
+        "must return None when peer is not in the list"
+    );
+}
+
+// ======================================================================
+// T-16e — should_store_cert_hash tests
+// ======================================================================
+
+#[test]
+fn should_store_cert_hash_true_when_none_stored_and_some_observed() {
+    assert!(
+        should_store_cert_hash(None, Some("deadbeef")),
+        "must return true when no stored hash and observed hash is present"
+    );
+}
+
+#[test]
+fn should_store_cert_hash_false_when_already_stored() {
+    assert!(
+        !should_store_cert_hash(Some("existing"), Some("deadbeef")),
+        "must return false when a hash is already stored"
+    );
+}
+
+#[test]
+fn should_store_cert_hash_false_when_nothing_observed() {
+    assert!(
+        !should_store_cert_hash(None, None),
+        "must return false when no hash is observed"
+    );
+}
+
+#[test]
+fn should_store_cert_hash_false_when_both_present() {
+    assert!(
+        !should_store_cert_hash(Some("existing"), Some("observed")),
+        "must return false when both stored and observed are present"
+    );
+}

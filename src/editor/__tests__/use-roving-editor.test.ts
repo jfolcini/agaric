@@ -1,3 +1,4 @@
+import { act, renderHook } from '@testing-library/react'
 import { Editor } from '@tiptap/core'
 import Bold from '@tiptap/extension-bold'
 import Document from '@tiptap/extension-document'
@@ -18,6 +19,7 @@ import {
   replaceDocSilently,
   StrikeWithShortcut,
   shouldSplitOnBlur,
+  useRovingEditor,
 } from '../use-roving-editor'
 
 vi.mock('../markdown-serializer', async (importOriginal) => {
@@ -528,5 +530,132 @@ describe('getMarkdown logic (real Editor)', () => {
     const json = editor.getJSON() as DocNode
     const md = serialize(json)
     expect(md).toBe('')
+  })
+})
+
+// -- useRovingEditor integration (renderHook) ---------------------------------
+
+describe('useRovingEditor integration (renderHook)', () => {
+  /** Helper: render the hook and wait for editor initialization */
+  async function setup() {
+    const hook = renderHook(() => useRovingEditor())
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    return hook
+  }
+
+  it('creates an editor instance', async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    expect(result.current.editor).not.toBeNull()
+    expect(result.current.activeBlockId).toBeNull()
+    expect(result.current.originalMarkdown).toBe('')
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
+  it('mount() sets activeBlockId and originalMarkdown', async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    act(() => {
+      result.current.mount('block-1', 'hello world')
+    })
+
+    expect(result.current.activeBlockId).toBe('block-1')
+    expect(result.current.originalMarkdown).toBe('hello world')
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
+  it('mount() → getMarkdown() returns the mounted content', async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    act(() => {
+      result.current.mount('block-2', 'hello world')
+    })
+
+    const md = result.current.getMarkdown()
+    expect(md).toBe('hello world')
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
+  it('mount() → unmount() returns null for unchanged content', async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    act(() => {
+      result.current.mount('block-3', 'unchanged text')
+    })
+
+    let delta: string | null = null
+    act(() => {
+      delta = result.current.unmount()
+    })
+
+    expect(delta).toBeNull()
+    expect(result.current.activeBlockId).toBeNull()
+    expect(result.current.originalMarkdown).toBe('')
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
+  it('mount() → edit → unmount() returns changed markdown', async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    act(() => {
+      result.current.mount('block-4', 'original')
+    })
+
+    // Modify editor content directly via commands
+    act(() => {
+      ;(result.current.editor as Editor).commands.setContent({
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'modified' }] }],
+      })
+    })
+
+    let delta: string | null = null
+    act(() => {
+      delta = result.current.unmount()
+    })
+
+    expect(delta).toBe('modified')
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
+  it('mount() clears previous undo history (cannot undo after mount)', async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    // First mount — type something to create undo history
+    act(() => {
+      result.current.mount('block-5', 'start')
+    })
+
+    act(() => {
+      ;(result.current.editor as Editor).commands.insertContent(' added')
+    })
+
+    expect((result.current.editor as Editor).can().undo()).toBe(true)
+
+    // Unmount then mount again — undo history should be cleared
+    act(() => {
+      result.current.unmount()
+    })
+
+    act(() => {
+      result.current.mount('block-6', 'fresh content')
+    })
+
+    expect((result.current.editor as Editor).can().undo()).toBe(false)
+
+    result.current.editor?.destroy()
+    unmountHook()
   })
 })
