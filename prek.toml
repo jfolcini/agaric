@@ -48,13 +48,13 @@ language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx", "css"]
 
-# Vitest (run on TS changes)
+# Vitest: smart related-only tests (run on TS changes)
 [[repos]]
 repo = "local"
 [[repos.hooks]]
 id = "vitest"
 name = "vitest"
-entry = "npx vitest run --reporter=dot"
+entry = "scripts/test-related-ts.sh"
 language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx"]
@@ -125,13 +125,13 @@ language = "system"
 pass_filenames = false
 types = ["rust"]
 
-# Rust: cargo test
+# Rust: smart related-only tests (run on .rs changes)
 [[repos]]
 repo = "local"
 [[repos.hooks]]
 id = "cargo-test"
 name = "cargo nextest run"
-entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo nextest run'"
+entry = "scripts/test-related-rust.sh"
 language = "system"
 pass_filenames = false
 types = ["rust"]
