@@ -1,5 +1,28 @@
 # Session Log
 
+## Session 352 — UX-156/UX-157 resolved: calendar nav arrows + dot contrast (2026-04-12)
+
+**2 REVIEW-LATER items resolved (UX-156, UX-157). REVIEW-LATER backlog fully cleared (0 open items).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| UX-156 | Calendar month navigation arrows now flank the month name (prev left, next right) via absolute-positioned nav with `justify-between` | `calendar.tsx` |
+| UX-157 | Calendar date-indicator dots get `ring-1 ring-background` outline for contrast on highlighted/selected days | `JournalCalendarDropdown.tsx` |
+
+### Implementation
+- **UX-156**: In react-day-picker v9, the `nav` element (both prev/next buttons) is a sibling of `month` inside `months`. Added `relative` to `months`, changed `nav` to `absolute top-0 inset-x-0 flex items-center justify-between h-10 pt-1 px-1`. Removed `gap-1` from `month_caption` (no longer needed). Buttons now flank the centered month label.
+- **UX-157**: Added `ring-1 ring-background` to dot spans in `CalendarDayButton`. The `ring-background` token adapts to light/dark themes automatically.
+
+### Stats
+- 2 files changed (+3 -4 lines)
+- 41 calendar-related tests pass, all 20 prek hooks pass
+- 2 REVIEW-LATER items resolved (2 → 0 open)
+- **REVIEW-LATER backlog fully cleared**
+
+---
+
 ## Session 351 — UX-155 resolved: faint border around journal content panel (2026-04-12)
 
 **1 REVIEW-LATER item resolved (UX-155). REVIEW-LATER backlog is now empty (0 open items).**

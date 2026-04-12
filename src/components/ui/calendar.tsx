@@ -40,12 +40,11 @@ const Calendar = React.forwardRef<HTMLDivElement, CalendarProps>(
           className={cn('p-3', className)}
           classNames={{
             root: 'rdp',
-            months: 'flex flex-col sm:flex-row gap-2',
+            months: 'flex flex-col sm:flex-row gap-2 relative',
             month: 'flex flex-col gap-4',
-            month_caption:
-              'flex items-center justify-center gap-1 pt-1 pb-2 text-sm font-medium h-10',
+            month_caption: 'flex items-center justify-center pt-1 pb-2 text-sm font-medium h-10',
             caption_label: 'text-sm font-medium',
-            nav: 'flex items-center gap-1',
+            nav: 'absolute top-0 inset-x-0 flex items-center justify-between h-10 pt-1 px-1',
             button_previous: cn(
               buttonVariants({ variant: 'outline' }),
               'size-7 bg-transparent p-0 opacity-50 hover:opacity-100 [@media(pointer:coarse)]:size-10',

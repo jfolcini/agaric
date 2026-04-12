@@ -83,7 +83,7 @@ function CalendarDayButton({
           {dots.map((d) => (
             <span
               key={d.key}
-              className={cn('h-[5px] w-[5px] rounded-full', d.color)}
+              className={cn('h-[5px] w-[5px] rounded-full ring-1 ring-background', d.color)}
               role="img"
               aria-hidden
             />

@@ -19,7 +19,7 @@ The default view — one page per day, created automatically.
 | **Monthly** | 7-column CSS Grid calendar with compact day cells; click a day to switch to daily |
 | **Agenda** | Tasks grouped by date (Overdue / Today / Tomorrow / future) with configurable sort and group controls |
 
-- Floating calendar picker for jumping to any date, with per-source colored dots (blue=page, orange=due, green=scheduled, purple=property) rendered as real DOM `<span>` elements (5px diameter, flex row, only active sources) via react-day-picker DayButton component, replacing previous box-shadow CSS hack
+- Floating calendar picker for jumping to any date, with per-source colored dots (blue=page, orange=due, green=scheduled, purple=property) rendered as real DOM `<span>` elements (5px diameter, flex row, only active sources, `ring-1 ring-background` outline for contrast on highlighted days) via react-day-picker DayButton component, replacing previous box-shadow CSS hack. Month navigation arrows flank the month name (prev left, next right) via absolute-positioned nav with `justify-between` (UX-156, UX-157)
 - **Configurable week start** (UX-82): useWeekStart hook (localStorage). Applied to BlockDatePicker, JournalCalendarDropdown, date-utils. `useWeekStart.ts`, `date-utils.ts`.
 - **Color dot legend**: inline legend below calendar showing Page/Due/Scheduled/Property color dots with flex-wrap for narrow viewports (UX-57)
 - **Global date controls**: Today button and date picker available in all views (non-journal views navigate to journal first)
