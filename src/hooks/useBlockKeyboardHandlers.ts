@@ -115,29 +115,37 @@ export function useBlockKeyboardHandlers({
 
   const handleIndent = useCallback(() => {
     if (!focusedBlockId) return
+    const content = rovingEditorRef.current.getMarkdown?.() ?? ''
     handleFlush()
     indent(focusedBlockId)
+    rovingEditorRef.current.mount(focusedBlockId, content)
     announce('Block indented')
   }, [focusedBlockId, handleFlush, indent])
 
   const handleDedent = useCallback(() => {
     if (!focusedBlockId) return
+    const content = rovingEditorRef.current.getMarkdown?.() ?? ''
     handleFlush()
     dedent(focusedBlockId)
+    rovingEditorRef.current.mount(focusedBlockId, content)
     announce('Block outdented')
   }, [focusedBlockId, handleFlush, dedent])
 
   const handleMoveUp = useCallback(() => {
     if (!focusedBlockId) return
+    const content = rovingEditorRef.current.getMarkdown?.() ?? ''
     handleFlush()
     moveUp(focusedBlockId)
+    rovingEditorRef.current.mount(focusedBlockId, content)
     announce('Block moved up')
   }, [focusedBlockId, handleFlush, moveUp])
 
   const handleMoveDown = useCallback(() => {
     if (!focusedBlockId) return
+    const content = rovingEditorRef.current.getMarkdown?.() ?? ''
     handleFlush()
     moveDown(focusedBlockId)
+    rovingEditorRef.current.mount(focusedBlockId, content)
     announce('Block moved down')
   }, [focusedBlockId, handleFlush, moveDown])
 
