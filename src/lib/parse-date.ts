@@ -37,7 +37,7 @@ const DAY_NAMES: Record<string, number> = {
 }
 
 function isValidDate(year: number, month: number, day: number): boolean {
-  if (year <= 1900 || year >= 2100) return false
+  if (year < 100 || year > 9999) return false
   if (month < 1 || month > 12) return false
   if (day < 1) return false
   const maxDay = new Date(year, month, 0).getDate()

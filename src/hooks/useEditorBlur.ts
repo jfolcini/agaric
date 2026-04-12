@@ -71,9 +71,14 @@ export function useEditorBlur(params: {
       // For new blocks (created empty), persist any typed content before
       // checking transient UI. This prevents data loss when a popup is in
       // the DOM but the user clicked outside.
+      //
+      // B-65: Only early-persist when the content does NOT need splitting.
+      // Multi-paragraph content must go through Step 5's splitBlock path;
+      // calling edit() here with the unsplit content and then splitBlock()
+      // in Step 5 would create duplicate operations.
       if (rovingEditorRef.current.originalMarkdown === '' && rovingEditorRef.current.getMarkdown) {
         const content = rovingEditorRef.current.getMarkdown()
-        if (content && content !== '') {
+        if (content && content !== '' && !shouldSplitOnBlur(content)) {
           edit(blockId, content)
           // Don't return — continue to normal blur logic (unmount, setFocused, etc.)
         }

@@ -96,6 +96,7 @@ export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResol
             })
           }
         }
+        if (cancelled) return
         setResolveVersion((v) => v + 1)
       })
       .catch((err) => {

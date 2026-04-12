@@ -450,6 +450,43 @@ describe('useEditorBlur', () => {
       expect(mockUnmount).not.toHaveBeenCalled()
     })
 
+    it('skips early-persist when content needs splitting (B-65)', () => {
+      const multiParagraph = 'line one\n\nline two'
+      mockShouldSplitOnBlur.mockReturnValue(true)
+
+      const mockGetMarkdown = vi.fn(() => multiParagraph)
+      const mockUnmount = vi.fn<() => string | null>(() => multiParagraph)
+      const mockEdit = vi.fn()
+      const mockSplitBlock = vi.fn()
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: mockUnmount,
+        getMarkdown: mockGetMarkdown,
+        originalMarkdown: '',
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: mockSplitBlock,
+          setFocused: vi.fn(),
+          discardDraft: vi.fn(),
+        }),
+      )
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent())
+      })
+
+      // Step 3 should NOT have called edit() because content needs splitting
+      // Step 5 should handle it via splitBlock instead
+      expect(mockSplitBlock).toHaveBeenCalledWith('B1', multiParagraph)
+      expect(mockEdit).not.toHaveBeenCalled()
+    })
+
     it('does not early-save when block had existing content', () => {
       const mockGetMarkdown = vi.fn(() => 'updated')
       const mockEdit = vi.fn()

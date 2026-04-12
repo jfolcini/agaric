@@ -11,6 +11,7 @@ import type { Editor } from '@tiptap/core'
 import { ReactRenderer } from '@tiptap/react'
 import type { SuggestionKeyDownProps, SuggestionProps } from '@tiptap/suggestion'
 import { getShortcutKeys } from '../lib/keyboard-config'
+import { logger } from '../lib/logger'
 import { SuggestionList, type SuggestionListRef } from './SuggestionList'
 
 async function updatePosition(
@@ -102,7 +103,9 @@ export function createSuggestionRenderer(label?: string) {
       })
       document.body.appendChild(popup)
       popup.appendChild(renderer.element)
-      void updatePosition(popup, props)
+      updatePosition(popup, props).catch((err: unknown) => {
+        logger.warn('SuggestionRenderer', 'Position update failed', undefined, err)
+      })
 
       // Dismiss popup on outside click (capture phase, like BlockContextMenu)
       outsideClickHandler = (e: PointerEvent) => {
@@ -119,7 +122,10 @@ export function createSuggestionRenderer(label?: string) {
 
     onUpdate(props: SuggestionProps) {
       renderer?.updateProps(props)
-      if (popup) void updatePosition(popup, props)
+      if (popup)
+        updatePosition(popup, props).catch((err: unknown) => {
+          logger.warn('SuggestionRenderer', 'Position update failed', undefined, err)
+        })
     },
 
     onKeyDown({ event }: SuggestionKeyDownProps) {

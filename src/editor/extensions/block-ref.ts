@@ -96,6 +96,11 @@ export const BlockRef = Node.create<BlockRefOptions>({
         dom.setAttribute('data-id', blockId)
         dom.setAttribute('data-testid', 'block-ref-chip')
         dom.setAttribute('contenteditable', 'false')
+        if (status === 'deleted') {
+          dom.setAttribute('title', 'Broken ref — target block deleted')
+        } else {
+          dom.removeAttribute('title')
+        }
       }
 
       render(currentId)
@@ -128,6 +133,33 @@ export const BlockRef = Node.create<BlockRefOptions>({
         (id: string) =>
         ({ commands }) =>
           commands.insertContent({ type: this.name, attrs: { id } }),
+    }
+  },
+
+  addKeyboardShortcuts() {
+    return {
+      // B-66: Backspace on a block_ref chip re-expands it to ((content text,
+      // letting the suggestion plugin reopen for editing the reference.
+      Backspace: () => {
+        const { $from } = this.editor.state.selection
+        const nodeBefore = $from.nodeBefore
+        if (!nodeBefore || nodeBefore.type.name !== 'block_ref') return false
+
+        const id = nodeBefore.attrs.id as string
+        const content = this.options.resolveContent(id)
+        const nodeSize = nodeBefore.nodeSize
+        const from = $from.pos - nodeSize
+        const to = $from.pos
+
+        this.editor
+          .chain()
+          .focus()
+          .deleteRange({ from, to })
+          .insertContentAt(from, `((${content}`)
+          .run()
+
+        return true
+      },
     }
   },
 })
