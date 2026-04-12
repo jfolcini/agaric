@@ -1,5 +1,27 @@
 # Session Log
 
+## Session 369 — T-16/T-18 orchestrator extraction + renderHook breakthrough — 20 new tests (2026-04-13)
+
+**T-18 RESOLVED — renderHook + useRovingEditor works in jsdom (previously thought impossible). T-16 advanced with 4 extracted pure functions from orchestrator. 2 open items remain.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| T-18 (resolved) | 6 renderHook integration tests: editor creation, mount/unmount, getMarkdown, undo history | `use-roving-editor.test.ts` |
+| T-16 (further) | 4 pure functions extracted from orchestrator + 14 unit tests | `discovery.rs`, `orchestrator.rs`, `mod.rs`, `tests.rs` |
+
+### Implementation
+- **T-18**: Proved `renderHook` + `useRovingEditor` works in jsdom — all TipTap extensions (including suggestion pickers, CodeBlockLowlight) initialize successfully. 6 tests: editor creation, mount sets activeBlockId/originalMarkdown, getMarkdown returns content, unmount returns null for unchanged, unmount returns changed markdown, mount clears undo history. **47 total tests** for use-roving-editor (up from 24 at start of sessions 363-369).
+- **T-16**: Extracted `resolve_peer_address`, `format_peer_address`, `get_peer_cert_hash`, `should_store_cert_hash` from inline logic in orchestrator.rs to discovery.rs. Replaced 4 inline logic blocks in orchestrator.rs with named function calls. 14 unit tests covering all branches. **69 total sync_daemon tests** (up from 41 at session 364).
+
+### Stats
+- 5 files changed (+403 -49 lines)
+- 1882 Rust tests pass (+14), 6375 frontend tests pass (+6), all 19 prek hooks pass
+- T-18 resolved, T-16 updated (3 → 2 open items)
+
+---
+
 ## Session 368 — T-16 sync_files file transfer integration tests (2026-04-13)
 
 **T-16 further advanced — 6 file transfer protocol integration tests using in-memory WebSocket pairs. sync_files.rs now has comprehensive protocol coverage.**
