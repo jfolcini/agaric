@@ -817,8 +817,8 @@ describe('DeviceManagement', () => {
     const unpairBtn = screen.getByRole('button', { name: /Unpair/i })
     await user.click(unpairBtn)
 
-    expect(screen.getByText(/This will remove "Work Laptop"/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Yes, unpair Work Laptop/i })).toBeInTheDocument()
+    expect(screen.getByText(/This will remove the pairing with Work Laptop/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Yes, unpair/i })).toBeInTheDocument()
   })
 
   it('sorts peers: named alphabetically first, then unnamed (#434)', async () => {

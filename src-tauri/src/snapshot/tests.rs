@@ -68,6 +68,8 @@ fn sample_snapshot_data() -> SnapshotData {
                 created_at: "2025-01-01T00:00:00Z".to_string(),
                 deleted_at: None,
             }],
+            property_definitions: vec![],
+            page_aliases: vec![],
         },
     }
 }
@@ -251,6 +253,8 @@ fn encode_empty_snapshot() {
             block_properties: vec![],
             block_links: vec![],
             attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
         },
     };
 
@@ -491,6 +495,8 @@ async fn apply_snapshot_empty_db() {
             block_properties: vec![],
             block_links: vec![],
             attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
         },
     };
     let simple_encoded = encode_snapshot(&simple_data).unwrap();
@@ -798,6 +804,8 @@ fn cbor_round_trip_option_f64() {
             ],
             block_links: vec![],
             attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
         },
     };
 
@@ -952,6 +960,8 @@ async fn apply_snapshot_rejects_fk_violation() {
             block_properties: vec![],
             block_links: vec![],
             attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
         },
     };
 
@@ -1053,6 +1063,8 @@ async fn apply_snapshot_full_all_5_tables() {
                 created_at: "2025-01-01T00:00:00Z".to_string(),
                 deleted_at: None,
             }],
+            property_definitions: vec![],
+            page_aliases: vec![],
         },
     };
 
@@ -1286,6 +1298,8 @@ fn empty_blocks_map_round_trip() {
             block_properties: vec![],
             block_links: vec![],
             attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
         },
     };
 
@@ -1375,6 +1389,8 @@ fn large_text_field_round_trip() {
             }],
             block_links: vec![],
             attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
         },
     };
 
@@ -1449,6 +1465,8 @@ fn all_nullable_fields_null_round_trip() {
             }],
             block_links: vec![],
             attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
         },
     };
 
@@ -2145,6 +2163,8 @@ fn snapshot_v2_round_trips_new_fields() {
             block_properties: vec![],
             block_links: vec![],
             attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
         },
     };
 
@@ -2189,6 +2209,8 @@ fn snapshot_version_0_rejected() {
             block_properties: vec![],
             block_links: vec![],
             attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
         },
     };
 
@@ -2307,12 +2329,12 @@ async fn compact_op_log_transaction_happy_path() {
 }
 
 #[test]
-fn snapshot_version_3_rejected() {
+fn snapshot_version_4_rejected() {
     let mut up_to_seqs = BTreeMap::new();
     up_to_seqs.insert("dev".to_string(), 1);
 
     let data = SnapshotData {
-        schema_version: 3,
+        schema_version: 4,
         snapshot_device_id: "dev".to_string(),
         up_to_seqs,
         up_to_hash: "h".to_string(),
@@ -2322,12 +2344,14 @@ fn snapshot_version_3_rejected() {
             block_properties: vec![],
             block_links: vec![],
             attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
         },
     };
 
     let encoded = encode_snapshot(&data).unwrap();
     let result = decode_snapshot(&encoded);
-    assert!(result.is_err(), "schema_version 3 should be rejected");
+    assert!(result.is_err(), "schema_version 4 should be rejected");
     let err_msg = result.unwrap_err().to_string();
     assert!(
         err_msg.contains("unsupported schema version"),
@@ -2414,6 +2438,8 @@ async fn apply_snapshot_caches_are_empty_after_restore() {
             }],
             block_links: vec![],
             attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
         },
     };
 

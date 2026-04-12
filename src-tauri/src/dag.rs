@@ -324,6 +324,38 @@ pub async fn get_block_edit_heads(
     Ok(rows.into_iter().map(|r| (r.device_id, r.seq)).collect())
 }
 
+/// Check whether a merge op already exists that integrates `their_head`
+/// for a given block.
+///
+/// Used as an idempotency guard in the edit_block divergence handler to
+/// prevent duplicate merge ops on repeated sync passes.  After a
+/// successful merge, `append_merge_op` stores `their_head` inside the
+/// merge op's `parent_seqs` JSON array.  Subsequent syncs can detect
+/// that the remote head has already been integrated by searching for
+/// that entry.
+pub async fn has_merge_for_heads(
+    pool: &SqlitePool,
+    block_id: &str,
+    their_head: &(String, i64),
+) -> Result<bool, AppError> {
+    // Serialise their_head as a JSON tuple, e.g. `["device-B",1]`.
+    let needle = serde_json::to_string(their_head)?;
+
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM op_log \
+         WHERE op_type = 'edit_block' \
+           AND json_extract(payload, '$.block_id') = ? \
+           AND parent_seqs IS NOT NULL \
+           AND instr(parent_seqs, ?) > 0",
+    )
+    .bind(block_id)
+    .bind(&needle)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(count > 0)
+}
+
 // ===========================================================================
 // Tests
 // ===========================================================================

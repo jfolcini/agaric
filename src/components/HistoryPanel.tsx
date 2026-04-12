@@ -217,7 +217,9 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
           if (!open) setConfirmEntry(null)
         }}
         title={t('history.restoreConfirmTitle')}
-        description={`This will replace the current block content with the version from ${confirmEntry ? formatTimestamp(confirmEntry.created_at) : ''}. You can undo this change.`}
+        description={t('history.restoreConfirmDescription', {
+          timestamp: confirmEntry ? formatTimestamp(confirmEntry.created_at) : '',
+        })}
         cancelLabel={t('dialog.cancel')}
         actionLabel={t('history.restoreConfirmAction')}
         onAction={() => {

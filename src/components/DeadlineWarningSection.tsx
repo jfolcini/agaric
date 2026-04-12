@@ -42,7 +42,7 @@ export function DeadlineWarningSection(): React.ReactElement {
           aria-label={t('propertiesView.deadlineWarning')}
           onChange={(e) => handleChange(Number.parseInt(e.target.value, 10) || 0)}
         />
-        <span className="text-xs text-muted-foreground">days (0 = disabled)</span>
+        <span className="text-xs text-muted-foreground">{t('block.daysDisabledHint')}</span>
       </div>
     </div>
   )

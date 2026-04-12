@@ -429,7 +429,7 @@ criterion_main!(benches);
 
 23. **Purge tests must verify ALL 14 cleanup tables** — When adding a new table with FK to `blocks`, add a test case in `purge_block` tests verifying rows are cleaned. Session 305 code review discovered that `page_aliases` and `projected_agenda_cache` are missing from both `purge_block_inner` and the materializer's `PurgeBlock` handler. See ARCHITECTURE.md purge table inventory.
 
-24. **`list_agenda_range` and `list_page_history` have zero unit tests in pagination/tests.rs** — All other pagination functions have comprehensive unit tests. Session 305 code review flagged these as critical test gaps.
+24. **`list_agenda_range` now has 7 unit tests in pagination/tests.rs** (session 362). `list_page_history` still has partial coverage — flagged in session 305.
 
 25. **`edge_case_tests.rs` false-positive assertion** — `assert!(count >= 0)` at line 147 of `f13_sql_injection_block_type_returns_validation_error` always passes because `COUNT(*)` is never negative. Replace with `assert!(count >= 1)` or a schema existence check.
 

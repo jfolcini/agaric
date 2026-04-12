@@ -347,8 +347,8 @@ async fn create_conflict_copy_creates_block_with_conflict_flag() {
     assert_eq!(
         payload.position,
         Some(6),
-        "conflict copy position should be original + 1"
-    ); // original position (5) + 1
+        "conflict copy position should be MAX(sibling positions) + 1"
+    ); // MAX among siblings (5) + 1
     assert!(
         payload.parent_id.is_none(),
         "conflict copy parent_id should match original (none)"
@@ -425,8 +425,8 @@ async fn create_conflict_copy_preserves_parent_id() {
     assert_eq!(
         payload.position,
         Some(4),
-        "conflict copy position should be original (3) + 1"
-    ); // 3 + 1
+        "conflict copy position should be MAX(sibling positions) + 1"
+    ); // MAX among siblings under PARENT (3) + 1
 }
 
 #[tokio::test]
@@ -442,6 +442,41 @@ async fn create_conflict_copy_fails_for_missing_block() {
     assert!(
         msg.contains("Not found"),
         "expected NotFound error, got: {msg}"
+    );
+}
+
+/// M-13: conflict copy avoids position collision with existing siblings.
+///
+/// Parent "P" has 3 children at positions 1, 2, 3.
+/// Creating a conflict copy for the child at position 2 should assign
+/// position 4 (MAX(1,2,3) + 1), NOT position 3 (old p+1 approach which
+/// would collide with the existing child).
+#[tokio::test]
+async fn create_conflict_copy_avoids_position_collision() {
+    let (pool, _dir) = test_pool().await;
+
+    // Insert parent
+    insert_block(&pool, "P", "page", "parent", None, Some(0)).await;
+    // Insert 3 children under P at positions 1, 2, 3
+    insert_block(&pool, "C1", "content", "child 1", Some("P"), Some(1)).await;
+    insert_block(&pool, "C2", "content", "child 2", Some("P"), Some(2)).await;
+    insert_block(&pool, "C3", "content", "child 3", Some("P"), Some(3)).await;
+
+    // Create conflict copy for C2 (position 2). Old code would give 3 (collision!).
+    let record = create_conflict_copy(&pool, DEV_A, "C2", "conflict for C2", "Text")
+        .await
+        .unwrap();
+
+    let payload: CreateBlockPayload = serde_json::from_str(&record.payload).unwrap();
+    assert_eq!(
+        payload.position,
+        Some(4),
+        "M-13: conflict copy should get MAX(sibling positions) + 1 = 4, not p+1 = 3"
+    );
+    assert_eq!(
+        payload.parent_id,
+        Some(BlockId::test_id("P")),
+        "conflict copy should preserve parent_id"
     );
 }
 

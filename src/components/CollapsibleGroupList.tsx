@@ -7,6 +7,7 @@
  */
 
 import type React from 'react'
+import { useTranslation } from 'react-i18next'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { PageLink } from './PageLink'
 
@@ -54,6 +55,7 @@ export function CollapsibleGroupList<G extends GroupItem>({
   listAriaLabel,
   onPageTitleClick,
 }: CollapsibleGroupListProps<G>): React.ReactElement {
+  const { t } = useTranslation()
   return (
     <>
       {groups.map((group) => {
@@ -72,7 +74,7 @@ export function CollapsibleGroupList<G extends GroupItem>({
                   type="button"
                   onClick={() => onToggleGroup(group.page_id)}
                   aria-expanded={isExpanded}
-                  aria-label={isExpanded ? 'Collapse group' : 'Expand group'}
+                  aria-label={isExpanded ? t('group.collapseGroup') : t('group.expandGroup')}
                 >
                   <ChevronToggle isExpanded={isExpanded} size="md" />
                 </button>

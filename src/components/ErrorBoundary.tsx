@@ -1,6 +1,7 @@
 import { AlertCircle, RefreshCw } from 'lucide-react'
 import React from 'react'
 import { Button } from '@/components/ui/button'
+import i18n from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 
 interface ErrorBoundaryProps {
@@ -38,13 +39,13 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
             role="alert"
           >
             <AlertCircle className="h-8 w-8 text-destructive" />
-            <h2 className="text-lg font-semibold">Something went wrong</h2>
+            <h2 className="text-lg font-semibold">{i18n.t('error.generic')}</h2>
             <p className="text-sm text-muted-foreground max-w-sm text-center">
-              {this.state.error?.message ?? 'An unexpected error occurred'}
+              {this.state.error?.message ?? i18n.t('error.unexpected')}
             </p>
             <Button variant="outline" onClick={() => window.location.reload()}>
               <RefreshCw className="h-3.5 w-3.5" />
-              Reload
+              {i18n.t('action.reload')}
             </Button>
           </div>
         </div>

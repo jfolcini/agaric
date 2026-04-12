@@ -1287,6 +1287,300 @@ async fn list_agenda_excludes_soft_deleted() {
 }
 
 // ====================================================================
+// list_agenda_range
+// ====================================================================
+
+#[tokio::test]
+async fn list_agenda_range_returns_blocks_in_date_range() {
+    let (pool, _dir) = test_pool().await;
+
+    // Create blocks for dates 2025-01-10 through 2025-01-15.
+    for day in 10..=15_i64 {
+        let id = format!("BLOCK0{day}");
+        let date = format!("2025-01-{day}");
+        insert_block(&pool, &id, "content", &format!("event {day}"), None, None).await;
+        insert_agenda_entry(&pool, &date, &id, "property:due_date").await;
+        sqlx::query("UPDATE blocks SET due_date = ? WHERE id = ?")
+            .bind(&date)
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_agenda_range(&pool, "2025-01-11", "2025-01-13", None, &page)
+        .await
+        .unwrap();
+
+    assert_eq!(resp.items.len(), 3, "only blocks for Jan 11-13");
+    assert_eq!(resp.items[0].id, "BLOCK011", "first in range (Jan 11)");
+    assert_eq!(resp.items[1].id, "BLOCK012", "second in range (Jan 12)");
+    assert_eq!(resp.items[2].id, "BLOCK013", "third in range (Jan 13)");
+    assert!(!resp.has_more, "all items fit in one page");
+}
+
+#[tokio::test]
+async fn list_agenda_range_paginates_with_cursor() {
+    let (pool, _dir) = test_pool().await;
+
+    // 5 entries spread across dates so ordering is (date ASC, id ASC).
+    let entries = [
+        ("AGBLK001", "2025-02-01"),
+        ("AGBLK002", "2025-02-01"),
+        ("AGBLK003", "2025-02-02"),
+        ("AGBLK004", "2025-02-03"),
+        ("AGBLK005", "2025-02-03"),
+    ];
+    for (id, date) in &entries {
+        insert_block(&pool, id, "content", &format!("ev {id}"), None, None).await;
+        insert_agenda_entry(&pool, date, id, "property:due_date").await;
+        sqlx::query("UPDATE blocks SET due_date = ? WHERE id = ?")
+            .bind(date)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let r1 = list_agenda_range(
+        &pool,
+        "2025-02-01",
+        "2025-02-03",
+        None,
+        &PageRequest::new(None, Some(2)).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r1.items.len(), 2, "page 1 should return 2 items");
+    assert!(r1.has_more, "page 1 should indicate more");
+    assert_eq!(r1.items[0].id, "AGBLK001", "page 1 first item");
+    assert_eq!(r1.items[1].id, "AGBLK002", "page 1 second item");
+
+    let r2 = list_agenda_range(
+        &pool,
+        "2025-02-01",
+        "2025-02-03",
+        None,
+        &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r2.items.len(), 2, "page 2 should return 2 items");
+    assert!(r2.has_more, "page 2 should indicate more");
+    assert_eq!(
+        r2.items[0].id, "AGBLK003",
+        "page 2 first item (cursor skips past page 1)"
+    );
+    assert_eq!(r2.items[1].id, "AGBLK004", "page 2 second item");
+}
+
+#[tokio::test]
+async fn list_agenda_range_last_page_has_no_cursor() {
+    let (pool, _dir) = test_pool().await;
+
+    let entries = [
+        ("LPBLK001", "2025-03-01"),
+        ("LPBLK002", "2025-03-02"),
+        ("LPBLK003", "2025-03-02"),
+        ("LPBLK004", "2025-03-03"),
+        ("LPBLK005", "2025-03-03"),
+    ];
+    for (id, date) in &entries {
+        insert_block(&pool, id, "content", &format!("ev {id}"), None, None).await;
+        insert_agenda_entry(&pool, date, id, "property:due_date").await;
+        sqlx::query("UPDATE blocks SET due_date = ? WHERE id = ?")
+            .bind(date)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let r1 = list_agenda_range(
+        &pool,
+        "2025-03-01",
+        "2025-03-03",
+        None,
+        &PageRequest::new(None, Some(2)).unwrap(),
+    )
+    .await
+    .unwrap();
+    let r2 = list_agenda_range(
+        &pool,
+        "2025-03-01",
+        "2025-03-03",
+        None,
+        &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+    )
+    .await
+    .unwrap();
+    let r3 = list_agenda_range(
+        &pool,
+        "2025-03-01",
+        "2025-03-03",
+        None,
+        &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(r3.items.len(), 1, "last page must contain remaining item");
+    assert!(!r3.has_more, "last page must have has_more = false");
+    assert!(r3.next_cursor.is_none(), "last page must have no cursor");
+    assert_eq!(r3.items[0].id, "LPBLK005", "last page item");
+}
+
+#[tokio::test]
+async fn list_agenda_range_returns_empty_for_range_with_no_entries() {
+    let (pool, _dir) = test_pool().await;
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_agenda_range(&pool, "2025-06-01", "2025-06-30", None, &page)
+        .await
+        .unwrap();
+
+    assert!(
+        resp.items.is_empty(),
+        "range with no entries must return empty"
+    );
+    assert!(
+        !resp.has_more,
+        "empty result should not indicate more pages"
+    );
+    assert!(
+        resp.next_cursor.is_none(),
+        "empty result should have no cursor"
+    );
+}
+
+#[tokio::test]
+async fn list_agenda_range_excludes_soft_deleted() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "SDBLK001", "content", "alive 1", None, None).await;
+    insert_block(&pool, "SDBLK002", "content", "deleted", None, None).await;
+    insert_block(&pool, "SDBLK003", "content", "alive 2", None, None).await;
+
+    for id in &["SDBLK001", "SDBLK002", "SDBLK003"] {
+        insert_agenda_entry(&pool, "2025-04-10", id, "property:due_date").await;
+        sqlx::query("UPDATE blocks SET due_date = ? WHERE id = ?")
+            .bind("2025-04-10")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    soft_delete_block(&pool, "SDBLK002", FIXED_DELETED_AT).await;
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_agenda_range(&pool, "2025-04-10", "2025-04-10", None, &page)
+        .await
+        .unwrap();
+
+    assert_eq!(resp.items.len(), 2, "soft-deleted block must be excluded");
+    assert_eq!(resp.items[0].id, "SDBLK001", "first alive block");
+    assert_eq!(
+        resp.items[1].id, "SDBLK003",
+        "second alive block, SDBLK002 excluded"
+    );
+}
+
+#[tokio::test]
+async fn list_agenda_range_respects_source_filter() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "SFBLK001", "content", "due item 1", None, None).await;
+    insert_block(&pool, "SFBLK002", "content", "sched item", None, None).await;
+    insert_block(&pool, "SFBLK003", "content", "due item 2", None, None).await;
+
+    insert_agenda_entry(&pool, "2025-05-01", "SFBLK001", "property:due_date").await;
+    insert_agenda_entry(&pool, "2025-05-01", "SFBLK002", "property:scheduled_date").await;
+    insert_agenda_entry(&pool, "2025-05-02", "SFBLK003", "property:due_date").await;
+
+    sqlx::query("UPDATE blocks SET due_date = '2025-05-01' WHERE id = 'SFBLK001'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET scheduled_date = '2025-05-01' WHERE id = 'SFBLK002'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET due_date = '2025-05-02' WHERE id = 'SFBLK003'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_agenda_range(
+        &pool,
+        "2025-05-01",
+        "2025-05-02",
+        Some("property:due_date"),
+        &page,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(resp.items.len(), 2, "only due_date entries returned");
+    assert_eq!(resp.items[0].id, "SFBLK001", "first due_date entry");
+    assert_eq!(resp.items[1].id, "SFBLK003", "second due_date entry");
+}
+
+#[tokio::test]
+async fn list_agenda_range_exhaustive_walk_returns_all_items_once() {
+    let (pool, _dir) = test_pool().await;
+
+    // 13 entries across multiple dates, ordered by (date ASC, id ASC).
+    let entries = [
+        ("EWBLK001", "2025-06-01"),
+        ("EWBLK002", "2025-06-01"),
+        ("EWBLK003", "2025-06-01"),
+        ("EWBLK004", "2025-06-02"),
+        ("EWBLK005", "2025-06-02"),
+        ("EWBLK006", "2025-06-03"),
+        ("EWBLK007", "2025-06-03"),
+        ("EWBLK008", "2025-06-03"),
+        ("EWBLK009", "2025-06-03"),
+        ("EWBLK010", "2025-06-04"),
+        ("EWBLK011", "2025-06-05"),
+        ("EWBLK012", "2025-06-05"),
+        ("EWBLK013", "2025-06-05"),
+    ];
+    for (id, date) in &entries {
+        insert_block(&pool, id, "content", &format!("ev {id}"), None, None).await;
+        insert_agenda_entry(&pool, date, id, "property:due_date").await;
+        sqlx::query("UPDATE blocks SET due_date = ? WHERE id = ?")
+            .bind(date)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let mut all_ids = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = PageRequest::new(cursor, Some(3)).unwrap();
+        let resp = list_agenda_range(&pool, "2025-06-01", "2025-06-05", None, &page)
+            .await
+            .unwrap();
+        all_ids.extend(resp.items.iter().map(|b| b.id.clone()));
+        if !resp.has_more {
+            break;
+        }
+        cursor = resp.next_cursor;
+    }
+
+    let expected: Vec<String> = entries.iter().map(|(id, _)| id.to_string()).collect();
+    assert_eq!(
+        all_ids, expected,
+        "exhaustive walk must return every item exactly once, in (date, id) order"
+    );
+}
+
+// ====================================================================
 // insta snapshot tests — BlockRow and PageResponse
 // ====================================================================
 

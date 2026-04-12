@@ -43,16 +43,21 @@ pub async fn create_conflict_copy(
 
     // 2. Generate a new block ID
     let new_block_id = BlockId::new();
-    // NOTE (F08 — known limitation): `position + 1` may collide with an
-    // existing sibling.  We do NOT shift siblings here; the cascade-delete design specifies
-    // that the materializer compacts positions to contiguous 1..n on sync,
-    // which resolves the duplicate.  Between creation and the next
-    // materializer run, two blocks may share the same position.
+    // M-13: Use MAX(position) + 1 among siblings to avoid position collision.
+    // Previous approach used position + 1 which could collide with existing siblings.
     // P-18: When original position is the sentinel (or NULL before migration),
     // keep the sentinel instead of incrementing (which would overflow i64::MAX).
     let new_position = match position {
         Some(p) if p == NULL_POSITION_SENTINEL => Some(NULL_POSITION_SENTINEL),
-        Some(p) => Some(p + 1),
+        Some(_p) => {
+            let max_pos: Option<i64> = sqlx::query_scalar(
+                "SELECT MAX(position) FROM blocks WHERE parent_id IS ? AND deleted_at IS NULL",
+            )
+            .bind(parent_id.as_deref())
+            .fetch_one(pool)
+            .await?;
+            Some(max_pos.unwrap_or(0) + 1)
+        }
         None => Some(NULL_POSITION_SENTINEL),
     };
 

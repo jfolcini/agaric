@@ -235,28 +235,24 @@ function App() {
         if (mode === 'daily') setCurrentDate(subDays(currentDate, 1))
         else if (mode === 'weekly') setCurrentDate(subWeeks(currentDate, 1))
         else setCurrentDate(subMonths(currentDate, 1))
-        announce(
-          `Navigated to previous ${mode === 'daily' ? 'day' : mode === 'weekly' ? 'week' : 'month'}`,
-        )
+        announce(t('announce.navigatedToPrevious'))
       }
       if (e.key === 'ArrowRight') {
         e.preventDefault()
         if (mode === 'daily') setCurrentDate(addDays(currentDate, 1))
         else if (mode === 'weekly') setCurrentDate(addWeeks(currentDate, 1))
         else setCurrentDate(addMonths(currentDate, 1))
-        announce(
-          `Navigated to next ${mode === 'daily' ? 'day' : mode === 'weekly' ? 'week' : 'month'}`,
-        )
+        announce(t('announce.navigatedToNext'))
       }
       if (e.key === 't' || e.key === 'T') {
         e.preventDefault()
         setCurrentDate(new Date())
-        announce('Jumped to today')
+        announce(t('announce.jumpedToToday'))
       }
     }
     document.addEventListener('keydown', handleJournalNav)
     return () => document.removeEventListener('keydown', handleJournalNav)
-  }, [])
+  }, [t])
 
   // ── Global shortcuts (Ctrl+F → search, Ctrl+N → new page) ──────────
   useEffect(() => {
@@ -266,7 +262,7 @@ function App() {
       if (e.key === 'f') {
         e.preventDefault()
         useNavigationStore.getState().setView('search')
-        announce('Search opened')
+        announce(t('announce.searchOpened'))
       }
       if (e.key === 'n') {
         e.preventDefault()
@@ -274,7 +270,7 @@ function App() {
           .then((resp) => {
             useResolveStore.getState().set(resp.id, 'Untitled', false)
             useNavigationStore.getState().navigateToPage(resp.id, 'Untitled')
-            announce('New page created')
+            announce(t('announce.newPageCreated'))
           })
           .catch((err: unknown) => {
             logger.error('App', 'Failed to create page via shortcut', undefined, err)
@@ -328,7 +324,7 @@ function App() {
       const resp = await createBlock({ blockType: 'page', content: 'Untitled' })
       useResolveStore.getState().set(resp.id, 'Untitled', false)
       navigateToPage(resp.id, 'Untitled')
-      announce('New page created')
+      announce(t('announce.newPageCreated'))
     } catch (err) {
       logger.error('App', 'Failed to create new page', undefined, err)
       toast.error(t('error.createPageFailed'))

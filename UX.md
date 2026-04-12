@@ -897,7 +897,6 @@ t('agenda.overdue')              // "Overdue"
 
 **Agent guidance:** This is a non-negotiable requirement. Every user-visible string — including toast messages, ARIA labels, button text, placeholders, empty state copy, error messages, and `announce()` calls — must use `t('key')`. Hard-coded strings will be caught in review.
 
-**Known i18n gaps (audit 2026-04):** ~20 locations with hardcoded English strings remain across BootGate, ErrorBoundary, App.tsx announce() calls, DaySection aria-labels, HistoryPanel restore description, ConflictList announce() messages, UnpairConfirmDialog, BlockDatePicker placeholder, PropertyDefinitionsList error messages, StatusPanel sync labels, BatchActionToolbar "selected", FilterPillRow filterSummary(), RichContentRenderer CALLOUT_CONFIG labels, CollapsibleGroupList aria-labels, TaskStatesSection "none" badge, DeadlineWarningSection, DuePanel "Untitled", TrashView "Deleted:", TagList "Add Tag".
 
 ## Two-Tier Undo/Redo Model
 

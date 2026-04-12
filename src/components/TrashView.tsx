@@ -515,7 +515,7 @@ export function TrashView(): React.ReactElement {
                             : t('trash.emptyContent')}
                         </span>
                         <span className="trash-item-date text-xs text-muted-foreground">
-                          Deleted:{' '}
+                          {t('trash.deletedPrefix')}{' '}
                           {block.deleted_at ? formatTimestamp(block.deleted_at, 'relative') : ''}
                         </span>
                         {parentLabel && (

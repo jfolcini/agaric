@@ -9,6 +9,7 @@
  */
 
 import type React from 'react'
+import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 
@@ -31,13 +32,14 @@ export function BatchActionToolbar({
   children,
   className,
 }: BatchActionToolbarProps): React.ReactElement {
+  const { t } = useTranslation()
   return (
     <div
       role="toolbar"
-      aria-label={`${selectedCount} selected`}
+      aria-label={t('batch.selectedCount', { count: selectedCount })}
       className={cn('flex items-center gap-2 rounded-lg border bg-muted/50 p-2', className)}
     >
-      <Badge variant="secondary">{selectedCount} selected</Badge>
+      <Badge variant="secondary">{t('batch.selectedCount', { count: selectedCount })}</Badge>
       {children}
     </div>
   )

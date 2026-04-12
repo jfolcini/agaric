@@ -47,12 +47,26 @@ async fn collect_tables(conn: &mut SqliteConnection) -> Result<SnapshotTables, A
     .fetch_all(&mut *conn)
     .await?;
 
+    let property_definitions: Vec<PropertyDefinitionSnapshot> =
+        sqlx::query_as::<_, PropertyDefinitionSnapshot>(
+            "SELECT key, value_type, options, created_at FROM property_definitions",
+        )
+        .fetch_all(&mut *conn)
+        .await?;
+
+    let page_aliases: Vec<PageAliasSnapshot> =
+        sqlx::query_as::<_, PageAliasSnapshot>("SELECT page_id, alias FROM page_aliases")
+            .fetch_all(&mut *conn)
+            .await?;
+
     Ok(SnapshotTables {
         blocks,
         block_tags,
         block_properties,
         block_links,
         attachments,
+        property_definitions,
+        page_aliases,
     })
 }
 

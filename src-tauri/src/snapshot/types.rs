@@ -70,6 +70,22 @@ pub struct AttachmentSnapshot {
     pub deleted_at: Option<String>,
 }
 
+/// A property definition row captured in a snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct PropertyDefinitionSnapshot {
+    pub key: String,
+    pub value_type: String,
+    pub options: Option<String>,
+    pub created_at: String,
+}
+
+/// A page alias row captured in a snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct PageAliasSnapshot {
+    pub page_id: String,
+    pub alias: String,
+}
+
 // ---------------------------------------------------------------------------
 // Aggregate types
 // ---------------------------------------------------------------------------
@@ -82,6 +98,10 @@ pub struct SnapshotTables {
     pub block_properties: Vec<BlockPropertySnapshot>,
     pub block_links: Vec<BlockLinkSnapshot>,
     pub attachments: Vec<AttachmentSnapshot>,
+    #[serde(default)]
+    pub property_definitions: Vec<PropertyDefinitionSnapshot>,
+    #[serde(default)]
+    pub page_aliases: Vec<PageAliasSnapshot>,
 }
 
 /// Complete snapshot: schema version, op frontier, and all table data.

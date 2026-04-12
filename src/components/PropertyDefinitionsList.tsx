@@ -63,10 +63,10 @@ export function PropertyDefinitionsList(): React.ReactElement {
       const defs = await listPropertyDefs()
       setDefinitions(defs)
     } catch (error) {
-      toast.error(`Failed to load property definitions: ${String(error)}`)
+      toast.error(t('property.errorLoad', { error: String(error) }))
     }
     setLoading(false)
-  }, [])
+  }, [t])
 
   useEffect(() => {
     loadDefinitions()
@@ -83,7 +83,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
       setNewType('text')
       toast.success(t('propertiesView.created'))
     } catch (error) {
-      toast.error(`Failed to create property definition: ${String(error)}`)
+      toast.error(t('property.errorCreate', { error: String(error) }))
     }
     setIsCreating(false)
   }, [newKey, newType, t])
@@ -96,7 +96,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
         setDeleteTarget(null)
         toast.success(t('propertiesView.deleted'))
       } catch (error) {
-        toast.error(`Failed to delete property definition: ${String(error)}`)
+        toast.error(t('property.errorDelete', { error: String(error) }))
       }
     },
     [t],
@@ -114,11 +114,11 @@ export function PropertyDefinitionsList(): React.ReactElement {
         const updated = await updatePropertyDefOptions(key, editOptionsValue)
         setDefinitions((prev) => prev.map((d) => (d.key === key ? updated : d)))
         setEditingOptionsKey(null)
-      } catch (error) {
-        toast.error(`Failed to update options: ${String(error)}`)
+      } catch (err) {
+        toast.error(t('property.errorUpdate', { error: String(err) }))
       }
     },
-    [editOptionsValue],
+    [editOptionsValue, t],
   )
 
   const filteredDefs = definitions.filter((d) =>

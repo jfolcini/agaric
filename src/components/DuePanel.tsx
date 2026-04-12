@@ -91,7 +91,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   const { handleBlockClick, handleBlockKeyDown } = useBlockNavigation({
     onNavigateToPage,
     pageTitles,
-    untitledLabel: 'Untitled',
+    untitledLabel: t('block.untitled'),
   })
 
   // Filter out future-scheduled blocks when toggle is ON

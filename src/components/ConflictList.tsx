@@ -307,10 +307,10 @@ export function ConflictList(): React.ReactElement {
             },
           },
         })
-        announce('Conflict resolved — kept incoming version')
+        announce(t('conflict.resolvedAnnounce'))
       } catch (err: unknown) {
         toast.error(
-          `Failed to resolve conflict: ${err instanceof Error ? err.message : String(err)}`,
+          t('conflict.resolveError', { error: err instanceof Error ? err.message : String(err) }),
         )
       }
     },
@@ -339,10 +339,10 @@ export function ConflictList(): React.ReactElement {
             },
           },
         })
-        announce('Conflict discarded')
+        announce(t('conflict.discardedAnnounce'))
       } catch (err: unknown) {
         toast.error(
-          `Failed to discard conflict: ${err instanceof Error ? err.message : String(err)}`,
+          t('conflict.discardError', { error: err instanceof Error ? err.message : String(err) }),
         )
       }
     },
@@ -372,7 +372,7 @@ export function ConflictList(): React.ReactElement {
     clearSelection()
     setBatchAction(null)
     if (failCount > 0) {
-      toast.error(`${failCount} of ${selectedBlocks.length} operations failed`, {
+      toast.error(t('conflict.batchError', { failCount, count: selectedBlocks.length }), {
         duration: 5000,
         action: {
           label: t('action.retry'),
@@ -382,8 +382,8 @@ export function ConflictList(): React.ReactElement {
     } else {
       const msg =
         savedBatchAction === 'keep'
-          ? `Kept ${selectedBlocks.length} conflict(s)`
-          : `Discarded ${selectedBlocks.length} conflict(s)`
+          ? t('conflict.batchKeptCount', { count: selectedBlocks.length })
+          : t('conflict.batchDiscardedCount', { count: selectedBlocks.length })
       toast.success(msg)
       announce(msg)
     }

@@ -4468,7 +4468,7 @@ describe('DatePickerOverlay text input', () => {
     const input = screen.getByLabelText('Type a date')
     expect(input).toBeInTheDocument()
     expect(input).toHaveAttribute('type', 'text')
-    expect(input).toHaveAttribute('placeholder', 'Type a date... (today, +3d, Apr 15)')
+    expect(input).toHaveAttribute('placeholder', 'today, +3d, Apr 15')
 
     // Calendar should also be present
     expect(screen.getByTestId('mock-calendar')).toBeInTheDocument()

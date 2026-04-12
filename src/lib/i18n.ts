@@ -16,6 +16,11 @@ import { initReactI18next } from 'react-i18next'
 const resources = {
   en: {
     translation: {
+      // Boot
+      'boot.starting': 'Starting Agaric\u2026',
+      'boot.recovering': 'Recovering\u2026',
+      'boot.failedToStart': 'Failed to start',
+
       // Sidebar
       'sidebar.pages': 'Pages',
       'sidebar.journal': 'Journal',
@@ -49,6 +54,7 @@ const resources = {
       'action.undo': 'Undo',
       'action.redo': 'Redo',
       'action.retry': 'Retry',
+      'action.reload': 'Reload',
       'action.loadMore': 'Load more',
       'action.loading': 'Loading\u2026',
 
@@ -70,6 +76,7 @@ const resources = {
       'journal.noBlocks': 'No blocks for {{date}}.',
       'journal.addFirstBlock': 'Add your first block',
       'journal.openInEditor': 'Open in page editor',
+      'journal.dayAriaLabel': 'Journal for {{date}}',
       'journal.dueBadge': 'due',
       'journal.refsBadge': 'refs',
       'journal.addBlockFailed': 'Failed to add block',
@@ -86,6 +93,13 @@ const resources = {
       'journal.loadCalendarFailed': 'Failed to load calendar',
       'journal.rescheduled': 'Task rescheduled to {{date}}',
       'journal.rescheduleFailed': 'Failed to reschedule task',
+
+      // Announcements
+      'announce.navigatedToPrevious': 'Navigated to previous day/week/month',
+      'announce.navigatedToNext': 'Navigated to next day/week/month',
+      'announce.jumpedToToday': 'Jumped to today',
+      'announce.searchOpened': 'Search opened',
+      'announce.newPageCreated': 'New page created',
 
       // Formatting toolbar
       'toolbar.bold': 'Bold',
@@ -581,6 +595,12 @@ const resources = {
       'property.valueLabel': '{{key}} value',
       'property.selectProperty': 'Select property...',
 
+      // Property errors
+      'property.errorLoad': 'Failed to load property definitions: {{error}}',
+      'property.errorCreate': 'Failed to create property definition: {{error}}',
+      'property.errorUpdate': 'Failed to update options: {{error}}',
+      'property.errorDelete': 'Failed to delete property definition: {{error}}',
+
       // Properties view
       'sidebar.properties': 'Properties',
       'propertiesView.title': 'Property Definitions',
@@ -810,6 +830,11 @@ const resources = {
 
       // Device (UX-120)
       'device.thisDevice': 'This device',
+      'device.unpairConfirmTitle': 'Unpair device?',
+      'device.unpairConfirmDescription':
+        'This will remove the pairing with {{deviceName}}. You will need to pair again to sync.',
+      'device.unpairConfirmAction': 'Yes, unpair',
+      'device.pairedDevice': 'the paired device',
 
       // Dialog generic (UX-120)
       'dialog.no': 'No',
@@ -1169,6 +1194,12 @@ const resources = {
       'status.backgroundPanicsMessage_other': '{{count}} background panics',
       'status.cacheStaleHint': 'Cache data may be stale. Restart the app to retry.',
       'status.syncStatusTitle': 'Sync Status',
+      'status.syncIdle': 'Idle',
+      'status.syncDiscovering': 'Discovering...',
+      'status.syncPairing': 'Pairing...',
+      'status.syncSyncing': 'Syncing...',
+      'status.syncError': 'Error',
+      'status.syncOffline': 'Offline',
       'status.notConfigured': 'Not configured',
       'status.syncStateLabel': 'Sync state: {{state}}',
       'status.peerLabel_one': 'Peer',
@@ -1619,6 +1650,46 @@ const resources = {
 
       // UX-121: Search panel
       'search.searchButton': 'Search',
+
+      // UX-162: Filter labels
+      'filter.operatorContains': 'contains',
+      'filter.operatorStartsWith': 'starts with',
+      'filter.isSet': 'is set',
+      'filter.isEmpty': 'is empty',
+      'filter.tagPrefix': 'tag prefix',
+      'filter.default': 'filter',
+
+      // UX-162: Group labels
+      'group.collapseGroup': 'Collapse group',
+      'group.expandGroup': 'Expand group',
+
+      // UX-162: Task states
+      'task.noneState': 'none',
+
+      // UX-162: Block hints
+      'block.daysDisabledHint': 'days (0 = disabled)',
+
+      // UX-162: Trash prefix
+      'trash.deletedPrefix': 'Deleted:',
+
+      // UX-162: Tags
+      'tag.addTag': 'Add Tag',
+
+      // UX-162: Batch actions
+      'batch.selectedCount': '{{count}} selected',
+
+      // UX-162: Conflict announcements
+      'conflict.resolvedAnnounce': 'Conflict resolved \u2014 kept incoming version',
+      'conflict.discardedAnnounce': 'Conflict discarded',
+      'conflict.resolveError': 'Failed to resolve conflict: {{error}}',
+      'conflict.discardError': 'Failed to discard conflict: {{error}}',
+      'conflict.batchError': '{{failCount}} of {{count}} operations failed',
+      'conflict.batchKeptCount': 'Kept {{count}} conflict(s)',
+      'conflict.batchDiscardedCount': 'Discarded {{count}} conflict(s)',
+
+      // UX-162: History restore description
+      'history.restoreConfirmDescription':
+        'This will replace the current block content with the version from {{timestamp}}. You can undo this change.',
 
       // UX-144: Data settings tab (import/export)
       'data.importTitle': 'Import',

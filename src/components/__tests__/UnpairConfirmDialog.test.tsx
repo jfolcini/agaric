@@ -18,7 +18,9 @@ describe('UnpairConfirmDialog', () => {
     render(<UnpairConfirmDialog open={true} onOpenChange={vi.fn()} onConfirm={vi.fn()} />)
     expect(screen.getByText('Unpair device?')).toBeInTheDocument()
     expect(
-      screen.getByText('This will remove the paired device. You will need to pair again to sync.'),
+      screen.getByText(
+        'This will remove the pairing with the paired device. You will need to pair again to sync.',
+      ),
     ).toBeInTheDocument()
   })
 

@@ -45,20 +45,20 @@ function MetricLabel({ label, tooltip }: { label: string; tooltip: string }): Re
   )
 }
 
-function syncStateLabel(state: string): string {
+function syncStateLabel(state: string, t: (key: string) => string): string {
   switch (state) {
     case 'idle':
-      return 'Idle'
+      return t('status.syncIdle')
     case 'discovering':
-      return 'Discovering...'
+      return t('status.syncDiscovering')
     case 'pairing':
-      return 'Pairing...'
+      return t('status.syncPairing')
     case 'syncing':
-      return 'Syncing...'
+      return t('status.syncSyncing')
     case 'error':
-      return 'Error'
+      return t('status.syncError')
     case 'offline':
-      return 'Offline'
+      return t('status.syncOffline')
     default:
       return state
   }
@@ -243,10 +243,10 @@ export function StatusPanel(): React.ReactElement {
                       syncStateDotClasses(syncState),
                     )}
                     role="status"
-                    aria-label={t('status.syncStateLabel', { state: syncStateLabel(syncState) })}
+                    aria-label={t('status.syncStateLabel', { state: syncStateLabel(syncState, t) })}
                   />
                   <span className="sync-state-label text-sm font-medium">
-                    {syncStateLabel(syncState)}
+                    {syncStateLabel(syncState, t)}
                   </span>
                 </div>
 

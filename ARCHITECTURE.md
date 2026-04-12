@@ -1821,8 +1821,7 @@ empirically validated through bugs found, fixes applied, and alternatives reject
 ### Sync
 - **Idempotent guards on merge operations.** Compare current state with winner before creating
   new ops. Without this, merge queries match all historical ops causing infinite re-resolution.
-  **Known gap (B-60):** The `edit_block` divergence case in `operations.rs` lacks an idempotency
-  guard — property and move conflicts have guards but text merge does not.
+  All three conflict types (edit_block, set_property, move_block) have idempotency guards.
 - **`INSERT OR IGNORE` for remote ops.** Duplicate delivery is safe due to composite PK.
   No renumbering, no collision.
 - **Merge preload pattern.** Pre-load tag/page name maps via `load_ref_maps` before batch

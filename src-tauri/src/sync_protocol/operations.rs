@@ -230,6 +230,17 @@ pub async fn merge_diverged_blocks(
             .or_else(|| heads.iter().find(|(d, _)| d != device_id));
 
         if let (Some(ours), Some(theirs)) = (our_head, their_head) {
+            // Idempotency guard (S-10): skip if a previous merge op already
+            // integrated their head.  After a merge, get_block_edit_heads
+            // still returns 2 heads (one per device) because the merge op
+            // only advances the LOCAL device's max seq.  Without this
+            // check, merge_block would be called again on every subsequent
+            // sync, creating duplicate merge ops.
+            if dag::has_merge_for_heads(pool, &block_id, theirs).await? {
+                results.already_up_to_date += 1;
+                continue;
+            }
+
             let outcome = merge::merge_block(pool, device_id, &block_id, ours, theirs).await?;
 
             match outcome {

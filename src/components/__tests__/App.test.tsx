@@ -453,7 +453,7 @@ describe('App', () => {
         const state = useJournalStore.getState()
         expect(state.currentDate.getTime()).toBe(subDays(startDate, 1).getTime())
       })
-      expect(announce).toHaveBeenCalledWith('Navigated to previous day')
+      expect(announce).toHaveBeenCalledWith('Navigated to previous day/week/month')
     })
 
     it('Alt+ArrowRight navigates to next day in daily mode', async () => {
@@ -471,7 +471,7 @@ describe('App', () => {
         const state = useJournalStore.getState()
         expect(state.currentDate.getTime()).toBe(addDays(startDate, 1).getTime())
       })
-      expect(announce).toHaveBeenCalledWith('Navigated to next day')
+      expect(announce).toHaveBeenCalledWith('Navigated to next day/week/month')
     })
 
     it('Alt+ArrowLeft navigates to previous week in weekly mode', async () => {
@@ -489,7 +489,7 @@ describe('App', () => {
         const state = useJournalStore.getState()
         expect(state.currentDate.getTime()).toBe(subWeeks(startDate, 1).getTime())
       })
-      expect(announce).toHaveBeenCalledWith('Navigated to previous week')
+      expect(announce).toHaveBeenCalledWith('Navigated to previous day/week/month')
     })
 
     it('Alt+ArrowRight navigates to next week in weekly mode', async () => {
@@ -507,7 +507,7 @@ describe('App', () => {
         const state = useJournalStore.getState()
         expect(state.currentDate.getTime()).toBe(addWeeks(startDate, 1).getTime())
       })
-      expect(announce).toHaveBeenCalledWith('Navigated to next week')
+      expect(announce).toHaveBeenCalledWith('Navigated to next day/week/month')
     })
 
     it('Alt+ArrowLeft navigates to previous month in monthly mode', async () => {
@@ -525,7 +525,7 @@ describe('App', () => {
         const state = useJournalStore.getState()
         expect(state.currentDate.getTime()).toBe(subMonths(startDate, 1).getTime())
       })
-      expect(announce).toHaveBeenCalledWith('Navigated to previous month')
+      expect(announce).toHaveBeenCalledWith('Navigated to previous day/week/month')
     })
 
     it('Alt+ArrowRight navigates to next month in monthly mode', async () => {
@@ -543,7 +543,7 @@ describe('App', () => {
         const state = useJournalStore.getState()
         expect(state.currentDate.getTime()).toBe(addMonths(startDate, 1).getTime())
       })
-      expect(announce).toHaveBeenCalledWith('Navigated to next month')
+      expect(announce).toHaveBeenCalledWith('Navigated to next day/week/month')
     })
 
     it('Alt+T jumps to today', async () => {

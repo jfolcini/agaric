@@ -24,7 +24,7 @@ export interface FilterPillRowProps {
 // Human-readable filter summary
 // ---------------------------------------------------------------------------
 
-function opLabel(op: CompareOp): string {
+function opLabel(op: CompareOp, t?: (key: string) => string): string {
   switch (op) {
     case 'Eq':
       return '='
@@ -39,33 +39,34 @@ function opLabel(op: CompareOp): string {
     case 'Gte':
       return '>='
     case 'Contains':
-      return 'contains'
+      return t ? t('filter.operatorContains') : 'contains'
     case 'StartsWith':
-      return 'starts with'
+      return t ? t('filter.operatorStartsWith') : 'starts with'
   }
 }
 
 export function filterSummary(
   filter: BacklinkFilter,
   tagResolver?: (id: string) => string,
+  t?: (key: string) => string,
 ): string {
   switch (filter.type) {
     case 'BlockType':
       return `type = ${filter.block_type}`
     case 'PropertyText':
-      if (filter.key === 'todo') return `status ${opLabel(filter.op)} ${filter.value}`
-      if (filter.key === 'priority') return `priority ${opLabel(filter.op)} ${filter.value}`
-      return `${filter.key} ${opLabel(filter.op)} ${filter.value}`
+      if (filter.key === 'todo') return `status ${opLabel(filter.op, t)} ${filter.value}`
+      if (filter.key === 'priority') return `priority ${opLabel(filter.op, t)} ${filter.value}`
+      return `${filter.key} ${opLabel(filter.op, t)} ${filter.value}`
     case 'PropertyNum':
-      return `${filter.key} ${opLabel(filter.op)} ${filter.value}`
+      return `${filter.key} ${opLabel(filter.op, t)} ${filter.value}`
     case 'PropertyDate':
-      return `${filter.key} ${opLabel(filter.op)} ${filter.value}`
+      return `${filter.key} ${opLabel(filter.op, t)} ${filter.value}`
     case 'PropertyIsSet':
-      return `${filter.key} is set`
+      return `${filter.key} ${t ? t('filter.isSet') : 'is set'}`
     case 'PropertyIsEmpty':
-      return `${filter.key} is empty`
+      return `${filter.key} ${t ? t('filter.isEmpty') : 'is empty'}`
     case 'Contains':
-      return `contains "${filter.query}"`
+      return `${t ? t('filter.operatorContains') : 'contains'} "${filter.query}"`
     case 'CreatedInRange': {
       const parts: string[] = []
       if (filter.after) parts.push(`after ${filter.after}`)
@@ -77,9 +78,9 @@ export function filterSummary(
         ? `has tag ${tagResolver(filter.tag_id)}`
         : `has tag ${filter.tag_id.slice(0, 8)}...`
     case 'HasTagPrefix':
-      return `tag prefix "${filter.prefix}"`
+      return `${t ? t('filter.tagPrefix') : 'tag prefix'} "${filter.prefix}"`
     default:
-      return 'filter'
+      return t ? t('filter.default') : 'filter'
   }
 }
 
@@ -105,10 +106,10 @@ export function FilterPillRow({
           className="contents"
         >
           <FilterPill
-            label={filterSummary(filter, tagResolver)}
+            label={filterSummary(filter, tagResolver, t)}
             onRemove={() => onRemove(index)}
-            removeAriaLabel={`Remove filter ${filterSummary(filter, tagResolver)}`}
-            groupAriaLabel={`Filter: ${filterSummary(filter, tagResolver)}`}
+            removeAriaLabel={`Remove filter ${filterSummary(filter, tagResolver, t)}`}
+            groupAriaLabel={`Filter: ${filterSummary(filter, tagResolver, t)}`}
           />
         </li>
       ))}

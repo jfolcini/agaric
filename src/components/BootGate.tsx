@@ -1,11 +1,13 @@
 import { AlertCircle, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useBootStore } from '../stores/boot'
 
 export function BootGate({ children }: { children: React.ReactNode }) {
+  const { t } = useTranslation()
   const { state, error, boot } = useBootStore(
     useShallow((s) => ({ state: s.state, error: s.error, boot: s.boot })),
   )
@@ -27,7 +29,7 @@ export function BootGate({ children }: { children: React.ReactNode }) {
         className="flex h-screen flex-col items-center justify-center gap-3 transition-opacity duration-200"
       >
         <Spinner size="xl" className="text-muted-foreground" aria-hidden="true" />
-        <p className="text-sm text-muted-foreground">Starting Agaric&hellip;</p>
+        <p className="text-sm text-muted-foreground">{t('boot.starting')}</p>
       </div>
     )
   }
@@ -40,7 +42,7 @@ export function BootGate({ children }: { children: React.ReactNode }) {
         className="flex h-screen flex-col items-center justify-center gap-2 transition-opacity duration-200"
       >
         <Spinner size="xl" className="text-muted-foreground" aria-hidden="true" />
-        <p className="text-sm text-muted-foreground">Recovering&hellip;</p>
+        <p className="text-sm text-muted-foreground">{t('boot.recovering')}</p>
       </div>
     )
   }
@@ -53,7 +55,7 @@ export function BootGate({ children }: { children: React.ReactNode }) {
           role="alert"
         >
           <AlertCircle className="h-8 w-8 text-destructive" />
-          <h2 className="text-lg font-semibold">Failed to start</h2>
+          <h2 className="text-lg font-semibold">{t('boot.failedToStart')}</h2>
           <p className="text-sm text-muted-foreground max-w-sm text-center">{error}</p>
           <Button
             variant="outline"
@@ -68,7 +70,7 @@ export function BootGate({ children }: { children: React.ReactNode }) {
             ) : (
               <>
                 <RefreshCw className="h-3.5 w-3.5" />
-                Retry
+                {t('action.retry')}
               </>
             )}
           </Button>

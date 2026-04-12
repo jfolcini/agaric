@@ -43,6 +43,12 @@ pub async fn apply_snapshot(
     sqlx::query("DELETE FROM tags_cache")
         .execute(&mut *tx)
         .await?;
+    sqlx::query("DELETE FROM block_tag_inherited")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM projected_agenda_cache")
+        .execute(&mut *tx)
+        .await?;
     // FTS5
     sqlx::query("DELETE FROM fts_blocks")
         .execute(&mut *tx)
@@ -58,6 +64,12 @@ pub async fn apply_snapshot(
         .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM attachments")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM page_aliases")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM property_definitions")
         .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM op_log").execute(&mut *tx).await?;
@@ -180,6 +192,42 @@ pub async fn apply_snapshot(
                 .bind(&a.fs_path)
                 .bind(&a.created_at)
                 .bind(&a.deleted_at);
+        }
+        query.execute(&mut *tx).await?;
+    }
+
+    // -- property_definitions (4 columns) --
+    const PROP_DEFS_COLS: usize = 4;
+    const PROP_DEFS_CHUNK: usize = MAX_SQL_PARAMS / PROP_DEFS_COLS; // 249
+    for chunk in data.tables.property_definitions.chunks(PROP_DEFS_CHUNK) {
+        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?, ?)").collect();
+        let sql = format!(
+            "INSERT INTO property_definitions (key, value_type, options, created_at) VALUES {}",
+            placeholders.join(", ")
+        );
+        let mut query = sqlx::query(&sql);
+        for pd in chunk {
+            query = query
+                .bind(&pd.key)
+                .bind(&pd.value_type)
+                .bind(&pd.options)
+                .bind(&pd.created_at);
+        }
+        query.execute(&mut *tx).await?;
+    }
+
+    // -- page_aliases (2 columns) --
+    const PAGE_ALIASES_COLS: usize = 2;
+    const PAGE_ALIASES_CHUNK: usize = MAX_SQL_PARAMS / PAGE_ALIASES_COLS; // 499
+    for chunk in data.tables.page_aliases.chunks(PAGE_ALIASES_CHUNK) {
+        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?)").collect();
+        let sql = format!(
+            "INSERT INTO page_aliases (page_id, alias) VALUES {}",
+            placeholders.join(", ")
+        );
+        let mut query = sqlx::query(&sql);
+        for pa in chunk {
+            query = query.bind(&pa.page_id).bind(&pa.alias);
         }
         query.execute(&mut *tx).await?;
     }

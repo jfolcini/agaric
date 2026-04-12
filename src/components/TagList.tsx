@@ -190,7 +190,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
           className="flex-1"
         />
         <Button type="submit" variant="outline" disabled={!newTagName.trim() || isCreating}>
-          <Plus className="h-4 w-4" /> Add Tag
+          <Plus className="h-4 w-4" /> {t('tag.addTag')}
         </Button>
       </form>
 

@@ -97,7 +97,7 @@ export function BlockDatePicker({
               <Input
                 type="text"
                 className="flex-1"
-                placeholder="Type a date... (today, +3d, Apr 15)"
+                placeholder={t('dateChip.placeholder')}
                 value={dateTextInput}
                 onChange={(e) => {
                   setDateTextInput(e.target.value)

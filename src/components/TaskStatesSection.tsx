@@ -50,7 +50,7 @@ export function TaskStatesSection(): React.ReactElement {
       <p className="text-xs text-muted-foreground">{t('propertiesView.taskStatesDesc')}</p>
       <div className="flex flex-wrap gap-1">
         <Badge variant="outline" className="text-xs">
-          none
+          {t('task.noneState')}
         </Badge>
         {states.filter(Boolean).map((s) => (
           <Badge key={s} variant="secondary" className="text-xs flex items-center gap-1">
