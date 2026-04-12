@@ -1,0 +1,285 @@
+use crate::error::AppError;
+use crate::peer_refs;
+use crate::sync_events::SyncEventSink;
+use crate::sync_net::SyncConnection;
+use crate::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState};
+use crate::sync_scheduler::SyncScheduler;
+
+/// Result of verifying the peer's TLS certificate against its claimed identity.
+#[derive(Debug, PartialEq)]
+pub(crate) enum CertVerifyResult {
+    /// Certificate checks pass (or are skipped when no cert is presented).
+    Ok,
+    /// B-34: HeadExchange device_id doesn't match the TLS certificate CN.
+    CnMismatch { remote_id: String, cert_cn: String },
+    /// B-33: TLS certificate hash doesn't match the stored cert_hash.
+    HashMismatch { remote_id: String },
+}
+
+/// Verify the peer's TLS certificate CN matches the claimed device ID (B-34)
+/// and the certificate hash matches what was stored during pairing (B-33).
+///
+/// Extracted as a pure function so it can be unit-tested without TLS.
+pub(crate) fn verify_peer_cert(
+    remote_id: &str,
+    cert_cn: Option<&str>,
+    observed_hash: Option<&str>,
+    stored_hash: Option<&str>,
+) -> CertVerifyResult {
+    // B-34: Verify device ID matches TLS certificate CN
+    if let Some(cn) = cert_cn {
+        if cn != remote_id {
+            return CertVerifyResult::CnMismatch {
+                remote_id: remote_id.to_string(),
+                cert_cn: cn.to_string(),
+            };
+        }
+    }
+
+    // B-33: Verify TLS certificate hash matches stored cert_hash
+    if let Some(stored) = stored_hash {
+        if let Some(observed) = observed_hash {
+            if stored != observed {
+                return CertVerifyResult::HashMismatch {
+                    remote_id: remote_id.to_string(),
+                };
+            }
+        }
+    }
+
+    CertVerifyResult::Ok
+}
+
+/// Drive a complete responder-side sync session over an incoming connection.
+///
+/// Unlike the initiator path (`run_sync_session`), the responder does **not**
+/// call `SyncOrchestrator::start()`.  Instead it waits for the initiator's
+/// `HeadExchange`, processes it via `handle_message()` (which computes and
+/// returns an `OpBatch`), and then continues the message loop until a
+/// terminal state is reached.
+///
+/// Per-peer mutual exclusion is enforced after the first message reveals
+/// the remote device identity: if the scheduler already holds a lock for
+/// that peer (e.g. an outbound initiator-mode session is in progress) the
+/// connection is rejected with an `Error` message.
+pub(crate) async fn handle_incoming_sync(
+    mut conn: SyncConnection,
+    pool: sqlx::SqlitePool,
+    device_id: String,
+    materializer: crate::materializer::Materializer,
+    scheduler: std::sync::Arc<SyncScheduler>,
+    event_sink: std::sync::Arc<dyn SyncEventSink>,
+) -> Result<(), AppError> {
+    tracing::info!("incoming sync connection received, starting responder session");
+
+    let pool_ref = pool.clone();
+    let event_sink_box: Box<dyn SyncEventSink> =
+        Box::new(super::SharedEventSink(std::sync::Arc::clone(&event_sink)));
+    let mut orch = SyncOrchestrator::new(pool, device_id.clone(), materializer)
+        .with_event_sink(event_sink_box);
+
+    // ── Receive the initiator's first message ─────────────────────────────
+    let first_msg: SyncMessage = conn.recv_json().await?;
+
+    // ── Per-peer mutual exclusion ─────────────────────────────────────────
+    // We can only identify the peer after seeing the HeadExchange.
+    let _peer_guard = if let SyncMessage::HeadExchange { ref heads } = first_msg {
+        let remote_id = heads
+            .iter()
+            .find(|h| h.device_id != device_id)
+            .map(|h| h.device_id.clone())
+            .unwrap_or_default();
+
+        if remote_id.is_empty() || remote_id == device_id {
+            tracing::warn!("rejecting sync with self (remote_id matches local device_id)");
+            conn.send_json(&SyncMessage::Error {
+                message: "cannot sync with self".into(),
+            })
+            .await?;
+            let _ = conn.close().await;
+            return Ok(());
+        }
+
+        // Reject unpaired devices (S-1)
+        if peer_refs::get_peer_ref(&pool_ref, &remote_id)
+            .await?
+            .is_none()
+        {
+            tracing::warn!(peer_id = %remote_id, "rejecting sync from unpaired device");
+            conn.send_json(&SyncMessage::Error {
+                message: "peer not paired with this device".into(),
+            })
+            .await?;
+            let _ = conn.close().await;
+            return Ok(());
+        }
+
+        // S-5: Acquire per-peer lock BEFORE reading/storing cert hash so
+        // two devices that connect simultaneously after pairing cannot
+        // race through the TOFU path and overwrite each other's hash.
+        let guard = match scheduler.try_lock_peer(&remote_id) {
+            Some(guard) => {
+                tracing::info!(peer_id = %remote_id, "responder locked peer for sync");
+                guard
+            }
+            None => {
+                tracing::info!(
+                    peer_id = %remote_id,
+                    "rejecting incoming sync: already syncing with this peer"
+                );
+                conn.send_json(&SyncMessage::Error {
+                    message: "peer is busy with another sync session".into(),
+                })
+                .await?;
+                let _ = conn.close().await;
+                return Ok(());
+            }
+        };
+
+        // B-34: Verify device ID matches TLS certificate CN
+        // B-33: Verify TLS certificate hash matches stored cert_hash
+        let stored_hash = peer_refs::get_peer_ref(&pool_ref, &remote_id)
+            .await?
+            .and_then(|pr| pr.cert_hash);
+        match verify_peer_cert(
+            &remote_id,
+            conn.peer_cert_cn(),
+            conn.peer_cert_hash().as_deref(),
+            stored_hash.as_deref(),
+        ) {
+            CertVerifyResult::Ok => {
+                // TOFU: Store cert hash on first authenticated connection
+                // (trust-on-first-use, same model as SSH known_hosts)
+                if stored_hash.is_none() {
+                    if let Some(ref observed) = conn.peer_cert_hash() {
+                        if let Err(e) =
+                            peer_refs::upsert_peer_ref_with_cert(&pool_ref, &remote_id, observed)
+                                .await
+                        {
+                            tracing::warn!(
+                                peer_id = %remote_id,
+                                error = %e,
+                                "failed to store peer cert hash (TOFU)"
+                            );
+                        }
+                    }
+                }
+            }
+            CertVerifyResult::CnMismatch {
+                ref remote_id,
+                ref cert_cn,
+            } => {
+                tracing::warn!(
+                    peer_id = %remote_id,
+                    cert_cn = %cert_cn,
+                    "rejecting sync: HeadExchange device_id does not match TLS certificate CN"
+                );
+                conn.send_json(&SyncMessage::Error {
+                    message: "device ID does not match certificate".into(),
+                })
+                .await?;
+                let _ = conn.close().await;
+                return Ok(());
+            }
+            CertVerifyResult::HashMismatch { ref remote_id } => {
+                tracing::warn!(
+                    peer_id = %remote_id,
+                    "rejecting sync: TLS certificate hash mismatch"
+                );
+                conn.send_json(&SyncMessage::Error {
+                    message: "certificate hash mismatch".into(),
+                })
+                .await?;
+                let _ = conn.close().await;
+                return Ok(());
+            }
+        }
+
+        Some(guard)
+    } else {
+        None
+    };
+
+    // ── Process first message ─────────────────────────────────────────────
+    let response = orch.handle_message(first_msg).await?;
+    if let Some(resp) = response {
+        conn.send_json(&resp).await?;
+        // Drain any pending op batches (B-3)
+        while let Some(batch) = orch.next_message() {
+            conn.send_json(&batch).await?;
+        }
+    }
+
+    // ── Message loop (same structure as initiator) ────────────────────────
+    while !orch.is_terminal() {
+        let incoming: SyncMessage = conn.recv_json().await?;
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            orch.handle_message(incoming),
+        )
+        .await
+        .map_err(|_| AppError::InvalidOperation("handle_message timed out after 120s".into()))??;
+
+        match response {
+            Some(resp) => {
+                conn.send_json(&resp).await?;
+                // Drain any pending op batches (B-3)
+                while let Some(batch) = orch.next_message() {
+                    conn.send_json(&batch).await?;
+                }
+            }
+            None => {
+                let state = &orch.session().state;
+                if matches!(state, SyncState::Failed(_) | SyncState::ResetRequired) {
+                    tracing::warn!(state = ?state, "responder sync ended in non-complete state");
+                    break;
+                }
+            }
+        }
+    }
+
+    // ── File transfer phase (F-14) ────────────────────────────────────────
+    // After the op-sync completes, transfer missing attachment files.
+    // The responder responds first, then requests its own files.
+    if orch.is_complete() {
+        if let Ok(app_data_dir) = crate::sync_files::app_data_dir_from_pool(&pool_ref).await {
+            match crate::sync_files::run_file_transfer_responder(
+                &mut conn,
+                &pool_ref,
+                &app_data_dir,
+            )
+            .await
+            {
+                Ok(stats) => {
+                    if stats.files_received > 0 || stats.files_sent > 0 {
+                        tracing::info!(
+                            files_rx = stats.files_received,
+                            files_tx = stats.files_sent,
+                            "responder file transfer complete"
+                        );
+                    }
+                }
+                Err(e) => {
+                    // File transfer failure should not abort the sync
+                    tracing::warn!(error = %e, "responder file transfer failed (non-fatal)");
+                }
+            }
+        } else {
+            tracing::warn!("could not determine app_data_dir, skipping file transfer");
+        }
+    }
+
+    let session = orch.session();
+    tracing::info!(
+        ops_rx = session.ops_received,
+        ops_tx = session.ops_sent,
+        state = ?session.state,
+        "responder sync session finished"
+    );
+
+    if let Err(e) = conn.close().await {
+        tracing::debug!("failed to close responder connection: {e}");
+    }
+
+    Ok(())
+}
