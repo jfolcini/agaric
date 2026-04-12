@@ -1,4 +1,7 @@
+pub(crate) mod backlink_filters;
 pub mod backlink_query;
+pub(crate) mod backlink_sort;
+pub(crate) mod backlink_types;
 pub mod cache;
 pub mod commands;
 pub mod dag;

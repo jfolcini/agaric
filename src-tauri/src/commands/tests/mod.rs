@@ -1,0 +1,14 @@
+mod agenda_cmd_tests;
+mod block_cmd_tests;
+mod common;
+mod compaction_cmd_tests;
+mod edge_case_tests;
+mod history_cmd_tests;
+mod page_cmd_tests;
+mod property_cmd_tests;
+mod query_cmd_tests;
+mod snapshot_tests;
+mod status_cmd_tests;
+mod sync_cmd_tests;
+mod tag_cmd_tests;
+mod undo_redo_tests;
