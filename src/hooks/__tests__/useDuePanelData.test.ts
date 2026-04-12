@@ -434,4 +434,117 @@ describe('useDuePanelData', () => {
     expect(extractUlidRefs('plain text content')).toHaveLength(0)
     expect(extractUlidRefs('')).toHaveLength(0)
   })
+
+  it('overdue batchResolve includes content ULIDs (B-55)', async () => {
+    const ULID_REF = '01ABCDEFGHJKLMNPQRSTUVWXYZ'
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    const yesterday = new Date(today)
+    yesterday.setDate(yesterday.getDate() - 1)
+    const yesterdayStr = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`
+
+    mockedQueryByProperty.mockResolvedValue({
+      items: [
+        makeBlock({
+          id: 'OD1',
+          parent_id: 'POVER',
+          due_date: yesterdayStr,
+          todo_state: 'TODO',
+          content: `Overdue ref [[${ULID_REF}]]`,
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+    mockedBatchResolve.mockResolvedValue([
+      { id: 'POVER', title: 'Overdue Parent', block_type: 'page', deleted: false },
+      { id: ULID_REF, title: 'Ref Page', block_type: 'page', deleted: false },
+    ])
+
+    renderHook(() => useDuePanelData({ date: todayStr, sourceFilter: null }))
+
+    await waitFor(() => {
+      // Find the batchResolve call that includes 'POVER' (overdue effect)
+      const overdueCall = mockedBatchResolve.mock.calls.find(
+        (args) => Array.isArray(args[0]) && (args[0] as string[]).includes('POVER'),
+      )
+      expect(overdueCall).toBeDefined()
+      const resolvedIds = overdueCall?.[0] as string[]
+      expect(resolvedIds).toContain('POVER')
+      expect(resolvedIds).toContain(ULID_REF)
+    })
+  })
+
+  it('upcoming batchResolve includes content ULIDs (B-55)', async () => {
+    const ULID_REF = '01ABCDEFGHJKLMNPQRSTUVWXYZ'
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    const tomorrow = new Date(today)
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`
+
+    localStorage.setItem('agaric:deadlineWarningDays', '7')
+
+    mockedQueryByProperty.mockResolvedValue({
+      items: [
+        makeBlock({
+          id: 'UP1',
+          parent_id: 'PUPCOMING',
+          due_date: tomorrowStr,
+          todo_state: 'TODO',
+          content: `Upcoming ref [[${ULID_REF}]]`,
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+    mockedBatchResolve.mockResolvedValue([
+      { id: 'PUPCOMING', title: 'Upcoming Parent', block_type: 'page', deleted: false },
+      { id: ULID_REF, title: 'Ref Page', block_type: 'page', deleted: false },
+    ])
+
+    renderHook(() => useDuePanelData({ date: todayStr, sourceFilter: null }))
+
+    await waitFor(() => {
+      const upcomingCall = mockedBatchResolve.mock.calls.find(
+        (args) => Array.isArray(args[0]) && (args[0] as string[]).includes('PUPCOMING'),
+      )
+      expect(upcomingCall).toBeDefined()
+      const resolvedIds = upcomingCall?.[0] as string[]
+      expect(resolvedIds).toContain('PUPCOMING')
+      expect(resolvedIds).toContain(ULID_REF)
+    })
+  })
+
+  it('projected batchResolve includes content ULIDs (B-55)', async () => {
+    const ULID_REF = '01ABCDEFGHJKLMNPQRSTUVWXYZ'
+
+    mockedListProjectedAgenda.mockResolvedValue([
+      {
+        block: makeBlock({
+          id: 'PROJ1',
+          parent_id: 'PPROJ',
+          content: `Projected ref [[${ULID_REF}]]`,
+        }),
+        projected_date: '2025-06-15',
+        source: 'due_date',
+      },
+    ])
+    mockedBatchResolve.mockResolvedValue([
+      { id: 'PPROJ', title: 'Projected Parent', block_type: 'page', deleted: false },
+      { id: ULID_REF, title: 'Ref Page', block_type: 'page', deleted: false },
+    ])
+
+    renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
+
+    await waitFor(() => {
+      const projectedCall = mockedBatchResolve.mock.calls.find(
+        (args) => Array.isArray(args[0]) && (args[0] as string[]).includes('PPROJ'),
+      )
+      expect(projectedCall).toBeDefined()
+      const resolvedIds = projectedCall?.[0] as string[]
+      expect(resolvedIds).toContain('PPROJ')
+      expect(resolvedIds).toContain(ULID_REF)
+    })
+  })
 })

@@ -10,6 +10,7 @@ pub mod fts;
 pub mod hash;
 pub mod import;
 pub mod materializer;
+mod materializer_handlers;
 pub mod merge;
 pub mod op;
 pub mod op_log;

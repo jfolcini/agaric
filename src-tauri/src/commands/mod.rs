@@ -15,8 +15,8 @@ use specta::Type;
 use sqlx::SqlitePool;
 use tauri::State;
 
-use crate::db::{ReadPool, WritePool};
-use crate::device::DeviceId;
+use crate::db::ReadPool;
+#[cfg(test)]
 use crate::draft;
 use crate::error::AppError;
 use crate::materializer::Materializer;
@@ -33,7 +33,11 @@ use crate::ulid::BlockId;
 mod agenda;
 mod attachments;
 mod blocks;
+mod compaction;
+mod drafts;
 mod history;
+mod journal;
+mod logging;
 mod pages;
 mod properties;
 mod queries;
@@ -56,11 +60,20 @@ pub use blocks::{
     purge_block, purge_block_inner, restore_all_deleted, restore_all_deleted_inner, restore_block,
     restore_block_inner,
 };
+pub use compaction::{
+    compact_op_log_cmd, compact_op_log_cmd_inner, get_compaction_status,
+    get_compaction_status_inner, CompactionResult, CompactionStatus, PageLink, RestoreToOpResult,
+};
+pub use drafts::{
+    delete_draft, flush_draft, flush_draft_inner, list_drafts, list_drafts_inner, save_draft,
+};
 pub use history::{
     apply_reverse_in_tx, compute_edit_diff, compute_edit_diff_inner, list_page_history,
     list_page_history_inner, redo_page_op, redo_page_op_inner, restore_page_to_op,
     restore_page_to_op_inner, revert_ops, revert_ops_inner, undo_page_op, undo_page_op_inner,
 };
+pub use journal::{navigate_journal_inner, today_journal_inner};
+pub use logging::{get_log_dir, log_frontend};
 pub use pages::{
     export_page_markdown, export_page_markdown_inner, get_page_aliases, get_page_aliases_inner,
     import_markdown, import_markdown_inner, list_page_links, list_page_links_inner,
@@ -113,10 +126,19 @@ pub use blocks::{
     __specta__fn__restore_all_deleted, __specta__fn__restore_block,
 };
 #[doc(hidden)]
+pub use compaction::{__specta__fn__compact_op_log_cmd, __specta__fn__get_compaction_status};
+#[doc(hidden)]
+pub use drafts::{
+    __specta__fn__delete_draft, __specta__fn__flush_draft, __specta__fn__list_drafts,
+    __specta__fn__save_draft,
+};
+#[doc(hidden)]
 pub use history::{
     __specta__fn__compute_edit_diff, __specta__fn__list_page_history, __specta__fn__redo_page_op,
     __specta__fn__restore_page_to_op, __specta__fn__revert_ops, __specta__fn__undo_page_op,
 };
+#[doc(hidden)]
+pub use logging::{__specta__fn__get_log_dir, __specta__fn__log_frontend};
 #[doc(hidden)]
 pub use pages::{
     __specta__fn__export_page_markdown, __specta__fn__get_page_aliases,
@@ -166,10 +188,16 @@ pub use blocks::{
     __cmd__purge_block, __cmd__restore_all_deleted, __cmd__restore_block,
 };
 #[doc(hidden)]
+pub use compaction::{__cmd__compact_op_log_cmd, __cmd__get_compaction_status};
+#[doc(hidden)]
+pub use drafts::{__cmd__delete_draft, __cmd__flush_draft, __cmd__list_drafts, __cmd__save_draft};
+#[doc(hidden)]
 pub use history::{
     __cmd__compute_edit_diff, __cmd__list_page_history, __cmd__redo_page_op,
     __cmd__restore_page_to_op, __cmd__revert_ops, __cmd__undo_page_op,
 };
+#[doc(hidden)]
+pub use logging::{__cmd__get_log_dir, __cmd__log_frontend};
 #[doc(hidden)]
 pub use pages::{
     __cmd__export_page_markdown, __cmd__get_page_aliases, __cmd__import_markdown,
@@ -609,370 +637,6 @@ pub async fn get_block_history(
     get_block_history_inner(&pool.0, block_id, cursor, limit)
         .await
         .map_err(sanitize_internal_error)
-}
-
-// ---------------------------------------------------------------------------
-// Draft autosave commands (F-17)
-// ---------------------------------------------------------------------------
-
-/// Flush a draft: look up the stored draft content, compute `prev_edit`,
-/// write an `edit_block` op, and delete the draft row — all atomically.
-///
-/// If no draft exists for `block_id`, this is a no-op (returns `Ok(())`).
-pub async fn flush_draft_inner(
-    pool: &SqlitePool,
-    device_id: &str,
-    block_id: String,
-) -> Result<(), AppError> {
-    // 1. Look up the draft; if none exists, no-op.
-    let stored = match draft::get_draft(pool, &block_id).await? {
-        Some(d) => d,
-        None => return Ok(()),
-    };
-
-    // 2. Compute prev_edit from op_log (same logic as edit_block_inner).
-    let prev_edit_row = sqlx::query!(
-        "SELECT device_id, seq FROM op_log \
-         WHERE json_extract(payload, '$.block_id') = ? \
-         AND op_type IN ('edit_block', 'create_block') \
-         ORDER BY created_at DESC \
-         LIMIT 1",
-        block_id
-    )
-    .fetch_optional(pool)
-    .await?;
-    let prev_edit = prev_edit_row.map(|r| (r.device_id, r.seq));
-
-    // 3. Delegate to draft::flush_draft (atomic tx inside).
-    draft::flush_draft(pool, device_id, &block_id, &stored.content, prev_edit).await?;
-    Ok(())
-}
-
-/// Tauri command: save a draft for a block. Delegates to [`draft::save_draft`].
-#[cfg(not(tarpaulin_include))]
-#[tauri::command]
-#[specta::specta]
-pub async fn save_draft(
-    pool: State<'_, WritePool>,
-    block_id: String,
-    content: String,
-) -> Result<(), AppError> {
-    draft::save_draft(&pool.0, &block_id, &content)
-        .await
-        .map_err(sanitize_internal_error)
-}
-
-/// Tauri command: flush a draft (write edit_block op + delete draft row).
-/// Delegates to [`flush_draft_inner`].
-#[cfg(not(tarpaulin_include))]
-#[tauri::command]
-#[specta::specta]
-pub async fn flush_draft(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    block_id: String,
-) -> Result<(), AppError> {
-    flush_draft_inner(&pool.0, device_id.as_str(), block_id)
-        .await
-        .map_err(sanitize_internal_error)
-}
-
-/// Tauri command: delete a draft for a block. Delegates to [`draft::delete_draft`].
-#[cfg(not(tarpaulin_include))]
-#[tauri::command]
-#[specta::specta]
-pub async fn delete_draft(pool: State<'_, WritePool>, block_id: String) -> Result<(), AppError> {
-    draft::delete_draft(&pool.0, &block_id)
-        .await
-        .map_err(sanitize_internal_error)
-}
-
-/// Tauri command: list all drafts. Delegates to [`draft::get_all_drafts`].
-#[cfg(not(tarpaulin_include))]
-#[tauri::command]
-#[specta::specta]
-pub async fn list_drafts(pool: State<'_, ReadPool>) -> Result<Vec<draft::Draft>, AppError> {
-    draft::get_all_drafts(&pool.0)
-        .await
-        .map_err(sanitize_internal_error)
-}
-
-/// Inner implementation for `list_drafts`, usable from tests without Tauri state.
-pub async fn list_drafts_inner(pool: &sqlx::SqlitePool) -> Result<Vec<draft::Draft>, AppError> {
-    draft::get_all_drafts(pool).await
-}
-
-// ---------------------------------------------------------------------------
-// Frontend logging (F-19)
-// ---------------------------------------------------------------------------
-
-/// Log a frontend message to the backend's daily-rolling log file.
-/// Fire-and-forget — the frontend never awaits this.
-#[cfg(not(tarpaulin_include))]
-#[tauri::command]
-#[specta::specta]
-pub async fn log_frontend(
-    level: String,
-    module: String,
-    message: String,
-    stack: Option<String>,
-    context: Option<String>,
-    data: Option<String>,
-) -> Result<(), AppError> {
-    match level.as_str() {
-        "error" => {
-            tracing::error!(target: "frontend", module = %module, stack = stack.as_deref().unwrap_or(""), context = context.as_deref().unwrap_or(""), data = data.as_deref().unwrap_or(""), "{message}")
-        }
-        "warn" => {
-            tracing::warn!(target: "frontend", module = %module, stack = stack.as_deref().unwrap_or(""), context = context.as_deref().unwrap_or(""), data = data.as_deref().unwrap_or(""), "{message}")
-        }
-        "info" => {
-            tracing::info!(target: "frontend", module = %module, data = data.as_deref().unwrap_or(""), "{message}")
-        }
-        "debug" => {
-            tracing::debug!(target: "frontend", module = %module, data = data.as_deref().unwrap_or(""), "{message}")
-        }
-        _ => {
-            tracing::info!(target: "frontend", module = %module, data = data.as_deref().unwrap_or(""), "{message}")
-        }
-    }
-    Ok(())
-}
-
-/// Return the path to the logs directory.
-#[cfg(not(tarpaulin_include))]
-#[tauri::command]
-#[specta::specta]
-pub async fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
-    use tauri::Manager;
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
-    let log_dir = data_dir.join("logs");
-    Ok(log_dir.to_string_lossy().into_owned())
-}
-
-// ---------------------------------------------------------------------------
-// Op log compaction (F-20)
-// ---------------------------------------------------------------------------
-
-/// A link between two pages (for graph visualization).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, sqlx::FromRow, specta::Type)]
-pub struct PageLink {
-    pub source_id: String,
-    pub target_id: String,
-}
-
-/// Result of a point-in-time restore operation.
-#[derive(Debug, Clone, Serialize, specta::Type)]
-pub struct RestoreToOpResult {
-    /// Number of ops that were successfully reverted.
-    pub ops_reverted: u64,
-    /// Number of non-reversible ops (purge_block, delete_attachment) skipped.
-    pub non_reversible_skipped: u64,
-    /// Individual undo results for each reverted op.
-    pub results: Vec<UndoResult>,
-}
-
-/// Statistics about the op log, returned by [`get_compaction_status`].
-#[derive(Debug, Clone, Serialize, serde::Deserialize, specta::Type)]
-pub struct CompactionStatus {
-    pub total_ops: i64,
-    pub oldest_op_date: Option<String>,
-    pub eligible_ops: i64,
-    pub retention_days: u64,
-}
-
-/// Result of an op log compaction, returned by [`compact_op_log_cmd`].
-#[derive(Debug, Clone, Serialize, serde::Deserialize, specta::Type)]
-pub struct CompactionResult {
-    pub snapshot_id: Option<String>,
-    pub ops_deleted: i64,
-}
-
-/// Inner implementation for [`get_compaction_status`], testable without Tauri state.
-pub async fn get_compaction_status_inner(pool: &SqlitePool) -> Result<CompactionStatus, AppError> {
-    let total_ops: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
-        .fetch_one(pool)
-        .await?;
-
-    let oldest_op_date: Option<String> = sqlx::query_scalar!("SELECT MIN(created_at) FROM op_log")
-        .fetch_one(pool)
-        .await?;
-
-    let cutoff =
-        chrono::Utc::now() - chrono::Duration::days(crate::snapshot::DEFAULT_RETENTION_DAYS as i64);
-    let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-
-    let eligible_ops: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM op_log WHERE created_at < ?",
-        cutoff_str
-    )
-    .fetch_one(pool)
-    .await?;
-
-    Ok(CompactionStatus {
-        total_ops,
-        oldest_op_date,
-        eligible_ops,
-        retention_days: crate::snapshot::DEFAULT_RETENTION_DAYS,
-    })
-}
-
-/// Tauri command: return op log compaction statistics for the UI.
-#[cfg(not(tarpaulin_include))]
-#[tauri::command]
-#[specta::specta]
-pub async fn get_compaction_status(
-    pool: State<'_, ReadPool>,
-) -> Result<CompactionStatus, AppError> {
-    get_compaction_status_inner(&pool.0)
-        .await
-        .map_err(sanitize_internal_error)
-}
-
-/// Inner implementation for [`compact_op_log_cmd`], testable without Tauri state.
-///
-/// Wraps the compaction in a `BEGIN IMMEDIATE` transaction to prevent
-/// interleaving with concurrent writers (REVIEW-LATER item from snapshot.rs).
-pub async fn compact_op_log_cmd_inner(
-    pool: &SqlitePool,
-    device_id: &str,
-    retention_days: u64,
-) -> Result<CompactionResult, AppError> {
-    let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days as i64);
-    let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-
-    // Count eligible ops before compaction
-    let eligible: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM op_log WHERE created_at < ?",
-        cutoff_str
-    )
-    .fetch_one(pool)
-    .await?;
-
-    if eligible == 0 {
-        return Ok(CompactionResult {
-            snapshot_id: None,
-            ops_deleted: 0,
-        });
-    }
-
-    // Wrap in BEGIN IMMEDIATE for atomicity (the existing compact_op_log
-    // lacks explicit transaction wrapping — see REVIEW-LATER).
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-
-    // Recount inside the transaction to avoid TOCTOU
-    let eligible_in_tx: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM op_log WHERE created_at < ?",
-        cutoff_str
-    )
-    .fetch_one(&mut *tx)
-    .await?;
-
-    if eligible_in_tx == 0 {
-        tx.rollback().await?;
-        return Ok(CompactionResult {
-            snapshot_id: None,
-            ops_deleted: 0,
-        });
-    }
-
-    // Release the IMMEDIATE transaction before calling compact_op_log,
-    // which manages its own internal queries. We verified eligibility;
-    // compact_op_log will re-verify and perform the actual work.
-    tx.commit().await?;
-
-    let snapshot_id = crate::snapshot::compact_op_log(pool, device_id, retention_days).await?;
-
-    Ok(CompactionResult {
-        snapshot_id,
-        ops_deleted: eligible_in_tx,
-    })
-}
-
-/// Tauri command: trigger op log compaction.
-///
-/// The frontend is responsible for confirming with the user before calling
-/// this command. `retention_days` controls how far back ops are retained.
-#[cfg(not(tarpaulin_include))]
-#[tauri::command]
-#[specta::specta]
-pub async fn compact_op_log_cmd(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    retention_days: u64,
-) -> Result<CompactionResult, AppError> {
-    compact_op_log_cmd_inner(&pool.0, device_id.as_str(), retention_days)
-        .await
-        .map_err(sanitize_internal_error)
-}
-
-// ---------------------------------------------------------------------------
-// Journal commands — daily page navigation
-// ---------------------------------------------------------------------------
-
-/// Open today's journal page, creating it if it does not exist.
-///
-/// Returns the [`BlockRow`] for a `page` block whose content is today's date
-/// in `YYYY-MM-DD` format.  The lookup is idempotent: calling this multiple
-/// times on the same day always returns the same page.
-pub async fn today_journal_inner(
-    pool: &SqlitePool,
-    device_id: &str,
-    materializer: &Materializer,
-) -> Result<BlockRow, AppError> {
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    navigate_journal_inner(pool, device_id, materializer, today).await
-}
-
-/// Open the journal page for a specific date, creating it if it does not exist.
-///
-/// `date` must be in `YYYY-MM-DD` format.  If a `page` block with that exact
-/// content already exists (and is not deleted), its [`BlockRow`] is returned.
-/// Otherwise a new page block is created.
-///
-/// # Errors
-///
-/// - [`AppError::Validation`] — `date` is not a valid `YYYY-MM-DD` string
-pub async fn navigate_journal_inner(
-    pool: &SqlitePool,
-    device_id: &str,
-    materializer: &Materializer,
-    date: String,
-) -> Result<BlockRow, AppError> {
-    validate_date_format(&date)?;
-
-    // Look for an existing page whose content matches the date exactly.
-    let existing: Option<BlockRow> = sqlx::query_as!(
-        BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at,
-                  is_conflict as "is_conflict: bool", conflict_type,
-                  todo_state, priority, due_date, scheduled_date
-           FROM blocks
-           WHERE block_type = 'page' AND content = ? AND deleted_at IS NULL
-           LIMIT 1"#,
-        date
-    )
-    .fetch_optional(pool)
-    .await?;
-
-    if let Some(row) = existing {
-        return Ok(row);
-    }
-
-    // No existing page — create one.
-    create_block_inner(
-        pool,
-        device_id,
-        materializer,
-        "page".into(),
-        date,
-        None,
-        None,
-    )
-    .await
 }
 
 // ---------------------------------------------------------------------------

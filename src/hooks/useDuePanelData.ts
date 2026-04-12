@@ -118,9 +118,15 @@ export function useDuePanelData({
         setOverdueBlocks(overdue)
 
         if (overdue.length > 0) {
-          const parentIds = overdue.map((b) => b.parent_id).filter((id): id is string => id != null)
-          if (parentIds.length > 0) {
-            const resolved = await batchResolve([...new Set(parentIds)])
+          const contentRefs = overdue.flatMap((b) => (b.content ? extractUlidRefs(b.content) : []))
+          const idsToResolve = [
+            ...new Set([
+              ...overdue.map((b) => b.parent_id).filter((id): id is string => id != null),
+              ...contentRefs,
+            ]),
+          ]
+          if (idsToResolve.length > 0) {
+            const resolved = await batchResolve(idsToResolve)
             if (!stale) {
               setPageTitles((prev) => {
                 const next = new Map(prev)
@@ -178,11 +184,15 @@ export function useDuePanelData({
 
         // Resolve parent titles
         if (upcoming.length > 0) {
-          const parentIds = upcoming
-            .map((b) => b.parent_id)
-            .filter((id): id is string => id != null)
-          if (parentIds.length > 0) {
-            const titles = await batchResolve([...new Set(parentIds)])
+          const contentRefs = upcoming.flatMap((b) => (b.content ? extractUlidRefs(b.content) : []))
+          const idsToResolve = [
+            ...new Set([
+              ...upcoming.map((b) => b.parent_id).filter((id): id is string => id != null),
+              ...contentRefs,
+            ]),
+          ]
+          if (idsToResolve.length > 0) {
+            const titles = await batchResolve(idsToResolve)
             if (!stale) {
               setPageTitles((prev) => {
                 const next = new Map(prev)
@@ -345,11 +355,19 @@ export function useDuePanelData({
           // Filter out empty-content projected entries (UX-129)
           const nonEmptyEntries = entries.filter((e) => e.block.content?.trim())
           setProjectedEntries(nonEmptyEntries)
-          const parentIds = nonEmptyEntries
-            .map((e) => e.block.parent_id)
-            .filter((id): id is string => id != null)
-          if (parentIds.length > 0) {
-            batchResolve(parentIds)
+          const contentRefs = nonEmptyEntries.flatMap((e) =>
+            e.block.content ? extractUlidRefs(e.block.content) : [],
+          )
+          const idsToResolve = [
+            ...new Set([
+              ...nonEmptyEntries
+                .map((e) => e.block.parent_id)
+                .filter((id): id is string => id != null),
+              ...contentRefs,
+            ]),
+          ]
+          if (idsToResolve.length > 0) {
+            batchResolve(idsToResolve)
               .then((resolved) => {
                 if (!stale) {
                   setPageTitles((prev) => {
