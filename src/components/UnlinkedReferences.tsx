@@ -257,8 +257,10 @@ export function UnlinkedReferences({
         ? t('unlinkedRefs.headerOne')
         : t('unlinkedRefs.header', { count: totalCount })
 
-  // UX-152: Don't render when no unlinked references (and not loading)
-  if (!loading && totalCount === 0 && groups.length === 0) {
+  // UX-152: Don't render when no unlinked references (and not loading).
+  // When filters are active, keep the panel visible so the user can
+  // clear/adjust filters — otherwise the filter controls vanish.
+  if (!loading && totalCount === 0 && groups.length === 0 && filters.length === 0) {
     return null
   }
 

@@ -508,19 +508,20 @@ const resources = {
       'pageBrowser.noStarredPages': 'No starred pages',
       'pageBrowser.pageList': 'Page list',
 
-      // Due Panel
-      'duePanel.headerOne': '1 Due',
-      'duePanel.header': '{{count}} Due',
+      // Due Panel (agenda: due_date + scheduled_date + date properties + date tags)
+      'duePanel.headerOne': '1 Agenda',
+      'duePanel.header': '{{count}} Agenda',
       'duePanel.groupDoing': 'DOING',
       'duePanel.groupTodo': 'TODO',
       'duePanel.groupDone': 'DONE',
       'duePanel.groupOther': 'Other',
       'duePanel.loadMore': 'Load more',
       'duePanel.loading': 'Loading...',
-      'duePanel.loadingMore': 'Loading more due items',
-      'duePanel.loadMoreLabel': 'Load more due items',
+      'duePanel.loadingMore': 'Loading more agenda items',
+      'duePanel.loadMoreLabel': 'Load more agenda items',
       'duePanel.breadcrumbArrow': '\u2192',
       'duePanel.untitled': 'Untitled',
+      'duePanel.noItemsForFilter': 'No items match this filter.',
 
       'duePanel.filterAll': 'All',
       'duePanel.filterDue': 'Due',
@@ -1088,7 +1089,7 @@ const resources = {
 
       // Due panel (additions)
       'duePanel.emptyContent': '(empty)',
-      'duePanel.duePanelLabel': 'Due items',
+      'duePanel.duePanelLabel': 'Agenda',
       'duePanel.showingScheduledTodayTooltip': 'Showing only tasks scheduled for today or earlier',
       'duePanel.showingAllTasksTooltip': 'Showing all tasks regardless of scheduled date',
       'duePanel.scheduledHideFutureButton': 'Scheduled: hide future',

@@ -118,7 +118,7 @@ beforeEach(() => {
 })
 
 describe('DuePanel', () => {
-  // 1. Renders with items showing count header ("3 Due")
+  // 1. Renders with items showing count header ("3 Agenda")
   it('renders header with correct count', async () => {
     mockedListBlocks.mockResolvedValue({
       items: [makeBlock({ id: 'B1' }), makeBlock({ id: 'B2' }), makeBlock({ id: 'B3' })],
@@ -128,11 +128,11 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    expect(await screen.findByText('3 Due')).toBeInTheDocument()
+    expect(await screen.findByText('3 Agenda')).toBeInTheDocument()
   })
 
   // 1b. Singular count
-  it('renders singular count header ("1 Due")', async () => {
+  it('renders singular count header ("1 Agenda")', async () => {
     mockedListBlocks.mockResolvedValue({
       items: [makeBlock({ id: 'B1' })],
       next_cursor: null,
@@ -141,7 +141,7 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    expect(await screen.findByText('1 Due')).toBeInTheDocument()
+    expect(await screen.findByText('1 Agenda')).toBeInTheDocument()
   })
 
   // 2. Returns null when all sources are empty (UX-152)
@@ -158,7 +158,7 @@ describe('DuePanel', () => {
     await waitFor(() => {
       expect(container.innerHTML).toBe('')
     })
-    expect(screen.queryByLabelText('Due items')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Agenda')).not.toBeInTheDocument()
   })
 
   // 3. Groups blocks by todo_state in correct order (DOING > TODO > DONE > null)
@@ -176,7 +176,7 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    await screen.findByText('4 Due')
+    await screen.findByText('4 Agenda')
 
     // Verify group headers appear in correct order
     const groupHeaders = screen.getAllByText(/^(DOING|TODO|DONE|Other)$/)
@@ -202,7 +202,7 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    await screen.findByText('4 Due')
+    await screen.findByText('4 Agenda')
 
     // Get all block text items within the TODO group
     const items = screen.getAllByText(/priority (one|two|three)|no priority/)
@@ -344,7 +344,7 @@ describe('DuePanel', () => {
     render(<DuePanel date="2025-06-15" />)
 
     const loadMoreBtn = await screen.findByRole('button', {
-      name: /load more due items/i,
+      name: /load more agenda items/i,
     })
     expect(loadMoreBtn).toBeInTheDocument()
 
@@ -386,11 +386,11 @@ describe('DuePanel', () => {
     // Content should be visible (expanded by default)
     expect(await screen.findByText('visible block')).toBeInTheDocument()
 
-    const section = screen.getByLabelText('Due items')
+    const section = screen.getByLabelText('Agenda')
     expect(section.querySelector('.due-panel-content')).toBeInTheDocument()
 
     // Click header to collapse
-    const header = screen.getByText('1 Due')
+    const header = screen.getByText('1 Agenda')
     await user.click(header)
 
     // Content should be hidden
@@ -669,8 +669,8 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    // All blocks are from due_date — falls back to "N Due" format
-    expect(await screen.findByText('2 Due')).toBeInTheDocument()
+    // All blocks are from due_date — falls back to "N Agenda" format
+    expect(await screen.findByText('2 Agenda')).toBeInTheDocument()
   })
 
   // 20. Panel returns null when all sources are empty (UX-152 supersedes B-43)
@@ -691,7 +691,7 @@ describe('DuePanel', () => {
     await waitFor(() => {
       expect(container.innerHTML).toBe('')
     })
-    expect(screen.queryByLabelText('Due items')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Agenda')).not.toBeInTheDocument()
   })
 
   // --- Projected agenda entries (repeating tasks) ---
@@ -1067,7 +1067,7 @@ describe('DuePanel', () => {
       })
 
       // UX-152: Panel returns null when all sources are empty
-      expect(screen.queryByLabelText('Due items')).not.toBeInTheDocument()
+      expect(screen.queryByLabelText('Agenda')).not.toBeInTheDocument()
     })
 
     it('batchResolve rejection after listBlocks still renders blocks without page titles', async () => {
@@ -1210,7 +1210,7 @@ describe('DuePanel', () => {
       // Now make loadMore fail
       mockedListBlocks.mockRejectedValueOnce(new Error('loadMore network failure'))
 
-      const loadMoreBtn = screen.getByRole('button', { name: /load more due items/i })
+      const loadMoreBtn = screen.getByRole('button', { name: /load more agenda items/i })
       await user.click(loadMoreBtn)
 
       // Wait for the failed request to complete
@@ -1222,7 +1222,7 @@ describe('DuePanel', () => {
       expect(screen.getByText('first block')).toBeInTheDocument()
 
       // Component still renders without crashing
-      expect(screen.getByLabelText('Due items')).toBeInTheDocument()
+      expect(screen.getByLabelText('Agenda')).toBeInTheDocument()
     })
   })
 })

@@ -166,8 +166,10 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     el?.scrollIntoView?.({ block: 'nearest' })
   }, [focusedIndex])
 
-  // UX-152: Don't render when ALL sources are empty (not loading)
-  if (!loading && !projectedLoading && allDisplayItems.length === 0) {
+  // UX-152: Don't render when ALL sources are empty (not loading).
+  // When a source filter is active, always keep the panel visible so the
+  // user can switch back to "All" — otherwise the filter pills vanish.
+  if (!loading && !projectedLoading && allDisplayItems.length === 0 && sourceFilter === null) {
     return null
   }
 
@@ -220,7 +222,13 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
               <LoadingSkeleton count={3} height="h-10" />
             </div>
           }
-          empty={null}
+          empty={
+            sourceFilter !== null ? (
+              <p className="px-3 py-2 text-sm text-muted-foreground">
+                {t('duePanel.noItemsForFilter')}
+              </p>
+            ) : null
+          }
         >
           {() => {
             let flatIndex = 0

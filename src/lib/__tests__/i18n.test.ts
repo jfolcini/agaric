@@ -230,7 +230,7 @@ describe('interpolation', () => {
 
   it('interpolates {{count}} in duePanel.header', () => {
     const result = i18n.t('duePanel.header', { count: 5 })
-    expect(result).toBe('5 Due')
+    expect(result).toBe('5 Agenda')
   })
 
   it('interpolates {{count}} in agenda.resultCount', () => {

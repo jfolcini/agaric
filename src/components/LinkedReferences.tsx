@@ -280,8 +280,12 @@ export function LinkedReferences({
   const headerLabel =
     totalCount === 1 ? t('references.headerOne') : t('references.header', { count: totalCount })
 
-  // UX-152: Don't render when no references (and not loading)
-  if (!loading && totalCount === 0 && groups.length === 0) {
+  // UX-152: Don't render when no references (and not loading).
+  // When filters are active, keep the panel visible so the user can
+  // clear/adjust filters — otherwise the filter controls vanish.
+  const hasActiveFilters =
+    filters.length > 0 || sourcePageIncluded.length > 0 || sourcePageExcluded.length > 0
+  if (!loading && totalCount === 0 && groups.length === 0 && !hasActiveFilters) {
     return null
   }
 
@@ -296,7 +300,7 @@ export function LinkedReferences({
         >
           {headerLabel}
         </CollapsiblePanelHeader>
-        {expanded && totalCount > 0 && (
+        {expanded && (totalCount > 0 || hasActiveFilters) && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
