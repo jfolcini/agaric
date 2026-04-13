@@ -1,5 +1,32 @@
 # Session Log
 
+## Session 377 — B-73/B-74/UX-169/170/171 RESOLVED: theme toggle, DonePanel, gutter, pills, history sheet (2026-04-13)
+
+**5 items resolved in one batch. REVIEW-LATER is empty (0 open items).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| B-73 (resolved) | Theme toggle smart skip — each click always produces a visible theme change | `useTheme.ts`, `useTheme.test.ts` |
+| B-74 (resolved) | DonePanel excludes blocks from current date page to avoid redundancy | `DonePanel.tsx`, `PageEditor.tsx`, `DaySection.tsx`, `DonePanel.test.tsx` |
+| UX-169 (resolved) | Gutter icons optical alignment — 1px downward shift via translate-y-px | `SortableBlock.tsx` |
+| UX-170 (resolved) | Pill background contrast increased — bg-primary/20, darker accent + block-ref tokens | `index.css` |
+| UX-171 (resolved) | History sheet scroll — wrapped HistoryPanel in ScrollArea | `HistorySheet.tsx` |
+
+### Implementation
+- **B-73**: `toggleTheme` now iterates the cycle to find the first state where `isDark` differs from current. Uses `systemDarkRef` to read latest system preference without recreating the callback. 2 new tests (system=dark skip, system=light skip), 2 existing tests updated.
+- **B-74**: Added `excludePageId` prop to `DonePanel`. Filters out blocks whose `parent_id` matches in both fetch paths (initial + pagination). `PageEditor` passes `pageId`, `DaySection` passes `entry.pageId ?? undefined`. 1 new test.
+- **UX-169**: Added `translate-y-px` to the gutter div in `SortableBlock`, shifting icons 1px down to optically compensate for text baseline offset.
+- **UX-170**: Block-link chips bumped from `bg-primary/10` to `/20` (hover `/30`). Light-mode accent lightness lowered 0.968→0.93, dark-mode raised 0.25→0.3. Block-ref tokens similarly adjusted for both themes.
+- **UX-171**: Added `ScrollArea` import and `<ScrollArea className="flex-1 overflow-hidden">` wrapper around `HistoryPanel` in `HistorySheet.tsx`, matching `BlockPropertyDrawer` pattern.
+
+### Stats
+- 9 files changed (+114 -22 lines)
+- 5 items resolved — REVIEW-LATER now has 0 open items
+
+---
+
 ## Session 376 — B-71/B-72/UX-166/167/168 RESOLVED: references, gutter, filters (2026-04-13)
 
 **5 items resolved in one batch. REVIEW-LATER is empty (0 open items).**
