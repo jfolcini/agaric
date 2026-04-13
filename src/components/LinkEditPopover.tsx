@@ -12,6 +12,8 @@ import type { Editor } from '@tiptap/react'
 import type React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { logger } from '@/lib/logger'
+import { fetchLinkMetadata } from '@/lib/tauri'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
@@ -78,6 +80,10 @@ export function LinkEditPopover({
     } else {
       editor.chain().focus().setLink({ href: normalized }).run()
     }
+    // Fire-and-forget: prefetch metadata for the applied URL (UX-165)
+    fetchLinkMetadata(normalized).catch((err: unknown) => {
+      logger.warn('LinkEditPopover', 'link metadata prefetch failed', { url: normalized }, err)
+    })
     onClose()
   }, [editor, url, onClose, t, savedSelection])
 

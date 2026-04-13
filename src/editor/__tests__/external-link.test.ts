@@ -2,14 +2,32 @@
  * Tests for the ExternalLink extension (F-40):
  * - isValidHttpUrl pure function
  * - Paste-to-link behavior (bare URL -> linked text when selection is empty)
+ * - Link metadata prefetch on paste (UX-165)
  */
 
 import { Editor } from '@tiptap/core'
 import Document from '@tiptap/extension-document'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ExternalLink, isValidHttpUrl } from '../extensions/external-link'
+
+// ── Mocks ────────────────────────────────────────────────────────────────
+
+const mockFetchLinkMetadata = vi.fn().mockResolvedValue({})
+
+vi.mock('@/lib/tauri', () => ({
+  fetchLinkMetadata: (...args: unknown[]) => mockFetchLinkMetadata(...args),
+}))
+
+vi.mock('@/lib/logger', () => ({
+  logger: {
+    warn: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    error: vi.fn(),
+  },
+}))
 
 // -- isValidHttpUrl -----------------------------------------------------------
 
@@ -190,6 +208,19 @@ describe('ExternalLink paste-to-link (F-40)', () => {
     const lastChild = paragraph.child(paragraph.childCount - 1)
     const hasLink = lastChild.marks.some((m) => m.type.name === 'link')
     expect(hasLink).toBe(false)
+  })
+
+  it('triggers metadata prefetch after pasting a URL (UX-165)', () => {
+    editor = createEditor()
+    simulatePaste(editor, 'https://example.com')
+    expect(mockFetchLinkMetadata).toHaveBeenCalledWith('https://example.com')
+  })
+
+  it('does not trigger metadata prefetch for non-URL paste', () => {
+    editor = createEditor()
+    mockFetchLinkMetadata.mockClear()
+    simulatePaste(editor, 'just some text')
+    expect(mockFetchLinkMetadata).not.toHaveBeenCalled()
   })
 })
 

@@ -35,6 +35,22 @@ vi.mock('../ui/button', () => ({
   ),
 }))
 
+// Mock Tauri IPC functions used for link metadata prefetch (UX-165)
+const mockFetchLinkMetadata = vi.fn().mockResolvedValue({})
+
+vi.mock('@/lib/tauri', () => ({
+  fetchLinkMetadata: (...args: unknown[]) => mockFetchLinkMetadata(...args),
+}))
+
+vi.mock('@/lib/logger', () => ({
+  logger: {
+    warn: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    error: vi.fn(),
+  },
+}))
+
 // ── Editor mock helpers ──────────────────────────────────────────────────
 
 const mockRun = vi.fn()
@@ -273,6 +289,18 @@ describe('LinkEditPopover', () => {
       fireEvent(applyBtn, event)
 
       expect(preventSpy).toHaveBeenCalled()
+    })
+
+    it('triggers metadata prefetch after applying link (UX-165)', () => {
+      render(
+        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+      )
+
+      const input = screen.getByTestId('link-url-input')
+      fireEvent.change(input, { target: { value: 'example.com' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(mockFetchLinkMetadata).toHaveBeenCalledWith('https://example.com')
     })
   })
 

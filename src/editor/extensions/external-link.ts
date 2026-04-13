@@ -17,6 +17,8 @@
 import Link from '@tiptap/extension-link'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { configKeyToTipTap, getShortcutKeys } from '@/lib/keyboard-config'
+import { logger } from '@/lib/logger'
+import { fetchLinkMetadata } from '@/lib/tauri'
 
 /**
  * Validate that `text` is an absolute HTTP(S) URL.
@@ -78,6 +80,12 @@ export const ExternalLink = Link.extend({
             const tr = view.state.tr.replaceSelectionWith(node, false)
             tr.removeStoredMark(linkType)
             view.dispatch(tr)
+
+            // Fire-and-forget: prefetch metadata for the pasted URL (UX-165)
+            fetchLinkMetadata(url).catch((err: unknown) => {
+              logger.warn('ExternalLink', 'link metadata prefetch failed', { url }, err)
+            })
+
             return true
           },
         },

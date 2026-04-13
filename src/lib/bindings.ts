@@ -849,6 +849,30 @@ async purgeAllDeleted() : Promise<Result<BulkTrashResponse, { kind: string; mess
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async fetchLinkMetadata(url: string) : Promise<Result<LinkMetadata, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("fetch_link_metadata", { url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLinkMetadata(url: string) : Promise<Result<LinkMetadata | null, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_link_metadata", { url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async clearLinkMetadataAuth(url: string) : Promise<Result<null, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("clear_link_metadata_auth", { url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -944,6 +968,7 @@ export type HistoryEntry = { device_id: string; seq: number; op_type: string; pa
  * Result of parsing a markdown file.
  */
 export type ImportResult = { page_title: string; blocks_created: number; properties_set: number; warnings: string[] }
+export type LinkMetadata = { url: string; title: string | null; favicon_url: string | null; description: string | null; fetched_at: string; auth_required: boolean }
 export type MoveResponse = { block_id: string; new_parent_id: string | null; new_position: number }
 /**
  * Reference to a specific op in the log.

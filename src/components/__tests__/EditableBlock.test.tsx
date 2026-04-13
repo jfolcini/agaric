@@ -39,6 +39,11 @@ vi.mock('../FormattingToolbar', () => ({
   ),
 }))
 
+// Mock LinkPreviewTooltip — tested separately in LinkPreviewTooltip.test.tsx (UX-165)
+vi.mock('../LinkPreviewTooltip', () => ({
+  LinkPreviewTooltip: () => <div data-testid="link-preview-tooltip-mock" />,
+}))
+
 // Mock StaticBlock to keep tests focused on EditableBlock logic
 vi.mock('../StaticBlock', () => ({
   StaticBlock: ({

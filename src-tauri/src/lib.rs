@@ -9,6 +9,7 @@ pub mod error;
 pub mod fts;
 pub mod hash;
 pub mod import;
+pub mod link_metadata;
 pub mod materializer;
 pub mod merge;
 pub mod op;
@@ -205,6 +206,10 @@ pub fn run() {
         // Bulk trash operations (B-46)
         commands::restore_all_deleted,
         commands::purge_all_deleted,
+        // Link metadata (UX-165)
+        commands::fetch_link_metadata,
+        commands::get_link_metadata,
+        commands::clear_link_metadata_auth,
     ]);
 
     tauri::Builder::default()
@@ -239,6 +244,20 @@ pub fn run() {
                     count = report.drafts_recovered.len(),
                     "recovered unflushed drafts"
                 );
+            }
+
+            // UX-165: Clean up stale link metadata entries (> 30 days old, non-auth).
+            match tauri::async_runtime::block_on(
+                crate::link_metadata::cleanup_stale(&pools.write, 30),
+            ) {
+                Ok(deleted) => {
+                    if deleted > 0 {
+                        tracing::info!(deleted, "cleaned up stale link metadata entries");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to clean up stale link metadata");
+                }
             }
 
             // Create materializer — bg cache rebuilds read from read pool, write to write pool (P-8)
@@ -466,6 +485,10 @@ mod specta_tests {
             // Bulk trash operations (B-46)
             crate::commands::restore_all_deleted,
             crate::commands::purge_all_deleted,
+            // Link metadata (UX-165)
+            crate::commands::fetch_link_metadata,
+            crate::commands::get_link_metadata,
+            crate::commands::clear_link_metadata_auth,
         ])
     }
 

@@ -826,3 +826,31 @@ export function getCompactionStatus(): Promise<CompactionStatus> {
 export function compactOpLog(retentionDays: number): Promise<CompactionResult> {
   return invoke('compact_op_log_cmd', { retentionDays })
 }
+
+// ---------------------------------------------------------------------------
+// Link metadata (UX-165)
+// ---------------------------------------------------------------------------
+
+export interface LinkMetadata {
+  url: string
+  title: string | null
+  favicon_url: string | null
+  description: string | null
+  fetched_at: string
+  auth_required: boolean
+}
+
+/** Fetch and cache link metadata (triggers HTTP fetch if not cached). */
+export function fetchLinkMetadata(url: string): Promise<LinkMetadata> {
+  return invoke('fetch_link_metadata', { url })
+}
+
+/** Get cached link metadata (no network fetch). */
+export function getLinkMetadata(url: string): Promise<LinkMetadata | null> {
+  return invoke('get_link_metadata', { url })
+}
+
+/** Clear auth_required flag for a URL (user retry). */
+export function clearLinkMetadataAuth(url: string): Promise<void> {
+  return invoke('clear_link_metadata_auth', { url })
+}
