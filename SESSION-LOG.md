@@ -1,5 +1,27 @@
 # Session Log
 
+## Session 375 — UX-165 RESOLVED: link hover preview with prefetched metadata (2026-04-13)
+
+**UX-165 RESOLVED — the last REVIEW-LATER item. REVIEW-LATER is empty (0 open items).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| UX-165 (resolved) | Link hover preview with prefetched metadata | 35 files (see below) |
+
+### Implementation
+- **Backend (Rust):** New `link_metadata` table (migration 0026). `link_metadata.rs` module: reqwest HTTP fetcher (10s timeout, 512KB body limit, 5 max redirects), string-based HTML parser (title/og:title, favicon/shortcut icon, description/og:description), auth detection heuristics (401/403, login forms, meta refresh, title keywords). SQLite cache ops (get/upsert/cleanup/clear_auth). 3 Tauri commands: `fetch_link_metadata` (cache-first, 7-day freshness), `get_link_metadata` (cache-only), `clear_link_metadata_auth`. Boot-time cleanup of stale entries (> 30 days). reqwest added as dependency.
+- **Frontend:** `useLinkPreview` hook (pointer event delegation on editor DOM, 150ms debounce, stale-request cancellation). `LinkPreviewTooltip` component (favicon + title tooltip via @floating-ui/dom with flip/shift). Prefetch triggers on paste-to-link and LinkEditPopover apply. IPC wrappers in tauri.ts, specta bindings regenerated.
+- **Review findings addressed:** Fixed `is_stale` off-by-one (>= to >), added 5 `is_stale` tests, improved boot cleanup error logging, fixed Content-Type validation (default to application/octet-stream, split on semicolon, added application/xhtml), removed non-null assertion in tooltip component.
+
+### Stats
+- 35 files changed (+2417 -211 lines)
+- 1930 Rust tests pass (+42), 6407 frontend tests pass (+25), all 19 prek hooks pass
+- UX-165 resolved — REVIEW-LATER now has 0 open items
+
+---
+
 ## Session 374 — B-69 + B-70 RESOLVED: paste-to-link mark leak + Ctrl+K selection preservation (2026-04-13)
 
 **B-69 and B-70 RESOLVED — both link-related bugs fixed. 1 open item remains (UX-165).**
