@@ -122,8 +122,8 @@ Opens when navigating to any page:
 - Empty blocks show helpful placeholder: "Type / for commands..." (UX-64)
 - Auto-creates first empty block on new/empty pages for immediate typing
 - Page properties table
-- Linked references (grouped by source page)
-- Unlinked references (mentions not yet linked, with "Link it" button)
+- Linked references (grouped by source page) with advanced filters (BacklinkFilterBuilder: type, status, priority, contains, property, date, has-tag, tag-prefix). Filter toggle button (SlidersHorizontal) positioned next to panel title (UX-167). **Tag filter** (B-72) uses SearchablePopover with debounced `listTagsByPrefix` search.
+- Unlinked references (mentions not yet linked, with "Link it" button). Matches page title AND all page aliases via FTS5 OR query (B-71). Filter controls added (UX-168) matching LinkedReferences pattern.
 - Zoom-in: focus on a block and its descendants with breadcrumb trail
 - Back navigation via page stack
 - **Page header kebab menu** (`PageHeaderMenu`): 8 actions (Open in New Tab, Add Alias, Add Tag, Add Property, Save/Remove Template, Set/Remove Journal Template, Export Markdown, Delete Page) — all with Lucide icons for scannability

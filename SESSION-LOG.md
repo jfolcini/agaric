@@ -1,5 +1,33 @@
 # Session Log
 
+## Session 376 — B-71/B-72/UX-166/167/168 RESOLVED: references, gutter, filters (2026-04-13)
+
+**5 items resolved in one batch. REVIEW-LATER is empty (0 open items).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| B-71 (resolved) | Unlinked references now match page aliases via FTS5 OR query | `grouped.rs`, `tests.rs` |
+| B-72 (resolved) | Tag filter dropdown replaced with SearchablePopover + debounced search | `BacklinkFilterBuilder.tsx`, `i18n.ts`, tests |
+| UX-166 (resolved) | Gutter caret placeholder omitted when no blocks have children | `BlockInlineControls.tsx`, `SortableBlock.tsx`, `BlockListRenderer.tsx`, tests |
+| UX-167 (resolved) | Filter button hugs panel title (removed flex-1) | `LinkedReferences.tsx`, tests |
+| UX-168 (resolved) | UnlinkedReferences panel now has filter toggle + BacklinkFilterBuilder | `UnlinkedReferences.tsx`, tests |
+
+### Implementation
+- **B-71**: `eval_unlinked_references` now fetches aliases from `page_aliases` and builds a combined FTS5 OR query (`("title") OR ("alias1") OR ("alias2")`). Each term sanitized separately. 4 Rust tests: alias match, title-or-alias, linked exclusion with alias, empty alias.
+- **B-72**: Replaced static `Select` with `SearchablePopover` for has-tag filter. Internal `useDebouncedCallback` (150ms) calls `listTagsByPrefix` on query change. Falls back to parent `tags` prop when no search results. 3 i18n keys added. 5 new tests.
+- **UX-166**: `anyBlockHasChildren` boolean computed from `hasChildrenSet.size > 0` in `BlockListRenderer`, threaded through `SortableBlock` to `BlockInlineControls`. Placeholder span omitted when false. 3 new tests.
+- **UX-167**: Removed `flex-1` from `CollapsiblePanelHeader` in `LinkedReferences.tsx`. 1 new test.
+- **UX-168**: Added filter state (filters, sort, tags, propertyKeys), SlidersHorizontal toggle button, and `BacklinkFilterBuilder` to `UnlinkedReferences.tsx`. Tags and property keys loaded on mount. Filter UI wired; backend filtering deferred. 6 new tests.
+
+### Stats
+- 13 files changed (+824 -73 lines)
+- 1939 Rust tests pass (+4), 6423 frontend tests pass (+19), all 19 prek hooks pass
+- 5 items resolved — REVIEW-LATER now has 0 open items
+
+---
+
 ## Session 375 — UX-165 RESOLVED: link hover preview with prefetched metadata (2026-04-13)
 
 **UX-165 RESOLVED — the last REVIEW-LATER item. REVIEW-LATER is empty (0 open items).**
