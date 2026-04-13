@@ -100,6 +100,7 @@ export function FormattingToolbar({
 }: FormattingToolbarProps): React.ReactElement {
   const { t } = useTranslation()
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
+  const [savedSelection, setSavedSelection] = useState<{ from: number; to: number } | null>(null)
   const [headingPopoverOpen, setHeadingPopoverOpen] = useState(false)
   const [codeBlockPopoverOpen, setCodeBlockPopoverOpen] = useState(false)
 
@@ -140,7 +141,15 @@ export function FormattingToolbar({
     const dom = editor.view?.dom
     if (!dom) return
 
-    const handler = () => setLinkPopoverOpen(true)
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ from: number; to: number }>).detail
+      if (detail && detail.from !== detail.to) {
+        setSavedSelection(detail)
+      } else {
+        setSavedSelection(null)
+      }
+      setLinkPopoverOpen(true)
+    }
     dom.addEventListener('open-link-popover', handler)
     return () => dom.removeEventListener('open-link-popover', handler)
   }, [editor])
@@ -148,6 +157,7 @@ export function FormattingToolbar({
   const currentUrl = state.link ? ((editor.getAttributes('link')['href'] as string) ?? '') : ''
 
   const handleLinkPopoverClose = useCallback(() => {
+    setSavedSelection(null)
     setLinkPopoverOpen(false)
   }, [])
 
@@ -201,6 +211,7 @@ export function FormattingToolbar({
                 isEditing={state.link}
                 initialUrl={currentUrl}
                 onClose={handleLinkPopoverClose}
+                savedSelection={savedSelection}
               />
             </PopoverContent>
           </Popover>

@@ -460,4 +460,83 @@ describe('LinkEditPopover', () => {
       expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     })
   })
+
+  // ── Selection restoration (B-70) ──────────────────────────────────────
+
+  describe('selection restoration (B-70)', () => {
+    it('restores saved selection before applying link', () => {
+      const mockSetTextSelection = vi.fn(() => ({ setLink: mockSetLink }))
+      const mockFocusWithSelection = vi.fn(() => ({
+        setTextSelection: mockSetTextSelection,
+        setLink: mockSetLink,
+      }))
+      const mockChainWithSelection = vi.fn(() => ({ focus: mockFocusWithSelection }))
+
+      const editorWithSelection = {
+        chain: mockChainWithSelection,
+        commands: { focus: mockCommandsFocus },
+      } as never
+
+      render(
+        <LinkEditPopover
+          editor={editorWithSelection}
+          isEditing={false}
+          initialUrl=""
+          onClose={onClose}
+          savedSelection={{ from: 5, to: 15 }}
+        />,
+      )
+
+      const input = screen.getByTestId('link-url-input')
+      fireEvent.change(input, { target: { value: 'https://example.com' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(mockChainWithSelection).toHaveBeenCalled()
+      expect(mockFocusWithSelection).toHaveBeenCalled()
+      expect(mockSetTextSelection).toHaveBeenCalledWith({ from: 5, to: 15 })
+      expect(mockSetLink).toHaveBeenCalledWith({ href: 'https://example.com' })
+      expect(mockRun).toHaveBeenCalled()
+    })
+
+    it('does not restore selection when savedSelection is null', () => {
+      render(
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          onClose={onClose}
+          savedSelection={null}
+        />,
+      )
+
+      const input = screen.getByTestId('link-url-input')
+      fireEvent.change(input, { target: { value: 'https://example.com' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+
+      // Should use the regular chain().focus().setLink() path
+      expect(mockChain).toHaveBeenCalled()
+      expect(mockFocus).toHaveBeenCalled()
+      expect(mockSetLink).toHaveBeenCalledWith({ href: 'https://example.com' })
+    })
+
+    it('does not restore selection when savedSelection is collapsed (from === to)', () => {
+      render(
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          onClose={onClose}
+          savedSelection={{ from: 5, to: 5 }}
+        />,
+      )
+
+      const input = screen.getByTestId('link-url-input')
+      fireEvent.change(input, { target: { value: 'https://example.com' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(mockChain).toHaveBeenCalled()
+      expect(mockFocus).toHaveBeenCalled()
+      expect(mockSetLink).toHaveBeenCalledWith({ href: 'https://example.com' })
+    })
+  })
 })

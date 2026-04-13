@@ -163,4 +163,75 @@ describe('ExternalLink paste-to-link (F-40)', () => {
     const handled = simulatePaste(editor, 'https://example.com')
     expect(handled).toBe(false)
   })
+
+  it('cursor after paste does not carry the link mark (B-69)', () => {
+    editor = createEditor()
+    simulatePaste(editor, 'https://example.com')
+
+    // The stored marks on the state should NOT include the link mark
+    const storedMarks = editor.state.storedMarks
+    const hasLinkMark = storedMarks?.some((m) => m.type.name === 'link') ?? false
+    expect(hasLinkMark).toBe(false)
+  })
+
+  it('text typed after pasting a URL does not get the link mark (B-69)', () => {
+    editor = createEditor()
+    simulatePaste(editor, 'https://example.com')
+
+    // Simulate typing a character after the pasted link
+    const { tr } = editor.state
+    const textNode = editor.state.schema.text(' hello')
+    const insertPos = editor.state.selection.from
+    editor.view.dispatch(tr.insert(insertPos, textNode))
+
+    // Get the paragraph content
+    const paragraph = editor.state.doc.child(0)
+    // The last text node should NOT have a link mark
+    const lastChild = paragraph.child(paragraph.childCount - 1)
+    const hasLink = lastChild.marks.some((m) => m.type.name === 'link')
+    expect(hasLink).toBe(false)
+  })
+})
+
+describe('ExternalLink Ctrl+K shortcut (B-70)', () => {
+  type ShortcutContext = { editor: unknown; options: unknown }
+  type ShortcutMap = Record<string, (() => boolean) | undefined>
+
+  function callAddKeyboardShortcuts(
+    dom: HTMLElement,
+    selection: { from: number; to: number },
+  ): ShortcutMap {
+    const addKb = ExternalLink.config.addKeyboardShortcuts as
+      | ((this: ShortcutContext) => ShortcutMap)
+      | undefined
+    expect(addKb).toBeDefined()
+    return (addKb as (this: ShortcutContext) => ShortcutMap).call({
+      editor: { view: { dom }, state: { selection } },
+      options: ExternalLink.options,
+    })
+  }
+
+  it('addKeyboardShortcuts returns Mod-k handler', () => {
+    expect(ExternalLink.config.addKeyboardShortcuts).toBeDefined()
+    const shortcuts = callAddKeyboardShortcuts(document.createElement('div'), { from: 0, to: 0 })
+    expect(shortcuts).toBeDefined()
+    expect(shortcuts['Mod-k']).toBeDefined()
+    expect(typeof shortcuts['Mod-k']).toBe('function')
+  })
+
+  it('Mod-k handler dispatches open-link-popover CustomEvent with bubbles', () => {
+    const mockDom = document.createElement('div')
+    const events: Event[] = []
+    mockDom.addEventListener('open-link-popover', (e) => events.push(e))
+
+    const shortcuts = callAddKeyboardShortcuts(mockDom, { from: 5, to: 10 })
+    const handler = shortcuts['Mod-k']
+    expect(handler).toBeDefined()
+
+    const result = (handler as () => boolean)()
+    expect(result).toBe(true)
+    expect(events).toHaveLength(1)
+    expect((events[0] as CustomEvent).bubbles).toBe(true)
+    expect((events[0] as CustomEvent).detail).toEqual({ from: 5, to: 10 })
+  })
 })

@@ -86,16 +86,19 @@ vi.mock('../LinkEditPopover', () => ({
     isEditing,
     initialUrl,
     onClose,
+    savedSelection,
   }: {
     editor: unknown
     isEditing: boolean
     initialUrl: string
     onClose: () => void
+    savedSelection?: { from: number; to: number } | null
   }) => (
     <div
       data-testid="link-edit-popover-mock"
       data-is-editing={String(!!isEditing)}
       data-initial-url={initialUrl}
+      data-saved-selection={savedSelection ? JSON.stringify(savedSelection) : ''}
     >
       <button type="button" onClick={onClose} data-testid="close-popover">
         Close
@@ -412,13 +415,36 @@ describe('FormattingToolbar', () => {
 
       // Simulate the custom event dispatched by the ExternalLink extension
       act(() => {
-        mockEditorDom.dispatchEvent(new CustomEvent('open-link-popover'))
+        mockEditorDom.dispatchEvent(new CustomEvent('open-link-popover', { bubbles: true }))
       })
 
       const popoverAfter = screen
         .getByRole('button', { name: 'External link' })
         .closest('[data-popover]') as HTMLElement
       expect(popoverAfter).toHaveAttribute('data-open', 'true')
+    })
+
+    it('Ctrl+K event with selection range passes savedSelection to popover', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+
+      act(() => {
+        mockEditorDom.dispatchEvent(
+          new CustomEvent('open-link-popover', {
+            bubbles: true,
+            detail: { from: 5, to: 15 },
+          }),
+        )
+      })
+
+      const linkBtn = screen.getByRole('button', { name: 'External link' })
+      const popoverAfter = linkBtn.closest('[data-popover]') as HTMLElement
+      expect(popoverAfter).toHaveAttribute('data-open', 'true')
+
+      const popoverMock = screen.getByTestId('link-edit-popover-mock')
+      expect(popoverMock).toHaveAttribute(
+        'data-saved-selection',
+        JSON.stringify({ from: 5, to: 15 }),
+      )
     })
 
     it('shows External link as pressed when link is active', () => {

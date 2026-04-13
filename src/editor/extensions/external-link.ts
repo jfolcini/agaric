@@ -41,7 +41,13 @@ export const ExternalLink = Link.extend({
       [configKeyToTipTap(getShortcutKeys('linkPopover'))]: () => {
         // Dispatch a custom event on the editor DOM element.
         // FormattingToolbar listens for this and opens the link popover.
-        this.editor.view.dom.dispatchEvent(new CustomEvent('open-link-popover'))
+        const { from, to } = this.editor.state.selection
+        this.editor.view.dom.dispatchEvent(
+          new CustomEvent('open-link-popover', {
+            bubbles: true,
+            detail: { from, to },
+          }),
+        )
         return true
       },
     }
@@ -70,6 +76,7 @@ export const ExternalLink = Link.extend({
             const mark = linkType.create({ href: url })
             const node = view.state.schema.text(url, [mark])
             const tr = view.state.tr.replaceSelectionWith(node, false)
+            tr.removeStoredMark(linkType)
             view.dispatch(tr)
             return true
           },

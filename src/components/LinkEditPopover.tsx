@@ -24,6 +24,8 @@ export interface LinkEditPopoverProps {
   initialUrl: string
   /** Close the popover (called after apply, remove, or escape). */
   onClose: () => void
+  /** Selection range saved before popover stole focus (B-70). */
+  savedSelection?: { from: number; to: number } | null
 }
 
 /**
@@ -51,6 +53,7 @@ export function LinkEditPopover({
   isEditing,
   initialUrl,
   onClose,
+  savedSelection,
 }: LinkEditPopoverProps): React.ReactElement {
   const { t } = useTranslation()
   const [url, setUrl] = useState(initialUrl)
@@ -69,9 +72,14 @@ export function LinkEditPopover({
       return
     }
     setUrlError(null)
-    editor.chain().focus().setLink({ href: normalized }).run()
+    if (savedSelection && savedSelection.from !== savedSelection.to) {
+      // Restore the selection that was active when Ctrl+K was pressed
+      editor.chain().focus().setTextSelection(savedSelection).setLink({ href: normalized }).run()
+    } else {
+      editor.chain().focus().setLink({ href: normalized }).run()
+    }
     onClose()
-  }, [editor, url, onClose, t])
+  }, [editor, url, onClose, t, savedSelection])
 
   const handleRemove = useCallback(() => {
     editor.chain().focus().unsetLink().run()
