@@ -24,6 +24,8 @@ import { axe } from 'vitest-axe'
 vi.mock('../../lib/tauri', () => ({
   listUnlinkedReferences: vi.fn(),
   editBlock: vi.fn(),
+  listTagsByPrefix: vi.fn(),
+  listPropertyKeys: vi.fn(),
 }))
 
 vi.mock('lucide-react', () => ({
@@ -31,6 +33,9 @@ vi.mock('lucide-react', () => ({
   ChevronDown: (props: Record<string, unknown>) => <svg data-testid="chevron-down" {...props} />,
   Link2: (props: Record<string, unknown>) => <svg data-testid="link2-icon" {...props} />,
   Loader2: (props: Record<string, unknown>) => <svg data-testid="loader2-icon" {...props} />,
+  SlidersHorizontal: (props: Record<string, unknown>) => (
+    <svg data-testid="sliders-horizontal-icon" {...props} />
+  ),
 }))
 
 vi.mock('sonner', () => ({
@@ -38,6 +43,10 @@ vi.mock('sonner', () => ({
     error: vi.fn(),
     success: vi.fn(),
   },
+}))
+
+vi.mock('../BacklinkFilterBuilder', () => ({
+  BacklinkFilterBuilder: () => <div data-testid="backlink-filter-builder">Advanced Filters</div>,
 }))
 
 const mockNavigateToPage = vi.fn()
@@ -66,11 +75,19 @@ vi.mock('../PageLink', () => ({
   ),
 }))
 
-import { editBlock, listUnlinkedReferences } from '../../lib/tauri'
+import {
+  editBlock,
+  listPropertyKeys,
+  listTagsByPrefix,
+  listUnlinkedReferences,
+} from '../../lib/tauri'
 import { UnlinkedReferences } from '../UnlinkedReferences'
+import { TooltipProvider } from '../ui/tooltip'
 
 const mockedListUnlinked = vi.mocked(listUnlinkedReferences)
 const mockedEditBlock = vi.mocked(editBlock)
+const mockedListTagsByPrefix = vi.mocked(listTagsByPrefix)
+const mockedListPropertyKeys = vi.mocked(listPropertyKeys)
 
 function makeGroup(
   pageId: string,
@@ -123,7 +140,22 @@ beforeEach(() => {
     due_date: null,
     scheduled_date: null,
   })
+  mockedListTagsByPrefix.mockResolvedValue([])
+  mockedListPropertyKeys.mockResolvedValue([])
 })
+
+/** Wrap UnlinkedReferences in TooltipProvider (required for UX-168 filter icon button). */
+function renderUnlinkedReferences(props: {
+  pageId: string
+  pageTitle: string
+  onNavigateToPage?: typeof mockNavigateToPage
+}) {
+  return render(
+    <TooltipProvider>
+      <UnlinkedReferences {...props} />
+    </TooltipProvider>,
+  )
+}
 
 describe('UnlinkedReferences', () => {
   // 1. Renders collapsed by default (with results present)
@@ -137,7 +169,7 @@ describe('UnlinkedReferences', () => {
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
-    render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
     // Wait for eager fetch to complete
     await waitFor(() => {
@@ -175,7 +207,7 @@ describe('UnlinkedReferences', () => {
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
-    render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
     // Click to expand
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
@@ -195,7 +227,7 @@ describe('UnlinkedReferences', () => {
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
-    render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
     const header = screen.getByRole('button', { name: /unlinked references/i })
 
@@ -239,7 +271,7 @@ describe('UnlinkedReferences', () => {
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
-    render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
 
@@ -264,7 +296,7 @@ describe('UnlinkedReferences', () => {
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
-    render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
 
@@ -284,7 +316,7 @@ describe('UnlinkedReferences', () => {
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
-    render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
     // Expand
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
@@ -316,7 +348,7 @@ describe('UnlinkedReferences', () => {
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
-    render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
 
@@ -353,7 +385,7 @@ describe('UnlinkedReferences', () => {
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
-    render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
     await screen.findByText('I mention my page in lowercase')
@@ -388,7 +420,7 @@ describe('UnlinkedReferences', () => {
       return callCount === 1 ? page1 : page2
     })
 
-    render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
     // Expand
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
@@ -429,7 +461,7 @@ describe('UnlinkedReferences', () => {
     }
     mockedListUnlinked.mockResolvedValue(resp1)
 
-    const { rerender } = render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
+    const { rerender } = renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
     // Expand
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
@@ -448,7 +480,11 @@ describe('UnlinkedReferences', () => {
     mockedListUnlinked.mockResolvedValue(resp2)
 
     // Re-render with new pageId — component should collapse back
-    rerender(<UnlinkedReferences pageId="PAGE2" pageTitle="Other Page" />)
+    rerender(
+      <TooltipProvider>
+        <UnlinkedReferences pageId="PAGE2" pageTitle="Other Page" />
+      </TooltipProvider>,
+    )
 
     // Should be collapsed again after pageId change
     const header = screen.getByRole('button', { name: /unlinked references/i })
@@ -470,7 +506,7 @@ describe('UnlinkedReferences', () => {
   it('returns null when no unlinked references', async () => {
     mockedListUnlinked.mockResolvedValue(emptyResponse)
 
-    const { container } = render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
+    const { container } = renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
     // Wait for eager fetch to complete
     await waitFor(() => {
@@ -491,7 +527,7 @@ describe('UnlinkedReferences', () => {
     // Never-resolving promise to keep loading state
     mockedListUnlinked.mockImplementation(() => new Promise(() => {}))
 
-    render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
     // Expand to trigger fetch
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
@@ -515,7 +551,7 @@ describe('UnlinkedReferences', () => {
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
-    const { container } = render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
+    const { container } = renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
     // Expand
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
@@ -539,7 +575,7 @@ describe('UnlinkedReferences', () => {
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
-    render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
     // Expand main section
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
@@ -571,7 +607,7 @@ describe('UnlinkedReferences', () => {
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
-    render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
 
@@ -591,7 +627,7 @@ describe('UnlinkedReferences', () => {
     mockedListUnlinked.mockResolvedValue(resp)
     mockedEditBlock.mockRejectedValueOnce(new Error('backend error'))
 
-    render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
     await screen.findByText('mentions My Page here')
 
@@ -629,7 +665,7 @@ describe('UnlinkedReferences', () => {
       scheduled_date: null,
     })
 
-    render(<UnlinkedReferences pageId="PAGE1" pageTitle="C++" />)
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'C++' })
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
     await screen.findByText('I love C++ coding')
 
@@ -665,7 +701,7 @@ describe('UnlinkedReferences', () => {
       scheduled_date: null,
     })
 
-    render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
     await screen.findByText('My Page mentions My Page twice')
 
@@ -692,7 +728,11 @@ describe('UnlinkedReferences', () => {
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
-    render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" onNavigateToPage={onNavigate} />)
+    renderUnlinkedReferences({
+      pageId: 'PAGE1',
+      pageTitle: 'My Page',
+      onNavigateToPage: onNavigate,
+    })
 
     // Expand
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
@@ -704,5 +744,168 @@ describe('UnlinkedReferences', () => {
     await user.click(pageLink)
 
     expect(mockNavigateToPage).toHaveBeenCalledWith('P1', 'Source Page')
+  })
+
+  // ---------------------------------------------------------------------------
+  // UX-168: Filter controls for unlinked references
+  // ---------------------------------------------------------------------------
+
+  // Filter button appears when expanded with results
+  it('filter button appears when expanded with results (UX-168)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+
+    // Expand
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+
+    // Wait for content to appear
+    await screen.findByText('mention text')
+
+    // Filter button should be visible
+    expect(screen.getByRole('button', { name: /show filters/i })).toBeInTheDocument()
+  })
+
+  // Filter button hidden when collapsed
+  it('filter button hidden when collapsed (UX-168)', async () => {
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+
+    // Wait for eager fetch
+    await waitFor(() => {
+      expect(mockedListUnlinked).toHaveBeenCalled()
+    })
+
+    // Still collapsed — filter button should NOT be visible
+    expect(screen.queryByRole('button', { name: /show filters/i })).not.toBeInTheDocument()
+  })
+
+  // Filter button toggles BacklinkFilterBuilder
+  it('filter button toggles filter panel (UX-168)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+
+    // Expand
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await screen.findByText('mention text')
+
+    // Advanced filters not visible initially
+    expect(screen.queryByTestId('backlink-filter-builder')).not.toBeInTheDocument()
+
+    // Click filter button to show
+    await user.click(screen.getByRole('button', { name: /show filters/i }))
+
+    // Advanced filters now visible
+    expect(screen.getByTestId('backlink-filter-builder')).toBeInTheDocument()
+
+    // Click filter button to hide
+    await user.click(screen.getByRole('button', { name: /hide filters/i }))
+
+    // Advanced filters hidden again
+    expect(screen.queryByTestId('backlink-filter-builder')).not.toBeInTheDocument()
+  })
+
+  // Filter button aria-expanded toggles correctly
+  it('filter button aria-expanded toggles correctly (UX-168)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+
+    // Expand
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await screen.findByText('mention text')
+
+    const filterBtn = screen.getByRole('button', { name: /show filters/i })
+    expect(filterBtn).toHaveAttribute('aria-expanded', 'false')
+
+    await user.click(filterBtn)
+
+    const hideBtn = screen.getByRole('button', { name: /hide filters/i })
+    expect(hideBtn).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  // Filter state resets when pageId changes
+  it('resets filter visibility when pageId changes (UX-168)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    const { rerender } = renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+
+    // Expand and open filters
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await screen.findByText('mention text')
+    await user.click(screen.getByRole('button', { name: /show filters/i }))
+    expect(screen.getByTestId('backlink-filter-builder')).toBeInTheDocument()
+
+    // Re-render with different pageId
+    rerender(
+      <TooltipProvider>
+        <UnlinkedReferences pageId="PAGE2" pageTitle="Other Page" />
+      </TooltipProvider>,
+    )
+
+    // Component should collapse, so filter builder should be gone
+    await waitFor(() => {
+      expect(screen.queryByTestId('backlink-filter-builder')).not.toBeInTheDocument()
+    })
+  })
+
+  // Loads tags and property keys on mount
+  it('loads tags and property keys on mount (UX-168)', async () => {
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+
+    await waitFor(() => {
+      expect(mockedListTagsByPrefix).toHaveBeenCalledWith({ prefix: '' })
+      expect(mockedListPropertyKeys).toHaveBeenCalled()
+    })
   })
 })

@@ -278,20 +278,33 @@ pub async fn eval_unlinked_references(
 
     let title = match title {
         Some(ref t) if !t.is_empty() => t.clone(),
-        _ => {
-            return Ok(GroupedBacklinkResponse {
-                groups: vec![],
-                next_cursor: None,
-                has_more: false,
-                total_count: 0,
-                filtered_count: 0,
-            });
-        }
+        _ => String::new(),
     };
 
-    // 2. Sanitize title for FTS5
-    let fts_query = sanitize_fts_query(&title);
-    if fts_query.is_empty() {
+    // 1b. Fetch page aliases
+    let aliases: Vec<String> =
+        sqlx::query_scalar("SELECT alias FROM page_aliases WHERE page_id = ?1")
+            .bind(page_id)
+            .fetch_all(pool)
+            .await?;
+
+    // 2. Build combined FTS5 query from title + aliases
+    let mut terms: Vec<String> = Vec::new();
+    let title_sanitized = sanitize_fts_query(&title);
+    if !title_sanitized.is_empty() {
+        terms.push(title_sanitized);
+    }
+    for alias in &aliases {
+        let alias_trimmed = alias.trim();
+        if !alias_trimmed.is_empty() {
+            let sanitized = sanitize_fts_query(alias_trimmed);
+            if !sanitized.is_empty() {
+                terms.push(sanitized);
+            }
+        }
+    }
+
+    if terms.is_empty() {
         return Ok(GroupedBacklinkResponse {
             groups: vec![],
             next_cursor: None,
@@ -300,6 +313,18 @@ pub async fn eval_unlinked_references(
             filtered_count: 0,
         });
     }
+
+    // FTS5 OR query: matches blocks containing ANY of the terms
+    let fts_query = if terms.len() == 1 {
+        terms.into_iter().next().unwrap_or_default()
+    } else {
+        // Wrap each term group in parentheses and join with OR
+        terms
+            .into_iter()
+            .map(|t| format!("({t})"))
+            .collect::<Vec<_>>()
+            .join(" OR ")
+    };
 
     // 3. FTS5 query to find blocks mentioning the title, excluding linked blocks
     let matching_ids: FxHashSet<String> = sqlx::query_scalar::<_, String>(

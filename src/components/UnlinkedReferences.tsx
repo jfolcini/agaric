@@ -6,18 +6,21 @@
  * converts the first plain-text mention into a [[pageId]] link.
  */
 
-import { Link2 } from 'lucide-react'
+import { Link2, SlidersHorizontal } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { logger } from '@/lib/logger'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import type { NavigateToPageFn } from '../lib/block-events'
-import type { BacklinkGroup } from '../lib/tauri'
-import { editBlock, listUnlinkedReferences } from '../lib/tauri'
+import type { BacklinkFilter, BacklinkGroup, BacklinkSort } from '../lib/tauri'
+import { editBlock, listPropertyKeys, listTagsByPrefix, listUnlinkedReferences } from '../lib/tauri'
+import { BacklinkFilterBuilder } from './BacklinkFilterBuilder'
 import { CollapsibleGroupList } from './CollapsibleGroupList'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { EmptyState } from './EmptyState'
@@ -50,6 +53,11 @@ export function UnlinkedReferences({
   const [hasMore, setHasMore] = useState(false)
   const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [filters, setFilters] = useState<BacklinkFilter[]>([])
+  const [sort, setSort] = useState<BacklinkSort | null>(null)
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
+  const [propertyKeys, setPropertyKeys] = useState<string[]>([])
+  const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 
   const fetchGroups = useCallback(
     async (cursor?: string) => {
@@ -104,7 +112,26 @@ export function UnlinkedReferences({
   // biome-ignore lint/correctness/useExhaustiveDependencies: pageId is the intentional trigger for resetting collapse state on navigation
   useEffect(() => {
     setCollapsed(true)
+    setShowAdvancedFilters(false)
   }, [pageId])
+
+  // Load tags on mount
+  useEffect(() => {
+    listTagsByPrefix({ prefix: '' })
+      .then((result) => setTags((result ?? []).map((t) => ({ id: t.tag_id, name: t.name }))))
+      .catch((e) => {
+        logger.error('UnlinkedReferences', 'Failed to load tags', undefined, e)
+      })
+  }, [])
+
+  // Load property keys on mount
+  useEffect(() => {
+    listPropertyKeys()
+      .then((keys) => setPropertyKeys(keys))
+      .catch((e) => {
+        logger.error('UnlinkedReferences', 'Failed to load property keys', undefined, e)
+      })
+  }, [])
 
   const handleLinkIt = useCallback(
     async (blockId: string, content: string) => {
@@ -237,14 +264,52 @@ export function UnlinkedReferences({
 
   return (
     <section className="unlinked-references" aria-label={t('unlinkedRefs.panelLabel')}>
-      {/* Main header — collapsible, collapsed by default */}
-      <CollapsiblePanelHeader
-        isCollapsed={collapsed}
-        onToggle={toggleCollapsed}
-        className="unlinked-references-header"
-      >
-        {headerLabel}
-      </CollapsiblePanelHeader>
+      {/* Main header — collapsible, collapsed by default, with inline filter toggle */}
+      <div className="flex items-center gap-1">
+        <CollapsiblePanelHeader
+          isCollapsed={collapsed}
+          onToggle={toggleCollapsed}
+          className="unlinked-references-header"
+        >
+          {headerLabel}
+        </CollapsiblePanelHeader>
+        {!collapsed && totalCount > 0 && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="shrink-0 h-7 w-7 text-muted-foreground"
+                onClick={() => setShowAdvancedFilters((prev) => !prev)}
+                aria-expanded={showAdvancedFilters}
+                aria-label={
+                  showAdvancedFilters ? t('references.hideFilters') : t('references.showFilters')
+                }
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {showAdvancedFilters ? t('references.hideFilters') : t('references.showFilters')}
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </div>
+
+      {showAdvancedFilters && !collapsed && (
+        <div className="unlinked-references-advanced-filters px-2">
+          <BacklinkFilterBuilder
+            filters={filters}
+            sort={sort}
+            onFiltersChange={setFilters}
+            onSortChange={setSort}
+            totalCount={totalCount}
+            filteredCount={totalCount}
+            propertyKeys={propertyKeys}
+            tags={tags}
+          />
+        </div>
+      )}
 
       {!collapsed && (
         <div className="unlinked-references-content mt-1 space-y-2">

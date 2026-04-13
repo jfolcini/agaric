@@ -17,12 +17,13 @@
  *  - Empty state
  */
 
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { BacklinkFilter } from '../../lib/tauri'
+import { listTagsByPrefix } from '../../lib/tauri'
 import type { BacklinkFilterBuilderProps } from '../BacklinkFilterBuilder'
 import { BacklinkFilterBuilder } from '../BacklinkFilterBuilder'
 
@@ -85,6 +86,86 @@ vi.mock('@/components/ui/select', () => {
   }
 
   return { Select, SelectTrigger, SelectValue, SelectContent, SelectItem }
+})
+
+vi.mock('../../lib/tauri', () => ({
+  listTagsByPrefix: vi.fn().mockResolvedValue([]),
+}))
+
+vi.mock('@/lib/logger', () => ({
+  logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}))
+
+// Mock SearchablePopover with simple interactive DOM (Radix popovers don't work in jsdom).
+vi.mock('../SearchablePopover', () => {
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock
+  const React = require('react')
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock
+  function SearchablePopover(props: any) {
+    const {
+      open,
+      onOpenChange,
+      items,
+      isLoading,
+      onSelect,
+      renderItem,
+      keyExtractor,
+      searchValue,
+      onSearchChange,
+      searchPlaceholder,
+      emptyMessage,
+      triggerLabel,
+    } = props
+
+    const trigger = React.createElement(
+      'button',
+      {
+        type: 'button',
+        onClick: () => onOpenChange(!open),
+        'aria-label': triggerLabel,
+      },
+      triggerLabel,
+    )
+
+    if (!open) {
+      return React.createElement('div', { 'data-testid': 'tag-search-popover' }, trigger)
+    }
+
+    const searchInput = React.createElement('input', {
+      key: 'search-input',
+      value: searchValue,
+      // biome-ignore lint/suspicious/noExplicitAny: lightweight mock
+      onChange: (e: any) => onSearchChange(e.target.value),
+      placeholder: searchPlaceholder,
+      'aria-label': searchPlaceholder,
+    })
+
+    const content = React.createElement(
+      'div',
+      { key: 'content', role: 'listbox', 'aria-label': 'Tag search results' },
+      searchInput,
+      isLoading ? React.createElement('span', { key: 'loading' }, 'Loading...') : null,
+      !isLoading && items.length === 0
+        ? React.createElement('p', { key: 'empty' }, emptyMessage)
+        : null,
+      // biome-ignore lint/suspicious/noExplicitAny: lightweight mock
+      ...items.map((item: any) =>
+        React.createElement(
+          'button',
+          {
+            key: keyExtractor(item),
+            type: 'button',
+            role: 'option',
+            onClick: () => onSelect(item),
+          },
+          renderItem(item),
+        ),
+      ),
+    )
+
+    return React.createElement('div', { 'data-testid': 'tag-search-popover' }, trigger, content)
+  }
+  return { SearchablePopover }
 })
 
 const defaultProps: BacklinkFilterBuilderProps = {
@@ -596,7 +677,12 @@ describe('BacklinkFilterBuilder', () => {
 
       await user.click(screen.getByRole('button', { name: /Add filter/i }))
       await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
-      await user.selectOptions(screen.getByLabelText('Tag'), TAG_B)
+
+      // Open tag search popover (trigger shows "Alpha" since tagValue defaults to TAG_A)
+      await user.click(screen.getByRole('button', { name: 'Alpha' }))
+      // Select TAG_B from the popover
+      await user.click(screen.getByRole('option', { name: 'Beta' }))
+
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       // Should NOT be flagged as duplicate since full tag_ids differ
@@ -654,30 +740,40 @@ describe('BacklinkFilterBuilder', () => {
   })
 
   // ====================================================================
-  // #400 — Tag select dropdown rendering with actual tags
+  // #400 — Tag select rendering with actual tags (updated for B-72 SearchablePopover)
   // ====================================================================
 
-  describe('tag select dropdown with actual tags (#400)', () => {
+  describe('tag select with actual tags (#400)', () => {
     const tagsData = [
       { id: '01ARZTAGAAAAAAAAAAAAAAAAAA', name: 'Project' },
       { id: '01ARZTAGBBBBBBBBBBBBBBBBBB', name: 'Review' },
     ]
 
-    it('renders a <select> with tag options when has-tag category is selected', async () => {
+    it('renders SearchablePopover trigger when has-tag category is selected', async () => {
       const user = userEvent.setup()
       renderBuilder({ tags: tagsData })
 
       await user.click(screen.getByRole('button', { name: /Add filter/i }))
       await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
 
-      const tagSelect = screen.getByLabelText('Tag')
-      expect(tagSelect).toBeInTheDocument()
-      expect(tagSelect.tagName).toBe('SELECT')
+      // tagValue defaults to first tag ID, so trigger shows "Project"
+      expect(screen.getByTestId('tag-search-popover')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Project' })).toBeInTheDocument()
+    })
 
-      const options = tagSelect.querySelectorAll('option')
-      expect(options).toHaveLength(2)
-      expect(options[0]).toHaveTextContent('Project')
-      expect(options[1]).toHaveTextContent('Review')
+    it('shows tag items when popover is opened', async () => {
+      const user = userEvent.setup()
+      renderBuilder({ tags: tagsData })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
+
+      // Open the popover
+      await user.click(screen.getByRole('button', { name: 'Project' }))
+
+      // Both tags should be visible as options
+      expect(screen.getByRole('option', { name: 'Project' })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: 'Review' })).toBeInTheDocument()
     })
 
     it('calls onFiltersChange with selected tag_id when Apply is clicked', async () => {
@@ -687,7 +783,7 @@ describe('BacklinkFilterBuilder', () => {
 
       await user.click(screen.getByRole('button', { name: /Add filter/i }))
       await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
-      await user.selectOptions(screen.getByLabelText('Tag'), '01ARZTAGAAAAAAAAAAAAAAAAAA')
+      // tagValue defaults to first tag; click Apply directly
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       expect(onFiltersChange).toHaveBeenCalledWith([
@@ -984,6 +1080,96 @@ describe('BacklinkFilterBuilder', () => {
       renderBuilder()
       const sortSelect = screen.getByLabelText('Sort by')
       expect(sortSelect).toHaveAttribute('data-size', 'sm')
+    })
+  })
+
+  // ====================================================================
+  // B-72 — Searchable tag filter in backlink filter panel
+  // ====================================================================
+
+  describe('searchable tag filter (B-72)', () => {
+    const tagsData = [
+      { id: '01TAG_PROJ', name: 'Project' },
+      { id: '01TAG_REVW', name: 'Review' },
+    ]
+
+    it('renders SearchablePopover trigger when has-tag is selected', async () => {
+      const user = userEvent.setup()
+      renderBuilder({ tags: tagsData })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
+
+      expect(screen.getByTestId('tag-search-popover')).toBeInTheDocument()
+      // Trigger shows first tag name since tagValue defaults to first tag
+      expect(screen.getByRole('button', { name: 'Project' })).toBeInTheDocument()
+    })
+
+    it('calls listTagsByPrefix on search query change', async () => {
+      const user = userEvent.setup()
+      vi.mocked(listTagsByPrefix).mockResolvedValue([
+        { tag_id: '01TAG_PROJ', name: 'Project', usage_count: 5, updated_at: '' },
+      ])
+      renderBuilder({ tags: tagsData })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
+
+      // Open the popover
+      await user.click(screen.getByRole('button', { name: 'Project' }))
+
+      // Type in search
+      const searchInput = screen.getByLabelText('Search tags...')
+      await user.type(searchInput, 'proj')
+
+      // Wait for the debounced IPC call
+      await waitFor(() => {
+        expect(listTagsByPrefix).toHaveBeenCalledWith({ prefix: 'proj', limit: 50 })
+      })
+    })
+
+    it('selects a tag from popover and sets tagValue', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ tags: tagsData, onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
+
+      // Open popover and select "Review"
+      await user.click(screen.getByRole('button', { name: 'Project' }))
+      await user.click(screen.getByRole('option', { name: 'Review' }))
+
+      // Trigger should now show "Review"
+      expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument()
+    })
+
+    it('creates HasTag filter when tag is selected and Apply clicked', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ tags: tagsData, onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
+
+      // Open popover and select "Review"
+      await user.click(screen.getByRole('button', { name: 'Project' }))
+      await user.click(screen.getByRole('option', { name: 'Review' }))
+
+      // Click Apply
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(onFiltersChange).toHaveBeenCalledWith([{ type: 'HasTag', tag_id: '01TAG_REVW' }])
+    })
+
+    it('shows "Select tag" label when no tags are available', async () => {
+      const user = userEvent.setup()
+      renderBuilder({ tags: [] })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
+
+      expect(screen.getByRole('button', { name: 'Select tag' })).toBeInTheDocument()
     })
   })
 })

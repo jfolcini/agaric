@@ -111,6 +111,7 @@ function makeProps(overrides: Partial<BlockInlineControlsProps> = {}): BlockInli
     hasChildren: false,
     isCollapsed: false,
     filteredProperties: [],
+    anyBlockHasChildren: true,
     attachmentCount: 0,
     showAttachments: false,
     onToggleAttachments: vi.fn(),
@@ -287,6 +288,27 @@ describe('BlockInlineControls', () => {
     renderControls(makeProps({ hasChildren: true, isCollapsed: true }))
     const chevron = screen.getByTestId('chevron-toggle')
     expect(chevron.getAttribute('data-expanded')).toBe('false')
+  })
+
+  it('renders placeholder span when anyBlockHasChildren is true but block has no children', () => {
+    const { container } = renderControls(
+      makeProps({ hasChildren: false, anyBlockHasChildren: true }),
+    )
+    const placeholder = container.querySelector('span.flex-shrink-0.p-0\\.5.h-4.w-4')
+    expect(placeholder).toBeInTheDocument()
+  })
+
+  it('omits placeholder span when anyBlockHasChildren is false and block has no children', () => {
+    const { container } = renderControls(
+      makeProps({ hasChildren: false, anyBlockHasChildren: false }),
+    )
+    const placeholder = container.querySelector('span.flex-shrink-0.p-0\\.5.h-4.w-4')
+    expect(placeholder).not.toBeInTheDocument()
+  })
+
+  it('renders collapse toggle when hasChildren is true regardless of anyBlockHasChildren', () => {
+    renderControls(makeProps({ hasChildren: true, anyBlockHasChildren: false }))
+    expect(screen.getByTestId('collapse-toggle')).toBeInTheDocument()
   })
 
   it('renders task marker button', () => {

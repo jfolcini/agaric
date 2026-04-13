@@ -292,7 +292,7 @@ export function LinkedReferences({
         <CollapsiblePanelHeader
           isCollapsed={!expanded}
           onToggle={toggleExpanded}
-          className="linked-references-header flex-1"
+          className="linked-references-header"
         >
           {headerLabel}
         </CollapsiblePanelHeader>

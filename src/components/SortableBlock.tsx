@@ -57,6 +57,8 @@ interface SortableBlockProps {
   resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
   /** Whether this block has children in the tree. */
   hasChildren?: boolean | undefined
+  /** Whether any block in the tree has children (for caret placeholder alignment). */
+  anyBlockHasChildren?: boolean | undefined
   /** Whether this block is currently collapsed. */
   isCollapsed?: boolean | undefined
   /** Callback to toggle collapse state. */
@@ -108,6 +110,7 @@ function SortableBlockInner({
   resolveBlockStatus,
   resolveTagStatus,
   hasChildren = false,
+  anyBlockHasChildren = false,
   isCollapsed = false,
   onToggleCollapse,
   todoState,
@@ -362,6 +365,7 @@ function SortableBlockInner({
             properties={properties}
             filteredProperties={filteredProperties}
             resolveBlockTitle={resolveBlockTitle}
+            anyBlockHasChildren={anyBlockHasChildren}
             attachmentCount={attachmentCount}
             showAttachments={showAttachments}
             onToggleAttachments={() => setShowAttachments((prev) => !prev)}

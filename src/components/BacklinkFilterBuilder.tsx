@@ -10,7 +10,7 @@
 
 import { Filter, X } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -22,9 +22,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
+import { logger } from '@/lib/logger'
 import type { BacklinkFilter, BacklinkSort, CompareOp, SortDir } from '../lib/tauri'
+import { listTagsByPrefix } from '../lib/tauri'
 import { FilterPillRow } from './FilterPillRow'
 import { FilterSortControls } from './FilterSortControls'
+import { SearchablePopover } from './SearchablePopover'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -118,6 +122,36 @@ function AddFilterRow({
   const [propEmptyKey, setPropEmptyKey] = useState(propertyKeys[0] ?? '')
   const [tagValue, setTagValue] = useState(tags[0]?.id ?? '')
   const [prefixValue, setPrefixValue] = useState('')
+
+  // -----------------------------------------------------------------------
+  // Tag search state (B-72 — searchable tag filter)
+  // -----------------------------------------------------------------------
+  const [tagSearchOpen, setTagSearchOpen] = useState(false)
+  const [tagSearchQuery, setTagSearchQuery] = useState('')
+  const [tagSearchResults, setTagSearchResults] = useState<Array<{ id: string; name: string }>>([])
+  const [tagSearchLoading, setTagSearchLoading] = useState(false)
+
+  const debouncedTagSearch = useDebouncedCallback((query: string) => {
+    setTagSearchLoading(true)
+    listTagsByPrefix({ prefix: query, limit: 50 })
+      .then((rows) => {
+        setTagSearchResults(rows.map((r) => ({ id: r.tag_id, name: r.name })))
+      })
+      .catch((err) => {
+        logger.warn('Tag search failed', err)
+      })
+      .finally(() => {
+        setTagSearchLoading(false)
+      })
+  }, 150)
+
+  useEffect(() => {
+    if (tagSearchOpen) {
+      debouncedTagSearch.schedule(tagSearchQuery)
+    } else {
+      debouncedTagSearch.cancel()
+    }
+  }, [tagSearchQuery, tagSearchOpen, debouncedTagSearch])
 
   const handleApply = useCallback(() => {
     switch (category) {
@@ -448,18 +482,29 @@ function AddFilterRow({
         ))}
 
       {category === 'has-tag' && (
-        <Select value={tagValue} onValueChange={(val) => setTagValue(val)}>
-          <SelectTrigger size="sm" aria-label={t('backlink.tagLabel')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {tags.map((tag) => (
-              <SelectItem key={tag.id} value={tag.id}>
-                {tag.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <SearchablePopover
+          open={tagSearchOpen}
+          onOpenChange={setTagSearchOpen}
+          items={tagSearchResults.length > 0 ? tagSearchResults : tags}
+          isLoading={tagSearchLoading}
+          onSelect={(tag) => {
+            setTagValue(tag.id)
+            setTagSearchOpen(false)
+          }}
+          renderItem={(tag) => tag.name}
+          keyExtractor={(tag) => tag.id}
+          searchValue={tagSearchQuery}
+          onSearchChange={setTagSearchQuery}
+          searchPlaceholder={t('backlink.searchTagPlaceholder')}
+          emptyMessage={t('backlink.noTagsFound')}
+          triggerLabel={
+            tagValue
+              ? (tags.find((tg) => tg.id === tagValue)?.name ??
+                tagSearchResults.find((tg) => tg.id === tagValue)?.name ??
+                tagValue)
+              : t('backlink.selectTag')
+          }
+        />
       )}
 
       {category === 'tag-prefix' && (

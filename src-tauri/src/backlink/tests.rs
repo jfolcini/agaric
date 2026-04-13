@@ -3502,3 +3502,168 @@ async fn eval_unlinked_refs_mixed_linked_and_unlinked() {
         "BLK_E1 is unlinked mention"
     );
 }
+
+// ======================================================================
+// B-71 — Unlinked references should consider page aliases
+// ======================================================================
+
+/// Insert a page alias row.
+async fn insert_alias(pool: &SqlitePool, page_id: &str, alias: &str) {
+    sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES (?, ?)")
+        .bind(page_id)
+        .bind(alias)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn eval_unlinked_refs_matches_alias() {
+    let (pool, _dir) = test_pool().await;
+    // Target page with an alias (>= 3 chars for trigram FTS5 tokenizer)
+    insert_block_with_parent(&pool, "TARGET", "page", "Project Alpha", None, None).await;
+    insert_alias(&pool, "TARGET", "ProjAlpha").await;
+
+    // Another page with a block mentioning the alias text (not the title)
+    insert_block_with_parent(&pool, "PAGE_F", "page", "Page F", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "BLK_F1",
+        "content",
+        "We should look at ProjAlpha for guidance",
+        Some("PAGE_F"),
+        Some(1),
+    )
+    .await;
+    insert_fts(&pool, "BLK_F1", "We should look at ProjAlpha for guidance").await;
+
+    let page = default_page();
+    let resp = eval_unlinked_references(&pool, "TARGET", &page)
+        .await
+        .unwrap();
+    assert_eq!(resp.groups.len(), 1, "one group matching via alias");
+    assert_eq!(
+        resp.groups[0].page_id, "PAGE_F",
+        "group should be from PAGE_F"
+    );
+    assert_eq!(resp.groups[0].blocks.len(), 1, "one mentioning block");
+    assert_eq!(
+        resp.groups[0].blocks[0].id, "BLK_F1",
+        "BLK_F1 mentions the alias"
+    );
+}
+
+#[tokio::test]
+async fn eval_unlinked_refs_matches_title_or_alias() {
+    let (pool, _dir) = test_pool().await;
+    // Target page with title "ProjectX" and alias "ProX" (>= 3 chars for trigram FTS5)
+    insert_block_with_parent(&pool, "TARGET", "page", "ProjectX", None, None).await;
+    insert_alias(&pool, "TARGET", "ProX").await;
+
+    // Page G: block mentions "ProjectX" (title)
+    insert_block_with_parent(&pool, "PAGE_G", "page", "Page G", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "BLK_G1",
+        "content",
+        "Check out ProjectX soon",
+        Some("PAGE_G"),
+        Some(1),
+    )
+    .await;
+    insert_fts(&pool, "BLK_G1", "Check out ProjectX soon").await;
+
+    // Page H: block mentions "ProX" (alias)
+    insert_block_with_parent(&pool, "PAGE_H", "page", "Page H", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "BLK_H1",
+        "content",
+        "ProX has the details we need",
+        Some("PAGE_H"),
+        Some(1),
+    )
+    .await;
+    insert_fts(&pool, "BLK_H1", "ProX has the details we need").await;
+
+    let page = default_page();
+    let resp = eval_unlinked_references(&pool, "TARGET", &page)
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.groups.len(),
+        2,
+        "two groups: one for title match, one for alias match"
+    );
+    let page_ids: Vec<&str> = resp.groups.iter().map(|g| g.page_id.as_str()).collect();
+    assert!(
+        page_ids.contains(&"PAGE_G"),
+        "PAGE_G should appear (title match)"
+    );
+    assert!(
+        page_ids.contains(&"PAGE_H"),
+        "PAGE_H should appear (alias match)"
+    );
+}
+
+#[tokio::test]
+async fn eval_unlinked_refs_linked_blocks_excluded_even_with_alias() {
+    let (pool, _dir) = test_pool().await;
+    // Target page with an alias (>= 3 chars for trigram FTS5)
+    insert_block_with_parent(&pool, "TARGET", "page", "Project Alpha", None, None).await;
+    insert_alias(&pool, "TARGET", "ProjAlpha").await;
+
+    // Another page with a block that mentions the alias AND links to target
+    insert_block_with_parent(&pool, "PAGE_I", "page", "Page I", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "BLK_I1",
+        "content",
+        "See ProjAlpha for more info",
+        Some("PAGE_I"),
+        Some(1),
+    )
+    .await;
+    insert_fts(&pool, "BLK_I1", "See ProjAlpha for more info").await;
+    insert_block_link(&pool, "BLK_I1", "TARGET").await;
+
+    let page = default_page();
+    let resp = eval_unlinked_references(&pool, "TARGET", &page)
+        .await
+        .unwrap();
+    assert!(
+        resp.groups.is_empty(),
+        "linked block should be excluded even when matching via alias"
+    );
+}
+
+#[tokio::test]
+async fn eval_unlinked_refs_empty_alias_ignored() {
+    let (pool, _dir) = test_pool().await;
+    // Target page with an empty alias and a whitespace-only alias
+    insert_block_with_parent(&pool, "TARGET", "page", "Project Alpha", None, None).await;
+    insert_alias(&pool, "TARGET", "").await;
+    insert_alias(&pool, "TARGET", "   ").await;
+
+    // A block that does NOT mention the title — should not match
+    insert_block_with_parent(&pool, "PAGE_J", "page", "Page J", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "BLK_J1",
+        "content",
+        "Some unrelated content here",
+        Some("PAGE_J"),
+        Some(1),
+    )
+    .await;
+    insert_fts(&pool, "BLK_J1", "Some unrelated content here").await;
+
+    let page = default_page();
+    let resp = eval_unlinked_references(&pool, "TARGET", &page)
+        .await
+        .unwrap();
+    assert!(
+        resp.groups.is_empty(),
+        "empty/whitespace aliases should not cause false matches"
+    );
+}

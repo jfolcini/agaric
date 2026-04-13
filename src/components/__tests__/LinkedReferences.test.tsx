@@ -1204,4 +1204,29 @@ describe('LinkedReferences', () => {
     // Verify all three distinct toasts fired
     expect(toast.error).toHaveBeenCalledTimes(3)
   })
+
+  // ---------------------------------------------------------------------------
+  // UX-167: Filter button position — hugs header, not pushed right
+  // ---------------------------------------------------------------------------
+
+  // 40. CollapsiblePanelHeader does NOT have flex-1 class (UX-167)
+  it('filter button is sibling of header without flex-1 pushing it right (UX-167)', async () => {
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+    }
+    mockInvokeWith(resp)
+
+    const { container } = renderLinkedReferences({ pageId: 'PAGE1' })
+
+    await screen.findByText('Page One (1)')
+
+    // The CollapsiblePanelHeader wrapper button should NOT have flex-1
+    const headerEl = container.querySelector('.linked-references-header')
+    expect(headerEl).toBeInTheDocument()
+    expect(headerEl).not.toHaveClass('flex-1')
+  })
 })

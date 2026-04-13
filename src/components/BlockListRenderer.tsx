@@ -108,6 +108,8 @@ export function BlockListRenderer({
 }: BlockListRendererProps): React.ReactElement {
   const { t } = useTranslation()
 
+  const anyBlockHasChildren = hasChildrenSet.size > 0
+
   // ── Expand animation (UX-79) ──────────────────────────────────────
   // Track previous collapsedIds to detect which parents were just expanded.
   // Children of those parents get a CSS enter animation.
@@ -248,6 +250,7 @@ export function BlockListRenderer({
                   resolveBlockStatus={resolveBlockStatus}
                   resolveTagStatus={resolveTagStatus}
                   hasChildren={hasChildren}
+                  anyBlockHasChildren={anyBlockHasChildren}
                   isCollapsed={isCollapsed}
                   onToggleCollapse={onToggleCollapse}
                   todoState={block.todo_state ?? null}

@@ -145,6 +145,8 @@ export interface BlockInlineControlsProps {
   properties?: Array<{ key: string; value: string }> | undefined
   filteredProperties: Array<{ key: string; value: string }>
   resolveBlockTitle?: ((id: string) => string) | undefined
+  /** Whether any sibling block in the tree has children. When false, skip the caret placeholder. */
+  anyBlockHasChildren: boolean
   attachmentCount: number
   showAttachments: boolean
   onToggleAttachments: () => void
@@ -166,6 +168,7 @@ export function BlockInlineControls({
   properties,
   filteredProperties,
   resolveBlockTitle,
+  anyBlockHasChildren,
   attachmentCount,
   showAttachments,
   onToggleAttachments,
@@ -198,9 +201,11 @@ export function BlockInlineControls({
             {isCollapsed ? t('block.expandTip') : t('block.collapseTip')}
           </TooltipContent>
         </Tooltip>
-      ) : (
+      ) : // Only reserve space for the caret if at least one block in the tree has children.
+      // This avoids an unsightly gap on leaf-only pages.
+      anyBlockHasChildren ? (
         <span className="flex-shrink-0 p-0.5 h-4 w-4" aria-hidden />
-      )}
+      ) : null}
 
       <Tooltip>
         <TooltipTrigger asChild>
