@@ -1,5 +1,27 @@
 # Session Log
 
+## Session 374 — B-69 + B-70 RESOLVED: paste-to-link mark leak + Ctrl+K selection preservation (2026-04-13)
+
+**B-69 and B-70 RESOLVED — both link-related bugs fixed. 1 open item remains (UX-165).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| B-69 (resolved) | Paste-to-link mark leak: subsequent typing no longer inherits link mark | `external-link.ts` |
+| B-70 (resolved) | Ctrl+K selection preservation: event dispatched with bubbles + selection detail | `external-link.ts`, `FormattingToolbar.tsx`, `LinkEditPopover.tsx` |
+
+### Implementation
+- **B-69**: Root cause: parent Link extension `inclusive()` returns `this.options.autolink` (true), so the link mark is inclusive. After `replaceSelectionWith`, the cursor carried the link mark as a stored mark. Fix: `tr.removeStoredMark(linkType)` clears the pending mark after paste. 2 tests verify stored marks are empty and subsequent text is unlinked.
+- **B-70**: CustomEvent now dispatched with `{bubbles: true, detail: {from, to}}`. FormattingToolbar saves selection from event detail. LinkEditPopover restores it via `setTextSelection` before applying the link, so selected text becomes the link label. Collapsed selections (cursor-only) skip restoration. 7 tests: 2 shortcut registration, 1 event assertion in FormattingToolbar, 1 savedSelection pass-through, 2 selection restoration + 1 collapsed selection edge case in LinkEditPopover.
+
+### Stats
+- 6 files changed (+207 -5 lines)
+- 6382 frontend tests pass (+9), all 19 prek hooks pass
+- B-69 and B-70 resolved — REVIEW-LATER now has 1 open item (UX-165)
+
+---
+
 ## Session 373 — T-16 RESOLVED: all 4 select! branches tested — Branch A extracted + 5 tests (2026-04-13)
 
 **T-16 RESOLVED — the last REVIEW-LATER item. All 4 daemon_loop select! branches now tested. REVIEW-LATER is empty (0 open items).**
