@@ -316,7 +316,7 @@ function SortableBlockInner({
 
         {/* ── Sliding content wrapper (swipe-to-delete) ───────────── */}
         <div
-          className="flex items-center gap-1 w-full max-sm:items-start max-sm:flex-wrap"
+          className="flex items-stretch gap-1 w-full max-sm:items-start max-sm:flex-wrap"
           data-testid="swipe-content"
           style={{
             transform:
@@ -338,7 +338,7 @@ function SortableBlockInner({
           <div
             className={cn(
               GUTTER_WIDTH,
-              'relative z-10 flex-shrink-0 flex items-center gap-1 justify-end translate-y-px max-sm:w-0 max-sm:overflow-hidden',
+              'relative z-10 flex-shrink-0 flex items-center gap-1 justify-end max-sm:w-0 max-sm:overflow-hidden',
             )}
           >
             <BlockGutterControls
