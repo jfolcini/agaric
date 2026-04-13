@@ -1,5 +1,26 @@
 # Session Log
 
+## Session 378 — Fix filter pill disappearance + rename "Due" panel to "Agenda" (2026-04-13)
+
+**3 panels fixed, 1 label renamed. REVIEW-LATER remains at 0 open items.**
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `DuePanel.tsx` | Added `sourceFilter === null` guard to early-return — panel stays visible when a filter is active; added empty-state message for zero-result filters |
+| `LinkedReferences.tsx` | Added `!hasActiveFilters` guard — panel stays when backlink/source-page filters are active; filter toggle stays visible at totalCount=0 |
+| `UnlinkedReferences.tsx` | Added `filters.length === 0` guard — same pattern |
+| `i18n.ts` | Renamed panel labels from "Due" to "Agenda" (header, aria-label, load-more); added `duePanel.noItemsForFilter` key |
+| `DuePanel.test.tsx` | Updated 8 assertions for "Agenda" label rename |
+| `i18n.test.ts` | Updated interpolation assertion for "Agenda" |
+
+### Stats
+- 6 files changed (+46 -31 lines)
+- 6427 tests pass (269 test files)
+
+---
+
 ## Session 377 — B-73/B-74/UX-169/170/171 RESOLVED: theme toggle, DonePanel, gutter, pills, history sheet (2026-04-13)
 
 **5 items resolved in one batch. REVIEW-LATER is empty (0 open items).**
