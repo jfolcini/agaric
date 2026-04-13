@@ -6,7 +6,7 @@
  */
 
 import type React from 'react'
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { NavigateToPageFn } from '../lib/block-events'
@@ -24,6 +24,7 @@ import { BlockTree } from './BlockTree'
 import { DonePanel } from './DonePanel'
 import { DuePanel } from './DuePanel'
 import { LinkedReferences } from './LinkedReferences'
+import { LinkPreviewTooltip } from './LinkPreviewTooltip'
 import { PageHeader } from './PageHeader'
 import { PageMetadataBar } from './PageMetadataBar'
 import { UnlinkedReferences } from './UnlinkedReferences'
@@ -139,8 +140,18 @@ function PageEditorInner({
     }
   }, [])
 
+  // ── Link preview tooltip — covers all blocks (static + editor) ──
+  const [pageContainerEl, setPageContainerEl] = useState<HTMLDivElement | null>(null)
+  const pageRef = useCallback((node: HTMLDivElement | null) => {
+    setPageContainerEl(node)
+  }, [])
+
   return (
-    <div className="page-editor flex flex-col gap-3" onPointerDown={handleBackgroundMouseDown}>
+    <div
+      ref={pageRef}
+      className="page-editor flex flex-col gap-3"
+      onPointerDown={handleBackgroundMouseDown}
+    >
       {/* Header: back button + editable title + tag badges */}
       <PageHeader pageId={pageId} title={title} onBack={onBack} />
 
@@ -172,6 +183,9 @@ function PageEditorInner({
 
       {/* Page metadata bar — word count, block count, created date */}
       <PageMetadataBar blocks={blocks} pageId={pageId} />
+
+      {/* Link preview tooltip — covers all external links in the page */}
+      <LinkPreviewTooltip container={pageContainerEl} />
     </div>
   )
 }

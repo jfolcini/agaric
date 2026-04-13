@@ -10,7 +10,6 @@
  */
 
 import { computePosition, flip, shift } from '@floating-ui/dom'
-import type { Editor } from '@tiptap/react'
 import { Globe } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
@@ -20,11 +19,13 @@ import { cn } from '@/lib/utils'
 import { Spinner } from './ui/spinner'
 
 interface LinkPreviewTooltipProps {
-  editor: Editor
+  container: HTMLElement | null
 }
 
-export function LinkPreviewTooltip({ editor }: LinkPreviewTooltipProps): React.ReactElement | null {
-  const { url, metadata, anchorRect, isLoading } = useLinkPreview(editor)
+export function LinkPreviewTooltip({
+  container,
+}: LinkPreviewTooltipProps): React.ReactElement | null {
+  const { url, metadata, anchorRect, isLoading } = useLinkPreview(container)
   const tooltipRef = useRef<HTMLDivElement>(null)
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null)
   const [imgErrorUrl, setImgErrorUrl] = useState<string | null>(null)

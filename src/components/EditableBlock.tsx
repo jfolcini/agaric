@@ -21,7 +21,6 @@ import { addAttachment } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 import { type PageBlockState, usePageBlockStore } from '../stores/page-blocks'
 import { FormattingToolbar } from './FormattingToolbar'
-import { LinkPreviewTooltip } from './LinkPreviewTooltip'
 import { StaticBlock } from './StaticBlock'
 
 // Re-export for backwards compatibility — consumers may import from EditableBlock
@@ -276,14 +275,11 @@ function EditableBlockInner({
       onPaste={handlePaste}
     >
       {rovingEditor.editor && (
-        <>
-          <FormattingToolbar
-            editor={rovingEditor.editor}
-            blockId={blockId}
-            currentPriority={currentPriority}
-          />
-          <LinkPreviewTooltip editor={rovingEditor.editor} />
-        </>
+        <FormattingToolbar
+          editor={rovingEditor.editor}
+          blockId={blockId}
+          currentPriority={currentPriority}
+        />
       )}
       <EditorContent editor={rovingEditor.editor} />
     </section>

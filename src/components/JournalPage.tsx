@@ -53,6 +53,7 @@ import { DailyView } from './journal/DailyView'
 import { JournalCalendarDropdown } from './journal/JournalCalendarDropdown'
 import { MonthlyView } from './journal/MonthlyView'
 import { WeeklyView } from './journal/WeeklyView'
+import { LinkPreviewTooltip } from './LinkPreviewTooltip'
 import { LoadingSkeleton } from './LoadingSkeleton'
 
 export type { DayEntry } from '../lib/date-utils'
@@ -215,10 +216,16 @@ export function JournalPage({
     handleAddBlock,
   })
 
+  // ── Link preview tooltip — covers all blocks in the journal view ────
+  const [journalContainerEl, setJournalContainerEl] = useState<HTMLDivElement | null>(null)
+  const journalRef = useCallback((node: HTMLDivElement | null) => {
+    setJournalContainerEl(node)
+  }, [])
+
   // ── Main render ─────────────────────────────────────────────────────
 
   return (
-    <div className="space-y-4">
+    <div ref={journalRef} className="space-y-4">
       {/* Loading indicator on initial fetch */}
       {loading && (
         <div aria-busy="true">
@@ -249,6 +256,9 @@ export function JournalPage({
         />
       )}
       {!loading && mode === 'agenda' && <AgendaView onNavigateToPage={onNavigateToPage} />}
+
+      {/* Link preview tooltip — covers all external links in journal */}
+      <LinkPreviewTooltip container={journalContainerEl} />
     </div>
   )
 }

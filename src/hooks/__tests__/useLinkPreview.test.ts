@@ -9,6 +9,7 @@
  *  - Falls back to fetchLinkMetadata when cache miss
  *  - Handles fetch errors gracefully (no crash)
  *  - Debounces rapid hover changes
+ *  - Works with both <a> (editor) and <span data-href> (static) links
  */
 
 import { act, renderHook } from '@testing-library/react'
@@ -47,12 +48,9 @@ const SAMPLE_METADATA: LinkMetadata = {
   auth_required: false,
 }
 
-/** Create a mock editor with a real DOM element. */
-function makeEditor(dom?: HTMLElement) {
-  const element = dom ?? document.createElement('div')
-  return {
-    view: { dom: element },
-  } as never
+/** Create a container DOM element. */
+function makeContainer(): HTMLDivElement {
+  return document.createElement('div')
 }
 
 /** Create an anchor element with the external-link class. */
@@ -93,25 +91,25 @@ describe('useLinkPreview', () => {
   })
 
   it('returns null state when no link is hovered', () => {
-    const { result } = renderHook(() => useLinkPreview(makeEditor()))
+    const { result } = renderHook(() => useLinkPreview(makeContainer()))
     expect(result.current.url).toBeNull()
     expect(result.current.metadata).toBeNull()
     expect(result.current.anchorRect).toBeNull()
     expect(result.current.isLoading).toBe(false)
   })
 
-  it('returns null state when editor is null', () => {
+  it('returns null state when container is null', () => {
     const { result } = renderHook(() => useLinkPreview(null))
     expect(result.current.url).toBeNull()
     expect(result.current.anchorRect).toBeNull()
   })
 
   it('updates state when pointerenter fires on .external-link element', () => {
-    const dom = document.createElement('div')
+    const dom = makeContainer()
     const link = createExternalLink()
     dom.appendChild(link)
 
-    const { result } = renderHook(() => useLinkPreview(makeEditor(dom)))
+    const { result } = renderHook(() => useLinkPreview(dom))
 
     act(() => {
       link.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
@@ -123,11 +121,11 @@ describe('useLinkPreview', () => {
   })
 
   it('clears state on pointerleave', () => {
-    const dom = document.createElement('div')
+    const dom = makeContainer()
     const link = createExternalLink()
     dom.appendChild(link)
 
-    const { result } = renderHook(() => useLinkPreview(makeEditor(dom)))
+    const { result } = renderHook(() => useLinkPreview(dom))
 
     act(() => {
       link.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
@@ -148,11 +146,11 @@ describe('useLinkPreview', () => {
   it('calls getLinkMetadata on hover (cache hit)', async () => {
     mockGetLinkMetadata.mockResolvedValue(SAMPLE_METADATA)
 
-    const dom = document.createElement('div')
+    const dom = makeContainer()
     const link = createExternalLink()
     dom.appendChild(link)
 
-    const { result } = renderHook(() => useLinkPreview(makeEditor(dom)))
+    const { result } = renderHook(() => useLinkPreview(dom))
 
     act(() => {
       link.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
@@ -172,11 +170,11 @@ describe('useLinkPreview', () => {
     mockGetLinkMetadata.mockResolvedValue(null)
     mockFetchLinkMetadata.mockResolvedValue(SAMPLE_METADATA)
 
-    const dom = document.createElement('div')
+    const dom = makeContainer()
     const link = createExternalLink()
     dom.appendChild(link)
 
-    const { result } = renderHook(() => useLinkPreview(makeEditor(dom)))
+    const { result } = renderHook(() => useLinkPreview(dom))
 
     act(() => {
       link.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
@@ -195,11 +193,11 @@ describe('useLinkPreview', () => {
   it('handles fetch errors gracefully (no crash)', async () => {
     mockGetLinkMetadata.mockRejectedValue(new Error('network error'))
 
-    const dom = document.createElement('div')
+    const dom = makeContainer()
     const link = createExternalLink()
     dom.appendChild(link)
 
-    const { result } = renderHook(() => useLinkPreview(makeEditor(dom)))
+    const { result } = renderHook(() => useLinkPreview(dom))
 
     act(() => {
       link.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
@@ -215,13 +213,13 @@ describe('useLinkPreview', () => {
   })
 
   it('debounces rapid hover changes', async () => {
-    const dom = document.createElement('div')
+    const dom = makeContainer()
     const link1 = createExternalLink('https://example.com/1')
     const link2 = createExternalLink('https://example.com/2')
     dom.appendChild(link1)
     dom.appendChild(link2)
 
-    renderHook(() => useLinkPreview(makeEditor(dom)))
+    renderHook(() => useLinkPreview(dom))
 
     // Hover over first link
     act(() => {
@@ -254,12 +252,12 @@ describe('useLinkPreview', () => {
   })
 
   it('does not fire fetch for non-link elements', () => {
-    const dom = document.createElement('div')
+    const dom = makeContainer()
     const span = document.createElement('span')
     span.textContent = 'not a link'
     dom.appendChild(span)
 
-    const { result } = renderHook(() => useLinkPreview(makeEditor(dom)))
+    const { result } = renderHook(() => useLinkPreview(dom))
 
     act(() => {
       span.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
@@ -270,11 +268,11 @@ describe('useLinkPreview', () => {
   })
 
   it('stops responding to events after unmount', () => {
-    const dom = document.createElement('div')
+    const dom = makeContainer()
     const link = createExternalLink()
     dom.appendChild(link)
 
-    const { unmount } = renderHook(() => useLinkPreview(makeEditor(dom)))
+    const { unmount } = renderHook(() => useLinkPreview(dom))
 
     unmount()
 
@@ -283,5 +281,36 @@ describe('useLinkPreview', () => {
     expect(() => {
       link.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
     }).not.toThrow()
+  })
+
+  it('works with static span.external-link[data-href] elements', () => {
+    const dom = makeContainer()
+    const span = document.createElement('span')
+    span.className = 'external-link'
+    span.setAttribute('data-href', 'https://static.example.com')
+    span.textContent = 'Static link'
+    span.getBoundingClientRect = () =>
+      ({
+        top: 100,
+        bottom: 120,
+        left: 50,
+        right: 200,
+        width: 150,
+        height: 20,
+        x: 50,
+        y: 100,
+        toJSON: () => ({}),
+      }) as DOMRect
+    dom.appendChild(span)
+
+    const { result } = renderHook(() => useLinkPreview(dom))
+
+    act(() => {
+      span.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
+    })
+
+    expect(result.current.url).toBe('https://static.example.com')
+    expect(result.current.anchorRect).not.toBeNull()
+    expect(result.current.isLoading).toBe(true)
   })
 })

@@ -19,10 +19,10 @@ import type { LinkMetadata } from '@/lib/tauri'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
-const mockUseLinkPreview = vi.fn<(editor: unknown) => LinkPreviewState>()
+const mockUseLinkPreview = vi.fn<(container: unknown) => LinkPreviewState>()
 
 vi.mock('@/hooks/useLinkPreview', () => ({
-  useLinkPreview: (editor: unknown) => mockUseLinkPreview(editor),
+  useLinkPreview: (container: unknown) => mockUseLinkPreview(container),
 }))
 
 // Mock @floating-ui/dom to avoid layout-dependent calculations in jsdom
@@ -47,8 +47,8 @@ const SAMPLE_METADATA: LinkMetadata = {
 
 const SAMPLE_RECT = new DOMRect(50, 100, 150, 20)
 
-function makeEditor() {
-  return { view: { dom: document.createElement('div') } } as never
+function makeContainer(): HTMLDivElement {
+  return document.createElement('div')
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────
@@ -66,7 +66,7 @@ describe('LinkPreviewTooltip', () => {
       isLoading: false,
     })
 
-    const { container } = render(<LinkPreviewTooltip editor={makeEditor()} />)
+    const { container } = render(<LinkPreviewTooltip container={makeContainer()} />)
     expect(container.innerHTML).toBe('')
   })
 
@@ -78,7 +78,7 @@ describe('LinkPreviewTooltip', () => {
       isLoading: false,
     })
 
-    const { container } = render(<LinkPreviewTooltip editor={makeEditor()} />)
+    const { container } = render(<LinkPreviewTooltip container={makeContainer()} />)
     expect(container.innerHTML).toBe('')
   })
 
@@ -90,7 +90,7 @@ describe('LinkPreviewTooltip', () => {
       isLoading: false,
     })
 
-    render(<LinkPreviewTooltip editor={makeEditor()} />)
+    render(<LinkPreviewTooltip container={makeContainer()} />)
 
     const tooltip = screen.getByTestId('link-preview-tooltip')
     expect(tooltip).toBeInTheDocument()
@@ -114,7 +114,7 @@ describe('LinkPreviewTooltip', () => {
       isLoading: false,
     })
 
-    render(<LinkPreviewTooltip editor={makeEditor()} />)
+    render(<LinkPreviewTooltip container={makeContainer()} />)
 
     const tooltip = screen.getByTestId('link-preview-tooltip')
     expect(tooltip).toHaveTextContent('https://example.com')
@@ -130,7 +130,7 @@ describe('LinkPreviewTooltip', () => {
       isLoading: true,
     })
 
-    render(<LinkPreviewTooltip editor={makeEditor()} />)
+    render(<LinkPreviewTooltip container={makeContainer()} />)
 
     const tooltip = screen.getByTestId('link-preview-tooltip')
     // Should have a spinner
@@ -148,7 +148,7 @@ describe('LinkPreviewTooltip', () => {
       isLoading: false,
     })
 
-    render(<LinkPreviewTooltip editor={makeEditor()} />)
+    render(<LinkPreviewTooltip container={makeContainer()} />)
 
     const tooltip = screen.getByTestId('link-preview-tooltip')
     // Should not have an img
@@ -166,7 +166,7 @@ describe('LinkPreviewTooltip', () => {
       isLoading: false,
     })
 
-    render(<LinkPreviewTooltip editor={makeEditor()} />)
+    render(<LinkPreviewTooltip container={makeContainer()} />)
 
     const tooltip = screen.getByTestId('link-preview-tooltip')
     const img = tooltip.querySelector('img')
@@ -193,7 +193,7 @@ describe('LinkPreviewTooltip', () => {
       isLoading: false,
     })
 
-    render(<LinkPreviewTooltip editor={makeEditor()} />)
+    render(<LinkPreviewTooltip container={makeContainer()} />)
 
     const tooltip = screen.getByTestId('link-preview-tooltip')
     // Should show URL, not the title
@@ -211,7 +211,7 @@ describe('LinkPreviewTooltip', () => {
       isLoading: false,
     })
 
-    render(<LinkPreviewTooltip editor={makeEditor()} />)
+    render(<LinkPreviewTooltip container={makeContainer()} />)
     const tooltip = screen.getByTestId('link-preview-tooltip')
     expect(tooltip).toHaveAttribute('role', 'tooltip')
   })
@@ -225,7 +225,7 @@ describe('LinkPreviewTooltip', () => {
         isLoading: false,
       })
 
-      const { container } = render(<LinkPreviewTooltip editor={makeEditor()} />)
+      const { container } = render(<LinkPreviewTooltip container={makeContainer()} />)
       expect(await axe(container)).toHaveNoViolations()
     })
 
@@ -237,7 +237,7 @@ describe('LinkPreviewTooltip', () => {
         isLoading: true,
       })
 
-      const { container } = render(<LinkPreviewTooltip editor={makeEditor()} />)
+      const { container } = render(<LinkPreviewTooltip container={makeContainer()} />)
       expect(await axe(container)).toHaveNoViolations()
     })
   })

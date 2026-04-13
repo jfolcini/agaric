@@ -12,7 +12,6 @@
  * UX-165
  */
 
-import type { Editor } from '@tiptap/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { logger } from '@/lib/logger'
 import { fetchLinkMetadata, getLinkMetadata, type LinkMetadata } from '@/lib/tauri'
@@ -33,7 +32,7 @@ const INITIAL_STATE: LinkPreviewState = {
 
 const DEBOUNCE_MS = 150
 
-export function useLinkPreview(editor: Editor | null): LinkPreviewState {
+export function useLinkPreview(container: HTMLElement | null): LinkPreviewState {
   const [state, setState] = useState<LinkPreviewState>(INITIAL_STATE)
 
   // Ref to track the current hovered URL — used to discard stale fetches
@@ -50,10 +49,12 @@ export function useLinkPreview(editor: Editor | null): LinkPreviewState {
   const handlePointerEnter = useCallback(
     (e: Event) => {
       const target = e.target as HTMLElement
-      const anchor = target.closest('a.external-link') as HTMLAnchorElement | null
+      // Match both editor links (<a class="external-link">) and
+      // static-rendered links (<span class="external-link" data-href="...">)
+      const anchor = target.closest('.external-link') as HTMLElement | null
       if (!anchor) return
 
-      const href = anchor.getAttribute('href')
+      const href = anchor.getAttribute('href') ?? anchor.getAttribute('data-href')
       if (!href) return
 
       const rect = anchor.getBoundingClientRect()
@@ -108,7 +109,7 @@ export function useLinkPreview(editor: Editor | null): LinkPreviewState {
   const handlePointerLeave = useCallback(
     (e: Event) => {
       const target = e.target as HTMLElement
-      const anchor = target.closest('a.external-link') as HTMLAnchorElement | null
+      const anchor = target.closest('.external-link') as HTMLElement | null
       if (!anchor) return
 
       activeUrlRef.current = null
@@ -119,22 +120,21 @@ export function useLinkPreview(editor: Editor | null): LinkPreviewState {
   )
 
   useEffect(() => {
-    const dom = editor?.view?.dom
-    if (!dom) return
+    if (!container) return
 
-    dom.addEventListener('pointerenter', handlePointerEnter, true)
-    dom.addEventListener('pointerleave', handlePointerLeave, true)
+    container.addEventListener('pointerenter', handlePointerEnter, true)
+    container.addEventListener('pointerleave', handlePointerLeave, true)
 
     return () => {
-      dom.removeEventListener('pointerenter', handlePointerEnter, true)
-      dom.removeEventListener('pointerleave', handlePointerLeave, true)
+      container.removeEventListener('pointerenter', handlePointerEnter, true)
+      container.removeEventListener('pointerleave', handlePointerLeave, true)
       activeUrlRef.current = null
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current)
         debounceTimerRef.current = null
       }
     }
-  }, [editor?.view?.dom, handlePointerEnter, handlePointerLeave])
+  }, [container, handlePointerEnter, handlePointerLeave])
 
   return state
 }
