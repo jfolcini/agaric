@@ -57,7 +57,8 @@ describe('useTheme', () => {
     expect(result.current.isDark).toBe(true)
   })
 
-  it('cycles auto → dark → light → auto', () => {
+  it('cycles with smart skip (system light: auto → dark → light → dark)', () => {
+    // system=light, so auto resolves to light; skip states that don't change isDark
     const { result } = renderHook(() => useTheme())
     expect(result.current.theme).toBe('auto')
 
@@ -67,8 +68,9 @@ describe('useTheme', () => {
     act(() => result.current.toggleTheme())
     expect(result.current.theme).toBe('light')
 
+    // light→auto would be a no-op (both light), so skip to dark
     act(() => result.current.toggleTheme())
-    expect(result.current.theme).toBe('auto')
+    expect(result.current.theme).toBe('dark')
   })
 
   it('persists theme choice to localStorage', () => {
@@ -80,8 +82,9 @@ describe('useTheme', () => {
     act(() => result.current.toggleTheme())
     expect(localStorage.getItem('theme-preference')).toBe('light')
 
+    // light→auto skipped (both light with system=light), goes to dark
     act(() => result.current.toggleTheme())
-    expect(localStorage.getItem('theme-preference')).toBe('auto')
+    expect(localStorage.getItem('theme-preference')).toBe('dark')
   })
 
   it('applies .dark class when isDark is true', () => {
@@ -129,5 +132,30 @@ describe('useTheme', () => {
     localStorage.setItem('theme-preference', 'invalid-value')
     const { result } = renderHook(() => useTheme())
     expect(result.current.theme).toBe('auto')
+  })
+
+  it('skips dark when system is dark (auto → light)', () => {
+    mockDarkQuery = true
+    const { result } = renderHook(() => useTheme())
+    expect(result.current.theme).toBe('auto')
+    expect(result.current.isDark).toBe(true)
+
+    // auto(dark) → dark would be a no-op, so skip to light
+    act(() => result.current.toggleTheme())
+    expect(result.current.theme).toBe('light')
+    expect(result.current.isDark).toBe(false)
+  })
+
+  it('skips auto when system is light (light → dark)', () => {
+    mockDarkQuery = false
+    localStorage.setItem('theme-preference', 'light')
+    const { result } = renderHook(() => useTheme())
+    expect(result.current.theme).toBe('light')
+    expect(result.current.isDark).toBe(false)
+
+    // light(light) → auto would be a no-op (both light), so skip to dark
+    act(() => result.current.toggleTheme())
+    expect(result.current.theme).toBe('dark')
+    expect(result.current.isDark).toBe(true)
   })
 })

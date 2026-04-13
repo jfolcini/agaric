@@ -127,7 +127,7 @@
   --secondary-foreground: oklch(0.208 0.042 265.755);
   --muted: oklch(0.968 0.007 264.542);
   --muted-foreground: oklch(0.554 0.046 257.417);
-  --accent: oklch(0.968 0.012 28.71);
+  --accent: oklch(0.93 0.02 28.71);
   --accent-foreground: oklch(0.377 0.136 28.584);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.984 0.003 247.858);
@@ -202,7 +202,7 @@
   /* Highlight/search */
   --highlight: oklch(0.95 0.13 102);
   /* Block reference chip */
-  --block-ref: oklch(0.95 0.03 293);
+  --block-ref: oklch(0.91 0.05 293);
   --block-ref-foreground: oklch(0.45 0.2 293);
   /* Scheduled/repeat indicator */
   --indicator-scheduled: oklch(0.95 0.03 307);
@@ -255,7 +255,7 @@
   --secondary-foreground: oklch(0.984 0.003 247.858);
   --muted: oklch(0.279 0.041 260.031);
   --muted-foreground: oklch(0.704 0.04 256.788);
-  --accent: oklch(0.25 0.03 28.71);
+  --accent: oklch(0.3 0.04 28.71);
   --accent-foreground: oklch(0.911 0.04 84.583);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.984 0.003 247.858);
@@ -329,7 +329,7 @@
   /* Highlight/search */
   --highlight: oklch(0.55 0.14 66);
   /* Block reference chip */
-  --block-ref: oklch(0.25 0.04 293);
+  --block-ref: oklch(0.3 0.06 293);
   --block-ref-foreground: oklch(0.78 0.14 293);
   /* Scheduled/repeat indicator */
   --indicator-scheduled: oklch(0.22 0.04 305);
@@ -487,13 +487,13 @@
 
 /* Block link chips — [[ULID]] rendered as clickable page title chips */
 .block-link-chip {
-  @apply inline-flex items-center rounded-md bg-primary/10 text-primary font-semibold;
+  @apply inline-flex items-center rounded-md bg-primary/20 text-primary font-semibold;
   font-size: 0.85em;
   padding: 0.15em 0.5em;
 }
 .block-link-chip:hover,
 .block-link-chip:active {
-  @apply bg-primary/20;
+  @apply bg-primary/30;
 }
 
 /* Tag reference chips — #[ULID] rendered as tag name pills */

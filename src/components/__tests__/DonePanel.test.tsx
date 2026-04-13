@@ -619,4 +619,31 @@ describe('DonePanel', () => {
     // Empty / whitespace blocks should not appear
     expect(screen.queryByText('(empty)')).not.toBeInTheDocument()
   })
+
+  // 19. Excludes blocks whose parent_id matches excludePageId (B-74)
+  it('excludes blocks whose parent_id matches excludePageId', async () => {
+    mockedQueryByProperty.mockResolvedValue({
+      items: [
+        makeBlock({ id: 'B1', parent_id: 'PAGE_1', content: 'same-page task' }),
+        makeBlock({ id: 'B2', parent_id: 'PAGE_2', content: 'other-page task' }),
+        makeBlock({ id: 'B3', parent_id: 'PAGE_3', content: 'third-page task' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+    mockedBatchResolve.mockResolvedValue([
+      { id: 'PAGE_2', title: 'Other Page', block_type: 'page', deleted: false },
+      { id: 'PAGE_3', title: 'Third Page', block_type: 'page', deleted: false },
+    ])
+
+    render(<DonePanel date="2026-04-13" excludePageId="PAGE_1" />)
+
+    // Only the 2 non-excluded blocks should render
+    expect(await screen.findByText('2 Completed')).toBeInTheDocument()
+    expect(screen.getByText('other-page task')).toBeInTheDocument()
+    expect(screen.getByText('third-page task')).toBeInTheDocument()
+
+    // The excluded block should NOT appear
+    expect(screen.queryByText('same-page task')).not.toBeInTheDocument()
+  })
 })

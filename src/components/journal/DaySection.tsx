@@ -175,7 +175,11 @@ export function DaySection({
             <LinkedReferences pageId={entry.pageId} onNavigateToPage={onNavigateToPage} />
           </div>
           <div id="journal-done-panel">
-            <DonePanel date={entry.dateStr} onNavigateToPage={onNavigateToPage} />
+            <DonePanel
+              date={entry.dateStr}
+              onNavigateToPage={onNavigateToPage}
+              excludePageId={entry.pageId ?? undefined}
+            />
           </div>
         </>
       )}

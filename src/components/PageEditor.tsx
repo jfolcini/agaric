@@ -170,7 +170,7 @@ function PageEditorInner({
             <DuePanel date={title} onNavigateToPage={onNavigateToPage} />
           </div>
           <div id="journal-done-panel">
-            <DonePanel date={title} onNavigateToPage={onNavigateToPage} />
+            <DonePanel date={title} onNavigateToPage={onNavigateToPage} excludePageId={pageId} />
           </div>
         </>
       )}

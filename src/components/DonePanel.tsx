@@ -28,9 +28,14 @@ import { PageLink } from './PageLink'
 export interface DonePanelProps {
   date: string // YYYY-MM-DD
   onNavigateToPage?: NavigateToPageFn | undefined
+  excludePageId?: string | undefined
 }
 
-export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.ReactElement | null {
+export function DonePanel({
+  date,
+  onNavigateToPage,
+  excludePageId,
+}: DonePanelProps): React.ReactElement | null {
   const { t } = useTranslation()
   const { invalidationKey } = useBlockPropertyEvents()
   const [blocks, setBlocks] = useState<BlockRow[]>([])
@@ -52,8 +57,10 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
           ...(cursor != null && { cursor }),
           limit: 50,
         })
-        // Filter out blocks with empty content (UX-129)
-        const nonEmptyItems = resp.items.filter((b) => b.content?.trim())
+        // Filter out blocks with empty content (UX-129) and blocks from the excluded page (B-74)
+        const nonEmptyItems = resp.items
+          .filter((b) => b.content?.trim())
+          .filter((b) => !excludePageId || b.parent_id !== excludePageId)
         const newBlocks = cursor ? [...blocks, ...nonEmptyItems] : nonEmptyItems
         setBlocks(newBlocks)
         setNextCursor(resp.next_cursor)
@@ -79,7 +86,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
         setLoading(false)
       }
     },
-    [date, blocks, totalCount, pageTitles, t],
+    [date, blocks, totalCount, pageTitles, t, excludePageId],
   )
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: invalidationKey triggers refetch on property changes (F-39)
@@ -101,8 +108,10 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
           limit: 50,
         })
         if (cancelled) return
-        // Filter out blocks with empty content (UX-129)
-        const nonEmptyItems = resp.items.filter((b) => b.content?.trim())
+        // Filter out blocks with empty content (UX-129) and blocks from the excluded page (B-74)
+        const nonEmptyItems = resp.items
+          .filter((b) => b.content?.trim())
+          .filter((b) => !excludePageId || b.parent_id !== excludePageId)
         setBlocks(nonEmptyItems)
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
@@ -135,7 +144,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
     return () => {
       cancelled = true
     }
-  }, [date, t, invalidationKey])
+  }, [date, t, invalidationKey, excludePageId])
 
   const loadMore = useCallback(() => {
     if (nextCursor) {
