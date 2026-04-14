@@ -157,7 +157,7 @@ Markdown-based WYSIWYG editing:
 - **Ctrl+Shift+Right / Ctrl+Shift+Left**: indent / dedent (reparent in tree)
 - **Ctrl+Shift+Up/Down**: move block up/down among siblings
 - **Ctrl+.**: collapse/expand children
-- Drag-and-drop reordering with depth projection for indent/reparent
+- Drag-and-drop reordering with depth projection for indent/reparent. **20px dead zone** (UX-175) prevents accidental indentation during vertical reorder — horizontal drag must exceed `DEAD_ZONE_PX` before depth changes. **Sentinel drop zone** (UX-176) after the last block enables dragging to the end of the list via `SentinelDropZone` component (60px invisible droppable). Drop indicator thickened to 5px for visibility.
 - **Auto-scroll on drag** (B-31): When dragging blocks near viewport edges (50px zone), auto-scrolls at speed proportional to proximity. RAF-based 60fps. `useAutoScrollOnDrag` hook.
 - Auto-split: multiple paragraphs split into separate blocks on blur
 - Multi-selection (Ctrl+Click, Shift+Click, Ctrl+A) with batch delete and batch todo state

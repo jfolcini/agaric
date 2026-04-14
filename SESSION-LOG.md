@@ -1,5 +1,39 @@
 # Session Log
 
+## Session 380 — UX-173/174/175/176 + B-76: block polish, DnD precision, layout fix (2026-04-14)
+
+**5 items resolved (recovered from crashed session). REVIEW-LATER is empty (0 open items).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| UX-173 (resolved) | Block indentation misaligned between parent/leaf blocks — explicit `w-5` on chevron button + spacer | `BlockInlineControls.tsx` |
+| UX-174 (resolved) | Property pills too large and touching when wrapped — `gap-y-1.5` on containers, reduced touch padding | `BlockInlineControls.tsx`, `PropertyChip.tsx`, `SortableBlock.tsx` |
+| UX-175 (resolved) | DnD indentation too sensitive — 20px dead zone in `getProjection()`, thicker drop indicator | `tree-utils.ts`, `BlockListRenderer.tsx` |
+| UX-176 (resolved) | DnD hard to reach last position — sentinel droppable zone after last block | `BlockListRenderer.tsx`, `tree-utils.ts`, `useBlockDnD.ts` |
+| B-76 (resolved) | Layout errors navigating journal→page — 150ms fade delay, `useLayoutEffect` scroll | `App.tsx`, `PageEditor.tsx` |
+
+### Implementation
+- **UX-173**: Added `w-5` (20px) to both the collapse toggle `<button>` and the spacer `<span>` in `BlockInlineControls.tsx`, ensuring identical box-model widths.
+- **UX-174**: Added `max-sm:gap-x-1 max-sm:gap-y-1.5` to the inline-controls container and SortableBlock wrapper. Reduced PropertyChip touch padding from `px-2.5 py-1` to `px-2 py-0.5`, added `touch-target` class.
+- **UX-175**: Added `DEAD_ZONE_PX = 20` constant to `tree-utils.ts`. `getProjection()` subtracts dead zone from drag offset before computing depth — prevents accidental indent on small horizontal movements. Drop indicator thickened from 3px to 5px.
+- **UX-176**: Added `SENTINEL_ID = '__drop-after-last__'` to `tree-utils.ts`. `SentinelDropZone` component (60px min-height invisible droppable) appended after last block in `BlockListRenderer.tsx`. `getProjection()` handles sentinel with dead-zone-aware depth calc. `useBlockDnD.ts` maps sentinel to correct position in `handleDragEnd`.
+- **B-76**: Replaced `requestAnimationFrame` with `setTimeout(150)` for view transition fade-in in `App.tsx`. Switched `PageEditor.tsx` scroll-to-selected from `useEffect` + rAF to `useLayoutEffect` for synchronous DOM positioning.
+
+### Crash recovery
+Previous session crashed mid-build. All 14 modified files were coherent and test-passing. Fixed 2 issues:
+- Added missing `useDroppable` to `@dnd-kit/core` mock in `BlockTree.test.tsx`
+- Updated `viewTransition.test.tsx` to use `vi.useFakeTimers()` + `advanceTimersByTime(150)` (code changed from rAF to setTimeout)
+- Added biome-ignore comments for pre-existing complexity warnings in `BlockListRenderer.tsx`
+
+### Stats
+- 14 files changed (+354 lines)
+- 6465 tests pass (269 test files)
+- 5 items resolved — REVIEW-LATER now has 0 open items
+
+---
+
 ## Session 379 — B-75 suggestion popup fix + UX-172 history sheet overhaul (2026-04-14)
 
 **2 items resolved. REVIEW-LATER is empty (0 open items).**
