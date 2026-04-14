@@ -33,19 +33,27 @@ import { common, createLowlight } from 'lowlight'
 import { useCallback, useRef } from 'react'
 import { configKeyToTipTap, getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
-import { AtTagPicker } from './extensions/at-tag-picker'
+import { AtTagPicker, atTagPickerPluginKey } from './extensions/at-tag-picker'
 import { BlockLink } from './extensions/block-link'
-import { BlockLinkPicker } from './extensions/block-link-picker'
+import { BlockLinkPicker, blockLinkPickerPluginKey } from './extensions/block-link-picker'
 import { BlockRef } from './extensions/block-ref'
-import { BlockRefPicker } from './extensions/block-ref-picker'
+import { BlockRefPicker, blockRefPickerPluginKey } from './extensions/block-ref-picker'
 import { CheckboxInputRule } from './extensions/checkbox-input-rule'
 import { ExternalLink } from './extensions/external-link'
-import { PropertyPicker } from './extensions/property-picker'
-import { SlashCommand } from './extensions/slash-command'
+import { PropertyPicker, propertyPickerPluginKey } from './extensions/property-picker'
+import { SlashCommand, slashCommandPluginKey } from './extensions/slash-command'
 import { TagRef } from './extensions/tag-ref'
 import { parse, serialize } from './markdown-serializer'
 import type { PickerItem } from './SuggestionList'
 import type { DocNode } from './types'
+
+const suggestionPluginKeys = [
+  atTagPickerPluginKey,
+  blockLinkPickerPluginKey,
+  blockRefPickerPluginKey,
+  propertyPickerPluginKey,
+  slashCommandPluginKey,
+]
 
 // -- Extracted pure functions (testable without TipTap / jsdom) ---------------
 
@@ -373,6 +381,18 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         tr.setMeta(histPlugin, { historyState: freshHistory })
         tr.setMeta('addToHistory', false)
         editor.view.dispatch(tr)
+      }
+      // Reset all suggestion plugin states to prevent stale `active = true`
+      // from a previous block's suggestion lifecycle. Uses exitSuggestion's
+      // pattern: dispatch setMeta({ exit: true }) for each suggestion plugin key.
+      // This is safe as a no-op when the plugin is already inactive.
+      {
+        const { tr: suggTr } = editor.state
+        for (const key of suggestionPluginKeys) {
+          suggTr.setMeta(key, { exit: true })
+        }
+        suggTr.setMeta('addToHistory', false)
+        editor.view.dispatch(suggTr)
       }
       editor.commands.focus()
     },

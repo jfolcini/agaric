@@ -11,10 +11,11 @@
 import { Extension } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 import { Suggestion } from '@tiptap/suggestion'
+import { logger } from '../../lib/logger'
 import type { PickerItem } from '../SuggestionList'
 import { createSuggestionRenderer } from '../suggestion-renderer'
 
-const blockRefPickerPluginKey = new PluginKey('blockRefPicker')
+export const blockRefPickerPluginKey = new PluginKey('blockRefPicker')
 
 export interface BlockRefPickerOptions {
   /** Return blocks matching the query. Called on every keystroke after ((. */
@@ -38,7 +39,14 @@ export const BlockRefPicker = Extension.create<BlockRefPickerOptions>({
         char: '((',
         allowSpaces: true,
         allowedPrefixes: null,
-        items: ({ query }) => this.options.items(query),
+        items: async ({ query }) => {
+          try {
+            return await this.options.items(query)
+          } catch (err) {
+            logger.warn('BlockRefPicker', 'items callback failed, returning empty', { query }, err)
+            return []
+          }
+        },
         command: ({ editor, range, props }) => {
           const item = props as PickerItem
           editor.chain().focus().deleteRange(range).insertBlockRef(item.id).run()

@@ -13,10 +13,11 @@ import { Extension } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 import type { SuggestionKeyDownProps, SuggestionProps } from '@tiptap/suggestion'
 import { Suggestion } from '@tiptap/suggestion'
+import { logger } from '../../lib/logger'
 import type { PickerItem } from '../SuggestionList'
 import { createSuggestionRenderer } from '../suggestion-renderer'
 
-const slashCommandPluginKey = new PluginKey('slashCommand')
+export const slashCommandPluginKey = new PluginKey('slashCommand')
 
 export interface SlashCommandOptions {
   /** Return slash commands matching the query. Called on every keystroke after /. */
@@ -43,7 +44,14 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
         pluginKey: slashCommandPluginKey,
         char: '/',
         allowedPrefixes: null,
-        items: ({ query }) => extensionOptions.items(query),
+        items: async ({ query }) => {
+          try {
+            return await extensionOptions.items(query)
+          } catch (err) {
+            logger.warn('SlashCommand', 'items callback failed, returning empty', { query }, err)
+            return []
+          }
+        },
         command: ({ editor, range, props }) => {
           editor.chain().focus().deleteRange(range).run()
           extensionOptions.onCommand(props as PickerItem, editor)

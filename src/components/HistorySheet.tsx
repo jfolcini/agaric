@@ -25,12 +25,14 @@ export function HistorySheet({
   const { t } = useTranslation()
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right">
+      <SheetContent side="right" className="w-3/4 sm:w-80">
         <SheetHeader>
           <SheetTitle>{t('history.title')}</SheetTitle>
         </SheetHeader>
         <ScrollArea className="flex-1 overflow-hidden">
-          {blockId && <HistoryPanel blockId={blockId} />}
+          <div className="mt-4 space-y-3 px-4 pb-4">
+            {blockId && <HistoryPanel blockId={blockId} />}
+          </div>
         </ScrollArea>
       </SheetContent>
     </Sheet>

@@ -431,31 +431,19 @@ describe('HistoryPanel', () => {
     })
   })
 
-  // UX #175: Restore button disabled during operation
-  it('disables Restore button during restore operation', async () => {
-    const user = userEvent.setup()
+  // UX-172: BlockHistoryItem only shows restore for edit_block with rawContent
+  it('does not show restore button for create_block entries in block history', async () => {
     const page = {
-      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'Old content' })],
+      items: [makeHistoryEntry(1, 'create_block', { block_type: 'content' })],
       next_cursor: null,
       has_more: false,
     }
-    mockedInvoke
-      .mockResolvedValueOnce(page) // get_block_history
-      .mockReturnValueOnce(new Promise(() => {})) // edit_block — never resolves
+    mockedInvoke.mockResolvedValueOnce(page)
 
     render(<HistoryPanel blockId="BLOCK001" />)
 
-    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
-    await user.click(restoreBtn)
-
-    // Confirmation dialog opens — click confirm
-    const confirmBtn = await screen.findByRole('button', { name: /^Restore$/ })
-    await user.click(confirmBtn)
-
-    // Button should be disabled while restoring
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Restore/i })).toBeDisabled()
-    })
+    await screen.findByText('create_block')
+    expect(screen.queryByRole('button', { name: /restore to this point/i })).not.toBeInTheDocument()
   })
 
   // -- Confirmation dialog tests ------------------------------------------------

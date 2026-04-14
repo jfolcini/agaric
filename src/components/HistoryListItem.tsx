@@ -83,6 +83,99 @@ export function opIcon(opType: string): LucideIcon {
 }
 
 // ---------------------------------------------------------------------------
+// HistoryItemCore — shared visual elements
+// ---------------------------------------------------------------------------
+
+export interface HistoryItemCoreProps {
+  entry: HistoryEntry
+  isExpanded: boolean
+  isLoadingDiff: boolean
+  onToggleDiff: (entry: HistoryEntry) => void
+}
+
+export function HistoryItemCore({
+  entry,
+  isExpanded,
+  isLoadingDiff,
+  onToggleDiff,
+}: HistoryItemCoreProps): React.ReactElement {
+  const { t } = useTranslation()
+  const rawContent = getPayloadRawContent(entry)
+  const propPayload = getPropertyPayload(entry)
+  const richCallbacks = useRichContentCallbacks()
+
+  return (
+    <>
+      <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+        {/* Op type badge */}
+        <div className="flex items-center gap-2">
+          <Badge
+            variant="outline"
+            className={cn(
+              'history-item-type shrink-0 border-transparent',
+              opBadgeClasses(entry.op_type),
+            )}
+            data-testid="history-type-badge"
+          >
+            {(() => {
+              const IconComponent = opIcon(entry.op_type)
+              return <IconComponent className="h-3 w-3 mr-1" />
+            })()}
+            {entry.op_type}
+          </Badge>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="history-item-time text-xs text-muted-foreground w-fit">
+                  {formatTimestamp(entry.created_at, 'relative')}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{formatTimestamp(entry.created_at, 'full')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <span className="text-xs text-muted-foreground"> · </span>
+          <span className="history-item-device text-xs text-muted-foreground">
+            dev:{entry.device_id.slice(0, 8)}
+          </span>
+        </div>
+        {/* Content preview */}
+        {propPayload && (
+          <span className="history-item-preview text-sm line-clamp-2">
+            {formatPropertyName(propPayload.key)}
+            {propPayload.value != null && ` → ${propPayload.value}`}
+          </span>
+        )}
+        {!propPayload && rawContent && (
+          <span className="history-item-preview text-sm line-clamp-2">
+            {renderRichContent(rawContent, {
+              interactive: false,
+              ...richCallbacks,
+            })}
+          </span>
+        )}
+      </div>
+      {/* Diff toggle */}
+      {entry.op_type === 'edit_block' && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="diff-toggle-btn shrink-0 px-2"
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggleDiff(entry)
+          }}
+        >
+          <ChevronToggle isExpanded={isExpanded} loading={isLoadingDiff} size="md" />
+          {t('history.diffButton')}
+        </Button>
+      )}
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
 
@@ -120,9 +213,6 @@ export function HistoryListItem({
   onRestoreToHere,
 }: HistoryListItemProps): React.ReactElement {
   const { t } = useTranslation()
-  const rawContent = getPayloadRawContent(entry)
-  const propPayload = getPropertyPayload(entry)
-  const richCallbacks = useRichContentCallbacks()
 
   return (
     <div
@@ -161,71 +251,13 @@ export function HistoryListItem({
           })}
         />
 
-        {/* Op type badge */}
-        <Badge
-          variant="outline"
-          className={cn(
-            'history-item-type shrink-0 border-transparent',
-            opBadgeClasses(entry.op_type),
-          )}
-          data-testid="history-type-badge"
-        >
-          {(() => {
-            const IconComponent = opIcon(entry.op_type)
-            return <IconComponent className="h-3 w-3 mr-1" />
-          })()}
-          {entry.op_type}
-        </Badge>
-
-        {/* Content preview + timestamp */}
-        <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-          {propPayload && (
-            <span className="history-item-preview text-sm line-clamp-2">
-              {formatPropertyName(propPayload.key)}
-              {propPayload.value != null && ` → ${propPayload.value}`}
-            </span>
-          )}
-          {!propPayload && rawContent && (
-            <span className="history-item-preview text-sm line-clamp-2">
-              {renderRichContent(rawContent, {
-                interactive: false,
-                ...richCallbacks,
-              })}
-            </span>
-          )}
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="history-item-time text-xs text-muted-foreground w-fit">
-                  {formatTimestamp(entry.created_at, 'relative')}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{formatTimestamp(entry.created_at, 'full')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-          <span className="text-xs text-muted-foreground/60"> · </span>
-          <span className="history-item-device text-xs text-muted-foreground/60">
-            dev:{entry.device_id.slice(0, 8)}
-          </span>
-        </div>
-
-        {/* Diff toggle for edit_block entries */}
-        {entry.op_type === 'edit_block' && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="diff-toggle-btn shrink-0 px-2"
-            onClick={(e) => {
-              e.stopPropagation()
-              onToggleDiff(entry)
-            }}
-          >
-            <ChevronToggle isExpanded={isExpanded} loading={isLoadingDiff} size="md" />
-            {t('history.diffButton')}
-          </Button>
-        )}
+        {/* Shared core content */}
+        <HistoryItemCore
+          entry={entry}
+          isExpanded={isExpanded}
+          isLoadingDiff={isLoadingDiff}
+          onToggleDiff={onToggleDiff}
+        />
 
         {/* Restore to here button — only for reversible ops */}
         {!isNonReversible && (
@@ -280,5 +312,74 @@ export function HistoryListItem({
         </div>
       )}
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// BlockHistoryItem — compact row for per-block history sheet
+// ---------------------------------------------------------------------------
+
+export interface BlockHistoryItemProps {
+  entry: HistoryEntry
+  index: number
+  isExpanded: boolean
+  isLoadingDiff: boolean
+  diffSpans: DiffSpan[] | undefined
+  onToggleDiff: (entry: HistoryEntry) => void
+  onRestore: (entry: HistoryEntry) => void
+}
+
+export function BlockHistoryItem({
+  entry,
+  index,
+  isExpanded,
+  isLoadingDiff,
+  diffSpans,
+  onToggleDiff,
+  onRestore,
+}: BlockHistoryItemProps): React.ReactElement {
+  const { t } = useTranslation()
+  const rawContent = getPayloadRawContent(entry)
+  const isRestorable = entry.op_type === 'edit_block' && rawContent != null
+
+  return (
+    <li
+      data-testid={`block-history-item-${index}`}
+      className="flex flex-col gap-1.5 px-2 py-2 border-b border-border/20 hover:bg-accent/20"
+    >
+      <div className="flex items-center gap-2 w-full">
+        <HistoryItemCore
+          entry={entry}
+          isExpanded={isExpanded}
+          isLoadingDiff={isLoadingDiff}
+          onToggleDiff={onToggleDiff}
+        />
+        {isRestorable && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="shrink-0 px-1.5"
+                  onClick={() => onRestore(entry)}
+                  aria-label={t('history.restoreToHereLabel')}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{t('history.restoreToHereTooltip')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
+      </div>
+      {isExpanded && diffSpans != null && (
+        <div className="diff-container w-full">
+          <DiffDisplay spans={diffSpans} />
+        </div>
+      )}
+    </li>
   )
 }

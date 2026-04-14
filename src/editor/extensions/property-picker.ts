@@ -13,10 +13,11 @@ import type { Editor } from '@tiptap/core'
 import { Extension } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 import { Suggestion } from '@tiptap/suggestion'
+import { logger } from '../../lib/logger'
 import type { PickerItem } from '../SuggestionList'
 import { createSuggestionRenderer } from '../suggestion-renderer'
 
-const propertyPickerPluginKey = new PluginKey('propertyPicker')
+export const propertyPickerPluginKey = new PluginKey('propertyPicker')
 
 export interface PropertyPickerOptions {
   /** Return property keys matching the query. Called on every keystroke after ::. */
@@ -43,7 +44,14 @@ export const PropertyPicker = Extension.create<PropertyPickerOptions>({
         pluginKey: propertyPickerPluginKey,
         char: '::',
         allowedPrefixes: null,
-        items: ({ query }) => extensionOptions.items(query),
+        items: async ({ query }) => {
+          try {
+            return await extensionOptions.items(query)
+          } catch (err) {
+            logger.warn('PropertyPicker', 'items callback failed, returning empty', { query }, err)
+            return []
+          }
+        },
         command: ({ editor, range, props }) => {
           const item = props as PickerItem
           // Replace the :: trigger + query with `key:: `

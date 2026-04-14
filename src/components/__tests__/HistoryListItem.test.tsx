@@ -39,8 +39,8 @@ import {
 } from 'lucide-react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import type { HistoryListItemProps } from '../HistoryListItem'
-import { HistoryListItem, opIcon } from '../HistoryListItem'
+import type { BlockHistoryItemProps, HistoryListItemProps } from '../HistoryListItem'
+import { BlockHistoryItem, HistoryListItem, opIcon } from '../HistoryListItem'
 
 vi.mock('../../hooks/useRichContentCallbacks', () => ({
   useRichContentCallbacks: vi.fn(() => ({
@@ -665,6 +665,186 @@ describe('HistoryListItem', () => {
 
       // Should render content through renderRichContent
       expect(screen.getByText('some text')).toBeInTheDocument()
+    })
+  })
+})
+
+describe('BlockHistoryItem', () => {
+  function makeEntry(
+    seq: number,
+    opType: string,
+    payload: Record<string, unknown>,
+    createdAt = '2025-01-15T12:00:00Z',
+    deviceId = 'DEVICE01XXXXXXXX',
+  ) {
+    return {
+      device_id: deviceId,
+      seq,
+      op_type: opType,
+      payload: JSON.stringify(payload),
+      created_at: createdAt,
+    }
+  }
+
+  function blockDefaultProps(
+    overrides: Partial<BlockHistoryItemProps> = {},
+  ): BlockHistoryItemProps {
+    return {
+      entry: makeEntry(1, 'edit_block', { to_text: 'Hello world' }),
+      index: 0,
+      isExpanded: false,
+      isLoadingDiff: false,
+      diffSpans: undefined,
+      onToggleDiff: vi.fn(),
+      onRestore: vi.fn(),
+      ...overrides,
+    }
+  }
+
+  function renderInList(props: BlockHistoryItemProps) {
+    return render(
+      <ul aria-label="Block history">
+        <BlockHistoryItem {...props} />
+      </ul>,
+    )
+  }
+
+  it('renders edit_block entry with semantic badge', () => {
+    renderInList(blockDefaultProps())
+    const badge = screen.getByTestId('history-type-badge')
+    expect(badge).toHaveTextContent('edit_block')
+  })
+
+  it('renders as a <li> element', () => {
+    renderInList(blockDefaultProps())
+    expect(screen.getByTestId('block-history-item-0').tagName).toBe('LI')
+  })
+
+  it('uses compact layout without card borders', () => {
+    renderInList(blockDefaultProps())
+    const li = screen.getByTestId('block-history-item-0')
+    expect(li).toHaveClass('border-b')
+    expect(li).not.toHaveClass('rounded-lg')
+  })
+
+  it('shows restore button only for edit_block with rawContent', () => {
+    renderInList(blockDefaultProps({ entry: makeEntry(1, 'edit_block', { to_text: 'content' }) }))
+    expect(screen.getByRole('button', { name: /restore to this point/i })).toBeInTheDocument()
+  })
+
+  it('does not show restore button for edit_block without rawContent', () => {
+    renderInList(blockDefaultProps({ entry: makeEntry(1, 'edit_block', { some_field: 'val' }) }))
+    expect(screen.queryByRole('button', { name: /restore to this point/i })).not.toBeInTheDocument()
+  })
+
+  it('does not show restore button for create_block', () => {
+    renderInList(blockDefaultProps({ entry: makeEntry(1, 'create_block', { content: 'new' }) }))
+    expect(screen.queryByRole('button', { name: /restore to this point/i })).not.toBeInTheDocument()
+  })
+
+  it('does not show restore button for delete_block', () => {
+    renderInList(blockDefaultProps({ entry: makeEntry(1, 'delete_block', { block_id: 'B1' }) }))
+    expect(screen.queryByRole('button', { name: /restore to this point/i })).not.toBeInTheDocument()
+  })
+
+  it('calls onRestore when restore button is clicked', async () => {
+    const user = userEvent.setup()
+    const onRestore = vi.fn()
+    const entry = makeEntry(1, 'edit_block', { to_text: 'content' })
+    renderInList(blockDefaultProps({ entry, onRestore }))
+    await user.click(screen.getByRole('button', { name: /restore to this point/i }))
+    expect(onRestore).toHaveBeenCalledWith(entry)
+  })
+
+  it('shows diff toggle for edit_block entries', () => {
+    renderInList(blockDefaultProps())
+    expect(screen.getByRole('button', { name: /Diff/ })).toBeInTheDocument()
+  })
+
+  it('does not show diff toggle for non-edit_block', () => {
+    renderInList(blockDefaultProps({ entry: makeEntry(1, 'create_block', { content: 'new' }) }))
+    expect(screen.queryByRole('button', { name: /Diff/ })).not.toBeInTheDocument()
+  })
+
+  it('calls onToggleDiff when diff button is clicked', async () => {
+    const user = userEvent.setup()
+    const onToggleDiff = vi.fn()
+    const entry = makeEntry(1, 'edit_block', { to_text: 'content' })
+    renderInList(blockDefaultProps({ entry, onToggleDiff }))
+    await user.click(screen.getByRole('button', { name: /Diff/ }))
+    expect(onToggleDiff).toHaveBeenCalledWith(entry)
+  })
+
+  it('renders diff display when expanded', () => {
+    const diffSpans = [
+      { tag: 'Equal' as const, value: 'Hello' },
+      { tag: 'Delete' as const, value: 'old' },
+      { tag: 'Insert' as const, value: 'new' },
+    ]
+    renderInList(blockDefaultProps({ isExpanded: true, diffSpans }))
+    expect(document.querySelector('.diff-container')).toBeInTheDocument()
+  })
+
+  it('does not render diff display when not expanded', () => {
+    const diffSpans = [{ tag: 'Equal' as const, value: 'Hello' }]
+    renderInList(blockDefaultProps({ isExpanded: false, diffSpans }))
+    expect(document.querySelector('.diff-container')).not.toBeInTheDocument()
+  })
+
+  it('shows device_id with full opacity (not /60)', () => {
+    renderInList(blockDefaultProps())
+    const deviceEl = screen.getByText('dev:DEVICE01')
+    expect(deviceEl).toHaveClass('text-muted-foreground')
+    expect(deviceEl.className).not.toContain('/60')
+  })
+
+  it('renders relative timestamp', () => {
+    renderInList(blockDefaultProps())
+    // formatTimestamp with 'relative' is called — check the time element exists
+    const timeEl = document.querySelector('.history-item-time')
+    expect(timeEl).toBeInTheDocument()
+  })
+
+  it('renders content preview with line-clamp-2', () => {
+    renderInList(
+      blockDefaultProps({ entry: makeEntry(1, 'edit_block', { to_text: 'Hello world' }) }),
+    )
+    const preview = screen.getByText('Hello world').closest('.history-item-preview')
+    expect(preview).toHaveClass('line-clamp-2')
+  })
+
+  it('renders property payload display', () => {
+    renderInList(
+      blockDefaultProps({
+        entry: makeEntry(1, 'set_property', { key: 'due_date', value: '2026-04-15' }),
+      }),
+    )
+    expect(screen.getByText(/Due Date/)).toBeInTheDocument()
+    expect(screen.getByText(/2026-04-15/)).toBeInTheDocument()
+  })
+
+  it('does not render checkbox (no selection in block history)', () => {
+    renderInList(blockDefaultProps())
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+  })
+
+  it('has no a11y violations', async () => {
+    const { container } = renderInList(blockDefaultProps())
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  it('has no a11y violations with diff expanded', async () => {
+    const diffSpans = [
+      { tag: 'Equal' as const, value: 'Hello' },
+      { tag: 'Insert' as const, value: 'world' },
+    ]
+    const { container } = renderInList(blockDefaultProps({ isExpanded: true, diffSpans }))
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
     })
   })
 })

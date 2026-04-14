@@ -68,6 +68,21 @@ describe('HistorySheet', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
+  it('has w-80 width class on SheetContent for desktop', () => {
+    render(<HistorySheet blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    // SheetContent renders with role="dialog"
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveClass('sm:w-80')
+  })
+
+  it('has padding wrapper inside ScrollArea', () => {
+    render(<HistorySheet blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    const panel = screen.getByTestId('history-panel')
+    const wrapper = panel.closest('.px-4')
+    expect(wrapper).toBeInTheDocument()
+    expect(wrapper).toHaveClass('mt-4', 'space-y-3', 'pb-4')
+  })
+
   it('has no a11y violations when open', async () => {
     const { container } = render(
       <HistorySheet blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />,

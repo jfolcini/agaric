@@ -5,30 +5,22 @@
  * Supports restoring a block to a previous state via the op log payload.
  */
 
-import { Clock, RotateCcw } from 'lucide-react'
+import { Clock } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { ChevronToggle } from '@/components/ui/chevron-toggle'
-import { Spinner } from '@/components/ui/spinner'
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
-import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
 import { formatTimestamp } from '../lib/format'
-import { getPayloadRawContent, getPropertyPayload } from '../lib/history-utils'
-import { formatPropertyName } from '../lib/property-utils'
 import type { HistoryEntry } from '../lib/tauri'
 import { editBlock, getBlockHistory } from '../lib/tauri'
-import { DiffDisplay } from './DiffDisplay'
 import { EmptyState } from './EmptyState'
 import { HistoryFilterBar } from './HistoryFilterBar'
+import { BlockHistoryItem } from './HistoryListItem'
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
-import { renderRichContent } from './StaticBlock'
 
 interface HistoryPanelProps {
   /** The block to show history for. */
@@ -41,13 +33,11 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   const [loading, setLoading] = useState(false)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
-  const [restoringSeq, setRestoringSeq] = useState<number | null>(null)
   const [confirmEntry, setConfirmEntry] = useState<HistoryEntry | null>(null)
   const [opTypeFilter, setOpTypeFilter] = useState<string | null>(null)
   const { expandedKeys, diffCache, loadingDiffs, handleToggleDiff } = useHistoryDiffToggle<number>(
     (entry) => entry.seq,
   )
-  const richCallbacks = useRichContentCallbacks()
 
   const loadHistory = useCallback(
     async (cursor?: string) => {
@@ -91,7 +81,6 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   const handleRestore = useCallback(
     async (entry: HistoryEntry) => {
       if (!blockId) return
-      setRestoringSeq(entry.seq)
       try {
         const parsed = JSON.parse(entry.payload) as { to_text?: string }
         if (parsed.to_text != null) {
@@ -101,7 +90,6 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
       } catch {
         toast.error(t('history.revertPanelFailed'))
       }
-      setRestoringSeq(null)
     },
     [blockId, t],
   )
@@ -121,85 +109,19 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         empty={<EmptyState icon={Clock} message={t('history.noHistoryEmpty')} />}
       >
         {(items) => (
-          <ul className="history-list space-y-2 list-none p-0 m-0">
-            {items.map((entry) => {
-              const rawContent = getPayloadRawContent(entry)
-              const propPayload = getPropertyPayload(entry)
-              const isEditBlock = entry.op_type === 'edit_block'
-              return (
-                <li
-                  key={entry.seq}
-                  className="history-item flex flex-col gap-2 rounded-lg border bg-card p-4"
-                >
-                  <div className="history-item-row flex flex-col [@media(pointer:fine)]:flex-row [@media(pointer:fine)]:items-start [@media(pointer:fine)]:justify-between gap-3 w-full">
-                    <div className="history-item-content flex flex-col gap-1 min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <Badge variant="secondary" className="history-item-type shrink-0">
-                          {entry.op_type}
-                        </Badge>
-                        <span className="history-item-time text-xs [@media(pointer:coarse)]:text-sm text-muted-foreground">
-                          {formatTimestamp(entry.created_at)}
-                        </span>
-                        <span className="text-xs text-muted-foreground/60">&middot;</span>
-                        <span className="text-xs text-muted-foreground/60">
-                          dev:{entry.device_id.slice(0, 8)}
-                        </span>
-                      </div>
-                      {propPayload && (
-                        <span className="history-item-preview text-sm text-muted-foreground line-clamp-2">
-                          {formatPropertyName(propPayload.key)}
-                          {propPayload.value != null && ` → ${propPayload.value}`}
-                        </span>
-                      )}
-                      {!propPayload && rawContent && (
-                        <span className="history-item-preview text-sm text-muted-foreground line-clamp-2">
-                          {renderRichContent(rawContent, {
-                            interactive: false,
-                            ...richCallbacks,
-                          })}
-                        </span>
-                      )}
-                    </div>
-                    {entry.op_type === 'edit_block' && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="diff-toggle-btn shrink-0 h-7 px-2"
-                        onClick={() => handleToggleDiff(entry)}
-                      >
-                        <ChevronToggle
-                          isExpanded={expandedKeys.has(entry.seq)}
-                          loading={loadingDiffs.has(entry.seq)}
-                          size="md"
-                        />
-                        {t('history.diffButton')}
-                      </Button>
-                    )}
-                    {isEditBlock && rawContent && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="history-restore-btn shrink-0 touch-target"
-                        onClick={() => setConfirmEntry(entry)}
-                        disabled={restoringSeq === entry.seq}
-                      >
-                        {restoringSeq === entry.seq ? (
-                          <Spinner size="sm" />
-                        ) : (
-                          <RotateCcw className="h-3.5 w-3.5" />
-                        )}
-                        {t('history.restoreButton')}
-                      </Button>
-                    )}
-                  </div>
-                  {expandedKeys.has(entry.seq) && diffCache.has(entry.seq) && (
-                    <div className="diff-container mt-2 w-full">
-                      <DiffDisplay spans={diffCache.get(entry.seq) ?? []} />
-                    </div>
-                  )}
-                </li>
-              )
-            })}
+          <ul className="history-list space-y-0 list-none p-0 m-0">
+            {items.map((entry, i) => (
+              <BlockHistoryItem
+                key={entry.seq}
+                entry={entry}
+                index={i}
+                isExpanded={expandedKeys.has(entry.seq)}
+                isLoadingDiff={loadingDiffs.has(entry.seq)}
+                diffSpans={diffCache.get(entry.seq)}
+                onToggleDiff={handleToggleDiff}
+                onRestore={(e) => setConfirmEntry(e)}
+              />
+            ))}
           </ul>
         )}
       </ListViewState>

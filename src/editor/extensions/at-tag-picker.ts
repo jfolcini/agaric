@@ -15,7 +15,7 @@ import { logger } from '../../lib/logger'
 import type { PickerItem } from '../SuggestionList'
 import { createSuggestionRenderer } from '../suggestion-renderer'
 
-const atTagPickerPluginKey = new PluginKey('atTagPicker')
+export const atTagPickerPluginKey = new PluginKey('atTagPicker')
 
 export interface AtTagPickerOptions {
   /** Return tags matching the query. Called on every keystroke after @. */
@@ -100,7 +100,14 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
         char: '@',
         allowedPrefixes: null,
         allowSpaces: true,
-        items: ({ query }) => this.options.items(query),
+        items: async ({ query }) => {
+          try {
+            return await this.options.items(query)
+          } catch (err) {
+            logger.warn('AtTagPicker', 'items callback failed, returning empty', { query }, err)
+            return []
+          }
+        },
         command: ({ editor, range, props }) => {
           const item = props as PickerItem
           if (item.isCreate && extensionOptions.onCreate) {
