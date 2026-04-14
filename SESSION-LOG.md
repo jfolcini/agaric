@@ -1,5 +1,41 @@
 # Session Log
 
+## Session 379 — B-75 suggestion popup fix + UX-172 history sheet overhaul (2026-04-14)
+
+**2 items resolved. REVIEW-LATER is empty (0 open items).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| B-75 (resolved) | Suggestion popups stop appearing after first use — wrapped all 5 picker items() callbacks in defensive try-catch, reset suggestion plugin states in mount() | 6 editor files |
+| UX-172 (resolved) | Block history sheet visual overhaul — extracted HistoryItemCore, created BlockHistoryItem, refactored HistoryPanel, updated HistorySheet width/padding | 6 component/test files |
+
+### Implementation
+
+#### B-75 — Suggestion popup fix
+- **Defensive try-catch**: All 5 picker extensions (`block-link-picker.ts`, `at-tag-picker.ts`, `block-ref-picker.ts`, `slash-command.ts`, `property-picker.ts`) wrap their `items()` callbacks in async try-catch returning `[]` on error. Prevents unhandled rejections in `@tiptap/suggestion`'s async `view.update()` from permanently breaking the popup lifecycle.
+- **Suggestion state reset**: `use-roving-editor.ts` mount() now dispatches `setMeta(key, { exit: true })` for all 5 suggestion plugin keys after the History plugin reset, clearing stale `active = true` state that persists across block switches.
+- **Plugin key exports**: All 5 picker plugin keys exported and collected into `suggestionPluginKeys` array.
+
+#### UX-172 — History sheet visual overhaul
+- **HistoryItemCore**: New shared component in `HistoryListItem.tsx` — semantic colored badges with icons (opBadgeClasses + opIcon), relative timestamps with full-date tooltips, full-opacity device IDs, content previews, diff toggle buttons.
+- **BlockHistoryItem**: New compact component for per-block sheet — `<li>` with border dividers (no padded cards), icon-only restore button for edit_block entries with rawContent, no checkboxes/selection.
+- **HistoryPanel**: Replaced ~75 lines of inline rendering with `<BlockHistoryItem>`, removed dead `restoringSeq` state, cleaned unused imports.
+- **HistorySheet**: Added `w-3/4 sm:w-80` width constraint and `mt-4 space-y-3 px-4 pb-4` padding wrapper matching BlockPropertyDrawer.
+- **Tests**: 20 new BlockHistoryItem tests (render, interaction, a11y), 2 new HistorySheet tests (width, padding), 1 updated HistoryPanel test.
+
+### Review findings fixed
+- B-75: Added missing try-catch to `slash-command.ts` and `property-picker.ts` (reviewer caught)
+- UX-172: Removed unused `diffSpans` from `HistoryItemCoreProps` interface (reviewer caught)
+
+### Stats
+- 12 files changed (+464 -198 lines)
+- 807 tests pass (23 test files across editor + history components)
+- 2 items resolved — REVIEW-LATER now has 0 open items
+
+---
+
 ## Session 378 — Fix filter pill disappearance + rename "Due" panel to "Agenda" (2026-04-13)
 
 **3 panels fixed, 1 label renamed. REVIEW-LATER remains at 0 open items.**
