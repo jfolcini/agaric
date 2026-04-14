@@ -316,7 +316,7 @@ function SortableBlockInner({
 
         {/* ── Sliding content wrapper (swipe-to-delete) ───────────── */}
         <div
-          className="flex items-stretch gap-1 w-full max-sm:items-start max-sm:flex-wrap"
+          className="flex items-stretch gap-1 w-full max-sm:items-start max-sm:flex-wrap max-sm:gap-x-1 max-sm:gap-y-1.5"
           data-testid="swipe-content"
           style={{
             transform:

@@ -180,7 +180,7 @@ export function BlockInlineControls({
   return (
     <div
       className={cn(
-        'inline-controls flex items-center flex-shrink-0 gap-1 max-sm:flex-shrink max-sm:flex-wrap max-sm:w-auto max-sm:gap-1',
+        'inline-controls flex items-center flex-shrink-0 gap-1 max-sm:flex-shrink max-sm:flex-wrap max-sm:w-auto max-sm:gap-x-1 max-sm:gap-y-1.5',
       )}
     >
       {hasChildren ? (
@@ -188,7 +188,7 @@ export function BlockInlineControls({
           <TooltipTrigger asChild>
             <button
               type="button"
-              className="collapse-toggle flex-shrink-0 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
+              className="collapse-toggle flex-shrink-0 w-5 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
               data-testid="collapse-toggle"
               onClick={() => onToggleCollapse?.(blockId)}
               aria-label={isCollapsed ? t('block.expandChildren') : t('block.collapseChildren')}
@@ -204,7 +204,7 @@ export function BlockInlineControls({
       ) : // Only reserve space for the caret if at least one block in the tree has children.
       // This avoids an unsightly gap on leaf-only pages.
       anyBlockHasChildren ? (
-        <span className="flex-shrink-0 p-0.5 h-4 w-4" aria-hidden />
+        <span className="flex-shrink-0 w-5 h-5" aria-hidden />
       ) : null}
 
       <Tooltip>

@@ -225,6 +225,7 @@ vi.mock('@dnd-kit/core', () => ({
   useSensor: vi.fn(),
   useSensors: vi.fn(() => []),
   MeasuringStrategy: { Always: 'always' },
+  useDroppable: vi.fn(() => ({ setNodeRef: vi.fn() })),
 }))
 vi.mock('@dnd-kit/sortable', () => ({
   SortableContext: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,

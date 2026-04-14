@@ -27,6 +27,7 @@ import {
   getDragDescendants,
   getProjection,
   type Projection,
+  SENTINEL_ID,
 } from '../lib/tree-utils'
 import { useIsMobile } from './use-mobile'
 import { useAutoScrollOnDrag } from './useAutoScrollOnDrag'
@@ -150,15 +151,14 @@ export function useBlockDnD({
         const currentParentId = activeBlock.parent_id ?? rootParentId
         const depthChanged = projected.depth !== activeBlock.depth
         const parentChanged = projected.parentId !== currentParentId
+        const isSentinel = (over.id as string) === SENTINEL_ID
 
-        if (depthChanged || parentChanged || active.id !== over.id) {
+        if (isSentinel || depthChanged || parentChanged || active.id !== over.id) {
           // Tree-aware move: use projection to determine new parent + position
-          const newPosition = computePosition(
-            visibleItems,
-            projected.parentId,
-            visibleItems.findIndex((b) => b.id === over.id),
-            blockId,
-          )
+          const overIndex = isSentinel
+            ? visibleItems.length
+            : visibleItems.findIndex((b) => b.id === over.id)
+          const newPosition = computePosition(visibleItems, projected.parentId, overIndex, blockId)
           moveToParent(blockId, projected.parentId, newPosition)
           return
         }

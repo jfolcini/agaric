@@ -7,9 +7,11 @@ import type { BlockRow } from '../tauri'
 import {
   buildFlatTree,
   computePosition,
+  DEAD_ZONE_PX,
   type FlatBlock,
   getDragDescendants,
   getProjection,
+  SENTINEL_ID,
 } from '../tree-utils'
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -258,13 +260,14 @@ describe('getProjection', () => {
       mkFlat('Z', null, 2, 0),
       mkFlat('Y', null, 3, 0),
     ]
-    // Drag Y over Z (same position), with rightward offset of 1 indent
-    const result = getProjection(flat, 'Y', 'Z', INDENT, INDENT)
+    // Drag Y over Z (same position), with rightward offset of dead zone + 1 indent
+    // Need to exceed 20px dead zone, then 24px for one indent level
+    const result = getProjection(flat, 'Y', 'Z', DEAD_ZONE_PX + INDENT, INDENT)
     // overIndex=1, activeIndex=2: overIndex < activeIndex
     // clone: remove Y → [X, Z], insert at 1 → [X, Y, Z]
     // projectedIndex=1, prev=X(depth 0), next=Z(depth 0)
     // maxDepth=1, minDepth=0
-    // dragDepth=round(24/24)=1, projected=0+1=1, clamped to 1
+    // effectiveOffset=24, dragDepth=round(24/24)=1, projected=0+1=1, clamped to 1
     expect(result.depth).toBe(1)
     expect(result.parentId).toBe('X') // child of X
   })
@@ -340,7 +343,7 @@ describe('getProjection', () => {
       mkFlat('X', null, 2, 0),
       mkFlat('B', null, 3, 0),
     ]
-    const result = getProjection(flat, 'B', 'X', INDENT, INDENT)
+    const result = getProjection(flat, 'B', 'X', DEAD_ZONE_PX + INDENT, INDENT)
     expect(result.depth).toBe(1)
     expect(result.parentId).toBe('GP')
   })
@@ -433,5 +436,84 @@ describe('computePosition', () => {
       mkFlat('C2', 'P', 20, 1),
     ]
     expect(computePosition(items, 'P', 1, 'dragged')).toBe(9)
+  })
+})
+
+// ── getProjection dead zone ──────────────────────────────────────────────
+
+describe('getProjection dead zone', () => {
+  const INDENT = 24
+  const items: FlatBlock[] = [
+    mkFlat('A', null, 1, 0),
+    mkFlat('B', null, 2, 0),
+    mkFlat('C', null, 3, 0),
+  ]
+
+  it('does not change depth within dead zone (< 20px)', () => {
+    const result = getProjection(items, 'A', 'B', 15, INDENT) // 15px < 20px dead zone
+    expect(result.depth).toBe(0) // no indent
+  })
+
+  it('does not change depth at exactly dead zone boundary', () => {
+    const result = getProjection(items, 'A', 'B', DEAD_ZONE_PX, INDENT) // exactly 20px
+    expect(result.depth).toBe(0)
+  })
+
+  it('allows indent after exceeding dead zone', () => {
+    // 20px dead zone + 24px indent width = need 44px+ for indent
+    // Drag B over C: after sim [A, B, C] projectedIndex=1, prev=A(depth 0), next=C(depth 0)
+    // maxDepth=1, minDepth=0
+    // effectiveOffset=44-20=24, dragDepth=round(24/24)=1, projected=0+1=1, clamped to 1
+    const result = getProjection(items, 'B', 'C', DEAD_ZONE_PX + INDENT, INDENT)
+    expect(result.depth).toBe(1)
+  })
+
+  it('applies dead zone symmetrically for negative offset (dedent)', () => {
+    const nested: FlatBlock[] = [
+      mkFlat('P', null, 1, 0),
+      mkFlat('A', 'P', 1, 1),
+      mkFlat('B', 'P', 2, 1),
+    ]
+    const result = getProjection(nested, 'A', 'B', -15, INDENT) // within dead zone
+    expect(result.depth).toBe(1) // stays at current depth
+  })
+})
+
+// ── getProjection sentinel ───────────────────────────────────────────────
+
+describe('getProjection sentinel', () => {
+  const INDENT = 24
+  const items: FlatBlock[] = [mkFlat('A', null, 1, 0), mkFlat('B', null, 2, 0)]
+
+  it('returns root-level projection for sentinel with no horizontal offset', () => {
+    const result = getProjection(items, 'A', SENTINEL_ID, 0, INDENT)
+    expect(result.depth).toBe(0)
+    expect(result.parentId).toBeNull()
+  })
+
+  it('allows indentation on sentinel when drag offset exceeds dead zone', () => {
+    // Need DEAD_ZONE_PX + INDENT = 20 + 24 = 44px to get depth 1
+    const result = getProjection(items, 'A', SENTINEL_ID, DEAD_ZONE_PX + INDENT, INDENT)
+    expect(result.depth).toBe(1)
+    expect(result.parentId).toBe('B') // child of the last visible item
+  })
+
+  it('clamps sentinel depth to maxDepth (lastItem.depth + 1)', () => {
+    // Last item B is at depth 0, maxDepth = 1
+    const result = getProjection(items, 'A', SENTINEL_ID, DEAD_ZONE_PX + INDENT * 5, INDENT)
+    expect(result.depth).toBe(1) // clamped to maxEndDepth
+  })
+
+  it('clamps sentinel depth to 0 for negative offset', () => {
+    const result = getProjection(items, 'A', SENTINEL_ID, -(DEAD_ZONE_PX + INDENT * 5), INDENT)
+    expect(result.depth).toBe(0)
+    expect(result.parentId).toBeNull()
+  })
+
+  it('returns depth 0 for sentinel with empty items list', () => {
+    const result = getProjection([], 'A', SENTINEL_ID, 0, INDENT)
+    // activeItem not found → fallback
+    expect(result.depth).toBe(0)
+    expect(result.parentId).toBeNull()
   })
 })

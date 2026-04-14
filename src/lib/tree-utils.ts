@@ -9,6 +9,12 @@
 
 import type { BlockRow } from './tauri'
 
+/** Sentinel ID used as drop target after the last block in the list. */
+export const SENTINEL_ID = '__drop-after-last__'
+
+/** Dead zone in pixels: horizontal drag must exceed this before any indent change. */
+export const DEAD_ZONE_PX = 20
+
 /** A block with its depth in the visual tree. */
 export interface FlatBlock extends BlockRow {
   depth: number
@@ -128,7 +134,32 @@ export function getProjection(
   const activeIndex = items.findIndex((item) => item.id === activeId)
   const activeItem = items[activeIndex]
 
-  if (!activeItem || overIndex < 0) {
+  if (!activeItem) {
+    return { depth: 0, parentId: rootParentId, maxDepth: 0, minDepth: 0 }
+  }
+
+  // Sentinel: drop after last item — compute depth/parent from drag offset
+  if (overId === SENTINEL_ID) {
+    const lastItem = items[items.length - 1]
+    const maxEndDepth = lastItem ? lastItem.depth + 1 : 0
+    // Use drag offset to allow indentation even at the end
+    const effectiveOffset =
+      Math.abs(dragOffset) > DEAD_ZONE_PX ? dragOffset - Math.sign(dragOffset) * DEAD_ZONE_PX : 0
+    const dragDepthVal = Math.round(effectiveOffset / indentWidth)
+    let endDepth = (lastItem?.depth ?? 0) + dragDepthVal
+    endDepth = Math.max(0, Math.min(endDepth, maxEndDepth))
+
+    // Walk backwards to find parent at endDepth - 1
+    let endParentId = rootParentId
+    if (endDepth > 0) {
+      const ancestor = [...items].reverse().find((item) => item.depth === endDepth - 1)
+      endParentId = ancestor?.id ?? rootParentId
+    }
+
+    return { depth: endDepth, parentId: endParentId, maxDepth: maxEndDepth, minDepth: 0 }
+  }
+
+  if (overIndex < 0) {
     return { depth: 0, parentId: rootParentId, maxDepth: 0, minDepth: 0 }
   }
 
@@ -143,7 +174,10 @@ export function getProjection(
   const previousItem: FlatBlock | undefined = clonedItems[projectedIndex - 1]
   const nextItem: FlatBlock | undefined = clonedItems[projectedIndex + 1]
 
-  const dragDepth = Math.round(dragOffset / indentWidth)
+  // Dead zone: ignore small horizontal movements to prevent accidental indent
+  const effectiveOffset =
+    Math.abs(dragOffset) > DEAD_ZONE_PX ? dragOffset - Math.sign(dragOffset) * DEAD_ZONE_PX : 0
+  const dragDepth = Math.round(effectiveOffset / indentWidth)
   const projectedDepth = activeItem.depth + dragDepth
 
   // Max depth: can be a child of the previous item (previous.depth + 1)

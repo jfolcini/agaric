@@ -35,6 +35,7 @@ vi.mock('../../lib/tree-utils', () => ({
   getDragDescendants: vi.fn(() => new Set<string>()),
   getProjection: vi.fn(() => null),
   computePosition: vi.fn(() => 0),
+  SENTINEL_ID: '__drop-after-last__',
 }))
 
 vi.mock('../../components/SortableBlock', () => ({
@@ -846,6 +847,73 @@ describe('useBlockDnD', () => {
 
       expect(result.current.activeId).toBe('C')
       expect(result.current.overId).toBe('C')
+    })
+  })
+
+  // ── 13. Sentinel drop handling (UX-176) ──────────────────────────────
+
+  describe('handleDragEnd (sentinel)', () => {
+    it('calls moveToParent when dropping on sentinel', () => {
+      const blocks = [
+        makeFlatBlock('A', 0, null, 0),
+        makeFlatBlock('B', 0, null, 1),
+        makeFlatBlock('C', 0, null, 2),
+      ]
+      const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
+
+      // Set up projection for sentinel drop (root level)
+      const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
+      mockedGetProjection.mockReturnValue(projection)
+      mockedComputePosition.mockReturnValue(3)
+
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      // Start drag on A
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('A') as never)
+      })
+
+      // Set over to sentinel
+      act(() => {
+        result.current.handleDragOver(makeDragOverEvent('__drop-after-last__') as never)
+      })
+
+      // End drag over sentinel
+      act(() => {
+        result.current.handleDragEnd(makeDragEndEvent('A', '__drop-after-last__') as never)
+      })
+
+      // moveToParent should be called with projected parentId and computed position
+      expect(params.moveToParent).toHaveBeenCalledWith('A', null, 3)
+      expect(params.reorder).not.toHaveBeenCalled()
+    })
+
+    it('passes visibleItems.length as overIndex for sentinel', () => {
+      const blocks = [makeFlatBlock('A', 0, null, 0), makeFlatBlock('B', 0, null, 1)]
+      const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
+
+      const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
+      mockedGetProjection.mockReturnValue(projection)
+      mockedComputePosition.mockReturnValue(5)
+
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('A') as never)
+      })
+
+      act(() => {
+        result.current.handleDragEnd(makeDragEndEvent('A', '__drop-after-last__') as never)
+      })
+
+      // computePosition should be called with overIndex = visibleItems.length
+      expect(mockedComputePosition).toHaveBeenCalledWith(
+        expect.any(Array),
+        null,
+        expect.any(Number), // visibleItems.length
+        'A',
+      )
+      expect(params.moveToParent).toHaveBeenCalledWith('A', null, 5)
     })
   })
 })

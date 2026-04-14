@@ -6,7 +6,7 @@
  */
 
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { NavigateToPageFn } from '../lib/block-events'
@@ -70,18 +70,17 @@ function PageEditorInner({
   const selectedBlockId = useNavigationStore((s) => s.selectedBlockId)
   const clearSelection = useNavigationStore((s) => s.clearSelection)
 
-  useEffect(() => {
+  // useLayoutEffect fires synchronously after DOM commit but before paint,
+  // eliminating the visible scroll jump that occurred with useEffect + rAF (B-76).
+  useLayoutEffect(() => {
     if (!selectedBlockId || blocks.length === 0) return
     // Focus the target block if it exists in this page's block tree
     const target = blocks.find((b) => b.id === selectedBlockId)
     if (target) {
       setFocused(selectedBlockId)
-      // Scroll into view after a tick to allow DOM to update
-      requestAnimationFrame(() => {
-        document
-          .querySelector(`[data-block-id="${selectedBlockId}"]`)
-          ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      })
+      document
+        .querySelector(`[data-block-id="${selectedBlockId}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       clearSelection()
     }
   }, [selectedBlockId, blocks, setFocused, clearSelection])

@@ -294,7 +294,7 @@ describe('BlockInlineControls', () => {
     const { container } = renderControls(
       makeProps({ hasChildren: false, anyBlockHasChildren: true }),
     )
-    const placeholder = container.querySelector('span.flex-shrink-0.p-0\\.5.h-4.w-4')
+    const placeholder = container.querySelector('span.flex-shrink-0.w-5.h-5')
     expect(placeholder).toBeInTheDocument()
   })
 
@@ -302,13 +302,29 @@ describe('BlockInlineControls', () => {
     const { container } = renderControls(
       makeProps({ hasChildren: false, anyBlockHasChildren: false }),
     )
-    const placeholder = container.querySelector('span.flex-shrink-0.p-0\\.5.h-4.w-4')
+    const placeholder = container.querySelector('span.flex-shrink-0.w-5.h-5')
     expect(placeholder).not.toBeInTheDocument()
   })
 
   it('renders collapse toggle when hasChildren is true regardless of anyBlockHasChildren', () => {
     renderControls(makeProps({ hasChildren: true, anyBlockHasChildren: false }))
     expect(screen.getByTestId('collapse-toggle')).toBeInTheDocument()
+  })
+
+  it('spacer and collapse toggle have matching width', () => {
+    // Render with hasChildren=false, anyBlockHasChildren=true to get spacer
+    const { container: spacerContainer } = renderControls(
+      makeProps({ hasChildren: false, anyBlockHasChildren: true }),
+    )
+    const spacer = spacerContainer.querySelector('span[aria-hidden]')
+    expect(spacer?.className).toContain('w-5')
+
+    // Render with hasChildren=true to get button
+    const { container: buttonContainer } = renderControls(
+      makeProps({ hasChildren: true, anyBlockHasChildren: true }),
+    )
+    const button = buttonContainer.querySelector('.collapse-toggle')
+    expect(button?.className).toContain('w-5')
   })
 
   it('renders task marker button', () => {

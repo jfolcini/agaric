@@ -360,10 +360,13 @@ function App() {
 
   useEffect(() => {
     if (!fadeVisible) {
-      const id = requestAnimationFrame(() => {
+      // Delay fade-in by 150ms to allow page content to load from SQLite
+      // before the opacity transition begins, preventing CLS from skeleton
+      // placeholders being replaced by actual content mid-fade (B-76).
+      const id = setTimeout(() => {
         setFadeVisible(true)
-      })
-      return () => cancelAnimationFrame(id)
+      }, 150)
+      return () => clearTimeout(id)
     }
     return undefined
   }, [fadeVisible])

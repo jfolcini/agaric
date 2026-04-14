@@ -35,6 +35,11 @@ vi.mock('@dnd-kit/sortable', () => ({
   verticalListSortingStrategy: vi.fn(),
 }))
 
+// Mock @dnd-kit/core (useDroppable for SentinelDropZone)
+vi.mock('@dnd-kit/core', () => ({
+  useDroppable: () => ({ setNodeRef: vi.fn(), isOver: false }),
+}))
+
 import { BlockListRenderer } from '../BlockListRenderer'
 
 const noop = () => {}
@@ -414,5 +419,67 @@ describe('BlockListRenderer', () => {
     expect(
       screen.getByTestId('sortable-block-GRANDCHILD').parentElement as HTMLElement,
     ).toHaveClass('block-children-enter')
+  })
+
+  // ── Sentinel drop zone tests (UX-176) ─────────────────────────────
+
+  it('renders sentinel droppable zone after last block when blocks exist', () => {
+    const blocks = [
+      makeBlock({ id: 'BLK001', content: 'First' }),
+      makeBlock({ id: 'BLK002', content: 'Second' }),
+    ]
+    const { container } = render(
+      <BlockListRenderer {...makeProps({ visibleItems: blocks, blocks })} />,
+    )
+
+    // The sentinel is the last <li> inside the <ul>, with aria-hidden
+    const tree = container.querySelector('.block-tree')
+    const sentinelLi = tree?.querySelector('li[aria-hidden]')
+    expect(sentinelLi).toBeInTheDocument()
+
+    // The sentinel should contain a spacer div
+    const spacer = sentinelLi?.querySelector('.min-h-\\[60px\\]')
+    expect(spacer).toBeInTheDocument()
+  })
+
+  it('does not render sentinel when there are no blocks', () => {
+    const { container } = render(
+      <BlockListRenderer {...makeProps({ visibleItems: [], blocks: [], loading: false })} />,
+    )
+
+    // With no blocks, the empty state renders instead of the ul
+    const sentinelLi = container.querySelector('li[aria-hidden]')
+    expect(sentinelLi).not.toBeInTheDocument()
+  })
+
+  it('does not render sentinel during loading when no visible items', () => {
+    const { container } = render(
+      <BlockListRenderer
+        {...makeProps({ visibleItems: [], blocks: [makeBlock()], loading: true })}
+      />,
+    )
+
+    const sentinelLi = container.querySelector('li[aria-hidden]')
+    expect(sentinelLi).not.toBeInTheDocument()
+  })
+
+  it('renders drop indicator in sentinel when overId matches sentinel', () => {
+    const blocks = [makeBlock({ id: 'BLK001', content: 'First' })]
+    const { container } = render(
+      <BlockListRenderer
+        {...makeProps({
+          visibleItems: blocks,
+          blocks,
+          activeId: 'BLK001',
+          overId: '__drop-after-last__',
+          projected: { depth: 0, parentId: null, maxDepth: 0, minDepth: 0 },
+        })}
+      />,
+    )
+
+    const sentinelLi = container.querySelector('li[aria-hidden]')
+    expect(sentinelLi).toBeInTheDocument()
+    const dropIndicator = sentinelLi?.querySelector('.drop-indicator')
+    expect(dropIndicator).toBeInTheDocument()
   })
 })

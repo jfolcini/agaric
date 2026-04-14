@@ -6,6 +6,7 @@
  * (M-1 subtask 5) for file organization — no state of its own.
  */
 
+import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import type React from 'react'
 import { useEffect, useMemo, useRef } from 'react'
@@ -13,6 +14,7 @@ import { useTranslation } from 'react-i18next'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import type { ViewportObserver } from '../hooks/useViewportObserver'
 import type { FlatBlock, Projection } from '../lib/tree-utils'
+import { SENTINEL_ID } from '../lib/tree-utils'
 import { cn } from '../lib/utils'
 import { EmptyState } from './EmptyState'
 import { SortableBlock } from './SortableBlock'
@@ -147,6 +149,7 @@ export function BlockListRenderer({
   // ── Sibling aria props (UX-48) ─────────────────────────────────────
   // Compute aria-setsize / aria-posinset for each block by grouping
   // siblings that share the same parent in the flat list.
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: flat-list parent grouping inherently branches per-depth
   const siblingAriaProps = useMemo(() => {
     const result = new Map<string, { setsize: number; posinset: number }>()
     const groups = new Map<number, number[]>()
@@ -180,7 +183,10 @@ export function BlockListRenderer({
   }, [visibleItems])
 
   return (
-    <SortableContext items={visibleItems.map((b) => b.id)} strategy={verticalListSortingStrategy}>
+    <SortableContext
+      items={[...visibleItems.map((b) => b.id), ...(visibleItems.length > 0 ? [SENTINEL_ID] : [])]}
+      strategy={verticalListSortingStrategy}
+    >
       {blocks.length === 0 && !loading ? (
         <EmptyState message={rootParentId ? t('blockTree.emptyPage') : t('blockTree.noBlocks')} />
       ) : (
@@ -189,6 +195,7 @@ export function BlockListRenderer({
           aria-label={t('blockTree.treeLabel')}
           onPointerDown={onContainerPointerDown}
         >
+          {/* biome-ignore lint/complexity/noExcessiveCognitiveComplexity: block rendering has many conditional props (dnd, collapse, viewport, focus) */}
           {visibleItems.map((block) => {
             const isFocused = focusedBlockId === block.id
             // Show projected depth during drag for the active item's over target
@@ -233,7 +240,7 @@ export function BlockListRenderer({
                 {/* Drop indicator: shows where the dragged block will land */}
                 {projected && overId === block.id && activeId !== block.id && (
                   <div
-                    className="drop-indicator h-[3px] bg-primary rounded-full ring-2 ring-primary/20"
+                    className="drop-indicator h-[5px] bg-primary rounded-full ring-2 ring-primary/20"
                     style={{ marginLeft: `calc(var(--indent-width) * ${projected.depth})` }}
                   />
                 )}
@@ -274,8 +281,39 @@ export function BlockListRenderer({
               </li>
             )
           })}
+          {/* Sentinel droppable zone for dropping after last block */}
+          {!loading && visibleItems.length > 0 && (
+            <SentinelDropZone activeId={activeId} overId={overId} projected={projected} />
+          )}
         </ul>
       )}
     </SortableContext>
+  )
+}
+
+// ── Sentinel drop zone ─────────────────────────────────────────────────
+
+function SentinelDropZone({
+  activeId,
+  overId,
+  projected,
+}: {
+  activeId: string | null
+  overId: string | null
+  projected: Projection | null
+}): React.ReactElement {
+  const { setNodeRef } = useDroppable({ id: SENTINEL_ID })
+
+  return (
+    <li ref={setNodeRef} className="list-none m-0 p-0" aria-hidden>
+      {/* Drop indicator when hovering over sentinel */}
+      {projected && overId === SENTINEL_ID && activeId && (
+        <div
+          className="drop-indicator h-[5px] bg-primary rounded-full ring-2 ring-primary/20"
+          style={{ marginLeft: 0 }}
+        />
+      )}
+      <div className="min-h-[60px]" />
+    </li>
   )
 }
