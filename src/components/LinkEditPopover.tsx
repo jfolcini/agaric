@@ -24,6 +24,8 @@ export interface LinkEditPopoverProps {
   isEditing: boolean
   /** Pre-filled URL when editing; empty string for new links. */
   initialUrl: string
+  /** Pre-filled label text (selected text or existing link text). */
+  initialLabel: string
   /** Close the popover (called after apply, remove, or escape). */
   onClose: () => void
   /** Selection range saved before popover stole focus (B-70). */
@@ -54,16 +56,18 @@ export function LinkEditPopover({
   editor,
   isEditing,
   initialUrl,
+  initialLabel,
   onClose,
   savedSelection,
 }: LinkEditPopoverProps): React.ReactElement {
   const { t } = useTranslation()
   const [url, setUrl] = useState(initialUrl)
+  const [label, setLabel] = useState(initialLabel)
   const [urlError, setUrlError] = useState<string | null>(null)
 
   const handleApply = useCallback(() => {
-    const trimmed = url.trim()
-    if (!trimmed) {
+    const trimmedUrl = url.trim()
+    if (!trimmedUrl) {
       editor.commands.focus()
       onClose()
       return
@@ -74,13 +78,39 @@ export function LinkEditPopover({
       return
     }
     setUrlError(null)
+
+    const trimmedLabel = label.trim()
+    const linkText = trimmedLabel || normalized
+
     if (savedSelection && savedSelection.from !== savedSelection.to) {
-      // Restore the selection that was active when Ctrl+K was pressed
-      editor.chain().focus().setTextSelection(savedSelection).setLink({ href: normalized }).run()
+      if (isEditing && label === initialLabel) {
+        editor.chain().focus().setTextSelection(savedSelection).setLink({ href: normalized }).run()
+      } else {
+        editor
+          .chain()
+          .focus()
+          .setTextSelection(savedSelection)
+          .insertContent({
+            type: 'text',
+            text: linkText,
+            marks: [{ type: 'link', attrs: { href: normalized } }],
+          })
+          .run()
+      }
     } else {
-      editor.chain().focus().setLink({ href: normalized }).run()
+      editor
+        .chain()
+        .focus()
+        .insertContent({
+          type: 'text',
+          text: linkText,
+          marks: [{ type: 'link', attrs: { href: normalized } }],
+        })
+        .run()
     }
+
     // Exit the link mark so subsequent typing is plain text (UX-177)
+    // biome-ignore lint/complexity/useLiteralKeys: index signature requires bracket notation
     const linkMarkType = editor.schema.marks['link']
     if (linkMarkType) {
       editor.view.dispatch(editor.state.tr.removeStoredMark(linkMarkType))
@@ -90,7 +120,7 @@ export function LinkEditPopover({
       logger.warn('LinkEditPopover', 'link metadata prefetch failed', { url: normalized }, err)
     })
     onClose()
-  }, [editor, url, onClose, t, savedSelection])
+  }, [editor, url, label, initialLabel, isEditing, onClose, t, savedSelection])
 
   const handleRemove = useCallback(() => {
     editor.chain().focus().unsetLink().run()
@@ -112,24 +142,41 @@ export function LinkEditPopover({
   )
 
   return (
-    <div className="flex flex-col gap-2" data-testid="link-edit-popover">
-      <Label size="xs" htmlFor="link-url-input">
-        URL
-      </Label>
-      <Input
-        id="link-url-input"
-        type="url"
-        placeholder="https://..."
-        value={url}
-        onChange={(e) => {
-          setUrl(e.target.value)
-          setUrlError(null)
-        }}
-        onKeyDown={handleKeyDown}
-        autoFocus
-        className="h-8 text-sm"
-        data-testid="link-url-input"
-      />
+    <div className="flex flex-col gap-3" data-testid="link-edit-popover">
+      <div className="flex flex-col gap-1">
+        <Label size="xs" htmlFor="link-label-input">
+          {t('linkEdit.label')}
+        </Label>
+        <Input
+          id="link-label-input"
+          type="text"
+          placeholder={t('linkEdit.labelPlaceholder')}
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          onKeyDown={handleKeyDown}
+          className="h-8 [@media(pointer:coarse)]:h-11 text-sm"
+          data-testid="link-label-input"
+        />
+      </div>
+      <div className="flex flex-col gap-1">
+        <Label size="xs" htmlFor="link-url-input">
+          {t('linkEdit.url')}
+        </Label>
+        <Input
+          id="link-url-input"
+          type="url"
+          placeholder="https://..."
+          value={url}
+          onChange={(e) => {
+            setUrl(e.target.value)
+            setUrlError(null)
+          }}
+          onKeyDown={handleKeyDown}
+          autoFocus
+          className="h-8 [@media(pointer:coarse)]:h-11 text-sm"
+          data-testid="link-url-input"
+        />
+      </div>
       {urlError && (
         <p className="text-xs text-destructive" role="alert">
           {urlError}

@@ -12,6 +12,7 @@
  * Priority and Date buttons dispatch custom events that BlockTree listens for.
  */
 
+import { getMarkRange } from '@tiptap/core'
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
 import { FileCode2, Heading, Link2 } from 'lucide-react'
@@ -44,6 +45,26 @@ interface FormattingToolbarProps {
   blockId?: string
   /** Current priority of the focused block (null, '1', '2', '3'). */
   currentPriority?: string | null
+}
+
+/** Resolve the link mark range around the cursor, or undefined if not inside a link. */
+function getLinkMarkRange(editor: Editor): { from: number; to: number } | undefined {
+  try {
+    const $from = editor.state.doc.resolve(editor.state.selection.from)
+    // biome-ignore lint/complexity/useLiteralKeys: index signature requires bracket notation
+    const linkMark = editor.schema.marks['link']
+    if (linkMark) return getMarkRange($from, linkMark) ?? undefined
+  } catch {
+    // Cursor at document boundary
+  }
+  return undefined
+}
+
+function getHeadingLevel(editor: Editor): number {
+  for (let lvl = 1; lvl <= 6; lvl++) {
+    if (editor.isActive('heading', { level: lvl })) return lvl
+  }
+  return 0
 }
 
 const Tip = React.forwardRef<HTMLButtonElement, { label: string; children: React.ReactElement }>(
@@ -115,22 +136,11 @@ export function FormattingToolbar({
       link: ctx.editor.isActive('link'),
       codeBlock: ctx.editor.isActive('codeBlock'),
       codeBlockLanguage: ctx.editor.isActive('codeBlock')
-        ? ((ctx.editor.getAttributes('codeBlock')['language'] as string) ?? '')
+        ? // biome-ignore lint/complexity/useLiteralKeys: index signature requires bracket notation
+          ((ctx.editor.getAttributes('codeBlock')['language'] as string) ?? '')
         : '',
       blockquote: ctx.editor.isActive('blockquote'),
-      headingLevel: ctx.editor.isActive('heading', { level: 1 })
-        ? 1
-        : ctx.editor.isActive('heading', { level: 2 })
-          ? 2
-          : ctx.editor.isActive('heading', { level: 3 })
-            ? 3
-            : ctx.editor.isActive('heading', { level: 4 })
-              ? 4
-              : ctx.editor.isActive('heading', { level: 5 })
-                ? 5
-                : ctx.editor.isActive('heading', { level: 6 })
-                  ? 6
-                  : 0,
+      headingLevel: getHeadingLevel(ctx.editor),
       canUndo: ctx.editor.can().undo(),
       canRedo: ctx.editor.can().redo(),
     }),
@@ -143,6 +153,16 @@ export function FormattingToolbar({
 
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ from: number; to: number }>).detail
+
+      if (editor.isActive('link')) {
+        const range = getLinkMarkRange(editor)
+        if (range) {
+          setSavedSelection(range)
+          setLinkPopoverOpen(true)
+          return
+        }
+      }
+
       if (detail && detail.from !== detail.to) {
         setSavedSelection(detail)
       } else {
@@ -154,7 +174,26 @@ export function FormattingToolbar({
     return () => dom.removeEventListener('open-link-popover', handler)
   }, [editor])
 
+  // biome-ignore lint/complexity/useLiteralKeys: index signature requires bracket notation
   const currentUrl = state.link ? ((editor.getAttributes('link')['href'] as string) ?? '') : ''
+
+  let currentLabel = ''
+  if (state.link) {
+    const range = getLinkMarkRange(editor)
+    if (range) {
+      try {
+        currentLabel = editor.state.doc.textBetween(range.from, range.to)
+      } catch {
+        // Document boundary
+      }
+    }
+  } else if (savedSelection && savedSelection.from !== savedSelection.to) {
+    try {
+      currentLabel = editor.state.doc.textBetween(savedSelection.from, savedSelection.to)
+    } catch {
+      // Stale selection range
+    }
+  }
 
   const handleLinkPopoverClose = useCallback(() => {
     setSavedSelection(null)
@@ -198,6 +237,10 @@ export function FormattingToolbar({
                   className={cn(state.link && toolbarActiveClass)}
                   onPointerDown={(e) => {
                     e.preventDefault()
+                    if (!linkPopoverOpen && state.link) {
+                      const range = getLinkMarkRange(editor)
+                      if (range) setSavedSelection(range)
+                    }
                     setLinkPopoverOpen((prev) => !prev)
                   }}
                 >
@@ -210,6 +253,7 @@ export function FormattingToolbar({
                 editor={editor}
                 isEditing={state.link}
                 initialUrl={currentUrl}
+                initialLabel={currentLabel}
                 onClose={handleLinkPopoverClose}
                 savedSelection={savedSelection}
               />

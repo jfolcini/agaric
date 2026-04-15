@@ -35,6 +35,17 @@ vi.mock('../ui/button', () => ({
   ),
 }))
 
+vi.mock('../ui/label', () => ({
+  Label: ({
+    size: _size,
+    children,
+    ...props
+  }: React.LabelHTMLAttributes<HTMLLabelElement> & { size?: string }) => (
+    // biome-ignore lint/a11y/noLabelWithoutControl: htmlFor is passed via ...props from the real component
+    <label {...props}>{children}</label>
+  ),
+}))
+
 // Mock Tauri IPC functions used for link metadata prefetch (UX-165)
 const mockFetchLinkMetadata = vi.fn().mockResolvedValue({})
 
@@ -55,10 +66,17 @@ vi.mock('@/lib/logger', () => ({
 
 const mockRun = vi.fn()
 const mockSetLink = vi.fn(() => ({ run: mockRun }))
+const mockInsertContent = vi.fn(() => ({ run: mockRun }))
 const mockUnsetLink = vi.fn(() => ({ run: mockRun }))
+const mockSetTextSelection = vi.fn(() => ({
+  setLink: mockSetLink,
+  insertContent: mockInsertContent,
+}))
 const mockFocus = vi.fn(() => ({
   setLink: mockSetLink,
   unsetLink: mockUnsetLink,
+  setTextSelection: mockSetTextSelection,
+  insertContent: mockInsertContent,
 }))
 const mockChain = vi.fn(() => ({ focus: mockFocus }))
 const mockCommandsFocus = vi.fn()
@@ -158,14 +176,26 @@ describe('LinkEditPopover', () => {
   describe('rendering', () => {
     it('renders the popover container with data-testid', () => {
       render(
-        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
       )
       expect(screen.getByTestId('link-edit-popover')).toBeInTheDocument()
     })
 
     it('renders URL input with autoFocus', () => {
       render(
-        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
       )
       const input = screen.getByTestId('link-url-input')
       expect(input).toBeInTheDocument()
@@ -177,7 +207,13 @@ describe('LinkEditPopover', () => {
 
     it('renders Apply button when creating new link', () => {
       render(
-        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
       )
       expect(screen.getByRole('button', { name: 'Apply' })).toBeInTheDocument()
     })
@@ -188,6 +224,7 @@ describe('LinkEditPopover', () => {
           editor={makeEditor()}
           isEditing={true}
           initialUrl="https://example.com"
+          initialLabel=""
           onClose={onClose}
         />,
       )
@@ -197,7 +234,13 @@ describe('LinkEditPopover', () => {
 
     it('does NOT render Remove button when not editing', () => {
       render(
-        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
       )
       expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument()
     })
@@ -208,6 +251,7 @@ describe('LinkEditPopover', () => {
           editor={makeEditor()}
           isEditing={true}
           initialUrl="https://example.com"
+          initialLabel=""
           onClose={onClose}
         />,
       )
@@ -220,6 +264,7 @@ describe('LinkEditPopover', () => {
           editor={makeEditor()}
           isEditing={true}
           initialUrl="https://example.com"
+          initialLabel=""
           onClose={onClose}
         />,
       )
@@ -230,9 +275,15 @@ describe('LinkEditPopover', () => {
   // ── Apply action ───────────────────────────────────────────────────────
 
   describe('apply', () => {
-    it('calls editor.setLink with normalized URL on Apply click', () => {
+    it('calls editor.insertContent with normalized URL on Apply click', () => {
       render(
-        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
       )
 
       const input = screen.getByTestId('link-url-input')
@@ -241,27 +292,47 @@ describe('LinkEditPopover', () => {
 
       expect(mockChain).toHaveBeenCalled()
       expect(mockFocus).toHaveBeenCalled()
-      expect(mockSetLink).toHaveBeenCalledWith({ href: 'https://example.com' })
+      expect(mockInsertContent).toHaveBeenCalledWith({
+        type: 'text',
+        text: 'https://example.com',
+        marks: [{ type: 'link', attrs: { href: 'https://example.com' } }],
+      })
       expect(mockRun).toHaveBeenCalled()
       expect(onClose).toHaveBeenCalled()
     })
 
     it('applies link on Enter key in input', () => {
       render(
-        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
       )
 
       const input = screen.getByTestId('link-url-input')
       fireEvent.change(input, { target: { value: 'https://example.com' } })
       fireEvent.keyDown(input, { key: 'Enter' })
 
-      expect(mockSetLink).toHaveBeenCalledWith({ href: 'https://example.com' })
+      expect(mockInsertContent).toHaveBeenCalledWith({
+        type: 'text',
+        text: 'https://example.com',
+        marks: [{ type: 'link', attrs: { href: 'https://example.com' } }],
+      })
       expect(onClose).toHaveBeenCalled()
     })
 
     it('does NOT call setLink when URL is empty', () => {
       render(
-        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
       )
 
       fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
@@ -273,7 +344,13 @@ describe('LinkEditPopover', () => {
 
     it('does NOT call setLink when URL is whitespace-only', () => {
       render(
-        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
       )
 
       const input = screen.getByTestId('link-url-input')
@@ -287,7 +364,13 @@ describe('LinkEditPopover', () => {
 
     it('Apply button prevents pointerdown default (preserves editor focus)', () => {
       render(
-        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
       )
 
       const applyBtn = screen.getByRole('button', { name: 'Apply' })
@@ -300,7 +383,13 @@ describe('LinkEditPopover', () => {
 
     it('triggers metadata prefetch after applying link (UX-165)', () => {
       render(
-        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
       )
 
       const input = screen.getByTestId('link-url-input')
@@ -312,7 +401,13 @@ describe('LinkEditPopover', () => {
 
     it('removes stored link mark after applying link (UX-177)', () => {
       render(
-        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
       )
 
       const input = screen.getByTestId('link-url-input')
@@ -333,6 +428,7 @@ describe('LinkEditPopover', () => {
           editor={makeEditor()}
           isEditing={true}
           initialUrl="https://example.com"
+          initialLabel=""
           onClose={onClose}
         />,
       )
@@ -352,6 +448,7 @@ describe('LinkEditPopover', () => {
           editor={makeEditor()}
           isEditing={true}
           initialUrl="https://example.com"
+          initialLabel=""
           onClose={onClose}
         />,
       )
@@ -370,7 +467,13 @@ describe('LinkEditPopover', () => {
   describe('escape', () => {
     it('closes popover and refocuses editor on Escape', () => {
       render(
-        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
       )
 
       const input = screen.getByTestId('link-url-input')
@@ -384,7 +487,13 @@ describe('LinkEditPopover', () => {
 
     it('prevents default on Escape to avoid other handlers', () => {
       render(
-        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
       )
 
       const input = screen.getByTestId('link-url-input')
@@ -401,7 +510,13 @@ describe('LinkEditPopover', () => {
   describe('input state', () => {
     it('updates internal state as user types', () => {
       render(
-        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
       )
 
       const input = screen.getByTestId('link-url-input')
@@ -415,6 +530,7 @@ describe('LinkEditPopover', () => {
           editor={makeEditor()}
           isEditing={true}
           initialUrl="https://old.com"
+          initialLabel=""
           onClose={onClose}
         />,
       )
@@ -425,7 +541,11 @@ describe('LinkEditPopover', () => {
       fireEvent.change(input, { target: { value: 'https://new.com' } })
       fireEvent.click(screen.getByRole('button', { name: 'Update' }))
 
-      expect(mockSetLink).toHaveBeenCalledWith({ href: 'https://new.com' })
+      expect(mockInsertContent).toHaveBeenCalledWith({
+        type: 'text',
+        text: 'https://new.com',
+        marks: [{ type: 'link', attrs: { href: 'https://new.com' } }],
+      })
     })
   })
 
@@ -434,7 +554,13 @@ describe('LinkEditPopover', () => {
   describe('a11y', () => {
     it('passes axe audit (new link)', async () => {
       const { container } = render(
-        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
       )
       expect(await axe(container)).toHaveNoViolations()
     })
@@ -445,6 +571,7 @@ describe('LinkEditPopover', () => {
           editor={makeEditor()}
           isEditing={true}
           initialUrl="https://example.com"
+          initialLabel=""
           onClose={onClose}
         />,
       )
@@ -457,7 +584,13 @@ describe('LinkEditPopover', () => {
   describe('rejected URL error', () => {
     it('shows error for javascript: URLs and does not close', () => {
       render(
-        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
       )
 
       const input = screen.getByTestId('link-url-input')
@@ -478,7 +611,13 @@ describe('LinkEditPopover', () => {
 
     it('shows error for data: URLs', () => {
       render(
-        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
       )
 
       const input = screen.getByTestId('link-url-input')
@@ -493,7 +632,13 @@ describe('LinkEditPopover', () => {
 
     it('clears error when user types', () => {
       render(
-        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
       )
 
       const input = screen.getByTestId('link-url-input')
@@ -513,10 +658,15 @@ describe('LinkEditPopover', () => {
 
   describe('selection restoration (B-70)', () => {
     it('restores saved selection before applying link', () => {
-      const mockSetTextSelection = vi.fn(() => ({ setLink: mockSetLink }))
-      const mockFocusWithSelection = vi.fn(() => ({
-        setTextSelection: mockSetTextSelection,
+      const mockInsertContentLocal = vi.fn(() => ({ run: mockRun }))
+      const mockSetTextSelectionLocal = vi.fn(() => ({
         setLink: mockSetLink,
+        insertContent: mockInsertContentLocal,
+      }))
+      const mockFocusWithSelection = vi.fn(() => ({
+        setTextSelection: mockSetTextSelectionLocal,
+        setLink: mockSetLink,
+        insertContent: mockInsertContentLocal,
       }))
       const mockChainWithSelection = vi.fn(() => ({ focus: mockFocusWithSelection }))
 
@@ -533,6 +683,7 @@ describe('LinkEditPopover', () => {
           editor={editorWithSelection}
           isEditing={false}
           initialUrl=""
+          initialLabel=""
           onClose={onClose}
           savedSelection={{ from: 5, to: 15 }}
         />,
@@ -544,8 +695,12 @@ describe('LinkEditPopover', () => {
 
       expect(mockChainWithSelection).toHaveBeenCalled()
       expect(mockFocusWithSelection).toHaveBeenCalled()
-      expect(mockSetTextSelection).toHaveBeenCalledWith({ from: 5, to: 15 })
-      expect(mockSetLink).toHaveBeenCalledWith({ href: 'https://example.com' })
+      expect(mockSetTextSelectionLocal).toHaveBeenCalledWith({ from: 5, to: 15 })
+      expect(mockInsertContentLocal).toHaveBeenCalledWith({
+        type: 'text',
+        text: 'https://example.com',
+        marks: [{ type: 'link', attrs: { href: 'https://example.com' } }],
+      })
       expect(mockRun).toHaveBeenCalled()
       expect(mockRemoveStoredMark).toHaveBeenCalledWith(mockLinkMarkType)
       expect(mockDispatch).toHaveBeenCalledWith(mockTr)
@@ -557,6 +712,7 @@ describe('LinkEditPopover', () => {
           editor={makeEditor()}
           isEditing={false}
           initialUrl=""
+          initialLabel=""
           onClose={onClose}
           savedSelection={null}
         />,
@@ -566,10 +722,14 @@ describe('LinkEditPopover', () => {
       fireEvent.change(input, { target: { value: 'https://example.com' } })
       fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
 
-      // Should use the regular chain().focus().setLink() path
+      // Should use the regular chain().focus().insertContent() path
       expect(mockChain).toHaveBeenCalled()
       expect(mockFocus).toHaveBeenCalled()
-      expect(mockSetLink).toHaveBeenCalledWith({ href: 'https://example.com' })
+      expect(mockInsertContent).toHaveBeenCalledWith({
+        type: 'text',
+        text: 'https://example.com',
+        marks: [{ type: 'link', attrs: { href: 'https://example.com' } }],
+      })
     })
 
     it('does not restore selection when savedSelection is collapsed (from === to)', () => {
@@ -578,6 +738,7 @@ describe('LinkEditPopover', () => {
           editor={makeEditor()}
           isEditing={false}
           initialUrl=""
+          initialLabel=""
           onClose={onClose}
           savedSelection={{ from: 5, to: 5 }}
         />,
@@ -589,9 +750,194 @@ describe('LinkEditPopover', () => {
 
       expect(mockChain).toHaveBeenCalled()
       expect(mockFocus).toHaveBeenCalled()
-      expect(mockSetLink).toHaveBeenCalledWith({ href: 'https://example.com' })
+      expect(mockInsertContent).toHaveBeenCalledWith({
+        type: 'text',
+        text: 'https://example.com',
+        marks: [{ type: 'link', attrs: { href: 'https://example.com' } }],
+      })
       expect(mockRemoveStoredMark).toHaveBeenCalledWith(mockLinkMarkType)
       expect(mockDispatch).toHaveBeenCalledWith(mockTr)
+    })
+  })
+
+  // ── Label field (UX-181) ──────────────────────────────────────────────
+
+  describe('label field', () => {
+    it('renders label input with empty initial value for new links', () => {
+      render(
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
+      )
+      const labelInput = screen.getByTestId('link-label-input')
+      expect(labelInput).toBeInTheDocument()
+      expect(labelInput).toHaveValue('')
+    })
+
+    it('renders label input pre-filled with initial label', () => {
+      render(
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel="My Link"
+          onClose={onClose}
+        />,
+      )
+      expect(screen.getByTestId('link-label-input')).toHaveValue('My Link')
+    })
+
+    it('apply with label inserts labeled linked text (no selection)', () => {
+      render(
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
+      )
+
+      const labelInput = screen.getByTestId('link-label-input')
+      const urlInput = screen.getByTestId('link-url-input')
+      fireEvent.change(labelInput, { target: { value: 'Click here' } })
+      fireEvent.change(urlInput, { target: { value: 'https://example.com' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(mockInsertContent).toHaveBeenCalledWith({
+        type: 'text',
+        text: 'Click here',
+        marks: [{ type: 'link', attrs: { href: 'https://example.com' } }],
+      })
+    })
+
+    it('apply with empty label falls back to URL as text (no selection)', () => {
+      render(
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
+      )
+
+      const urlInput = screen.getByTestId('link-url-input')
+      fireEvent.change(urlInput, { target: { value: 'https://example.com' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(mockInsertContent).toHaveBeenCalledWith({
+        type: 'text',
+        text: 'https://example.com',
+        marks: [{ type: 'link', attrs: { href: 'https://example.com' } }],
+      })
+    })
+
+    it('apply with selection + unchanged label preserves formatting (uses setLink)', () => {
+      render(
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={true}
+          initialUrl=""
+          initialLabel="existing text"
+          onClose={onClose}
+          savedSelection={{ from: 5, to: 17 }}
+        />,
+      )
+
+      const urlInput = screen.getByTestId('link-url-input')
+      fireEvent.change(urlInput, { target: { value: 'https://example.com' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Update' }))
+
+      expect(mockSetTextSelection).toHaveBeenCalledWith({ from: 5, to: 17 })
+      expect(mockSetLink).toHaveBeenCalledWith({ href: 'https://example.com' })
+      expect(mockInsertContent).not.toHaveBeenCalled()
+    })
+
+    it('apply with selection + changed label replaces with new text', () => {
+      render(
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel="old text"
+          onClose={onClose}
+          savedSelection={{ from: 5, to: 13 }}
+        />,
+      )
+
+      const labelInput = screen.getByTestId('link-label-input')
+      const urlInput = screen.getByTestId('link-url-input')
+      fireEvent.change(labelInput, { target: { value: 'new label' } })
+      fireEvent.change(urlInput, { target: { value: 'https://example.com' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(mockSetTextSelection).toHaveBeenCalledWith({ from: 5, to: 13 })
+      expect(mockInsertContent).toHaveBeenCalledWith({
+        type: 'text',
+        text: 'new label',
+        marks: [{ type: 'link', attrs: { href: 'https://example.com' } }],
+      })
+    })
+
+    it('Enter key in label input applies the link', () => {
+      render(
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
+      )
+
+      const labelInput = screen.getByTestId('link-label-input')
+      const urlInput = screen.getByTestId('link-url-input')
+      fireEvent.change(labelInput, { target: { value: 'My label' } })
+      fireEvent.change(urlInput, { target: { value: 'https://example.com' } })
+      fireEvent.keyDown(labelInput, { key: 'Enter' })
+
+      expect(mockInsertContent).toHaveBeenCalledWith({
+        type: 'text',
+        text: 'My label',
+        marks: [{ type: 'link', attrs: { href: 'https://example.com' } }],
+      })
+      expect(onClose).toHaveBeenCalled()
+    })
+
+    it('Escape key in label input closes popover', () => {
+      render(
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
+      )
+
+      const labelInput = screen.getByTestId('link-label-input')
+      fireEvent.keyDown(labelInput, { key: 'Escape' })
+
+      expect(mockCommandsFocus).toHaveBeenCalled()
+      expect(onClose).toHaveBeenCalled()
+    })
+
+    it('passes axe audit with label field', async () => {
+      const { container } = render(
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={false}
+          initialUrl=""
+          initialLabel=""
+          onClose={onClose}
+        />,
+      )
+      expect(await axe(container)).toHaveNoViolations()
     })
   })
 })

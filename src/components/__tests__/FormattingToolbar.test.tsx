@@ -23,6 +23,11 @@ import { FormattingToolbar } from '../FormattingToolbar'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
+const mockGetMarkRange = vi.fn()
+vi.mock('@tiptap/core', () => ({
+  getMarkRange: (...args: unknown[]) => mockGetMarkRange(...args),
+}))
+
 // Mock useEditorState to return controlled state
 const mockEditorState = {
   bold: false,
@@ -85,12 +90,14 @@ vi.mock('../LinkEditPopover', () => ({
   LinkEditPopover: ({
     isEditing,
     initialUrl,
+    initialLabel,
     onClose,
     savedSelection,
   }: {
     editor: unknown
     isEditing: boolean
     initialUrl: string
+    initialLabel: string
     onClose: () => void
     savedSelection?: { from: number; to: number } | null
   }) => (
@@ -98,6 +105,7 @@ vi.mock('../LinkEditPopover', () => ({
       data-testid="link-edit-popover-mock"
       data-is-editing={String(!!isEditing)}
       data-initial-url={initialUrl}
+      data-initial-label={initialLabel}
       data-saved-selection={savedSelection ? JSON.stringify(savedSelection) : ''}
     >
       <button type="button" onClick={onClose} data-testid="close-popover">
@@ -148,10 +156,27 @@ const mockGetAttributes = vi.fn(() => ({}))
 /** Shared editor DOM element so Ctrl+K event listener can be tested. */
 const mockEditorDom = document.createElement('div')
 
+const mockResolve = vi.fn(() => ({}))
+const mockTextBetween = vi.fn(() => '')
+const mockIsActive = vi.fn(() => false)
+
 function makeEditor() {
   return {
     chain: mockChain,
     getAttributes: mockGetAttributes,
+    isActive: mockIsActive,
+    state: {
+      doc: {
+        resolve: mockResolve,
+        textBetween: mockTextBetween,
+      },
+      selection: { from: 0, to: 0 },
+    },
+    schema: {
+      marks: {
+        link: { name: 'link' },
+      },
+    },
     view: { dom: mockEditorDom },
   } as never
 }
@@ -173,6 +198,10 @@ describe('FormattingToolbar', () => {
     mockEditorState.canUndo = false
     mockEditorState.canRedo = false
     mockGetAttributes.mockReturnValue({})
+    mockResolve.mockReturnValue({})
+    mockTextBetween.mockReturnValue('')
+    mockIsActive.mockReturnValue(false)
+    mockGetMarkRange.mockReturnValue(undefined)
   })
 
   // ── Rendering ────────────────────────────────────────────────────────
@@ -454,6 +483,59 @@ describe('FormattingToolbar', () => {
       const btn = screen.getByRole('button', { name: 'External link' })
       expect(btn).toHaveAttribute('aria-pressed', 'true')
       expect(btn.className).toContain('bg-accent')
+    })
+
+    it('passes initialLabel="" when no link is active', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const mock = screen.getByTestId('link-edit-popover-mock')
+      expect(mock).toHaveAttribute('data-initial-label', '')
+    })
+
+    it('passes link text as initialLabel when link is active', () => {
+      mockEditorState.link = true
+      mockGetAttributes.mockReturnValue({ href: 'https://example.com' })
+      mockGetMarkRange.mockReturnValue({ from: 5, to: 17 })
+      mockTextBetween.mockReturnValue('Example Site')
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const mock = screen.getByTestId('link-edit-popover-mock')
+      expect(mock).toHaveAttribute('data-initial-label', 'Example Site')
+    })
+
+    it('passes selected text as initialLabel when Ctrl+K with selection', () => {
+      mockTextBetween.mockReturnValue('selected text')
+      render(<FormattingToolbar editor={makeEditor()} />)
+
+      act(() => {
+        mockEditorDom.dispatchEvent(
+          new CustomEvent('open-link-popover', {
+            bubbles: true,
+            detail: { from: 5, to: 18 },
+          }),
+        )
+      })
+
+      const mock = screen.getByTestId('link-edit-popover-mock')
+      expect(mock).toHaveAttribute('data-initial-label', 'selected text')
+    })
+
+    it('Ctrl+K inside existing link uses full mark range for savedSelection', () => {
+      mockEditorState.link = true
+      mockIsActive.mockReturnValue(true)
+      mockGetMarkRange.mockReturnValue({ from: 3, to: 20 })
+      mockGetAttributes.mockReturnValue({ href: 'https://example.com' })
+      render(<FormattingToolbar editor={makeEditor()} />)
+
+      act(() => {
+        mockEditorDom.dispatchEvent(
+          new CustomEvent('open-link-popover', {
+            bubbles: true,
+            detail: { from: 8, to: 12 },
+          }),
+        )
+      })
+
+      const mock = screen.getByTestId('link-edit-popover-mock')
+      expect(mock).toHaveAttribute('data-saved-selection', JSON.stringify({ from: 3, to: 20 }))
     })
 
     it('toggles code block via editor chain', () => {

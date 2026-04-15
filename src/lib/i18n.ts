@@ -1646,6 +1646,9 @@ const resources = {
       'rename.save': 'Save',
 
       // UX-121: Link edit popover
+      'linkEdit.label': 'Link text',
+      'linkEdit.labelPlaceholder': 'Display text (optional)',
+      'linkEdit.url': 'URL',
       'linkEdit.invalidUrl': 'javascript: and data: URLs are not allowed',
       'linkEdit.apply': 'Apply',
       'linkEdit.update': 'Update',
