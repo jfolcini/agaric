@@ -1,5 +1,43 @@
 # Session Log
 
+## Session 387 — BUG-1/2/3 + UX-182: rich titles, suggestion race, FTS lock, filter pills (2026-04-15)
+
+**4 items resolved. REVIEW-LATER has 1 open item (FEAT-1).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| BUG-1 (resolved) | Page title renders link/tag pills via dual-mode PageTitleEditor — display mode uses renderRichContent(), edit mode uses contentEditable | `PageTitleEditor.tsx`, `PageHeader.test.tsx`, `PageTitleEditor.test.tsx` |
+| BUG-2 (resolved) | Suggestion renderer defers outside-click listener registration by one animation frame to prevent false-positive dismissal | `suggestion-renderer.ts`, `suggestion-renderer.test.ts` |
+| BUG-3 (resolved) | New `update_fts_for_block_split()` reads from read pool, writes to write pool; background retry backoff increased from 50ms to 150ms | `fts/index.rs`, `fts/mod.rs`, `fts/tests.rs`, `materializer/handlers.rs`, `materializer/consumer.rs` |
+| UX-182 (resolved) | Property filter pills show "key = value" instead of "Property: key:value" with tooltip and improved aria-labels | `AgendaFilterBuilder.tsx`, `AgendaFilterBuilder.test.tsx` |
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src/components/PageTitleEditor.tsx` | Dual-mode rendering: `hasInlineTokens()` detects `[[` / `#[` tokens; display mode uses `renderRichContent()` with `useRichContentCallbacks()`; edit mode (on click/focus) shows contentEditable. `TITLE_CLASS` constant shared. |
+| `src/components/__tests__/PageHeader.test.tsx` | 4 new BUG-1 tests (plain title, rich display, click transition, a11y). Added 5 missing lucide-react mock icons for RichContentRenderer. |
+| `src/components/__tests__/PageTitleEditor.test.tsx` | Added 5 missing lucide-react mock icons for RichContentRenderer dependency. |
+| `src/editor/suggestion-renderer.ts` | `deferredRegistrationId` tracks pending rAF; `cleanupListener()` cancels rAF; `addEventListener` wrapped in `requestAnimationFrame` with popup+handler null guards. |
+| `src/editor/__tests__/suggestion-renderer.test.ts` | 4 new BUG-2 tests with manual rAF control: pointerdown during/after first frame, onExit before rAF, rapid open/close cycle. |
+| `src-tauri/src/fts/index.rs` | New `update_fts_for_block_split()`: reads block + strip_for_fts from read_pool, DELETE+INSERT transaction on write_pool. TOCTOU doc comment. |
+| `src-tauri/src/fts/mod.rs` | Added `update_fts_for_block_split` to re-exports. |
+| `src-tauri/src/fts/tests.rs` | 5 new tests: active block, deleted, conflict, missing, NULL content. |
+| `src-tauri/src/materializer/handlers.rs` | `UpdateFtsBlock` handler uses split variant when `read_pool` is Some. |
+| `src-tauri/src/materializer/consumer.rs` | `INITIAL_BACKOFF_MS` 50→150 with rationale comment. |
+| `src/components/AgendaFilterBuilder.tsx` | `formatPropertyPill()` helper parses "key:value" → "key = value". Pill rendering uses `isProperty` flag for display, tooltip, aria-labels. |
+| `src/components/__tests__/AgendaFilterBuilder.test.tsx` | Updated test #24 + 4 new tests: key=value, key-only, tooltip, aria-label, regression. |
+
+### Stats
+- 13 files changed (+686 lines, -51 lines)
+- 157 frontend tests pass (69 PageHeader + 47 AgendaFilter + 33 suggestion-renderer + 8 PageTitleEditor), 17 new
+- 5 Rust FTS tests pass, all new
+- 4 items resolved — REVIEW-LATER has 1 open item (FEAT-1)
+
+---
+
 ## Session 386 — Selection-to-page-link via toolbar button (2026-04-15)
 
 **New feature. REVIEW-LATER remains empty (0 open items).**

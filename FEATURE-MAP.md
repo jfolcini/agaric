@@ -117,7 +117,7 @@ The default view — one page per day, created automatically.
 
 Opens when navigating to any page:
 
-- Editable page title with alias support
+- Editable page title with alias support. **Rich title rendering** (BUG-1): titles containing `[[ULID]]` or `#[ULID]` tokens display inline pills in a read-only view; clicking transitions to contentEditable for editing.
 - Block tree with full outliner editing
 - Empty blocks show helpful placeholder: "Type / for commands..." (UX-64)
 - Auto-creates first empty block on new/empty pages for immediate typing
@@ -330,6 +330,7 @@ Shows tasks with due or scheduled dates for today, grouped by date (Overdue / To
 - Completed date — 5 presets: Today, This week, This month, Last 7/30 days
 - Created date — 5 presets (same)
 - Tag
+- Property — key:value filter with `PropertyValuePicker`. **Human-readable pills** (UX-182): property filter pills display `"key = value"` instead of `"Property: key:value"`, with hover tooltip and improved aria-labels.
 
 ### Sort & Group
 
