@@ -666,8 +666,13 @@ async fn projected_agenda_returns_future_weekly_occurrences() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    // Set due date to 2026-04-06 (a Monday)
-    set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
+    // Set due date to 3 weeks before today so the weekly cadence
+    // produces today as an exact hit, plus future weeks.
+    let today = chrono::Local::now().date_naive();
+    let due_date = (today - chrono::Duration::days(21))
+        .format("%Y-%m-%d")
+        .to_string();
+    set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some(due_date))
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
@@ -694,20 +699,39 @@ async fn projected_agenda_returns_future_weekly_occurrences() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    // Project 4 weeks ahead
-    let entries =
-        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-05-04".into(), None)
-            .await
-            .unwrap();
+    // Project 4 weeks ahead from today
+    let start = today.format("%Y-%m-%d").to_string();
+    let end = (today + chrono::Duration::days(28))
+        .format("%Y-%m-%d")
+        .to_string();
+    let entries = list_projected_agenda_inner(&pool, start, end, None)
+        .await
+        .unwrap();
 
     assert!(
         entries.len() >= 3,
         "should project at least 3 weekly occurrences, got {}",
         entries.len()
     );
-    assert_eq!(entries[0].projected_date, "2026-04-13", "first projection");
-    assert_eq!(entries[1].projected_date, "2026-04-20", "second projection");
-    assert_eq!(entries[2].projected_date, "2026-04-27", "third projection");
+    let expected_first = today.format("%Y-%m-%d").to_string();
+    let expected_second = (today + chrono::Duration::days(7))
+        .format("%Y-%m-%d")
+        .to_string();
+    let expected_third = (today + chrono::Duration::days(14))
+        .format("%Y-%m-%d")
+        .to_string();
+    assert_eq!(
+        entries[0].projected_date, expected_first,
+        "first projection"
+    );
+    assert_eq!(
+        entries[1].projected_date, expected_second,
+        "second projection"
+    );
+    assert_eq!(
+        entries[2].projected_date, expected_third,
+        "third projection"
+    );
     assert_eq!(
         entries[0].source, "due_date",
         "projection source should be due_date"
@@ -738,9 +762,20 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
-        .await
-        .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        resp.id.clone(),
+        Some({
+            let today = chrono::Local::now().date_naive();
+            (today - chrono::Duration::days(14))
+                .format("%Y-%m-%d")
+                .to_string()
+        }),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     set_property_inner(
@@ -758,7 +793,12 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    // Set repeat-until to 2026-04-20
+    // Set repeat-until to today + 8 days (should allow exactly 2 weekly occurrences:
+    // today and today+7, since today+7 < today+8 but today+14 > today+8)
+    let today = chrono::Local::now().date_naive();
+    let until_date = (today + chrono::Duration::days(8))
+        .format("%Y-%m-%d")
+        .to_string();
     set_property_inner(
         &pool,
         DEV,
@@ -767,7 +807,7 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
         "repeat-until".into(),
         None,
         None,
-        Some("2026-04-20".into()),
+        Some(until_date),
         None,
     )
     .await
@@ -779,22 +819,29 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    let entries =
-        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-06-01".into(), None)
-            .await
-            .unwrap();
+    let start = today.format("%Y-%m-%d").to_string();
+    let end = (today + chrono::Duration::days(60))
+        .format("%Y-%m-%d")
+        .to_string();
+    let entries = list_projected_agenda_inner(&pool, start, end, None)
+        .await
+        .unwrap();
 
     assert_eq!(
         entries.len(),
         2,
         "should stop at repeat-until date: {entries:?}"
     );
+    let expected_first = today.format("%Y-%m-%d").to_string();
+    let expected_second = (today + chrono::Duration::days(7))
+        .format("%Y-%m-%d")
+        .to_string();
     assert_eq!(
-        entries[0].projected_date, "2026-04-13",
+        entries[0].projected_date, expected_first,
         "first projection before until date"
     );
     assert_eq!(
-        entries[1].projected_date, "2026-04-20",
+        entries[1].projected_date, expected_second,
         "second projection before until date"
     );
 
