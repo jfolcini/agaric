@@ -111,8 +111,8 @@ cargo tauri build             # Linux: .deb + .rpm + .AppImage (~9 MB)
                               # Windows: .msi + .exe (run on Windows)
                               # macOS: .dmg + .app (run on macOS)
 
-cargo tauri android build --target x86_64           # Release APK (24 MB)
-cargo tauri android build --target x86_64 --debug   # Debug APK (400 MB)
+cargo tauri android build --target aarch64           # Release APK (~24 MB, Pixel 8 / ARM)
+cargo tauri android build --target aarch64 --debug   # Debug APK (400 MB)
 ```
 
 No cross-compilation — each desktop platform must be built on that platform. Android builds run on Linux. CI handles the full matrix automatically.

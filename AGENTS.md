@@ -27,8 +27,8 @@ cargo tauri build            # Production build (per-platform)
 npm run test                 # Vitest (~6000 tests)
 cd src-tauri && cargo nextest run   # Rust tests (~1700 tests)
 npx playwright test          # E2E tests (21 spec files)
-cargo tauri android build --target x86_64 --debug   # Android debug APK
-cargo tauri android build --target x86_64            # Android release APK (24 MB)
+cargo tauri android build --target aarch64 --debug   # Android debug APK
+cargo tauri android build --target aarch64            # Android release APK (~24 MB)
 prek run --all-files         # Pre-commit hooks
 ```
 

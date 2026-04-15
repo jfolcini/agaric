@@ -12,10 +12,10 @@ cargo tauri dev
 cargo tauri build
 
 # Android debug APK (Linux host with Android SDK)
-cargo tauri android build --target x86_64 --debug
+cargo tauri android build --target aarch64 --debug
 
-# Android release APK
-cargo tauri android build --target x86_64
+# Android release APK (aarch64 = Pixel 8 / modern ARM devices)
+cargo tauri android build --target aarch64
 ```
 
 ## Prerequisites
@@ -460,3 +460,4 @@ Install `libwebkit2gtk-4.1-dev`. The exact package name varies by distro.
 ### Slow first build
 
 Cold Rust compilation takes 2-5 minutes. Subsequent incremental builds are much faster (~1-15s depending on what changed). The `target/` directory caches compiled dependencies.
+sequent incremental builds are much faster (~1-15s depending on what changed). The `target/` directory caches compiled dependencies.

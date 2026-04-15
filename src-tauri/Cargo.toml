@@ -89,6 +89,10 @@ proptest = "1.11.0"
 tempfile = "3.27.0"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 
+[profile.release]
+strip = "symbols"
+debug = false
+
 [lib]
 name = "agaric_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
