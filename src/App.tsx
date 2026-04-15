@@ -514,7 +514,7 @@ function App() {
             ref={mainContentRef}
             id="main-content"
             tabIndex={-1}
-            className="flex-1 overflow-y-auto p-4 md:p-6 outline-none"
+            className="flex-1 overflow-x-hidden overflow-y-auto p-4 md:p-6 outline-none"
           >
             <div
               className={
