@@ -208,14 +208,14 @@ recovery (3), drafts (2), PRAGMAs (1), and misc (3 in soft_delete, peer_refs, me
 
 ### Schema
 
-15 tables + 1 FTS5 virtual table, 23 indexes across 22 migrations.
+15 tables + 1 FTS5 virtual table, 24 indexes across 27 migrations.
 
 **Core tables:**
 
 ```
 blocks              — id (ULID PK), block_type, content, parent_id, position,
                       deleted_at, is_conflict, conflict_source, conflict_type,
-                      todo_state, priority, due_date, scheduled_date
+                      todo_state, priority, due_date, scheduled_date, page_id
 block_tags          — (block_id, tag_id) composite PK
 block_properties    — (block_id, key) composite PK, value_text/value_num/value_date/value_ref
 block_links         — (source_id, target_id) composite PK — materializer-maintained cache
@@ -253,7 +253,7 @@ fts_blocks          — FTS5 virtual table (block_id UNINDEXED, stripped), trigr
 `op_log(json_extract(payload, '$.block_id'))`, `block_properties(key, block_id)`,
 `block_properties(key, value_text)`, `block_properties(key, value_num)`,
 `op_log(device_id, op_type)`, `blocks(todo_state)`, `blocks(due_date)`,
-`blocks(scheduled_date)`, `page_aliases(alias COLLATE NOCASE)`, `page_aliases(page_id)`,
+`blocks(scheduled_date)`, `blocks(page_id)`, `page_aliases(alias COLLATE NOCASE)`, `page_aliases(page_id)`,
 `block_tag_inherited(tag_id)`, `block_tag_inherited(inherited_from, tag_id)`.
 
 ---
@@ -411,6 +411,7 @@ tasks deduplicated by enum discriminant. `ApplyOp` and barrier tasks are never d
 | `agenda_cache` | set/delete property (value_date), set due/scheduled date, add/remove tag (date pattern) |
 | `block_links` | edit_block — regex parse `[[ULID]]`, diff against prior index |
 | `block_tag_inherited` | create/move/delete/restore/purge block, add/remove tag |
+| `page_id` (denormalized column) | create/move/delete/restore/purge block — nearest page ancestor |
 
 Invalidation is **event-driven**, not TTL-based. Each command calls `dispatch_background()` which
 enqueues the relevant cache-rebuild tasks. There are no staleness timestamp checks — caches are
@@ -1609,7 +1610,7 @@ architectural changes were required.
 
 ## 20. Tauri Command API
 
-74 total commands (including 11 sync/pairing). Each has an `inner_*` function taking `&SqlitePool` for
+75 total commands (including 11 sync/pairing). Each has an `inner_*` function taking `&SqlitePool` for
 testability. All use cursor-based pagination where applicable.
 
 ### Block Operations (9)
@@ -1635,7 +1636,7 @@ testability. All use cursor-based pagination where applicable.
 | `list_tags_by_prefix` | Case-insensitive prefix search on tags_cache. |
 | `list_tags_for_block` | Get all tag IDs for a block. |
 
-### Query Operations (8)
+### Query Operations (9)
 
 | Command | Purpose |
 |---------|---------|
@@ -1647,6 +1648,7 @@ testability. All use cursor-based pagination where applicable.
 | `list_unlinked_references` | Blocks mentioning a page but not linked. |
 | `get_backlinks` | Simple backlink list. |
 | `list_projected_agenda` | Compute virtual future occurrences for repeating tasks within a date range. |
+| `list_undated_tasks` | Paginated list of blocks with todo_state but no due_date or scheduled_date. |
 
 ### Property Operations (9)
 

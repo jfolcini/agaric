@@ -66,8 +66,8 @@ Agaric is a **single-user, multi-device, local-first** application with **no clo
 - **File:** `notes.db` in `~/.local/share/com.agaric.app/` (Linux) or app data dir (Android)
 - **WAL mode**, foreign keys ON on every connection
 - **Pool:** 2 writers + 4 readers (6 total)
-- **Migrations:** `src-tauri/migrations/` (22 files) — auto-run on pool init
-- **Schema:** 15 tables + 1 FTS5 virtual table (trigram tokenizer), 23 indexes, 2 triggers
+- **Migrations:** `src-tauri/migrations/` (27 files) — auto-run on pool init
+- **Schema:** 15 tables + 1 FTS5 virtual table (trigram tokenizer), 24 indexes, 2 triggers
 
 ## Frontend Architecture
 
@@ -156,7 +156,7 @@ Components exceeding ~500 lines are candidates for extraction. The established p
 - **Undo/redo:** Two-tier model. In-editor: TipTap/ProseMirror history (cleared on blur). Page-level: `reverse.rs` computes inverse ops from op log. Non-reversible: `purge_block`, `delete_attachment`.
 - **Materializer:** Foreground queue (256 cap, core tables + `BatchApplyOps`) + background queue (1024 cap, caches/FTS). Auto-dedup, silent drop on backpressure. Background tasks use split read/write pools — reads from reader pool, writes only for the final transaction. Foreground consumer batch-drains and parallelizes independent block_id groups via JoinSet.
 - **Tag inheritance:** Materialized `block_tag_inherited` table, maintained transactionally by command handlers + background rebuild task. Replaces recursive CTEs for `include_inherited=true` queries.
-- **Commands:** 74 Tauri command handlers in `commands.rs`. Each has an `inner_*` function taking `&SqlitePool` for testability.
+- **Commands:** 75 Tauri command handlers in `commands.rs`. Each has an `inner_*` function taking `&SqlitePool` for testability.
 - **Sync daemon:** `sync_daemon.rs` — background task with mDNS discovery, TLS WebSocket server, initiator-side sync via `SyncOrchestrator`. Per-peer backoff via `SyncScheduler`.
 - **Sync cert:** `sync_cert.rs` — persistent TLS certificate (generate-once-then-load pattern). `PersistedCert` managed state.
 
