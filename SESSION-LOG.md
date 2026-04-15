@@ -1,5 +1,36 @@
 # Session Log
 
+## Session 382 — M-70/71/73/74/75/78: observability improvements (2026-04-15)
+
+**6 items resolved. 6 open items remain in REVIEW-LATER.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| M-70 (resolved) | Add `logger.error()` to 9 toast-only catch blocks + `logger.warn()` to 2 localStorage catches | `UnlinkedReferences.tsx`, `TrashView.tsx`, `useBlockAttachments.ts`, `HistoryPanel.tsx`, `DuePanel.tsx` |
+| M-71 (resolved) | Add tracing to merge/ module — 9 statements across detect/resolve/apply | `merge/detect.rs`, `merge/resolve.rs`, `merge/apply.rs` |
+| M-73 (resolved) | Log startup identity (version, platform, arch, device_id) after boot | `lib.rs` |
+| M-74 (resolved) | Add editor lifecycle logging (mount/unmount/focus/blur) at debug level | `use-roving-editor.ts`, `EditableBlock.tsx`, `useEditorBlur.ts` |
+| M-75 (resolved) | Wrap `sqlx::migrate!()` with `tracing::info` in both `init_pools` and `init_pool` | `db.rs` |
+| M-78 (resolved) | Add page load timing (`performance.now()`) to page-blocks store and JournalPage | `page-blocks.ts`, `JournalPage.tsx` |
+
+### Implementation
+
+- **M-70**: Changed all bare `} catch {` to `} catch (err) {` and added `logger.error(module, message, { context }, err)` before each `toast.error()`. DuePanel localStorage catches use `logger.warn()` (low-severity). Pattern follows `page-blocks.ts` convention.
+- **M-71**: Added `tracing::debug!` for diagnostic details (LCA lookup, merge attempt, function entry), `tracing::info!` for outcomes (merge completed, LWW resolution, conflict copy creation), `tracing::warn!` for conflict copies. 9 statements total across 3 files.
+- **M-73**: Single `tracing::info!` with `version`, `platform`, `arch`, `device_id` fields after device_id loading in `run()`.
+- **M-74**: `logger.debug('editor', ...)` at mount (after blockId set), unmount (before return, with changed flag), focus (in handleFocus), blur (in useEditorBlur step 5).
+- **M-75**: `tracing::info!("running database migrations")` before and `tracing::info!("database migrations complete")` after each `sqlx::migrate!()` call in both `init_pools()` and `init_pool()`.
+- **M-78**: `performance.now()` timing in `page-blocks.ts` `load()` and `JournalPage.tsx` `fetchPages()`, logging pageId/blockCount/durationMs at debug level.
+
+### Stats
+- 15 files changed (+106 lines, -17 lines)
+- 6 items resolved — REVIEW-LATER now has 6 open items
+- Pre-existing: 2 date-dependent agenda tests fail on clean tree (unrelated)
+
+---
+
 ## Session 381 — UX-177: external link mark exit after toolbar insertion (2026-04-15)
 
 **1 item resolved. REVIEW-LATER is empty (0 open items).**
