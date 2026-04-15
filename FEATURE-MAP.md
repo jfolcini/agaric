@@ -173,6 +173,7 @@ Markdown-based WYSIWYG editing:
 - Type `#[tagname]` to auto-resolve an existing tag or create a new one (input rule, no popup)
 - Type `[[` to open page/block link picker with fuzzy search (create-new option, multi-word support)
 - Type `[[text]]` (with closing brackets) to auto-resolve: exact-match page links directly, alias matches link to the aliased page, no match creates a new page
+- **Selection-to-page-link**: clicking the "Internal link" toolbar button with text selected uses the selected text as the page title — resolves to an existing page (exact/alias match) or creates a new one, then replaces the selection with a `block_link` chip. `resolveBlockLinkFromSelection` command on `BlockLinkPicker` extension, same race-condition-safe pattern as the `[[text]]` input rule.
 - Type `((` to open block reference picker with FTS search (reference existing blocks)
 - **Picker icons and breadcrumbs** (UX-65): Tag picker shows Tag icon, page picker shows FileText icon, block ref picker shows Hash icon. Namespaced pages show parent path as breadcrumb (e.g., `work/meetings/standup` → label "standup", breadcrumb "work / meetings"). Block refs show parent page title as breadcrumb.
 - **Fuzzy matching** (UX-68): All pickers use `match-sorter` for fuzzy matching (e.g., "qn" finds "Quick Notes"). FTS5 preserved for longer page queries (>2 chars).

@@ -1,5 +1,24 @@
 # Session Log
 
+## Session 386 — Selection-to-page-link via toolbar button (2026-04-15)
+
+**New feature. REVIEW-LATER remains empty (0 open items).**
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `block-link-picker.ts` | New `resolveBlockLinkFromSelection` command: extracts selected text, searches for matching page (exact/alias), creates page if not found, replaces selection with `block_link` node. Follows same race-condition-safe pattern as the `[[text]]` input rule. Module augmentation for TipTap command type. |
+| `toolbar-config.ts` | Internal link button checks `editor.state.selection` at click time; calls `resolveBlockLinkFromSelection()` when text is selected, inserts `[[` when not. |
+| `block-link-picker.test.ts` | 6 new tests: collapsed selection, exact match, create, error fallback, whitespace-only, alias preference. |
+| `FormattingToolbar.test.tsx` | 2 new tests: no-selection inserts `[[`, selection calls command. |
+
+### Stats
+- 4 files changed (+273 lines, -1 line)
+- 101 frontend tests pass (22 block-link-picker + 79 FormattingToolbar), 8 new tests
+
+---
+
 ## Session 385 — UX-181: link popover label field (2026-04-15)
 
 **1 item resolved. REVIEW-LATER is empty (0 open items).**
