@@ -1,5 +1,28 @@
 # Session Log
 
+## Session 384 — M-72 + M-76: #[instrument] spans + AppError source() (2026-04-15)
+
+**2 items resolved. REVIEW-LATER is empty (0 open items).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| M-72 (resolved) | Add `#[instrument]` spans to 66 command handler `inner_*` functions across 15 files | `blocks/crud.rs`, `blocks/queries.rs`, `blocks/move_ops.rs`, `pages.rs`, `tags.rs`, `attachments.rs`, `properties.rs`, `queries.rs`, `agenda.rs`, `history.rs`, `drafts.rs`, `journal.rs`, `link_metadata.rs`, `compaction.rs`, `sync_cmds.rs`, `Cargo.toml` |
+| M-76 (resolved) | Verify `source()` on AppError already works via thiserror derive, add 4 tests | `error.rs` |
+
+### Implementation
+
+- **M-72**: Enabled `tracing = { features = ["attributes"] }` in Cargo.toml. Added `#[instrument(skip(...), err)]` to all 66 `pub async fn *_inner` functions across 15 command files. Skip params: `pool`, `device_id`, `materializer`, `pairing_state`, `scheduler`, `cancel_flag` (non-serializable state), plus large string/collection params (`content`, `to_text`, `markdown`, `ids`, `block_ids`, `tag_ids`, `dates`, `filters`, `sort`, `op_ids`). Non-Result functions (`get_status_inner`, `get_device_id_inner`) use `#[instrument(skip(...))]` without `err`. 6 parallel subagents by file group.
+- **M-76**: Discovered `thiserror::Error` derive already implements `std::error::Error` with `source()` for `#[from]` variants (Database, Migration, Io, Json). Added 4 tests verifying `source().is_some()` for wrapped-error variants and 1 test verifying `source().is_none()` for 7 string-only variants. No code restructuring needed — the REVIEW-LATER description was based on an incorrect assessment.
+
+### Stats
+- 17 files changed (+138 lines, -1 line)
+- 1942/1944 Rust tests pass (2 pre-existing date-dependent failures)
+- 2 items resolved — REVIEW-LATER now has 0 open items
+
+---
+
 ## Session 383 — UX-178/179/180 + M-77: graph improvements, Copy URL, metrics dump (2026-04-15)
 
 **4 items resolved. 2 open items remain in REVIEW-LATER.**
