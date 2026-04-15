@@ -76,6 +76,24 @@ async fn seed_trash(pool: &sqlx::SqlitePool, n: usize) {
     tx.commit().await.unwrap();
 }
 
+/// Seed `n` blocks with `todo_state` but no `due_date` or `scheduled_date`.
+async fn seed_undated_tasks(pool: &sqlx::SqlitePool, n: usize) {
+    let mut tx = pool.begin().await.unwrap();
+    for i in 0..n {
+        let id = format!("UNDATED{i:020}");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, todo_state) \
+             VALUES (?, 'content', ?, 'TODO')",
+        )
+        .bind(&id)
+        .bind(format!("undated task {i}"))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
+}
+
 /// Seed `n` blocks and tag them all with a single tag.
 async fn seed_tagged_blocks(pool: &sqlx::SqlitePool, n: usize) {
     let mut tx = pool.begin().await.unwrap();
@@ -246,11 +264,45 @@ fn bench_list_by_tag(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_list_undated_tasks(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("list_undated_tasks");
+
+    for total in [100, 1_000, 10_000, 100_000] {
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(async {
+            let pool = init_pool(&dir.path().join("bench.db")).await.unwrap();
+            seed_undated_tasks(&pool, total).await;
+            pool
+        });
+
+        group.bench_with_input(BenchmarkId::new("first_page", total), &total, |b, _| {
+            let page = PageRequest::new(None, Some(50)).unwrap();
+            b.to_async(&rt).iter(|| list_undated_tasks(&pool, &page));
+        });
+
+        let mid_cursor = rt.block_on(async {
+            let half = PageRequest::new(None, Some((total / 2) as i64)).unwrap();
+            let resp = list_undated_tasks(&pool, &half).await.unwrap();
+            resp.next_cursor
+        });
+
+        if mid_cursor.is_some() {
+            group.bench_with_input(BenchmarkId::new("cursor_page", total), &total, |b, _| {
+                let page = PageRequest::new(mid_cursor.clone(), Some(50)).unwrap();
+                b.to_async(&rt).iter(|| list_undated_tasks(&pool, &page));
+            });
+        }
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_list_children,
     bench_list_by_type,
     bench_list_trash,
-    bench_list_by_tag
+    bench_list_by_tag,
+    bench_list_undated_tasks
 );
 criterion_main!(benches);

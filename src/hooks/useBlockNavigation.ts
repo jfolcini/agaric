@@ -36,10 +36,10 @@ export function useBlockNavigation({
 }: UseBlockNavigationOptions): UseBlockNavigationReturn {
   const handleBlockClick = useCallback(
     (block: BlockRow) => {
-      const parentId = block.parent_id
-      if (parentId) {
-        const title = pageTitles.get(parentId) ?? untitledLabel
-        onNavigateToPage?.(parentId, title, block.id)
+      const pageId = block.page_id
+      if (pageId) {
+        const title = pageTitles.get(pageId) ?? untitledLabel
+        onNavigateToPage?.(pageId, title, block.id)
       }
     },
     [onNavigateToPage, pageTitles, untitledLabel],

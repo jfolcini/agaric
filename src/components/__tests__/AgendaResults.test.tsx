@@ -159,8 +159,8 @@ describe('AgendaResults', () => {
   // 3. Shows source page breadcrumb from pageTitles
   it('shows source page breadcrumb from pageTitles', () => {
     const blocks = [
-      makeBlock({ id: 'B1', parent_id: 'PAGE1', content: 'Task A' }),
-      makeBlock({ id: 'B2', parent_id: 'PAGE2', content: 'Task B' }),
+      makeBlock({ id: 'B1', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'Task A' }),
+      makeBlock({ id: 'B2', parent_id: 'PAGE2', page_id: 'PAGE2', content: 'Task B' }),
     ]
     const pageTitles = new Map([
       ['PAGE1', 'Daily Notes'],
@@ -175,7 +175,9 @@ describe('AgendaResults', () => {
 
   // 3b. Shows "Untitled" when pageTitles has no entry
   it('shows "Untitled" breadcrumb when page title is not resolved', () => {
-    const blocks = [makeBlock({ id: 'B1', parent_id: 'UNKNOWN', content: 'Orphan' })]
+    const blocks = [
+      makeBlock({ id: 'B1', parent_id: 'UNKNOWN', page_id: 'UNKNOWN', content: 'Orphan' }),
+    ]
 
     render(<AgendaResults {...defaultProps({ blocks, pageTitles: new Map() })} />)
 
@@ -186,7 +188,9 @@ describe('AgendaResults', () => {
   it('calls onNavigateToPage when an item is clicked', async () => {
     const user = userEvent.setup()
     const onNavigateToPage = vi.fn()
-    const blocks = [makeBlock({ id: 'B1', parent_id: 'PAGE1', content: 'Clickable task' })]
+    const blocks = [
+      makeBlock({ id: 'B1', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'Clickable task' }),
+    ]
     const pageTitles = new Map([['PAGE1', 'My Page']])
 
     render(<AgendaResults {...defaultProps({ blocks, pageTitles, onNavigateToPage })} />)
@@ -200,7 +204,9 @@ describe('AgendaResults', () => {
   it('calls onNavigateToPage on Enter key', async () => {
     const user = userEvent.setup()
     const onNavigateToPage = vi.fn()
-    const blocks = [makeBlock({ id: 'B1', parent_id: 'PAGE1', content: 'Keyboard task' })]
+    const blocks = [
+      makeBlock({ id: 'B1', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'Keyboard task' }),
+    ]
     const pageTitles = new Map([['PAGE1', 'Page Title']])
 
     render(<AgendaResults {...defaultProps({ blocks, pageTitles, onNavigateToPage })} />)
@@ -465,6 +471,40 @@ describe('AgendaResults', () => {
     expect(labels).toEqual(['My Page', 'No page'])
   })
 
+  it('a11y: no violations with page grouping', async () => {
+    const blocks = [
+      makeBlock({ id: 'B1', page_id: '01AAAAAAAAAAAAAAAAAAAAPAGE', todo_state: 'TODO' }),
+      makeBlock({ id: 'B2', page_id: '01BBBBBBBBBBBBBBBBBBBBPAGE', todo_state: 'DOING' }),
+      makeBlock({ id: 'B3', page_id: '01AAAAAAAAAAAAAAAAAAAAPAGE', todo_state: 'DONE' }),
+    ]
+    const pageTitles = new Map([
+      ['01AAAAAAAAAAAAAAAAAAAAPAGE', 'Project A'],
+      ['01BBBBBBBBBBBBBBBBBBBBPAGE', 'Project B'],
+    ])
+
+    const { container } = render(
+      <AgendaResults {...defaultProps({ blocks, pageTitles })} groupBy="page" />,
+    )
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
+  it('a11y: no violations with "No page" group', async () => {
+    const blocks = [
+      makeBlock({ id: 'B1', page_id: '01AAAAAAAAAAAAAAAAAAAAPAGE', todo_state: 'TODO' }),
+      makeBlock({ id: 'B2', page_id: null, todo_state: 'DOING' }),
+    ]
+    const pageTitles = new Map([['01AAAAAAAAAAAAAAAAAAAAPAGE', 'My Page']])
+
+    const { container } = render(
+      <AgendaResults {...defaultProps({ blocks, pageTitles })} groupBy="page" />,
+    )
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
   // 12. sortBy="priority" sorts blocks by priority first
   it('sortBy="priority" sorts blocks by priority first', () => {
     const blocks = [
@@ -500,7 +540,14 @@ describe('AgendaResults', () => {
   // 14. Clicking page title in breadcrumb navigates to the page via PageLink
   it('clicking page title in breadcrumb navigates to the page', async () => {
     const user = userEvent.setup()
-    const blocks = [makeBlock({ id: 'B1', parent_id: 'PAGE1', content: 'Task with breadcrumb' })]
+    const blocks = [
+      makeBlock({
+        id: 'B1',
+        parent_id: 'PAGE1',
+        page_id: 'PAGE1',
+        content: 'Task with breadcrumb',
+      }),
+    ]
     const pageTitles = new Map([['PAGE1', 'My Project Page']])
 
     render(<AgendaResults {...defaultProps({ blocks, pageTitles })} />)

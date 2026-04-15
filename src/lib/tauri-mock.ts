@@ -132,6 +132,7 @@ function makeBlock(
     block_type: blockType,
     content,
     parent_id: parentId,
+    page_id: blockType === 'page' ? id : parentId,
     position,
     deleted_at: null,
     is_conflict: false,
@@ -573,6 +574,17 @@ export function setupMock(): void {
         return { items, next_cursor: null, has_more: false }
       }
 
+      case 'list_undated_tasks': {
+        const items = [...blocks.values()].filter(
+          (b) =>
+            b['todo_state'] !== null &&
+            b['due_date'] === null &&
+            b['scheduled_date'] === null &&
+            !b['deleted_at'],
+        )
+        return { items, next_cursor: null, has_more: false }
+      }
+
       case 'create_block': {
         const a = args as Record<string, unknown>
         const id = fakeId()
@@ -590,6 +602,7 @@ export function setupMock(): void {
           block_type: a['blockType'] as string,
           content: (a['content'] as string) ?? null,
           parent_id: parentId,
+          page_id: (a['blockType'] as string) === 'page' ? id : parentId,
           position,
           deleted_at: null,
           is_conflict: false,
@@ -701,6 +714,18 @@ export function setupMock(): void {
         const oldPosition = b['position']
         b['parent_id'] = a['newParentId'] as string | null
         b['position'] = a['newPosition'] as number
+        // Compute page_id from new parent (like the real backend)
+        if (a['newParentId']) {
+          const newParent = blocks.get(a['newParentId'] as string)
+          if (newParent) {
+            b['page_id'] =
+              newParent['block_type'] === 'page'
+                ? (newParent['id'] as string)
+                : (newParent['page_id'] as string | null)
+          }
+        } else {
+          b['page_id'] = null
+        }
         pushOp('move_block', {
           block_id: a['blockId'],
           new_parent_id: b['parent_id'],

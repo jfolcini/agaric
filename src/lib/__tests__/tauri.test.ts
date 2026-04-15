@@ -47,6 +47,7 @@ import {
   listPropertyKeys,
   listTagsByPrefix,
   listTagsForBlock,
+  listUndatedTasks,
   listUnlinkedReferences,
   moveBlock,
   purgeBlock,
@@ -306,6 +307,38 @@ describe('listBlocks', () => {
     expect(args['limit']).toBeNull()
     // blockType should be the value we passed
     expect(args['blockType']).toBe('page')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// listUndatedTasks
+// ---------------------------------------------------------------------------
+
+describe('listUndatedTasks', () => {
+  const emptyPage = { items: [], next_cursor: null, has_more: false }
+
+  it('invokes list_undated_tasks with correct args', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    const result = await listUndatedTasks({ cursor: 'abc', limit: 10 })
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('list_undated_tasks', {
+      cursor: 'abc',
+      limit: 10,
+    })
+    expect(result).toEqual(emptyPage)
+  })
+
+  it('defaults optional params to null', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    await listUndatedTasks()
+    const callArgs = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    expect(callArgs['cursor']).toBeNull()
+    expect(callArgs['limit']).toBeNull()
+  })
+
+  it('propagates errors from invoke', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('query failed'))
+    await expect(listUndatedTasks()).rejects.toThrow('query failed')
   })
 })
 

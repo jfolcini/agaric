@@ -92,7 +92,7 @@ function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
     priority: null,
     due_date: '2025-06-15',
     scheduled_date: null,
-    page_id: null,
+    page_id: 'PAGE1',
     ...overrides,
   }
 }

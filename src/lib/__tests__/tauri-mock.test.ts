@@ -121,6 +121,7 @@ describe('get_block', () => {
       block_type: 'page',
       content: 'Getting Started',
       parent_id: null,
+      page_id: SEED_IDS.PAGE_GETTING_STARTED,
       position: 0,
       deleted_at: null,
       is_conflict: false,
@@ -427,6 +428,7 @@ describe('move_block', () => {
     const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
     expect(block['parent_id']).toBe(SEED_IDS.PAGE_QUICK_NOTES)
     expect(block['position']).toBe(99)
+    expect(block['page_id']).toBe(SEED_IDS.PAGE_QUICK_NOTES)
   })
 
   it('throws for non-existent block', () => {
@@ -2347,5 +2349,43 @@ describe('import_markdown', () => {
       items: Record<string, unknown>[]
     }
     expect(pages.items.some((p) => p['content'] === 'Unique Import Test')).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// list_undated_tasks
+// ---------------------------------------------------------------------------
+
+describe('list_undated_tasks', () => {
+  it('returns tasks with todo_state but no dates', () => {
+    const result = invoke('list_undated_tasks', {}) as {
+      items: Record<string, unknown>[]
+      next_cursor: null
+      has_more: boolean
+    }
+    // BLOCK_PROJ_3 has todo_state='DONE' but no due_date or scheduled_date
+    expect(result.items.length).toBeGreaterThan(0)
+    expect(result.items.every((b) => b['todo_state'] !== null)).toBe(true)
+  })
+
+  it('excludes tasks with due_date or scheduled_date', () => {
+    const result = invoke('list_undated_tasks', {}) as {
+      items: Record<string, unknown>[]
+    }
+    expect(result.items.every((b) => b['due_date'] === null)).toBe(true)
+    expect(result.items.every((b) => b['scheduled_date'] === null)).toBe(true)
+  })
+
+  it('excludes deleted blocks', () => {
+    // Delete an undated task first
+    const before = invoke('list_undated_tasks', {}) as {
+      items: Record<string, unknown>[]
+    }
+    const undatedId = before.items[0]?.['id'] as string
+    invoke('delete_block', { blockId: undatedId })
+    const after = invoke('list_undated_tasks', {}) as {
+      items: Record<string, unknown>[]
+    }
+    expect(after.items.every((b) => b['id'] !== undatedId)).toBe(true)
   })
 })

@@ -68,9 +68,9 @@ async fn seed_move_data(pool: &SqlitePool, n: usize) -> Vec<String> {
 fn bench_move_block(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("move_block");
-    group.sample_size(100);
+    group.sample_size(10);
 
-    for count in [10, 100, 1_000] {
+    for count in [10, 100, 1_000, 10_000, 100_000] {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("move_{count}")));
         let materializer = rt.block_on(async { Materializer::new(pool.clone()) });

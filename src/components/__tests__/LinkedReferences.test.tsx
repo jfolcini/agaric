@@ -107,6 +107,7 @@ function makeGroup(
       block_type: 'content',
       content: b.content,
       parent_id: pageId,
+      page_id: pageId,
       position: 1,
       deleted_at: null,
       is_conflict: false,

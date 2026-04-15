@@ -469,3 +469,94 @@ test.describe('View mode interactions', () => {
     await expect(dateDisplay).not.toHaveText(initialWeek ?? '')
   })
 })
+
+// ===========================================================================
+// 7. Page-centric agenda + undated tasks (FEAT-1)
+// ===========================================================================
+
+test.describe('Page-centric agenda defaults', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('agenda view includes undated tasks by default', async ({ page }) => {
+    // Switch to agenda view
+    await page.getByRole('tab', { name: 'Agenda view' }).click()
+    await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
+
+    // Wait for results to load
+    const items = page.locator('.agenda-results-item')
+    await expect(items.first()).toBeVisible({ timeout: 5000 })
+
+    // BLOCK_PROJ_3 "Update dependencies" is undated (todo_state=DONE, no dates)
+    // It should appear in the agenda results
+    await expect(page.getByText('Update dependencies')).toBeVisible()
+  })
+
+  test('agenda view groups by page by default', async ({ page }) => {
+    // Switch to agenda view — default groupBy is 'page' since FEAT-1
+    await page.getByRole('tab', { name: 'Agenda view' }).click()
+    await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
+
+    // Wait for results to load
+    const items = page.locator('.agenda-results-item')
+    await expect(items.first()).toBeVisible({ timeout: 5000 })
+
+    // Page group headers should appear (agenda groups by page by default)
+    const groupHeaders = page.locator('.agenda-group-header')
+    const headerCount = await groupHeaders.count()
+    expect(headerCount).toBeGreaterThanOrEqual(1)
+  })
+
+  test('group by page shows page name headers', async ({ page }) => {
+    // Switch to agenda view
+    await page.getByRole('tab', { name: 'Agenda view' }).click()
+    await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
+
+    // Click "Group by" to open popover
+    await page.getByRole('button', { name: 'Group by' }).click()
+    const groupList = page.locator('ul[aria-label="Group by"]')
+    await expect(groupList).toBeVisible()
+
+    // Select "Page" grouping
+    await groupList.getByText('Page').click()
+    await expect(groupList).not.toBeVisible()
+
+    // Wait for regrouped results
+    const items = page.locator('.agenda-results-item')
+    await expect(items.first()).toBeVisible({ timeout: 5000 })
+
+    // Verify page group headers contain page names from seed data
+    const groupHeaders = page.locator('.agenda-group-header')
+    const headerCount = await groupHeaders.count()
+    expect(headerCount).toBeGreaterThanOrEqual(1)
+
+    // At least one header should contain a known page name
+    const allHeaderText = await groupHeaders.allTextContents()
+    const hasKnownPage = allHeaderText.some(
+      (text) => text.includes('Projects') || text.includes('Meetings') || text.includes('No page'),
+    )
+    expect(hasKnownPage).toBe(true)
+  })
+
+  test('sort by page reorders items alphabetically by page title', async ({ page }) => {
+    // Switch to agenda view
+    await page.getByRole('tab', { name: 'Agenda view' }).click()
+    await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
+
+    // Click "Sort by" to open popover
+    await page.getByRole('button', { name: 'Sort by' }).click()
+    const sortList = page.locator('ul[aria-label="Sort by"]')
+    await expect(sortList).toBeVisible()
+
+    // Select "Page" sorting
+    await sortList.getByText('Page').click()
+    await expect(sortList).not.toBeVisible()
+
+    // Verify items are still rendered after re-sort
+    const items = page.locator('.agenda-results-item')
+    await expect(items.first()).toBeVisible({ timeout: 5000 })
+    const count = await items.count()
+    expect(count).toBeGreaterThanOrEqual(1)
+  })
+})

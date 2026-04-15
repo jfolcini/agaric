@@ -5,7 +5,7 @@
  *  1. handleBlockClick calls onNavigateToPage with correct args
  *  2. handleBlockClick uses pageTitles to resolve title
  *  3. handleBlockClick uses untitledLabel fallback when page not in map
- *  4. handleBlockClick does nothing when block has no parent_id
+ *  4. handleBlockClick does nothing when block has no page_id
  *  5. handleBlockClick does nothing when onNavigateToPage is undefined
  *  6. handleBlockKeyDown triggers click on Enter key
  *  7. handleBlockKeyDown triggers click on Space key
@@ -32,7 +32,7 @@ function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
     priority: null,
     due_date: null,
     scheduled_date: null,
-    page_id: null,
+    page_id: 'PAGE_1',
     ...overrides,
   }
 }
@@ -71,7 +71,7 @@ describe('useBlockNavigation', () => {
 
     const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
-    result.current.handleBlockClick(makeBlock({ parent_id: 'PAGE_2', id: 'B2' }))
+    result.current.handleBlockClick(makeBlock({ page_id: 'PAGE_2', id: 'B2' }))
 
     expect(onNavigateToPage).toHaveBeenCalledWith('PAGE_2', 'Beta Page', 'B2')
   })
@@ -83,7 +83,7 @@ describe('useBlockNavigation', () => {
 
     const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
-    result.current.handleBlockClick(makeBlock({ parent_id: 'UNKNOWN_PAGE' }))
+    result.current.handleBlockClick(makeBlock({ page_id: 'UNKNOWN_PAGE' }))
 
     expect(onNavigateToPage).toHaveBeenCalledWith('UNKNOWN_PAGE', 'Untitled', 'BLOCK_1')
   })
@@ -101,19 +101,33 @@ describe('useBlockNavigation', () => {
       }),
     )
 
-    result.current.handleBlockClick(makeBlock({ parent_id: 'UNKNOWN_PAGE' }))
+    result.current.handleBlockClick(makeBlock({ page_id: 'UNKNOWN_PAGE' }))
 
     expect(onNavigateToPage).toHaveBeenCalledWith('UNKNOWN_PAGE', 'Sans titre', 'BLOCK_1')
   })
 
-  // 4. handleBlockClick does nothing when block has no parent_id
-  it('does nothing when block has no parent_id', () => {
+  // 3c. Nested block navigates to page_id, not parent_id
+  it('navigates using page_id even when parent_id differs (nested blocks)', () => {
+    const onNavigateToPage = vi.fn()
+    const pageTitles = new Map([['PAGE_ROOT', 'My Page']])
+
+    const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
+
+    result.current.handleBlockClick(
+      makeBlock({ page_id: 'PAGE_ROOT', parent_id: 'PARENT_BLOCK', id: 'NESTED' }),
+    )
+
+    expect(onNavigateToPage).toHaveBeenCalledWith('PAGE_ROOT', 'My Page', 'NESTED')
+  })
+
+  // 4. handleBlockClick does nothing when block has no page_id
+  it('does nothing when block has no page_id', () => {
     const onNavigateToPage = vi.fn()
     const pageTitles = new Map<string, string>()
 
     const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
-    result.current.handleBlockClick(makeBlock({ parent_id: null }))
+    result.current.handleBlockClick(makeBlock({ page_id: null }))
 
     expect(onNavigateToPage).not.toHaveBeenCalled()
   })

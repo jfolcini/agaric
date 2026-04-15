@@ -269,8 +269,8 @@ export function AgendaResults({
             <DependencyIndicator blockId={block.id} propertiesCache={propertiesCacheRef} />
           </>
         }
-        pageId={block.parent_id}
-        pageTitle={pageTitles.get(block.parent_id ?? '') ?? t('agenda.untitled')}
+        pageId={block.page_id}
+        pageTitle={pageTitles.get(block.page_id ?? '') ?? t('agenda.untitled')}
         breadcrumbArrow={t('agenda.breadcrumbArrow')}
         className="agenda-results-item hover:bg-accent/50 active:bg-accent/70"
         contentClassName="agenda-results-text"

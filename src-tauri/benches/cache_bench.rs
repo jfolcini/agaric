@@ -1,7 +1,8 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 use agaric_lib::cache::{
-    rebuild_agenda_cache, rebuild_pages_cache, rebuild_tags_cache, reindex_block_links,
+    rebuild_agenda_cache, rebuild_page_ids, rebuild_pages_cache, rebuild_tags_cache,
+    reindex_block_links,
 };
 use agaric_lib::db::init_pool;
 use sqlx::SqlitePool;
@@ -116,6 +117,63 @@ async fn seed_links(pool: &SqlitePool, link_count: usize) {
         .unwrap();
 }
 
+/// Insert `count` pages with nested content blocks 2-3 levels deep to exercise
+/// the recursive CTE in `rebuild_page_ids`.
+async fn seed_page_id_data(pool: &SqlitePool, count: usize) {
+    let mut tx = pool.begin().await.unwrap();
+    for i in 0..count {
+        let page_id = format!("PAGE{i:020}");
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', ?)")
+            .bind(&page_id)
+            .bind(format!("Page {i}"))
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+
+        // Level-1 child
+        let child1_id = format!("L1C{i:021}");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', ?, ?, 1)",
+        )
+        .bind(&child1_id)
+        .bind(format!("child1 of page {i}"))
+        .bind(&page_id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+
+        // Level-2 child (nested under level-1)
+        let child2_id = format!("L2C{i:021}");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', ?, ?, 1)",
+        )
+        .bind(&child2_id)
+        .bind(format!("child2 of page {i}"))
+        .bind(&child1_id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+
+        // Level-3 child for every 3rd page (some 2, some 3 levels deep)
+        if i % 3 == 0 {
+            let child3_id = format!("L3C{i:021}");
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+                 VALUES (?, 'content', ?, ?, 1)",
+            )
+            .bind(&child3_id)
+            .bind(format!("child3 of page {i}"))
+            .bind(&child2_id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        }
+    }
+    tx.commit().await.unwrap();
+}
+
 // ---------------------------------------------------------------------------
 // Helper: create a temporary pool
 // ---------------------------------------------------------------------------
@@ -197,11 +255,29 @@ fn bench_reindex_block_links(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_rebuild_page_ids(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("rebuild_page_ids");
+
+    for count in [100, 1_000, 10_000, 100_000] {
+        let dir = TempDir::new().unwrap();
+        let pool = make_pool(&rt, &dir);
+        rt.block_on(seed_page_id_data(&pool, count));
+
+        group.throughput(Throughput::Elements(count as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
+            b.to_async(&rt).iter(|| rebuild_page_ids(&pool));
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_rebuild_tags_cache,
     bench_rebuild_pages_cache,
     bench_rebuild_agenda_cache,
     bench_reindex_block_links,
+    bench_rebuild_page_ids,
 );
 criterion_main!(benches);
