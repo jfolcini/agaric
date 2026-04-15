@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 381 — UX-177: external link mark exit after toolbar insertion (2026-04-15)
+
+**1 item resolved. REVIEW-LATER is empty (0 open items).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| UX-177 (resolved) | External link mark captured subsequent typing after toolbar/Ctrl+K insertion — added `removeStoredMark` in `handleApply` | `LinkEditPopover.tsx` |
+
+### Implementation
+- **UX-177**: `LinkEditPopover.handleApply` now calls `editor.view.dispatch(editor.state.tr.removeStoredMark(linkMarkType))` after the `setLink` chain completes. This mirrors the existing paste-path fix (B-69 in `external-link.ts:81`). Root cause: `@tiptap/extension-link` returns `inclusive: true` when `autolink` is enabled, making the link mark absorb text typed at its boundary. The `removeStoredMark` call clears the stored marks so subsequent typing produces plain text.
+
+### Tests added
+- `LinkEditPopover.test.tsx`: 3 new assertions verifying `removeStoredMark` is called after Apply (new link, saved selection, collapsed selection branches)
+- `external-link.test.ts`: 2 new integration tests using a real TipTap editor — verifies stored marks cleared and typed text unlinked after `setLink + removeStoredMark`
+
+### Stats
+- 3 files changed (+111 lines)
+- 64 tests pass across 2 test files (22 + 42)
+- 1 item resolved — REVIEW-LATER now has 0 open items
+
+---
+
 ## Session 380 — UX-173/174/175/176 + B-76: block polish, DnD precision, layout fix (2026-04-14)
 
 **5 items resolved (recovered from crashed session). REVIEW-LATER is empty (0 open items).**
