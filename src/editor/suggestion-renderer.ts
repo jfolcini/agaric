@@ -8,6 +8,7 @@
 
 import { computePosition, flip, offset, shift } from '@floating-ui/dom'
 import type { Editor } from '@tiptap/core'
+import type { PluginKey } from '@tiptap/pm/state'
 import { ReactRenderer } from '@tiptap/react'
 import type { SuggestionKeyDownProps, SuggestionProps } from '@tiptap/suggestion'
 import { getShortcutKeys } from '../lib/keyboard-config'
@@ -35,7 +36,7 @@ async function updatePosition(
       rect = new DOMRect(coords.left, coords.top, 1, coords.bottom - coords.top)
     }
   } catch {
-    // Fallback to clientRect
+    logger.debug('SuggestionRenderer', 'coordsAtPos fallback to clientRect')
   }
 
   // Fallback to trigger clientRect
@@ -62,10 +63,26 @@ async function updatePosition(
   })
 }
 
-export function createSuggestionRenderer(label?: string) {
+/**
+ * Remove all orphaned `.suggestion-popup` elements from `document.body`.
+ * Called as a safety net during mount/unmount to prevent DOM accumulation
+ * when the normal `onExit()` lifecycle is bypassed (B-77).
+ */
+export function cleanupOrphanedPopups(): number {
+  const orphans = document.querySelectorAll('.suggestion-popup')
+  const count = orphans.length
+  for (const el of orphans) el.remove()
+  if (count > 0) {
+    logger.warn('SuggestionRenderer', 'cleaned up orphaned popups', { count })
+  }
+  return count
+}
+
+export function createSuggestionRenderer(label?: string, pluginKey?: PluginKey) {
   let renderer: ReactRenderer<SuggestionListRef> | null = null
   let popup: HTMLDivElement | null = null
   let outsideClickHandler: ((e: PointerEvent) => void) | null = null
+  let editorRef: Editor | null = null
 
   function cleanupListener() {
     if (outsideClickHandler) {
@@ -76,6 +93,10 @@ export function createSuggestionRenderer(label?: string) {
 
   return {
     onStart(props: SuggestionProps) {
+      logger.debug('SuggestionRenderer', 'onStart', { label, query: props.query })
+
+      editorRef = props.editor
+
       // Clean up any previous popup to prevent DOM accumulation
       cleanupListener()
       if (renderer) renderer.destroy()
@@ -91,6 +112,7 @@ export function createSuggestionRenderer(label?: string) {
 
       popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
+      // biome-ignore lint/complexity/useLiteralKeys: DOMStringMap index signature requires bracket notation (TS4111)
       popup.dataset['testid'] = 'suggestion-popup'
       popup.setAttribute('role', 'region')
       popup.setAttribute('aria-label', label ?? 'Suggestions')
@@ -104,12 +126,30 @@ export function createSuggestionRenderer(label?: string) {
       document.body.appendChild(popup)
       popup.appendChild(renderer.element)
       updatePosition(popup, props).catch((err: unknown) => {
-        logger.warn('SuggestionRenderer', 'Position update failed', undefined, err)
+        logger.warn('SuggestionRenderer', 'Position update failed', { label }, err)
       })
 
       // Dismiss popup on outside click (capture phase, like BlockContextMenu)
       outsideClickHandler = (e: PointerEvent) => {
         if (popup && !popup.contains(e.target as Node)) {
+          logger.warn('SuggestionRenderer', 'outside click — deactivating plugin', { label })
+          // Deactivate the Suggestion plugin so it doesn't stay stuck
+          // active with a null renderer (B-77 fix layer 1).
+          if (editorRef && pluginKey) {
+            try {
+              const { tr } = editorRef.state
+              tr.setMeta(pluginKey, { exit: true })
+              tr.setMeta('addToHistory', false)
+              editorRef.view.dispatch(tr)
+            } catch (err) {
+              logger.warn(
+                'SuggestionRenderer',
+                'failed to dispatch exit meta on outside click',
+                { label },
+                err,
+              )
+            }
+          }
           cleanupListener()
           renderer?.destroy()
           renderer = null
@@ -121,10 +161,18 @@ export function createSuggestionRenderer(label?: string) {
     },
 
     onUpdate(props: SuggestionProps) {
-      renderer?.updateProps(props)
+      if (!renderer) {
+        logger.warn(
+          'SuggestionRenderer',
+          'onUpdate called with null renderer — plugin state desync',
+          { label, query: props.query },
+        )
+        return
+      }
+      renderer.updateProps(props)
       if (popup)
         updatePosition(popup, props).catch((err: unknown) => {
-          logger.warn('SuggestionRenderer', 'Position update failed', undefined, err)
+          logger.warn('SuggestionRenderer', 'Position update failed', { label }, err)
         })
     },
 
@@ -151,15 +199,24 @@ export function createSuggestionRenderer(label?: string) {
         const syntheticEnter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
         return renderer?.ref?.onKeyDown?.({ event: syntheticEnter }) ?? false
       }
-      return renderer?.ref?.onKeyDown?.({ event }) ?? false
+      if (!renderer) {
+        logger.warn('SuggestionRenderer', 'onKeyDown called with null renderer', {
+          label,
+          key: event.key,
+        })
+        return false
+      }
+      return renderer.ref?.onKeyDown?.({ event }) ?? false
     },
 
     onExit() {
+      logger.debug('SuggestionRenderer', 'onExit', { label })
       cleanupListener()
       renderer?.destroy()
       renderer = null
       popup?.remove()
       popup = null
+      editorRef = null
     },
   }
 }

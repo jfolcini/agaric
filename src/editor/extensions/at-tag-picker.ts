@@ -123,7 +123,7 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
             editor.chain().focus().deleteRange(range).insertTagRef(item.id).run()
           }
         },
-        render: () => createSuggestionRenderer('Tags'),
+        render: () => createSuggestionRenderer('Tags', atTagPickerPluginKey),
       }),
     ]
   },

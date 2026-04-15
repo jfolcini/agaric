@@ -24,6 +24,13 @@ import {
 } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
 
+function logSlowQuery(fn: string, query: string, t0: number, count: number): void {
+  const durationMs = Math.round(performance.now() - t0)
+  if (durationMs > 200) {
+    logger.warn('useBlockResolve', `${fn} slow`, { query, durationMs, count })
+  }
+}
+
 export interface UseBlockResolveReturn {
   resolveBlockTitle: (id: string) => string
   resolveBlockStatus: (id: string) => 'active' | 'deleted'
@@ -78,6 +85,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
 
   // ── Picker callbacks ────────────────────────────────────────────────
   const searchTags = useCallback(async (query: string): Promise<PickerItem[]> => {
+    const t0 = performance.now()
     try {
       // Strip trailing ] so @tag] resolves to "tag", not "tag]"
       const q = query.replace(/\]+$/, '').toLowerCase().trim()
@@ -110,17 +118,20 @@ export function useBlockResolve(): UseBlockResolveReturn {
           })
         }
       }
+      logSlowQuery('searchTags', q, t0, result.length)
       return result
     } catch (err) {
       // Never reject — the TipTap Suggestion plugin has no error handling
       // for async items callbacks.  A rejection silently prevents the popup
       // from opening (H-10 / H-11).
-      logger.error('useBlockResolve', 'searchTags failed', undefined, err)
+      const durationMs = Math.round(performance.now() - t0)
+      logger.error('useBlockResolve', 'searchTags failed', { query, durationMs }, err)
       return []
     }
   }, [])
 
   const searchPages = useCallback(async (query: string): Promise<PickerItem[]> => {
+    const t0 = performance.now()
     try {
       // Strip trailing ]] so [[text]] resolves to "text", not "text]]"
       const q = query.replace(/\]+$/, '').toLowerCase().trim()
@@ -201,8 +212,8 @@ export function useBlockResolve(): UseBlockResolveReturn {
               })
             }
           }
-        } catch {
-          // Alias lookup failed — ignore silently
+        } catch (err) {
+          logger.warn('useBlockResolve', 'alias lookup failed', { query: q }, err)
         }
       }
 
@@ -221,17 +232,20 @@ export function useBlockResolve(): UseBlockResolveReturn {
           })
         }
       }
+      logSlowQuery('searchPages', q, t0, matches.length)
       return matches
     } catch (err) {
       // Never reject — the TipTap Suggestion plugin has no error handling
       // for async items callbacks.  A rejection silently prevents the popup
       // from opening (H-10 / H-11).
-      logger.error('useBlockResolve', 'searchPages failed', undefined, err)
+      const durationMs = Math.round(performance.now() - t0)
+      logger.error('useBlockResolve', 'searchPages failed', { query, durationMs }, err)
       return []
     }
   }, [])
 
   const searchBlockRefs = useCallback(async (query: string): Promise<PickerItem[]> => {
+    const t0 = performance.now()
     try {
       const q = query.replace(/\)+$/, '').trim()
       if (q.length < 2) return []
@@ -257,26 +271,38 @@ export function useBlockResolve(): UseBlockResolveReturn {
           }),
         )
       }
+      logSlowQuery('searchBlockRefs', q, t0, results.length)
       return results
     } catch (err) {
-      logger.error('useBlockResolve', 'searchBlockRefs failed', undefined, err)
+      const durationMs = Math.round(performance.now() - t0)
+      logger.error('useBlockResolve', 'searchBlockRefs failed', { query, durationMs }, err)
       return []
     }
   }, [])
 
   const onCreatePage = useCallback(async (label: string): Promise<string> => {
-    const block = await createBlock({ blockType: 'page', content: label })
-    // Populate resolve cache so the link chip shows the title immediately
-    useResolveStore.getState().set(block.id, label, false)
-    pagesListRef.current = [...pagesListRef.current, { id: block.id, title: label }]
-    return block.id
+    try {
+      const block = await createBlock({ blockType: 'page', content: label })
+      // Populate resolve cache so the link chip shows the title immediately
+      useResolveStore.getState().set(block.id, label, false)
+      pagesListRef.current = [...pagesListRef.current, { id: block.id, title: label }]
+      return block.id
+    } catch (err) {
+      logger.error('useBlockResolve', 'onCreatePage failed', { label }, err)
+      throw err
+    }
   }, [])
 
   const onCreateTag = useCallback(async (name: string): Promise<string> => {
-    const block = await createBlock({ blockType: 'tag', content: name })
-    // Populate resolve cache so the tag chip shows the name immediately
-    useResolveStore.getState().set(block.id, name, false)
-    return block.id
+    try {
+      const block = await createBlock({ blockType: 'tag', content: name })
+      // Populate resolve cache so the tag chip shows the name immediately
+      useResolveStore.getState().set(block.id, name, false)
+      return block.id
+    } catch (err) {
+      logger.error('useBlockResolve', 'onCreateTag failed', { name }, err)
+      throw err
+    }
   }, [])
 
   return {

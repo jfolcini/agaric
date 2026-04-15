@@ -21,6 +21,7 @@ import { useCallback, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { shouldSplitOnBlur } from '../editor/use-roving-editor'
+import { logger } from '../lib/logger'
 
 /**
  * CSS selectors for transient UI elements (popups, toolbars, pickers) that
@@ -89,7 +90,12 @@ export function useEditorBlur(params: {
       // editor to stay mounted.
       const related = e.relatedTarget as HTMLElement | null
       if (related) {
-        if (EDITOR_PORTAL_SELECTORS.some((sel) => related.closest(sel))) {
+        const matchedSelector = EDITOR_PORTAL_SELECTORS.find((sel) => related.closest(sel))
+        if (matchedSelector) {
+          logger.debug('EditorBlur', 'blur prevented — focus moved to portal', {
+            blockId,
+            selector: matchedSelector,
+          })
           return
         }
       }
@@ -102,23 +108,33 @@ export function useEditorBlur(params: {
       // we use checkVisibility() which detects display:none, visibility:hidden,
       // and opacity:0. Falls back to offsetParent for older browsers.
       const wrapper = e.currentTarget as HTMLElement
-      if (
-        EDITOR_PORTAL_SELECTORS.some((sel) => {
+      {
+        let visiblePopupSelector: string | undefined
+        const hasVisiblePopup = EDITOR_PORTAL_SELECTORS.some((sel) => {
           const els = document.querySelectorAll(sel)
           for (const el of els) {
             if (wrapper.contains(el)) continue
             const htmlEl = el as HTMLElement
             if (typeof htmlEl.checkVisibility === 'function') {
-              if (htmlEl.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }))
+              if (htmlEl.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) {
+                visiblePopupSelector = sel
                 return true
+              }
             } else if (htmlEl.offsetParent !== null) {
+              visiblePopupSelector = sel
               return true
             }
           }
           return false
         })
-      )
-        return
+        if (hasVisiblePopup) {
+          logger.debug('EditorBlur', 'blur prevented — visible popup outside wrapper', {
+            blockId,
+            selector: visiblePopupSelector,
+          })
+          return
+        }
+      }
 
       // Step 5: Unmount -> save or split -> discard draft -> clear focus
       const changed = rovingEditorRef.current.unmount()

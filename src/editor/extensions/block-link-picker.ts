@@ -141,7 +141,7 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
             editor.chain().focus().deleteRange(range).insertBlockLink(item.id).run()
           }
         },
-        render: () => createSuggestionRenderer('Block links'),
+        render: () => createSuggestionRenderer('Block links', blockLinkPickerPluginKey),
       }),
     ]
   },

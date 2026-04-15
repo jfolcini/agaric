@@ -59,7 +59,7 @@ export const PropertyPicker = Extension.create<PropertyPickerOptions>({
           // Notify parent to create the property
           extensionOptions.onSelect?.(item, editor)
         },
-        render: () => createSuggestionRenderer('Properties'),
+        render: () => createSuggestionRenderer('Properties', propertyPickerPluginKey),
       }),
     ]
   },

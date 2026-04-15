@@ -57,7 +57,7 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
           extensionOptions.onCommand(props as PickerItem, editor)
         },
         render: () => {
-          const base = createSuggestionRenderer('Slash commands')
+          const base = createSuggestionRenderer('Slash commands', slashCommandPluginKey)
           let autoExecTimer: ReturnType<typeof setTimeout> | null = null
 
           return {

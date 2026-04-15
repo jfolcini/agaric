@@ -45,6 +45,7 @@ import { SlashCommand, slashCommandPluginKey } from './extensions/slash-command'
 import { TagRef } from './extensions/tag-ref'
 import { parse, serialize } from './markdown-serializer'
 import type { PickerItem } from './SuggestionList'
+import { cleanupOrphanedPopups } from './suggestion-renderer'
 import type { DocNode } from './types'
 
 const suggestionPluginKeys = [
@@ -362,6 +363,25 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       activeBlockIdRef.current = blockId
       originalMarkdownRef.current = markdown
 
+      // B-77 fix layer 2: Exit all suggestion plugins BEFORE replacing the
+      // document so setMeta({ exit: true }) fires while decorations still
+      // exist and the plugin can cleanly call onExit(). Previously this
+      // block ran after replaceDocSilently, which destroyed the decorations
+      // first and could leave the plugin in a corrupted active state.
+      {
+        const { tr: suggTr } = editor.state
+        for (const key of suggestionPluginKeys) {
+          suggTr.setMeta(key, { exit: true })
+        }
+        suggTr.setMeta('addToHistory', false)
+        editor.view.dispatch(suggTr)
+      }
+
+      // B-77 fix layer 3: Remove any orphaned popup DOM elements that
+      // survived a broken onExit() lifecycle (e.g. outside-click handler
+      // before B-77 fix, or any future edge case).
+      cleanupOrphanedPopups()
+
       const doc = parse(markdown)
       replaceDocSilently(editor, doc as unknown as Record<string, unknown>)
       // Clear undo history so previous block's edits don't leak into this one.
@@ -382,18 +402,6 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         tr.setMeta('addToHistory', false)
         editor.view.dispatch(tr)
       }
-      // Reset all suggestion plugin states to prevent stale `active = true`
-      // from a previous block's suggestion lifecycle. Uses exitSuggestion's
-      // pattern: dispatch setMeta({ exit: true }) for each suggestion plugin key.
-      // This is safe as a no-op when the plugin is already inactive.
-      {
-        const { tr: suggTr } = editor.state
-        for (const key of suggestionPluginKeys) {
-          suggTr.setMeta(key, { exit: true })
-        }
-        suggTr.setMeta('addToHistory', false)
-        editor.view.dispatch(suggTr)
-      }
       editor.commands.focus()
     },
     [editor],
@@ -401,6 +409,19 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
 
   const unmount = useCallback((): string | null => {
     if (!editor) return null
+
+    // B-77 fix layer 4: Exit all suggestion plugins before wiping the
+    // document.  Without this, blur → unmount → replaceDocSilently
+    // destroys decorations while the plugin may still be active.
+    {
+      const { tr: suggTr } = editor.state
+      for (const key of suggestionPluginKeys) {
+        suggTr.setMeta(key, { exit: true })
+      }
+      suggTr.setMeta('addToHistory', false)
+      editor.view.dispatch(suggTr)
+    }
+    cleanupOrphanedPopups()
 
     let delta: ContentDelta | null = null
     try {
