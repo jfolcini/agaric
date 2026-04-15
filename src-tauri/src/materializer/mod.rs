@@ -34,6 +34,7 @@ pub enum MaterializeTask {
     CleanupOrphanedAttachments,
     RebuildTagInheritanceCache,
     RebuildProjectedAgendaCache,
+    RebuildPageIds,
     Barrier(Arc<tokio::sync::Notify>),
 }
 

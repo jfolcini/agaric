@@ -45,6 +45,7 @@ function makeGroup(blocks: Array<{ id: string; content: string | null }>): Backl
       priority: null,
       due_date: null,
       scheduled_date: null,
+      page_id: null,
     })),
   }
 }

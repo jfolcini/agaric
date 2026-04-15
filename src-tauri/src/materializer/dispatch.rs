@@ -66,6 +66,7 @@ impl Materializer {
                 }
                 self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache)?;
+                self.try_enqueue_background(MaterializeTask::RebuildPageIds)?;
             }
             "edit_block" => {
                 let hint: BlockIdHint = serde_json::from_str(&record.payload)?;
@@ -140,6 +141,7 @@ impl Materializer {
                 self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
+                self.try_enqueue_background(MaterializeTask::RebuildPageIds)?;
                 if !hint.block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::RemoveFtsBlock {
                         block_id: hint.block_id,
@@ -153,6 +155,7 @@ impl Materializer {
                 self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
+                self.try_enqueue_background(MaterializeTask::RebuildPageIds)?;
                 if !hint.block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::UpdateFtsBlock {
                         block_id: hint.block_id,
@@ -166,6 +169,7 @@ impl Materializer {
                 self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
+                self.try_enqueue_background(MaterializeTask::RebuildPageIds)?;
                 if !hint.block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::RemoveFtsBlock {
                         block_id: hint.block_id,
@@ -184,6 +188,7 @@ impl Materializer {
             }
             "move_block" => {
                 self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
+                self.try_enqueue_background(MaterializeTask::RebuildPageIds)?;
             }
             "add_attachment" | "delete_attachment" => {}
             other => {

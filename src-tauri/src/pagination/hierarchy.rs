@@ -38,7 +38,8 @@ pub async fn list_children(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
                 deleted_at, is_conflict as "is_conflict: bool",
-                conflict_type, todo_state, priority, due_date, scheduled_date
+                conflict_type, todo_state, priority, due_date, scheduled_date,
+                page_id
          FROM blocks
          WHERE parent_id IS ?1 AND deleted_at IS NULL
            AND (?2 IS NULL OR (
@@ -84,7 +85,8 @@ pub async fn list_by_type(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
                 deleted_at, is_conflict as "is_conflict: bool",
-                conflict_type, todo_state, priority, due_date, scheduled_date
+                conflict_type, todo_state, priority, due_date, scheduled_date,
+                page_id
          FROM blocks
          WHERE block_type = ?1 AND deleted_at IS NULL
            AND (?2 IS NULL OR id > ?3)
@@ -126,7 +128,8 @@ pub async fn list_conflicts(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
                 deleted_at, is_conflict as "is_conflict: bool",
-                conflict_type, todo_state, priority, due_date, scheduled_date
+                conflict_type, todo_state, priority, due_date, scheduled_date,
+                page_id
          FROM blocks
          WHERE is_conflict = 1 AND deleted_at IS NULL
            AND (?1 IS NULL OR id > ?2)

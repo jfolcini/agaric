@@ -13,6 +13,7 @@
 
 mod agenda;
 mod block_links;
+mod page_id;
 mod pages;
 mod projected_agenda;
 mod tags;
@@ -55,6 +56,7 @@ fn ulid_link_re() -> &'static Regex {
 
 pub use agenda::{rebuild_agenda_cache, rebuild_agenda_cache_split};
 pub use block_links::{reindex_block_links, reindex_block_links_split};
+pub use page_id::{rebuild_page_ids, rebuild_page_ids_split};
 pub use pages::{rebuild_pages_cache, rebuild_pages_cache_split};
 pub use projected_agenda::{rebuild_projected_agenda_cache, rebuild_projected_agenda_cache_split};
 pub use tags::{rebuild_tags_cache, rebuild_tags_cache_split};
@@ -80,5 +82,6 @@ pub async fn rebuild_all_caches(pool: &SqlitePool) -> Result<(), AppError> {
     rebuild_pages_cache(pool).await?;
     rebuild_agenda_cache(pool).await?;
     rebuild_projected_agenda_cache(pool).await?;
+    rebuild_page_ids(pool).await?;
     Ok(())
 }

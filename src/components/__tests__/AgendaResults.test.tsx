@@ -71,6 +71,7 @@ function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
     block_type: 'block',
     content: 'test block',
     parent_id: 'PAGE1',
+    page_id: null,
     position: 0,
     deleted_at: null,
     is_conflict: false,
@@ -212,13 +213,11 @@ describe('AgendaResults', () => {
     expect(onNavigateToPage).toHaveBeenCalledWith('PAGE1', 'Page Title', 'B1')
   })
 
-  // 5. Empty state without filters shows "No dated tasks found"
-  it('shows "No dated tasks found" empty state when no filters active', () => {
+  // 5. Empty state without filters shows "No tasks found"
+  it('shows "No tasks found" empty state when no filters active', () => {
     render(<AgendaResults {...defaultProps({ blocks: [], hasActiveFilters: false })} />)
 
-    expect(
-      screen.getByText(/No dated tasks found\. Add a due date or scheduled date/),
-    ).toBeInTheDocument()
+    expect(screen.getByText(/No tasks found/)).toBeInTheDocument()
   })
 
   // 6. Empty state with filters shows "No blocks match" + clear button
@@ -399,6 +398,71 @@ describe('AgendaResults', () => {
     // Count badges
     const badges = screen.getAllByText('(1)')
     expect(badges.length).toBe(4)
+  })
+
+  it('groups by page when groupBy is page', () => {
+    const blocks = [
+      makeBlock({
+        id: 'B1',
+        page_id: '01AAAAAAAAAAAAAAAAAAAAPAGE',
+        content: 'Task in Project A',
+        todo_state: 'TODO',
+      }),
+      makeBlock({
+        id: 'B2',
+        page_id: '01BBBBBBBBBBBBBBBBBBBBPAGE',
+        content: 'Task in Project B',
+        todo_state: 'DOING',
+      }),
+      makeBlock({
+        id: 'B3',
+        page_id: '01AAAAAAAAAAAAAAAAAAAAPAGE',
+        content: 'Another task in Project A',
+        todo_state: 'DONE',
+      }),
+    ]
+    const pageTitles = new Map([
+      ['01AAAAAAAAAAAAAAAAAAAAPAGE', 'Project A'],
+      ['01BBBBBBBBBBBBBBBBBBBBPAGE', 'Project B'],
+    ])
+
+    const { container } = render(
+      <AgendaResults {...defaultProps({ blocks, pageTitles })} groupBy="page" />,
+    )
+
+    const headers = container.querySelectorAll('.agenda-group-header')
+    const labels = [...headers].map((h) => h.textContent?.replace(/\(\d+\)/, '').trim())
+    expect(labels).toEqual(['Project A', 'Project B'])
+
+    // Project A has 2 blocks, Project B has 1
+    expect(screen.getByText('(2)')).toBeInTheDocument()
+    expect(screen.getByText('(1)')).toBeInTheDocument()
+  })
+
+  it('shows "No page" group for blocks without page_id', () => {
+    const blocks = [
+      makeBlock({
+        id: 'B1',
+        page_id: '01AAAAAAAAAAAAAAAAAAAAPAGE',
+        content: 'Task with page',
+        todo_state: 'TODO',
+      }),
+      makeBlock({
+        id: 'B2',
+        page_id: null,
+        content: 'Orphan task',
+        todo_state: 'TODO',
+      }),
+    ]
+    const pageTitles = new Map([['01AAAAAAAAAAAAAAAAAAAAPAGE', 'My Page']])
+
+    const { container } = render(
+      <AgendaResults {...defaultProps({ blocks, pageTitles })} groupBy="page" />,
+    )
+
+    const headers = container.querySelectorAll('.agenda-group-header')
+    const labels = [...headers].map((h) => h.textContent?.replace(/\(\d+\)/, '').trim())
+    expect(labels).toEqual(['My Page', 'No page'])
   })
 
   // 12. sortBy="priority" sorts blocks by priority first

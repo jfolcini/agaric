@@ -52,7 +52,8 @@ pub async fn query_by_property(
         let sql = format!(
             "SELECT id, block_type, content, parent_id, position, \
                     deleted_at, is_conflict, conflict_type, \
-                    todo_state, priority, due_date, scheduled_date \
+                    todo_state, priority, due_date, scheduled_date, \
+                    page_id \
              FROM blocks \
              WHERE {col} IS NOT NULL \
                AND deleted_at IS NULL \
@@ -79,7 +80,8 @@ pub async fn query_by_property(
         let sql = format!(
             "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
                     b.deleted_at, b.is_conflict, b.conflict_type, \
-                    b.todo_state, b.priority, b.due_date, b.scheduled_date \
+                    b.todo_state, b.priority, b.due_date, b.scheduled_date, \
+                    b.page_id \
              FROM block_properties bp \
              JOIN blocks b ON b.id = bp.block_id \
              WHERE bp.key = ?1 \

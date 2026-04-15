@@ -45,6 +45,7 @@ mod tags;
 pub use agenda::{
     count_agenda_batch, count_agenda_batch_by_source, count_agenda_batch_by_source_inner,
     count_agenda_batch_inner, list_projected_agenda, list_projected_agenda_inner,
+    list_undated_tasks, list_undated_tasks_inner,
 };
 pub use attachments::{
     add_attachment, add_attachment_inner, delete_attachment, delete_attachment_inner,
@@ -113,7 +114,7 @@ pub use tags::{
 #[doc(hidden)]
 pub use agenda::{
     __specta__fn__count_agenda_batch, __specta__fn__count_agenda_batch_by_source,
-    __specta__fn__list_projected_agenda,
+    __specta__fn__list_projected_agenda, __specta__fn__list_undated_tasks,
 };
 #[doc(hidden)]
 pub use attachments::{
@@ -184,6 +185,7 @@ pub use tags::{
 #[doc(hidden)]
 pub use agenda::{
     __cmd__count_agenda_batch, __cmd__count_agenda_batch_by_source, __cmd__list_projected_agenda,
+    __cmd__list_undated_tasks,
 };
 #[doc(hidden)]
 pub use attachments::{__cmd__add_attachment, __cmd__delete_attachment, __cmd__list_attachments};
@@ -587,6 +589,7 @@ struct RepeatingBlockRow {
     priority: Option<String>,
     due_date: Option<String>,
     scheduled_date: Option<String>,
+    page_id: Option<String>,
     repeat_rule: Option<String>,
     repeat_until: Option<String>,
     repeat_count: Option<f64>,
@@ -610,6 +613,7 @@ impl RepeatingBlockRow {
             priority: self.priority.clone(),
             due_date: self.due_date.clone(),
             scheduled_date: self.scheduled_date.clone(),
+            page_id: self.page_id.clone(),
         }
     }
 }

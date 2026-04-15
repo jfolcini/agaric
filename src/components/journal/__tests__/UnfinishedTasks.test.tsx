@@ -37,6 +37,7 @@ function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
     priority: null,
     due_date: null,
     scheduled_date: null,
+    page_id: null,
     ...overrides,
   }
 }
@@ -425,6 +426,7 @@ describe('UnfinishedTasks', () => {
       todo_state: 'TODO',
       due_date: null,
       scheduled_date: daysAgo(2),
+      page_id: null,
     })
     mockInvokeForBlocks([block])
 

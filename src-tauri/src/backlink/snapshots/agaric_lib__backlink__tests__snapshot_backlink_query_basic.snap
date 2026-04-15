@@ -1,6 +1,5 @@
 ---
 source: src/backlink/tests.rs
-assertion_line: 2016
 expression: resp
 ---
 items:
@@ -16,6 +15,7 @@ items:
     priority: ~
     due_date: ~
     scheduled_date: ~
+    page_id: ~
   - id: "[ULID]"
     block_type: content
     content: Source B
@@ -28,6 +28,7 @@ items:
     priority: ~
     due_date: ~
     scheduled_date: ~
+    page_id: ~
   - id: "[ULID]"
     block_type: content
     content: Source C
@@ -40,6 +41,7 @@ items:
     priority: ~
     due_date: ~
     scheduled_date: ~
+    page_id: ~
 next_cursor: "[CURSOR]"
 has_more: false
 total_count: 3

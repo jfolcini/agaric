@@ -28,7 +28,8 @@ pub async fn list_trash(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
                 deleted_at, is_conflict as "is_conflict: bool",
-                conflict_type, todo_state, priority, due_date, scheduled_date
+                conflict_type, todo_state, priority, due_date, scheduled_date,
+                page_id
          FROM blocks
          WHERE deleted_at IS NOT NULL AND is_conflict = 0
            AND (?1 IS NULL OR (

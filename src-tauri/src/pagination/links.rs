@@ -23,7 +23,8 @@ pub async fn list_backlinks(
         BlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at, b.is_conflict as "is_conflict: bool",
-                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date
+                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date,
+                b.page_id
          FROM block_links bl
          JOIN blocks b ON b.id = bl.source_id
          WHERE bl.target_id = ?1 AND b.deleted_at IS NULL

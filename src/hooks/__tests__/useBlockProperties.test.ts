@@ -49,6 +49,7 @@ function makeBlock(id: string, todoState: string | null = null, priority: string
     priority,
     due_date: null,
     scheduled_date: null,
+    page_id: null,
     depth: 0,
   }
 }

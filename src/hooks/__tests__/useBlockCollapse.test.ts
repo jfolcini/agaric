@@ -30,6 +30,7 @@ function makeBlock(id: string, depth: number, parentId: string | null = null): F
     priority: null,
     due_date: null,
     scheduled_date: null,
+    page_id: null,
     depth,
   }
 }

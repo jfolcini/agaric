@@ -36,6 +36,7 @@ function makeFlatBlock(id: string, depth = 0, content = `Block ${id}`): FlatBloc
     priority: null,
     due_date: null,
     scheduled_date: null,
+    page_id: null,
     depth,
   }
 }

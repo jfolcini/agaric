@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   groupByDate,
+  groupByPage,
   groupByPriority,
   groupByState,
   sortAgendaBlocks,
   sortAgendaBlocksBy,
+  sortByPage,
   sortByPriority,
   sortByState,
 } from '../agenda-sort'
@@ -24,6 +26,7 @@ function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
     priority: null,
     due_date: null,
     scheduled_date: null,
+    page_id: null,
     ...overrides,
   }
 }
@@ -352,5 +355,120 @@ describe('sortAgendaBlocksBy', () => {
     // state-first: DOING (0) before TODO (1)
     expect(sorted[0]?.id).toBe('p3-doing')
     expect(sorted[1]?.id).toBe('p1-todo')
+  })
+
+  it('dispatches to page sort for sortBy=page', () => {
+    const pageBlocks = [
+      makeBlock({ id: 'b1', page_id: 'page-b', todo_state: 'TODO' }),
+      makeBlock({ id: 'b2', page_id: 'page-a', todo_state: 'TODO' }),
+    ]
+    const pageTitles = new Map([
+      ['page-a', 'Alpha'],
+      ['page-b', 'Beta'],
+    ])
+    const sorted = sortAgendaBlocksBy(pageBlocks, 'page', pageTitles)
+    // Alpha before Beta
+    expect(sorted[0]?.id).toBe('b2')
+    expect(sorted[1]?.id).toBe('b1')
+  })
+})
+
+describe('groupByPage', () => {
+  it('groups blocks by page_id', () => {
+    const blocks = [
+      makeBlock({ id: 'b1', page_id: 'page-1', todo_state: 'TODO' }),
+      makeBlock({ id: 'b2', page_id: 'page-2', todo_state: 'TODO' }),
+      makeBlock({ id: 'b3', page_id: 'page-1', todo_state: 'DOING' }),
+    ]
+    const pageTitles = new Map([
+      ['page-1', 'Beta Page'],
+      ['page-2', 'Alpha Page'],
+    ])
+    const groups = groupByPage(blocks, pageTitles)
+    // Alphabetical: Alpha Page before Beta Page
+    expect(groups.map((g) => g.label)).toEqual(['Alpha Page', 'Beta Page'])
+    expect(groups[0]?.blocks.length).toBe(1)
+    expect(groups[0]?.blocks[0]?.id).toBe('b2')
+    expect(groups[1]?.blocks.length).toBe(2)
+  })
+
+  it('puts blocks without page_id in "No page" group at end', () => {
+    const blocks = [
+      makeBlock({ id: 'b1', page_id: null, todo_state: 'TODO' }),
+      makeBlock({ id: 'b2', page_id: 'page-1', todo_state: 'TODO' }),
+    ]
+    const pageTitles = new Map([['page-1', 'My Page']])
+    const groups = groupByPage(blocks, pageTitles)
+    expect(groups.length).toBe(2)
+    expect(groups[0]?.label).toBe('My Page')
+    expect(groups[1]?.label).toBe('No page')
+    expect(groups[1]?.className).toBe('text-muted-foreground')
+    expect(groups[1]?.blocks[0]?.id).toBe('b1')
+  })
+
+  it('sorts within group by state then priority then date', () => {
+    const blocks = [
+      makeBlock({
+        id: 'done-p1',
+        page_id: 'page-1',
+        todo_state: 'DONE',
+        priority: '1',
+        due_date: '2026-04-10',
+      }),
+      makeBlock({
+        id: 'todo-p3',
+        page_id: 'page-1',
+        todo_state: 'TODO',
+        priority: '3',
+        due_date: '2026-04-10',
+      }),
+      makeBlock({
+        id: 'todo-p1',
+        page_id: 'page-1',
+        todo_state: 'TODO',
+        priority: '1',
+        due_date: '2026-04-10',
+      }),
+      makeBlock({
+        id: 'doing',
+        page_id: 'page-1',
+        todo_state: 'DOING',
+        priority: '2',
+        due_date: '2026-04-15',
+      }),
+    ]
+    const pageTitles = new Map([['page-1', 'Test Page']])
+    const groups = groupByPage(blocks, pageTitles)
+    expect(groups.length).toBe(1)
+    // DOING first, then TODO p1, TODO p3, then DONE
+    expect(groups[0]?.blocks.map((b) => b.id)).toEqual(['doing', 'todo-p1', 'todo-p3', 'done-p1'])
+  })
+})
+
+describe('sortByPage', () => {
+  it('sorts blocks alphabetically by page title', () => {
+    const blocks = [
+      makeBlock({ id: 'b1', page_id: 'page-c', todo_state: 'TODO' }),
+      makeBlock({ id: 'b2', page_id: 'page-a', todo_state: 'TODO' }),
+      makeBlock({ id: 'b3', page_id: 'page-b', todo_state: 'TODO' }),
+    ]
+    const pageTitles = new Map([
+      ['page-a', 'Alpha'],
+      ['page-b', 'Beta'],
+      ['page-c', 'Charlie'],
+    ])
+    const sorted = sortByPage(blocks, pageTitles)
+    expect(sorted.map((b) => b.id)).toEqual(['b2', 'b3', 'b1'])
+  })
+
+  it('puts blocks without page_id at end', () => {
+    const blocks = [
+      makeBlock({ id: 'no-page', page_id: null, todo_state: 'TODO' }),
+      makeBlock({ id: 'has-page', page_id: 'page-1', todo_state: 'TODO' }),
+    ]
+    const pageTitles = new Map([['page-1', 'My Page']])
+    const sorted = sortByPage(blocks, pageTitles)
+    expect(sorted[0]?.id).toBe('has-page')
+    expect(sorted[1]?.id).toBe('no-page')
   })
 })

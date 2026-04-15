@@ -122,6 +122,34 @@ describe('AgendaSortGroupControls', () => {
     expect(within(sortList).queryByText('None')).not.toBeInTheDocument()
   })
 
+  it('renders page group option', async () => {
+    const user = userEvent.setup()
+    const onGroupByChange = vi.fn()
+    renderControls({ onGroupByChange })
+
+    await user.click(screen.getByLabelText('Group by'))
+
+    const groupList = screen.getByRole('list', { name: 'Group by' })
+    expect(within(groupList).getByText('Page')).toBeInTheDocument()
+
+    await user.click(within(groupList).getByText('Page'))
+    expect(onGroupByChange).toHaveBeenCalledWith('page')
+  })
+
+  it('renders page sort option', async () => {
+    const user = userEvent.setup()
+    const onSortByChange = vi.fn()
+    renderControls({ onSortByChange })
+
+    await user.click(screen.getByLabelText('Sort by'))
+
+    const sortList = screen.getByRole('list', { name: 'Sort by' })
+    expect(within(sortList).getByText('Page')).toBeInTheDocument()
+
+    await user.click(within(sortList).getByText('Page'))
+    expect(onSortByChange).toHaveBeenCalledWith('page')
+  })
+
   // -----------------------------------------------------------------------
   // A11y
   // -----------------------------------------------------------------------

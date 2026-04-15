@@ -130,6 +130,17 @@ export function listBlocks(params?: {
   })
 }
 
+/** List undated tasks (tasks with todo_state but no due/scheduled date). */
+export function listUndatedTasks(params?: {
+  cursor?: string | undefined
+  limit?: number | undefined
+}): Promise<PageResponse<BlockRow>> {
+  return invoke('list_undated_tasks', {
+    cursor: params?.cursor ?? null,
+    limit: params?.limit ?? null,
+  })
+}
+
 /** List projected future occurrences of repeating tasks for a date range. */
 export function listProjectedAgenda(opts: {
   startDate: string

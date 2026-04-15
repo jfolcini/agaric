@@ -130,6 +130,7 @@ function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
     block_type: 'block',
     content: 'test block',
     parent_id: 'PAGE1',
+    page_id: null,
     position: 0,
     deleted_at: null,
     is_conflict: false,
@@ -283,6 +284,50 @@ describe('AgendaView', () => {
     })
 
     expect(mockedBatchResolve).toHaveBeenCalledWith(['PAGE1', 'PAGE2'])
+  })
+
+  // 6b. Resolves page_ids for page grouping
+  it('resolves page_ids in addition to parent_ids via batchResolve', async () => {
+    mockedExecuteAgendaFilters.mockResolvedValue({
+      blocks: [
+        makeBlock({ id: 'B1', parent_id: 'PARENT1', page_id: 'PAGEROOT1' }),
+        makeBlock({ id: 'B2', parent_id: 'PARENT2', page_id: 'PAGEROOT2' }),
+        makeBlock({ id: 'B3', parent_id: 'PARENT2', page_id: null }),
+      ],
+      hasMore: false,
+      cursor: null,
+    })
+    mockedBatchResolve.mockResolvedValue([
+      { id: 'PARENT1', title: 'Parent One', block_type: 'block', deleted: false },
+      { id: 'PARENT2', title: 'Parent Two', block_type: 'block', deleted: false },
+      { id: 'PAGEROOT1', title: 'Page Root One', block_type: 'page', deleted: false },
+      { id: 'PAGEROOT2', title: 'Page Root Two', block_type: 'page', deleted: false },
+    ])
+
+    render(<AgendaView />)
+
+    await waitFor(() => {
+      const results = screen.getByTestId('agenda-results')
+      const titles = JSON.parse(results.getAttribute('data-page-titles') ?? '[]')
+      expect(titles).toEqual(
+        expect.arrayContaining([
+          ['PARENT1', 'Parent One'],
+          ['PARENT2', 'Parent Two'],
+          ['PAGEROOT1', 'Page Root One'],
+          ['PAGEROOT2', 'Page Root Two'],
+        ]),
+      )
+    })
+
+    // batchResolve should be called with parent_ids AND page_ids (deduplicated)
+    expect(mockedBatchResolve).toHaveBeenCalledTimes(1)
+    const resolvedIds = mockedBatchResolve.mock.calls[0]?.[0] as string[]
+    expect(resolvedIds).toContain('PARENT1')
+    expect(resolvedIds).toContain('PARENT2')
+    expect(resolvedIds).toContain('PAGEROOT1')
+    expect(resolvedIds).toContain('PAGEROOT2')
+    // null page_id should not be included
+    expect(resolvedIds).not.toContain(null)
   })
 
   // 7. Passes onNavigateToPage down to AgendaResults
@@ -456,14 +501,17 @@ describe('AgendaView', () => {
       expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-loading', 'false')
     })
 
-    // Default values from useAgendaPreferences (localStorage empty → 'date')
+    // Default values from useAgendaPreferences (localStorage empty → 'page' / 'state')
     expect(screen.getByTestId('agenda-sort-group-controls')).toHaveAttribute(
       'data-group-by',
-      'date',
+      'page',
     )
-    expect(screen.getByTestId('agenda-sort-group-controls')).toHaveAttribute('data-sort-by', 'date')
-    expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-group-by', 'date')
-    expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-sort-by', 'date')
+    expect(screen.getByTestId('agenda-sort-group-controls')).toHaveAttribute(
+      'data-sort-by',
+      'state',
+    )
+    expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-group-by', 'page')
+    expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-sort-by', 'state')
   })
 
   // 12. Container has correct data-testid and class

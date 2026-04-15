@@ -182,6 +182,8 @@ pub fn run() {
         commands::export_page_markdown,
         // Agenda projection (#644)
         commands::list_projected_agenda,
+        // Undated tasks (FEAT-1)
+        commands::list_undated_tasks,
         // Logseq/Markdown import (#660)
         commands::import_markdown,
         // Attachments (F-7)
@@ -298,6 +300,11 @@ pub fn run() {
             // hits the cache rather than falling back to on-the-fly computation.
             if let Err(e) = materializer.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache) {
                 tracing::warn!(error = %e, "failed to enqueue projected agenda cache rebuild at boot");
+            }
+
+            // FEAT-1: Rebuild page_id column at boot to ensure consistency.
+            if let Err(e) = materializer.try_enqueue_background(MaterializeTask::RebuildPageIds) {
+                tracing::warn!(error = %e, "failed to enqueue page_id rebuild at boot");
             }
 
             // Create scheduler wrapped in Arc for sharing with the SyncDaemon
@@ -469,6 +476,8 @@ mod specta_tests {
             crate::commands::export_page_markdown,
             // Agenda projection (#644)
             crate::commands::list_projected_agenda,
+            // Undated tasks (FEAT-1)
+            crate::commands::list_undated_tasks,
             // Logseq/Markdown import (#660)
             crate::commands::import_markdown,
             // Attachments (F-7)

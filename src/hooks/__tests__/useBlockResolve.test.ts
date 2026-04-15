@@ -394,6 +394,7 @@ describe('onCreateTag', () => {
       priority: null,
       due_date: null,
       scheduled_date: null,
+      page_id: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -424,6 +425,7 @@ describe('onCreateTag', () => {
       priority: null,
       due_date: null,
       scheduled_date: null,
+      page_id: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -450,6 +452,7 @@ describe('onCreateTag', () => {
       priority: null,
       due_date: null,
       scheduled_date: null,
+      page_id: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -521,6 +524,7 @@ describe('searchPages — short query (<=2 chars)', () => {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: null,
         },
         {
           id: 'P11',
@@ -535,6 +539,7 @@ describe('searchPages — short query (<=2 chars)', () => {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: null,
         },
       ],
       next_cursor: null,
@@ -572,6 +577,7 @@ describe('searchPages — short query (<=2 chars)', () => {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: null,
         },
       ],
       next_cursor: null,
@@ -603,6 +609,7 @@ describe('searchPages — short query (<=2 chars)', () => {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: null,
         },
       ],
       next_cursor: null,
@@ -684,6 +691,7 @@ describe('searchPages — long query (>2 chars)', () => {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: null,
         },
         {
           id: 'F2',
@@ -698,6 +706,7 @@ describe('searchPages — long query (>2 chars)', () => {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: null,
         },
         {
           id: 'F3',
@@ -712,6 +721,7 @@ describe('searchPages — long query (>2 chars)', () => {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: null,
         },
       ],
       next_cursor: null,
@@ -750,6 +760,7 @@ describe('searchPages — long query (>2 chars)', () => {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: null,
         },
       ],
       next_cursor: null,
@@ -797,6 +808,7 @@ describe('searchPages — long query (>2 chars)', () => {
       priority: null,
       due_date: null,
       scheduled_date: null,
+      page_id: null,
     }))
 
     mockedSearchBlocks.mockResolvedValue({
@@ -840,6 +852,7 @@ describe('searchPages — long query (>2 chars)', () => {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: null,
         },
       ],
       next_cursor: null,
@@ -875,6 +888,7 @@ describe('searchPages — long query (>2 chars)', () => {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: null,
         },
       ],
       next_cursor: null,
@@ -999,6 +1013,7 @@ describe('searchPages — "Create new" option', () => {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: null,
         },
       ],
       next_cursor: null,
@@ -1033,6 +1048,7 @@ describe('searchPages — "Create new" option', () => {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: null,
         },
       ],
       next_cursor: null,
@@ -1071,6 +1087,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: null,
         },
       ],
       next_cursor: null,
@@ -1106,6 +1123,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: null,
         },
       ],
       next_cursor: null,
@@ -1178,6 +1196,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: null,
         },
       ],
       next_cursor: null,
@@ -1215,6 +1234,7 @@ describe('onCreatePage', () => {
       priority: null,
       due_date: null,
       scheduled_date: null,
+      page_id: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -1245,6 +1265,7 @@ describe('onCreatePage', () => {
       priority: null,
       due_date: null,
       scheduled_date: null,
+      page_id: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -1271,6 +1292,7 @@ describe('onCreatePage', () => {
       priority: null,
       due_date: null,
       scheduled_date: null,
+      page_id: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -1304,6 +1326,7 @@ describe('onCreatePage', () => {
       priority: null,
       due_date: null,
       scheduled_date: null,
+      page_id: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -1438,6 +1461,7 @@ describe('searchPages — alias matching via resolvePageByAlias', () => {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: null,
         },
       ],
       next_cursor: null,
@@ -1614,6 +1638,7 @@ describe('searchPages — icons and breadcrumbs (UX-65)', () => {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: null,
         },
       ],
       next_cursor: null,
@@ -1651,6 +1676,7 @@ describe('searchBlockRefs — icons (UX-65)', () => {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: null,
         },
       ],
       next_cursor: null,
@@ -1687,6 +1713,7 @@ describe('searchBlockRefs — icons (UX-65)', () => {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: null,
         },
       ],
       next_cursor: null,

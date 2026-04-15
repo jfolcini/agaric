@@ -34,6 +34,7 @@ function makeBlock(id: string, parentId: string | null = null) {
     priority: null,
     due_date: null,
     scheduled_date: null,
+    page_id: null,
     depth: 0,
   }
 }

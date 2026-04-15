@@ -12,6 +12,7 @@ const GROUP_OPTIONS: { value: AgendaGroupBy; labelKey: string }[] = [
   { value: 'date', labelKey: 'agenda.groupDate' },
   { value: 'priority', labelKey: 'agenda.groupPriority' },
   { value: 'state', labelKey: 'agenda.groupState' },
+  { value: 'page', labelKey: 'agenda.groupPage' },
   { value: 'none', labelKey: 'agenda.groupNone' },
 ]
 
@@ -19,6 +20,7 @@ const SORT_OPTIONS: { value: AgendaSortBy; labelKey: string }[] = [
   { value: 'date', labelKey: 'agenda.sortDate' },
   { value: 'priority', labelKey: 'agenda.sortPriority' },
   { value: 'state', labelKey: 'agenda.sortState' },
+  { value: 'page', labelKey: 'agenda.sortPage' },
 ]
 
 interface DropdownSelectorProps<T extends string> {

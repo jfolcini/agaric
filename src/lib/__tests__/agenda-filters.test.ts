@@ -20,6 +20,7 @@ function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
     block_type: 'block',
     content: 'Test block',
     parent_id: null,
+    page_id: null,
     position: null,
     deleted_at: null,
     is_conflict: false,
@@ -86,8 +87,9 @@ describe('executeAgendaFilters', () => {
       const dueBlock = makeBlock({ id: 'due-1', due_date: '2025-01-15' })
       const schedBlock = makeBlock({ id: 'sched-1', scheduled_date: '2025-01-16' })
 
-      mockedInvoke.mockImplementation(async (_cmd: string, args: unknown) => {
+      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
         const a = args as Record<string, unknown>
+        if (cmd === 'list_undated_tasks') return emptyPage
         if (a['key'] === 'due_date') {
           return { items: [dueBlock], next_cursor: null, has_more: false }
         }
@@ -127,6 +129,97 @@ describe('executeAgendaFilters', () => {
     it('returns empty when no dated blocks exist', async () => {
       const result = await executeAgendaFilters([])
       expect(result.blocks).toHaveLength(0)
+    })
+
+    it('includes undated tasks in results', async () => {
+      const dueBlock = makeBlock({ id: 'due-1', due_date: '2025-01-15' })
+      const undatedBlock = makeBlock({
+        id: 'undated-1',
+        todo_state: 'TODO',
+        due_date: null,
+        scheduled_date: null,
+        page_id: 'PAGE1',
+      })
+
+      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
+        const a = args as Record<string, unknown>
+        if (cmd === 'list_undated_tasks') {
+          return { items: [undatedBlock], next_cursor: null, has_more: false }
+        }
+        if (a['key'] === 'due_date') {
+          return { items: [dueBlock], next_cursor: null, has_more: false }
+        }
+        if (a['key'] === 'scheduled_date') {
+          return emptyPage
+        }
+        return emptyPage
+      })
+
+      const result = await executeAgendaFilters([])
+
+      expect(result.blocks).toHaveLength(2)
+      expect(result.blocks.map((b) => b.id)).toEqual(['due-1', 'undated-1'])
+    })
+
+    it('deduplicates blocks between dated and undated results', async () => {
+      const block = makeBlock({
+        id: 'shared-1',
+        todo_state: 'TODO',
+        due_date: '2025-01-15',
+        page_id: 'PAGE1',
+      })
+
+      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
+        const a = args as Record<string, unknown>
+        if (cmd === 'list_undated_tasks') {
+          return { items: [block], next_cursor: null, has_more: false }
+        }
+        if (a['key'] === 'due_date') {
+          return { items: [block], next_cursor: null, has_more: false }
+        }
+        if (a['key'] === 'scheduled_date') {
+          return emptyPage
+        }
+        return emptyPage
+      })
+
+      const result = await executeAgendaFilters([])
+
+      expect(result.blocks).toHaveLength(1)
+      expect(result.blocks[0]?.id).toBe('shared-1')
+    })
+
+    it('sets hasMore when undated response has more', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_undated_tasks') {
+          return { items: [], next_cursor: 'cursor-1', has_more: true }
+        }
+        return emptyPage
+      })
+
+      const result = await executeAgendaFilters([])
+
+      expect(result.hasMore).toBe(true)
+    })
+  })
+
+  describe('active filters do not fetch undated tasks', () => {
+    it('does not call listUndatedTasks when filters are active', async () => {
+      const todoBlock = makeBlock({ id: 'todo-1', todo_state: 'TODO', page_id: 'PAGE1' })
+
+      mockedInvoke.mockImplementation(async (_cmd: string, args: unknown) => {
+        const a = args as Record<string, unknown>
+        if (a['key'] === 'todo_state' && a['valueText'] === 'TODO') {
+          return { items: [todoBlock], next_cursor: null, has_more: false }
+        }
+        return emptyPage
+      })
+
+      await executeAgendaFilters([{ dimension: 'status', values: ['TODO'] }])
+
+      // Verify list_undated_tasks was never called
+      const undatedCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_undated_tasks')
+      expect(undatedCalls).toHaveLength(0)
     })
   })
 

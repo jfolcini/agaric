@@ -23,6 +23,7 @@ export function makeBlock(overrides: Partial<FlatBlock> = {}): FlatBlock {
     priority: null,
     due_date: null,
     scheduled_date: null,
+    page_id: null,
     depth: 0,
     ...overrides,
   }
@@ -43,6 +44,7 @@ export function makePage(overrides: Partial<BlockRow> = {}): BlockRow {
     priority: null,
     due_date: null,
     scheduled_date: null,
+    page_id: null,
     ...overrides,
   }
 }
@@ -62,6 +64,7 @@ export function makeConflict(overrides: Partial<BlockRow> = {}): BlockRow {
     priority: null,
     due_date: null,
     scheduled_date: null,
+    page_id: null,
     ...overrides,
   }
 }
@@ -81,6 +84,7 @@ export function makeDailyPage(overrides: Partial<BlockRow> = {}): BlockRow {
     priority: null,
     due_date: null,
     scheduled_date: null,
+    page_id: null,
     ...overrides,
   }
 }

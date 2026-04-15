@@ -10,8 +10,8 @@ import type { AgendaGroupBy, AgendaSortBy } from '../lib/agenda-sort'
 const GROUP_BY_KEY = 'agaric:agenda:groupBy'
 const SORT_BY_KEY = 'agaric:agenda:sortBy'
 
-const VALID_GROUP_BY: readonly string[] = ['date', 'priority', 'state', 'none']
-const VALID_SORT_BY: readonly string[] = ['date', 'priority', 'state']
+const VALID_GROUP_BY: readonly string[] = ['date', 'priority', 'state', 'page', 'none']
+const VALID_SORT_BY: readonly string[] = ['date', 'priority', 'state', 'page']
 
 function readGroupBy(): AgendaGroupBy {
   try {
@@ -20,7 +20,7 @@ function readGroupBy(): AgendaGroupBy {
   } catch {
     /* ignore */
   }
-  return 'date'
+  return 'page'
 }
 
 function readSortBy(): AgendaSortBy {
@@ -30,7 +30,7 @@ function readSortBy(): AgendaSortBy {
   } catch {
     /* ignore */
   }
-  return 'date'
+  return 'state'
 }
 
 export interface AgendaPreferences {

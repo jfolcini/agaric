@@ -2494,7 +2494,7 @@ async fn list_children_ifnull_oracle(
     let rows = sqlx::query_as::<_, BlockRow>(
         r#"SELECT id, block_type, content, parent_id, position,
                 deleted_at, is_conflict,
-                conflict_type, todo_state, priority, due_date, scheduled_date
+                conflict_type, todo_state, priority, due_date, scheduled_date, page_id
          FROM blocks
          WHERE parent_id IS ?1 AND deleted_at IS NULL
            AND (?2 IS NULL OR (

@@ -1,7 +1,7 @@
 import type { BlockRow } from './tauri'
 
-export type AgendaSortBy = 'date' | 'priority' | 'state'
-export type AgendaGroupBy = 'date' | 'priority' | 'state' | 'none'
+export type AgendaSortBy = 'date' | 'priority' | 'state' | 'page'
+export type AgendaGroupBy = 'date' | 'priority' | 'state' | 'page' | 'none'
 
 /**
  * Effective date for a block: prefer due_date, then scheduled_date.
@@ -274,15 +274,122 @@ export function sortByState(blocks: BlockRow[]): BlockRow[] {
 }
 
 /**
+ * Group blocks by page_id. Returns groups in alphabetical order by page title,
+ * with "No page" group at the end.
+ * Within each group, blocks are sorted by state (DOING > TODO > DONE > null),
+ * then priority, then date.
+ */
+export function groupByPage(blocks: BlockRow[], pageTitles: Map<string, string>): AgendaGroup[] {
+  const buckets = new Map<string, BlockRow[]>()
+
+  for (const block of blocks) {
+    const key = block.page_id ?? '__no_page__'
+    const existing = buckets.get(key) ?? []
+    existing.push(block)
+    buckets.set(key, existing)
+  }
+
+  const sortWithin = (a: BlockRow, b: BlockRow): number => {
+    // state
+    const stateA = stateRank(a.todo_state)
+    const stateB = stateRank(b.todo_state)
+    if (stateA !== stateB) return stateA - stateB
+    // priority
+    const prioA = priorityRank(a.priority)
+    const prioB = priorityRank(b.priority)
+    if (prioA !== prioB) return prioA - prioB
+    // date
+    const dateA = effectiveDate(a)
+    const dateB = effectiveDate(b)
+    if (dateA !== dateB) return dateA < dateB ? -1 : 1
+    return 0
+  }
+
+  // Separate no-page bucket
+  const noPageBlocks = buckets.get('__no_page__')
+  buckets.delete('__no_page__')
+
+  // Build entries with resolved titles, then sort alphabetically
+  const entries: Array<{ pageId: string; title: string; blocks: BlockRow[] }> = []
+  for (const [pageId, group] of buckets) {
+    const title = pageTitles.get(pageId) ?? pageId
+    entries.push({ pageId, title, blocks: group })
+  }
+  entries.sort((a, b) => a.title.localeCompare(b.title))
+
+  const result: AgendaGroup[] = []
+  for (const entry of entries) {
+    result.push({
+      label: entry.title,
+      blocks: [...entry.blocks].sort(sortWithin),
+    })
+  }
+
+  // "No page" group at the end
+  if (noPageBlocks && noPageBlocks.length > 0) {
+    result.push({
+      label: 'No page',
+      blocks: [...noPageBlocks].sort(sortWithin),
+      className: 'text-muted-foreground',
+    })
+  }
+
+  return result
+}
+
+/**
+ * Sort blocks alphabetically by page title (resolved via pageTitles map).
+ * Within same page: sort by state, then priority, then date.
+ * Blocks with no page_id sort to the end.
+ * Pure function, does not mutate input.
+ */
+export function sortByPage(blocks: BlockRow[], pageTitles: Map<string, string>): BlockRow[] {
+  return [...blocks].sort((a, b) => {
+    const titleA = a.page_id ? (pageTitles.get(a.page_id) ?? a.page_id) : null
+    const titleB = b.page_id ? (pageTitles.get(b.page_id) ?? b.page_id) : null
+
+    // Blocks with no page_id sort to the end
+    if (titleA === null && titleB !== null) return 1
+    if (titleA !== null && titleB === null) return -1
+
+    // Both have page titles — compare alphabetically
+    if (titleA !== null && titleB !== null && titleA !== titleB) {
+      return titleA.localeCompare(titleB)
+    }
+
+    // Same page (or both null): sort by state, then priority, then date
+    const stateA = stateRank(a.todo_state)
+    const stateB = stateRank(b.todo_state)
+    if (stateA !== stateB) return stateA - stateB
+
+    const prioA = priorityRank(a.priority)
+    const prioB = priorityRank(b.priority)
+    if (prioA !== prioB) return prioA - prioB
+
+    const dateA = effectiveDate(a)
+    const dateB = effectiveDate(b)
+    if (dateA !== dateB) return dateA < dateB ? -1 : 1
+
+    return 0
+  })
+}
+
+/**
  * Dispatch to the correct sort function based on the sortBy parameter.
  * Defaults to date-first sort.
  */
-export function sortAgendaBlocksBy(blocks: BlockRow[], sortBy: AgendaSortBy): BlockRow[] {
+export function sortAgendaBlocksBy(
+  blocks: BlockRow[],
+  sortBy?: AgendaSortBy | undefined,
+  pageTitles?: Map<string, string> | undefined,
+): BlockRow[] {
   switch (sortBy) {
     case 'priority':
       return sortByPriority(blocks)
     case 'state':
       return sortByState(blocks)
+    case 'page':
+      return sortByPage(blocks, pageTitles ?? new Map())
     default:
       return sortAgendaBlocks(blocks)
   }

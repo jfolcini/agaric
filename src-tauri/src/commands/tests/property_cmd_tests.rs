@@ -2278,7 +2278,7 @@ async fn recurrence_daily_creates_next_occurrence() {
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                   is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
-                  due_date, scheduled_date
+                  due_date, scheduled_date, page_id
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -2370,7 +2370,7 @@ async fn recurrence_weekly_shifts_by_7_days() {
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                   is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
-                  due_date, scheduled_date
+                  due_date, scheduled_date, page_id
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -2435,7 +2435,7 @@ async fn recurrence_monthly_handles_month_end() {
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                   is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
-                  due_date, scheduled_date
+                  due_date, scheduled_date, page_id
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -2503,7 +2503,7 @@ async fn recurrence_custom_plus_3d() {
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                   is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
-                  due_date, scheduled_date
+                  due_date, scheduled_date, page_id
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -2619,7 +2619,7 @@ async fn test_set_todo_state_recurrence_is_atomic() {
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                   is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
-                  due_date, scheduled_date
+                  due_date, scheduled_date, page_id
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -2891,7 +2891,7 @@ async fn recurrence_continues_when_repeat_count_not_exhausted() {
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                   is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
-                  due_date, scheduled_date
+                  due_date, scheduled_date, page_id
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -2973,7 +2973,7 @@ async fn recurrence_sets_repeat_origin_on_sibling() {
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                   is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
-                  due_date, scheduled_date
+                  due_date, scheduled_date, page_id
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -3147,7 +3147,7 @@ async fn set_todo_state_done_with_dot_plus_repeat_shifts_from_today() {
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                 is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
-                due_date, scheduled_date
+                due_date, scheduled_date, page_id
          FROM blocks WHERE todo_state = 'TODO' AND id != ?1 AND deleted_at IS NULL"#,
         resp.id,
     )
@@ -3235,7 +3235,7 @@ async fn set_todo_state_done_with_plus_plus_repeat_catches_up() {
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                 is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
-                due_date, scheduled_date
+                due_date, scheduled_date, page_id
          FROM blocks WHERE todo_state = 'TODO' AND id != ?1 AND deleted_at IS NULL"#,
         resp.id,
     )

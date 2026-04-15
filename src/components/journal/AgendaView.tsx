@@ -53,11 +53,14 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
           setAgendaLoading(false)
 
           // Resolve page titles for breadcrumbs
-          const parentIds = [
-            ...new Set(result.blocks.map((b) => b.parent_id).filter(Boolean)),
-          ] as string[]
-          if (parentIds.length > 0) {
-            const resolved = await batchResolve(parentIds)
+          const idsToResolve = new Set<string>()
+          for (const b of result.blocks) {
+            if (b.parent_id) idsToResolve.add(b.parent_id)
+            if (b.page_id) idsToResolve.add(b.page_id)
+          }
+          const uniqueIds = [...idsToResolve]
+          if (uniqueIds.length > 0) {
+            const resolved = await batchResolve(uniqueIds)
             const titleMap = new Map<string, string>()
             for (const r of resolved) {
               titleMap.set(r.id, r.title ?? 'Untitled')

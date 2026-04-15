@@ -27,6 +27,7 @@ mod links;
 mod properties;
 mod tags;
 mod trash;
+mod undated;
 
 #[cfg(test)]
 mod tests;
@@ -38,6 +39,7 @@ pub use links::list_backlinks;
 pub use properties::query_by_property;
 pub use tags::list_by_tag;
 pub use trash::list_trash;
+pub use undated::list_undated_tasks;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -75,6 +77,7 @@ pub struct BlockRow {
     pub priority: Option<String>,
     pub due_date: Option<String>,
     pub scheduled_date: Option<String>,
+    pub page_id: Option<String>,
 }
 
 /// A projected future occurrence of a repeating block.

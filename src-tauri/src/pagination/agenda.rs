@@ -26,7 +26,8 @@ pub async fn list_agenda(
         BlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at, b.is_conflict as "is_conflict: bool",
-                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date
+                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date,
+                b.page_id
          FROM agenda_cache ac
          JOIN blocks b ON b.id = ac.block_id
          WHERE ac.date = ?1 AND b.deleted_at IS NULL
@@ -80,7 +81,8 @@ pub async fn list_agenda_range(
         BlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at, b.is_conflict as "is_conflict: bool",
-                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date
+                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date,
+                b.page_id
          FROM agenda_cache ac
          JOIN blocks b ON b.id = ac.block_id
          WHERE ac.date >= ?1 AND ac.date <= ?2

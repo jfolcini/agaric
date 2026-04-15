@@ -42,6 +42,7 @@ const originalBlock = {
   priority: null,
   due_date: null,
   scheduled_date: null,
+  page_id: null,
 }
 
 describe('ConflictTypeRenderer', () => {
@@ -212,11 +213,13 @@ describe('ConflictTypeRenderer', () => {
         content: 'same',
         conflict_type: 'Property',
         scheduled_date: '2025-06-01',
+        page_id: null,
       })
       const original = {
         ...originalBlock,
         content: 'same',
         scheduled_date: '2025-05-01',
+        page_id: null,
       }
 
       render(

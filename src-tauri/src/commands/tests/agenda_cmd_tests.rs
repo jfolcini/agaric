@@ -1388,3 +1388,150 @@ async fn projected_agenda_limit_caps_results() {
 
     mat.shutdown();
 }
+
+// ======================================================================
+// list_undated_tasks
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_undated_tasks_returns_tasks_without_dates() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Create a page and a content block with a TODO state but no dates
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "TaskPage".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let task = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "undated task".into(),
+        Some(page.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    set_todo_state_inner(&pool, DEV, &mat, task.id.clone(), Some("TODO".into()))
+        .await
+        .unwrap();
+
+    let resp = list_undated_tasks_inner(&pool, None, None).await.unwrap();
+    assert_eq!(resp.items.len(), 1);
+    assert_eq!(resp.items[0].id, task.id);
+    assert_eq!(resp.items[0].todo_state.as_deref(), Some("TODO"));
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_undated_tasks_excludes_dated_tasks() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Create a content block with TODO state AND a due_date
+    let task = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "dated task".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    set_todo_state_inner(&pool, DEV, &mat, task.id.clone(), Some("TODO".into()))
+        .await
+        .unwrap();
+    set_due_date_inner(&pool, DEV, &mat, task.id.clone(), Some("2025-06-01".into()))
+        .await
+        .unwrap();
+
+    let resp = list_undated_tasks_inner(&pool, None, None).await.unwrap();
+    assert!(
+        resp.items.is_empty(),
+        "tasks with due_date should be excluded"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_undated_tasks_excludes_deleted() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let task = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "to delete".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    set_todo_state_inner(&pool, DEV, &mat, task.id.clone(), Some("TODO".into()))
+        .await
+        .unwrap();
+    delete_block_inner(&pool, DEV, &mat, task.id.clone())
+        .await
+        .unwrap();
+
+    let resp = list_undated_tasks_inner(&pool, None, None).await.unwrap();
+    assert!(resp.items.is_empty(), "deleted blocks should be excluded");
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_undated_tasks_pagination() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Create 3 undated tasks
+    for i in 0..3 {
+        let task = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            format!("task {i}"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        set_todo_state_inner(&pool, DEV, &mat, task.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+    }
+
+    // Page 1: limit = 2
+    let page1 = list_undated_tasks_inner(&pool, None, Some(2))
+        .await
+        .unwrap();
+    assert_eq!(page1.items.len(), 2);
+    assert!(page1.has_more);
+    assert!(page1.next_cursor.is_some());
+
+    // Page 2: use cursor
+    let page2 = list_undated_tasks_inner(&pool, page1.next_cursor, Some(2))
+        .await
+        .unwrap();
+    assert_eq!(page2.items.len(), 1);
+    assert!(!page2.has_more);
+
+    mat.shutdown();
+}

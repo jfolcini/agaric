@@ -114,16 +114,35 @@ pub(crate) async fn create_block_in_tx(
 
     let op_record = op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
 
+    // Compute page_id: if this block IS a page, page_id = self.
+    // Otherwise, inherit from parent's page_id (or parent itself if parent is a page).
+    let page_id: Option<String> = if block_type == "page" {
+        Some(block_id.as_str().to_string())
+    } else if let Some(ref pid) = parent_id {
+        // Look up parent's page_id. If parent is a page, use parent's id.
+        let parent_page = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END FROM blocks WHERE id = ?"
+        )
+        .bind(pid)
+        .fetch_optional(&mut **tx)
+        .await?
+        .flatten();
+        parent_page
+    } else {
+        None
+    };
+
     // 5. Insert into blocks table within same transaction
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(block_id.as_str())
     .bind(&block_type)
     .bind(&content)
     .bind(&parent_id)
     .bind(effective_position)
+    .bind(&page_id)
     .execute(&mut **tx)
     .await?;
 
@@ -146,6 +165,7 @@ pub(crate) async fn create_block_in_tx(
             priority: None,
             due_date: None,
             scheduled_date: None,
+            page_id,
         },
         op_record,
     ))
@@ -198,7 +218,7 @@ pub async fn edit_block_inner(
     // 1. Validate block exists and is not deleted (inside tx = TOCTOU-safe)
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(&mut *tx)
@@ -274,6 +294,7 @@ pub async fn edit_block_inner(
         priority: None,
         due_date: None,
         scheduled_date: None,
+        page_id: existing.page_id,
     })
 }
 
@@ -1038,7 +1059,7 @@ pub(crate) async fn set_property_in_tx(
     // 2. Validate block exists and is not deleted (TOCTOU-safe inside tx)
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(&mut **tx)
@@ -1115,6 +1136,7 @@ pub(crate) async fn set_property_in_tx(
             } else {
                 existing.scheduled_date
             },
+            page_id: existing.page_id,
         },
         op_record,
     ))

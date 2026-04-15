@@ -162,11 +162,13 @@ pub async fn list_projected_agenda_inner(
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>,
     )> = sqlx::query_as(
         "SELECT pac.block_id, pac.projected_date, pac.source,
                 b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at, b.is_conflict, b.conflict_type,
-                b.todo_state, b.priority, b.due_date, b.scheduled_date
+                b.todo_state, b.priority, b.due_date, b.scheduled_date,
+                b.page_id
          FROM projected_agenda_cache pac
          JOIN blocks b ON b.id = pac.block_id
          WHERE pac.projected_date >= ?1
@@ -201,6 +203,7 @@ pub async fn list_projected_agenda_inner(
                         priority: row.12,
                         due_date: row.13,
                         scheduled_date: row.14,
+                        page_id: row.15,
                     },
                     projected_date: row.1,
                     source: row.2,
@@ -233,6 +236,7 @@ async fn list_projected_agenda_on_the_fly(
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at, b.is_conflict as "is_conflict: bool",
                 b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date,
+                b.page_id,
                 bp.value_text AS repeat_rule,
                 bp_until.value_date AS repeat_until,
                 bp_count.value_num AS repeat_count,
@@ -462,6 +466,33 @@ pub async fn list_projected_agenda(
     limit: Option<i64>,
 ) -> Result<Vec<ProjectedAgendaEntry>, AppError> {
     list_projected_agenda_inner(&pool.0, start_date, end_date, limit)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// List undated tasks: blocks with todo_state but no due_date and no scheduled_date.
+/// Cursor-paginated.
+#[instrument(skip(pool), err)]
+pub async fn list_undated_tasks_inner(
+    pool: &SqlitePool,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    use crate::pagination;
+    let page_req = pagination::PageRequest::new(cursor, limit)?;
+    pagination::list_undated_tasks(pool, &page_req).await
+}
+
+/// Tauri command: list undated tasks. Delegates to [`list_undated_tasks_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_undated_tasks(
+    pool: State<'_, ReadPool>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    list_undated_tasks_inner(&pool.0, cursor, limit)
         .await
         .map_err(sanitize_internal_error)
 }

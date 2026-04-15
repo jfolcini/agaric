@@ -79,6 +79,7 @@ function makeFlatBlock(
     priority: null,
     due_date: null,
     scheduled_date: null,
+    page_id: null,
     depth,
   }
 }

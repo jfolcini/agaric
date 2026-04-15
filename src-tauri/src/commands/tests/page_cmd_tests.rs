@@ -439,7 +439,7 @@ async fn import_markdown_single_transaction() {
     // Verify page exists
     let page: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE block_type = 'page' AND content = 'TxTest'"#
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE block_type = 'page' AND content = 'TxTest'"#
     )
     .fetch_optional(&pool)
     .await
@@ -450,7 +450,7 @@ async fn import_markdown_single_transaction() {
     // Verify all content blocks exist under the page hierarchy
     let all_blocks: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE block_type = 'content' ORDER BY position"#
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE block_type = 'content' ORDER BY position"#
     )
     .fetch_all(&pool)
     .await
@@ -498,7 +498,7 @@ async fn import_markdown_single_transaction() {
     // "priority" is a reserved key stored in blocks.priority column
     let refreshed_parent: BlockRow = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ?"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ?"#,
         parent_block.id
     )
     .fetch_one(&pool)
@@ -1146,6 +1146,227 @@ async fn list_page_links_optimized_matches_oracle() {
         !optimized.is_empty(),
         "test should produce at least one page link"
     );
+
+    mat.shutdown();
+}
+
+// ======================================================================
+// page_id tests (FEAT-1)
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_block_sets_page_id_self_for_page() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "My Page".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        page.page_id.as_deref(),
+        Some(page.id.as_str()),
+        "page block's page_id should be its own id"
+    );
+
+    // Verify via direct DB read
+    let fetched = get_block_inner(&pool, page.id.clone()).await.unwrap();
+    assert_eq!(fetched.page_id.as_deref(), Some(page.id.as_str()));
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_block_sets_page_id_for_content_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Parent Page".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child block".into(),
+        Some(page.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        child.page_id.as_deref(),
+        Some(page.id.as_str()),
+        "content block's page_id should be the parent page's id"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_block_updates_page_id() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page_a = create_block_inner(&pool, DEV, &mat, "page".into(), "Page A".into(), None, None)
+        .await
+        .unwrap();
+    let page_b = create_block_inner(&pool, DEV, &mat, "page".into(), "Page B".into(), None, None)
+        .await
+        .unwrap();
+    let child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "movable".into(),
+        Some(page_a.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(child.page_id.as_deref(), Some(page_a.id.as_str()));
+
+    // Move child to page_b
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone(),
+        Some(page_b.id.clone()),
+        1,
+    )
+    .await
+    .unwrap();
+
+    let fetched = get_block_inner(&pool, child.id.clone()).await.unwrap();
+    assert_eq!(
+        fetched.page_id.as_deref(),
+        Some(page_b.id.as_str()),
+        "page_id should update after move"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_block_updates_descendants_page_id() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page_a = create_block_inner(&pool, DEV, &mat, "page".into(), "Page A".into(), None, None)
+        .await
+        .unwrap();
+    let page_b = create_block_inner(&pool, DEV, &mat, "page".into(), "Page B".into(), None, None)
+        .await
+        .unwrap();
+    let parent = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "parent".into(),
+        Some(page_a.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    let grandchild = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "grandchild".into(),
+        Some(parent.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(grandchild.page_id.as_deref(), Some(page_a.id.as_str()));
+
+    // Move parent to page_b
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        parent.id.clone(),
+        Some(page_b.id.clone()),
+        1,
+    )
+    .await
+    .unwrap();
+
+    let fetched_grandchild = get_block_inner(&pool, grandchild.id.clone()).await.unwrap();
+    assert_eq!(
+        fetched_grandchild.page_id.as_deref(),
+        Some(page_b.id.as_str()),
+        "descendants' page_id should update after move"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rebuild_page_ids_restores_correct_values() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "RebuildTest".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child".into(),
+        Some(page.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Corrupt page_id by setting it to NULL
+    sqlx::query("UPDATE blocks SET page_id = NULL")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Run rebuild
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let fetched_page = get_block_inner(&pool, page.id.clone()).await.unwrap();
+    assert_eq!(fetched_page.page_id.as_deref(), Some(page.id.as_str()));
+
+    let fetched_child = get_block_inner(&pool, child.id.clone()).await.unwrap();
+    assert_eq!(fetched_child.page_id.as_deref(), Some(page.id.as_str()));
 
     mat.shutdown();
 }

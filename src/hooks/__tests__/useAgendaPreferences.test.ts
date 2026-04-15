@@ -14,14 +14,14 @@ beforeEach(() => {
 
 describe('useAgendaPreferences', () => {
   describe('defaults', () => {
-    it('returns groupBy=date when localStorage is empty', () => {
+    it('returns groupBy=page when localStorage is empty', () => {
       const { result } = renderHook(() => useAgendaPreferences())
-      expect(result.current.groupBy).toBe('date')
+      expect(result.current.groupBy).toBe('page')
     })
 
-    it('returns sortBy=date when localStorage is empty', () => {
+    it('returns sortBy=state when localStorage is empty', () => {
       const { result } = renderHook(() => useAgendaPreferences())
-      expect(result.current.sortBy).toBe('date')
+      expect(result.current.sortBy).toBe('state')
     })
   })
 
@@ -61,25 +61,25 @@ describe('useAgendaPreferences', () => {
     it('falls back to default groupBy for invalid stored value', () => {
       localStorage.setItem('agaric:agenda:groupBy', 'invalid')
       const { result } = renderHook(() => useAgendaPreferences())
-      expect(result.current.groupBy).toBe('date')
+      expect(result.current.groupBy).toBe('page')
     })
 
     it('falls back to default sortBy for invalid stored value', () => {
       localStorage.setItem('agaric:agenda:sortBy', 'invalid')
       const { result } = renderHook(() => useAgendaPreferences())
-      expect(result.current.sortBy).toBe('date')
+      expect(result.current.sortBy).toBe('state')
     })
 
     it('falls back to default groupBy for empty string', () => {
       localStorage.setItem('agaric:agenda:groupBy', '')
       const { result } = renderHook(() => useAgendaPreferences())
-      expect(result.current.groupBy).toBe('date')
+      expect(result.current.groupBy).toBe('page')
     })
 
     it('falls back to default sortBy for none (not valid for sortBy)', () => {
       localStorage.setItem('agaric:agenda:sortBy', 'none')
       const { result } = renderHook(() => useAgendaPreferences())
-      expect(result.current.sortBy).toBe('date')
+      expect(result.current.sortBy).toBe('state')
     })
   })
 
@@ -124,8 +124,8 @@ describe('useAgendaPreferences', () => {
       })
 
       const { result } = renderHook(() => useAgendaPreferences())
-      expect(result.current.groupBy).toBe('date')
-      expect(result.current.sortBy).toBe('date')
+      expect(result.current.groupBy).toBe('page')
+      expect(result.current.sortBy).toBe('state')
 
       spy.mockRestore()
     })
@@ -146,6 +146,20 @@ describe('useAgendaPreferences', () => {
       expect(result.current.groupBy).toBe('priority')
 
       spy.mockRestore()
+    })
+  })
+
+  describe('page validation', () => {
+    it("validates 'page' as a valid groupBy value", () => {
+      localStorage.setItem('agaric:agenda:groupBy', 'page')
+      const { result } = renderHook(() => useAgendaPreferences())
+      expect(result.current.groupBy).toBe('page')
+    })
+
+    it("validates 'page' as a valid sortBy value", () => {
+      localStorage.setItem('agaric:agenda:sortBy', 'page')
+      const { result } = renderHook(() => useAgendaPreferences())
+      expect(result.current.sortBy).toBe('page')
     })
   })
 })

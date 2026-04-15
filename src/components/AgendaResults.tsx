@@ -24,6 +24,7 @@ import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import {
   type AgendaSortBy,
   groupByDate,
+  groupByPage,
   groupByPriority,
   groupByState,
   sortAgendaBlocksBy,
@@ -54,7 +55,7 @@ export interface AgendaResultsProps {
   /** Resolved page titles for breadcrumbs */
   pageTitles: Map<string, string>
   /** Group blocks by this dimension. Default: 'none'. */
-  groupBy?: ('date' | 'priority' | 'state' | 'none') | undefined
+  groupBy?: ('date' | 'priority' | 'state' | 'page' | 'none') | undefined
   /** Primary sort key. Default: 'date'. */
   sortBy?: AgendaSortBy | undefined
   /** Callback fired when a date is changed inline (e.g. to refresh blocks). */
@@ -153,15 +154,19 @@ export function AgendaResults({
   const listRef = useRef<HTMLDivElement>(null)
 
   // Apply sorting to blocks for consistent ordering (used in both flat + grouped modes)
-  const sortedBlocks = useMemo(() => sortAgendaBlocksBy(blocks, sortBy), [blocks, sortBy])
+  const sortedBlocks = useMemo(
+    () => sortAgendaBlocksBy(blocks, sortBy, pageTitles),
+    [blocks, sortBy, pageTitles],
+  )
 
   // Compute groups for display (needed before flatItems)
   const groups = useMemo(() => {
     if (groupBy === 'date') return groupByDate(blocks)
     if (groupBy === 'priority') return groupByPriority(blocks)
     if (groupBy === 'state') return groupByState(blocks)
+    if (groupBy === 'page') return groupByPage(sortedBlocks, pageTitles)
     return null
-  }, [blocks, groupBy])
+  }, [blocks, groupBy, sortedBlocks, pageTitles])
 
   const flatItems = useMemo(
     () => (groups ? groups.flatMap((g) => g.blocks) : sortedBlocks),
@@ -283,6 +288,7 @@ export function AgendaResults({
     Today: 'agenda.today',
     Tomorrow: 'agenda.tomorrow',
     'No date': 'agenda.noDate',
+    'No page': 'agenda.noPage',
   }
 
   let flatIndex = 0

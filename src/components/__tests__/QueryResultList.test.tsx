@@ -17,6 +17,7 @@ function makeBlock(
     priority: string | null
     due_date: string | null
     scheduled_date: string | null
+    page_id: null
   }> = {},
 ): BlockRow {
   return {
@@ -32,6 +33,7 @@ function makeBlock(
     priority: overrides.priority ?? null,
     due_date: overrides.due_date ?? null,
     scheduled_date: overrides.scheduled_date ?? null,
+    page_id: null,
   }
 }
 

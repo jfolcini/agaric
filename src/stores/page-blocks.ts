@@ -198,6 +198,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           priority: null,
           due_date: null,
           scheduled_date: null,
+          page_id: afterBlock.page_id,
           depth: afterBlock.depth,
         }
         const newBlocks = [...blocks]

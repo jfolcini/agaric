@@ -152,6 +152,59 @@ pub async fn move_block_inner(
         .execute(&mut *tx)
         .await?;
 
+    // Update page_id for the moved block and all its descendants.
+    // First, compute the new page_id based on the new parent.
+    let new_page_id: Option<String> = if let Some(ref pid) = new_parent_id {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END FROM blocks WHERE id = ?"
+        )
+        .bind(pid)
+        .fetch_optional(&mut *tx)
+        .await?
+        .flatten()
+    } else {
+        None
+    };
+
+    // Update the moved block itself (unless it's a page — pages always have page_id = self)
+    let is_page: bool =
+        sqlx::query_scalar::<_, String>("SELECT block_type FROM blocks WHERE id = ?")
+            .bind(&block_id)
+            .fetch_one(&mut *tx)
+            .await?
+            == "page";
+
+    if !is_page {
+        sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+            .bind(&new_page_id)
+            .bind(&block_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    // Update all non-page descendants to inherit the moved block's page_id.
+    // Pages keep their own id as page_id regardless of parent.
+    let effective_page_id = if is_page {
+        Some(block_id.clone())
+    } else {
+        new_page_id
+    };
+    sqlx::query(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT b.id FROM blocks b WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             JOIN descendants d ON b.parent_id = d.id \
+             WHERE b.deleted_at IS NULL \
+         ) \
+         UPDATE blocks SET page_id = ?2 \
+         WHERE id IN (SELECT id FROM descendants) AND block_type != 'page'",
+    )
+    .bind(&block_id)
+    .bind(&effective_page_id)
+    .execute(&mut *tx)
+    .await?;
+
     // P-4: Recompute inherited tags for moved subtree
     crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &block_id).await?;
 

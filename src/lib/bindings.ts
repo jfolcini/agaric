@@ -669,6 +669,17 @@ async listProjectedAgenda(startDate: string, endDate: string, limit: number | nu
 }
 },
 /**
+ * Tauri command: list undated tasks. Delegates to [`list_undated_tasks_inner`].
+ */
+async listUndatedTasks(cursor: string | null, limit: number | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_undated_tasks", { cursor, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: import a Logseq-style markdown file as a page with
  * block hierarchy. Delegates to [`import_markdown_inner`].
  */
@@ -925,7 +936,7 @@ export type BacklinkSort = { type: "Created"; dir: SortDir } | { type: "Property
 /**
  * Row returned by paginated block queries.
  */
-export type BlockRow = { id: string; block_type: string; content: string | null; parent_id: string | null; position: number | null; deleted_at: string | null; is_conflict: boolean; conflict_type: string | null; todo_state: string | null; priority: string | null; due_date: string | null; scheduled_date: string | null }
+export type BlockRow = { id: string; block_type: string; content: string | null; parent_id: string | null; position: number | null; deleted_at: string | null; is_conflict: boolean; conflict_type: string | null; todo_state: string | null; priority: string | null; due_date: string | null; scheduled_date: string | null; page_id: string | null }
 export type BulkTrashResponse = { affected_count: number }
 /**
  * Result of an op log compaction, returned by [`compact_op_log_cmd`].

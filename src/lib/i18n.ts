@@ -324,8 +324,7 @@ const resources = {
 
       // Agenda
       'agenda.loadingTasks': 'Loading tasks...',
-      'agenda.noTasks':
-        'No dated tasks found. Add a due date or scheduled date to your tasks to see them here.',
+      'agenda.noTasks': 'No tasks found. Set a todo state on your blocks to see them here.',
       'agenda.noMatch': 'No blocks match your filters.',
       'agenda.clearFilters': 'Clear all filters',
       'agenda.zeroResults': '0 results',
@@ -350,6 +349,9 @@ const resources = {
       'agenda.groupPriority': 'Priority',
       'agenda.groupState': 'State',
       'agenda.groupNone': 'None',
+      'agenda.groupPage': 'Page',
+      'agenda.sortPage': 'Page',
+      'agenda.noPage': 'No page',
       'agenda.breadcrumbArrow': '\u2192',
 
       // Task dependencies (F-37)

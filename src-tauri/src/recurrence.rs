@@ -789,7 +789,7 @@ mod tests {
             BlockRow,
             r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                       is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
-                      due_date, scheduled_date
+                      due_date, scheduled_date, page_id
                FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
             original_id
         )

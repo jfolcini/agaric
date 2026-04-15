@@ -8,7 +8,7 @@
 import type { AgendaFilter } from '../components/AgendaFilterBuilder'
 import { formatDate, getDateRangeForFilter } from './date-utils'
 import type { BlockRow } from './tauri'
-import { listBlocks, listTagsByPrefix, queryByProperty } from './tauri'
+import { listBlocks, listTagsByPrefix, listUndatedTasks, queryByProperty } from './tauri'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -224,21 +224,26 @@ async function queryPropertyDimension(values: string[]): Promise<Map<string, Blo
  */
 export async function executeAgendaFilters(filters: AgendaFilter[]): Promise<ExecuteFiltersResult> {
   if (filters.length === 0) {
-    // Default: blocks with due_date or scheduled_date (dated tasks only)
-    const [dueResp, schedResp] = await Promise.all([
+    // Default: blocks with due_date or scheduled_date, plus undated tasks
+    const [dueResp, schedResp, undatedResp] = await Promise.all([
       queryByProperty({ key: 'due_date', limit: 500 }),
       queryByProperty({ key: 'scheduled_date', limit: 500 }),
+      listUndatedTasks({ limit: 500 }),
     ])
     // Merge and deduplicate by id
     const seen = new Set<string>()
     const merged: BlockRow[] = []
-    for (const b of [...dueResp.items, ...schedResp.items]) {
+    for (const b of [...dueResp.items, ...schedResp.items, ...undatedResp.items]) {
       if (!seen.has(b.id)) {
         seen.add(b.id)
         merged.push(b)
       }
     }
-    return { blocks: merged, hasMore: false, cursor: null }
+    return {
+      blocks: merged,
+      hasMore: dueResp.has_more || schedResp.has_more || undatedResp.has_more,
+      cursor: null,
+    }
   }
 
   // Execute each filter dimension and intersect

@@ -161,6 +161,7 @@ struct FtsSearchRow {
     priority: Option<String>,
     due_date: Option<String>,
     scheduled_date: Option<String>,
+    page_id: Option<String>,
     // FTS ranking field (for cursor)
     search_rank: f64,
 }
@@ -232,6 +233,7 @@ pub async fn search_fts(
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at, b.is_conflict, b.conflict_type,
                 b.todo_state, b.priority, b.due_date, b.scheduled_date,
+                b.page_id,
                 fts.rank as search_rank
          FROM fts_blocks fts
          JOIN blocks b ON b.id = fts.block_id
@@ -352,6 +354,7 @@ pub async fn search_fts(
             priority: r.priority,
             due_date: r.due_date,
             scheduled_date: r.scheduled_date,
+            page_id: r.page_id,
         })
         .collect();
 

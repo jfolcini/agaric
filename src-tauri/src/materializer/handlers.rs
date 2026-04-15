@@ -311,6 +311,10 @@ pub(super) async fn handle_background_task(
             Some(rp) => cache::rebuild_projected_agenda_cache_split(pool, rp).await,
             None => cache::rebuild_projected_agenda_cache(pool).await,
         },
+        MaterializeTask::RebuildPageIds => match read_pool {
+            Some(rp) => cache::rebuild_page_ids_split(pool, rp).await,
+            None => cache::rebuild_page_ids(pool).await,
+        },
         MaterializeTask::ApplyOp(ref record) => {
             tracing::warn!(seq = record.seq, "unexpected ApplyOp in background queue");
             Ok(())
