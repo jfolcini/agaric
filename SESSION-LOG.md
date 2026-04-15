@@ -1,5 +1,49 @@
 # Session Log
 
+## Session 389 — Resolve BUG-4 + 5 FEAT-1 follow-ups (2026-04-16)
+
+**6 items resolved (BUG-4, P-17, TEST-7, TEST-8, TEST-9, UX-183). REVIEW-LATER cleared to 0.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| BUG-4 (resolved) | Fix agenda breadcrumb: replace `parent_id` with `page_id` in AgendaResults + useBlockNavigation hook | 8 files |
+| TEST-7 (resolved) | Add `page_id` to tauri-mock `makeBlock`/`create_block`/`move_block`, add `list_undated_tasks` handler | 2 files |
+| TEST-8 (resolved) | Add 4 E2E tests for page-centric agenda defaults (undated tasks, page grouping, sort/group by page) | 1 file |
+| TEST-9 (resolved) | Add 3 wrapper tests for `listUndatedTasks` in `tauri.test.ts` | 1 file |
+| UX-183 (resolved) | Add 2 axe a11y audits for page grouping in AgendaResults (multi-page + "No page" group) | 1 file |
+| P-17 (resolved) | Add `bench_list_undated_tasks` (pagination), `bench_rebuild_page_ids` (cache), extend `move_block` to 100K | 3 files |
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src/components/AgendaResults.tsx` | BUG-4: `block.parent_id` → `block.page_id` for breadcrumb pageId + pageTitle |
+| `src/hooks/useBlockNavigation.ts` | BUG-4: `block.parent_id` → `block.page_id` for navigation target |
+| `src/hooks/__tests__/useBlockNavigation.test.ts` | BUG-4: update test data to use `page_id`, add nested block regression test |
+| `src/components/__tests__/AgendaResults.test.tsx` | BUG-4: add `page_id` to 5 test blocks; UX-183: add 2 axe a11y audits |
+| `src/components/__tests__/DonePanel.test.tsx` | BUG-4: update `makeBlock` default `page_id` to match `parent_id` |
+| `src/components/__tests__/DuePanel.test.tsx` | BUG-4: update `makeBlock` default `page_id` to match `parent_id` |
+| `src/components/__tests__/LinkedReferences.test.tsx` | BUG-4: add `page_id` to `makeGroup` block objects |
+| `src/components/journal/__tests__/UnfinishedTasks.test.tsx` | BUG-4: update `makeBlock` default `page_id` to match `parent_id` |
+| `src/lib/tauri-mock.ts` | TEST-7: add `page_id` to `makeBlock`/`create_block`/`move_block`/`batch_resolve`; add `list_undated_tasks` handler |
+| `src/lib/__tests__/tauri-mock.test.ts` | TEST-7: add `page_id` to seed assertion; add 3 `list_undated_tasks` tests; add `page_id` assertion in `move_block` test |
+| `src/lib/__tests__/tauri.test.ts` | TEST-9: add 3 `listUndatedTasks` wrapper tests |
+| `e2e/agenda-advanced.spec.ts` | TEST-8: add section 7 with 4 E2E tests for page-centric agenda |
+| `src-tauri/benches/pagination_bench.rs` | P-17: add `seed_undated_tasks` + `bench_list_undated_tasks` at [100, 1K, 10K, 100K] |
+| `src-tauri/benches/cache_bench.rs` | P-17: add `seed_page_id_data` + `bench_rebuild_page_ids` at [100, 1K, 10K, 100K] |
+| `src-tauri/benches/move_reorder_bench.rs` | P-17: extend scales to [10, 100, 1K, 10K, 100K], reduce sample_size to 10 |
+
+### Stats
+- 15 files changed (+406 lines, -27 lines)
+- 12 new frontend tests (1 nested block regression, 3 tauri wrapper, 2 axe a11y, 3 mock handler, 3 mock undated tasks), 6534 frontend tests pass
+- 3 new Rust benchmarks (list_undated_tasks, rebuild_page_ids, move_block 100K extension)
+- 4 new E2E tests (undated tasks, page grouping default, group-by page, sort-by page)
+- 6 items resolved — REVIEW-LATER has 0 open items
+
+---
+
 ## Session 388 — FEAT-1: agenda redesign with page-centric default + denormalized page_id (2026-04-15)
 
 **1 item resolved (FEAT-1). 5 follow-up items filed: P-17, TEST-7, TEST-8, TEST-9, UX-183.**
