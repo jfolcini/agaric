@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { getTodayString } from '@/lib/date-utils'
+import { logger } from '@/lib/logger'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useDuePanelData } from '../hooks/useDuePanelData'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
@@ -54,7 +55,13 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   const [hideBeforeScheduled, setHideBeforeScheduled] = useState(() => {
     try {
       return localStorage.getItem('agaric:hideBeforeScheduled') === 'true'
-    } catch {
+    } catch (err) {
+      logger.warn(
+        'DuePanel',
+        'Failed to read localStorage preference',
+        { key: 'agaric:hideBeforeScheduled' },
+        err,
+      )
       return false
     }
   })
@@ -64,7 +71,14 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
       const next = !prev
       try {
         localStorage.setItem('agaric:hideBeforeScheduled', String(next))
-      } catch {}
+      } catch (err) {
+        logger.warn(
+          'DuePanel',
+          'Failed to write localStorage preference',
+          { key: 'agaric:hideBeforeScheduled' },
+          err,
+        )
+      }
       return next
     })
   }, [])

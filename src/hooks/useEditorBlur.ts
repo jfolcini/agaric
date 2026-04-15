@@ -152,6 +152,7 @@ export function useEditorBlur(params: {
       // Always discard draft on blur — even when content is unchanged, a
       // stale draft from a previous autosave cycle may exist in the database.
       discardDraft()
+      logger.debug('editor', 'blur', { blockId })
       setFocused(null)
     },
     [blockId, edit, splitBlock, setFocused, discardDraft],

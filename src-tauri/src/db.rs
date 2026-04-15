@@ -68,7 +68,9 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppErro
         .await?;
 
     // Run migrations on the write pool (needs write access)
+    tracing::info!("running database migrations");
     sqlx::migrate!("./migrations").run(&write_pool).await?;
+    tracing::info!("database migrations complete");
 
     // T-5: Update query planner statistics after migrations.
     // PRAGMA optimize analyzes tables whose stats may be stale and runs
@@ -103,7 +105,9 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool, crate::error::AppEr
         .await?;
 
     // Run migrations
+    tracing::info!("running database migrations");
     sqlx::migrate!("./migrations").run(&pool).await?;
+    tracing::info!("database migrations complete");
 
     Ok(pool)
 }

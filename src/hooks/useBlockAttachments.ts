@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
+import { logger } from '@/lib/logger'
 import { i18n } from '../lib/i18n'
 import type { AttachmentRow } from '../lib/tauri'
 import { addAttachment, deleteAttachment, listAttachments } from '../lib/tauri'
@@ -45,7 +46,8 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
         const { rootParentId } = pageStore.getState()
         if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
         setAttachments((prev) => [...prev, row])
-      } catch {
+      } catch (err) {
+        logger.error('useBlockAttachments', 'Failed to add attachment', { blockId }, err)
         toast.error(i18n.t('attachments.addFailed'))
       }
     },
@@ -60,7 +62,13 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
         const { rootParentId } = pageStore.getState()
         if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
         setAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
-      } catch {
+      } catch (err) {
+        logger.error(
+          'useBlockAttachments',
+          'Failed to delete attachment',
+          { blockId, attachmentId },
+          err,
+        )
         toast.error(i18n.t('attachments.deleteFailed'))
       }
     },

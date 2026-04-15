@@ -43,6 +43,7 @@ pub async fn create_conflict_copy(
 
     // 2. Generate a new block ID
     let new_block_id = BlockId::new();
+    tracing::info!(original_block_id, new_block_id = %new_block_id, conflict_type, "creating conflict copy");
     // M-13: Use MAX(position) + 1 among siblings to avoid position collision.
     // Previous approach used position + 1 which could collide with existing siblings.
     // P-18: When original position is the sentinel (or NULL before migration),
@@ -166,12 +167,14 @@ pub fn resolve_property_conflict(
     };
 
     if winner_is_b {
+        tracing::info!(winner_device = %op_b.device_id, winner_seq = op_b.seq, "property conflict resolved via LWW");
         Ok(PropertyConflictResolution {
             winner_device: op_b.device_id.clone(),
             winner_seq: op_b.seq,
             winner_value: payload_b,
         })
     } else {
+        tracing::info!(winner_device = %op_a.device_id, winner_seq = op_a.seq, "property conflict resolved via LWW");
         Ok(PropertyConflictResolution {
             winner_device: op_a.device_id.clone(),
             winner_seq: op_a.seq,

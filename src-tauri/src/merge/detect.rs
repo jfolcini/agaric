@@ -34,6 +34,7 @@ pub async fn merge_text(
 ) -> Result<MergeResult, AppError> {
     // 1. Find the Lowest Common Ancestor
     let lca = dag::find_lca(pool, op_ours, op_theirs).await?;
+    tracing::debug!(block_id, lca_found = lca.is_some(), "merge LCA lookup");
 
     // 2. Get the text content at each point
     let text_ours = dag::text_at(pool, &op_ours.0, op_ours.1).await?;
@@ -98,12 +99,25 @@ pub async fn merge_text(
     // 3. Line-level three-way merge via diffy.
     //    Note: diffy splits on `\n` boundaries (line-level, NOT word-level).
     //    For single-line blocks, any concurrent edit produces a conflict.
-    match diffy::merge(&text_ancestor, &text_ours, &text_theirs) {
-        Ok(merged) => Ok(MergeResult::Clean(merged)),
-        Err(_conflict_text) => Ok(MergeResult::Conflict {
+    tracing::debug!(
+        block_id,
+        ancestor_len = text_ancestor.len(),
+        ours_len = text_ours.len(),
+        theirs_len = text_theirs.len(),
+        "attempting three-way text merge"
+    );
+    let result = match diffy::merge(&text_ancestor, &text_ours, &text_theirs) {
+        Ok(merged) => MergeResult::Clean(merged),
+        Err(_conflict_text) => MergeResult::Conflict {
             ours: text_ours,
             theirs: text_theirs,
             ancestor: text_ancestor,
-        }),
-    }
+        },
+    };
+    tracing::info!(
+        block_id,
+        clean = matches!(result, MergeResult::Clean(_)),
+        "text merge completed"
+    );
+    Ok(result)
 }

@@ -228,6 +228,14 @@ pub fn run() {
             let device_id_path = app_data_dir.join("device-id");
             let device_id = device::get_or_create_device_id(&device_id_path)?;
 
+            tracing::info!(
+                version = env!("CARGO_PKG_VERSION"),
+                platform = std::env::consts::OS,
+                arch = std::env::consts::ARCH,
+                device_id = %device_id,
+                "app started"
+            );
+
             // Read or generate a persistent TLS certificate for sync (#380)
             let cert_path = app_data_dir.join("sync-cert");
             let sync_cert = sync_cert::get_or_create_sync_cert(&cert_path, &device_id)?;

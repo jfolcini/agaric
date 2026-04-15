@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
 import { useEditorBlur } from '@/hooks/useEditorBlur'
+import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { shouldSplitOnBlur } from '../editor/use-roving-editor'
@@ -186,6 +187,7 @@ function EditableBlockInner({
         )
       }
       // Mount into the new block
+      logger.debug('editor', 'focus', { blockId: id })
       setFocused(id)
       rovingEditorRef.current.mount(id, content)
     },
@@ -288,3 +290,4 @@ function EditableBlockInner({
 
 export const EditableBlock = React.memo(EditableBlockInner)
 EditableBlock.displayName = 'EditableBlock'
+;('EditableBlock')

@@ -210,7 +210,8 @@ export function TrashView(): React.ReactElement {
           useResolveStore.getState().set(block.id, block.content ?? 'Untitled', false)
         }
         toast.success(t('trash.blockRestored'))
-      } catch {
+      } catch (err) {
+        logger.error('TrashView', 'Failed to restore block', { blockId: block.id }, err)
         toast.error(t('trash.restoreFailed'))
       }
     },
@@ -224,7 +225,8 @@ export function TrashView(): React.ReactElement {
         setBlocks((prev) => prev.filter((b) => b.id !== blockId))
         setConfirmPurgeId(null)
         toast.success(t('trash.blockPurged'))
-      } catch {
+      } catch (err) {
+        logger.error('TrashView', 'Failed to purge block', { blockId }, err)
         toast.error(t('trash.purgeFailed'))
       }
     },
@@ -298,7 +300,8 @@ export function TrashView(): React.ReactElement {
       if (result.affected_count > 0) {
         toast.success(t('trash.allPurged', { count: result.affected_count }))
       }
-    } catch {
+    } catch (err) {
+      logger.error('TrashView', 'Failed to empty trash', undefined, err)
       toast.error(t('trash.emptyTrashFailed'))
     }
   }, [reload, clearSelection, t])
@@ -312,7 +315,8 @@ export function TrashView(): React.ReactElement {
       if (result.affected_count > 0) {
         toast.success(t('trash.allRestored', { count: result.affected_count }))
       }
-    } catch {
+    } catch (err) {
+      logger.error('TrashView', 'Failed to restore all blocks', undefined, err)
       toast.error(t('trash.restoreAllFailed'))
     }
   }, [reload, clearSelection, t])

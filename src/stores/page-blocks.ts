@@ -123,6 +123,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       const rootParentId = get().rootParentId
       set({ loading: true })
       try {
+        const start = performance.now()
         const allBlocks = await loadSubtree(rootParentId ?? undefined)
         // Defensive: discard if rootParentId changed (shouldn't happen with per-page stores)
         if (get().rootParentId !== rootParentId) return
@@ -141,6 +142,11 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         }
 
         set({ blocks: newBlocks, loading: false })
+        logger.debug('page-blocks', 'page loaded', {
+          pageId: rootParentId ?? '',
+          blockCount: newBlocks.length,
+          durationMs: Math.round(performance.now() - start),
+        })
       } catch (err) {
         if (get().rootParentId !== rootParentId) return
         set({ loading: false })

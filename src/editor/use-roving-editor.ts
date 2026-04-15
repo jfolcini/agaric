@@ -409,6 +409,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
 
   const unmount = useCallback((): string | null => {
     if (!editor) return null
+    const unmountBlockId = activeBlockIdRef.current
 
     // B-77 fix layer 4: Exit all suggestion plugins before wiping the
     // document.  Without this, blur → unmount → replaceDocSilently
@@ -454,6 +455,10 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       originalMarkdownRef.current = ''
     }
 
+    logger.debug('editor', 'unmounted', {
+      blockId: unmountBlockId,
+      changed: delta?.changed ?? false,
+    })
     return delta?.changed ? delta.newMarkdown : null
   }, [editor])
 

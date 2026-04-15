@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
+import { logger } from '@/lib/logger'
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
 import { formatTimestamp } from '../lib/format'
 import type { HistoryEntry } from '../lib/tauri'
@@ -56,7 +57,8 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         }
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
-      } catch {
+      } catch (err) {
+        logger.error('HistoryPanel', 'Failed to load block history', { blockId }, err)
         toast.error(t('history.loadFailed'))
       }
       setLoading(false)
@@ -87,7 +89,13 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
           await editBlock(blockId, parsed.to_text)
         }
         toast.success(t('history.revertedSuccessfully'))
-      } catch {
+      } catch (err) {
+        logger.error(
+          'HistoryPanel',
+          'Failed to restore from history',
+          { blockId, opId: entry.seq },
+          err,
+        )
         toast.error(t('history.revertPanelFailed'))
       }
     },

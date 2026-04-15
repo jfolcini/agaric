@@ -93,6 +93,7 @@ export function JournalPage({
   const fetchPages = useCallback(async () => {
     setLoading(true)
     try {
+      const start = performance.now()
       const resp = await listBlocks({ blockType: 'page', limit: 500 })
       const map = new Map<string, string>()
       for (const b of resp.items) {
@@ -101,6 +102,10 @@ export function JournalPage({
         }
       }
       setPageMap(map)
+      logger.debug('JournalPage', 'journal pages loaded', {
+        pageCount: map.size,
+        durationMs: Math.round(performance.now() - start),
+      })
     } catch (err) {
       logger.warn('JournalPage', 'Failed to fetch journal pages, using empty map', undefined, err)
       setPageMap(new Map())

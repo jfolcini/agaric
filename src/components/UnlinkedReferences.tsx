@@ -88,7 +88,8 @@ export function UnlinkedReferences({
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
         setTotalCount(resp.total_count)
-      } catch {
+      } catch (err) {
+        logger.error('UnlinkedReferences', 'Failed to load unlinked references', { pageId }, err)
         toast.error(t('unlinkedRefs.loadFailed'))
       } finally {
         setLoading(false)
@@ -149,7 +150,8 @@ export function UnlinkedReferences({
             .filter((g) => g.blocks.length > 0),
         )
         setTotalCount((prev) => prev - 1)
-      } catch {
+      } catch (err) {
+        logger.error('UnlinkedReferences', 'Failed to link block to page', { blockId, pageId }, err)
         toast.error(t('unlinkedRefs.linkFailed'))
       }
     },

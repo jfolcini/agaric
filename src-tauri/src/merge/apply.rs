@@ -30,6 +30,8 @@ pub async fn merge_block(
     our_head: &(String, i64),
     their_head: &(String, i64),
 ) -> Result<MergeOutcome, AppError> {
+    tracing::debug!(block_id, "merge_block invoked");
+
     // 1. Already up to date?
     if our_head == their_head {
         return Ok(MergeOutcome::AlreadyUpToDate);
@@ -50,6 +52,7 @@ pub async fn merge_block(
             let record =
                 dag::append_merge_op(pool, device_id, merge_payload, parent_entries).await?;
 
+            tracing::info!(block_id, "merge completed — clean merge applied");
             Ok(MergeOutcome::Merged(record))
         }
         MergeResult::Conflict {
@@ -77,6 +80,7 @@ pub async fn merge_block(
             let _merge_record =
                 dag::append_merge_op(pool, device_id, merge_payload, parent_entries).await?;
 
+            tracing::warn!(block_id, "merge completed — conflict copy created");
             Ok(MergeOutcome::ConflictCopy {
                 original_kept_ours: true,
                 conflict_block_op: conflict_op,
