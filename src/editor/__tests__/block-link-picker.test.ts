@@ -5,6 +5,25 @@
 import { describe, expect, it, vi } from 'vitest'
 import { BlockLinkPicker } from '../extensions/block-link-picker'
 
+/** Helper: create a chainProxy mock that tracks deleteRange and insertContentAt calls. */
+function createChainProxy() {
+  const deleteRangeCalls: Array<{ from: number; to: number }> = []
+  const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
+  const chainProxy: Record<string, unknown> = {
+    focus: () => chainProxy,
+    deleteRange: (range: { from: number; to: number }) => {
+      deleteRangeCalls.push(range)
+      return chainProxy
+    },
+    insertContentAt: (pos: number, content: unknown) => {
+      insertContentAtCalls.push({ pos, content })
+      return chainProxy
+    },
+    run: () => true,
+  }
+  return { chainProxy, deleteRangeCalls, insertContentAtCalls }
+}
+
 describe('BlockLinkPicker', () => {
   it('creates an extension with the correct name', () => {
     const ext = BlockLinkPicker.configure({ items: () => [] })
@@ -245,5 +264,155 @@ describe('BlockLinkPicker input rule uses insertContentAt (race-condition fix)',
 
     // On error, plain text re-inserted at the captured position
     expect(insertContentAtCalls).toEqual([{ pos: 7, content: 'Broken' }])
+  })
+})
+
+describe('resolveBlockLinkFromSelection command', () => {
+  /** Helper: get the command function from the extension config. */
+  function getCommand(ext: ReturnType<typeof BlockLinkPicker.configure>) {
+    const addCommands = ext.config.addCommands
+    expect(addCommands).toBeDefined()
+    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
+    const commands = (addCommands as Function).call({ options: ext.options })
+    return commands.resolveBlockLinkFromSelection
+  }
+
+  it('returns false when selection is collapsed (no selection)', () => {
+    const { chainProxy, insertContentAtCalls } = createChainProxy()
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: {
+        selection: { from: 5, to: 5 },
+        doc: { textBetween: () => '' },
+      },
+    } as unknown
+
+    const ext = BlockLinkPicker.configure({ items: vi.fn().mockResolvedValue([]) })
+    const command = getCommand(ext)
+
+    const result = command()({ editor: mockEditor })
+    expect(result).toBe(false)
+    expect(insertContentAtCalls).toHaveLength(0)
+  })
+
+  it('resolves exact match and inserts block_link', async () => {
+    const { chainProxy, deleteRangeCalls, insertContentAtCalls } = createChainProxy()
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: {
+        selection: { from: 5, to: 15 },
+        doc: { textBetween: () => 'My Page' },
+      },
+    } as unknown
+
+    const mockItems = vi
+      .fn()
+      .mockResolvedValue([{ id: 'ULID123', label: 'My Page', isCreate: false }])
+    const ext = BlockLinkPicker.configure({ items: mockItems })
+    const command = getCommand(ext)
+
+    const result = command()({ editor: mockEditor })
+    expect(result).toBe(true)
+    expect(deleteRangeCalls).toEqual([{ from: 5, to: 15 }])
+
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
+
+    expect(insertContentAtCalls).toEqual([
+      { pos: 5, content: { type: 'block_link', attrs: { id: 'ULID123' } } },
+    ])
+  })
+
+  it('creates page when no match found', async () => {
+    const { chainProxy, insertContentAtCalls } = createChainProxy()
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: {
+        selection: { from: 3, to: 11 },
+        doc: { textBetween: () => 'New Page' },
+      },
+    } as unknown
+
+    const mockItems = vi.fn().mockResolvedValue([])
+    const mockOnCreate = vi.fn().mockResolvedValue('NEW_ULID')
+    const ext = BlockLinkPicker.configure({ items: mockItems, onCreate: mockOnCreate })
+    const command = getCommand(ext)
+
+    const result = command()({ editor: mockEditor })
+    expect(result).toBe(true)
+
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
+
+    expect(mockOnCreate).toHaveBeenCalledWith('New Page')
+    expect(insertContentAtCalls).toEqual([
+      { pos: 3, content: { type: 'block_link', attrs: { id: 'NEW_ULID' } } },
+    ])
+  })
+
+  it('falls back to plain text on error', async () => {
+    const { chainProxy, insertContentAtCalls } = createChainProxy()
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: {
+        selection: { from: 2, to: 12 },
+        doc: { textBetween: () => 'Error Page' },
+      },
+    } as unknown
+
+    const mockItems = vi.fn().mockRejectedValue(new Error('network error'))
+    const ext = BlockLinkPicker.configure({ items: mockItems })
+    const command = getCommand(ext)
+
+    const result = command()({ editor: mockEditor })
+    expect(result).toBe(true)
+
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
+
+    expect(insertContentAtCalls).toEqual([{ pos: 2, content: 'Error Page' }])
+  })
+
+  it('returns false for whitespace-only selection', () => {
+    const { chainProxy, insertContentAtCalls } = createChainProxy()
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: {
+        selection: { from: 5, to: 10 },
+        doc: { textBetween: () => '   ' },
+      },
+    } as unknown
+
+    const ext = BlockLinkPicker.configure({ items: vi.fn().mockResolvedValue([]) })
+    const command = getCommand(ext)
+
+    const result = command()({ editor: mockEditor })
+    expect(result).toBe(false)
+    expect(insertContentAtCalls).toHaveLength(0)
+  })
+
+  it('prefers alias match over create', async () => {
+    const { chainProxy, insertContentAtCalls } = createChainProxy()
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: {
+        selection: { from: 0, to: 10 },
+        doc: { textBetween: () => 'alias name' },
+      },
+    } as unknown
+
+    const mockItems = vi
+      .fn()
+      .mockResolvedValue([{ id: 'ALIAS_ID', label: 'Real Name', isAlias: true, isCreate: false }])
+    const mockOnCreate = vi.fn().mockResolvedValue('SHOULD_NOT_USE')
+    const ext = BlockLinkPicker.configure({ items: mockItems, onCreate: mockOnCreate })
+    const command = getCommand(ext)
+
+    const result = command()({ editor: mockEditor })
+    expect(result).toBe(true)
+
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
+
+    expect(mockOnCreate).not.toHaveBeenCalled()
+    expect(insertContentAtCalls).toEqual([
+      { pos: 0, content: { type: 'block_link', attrs: { id: 'ALIAS_ID' } } },
+    ])
   })
 })

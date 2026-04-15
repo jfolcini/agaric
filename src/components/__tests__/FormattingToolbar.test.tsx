@@ -159,12 +159,16 @@ const mockEditorDom = document.createElement('div')
 const mockResolve = vi.fn(() => ({}))
 const mockTextBetween = vi.fn(() => '')
 const mockIsActive = vi.fn(() => false)
+const mockResolveBlockLinkFromSelection = vi.fn(() => true)
 
 function makeEditor() {
   return {
     chain: mockChain,
     getAttributes: mockGetAttributes,
     isActive: mockIsActive,
+    commands: {
+      resolveBlockLinkFromSelection: mockResolveBlockLinkFromSelection,
+    },
     state: {
       doc: {
         resolve: mockResolve,
@@ -673,6 +677,27 @@ describe('FormattingToolbar', () => {
       const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
       const prevented = !btn.dispatchEvent(event)
       expect(prevented).toBe(true)
+    })
+
+    it('inserts [[ when no text is selected', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Internal link' }))
+
+      expect(mockInsertContent).toHaveBeenCalledWith('[[')
+      expect(mockRun).toHaveBeenCalled()
+      expect(mockResolveBlockLinkFromSelection).not.toHaveBeenCalled()
+    })
+
+    it('calls resolveBlockLinkFromSelection when text is selected', () => {
+      const editor = makeEditor()
+      // biome-ignore lint/suspicious/noExplicitAny: test mock mutation
+      ;(editor as any).state.selection = { from: 5, to: 15 }
+
+      render(<FormattingToolbar editor={editor} />)
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Internal link' }))
+
+      expect(mockResolveBlockLinkFromSelection).toHaveBeenCalled()
+      expect(mockInsertContent).not.toHaveBeenCalled()
     })
   })
 

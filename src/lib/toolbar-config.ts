@@ -138,7 +138,14 @@ export function createRefsAndBlocks(editor: Editor): ToolbarButtonConfig[] {
       icon: FileSymlink,
       label: 'toolbar.internalLink',
       tip: 'toolbar.pageLinkTip',
-      action: () => editor.chain().focus().insertContent('[[').run(),
+      action: () => {
+        const { from, to } = editor.state.selection
+        if (from !== to) {
+          editor.commands.resolveBlockLinkFromSelection()
+        } else {
+          editor.chain().focus().insertContent('[[').run()
+        }
+      },
     },
     {
       icon: AtSign,

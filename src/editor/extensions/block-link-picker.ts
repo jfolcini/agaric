@@ -25,6 +25,14 @@ export interface BlockLinkPickerOptions {
   onCreate?: ((label: string) => Promise<string>) | undefined
 }
 
+declare module '@tiptap/core' {
+  interface Commands<ReturnType> {
+    blockLinkPicker: {
+      resolveBlockLinkFromSelection: () => ReturnType
+    }
+  }
+}
+
 export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
   name: 'blockLinkPicker',
 
@@ -32,6 +40,69 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
     return {
       items: () => [],
       onCreate: undefined,
+    }
+  },
+
+  addCommands() {
+    const extensionOptions = this.options
+    return {
+      resolveBlockLinkFromSelection:
+        () =>
+        ({ editor }) => {
+          const { from, to } = editor.state.selection
+          if (from === to) return false
+
+          const selectedText = editor.state.doc.textBetween(from, to).trim()
+          if (!selectedText) return false
+
+          // Capture position before deletion (same race-condition fix as the input rule)
+          const insertPos = from
+          editor.chain().focus().deleteRange({ from, to }).run()
+
+          const resolveAndInsert = async () => {
+            try {
+              const items = await extensionOptions.items(selectedText)
+              const exactMatch = items.find(
+                (item) =>
+                  !item.isCreate &&
+                  (item.label.toLowerCase() === selectedText.toLowerCase() || item.isAlias),
+              )
+              if (exactMatch) {
+                editor
+                  .chain()
+                  .focus()
+                  .insertContentAt(insertPos, {
+                    type: 'block_link',
+                    attrs: { id: exactMatch.id },
+                  })
+                  .run()
+              } else if (extensionOptions.onCreate) {
+                const newId = await extensionOptions.onCreate(selectedText)
+                editor
+                  .chain()
+                  .focus()
+                  .insertContentAt(insertPos, {
+                    type: 'block_link',
+                    attrs: { id: newId },
+                  })
+                  .run()
+              } else {
+                // No match and no onCreate — re-insert as plain text
+                editor.chain().focus().insertContentAt(insertPos, selectedText).run()
+              }
+            } catch (err) {
+              logger.warn(
+                'BlockLinkPicker',
+                'resolveBlockLinkFromSelection failed, falling back to plain text',
+                { text: selectedText },
+                err,
+              )
+              editor.chain().focus().insertContentAt(insertPos, selectedText).run()
+            }
+          }
+          void resolveAndInsert()
+          return true
+        },
     }
   },
 
