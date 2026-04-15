@@ -266,3 +266,82 @@ describe('ExternalLink Ctrl+K shortcut (B-70)', () => {
     expect((events[0] as CustomEvent).detail).toEqual({ from: 5, to: 10 })
   })
 })
+
+describe('ExternalLink mark exit after setLink (UX-177)', () => {
+  let editor: Editor
+
+  afterEach(() => {
+    editor?.destroy()
+  })
+
+  /** Helper — the link mark is always registered via ExternalLink extension. */
+  function getLinkMarkType(ed: Editor) {
+    const mt = ed.schema.marks['link']
+    expect(mt).toBeDefined()
+    return mt as import('@tiptap/pm/model').MarkType
+  }
+
+  it('stored marks do not include link after setLink + removeStoredMark', () => {
+    editor = createEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: 'click here' }],
+        },
+      ],
+    })
+    editor.commands.selectAll()
+
+    // Apply link (simulating what LinkEditPopover does)
+    editor.chain().focus().setLink({ href: 'https://example.com' }).run()
+
+    // Remove stored marks (the UX-177 fix)
+    const linkMarkType = getLinkMarkType(editor)
+    editor.view.dispatch(editor.state.tr.removeStoredMark(linkMarkType))
+
+    // Verify stored marks do not include link
+    const storedMarks = editor.state.storedMarks
+    const hasLinkMark = storedMarks?.some((m) => m.type.name === 'link') ?? false
+    expect(hasLinkMark).toBe(false)
+  })
+
+  it('text typed after setLink + removeStoredMark is not linked (UX-177)', () => {
+    editor = createEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: 'click here' }],
+        },
+      ],
+    })
+    editor.commands.selectAll()
+
+    // Apply link
+    editor.chain().focus().setLink({ href: 'https://example.com' }).run()
+
+    // Remove stored marks (UX-177 fix)
+    const linkMarkType = getLinkMarkType(editor)
+    editor.view.dispatch(editor.state.tr.removeStoredMark(linkMarkType))
+
+    // Move cursor to end of the link
+    const endPos = editor.state.doc.content.size - 1
+    editor.commands.setTextSelection(endPos)
+
+    // Re-remove stored marks at new position (simulating what happens after popover close)
+    editor.view.dispatch(editor.state.tr.removeStoredMark(linkMarkType))
+
+    // Insert text after the link
+    const textNode = editor.state.schema.text(' unlinked')
+    editor.view.dispatch(editor.state.tr.insert(endPos, textNode))
+
+    // The inserted text should NOT have the link mark
+    const paragraph = editor.state.doc.child(0)
+    const lastChild = paragraph.child(paragraph.childCount - 1)
+    const hasLink = lastChild.marks.some((m) => m.type.name === 'link')
+    expect(hasLink).toBe(false)
+  })
+})

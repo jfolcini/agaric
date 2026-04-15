@@ -62,11 +62,18 @@ const mockFocus = vi.fn(() => ({
 }))
 const mockChain = vi.fn(() => ({ focus: mockFocus }))
 const mockCommandsFocus = vi.fn()
+const mockRemoveStoredMark = vi.fn().mockReturnThis()
+const mockTr = { removeStoredMark: mockRemoveStoredMark }
+const mockDispatch = vi.fn()
+const mockLinkMarkType = { name: 'link' }
 
 function makeEditor() {
   return {
     chain: mockChain,
     commands: { focus: mockCommandsFocus },
+    schema: { marks: { link: mockLinkMarkType } },
+    state: { tr: mockTr },
+    view: { dispatch: mockDispatch },
   } as never
 }
 
@@ -302,6 +309,19 @@ describe('LinkEditPopover', () => {
 
       expect(mockFetchLinkMetadata).toHaveBeenCalledWith('https://example.com')
     })
+
+    it('removes stored link mark after applying link (UX-177)', () => {
+      render(
+        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+      )
+
+      const input = screen.getByTestId('link-url-input')
+      fireEvent.change(input, { target: { value: 'https://example.com' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(mockRemoveStoredMark).toHaveBeenCalledWith(mockLinkMarkType)
+      expect(mockDispatch).toHaveBeenCalledWith(mockTr)
+    })
   })
 
   // ── Remove action ──────────────────────────────────────────────────────
@@ -503,6 +523,9 @@ describe('LinkEditPopover', () => {
       const editorWithSelection = {
         chain: mockChainWithSelection,
         commands: { focus: mockCommandsFocus },
+        schema: { marks: { link: mockLinkMarkType } },
+        state: { tr: mockTr },
+        view: { dispatch: mockDispatch },
       } as never
 
       render(
@@ -524,6 +547,8 @@ describe('LinkEditPopover', () => {
       expect(mockSetTextSelection).toHaveBeenCalledWith({ from: 5, to: 15 })
       expect(mockSetLink).toHaveBeenCalledWith({ href: 'https://example.com' })
       expect(mockRun).toHaveBeenCalled()
+      expect(mockRemoveStoredMark).toHaveBeenCalledWith(mockLinkMarkType)
+      expect(mockDispatch).toHaveBeenCalledWith(mockTr)
     })
 
     it('does not restore selection when savedSelection is null', () => {
@@ -565,6 +590,8 @@ describe('LinkEditPopover', () => {
       expect(mockChain).toHaveBeenCalled()
       expect(mockFocus).toHaveBeenCalled()
       expect(mockSetLink).toHaveBeenCalledWith({ href: 'https://example.com' })
+      expect(mockRemoveStoredMark).toHaveBeenCalledWith(mockLinkMarkType)
+      expect(mockDispatch).toHaveBeenCalledWith(mockTr)
     })
   })
 })
