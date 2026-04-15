@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use sqlx::SqlitePool;
 
 use tauri::State;
+use tracing::instrument;
 
 use crate::db::{ReadPool, WritePool};
 use crate::device::DeviceId;
@@ -18,6 +19,7 @@ use crate::sync_scheduler::SyncScheduler;
 use super::*;
 
 /// List all known sync peers, ordered by most-recently-synced first.
+#[instrument(skip(pool), err)]
 pub async fn list_peer_refs_inner(pool: &SqlitePool) -> Result<Vec<PeerRef>, AppError> {
     peer_refs::list_peer_refs(pool).await
 }
@@ -25,6 +27,7 @@ pub async fn list_peer_refs_inner(pool: &SqlitePool) -> Result<Vec<PeerRef>, App
 /// Fetch a single sync peer by its `peer_id`.
 ///
 /// Returns `None` if the peer does not exist (not an error).
+#[instrument(skip(pool), err)]
 pub async fn get_peer_ref_inner(
     pool: &SqlitePool,
     peer_id: String,
@@ -35,10 +38,12 @@ pub async fn get_peer_ref_inner(
 /// Delete (unpair) a sync peer by its `peer_id`.
 ///
 /// Returns [`AppError::NotFound`] if the peer does not exist.
+#[instrument(skip(pool), err)]
 pub async fn delete_peer_ref_inner(pool: &SqlitePool, peer_id: String) -> Result<(), AppError> {
     peer_refs::delete_peer_ref(pool, &peer_id).await
 }
 
+#[instrument(skip(pool), err)]
 pub async fn update_peer_name_inner(
     pool: &SqlitePool,
     peer_id: String,
@@ -51,6 +56,7 @@ pub async fn update_peer_name_inner(
 ///
 /// Validates the address is a valid `host:port` socket address and that the
 /// peer exists before persisting.
+#[instrument(skip(pool), err)]
 pub async fn set_peer_address_inner(
     pool: &SqlitePool,
     peer_id: String,
@@ -71,6 +77,7 @@ pub async fn set_peer_address_inner(
 }
 
 /// Return the local device's persistent UUID.
+#[instrument(skip(device_id))]
 pub fn get_device_id_inner(device_id: &DeviceId) -> String {
     device_id.as_str().to_string()
 }
@@ -80,6 +87,7 @@ pub fn get_device_id_inner(device_id: &DeviceId) -> String {
 /// Generates a fresh passphrase, creates a QR code SVG for sharing,
 /// stores the session in `pairing_state`, and returns the pairing info
 /// to the frontend.
+#[instrument(skip(pairing_state), err)]
 pub fn start_pairing_inner(
     pairing_state: &Mutex<Option<PairingSession>>,
     device_id: &str,
@@ -104,6 +112,7 @@ pub fn start_pairing_inner(
 ///
 /// Validates the passphrase against the current session, stores the peer
 /// reference in the database, and clears the pairing session.
+#[instrument(skip(pool, pairing_state), err)]
 pub async fn confirm_pairing_inner(
     pool: &SqlitePool,
     pairing_state: &Mutex<Option<PairingSession>>,
@@ -130,6 +139,7 @@ pub async fn confirm_pairing_inner(
 /// Cancel an in-progress pairing session.
 ///
 /// Clears the stored session; no-op if no session is active.
+#[instrument(skip(pairing_state), err)]
 pub fn cancel_pairing_inner(pairing_state: &Mutex<Option<PairingSession>>) -> Result<(), AppError> {
     *pairing_state
         .lock()
@@ -143,6 +153,7 @@ pub fn cancel_pairing_inner(pairing_state: &Mutex<Option<PairingSession>>) -> Re
 /// the SyncDaemon (#382) to sync now.  Actual network sync happens in
 /// the daemon; this returns immediately with a "complete" status to
 /// indicate the trigger was accepted.
+#[instrument(skip(scheduler), err)]
 pub fn start_sync_inner(
     scheduler: &SyncScheduler,
     device_id: &str,
@@ -180,6 +191,7 @@ pub fn start_sync_inner(
 /// Sets the cancel flag that is checked each iteration of the sync message
 /// exchange loop.  If no sync is active the flag is harmlessly cleared on
 /// the next session start.
+#[instrument(skip(cancel_flag), err)]
 pub fn cancel_sync_inner(cancel_flag: &AtomicBool) -> Result<(), AppError> {
     cancel_flag.store(true, Ordering::Release);
     Ok(())

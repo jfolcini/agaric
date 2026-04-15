@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use sqlx::SqlitePool;
+use tracing::instrument;
 
 use tauri::State;
 
@@ -19,6 +20,7 @@ use crate::pagination::{self, BlockRow, PageResponse};
 use super::*;
 
 /// List blocks that link to the given block (backlinks), with cursor pagination.
+#[instrument(skip(pool), err)]
 pub async fn get_backlinks_inner(
     pool: &SqlitePool,
     block_id: String,
@@ -30,6 +32,7 @@ pub async fn get_backlinks_inner(
 }
 
 /// List conflict-copy blocks (blocks with `is_conflict = true`), with cursor pagination.
+#[instrument(skip(pool), err)]
 pub async fn get_conflicts_inner(
     pool: &SqlitePool,
     cursor: Option<String>,
@@ -40,6 +43,7 @@ pub async fn get_conflicts_inner(
 }
 
 /// Return current materializer queue metrics and system status.
+#[instrument(skip(materializer))]
 pub fn get_status_inner(materializer: &Materializer) -> StatusInfo {
     materializer.status()
 }
@@ -48,6 +52,7 @@ pub fn get_status_inner(materializer: &Materializer) -> StatusInfo {
 ///
 /// Returns an empty page if the query is blank. Otherwise delegates to
 /// [`fts::search_fts`] with cursor pagination.
+#[instrument(skip(pool, tag_ids), err)]
 pub async fn search_blocks_inner(
     pool: &SqlitePool,
     query: String,
@@ -82,6 +87,7 @@ pub async fn search_blocks_inner(
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `key` is empty
+#[instrument(skip(pool), err)]
 pub async fn query_by_property_inner(
     pool: &SqlitePool,
     key: String,
@@ -117,6 +123,7 @@ pub async fn query_by_property_inner(
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `block_id` is empty
+#[instrument(skip(pool, filters, sort), err)]
 pub async fn query_backlinks_filtered_inner(
     pool: &SqlitePool,
     block_id: String,
@@ -136,6 +143,7 @@ pub async fn query_backlinks_filtered_inner(
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `block_id` is empty
+#[instrument(skip(pool, filters, sort), err)]
 pub async fn list_backlinks_grouped_inner(
     pool: &SqlitePool,
     block_id: String,
@@ -156,6 +164,7 @@ pub async fn list_backlinks_grouped_inner(
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `page_id` is empty
+#[instrument(skip(pool), err)]
 pub async fn list_unlinked_references_inner(
     pool: &SqlitePool,
     page_id: &str,
@@ -177,6 +186,7 @@ pub async fn list_unlinked_references_inner(
 /// # Errors
 ///
 /// - Database errors propagated from sqlx.
+#[instrument(skip(pool, page_ids), err)]
 pub async fn count_backlinks_batch_inner(
     pool: &SqlitePool,
     page_ids: Vec<String>,

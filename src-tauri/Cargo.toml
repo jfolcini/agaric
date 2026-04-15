@@ -62,7 +62,7 @@ diffy = "0.4.2"
 similar = "2"
 zstd = "0.13"
 ciborium = "0.2"
-tracing = "0.1.44"
+tracing = { version = "0.1.44", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 # Sync

@@ -2,6 +2,7 @@
 
 use sqlx::SqlitePool;
 use tauri::State;
+use tracing::instrument;
 
 use crate::db::{ReadPool, WritePool};
 use crate::error::AppError;
@@ -34,6 +35,7 @@ pub async fn get_link_metadata_inner(
 }
 
 /// Clear the auth_required flag for a URL (user retry).
+#[instrument(skip(pool), err)]
 pub async fn clear_link_metadata_auth_inner(
     pool: &SqlitePool,
     url: String,

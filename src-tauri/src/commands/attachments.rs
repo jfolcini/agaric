@@ -1,6 +1,7 @@
 //! Attachments command handlers.
 
 use sqlx::SqlitePool;
+use tracing::instrument;
 
 use tauri::State;
 
@@ -27,6 +28,7 @@ use super::*;
 /// - [`AppError::NotFound`] — block does not exist or is soft-deleted
 /// - [`AppError::Validation`] — size exceeds 50 MB or MIME type not allowed
 #[allow(clippy::too_many_arguments)]
+#[instrument(skip(pool, device_id, materializer, fs_path), err)]
 pub async fn add_attachment_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -129,6 +131,7 @@ pub async fn add_attachment_inner(
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — attachment does not exist
+#[instrument(skip(pool, device_id, materializer), err)]
 pub async fn delete_attachment_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -180,6 +183,7 @@ pub async fn delete_attachment_inner(
 /// # Errors
 ///
 /// - [`AppError::Database`] — on query failure
+#[instrument(skip(pool), err)]
 pub async fn list_attachments_inner(
     pool: &SqlitePool,
     block_id: String,

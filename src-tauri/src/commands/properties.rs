@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use sqlx::SqlitePool;
 use tauri::State;
+use tracing::instrument;
 
 use crate::backlink;
 use crate::db::{ReadPool, WritePool};
@@ -14,6 +15,7 @@ use crate::materializer::Materializer;
 use super::*;
 
 /// List all distinct property keys currently in use across all blocks.
+#[instrument(skip(pool), err)]
 pub async fn list_property_keys_inner(pool: &SqlitePool) -> Result<Vec<String>, AppError> {
     backlink::list_property_keys(pool).await
 }
@@ -23,6 +25,7 @@ pub async fn list_property_keys_inner(pool: &SqlitePool) -> Result<Vec<String>, 
 /// Thin wrapper around [`set_property_in_tx`] that manages the transaction
 /// lifecycle and dispatches background work.
 #[allow(clippy::too_many_arguments)]
+#[instrument(skip(pool, device_id, materializer), err)]
 pub async fn set_property_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -56,6 +59,7 @@ pub async fn set_property_inner(
 /// When transitioning to DONE and the block has a `repeat` property, a new
 /// sibling block is created with TODO state and the dates shifted forward
 /// by the recurrence interval.
+#[instrument(skip(pool, device_id, materializer), err)]
 pub async fn set_todo_state_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -190,6 +194,7 @@ pub async fn set_todo_state_inner(
 ///
 /// Validates the value and delegates to [`set_property_inner`] with the
 /// reserved `"priority"` key.
+#[instrument(skip(pool, device_id, materializer), err)]
 pub async fn set_priority_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -222,6 +227,7 @@ pub async fn set_priority_inner(
 ///
 /// Validates the date format and delegates to [`set_property_inner`] with the
 /// reserved `"due_date"` key.
+#[instrument(skip(pool, device_id, materializer), err)]
 pub async fn set_due_date_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -254,6 +260,7 @@ pub async fn set_due_date_inner(
 ///
 /// Validates the date format and delegates to [`set_property_inner`] with the
 /// reserved `"scheduled_date"` key.
+#[instrument(skip(pool, device_id, materializer), err)]
 pub async fn set_scheduled_date_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -309,6 +316,7 @@ pub(crate) fn is_valid_iso_date(s: &str) -> bool {
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — block does not exist or is soft-deleted
+#[instrument(skip(pool, device_id, materializer), err)]
 pub async fn delete_property_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -320,6 +328,7 @@ pub async fn delete_property_inner(
 }
 
 /// Get all properties for a block (read-only).
+#[instrument(skip(pool), err)]
 pub async fn get_properties_inner(
     pool: &SqlitePool,
     block_id: String,
@@ -338,6 +347,7 @@ pub async fn get_properties_inner(
 
 /// Create a property definition. Uses INSERT OR IGNORE for idempotency —
 /// if the key already exists, this is a no-op.
+#[instrument(skip(pool, options), err)]
 pub async fn create_property_def_inner(
     pool: &SqlitePool,
     key: String,
@@ -416,6 +426,7 @@ pub async fn create_property_def_inner(
 }
 
 /// List all property definitions, ordered by key.
+#[instrument(skip(pool), err)]
 pub async fn list_property_defs_inner(
     pool: &SqlitePool,
 ) -> Result<Vec<PropertyDefinition>, AppError> {
@@ -430,6 +441,7 @@ pub async fn list_property_defs_inner(
 
 /// Update the options array for a select-type definition.
 /// Returns error if the key doesn't exist or isn't select-type.
+#[instrument(skip(pool, options), err)]
 pub async fn update_property_def_options_inner(
     pool: &SqlitePool,
     key: String,
@@ -475,6 +487,7 @@ pub async fn update_property_def_options_inner(
 
 /// Delete a property definition by key.
 /// Returns error if the key doesn't exist.
+#[instrument(skip(pool), err)]
 pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result<(), AppError> {
     let result = sqlx::query("DELETE FROM property_definitions WHERE key = ?")
         .bind(&key)
@@ -498,6 +511,7 @@ pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `block_ids` is empty
+#[instrument(skip(pool, block_ids), err)]
 pub async fn get_batch_properties_inner(
     pool: &SqlitePool,
     block_ids: Vec<String>,

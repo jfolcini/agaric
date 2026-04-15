@@ -1,6 +1,7 @@
 //! Tags command handlers.
 
 use sqlx::SqlitePool;
+use tracing::instrument;
 
 use tauri::State;
 
@@ -29,6 +30,7 @@ use super::*;
 ///
 /// - [`AppError::NotFound`] — block or tag block does not exist or is deleted
 /// - [`AppError::InvalidOperation`] — `tag_id` is not a tag block, or tag already applied
+#[instrument(skip(pool, device_id, materializer), err)]
 pub async fn add_tag_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -129,6 +131,7 @@ pub async fn add_tag_inner(
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — block does not exist, is deleted, or tag association missing
+#[instrument(skip(pool, device_id, materializer), err)]
 pub async fn remove_tag_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -203,6 +206,7 @@ pub async fn remove_tag_inner(
 /// Builds a `TagExpr` from the provided tag_ids, prefixes, and mode.
 /// `mode` is `"and"` for intersection, anything else defaults to `"or"` (union).
 /// Returns an empty page when no tag IDs or prefixes are supplied.
+#[instrument(skip(pool, tag_ids), err)]
 pub async fn query_by_tags_inner(
     pool: &SqlitePool,
     tag_ids: Vec<String>,
@@ -239,6 +243,7 @@ pub async fn query_by_tags_inner(
 }
 
 /// List all tags matching a name prefix (autocomplete / UI).
+#[instrument(skip(pool), err)]
 pub async fn list_tags_by_prefix_inner(
     pool: &SqlitePool,
     prefix: String,
@@ -248,6 +253,7 @@ pub async fn list_tags_by_prefix_inner(
 }
 
 /// List all tag_ids currently associated with a block.
+#[instrument(skip(pool), err)]
 pub async fn list_tags_for_block_inner(
     pool: &SqlitePool,
     block_id: String,

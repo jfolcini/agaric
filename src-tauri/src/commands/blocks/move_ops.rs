@@ -1,6 +1,7 @@
 use crate::db::WritePool;
 use crate::device::DeviceId;
 use crate::op::MoveBlockPayload;
+use tracing::instrument;
 
 use super::super::*;
 
@@ -15,6 +16,7 @@ use super::super::*;
 /// - [`AppError::InvalidOperation`] — block cannot be its own parent
 /// - [`AppError::Validation`] — non-positive position, or cycle detected
 /// - [`AppError::NotFound`] — block or new parent does not exist or is deleted
+#[instrument(skip(pool, device_id, materializer), err)]
 pub async fn move_block_inner(
     pool: &SqlitePool,
     device_id: &str,

@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use sqlx::SqlitePool;
+use tracing::instrument;
 
 use tauri::State;
 
@@ -19,6 +20,7 @@ use super::*;
 /// Replace the full set of aliases for a page. Returns the aliases that were
 /// actually inserted (empty/whitespace-only entries are skipped; duplicates
 /// across different pages are silently ignored via INSERT OR IGNORE).
+#[instrument(skip(pool, aliases), err)]
 pub async fn set_page_aliases_inner(
     pool: &SqlitePool,
     page_id: &str,
@@ -65,6 +67,7 @@ pub async fn set_page_aliases_inner(
 }
 
 /// Return all aliases for a page, sorted alphabetically.
+#[instrument(skip(pool), err)]
 pub async fn get_page_aliases_inner(
     pool: &SqlitePool,
     page_id: &str,
@@ -78,6 +81,7 @@ pub async fn get_page_aliases_inner(
 }
 
 /// Look up a page by one of its aliases. Returns `(page_id, title)` if found.
+#[instrument(skip(pool), err)]
 pub async fn resolve_page_by_alias_inner(
     pool: &SqlitePool,
     alias: &str,
@@ -144,6 +148,7 @@ fn resolve_ulids_for_export(
 ///
 /// - [`AppError::Validation`] — `page_id` does not refer to a `page` block
 /// - [`AppError::NotFound`] — block not found
+#[instrument(skip(pool), err)]
 pub async fn export_page_markdown_inner(
     pool: &SqlitePool,
     page_id: &str,
@@ -224,6 +229,7 @@ pub async fn export_page_markdown_inner(
 /// Creates a page from the filename (or first heading), then creates
 /// blocks following the indentation hierarchy. Properties are set via
 /// SetProperty ops. Returns import statistics.
+#[instrument(skip(pool, device_id, materializer, content), err)]
 pub async fn import_markdown_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -340,6 +346,7 @@ pub async fn import_markdown_inner(
 /// Returns edges where both source and target are non-deleted page blocks.
 /// Block-level links (where source is a content block) are rolled up to
 /// their parent page.
+#[instrument(skip(pool), err)]
 pub async fn list_page_links_inner(pool: &SqlitePool) -> Result<Vec<PageLink>, AppError> {
     // For each block_link, find the parent page of the source block.
     // The target in block_links is already a page (since [[links]] point to pages).

@@ -2,6 +2,7 @@
 
 use sqlx::SqlitePool;
 use tauri::State;
+use tracing::instrument;
 
 use crate::db::{ReadPool, WritePool};
 use crate::device::DeviceId;
@@ -14,6 +15,7 @@ use super::*;
 /// write an `edit_block` op, and delete the draft row — all atomically.
 ///
 /// If no draft exists for `block_id`, this is a no-op (returns `Ok(())`).
+#[instrument(skip(pool, device_id), err)]
 pub async fn flush_draft_inner(
     pool: &SqlitePool,
     device_id: &str,

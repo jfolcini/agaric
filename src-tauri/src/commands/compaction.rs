@@ -3,6 +3,7 @@
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
+use tracing::instrument;
 
 use crate::db::{ReadPool, WritePool};
 use crate::device::DeviceId;
@@ -46,6 +47,7 @@ pub struct CompactionResult {
 }
 
 /// Inner implementation for [`get_compaction_status`], testable without Tauri state.
+#[instrument(skip(pool), err)]
 pub async fn get_compaction_status_inner(pool: &SqlitePool) -> Result<CompactionStatus, AppError> {
     let total_ops: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
         .fetch_one(pool)

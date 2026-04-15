@@ -5,6 +5,8 @@ use crate::op::{
     PurgeBlockPayload, RestoreBlockPayload, SetPropertyPayload,
 };
 
+use tracing::instrument;
+
 use super::super::*;
 
 /// Create a new block.
@@ -149,6 +151,7 @@ pub(crate) async fn create_block_in_tx(
     ))
 }
 
+#[instrument(skip(pool, device_id, materializer, content), err)]
 pub async fn create_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -177,6 +180,7 @@ pub async fn create_block_inner(
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — block does not exist or is soft-deleted
+#[instrument(skip(pool, device_id, materializer, to_text), err)]
 pub async fn edit_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -283,6 +287,7 @@ pub async fn edit_block_inner(
 ///
 /// - [`AppError::NotFound`] — block does not exist
 /// - [`AppError::InvalidOperation`] — block is already soft-deleted
+#[instrument(skip(pool, device_id, materializer), err)]
 pub async fn delete_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -362,6 +367,7 @@ pub async fn delete_block_inner(
 ///
 /// - [`AppError::NotFound`] — block does not exist
 /// - [`AppError::InvalidOperation`] — block is not deleted, or `deleted_at` timestamp mismatch
+#[instrument(skip(pool, device_id, materializer), err)]
 pub async fn restore_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -453,6 +459,7 @@ pub async fn restore_block_inner(
 ///
 /// - [`AppError::NotFound`] — block does not exist
 /// - [`AppError::InvalidOperation`] — block is not soft-deleted
+#[instrument(skip(pool, device_id, materializer), err)]
 pub async fn purge_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -663,6 +670,7 @@ pub async fn purge_block_inner(
 /// Finds root-level deleted blocks (those whose parent is not deleted with the
 /// same timestamp), creates a `RestoreBlock` op for each, then clears
 /// `deleted_at` on ALL deleted blocks. Recomputes tag inheritance afterward.
+#[instrument(skip(pool, device_id, materializer), err)]
 pub async fn restore_all_deleted_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -736,6 +744,7 @@ pub async fn restore_all_deleted_inner(
 ///
 /// Creates `PurgeBlock` ops for root-level deleted blocks, then bulk-deletes
 /// all dependent rows and the blocks themselves. Irreversible.
+#[instrument(skip(pool, device_id, materializer), err)]
 pub async fn purge_all_deleted_inner(
     pool: &SqlitePool,
     device_id: &str,

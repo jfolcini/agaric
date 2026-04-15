@@ -343,4 +343,58 @@ mod tests {
             "Debug output should include inner message, got: {debug}"
         );
     }
+
+    // --- source() chain (std::error::Error) ---
+
+    #[test]
+    fn source_returns_inner_for_database_variant() {
+        use std::error::Error;
+        let err = AppError::Database(sqlx::Error::RowNotFound);
+        assert!(
+            err.source().is_some(),
+            "Database variant should expose inner sqlx::Error via source()"
+        );
+    }
+
+    #[test]
+    fn source_returns_inner_for_io_variant() {
+        use std::error::Error;
+        let err = AppError::Io(std::io::Error::other("disk full"));
+        assert!(
+            err.source().is_some(),
+            "Io variant should expose inner io::Error via source()"
+        );
+    }
+
+    #[test]
+    fn source_returns_inner_for_json_variant() {
+        use std::error::Error;
+        let err = AppError::Json(serde_json::from_str::<()>("{bad").unwrap_err());
+        assert!(
+            err.source().is_some(),
+            "Json variant should expose inner serde_json::Error via source()"
+        );
+    }
+
+    #[test]
+    fn source_returns_none_for_string_variants() {
+        use std::error::Error;
+        let cases: Vec<AppError> = vec![
+            AppError::Ulid(MSG_ULID.into()),
+            AppError::NotFound(MSG_NOT_FOUND.into()),
+            AppError::InvalidOperation(MSG_INVALID_OP.into()),
+            AppError::Channel(MSG_CHANNEL.into()),
+            AppError::Snapshot(MSG_SNAPSHOT.into()),
+            AppError::Validation(MSG_VALIDATION.into()),
+            AppError::NonReversible {
+                op_type: "purge_block".into(),
+            },
+        ];
+        for err in cases {
+            assert!(
+                err.source().is_none(),
+                "String-only variant {err:?} should return None from source()"
+            );
+        }
+    }
 }

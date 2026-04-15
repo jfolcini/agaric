@@ -1,6 +1,7 @@
 //! History command handlers.
 
 use sqlx::SqlitePool;
+use tracing::instrument;
 
 use tauri::State;
 
@@ -626,6 +627,7 @@ pub async fn redo_page_op(
 ///
 /// Returns `Ok(None)` if the op is not `edit_block` or if no prior text exists
 /// (i.e. the block was just created and this is the first edit).
+#[instrument(skip(pool), err)]
 pub async fn compute_edit_diff_inner(
     pool: &SqlitePool,
     device_id: String,

@@ -1,3 +1,5 @@
+use tracing::instrument;
+
 use super::super::*;
 
 /// List blocks with pagination, applying at most one exclusive filter.
@@ -11,6 +13,7 @@ use super::super::*;
 ///
 /// - [`AppError::Validation`] — multiple conflicting filters, or invalid date format
 #[allow(clippy::too_many_arguments)]
+#[instrument(skip(pool), err)]
 pub async fn list_blocks_inner(
     pool: &SqlitePool,
     parent_id: Option<String>,
@@ -90,6 +93,7 @@ pub async fn list_blocks_inner(
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — no block with the given ID exists
+#[instrument(skip(pool), err)]
 pub async fn get_block_inner(pool: &SqlitePool, block_id: String) -> Result<BlockRow, AppError> {
     let row: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
@@ -114,6 +118,7 @@ pub async fn get_block_inner(pool: &SqlitePool, block_id: String) -> Result<Bloc
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `ids` is empty
+#[instrument(skip(pool, ids), err)]
 pub async fn batch_resolve_inner(
     pool: &SqlitePool,
     ids: Vec<String>,

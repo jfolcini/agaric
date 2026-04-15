@@ -1,6 +1,7 @@
 //! Journal command handlers — daily page navigation.
 
 use sqlx::SqlitePool;
+use tracing::instrument;
 
 use crate::error::AppError;
 use crate::materializer::Materializer;
@@ -31,6 +32,7 @@ pub async fn today_journal_inner(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `date` is not a valid `YYYY-MM-DD` string
+#[instrument(skip(pool, device_id, materializer), err)]
 pub async fn navigate_journal_inner(
     pool: &SqlitePool,
     device_id: &str,

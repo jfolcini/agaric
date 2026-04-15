@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use sqlx::SqlitePool;
+use tracing::instrument;
 
 use tauri::State;
 
@@ -20,6 +21,7 @@ use super::*;
 /// # Errors
 ///
 /// - [`AppError::Validation`] — any date fails `YYYY-MM-DD` validation
+#[instrument(skip(pool, dates), err)]
 pub async fn count_agenda_batch_inner(
     pool: &SqlitePool,
     dates: Vec<String>,
@@ -66,6 +68,7 @@ pub async fn count_agenda_batch_inner(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — any date fails `YYYY-MM-DD` validation
+#[instrument(skip(pool, dates), err)]
 pub async fn count_agenda_batch_by_source_inner(
     pool: &SqlitePool,
     dates: Vec<String>,
@@ -113,6 +116,7 @@ pub async fn count_agenda_batch_by_source_inner(
 /// computation for first-run or pre-cache scenarios.
 ///
 /// Returns at most `limit` entries (default 200, max 500).
+#[instrument(skip(pool), err)]
 pub async fn list_projected_agenda_inner(
     pool: &SqlitePool,
     start_date: String,
