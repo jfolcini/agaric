@@ -29,6 +29,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
+import { logger } from '../lib/logger'
 import { cn } from '../lib/utils'
 
 export interface BlockContextMenuProps {
@@ -171,9 +172,18 @@ export function BlockContextMenu({
     computePosition(virtualEl, el, {
       placement: 'bottom-start',
       middleware: [offset(4), flip({ padding: 8 }), shift({ padding: 8 })],
-    }).then(({ x, y }) => {
-      setComputedPos({ x, y })
     })
+      .then(({ x, y }) => {
+        setComputedPos({ x, y })
+      })
+      .catch((err: unknown) => {
+        logger.warn(
+          'BlockContextMenu',
+          'computePosition failed, using initial position',
+          undefined,
+          err,
+        )
+      })
   }, [position])
 
   const handleAction = useCallback(

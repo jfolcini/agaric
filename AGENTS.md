@@ -114,6 +114,7 @@ Every frontend change — new component, bugfix, feature — must build on exist
 - **`aria-label`** on every icon-only button. Use `t()` i18n keys, not hardcoded English strings.
 - **`EmptyState`** component for all empty list/panel states. Never `return null` or show raw text for empty states.
 - **`LoadingSkeleton`** for initial load states. Inline spinners only for action feedback (submit buttons, pagination).
+- **Floating UI lifecycle logging**: Any component that creates DOM outside the React tree (portals, `document.body.appendChild`, `ReactRenderer`), manages capture-phase outside-click listeners, or uses `computePosition` must: (1) log failures at warn level via `logger.warn`, (2) guard callback invocations on stale/null state and log the desync, (3) handle positioning `.catch()` with a logged fallback, (4) be listed in `EDITOR_PORTAL_SELECTORS` if it should prevent editor blur. See `suggestion-renderer.ts` as the reference implementation.
 
 ### Anti-patterns — do not do these
 
