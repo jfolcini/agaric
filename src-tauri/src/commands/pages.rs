@@ -351,9 +351,10 @@ pub async fn list_page_links_inner(pool: &SqlitePool) -> Result<Vec<PageLink>, A
     // P-15 optimized: JOIN tb first (smaller page-only set via idx_blocks_page_alive),
     // move LEFT JOIN conditions inline so pb.id IS NOT NULL replaces the WHERE filter.
     let links = sqlx::query_as::<_, PageLink>(
-        "SELECT DISTINCT
+        "SELECT
             COALESCE(sb.parent_id, bl.source_id) AS source_id,
-            bl.target_id AS target_id
+            bl.target_id AS target_id,
+            COUNT(*) AS ref_count
          FROM block_links bl
          JOIN blocks tb ON tb.id = bl.target_id
              AND tb.block_type = 'page'
@@ -364,7 +365,8 @@ pub async fn list_page_links_inner(pool: &SqlitePool) -> Result<Vec<PageLink>, A
              AND pb.deleted_at IS NULL
              AND pb.block_type = 'page'
          WHERE COALESCE(sb.parent_id, bl.source_id) != bl.target_id
-             AND (sb.parent_id IS NULL OR pb.id IS NOT NULL)",
+             AND (sb.parent_id IS NULL OR pb.id IS NOT NULL)
+         GROUP BY 1, 2",
     )
     .fetch_all(pool)
     .await?;

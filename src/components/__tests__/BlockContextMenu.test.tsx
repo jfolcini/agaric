@@ -569,4 +569,43 @@ describe('BlockContextMenu', () => {
     expect(props.onIndent).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
   })
+
+  // ── Copy URL menu item ──────────────────────────────────────────
+
+  it('renders "Copy URL" item when linkUrl is provided', () => {
+    renderMenu({ linkUrl: 'https://example.com' })
+
+    expect(screen.getByText('Copy URL')).toBeInTheDocument()
+  })
+
+  it('does not render "Copy URL" item when linkUrl is undefined', () => {
+    renderMenu({ linkUrl: undefined })
+
+    expect(screen.queryByText('Copy URL')).not.toBeInTheDocument()
+  })
+
+  it('clicking "Copy URL" copies to clipboard and shows toast', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    })
+
+    const { props } = renderMenu({ linkUrl: 'https://example.com/page' })
+
+    fireEvent.click(screen.getByText('Copy URL'))
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith('https://example.com/page')
+    })
+    expect(props.onClose).toHaveBeenCalled()
+  })
+
+  it('"Copy URL" appears as the first menu item when linkUrl is provided', () => {
+    renderMenu({ linkUrl: 'https://example.com' })
+
+    const items = screen.getAllByRole('menuitem')
+    expect(items[0]).toHaveTextContent('Copy URL')
+  })
 })

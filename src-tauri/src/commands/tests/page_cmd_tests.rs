@@ -802,14 +802,86 @@ async fn list_page_links_deduplicates_multiple_content_links() {
 
     let links = list_page_links_inner(&pool).await.unwrap();
 
-    // Both b1 and b2 roll up to p1 → p2; DISTINCT should collapse to 1 edge
+    // Both b1 and b2 roll up to p1 → p2; GROUP BY should collapse to 1 edge
     let p1_to_p2_count = links
         .iter()
         .filter(|l| l.source_id == p1.id && l.target_id == p2.id)
         .count();
     assert_eq!(
         p1_to_p2_count, 1,
-        "DISTINCT should deduplicate multiple content blocks linking to the same target page"
+        "GROUP BY should deduplicate multiple content blocks linking to the same target page"
+    );
+
+    let edge = links
+        .iter()
+        .find(|l| l.source_id == p1.id && l.target_id == p2.id)
+        .unwrap();
+    assert_eq!(
+        edge.ref_count, 2,
+        "ref_count should be 2 for two content blocks linking to the same target page"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_single_link_has_ref_count_one() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let p1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page A".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    let p2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page B".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("link [[{}]]", p2.id),
+        Some(p1.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(&b1.id)
+        .bind(&p2.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let links = list_page_links_inner(&pool).await.unwrap();
+    let edge = links
+        .iter()
+        .find(|l| l.source_id == p1.id && l.target_id == p2.id)
+        .unwrap();
+    assert_eq!(
+        edge.ref_count, 1,
+        "single content block link should have ref_count 1"
     );
 
     mat.shutdown();
@@ -899,15 +971,17 @@ async fn list_page_links_excludes_links_with_deleted_parent_page() {
 /// Runs the old SQL and returns sorted results for comparison.
 async fn list_page_links_oracle(pool: &SqlitePool) -> Vec<PageLink> {
     let mut rows = sqlx::query_as::<_, PageLink>(
-        "SELECT DISTINCT
+        "SELECT
             COALESCE(sb.parent_id, bl.source_id) AS source_id,
-            bl.target_id AS target_id
+            bl.target_id AS target_id,
+            COUNT(*) AS ref_count
          FROM block_links bl
          JOIN blocks sb ON sb.id = bl.source_id AND sb.deleted_at IS NULL
          JOIN blocks tb ON tb.id = bl.target_id AND tb.deleted_at IS NULL AND tb.block_type = 'page'
          LEFT JOIN blocks pb ON pb.id = sb.parent_id
          WHERE COALESCE(sb.parent_id, bl.source_id) != bl.target_id
-         AND (sb.parent_id IS NULL OR (pb.deleted_at IS NULL AND pb.block_type = 'page'))",
+         AND (sb.parent_id IS NULL OR (pb.deleted_at IS NULL AND pb.block_type = 'page'))
+         GROUP BY 1, 2",
     )
     .fetch_all(pool)
     .await

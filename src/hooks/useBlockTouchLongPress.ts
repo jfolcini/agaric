@@ -4,7 +4,7 @@ export const LONG_PRESS_DELAY = 400
 export const LONG_PRESS_MOVE_THRESHOLD = 10
 
 export interface UseBlockTouchLongPressOptions {
-  openContextMenu: (x: number, y: number) => void
+  openContextMenu: (x: number, y: number, linkUrl?: string) => void
   isDraggingRef: React.RefObject<boolean>
 }
 
@@ -35,10 +35,18 @@ export function useBlockTouchLongPress({
     (e: React.TouchEvent) => {
       const touch = e.touches[0]
       if (!touch) return
+      const target = e.target as HTMLElement
       touchStartPos.current = { x: touch.clientX, y: touch.clientY }
       longPressTimer.current = setTimeout(() => {
         if (!isDraggingRef.current) {
-          openContextMenu(touch.clientX, touch.clientY)
+          const linkEl = target.closest('.external-link') as
+            | HTMLAnchorElement
+            | HTMLSpanElement
+            | null
+          const linkUrl = linkEl
+            ? (linkEl.getAttribute('href') ?? linkEl.getAttribute('data-href') ?? undefined)
+            : undefined
+          openContextMenu(touch.clientX, touch.clientY, linkUrl)
         }
         longPressTimer.current = null
       }, LONG_PRESS_DELAY)
@@ -67,7 +75,14 @@ export function useBlockTouchLongPress({
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault()
-      openContextMenu(e.clientX, e.clientY)
+      const linkEl = (e.target as HTMLElement).closest('.external-link') as
+        | HTMLAnchorElement
+        | HTMLSpanElement
+        | null
+      const linkUrl = linkEl
+        ? (linkEl.getAttribute('href') ?? linkEl.getAttribute('data-href') ?? undefined)
+        : undefined
+      openContextMenu(e.clientX, e.clientY, linkUrl)
     },
     [openContextMenu],
   )

@@ -382,7 +382,9 @@ export function listPageHistory(params: {
 }
 
 /** List all page-to-page links for graph visualization. */
-export function listPageLinks(): Promise<Array<{ source_id: string; target_id: string }>> {
+export function listPageLinks(): Promise<
+  Array<{ source_id: string; target_id: string; ref_count: number }>
+> {
   return invoke('list_page_links')
 }
 

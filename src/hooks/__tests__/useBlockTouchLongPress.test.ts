@@ -89,8 +89,12 @@ describe('useBlockTouchLongPress', () => {
       useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
     )
 
+    const div = document.createElement('div')
+    document.body.appendChild(div)
+
     const touchEvent = {
       touches: [{ clientX: 100, clientY: 200 }],
+      target: div,
     } as unknown as React.TouchEvent
 
     act(() => {
@@ -104,8 +108,9 @@ describe('useBlockTouchLongPress', () => {
     })
 
     expect(openContextMenu).toHaveBeenCalledOnce()
-    expect(openContextMenu).toHaveBeenCalledWith(100, 200)
+    expect(openContextMenu).toHaveBeenCalledWith(100, 200, undefined)
 
+    document.body.removeChild(div)
     unmount()
   })
 
@@ -179,9 +184,13 @@ describe('useBlockTouchLongPress', () => {
       useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
     )
 
+    const div = document.createElement('div')
+    document.body.appendChild(div)
+
     act(() => {
       result.current.handleTouchStart({
         touches: [{ clientX: 100, clientY: 100 }],
+        target: div,
       } as unknown as React.TouchEvent)
     })
 
@@ -197,6 +206,7 @@ describe('useBlockTouchLongPress', () => {
 
     expect(openContextMenu).toHaveBeenCalledOnce()
 
+    document.body.removeChild(div)
     unmount()
   })
 
@@ -233,11 +243,15 @@ describe('useBlockTouchLongPress', () => {
       useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
     )
 
+    const div = document.createElement('div')
+    document.body.appendChild(div)
+
     const preventDefault = vi.fn()
     const mouseEvent = {
       preventDefault,
       clientX: 300,
       clientY: 400,
+      target: div,
     } as unknown as React.MouseEvent
 
     act(() => {
@@ -245,8 +259,9 @@ describe('useBlockTouchLongPress', () => {
     })
 
     expect(preventDefault).toHaveBeenCalledOnce()
-    expect(openContextMenu).toHaveBeenCalledWith(300, 400)
+    expect(openContextMenu).toHaveBeenCalledWith(300, 400, undefined)
 
+    document.body.removeChild(div)
     unmount()
   })
 
@@ -306,6 +321,102 @@ describe('useBlockTouchLongPress', () => {
       result.current.clearLongPress()
     })
 
+    unmount()
+  })
+
+  it('handleContextMenu passes linkUrl when clicking on an .external-link element', () => {
+    const openContextMenu = vi.fn()
+    const isDraggingRef = { current: false }
+
+    const { result, unmount } = renderHook(() =>
+      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
+    )
+
+    // Create a DOM structure with an external link
+    const link = document.createElement('a')
+    link.classList.add('external-link')
+    link.setAttribute('href', 'https://example.com')
+    const span = document.createElement('span')
+    link.appendChild(span)
+    document.body.appendChild(link)
+
+    const preventDefault = vi.fn()
+    const mouseEvent = {
+      preventDefault,
+      clientX: 300,
+      clientY: 400,
+      target: span,
+    } as unknown as React.MouseEvent
+
+    act(() => {
+      result.current.handleContextMenu(mouseEvent)
+    })
+
+    expect(preventDefault).toHaveBeenCalledOnce()
+    expect(openContextMenu).toHaveBeenCalledWith(300, 400, 'https://example.com')
+
+    document.body.removeChild(link)
+    unmount()
+  })
+
+  it('handleContextMenu passes undefined linkUrl when clicking on a non-link element', () => {
+    const openContextMenu = vi.fn()
+    const isDraggingRef = { current: false }
+
+    const { result, unmount } = renderHook(() =>
+      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
+    )
+
+    const div = document.createElement('div')
+    document.body.appendChild(div)
+
+    const preventDefault = vi.fn()
+    const mouseEvent = {
+      preventDefault,
+      clientX: 100,
+      clientY: 200,
+      target: div,
+    } as unknown as React.MouseEvent
+
+    act(() => {
+      result.current.handleContextMenu(mouseEvent)
+    })
+
+    expect(preventDefault).toHaveBeenCalledOnce()
+    expect(openContextMenu).toHaveBeenCalledWith(100, 200, undefined)
+
+    document.body.removeChild(div)
+    unmount()
+  })
+
+  it('handleContextMenu reads data-href when href is absent', () => {
+    const openContextMenu = vi.fn()
+    const isDraggingRef = { current: false }
+
+    const { result, unmount } = renderHook(() =>
+      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
+    )
+
+    const span = document.createElement('span')
+    span.classList.add('external-link')
+    span.setAttribute('data-href', 'https://fallback.com')
+    document.body.appendChild(span)
+
+    const preventDefault = vi.fn()
+    const mouseEvent = {
+      preventDefault,
+      clientX: 50,
+      clientY: 60,
+      target: span,
+    } as unknown as React.MouseEvent
+
+    act(() => {
+      result.current.handleContextMenu(mouseEvent)
+    })
+
+    expect(openContextMenu).toHaveBeenCalledWith(50, 60, 'https://fallback.com')
+
+    document.body.removeChild(span)
     unmount()
   })
 })

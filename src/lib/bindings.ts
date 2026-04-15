@@ -977,7 +977,7 @@ export type OpRef = { device_id: string; seq: number }
 /**
  * A link between two pages (for graph visualization).
  */
-export type PageLink = { source_id: string; target_id: string }
+export type PageLink = { source_id: string; target_id: string; ref_count: number }
 /**
  * Paginated response.
  *

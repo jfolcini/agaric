@@ -185,6 +185,9 @@ const resources = {
       'contextMenu.setPriority1': 'Set priority 1',
       'contextMenu.properties': 'Properties...',
       'contextMenu.zoomIn': 'Zoom in',
+      'contextMenu.copyUrl': 'Copy URL',
+      'contextMenu.urlCopied': 'URL copied to clipboard',
+      'contextMenu.copyUrlFailed': 'Failed to copy URL',
 
       // Block
       'block.reorder': 'Reorder block (drag or use keyboard)',

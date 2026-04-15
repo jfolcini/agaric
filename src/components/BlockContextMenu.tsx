@@ -17,6 +17,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
+  Copy,
   Merge,
   MoveDown,
   MoveUp,
@@ -28,6 +29,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { logger } from '../lib/logger'
 import { cn } from '../lib/utils'
@@ -59,6 +61,8 @@ export interface BlockContextMenuProps {
   onShowProperties?: ((blockId: string) => void) | undefined
   /** Zoom in to show only this block's children */
   onZoomIn?: ((blockId: string) => void) | undefined
+  /** URL of external link under cursor (for Copy URL action). */
+  linkUrl?: string | undefined
 }
 
 interface MenuItem {
@@ -119,6 +123,7 @@ export function BlockContextMenu({
   onShowHistory,
   onShowProperties,
   onZoomIn,
+  linkUrl,
 }: BlockContextMenuProps): React.ReactElement {
   const { t } = useTranslation()
   const menuRef = useRef<HTMLDivElement>(null)
@@ -307,8 +312,33 @@ export function BlockContextMenu({
       : []),
   ]
 
+  // Copy URL item (shown only when right-clicking/long-pressing an external link)
+  const copyUrlItem: MenuItem | null = linkUrl
+    ? {
+        label: t('contextMenu.copyUrl'),
+        icon: <Copy className="h-3.5 w-3.5" />,
+        action: async () => {
+          try {
+            await navigator.clipboard.writeText(linkUrl)
+            toast.success(t('contextMenu.urlCopied'))
+          } catch (err) {
+            logger.error(
+              'BlockContextMenu',
+              'Failed to copy URL to clipboard',
+              { url: linkUrl },
+              err,
+            )
+            toast.error(t('contextMenu.copyUrlFailed'))
+          }
+          onClose()
+        },
+      }
+    : null
+
+  const copyUrlGroup = copyUrlItem ? [copyUrlItem] : []
+
   // Filter out items without actions and empty groups
-  const groups = [group1, group2, group3, group4, group5]
+  const groups = [copyUrlGroup, group1, group2, group3, group4, group5]
     .map((group) => group.filter((item) => item.action !== undefined))
     .filter((group) => group.length > 0)
 

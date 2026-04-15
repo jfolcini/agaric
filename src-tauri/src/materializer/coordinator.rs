@@ -37,6 +37,42 @@ impl Materializer {
             let m = metrics.clone();
             Self::spawn_task(consumer::run_background(pool, bg_rx, s, m, None));
         }
+        {
+            let m = metrics.clone();
+            let s = shutdown_flag.clone();
+            Self::spawn_task(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+                interval.tick().await; // skip immediate first tick
+                loop {
+                    interval.tick().await;
+                    if s.load(std::sync::atomic::Ordering::Acquire) {
+                        break;
+                    }
+                    let fg_processed = m.fg_processed.load(std::sync::atomic::Ordering::Relaxed);
+                    let bg_processed = m.bg_processed.load(std::sync::atomic::Ordering::Relaxed);
+                    let bg_deduped = m.bg_deduped.load(std::sync::atomic::Ordering::Relaxed);
+                    let fg_high_water = m.fg_high_water.load(std::sync::atomic::Ordering::Relaxed);
+                    let bg_high_water = m.bg_high_water.load(std::sync::atomic::Ordering::Relaxed);
+                    let fg_errors = m.fg_errors.load(std::sync::atomic::Ordering::Relaxed);
+                    let bg_errors = m.bg_errors.load(std::sync::atomic::Ordering::Relaxed);
+                    tracing::debug!(
+                        fg_processed,
+                        bg_processed,
+                        bg_deduped,
+                        fg_high_water,
+                        bg_high_water,
+                        fg_errors,
+                        bg_errors,
+                        "materializer metrics snapshot"
+                    );
+                    // Reset high-water marks after dump
+                    m.fg_high_water
+                        .store(0, std::sync::atomic::Ordering::Relaxed);
+                    m.bg_high_water
+                        .store(0, std::sync::atomic::Ordering::Relaxed);
+                }
+            });
+        }
         Self {
             fg_tx: Arc::new(Mutex::new(Some(fg_tx))),
             bg_tx: Arc::new(Mutex::new(Some(bg_tx))),
@@ -66,6 +102,42 @@ impl Materializer {
                 m,
                 Some(read_pool),
             ));
+        }
+        {
+            let m = metrics.clone();
+            let s = shutdown_flag.clone();
+            Self::spawn_task(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+                interval.tick().await; // skip immediate first tick
+                loop {
+                    interval.tick().await;
+                    if s.load(std::sync::atomic::Ordering::Acquire) {
+                        break;
+                    }
+                    let fg_processed = m.fg_processed.load(std::sync::atomic::Ordering::Relaxed);
+                    let bg_processed = m.bg_processed.load(std::sync::atomic::Ordering::Relaxed);
+                    let bg_deduped = m.bg_deduped.load(std::sync::atomic::Ordering::Relaxed);
+                    let fg_high_water = m.fg_high_water.load(std::sync::atomic::Ordering::Relaxed);
+                    let bg_high_water = m.bg_high_water.load(std::sync::atomic::Ordering::Relaxed);
+                    let fg_errors = m.fg_errors.load(std::sync::atomic::Ordering::Relaxed);
+                    let bg_errors = m.bg_errors.load(std::sync::atomic::Ordering::Relaxed);
+                    tracing::debug!(
+                        fg_processed,
+                        bg_processed,
+                        bg_deduped,
+                        fg_high_water,
+                        bg_high_water,
+                        fg_errors,
+                        bg_errors,
+                        "materializer metrics snapshot"
+                    );
+                    // Reset high-water marks after dump
+                    m.fg_high_water
+                        .store(0, std::sync::atomic::Ordering::Relaxed);
+                    m.bg_high_water
+                        .store(0, std::sync::atomic::Ordering::Relaxed);
+                }
+            });
         }
         Self {
             fg_tx: Arc::new(Mutex::new(Some(fg_tx))),

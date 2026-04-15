@@ -15,6 +15,7 @@ use super::*;
 pub struct PageLink {
     pub source_id: String,
     pub target_id: String,
+    pub ref_count: i64,
 }
 
 /// Result of a point-in-time restore operation.

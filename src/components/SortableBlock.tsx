@@ -135,7 +135,9 @@ function SortableBlockInner({
   })
 
   // ── Context menu state ───────────────────────────────────────────
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; linkUrl?: string } | null>(
+    null,
+  )
   const [editingProp, setEditingProp] = useState<{ key: string; value: string } | null>(null)
   const [editingKey, setEditingKey] = useState<{ oldKey: string; value: string } | null>(null)
   const [selectOptions, setSelectOptions] = useState<string[] | null>(null)
@@ -175,8 +177,8 @@ function SortableBlockInner({
   // can read the current value without capturing a stale boolean.
   const isDraggingRef = useRef(false)
 
-  const openContextMenu = useCallback((x: number, y: number) => {
-    setContextMenu({ x, y })
+  const openContextMenu = useCallback((x: number, y: number, linkUrl?: string) => {
+    setContextMenu(linkUrl ? { x, y, linkUrl } : { x, y })
   }, [])
 
   const closeContextMenu = useCallback(() => {
@@ -443,6 +445,7 @@ function SortableBlockInner({
             todoState={todoState}
             priority={priority}
             dueDate={dueDate}
+            linkUrl={contextMenu.linkUrl}
           />
         )}
       </div>

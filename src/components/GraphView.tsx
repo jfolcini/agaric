@@ -38,6 +38,7 @@ interface GraphNode extends SimulationNodeDatum {
 interface GraphEdge extends SimulationLinkDatum<GraphNode> {
   source: string | GraphNode
   target: string | GraphNode
+  ref_count: number
 }
 
 // ── Module-level cache for stale-while-revalidate (UX-113) ────────────
@@ -101,6 +102,7 @@ export function GraphView(): React.ReactElement {
           .map((l) => ({
             source: l.source_id,
             target: l.target_id,
+            ref_count: l.ref_count,
           }))
 
         // Update cache
@@ -166,8 +168,14 @@ export function GraphView(): React.ReactElement {
       .data(simEdges)
       .join('line')
       .attr('stroke', 'var(--muted-foreground)')
-      .attr('stroke-opacity', 0.7)
-      .attr('stroke-width', 1.5)
+      .attr('stroke-opacity', (d: GraphEdge) => {
+        const count = Math.max(1, d.ref_count ?? 1)
+        return Math.min(0.5 + 0.1 * count, 1)
+      })
+      .attr('stroke-width', (d: GraphEdge) => {
+        const count = Math.max(1, d.ref_count ?? 1)
+        return Math.min(1 + Math.log2(count), 6)
+      })
 
     // Draw node groups
     const node = g
@@ -220,17 +228,51 @@ export function GraphView(): React.ReactElement {
         .select('circle:nth-child(2)')
         .attr('stroke', 'var(--ring)')
         .attr('stroke-width', 2)
+      select(this).select('text').attr('font-size', '14px').attr('font-weight', '600')
     })
     node.on('blur', function () {
       select(this).select('circle:nth-child(2)').attr('stroke', null).attr('stroke-width', null)
+      select(this).select('text').attr('font-size', '12px').attr('font-weight', null)
     })
 
     // Hover/active feedback (UX-103)
     node.on('mouseenter', function () {
-      select(this).select('circle:nth-child(2)').attr('r', 8)
+      const self = select(this)
+      self.select('circle:nth-child(2)').attr('r', 8)
+      self
+        .select('text')
+        .attr('font-size', '14px')
+        .attr('font-weight', '600')
+        .style('paint-order', 'stroke')
+        .attr('stroke', 'var(--background)')
+        .attr('stroke-width', '3px')
+      // Dim other nodes
+      node
+        .filter(function () {
+          return this !== self.node()
+        })
+        .style('opacity', '0.3')
+      // Dim unconnected edges
+      link.style('opacity', (d: GraphEdge) => {
+        const src = typeof d.source === 'string' ? d.source : (d.source as GraphNode).id
+        const tgt = typeof d.target === 'string' ? d.target : (d.target as GraphNode).id
+        const nodeId = self.datum() as GraphNode
+        return src === nodeId.id || tgt === nodeId.id ? '1' : '0.15'
+      })
     })
     node.on('mouseleave', function () {
-      select(this).select('circle:nth-child(2)').attr('r', 6)
+      const self = select(this)
+      self.select('circle:nth-child(2)').attr('r', 6)
+      self
+        .select('text')
+        .attr('font-size', '12px')
+        .attr('font-weight', null)
+        .style('paint-order', null)
+        .attr('stroke', null)
+        .attr('stroke-width', null)
+      // Restore all nodes and edges
+      node.style('opacity', null)
+      link.style('opacity', null)
     })
     node.on('pointerdown', function () {
       select(this).select('circle:nth-child(2)').attr('r', 5)
