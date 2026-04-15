@@ -1,5 +1,53 @@
 # Session Log
 
+## Session 388 — FEAT-1: agenda redesign with page-centric default + denormalized page_id (2026-04-15)
+
+**1 item resolved (FEAT-1). REVIEW-LATER has 0 open items.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| FEAT-1 (resolved) | 3-phase agenda redesign: denormalized `page_id` column on blocks, `list_undated_tasks` command, page-centric agenda default with undated task inclusion | 102 files |
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `migrations/0027_add_page_id.sql` | Migration: `page_id TEXT REFERENCES blocks(id)`, recursive CTE backfill, index |
+| `pagination/mod.rs` | `page_id: Option<String>` added to `BlockRow` struct |
+| `pagination/undated.rs` | New cursor-paginated `list_undated_tasks` query |
+| `cache/page_id.rs` | New `rebuild_page_ids()` + `rebuild_page_ids_split()` via recursive CTE |
+| `commands/blocks/crud.rs` | `create_block_in_tx` computes page_id (self for pages, parent's page_id for content) |
+| `commands/blocks/move_ops.rs` | `move_block_inner` updates page_id for block + non-page descendants |
+| `commands/agenda.rs` | `list_undated_tasks_inner` + Tauri command; projected agenda query updated |
+| `materializer/mod.rs` | `RebuildPageIds` variant added to `MaterializeTask` |
+| `materializer/dispatch.rs` | `RebuildPageIds` dispatched on create/move/delete/restore/purge |
+| `materializer/handlers.rs` | `RebuildPageIds` handler with split pool support |
+| `cache/mod.rs` | Added `page_id` module, re-exports, `rebuild_all_caches()` integration |
+| `lib.rs` | Registered `list_undated_tasks` command + boot-time `RebuildPageIds` dispatch |
+| ~22 query files | Added `b.page_id` to all BlockRow SELECT queries across pagination, commands, fts, backlinks, tag_query, recurrence |
+| `commands/mod.rs` | `page_id` added to `RepeatingBlockRow` + `to_block_row()` |
+| `src/lib/agenda-sort.ts` | `'page'` added to `AgendaGroupBy`/`AgendaSortBy`; new `groupByPage()`, `sortByPage()`; updated `sortAgendaBlocksBy` signature |
+| `src/hooks/useAgendaPreferences.ts` | Defaults changed: groupBy `date`→`page`, sortBy `date`→`state`; `'page'` added to valid values |
+| `src/components/AgendaSortGroupControls.tsx` | `'page'` option added to GROUP_OPTIONS and SORT_OPTIONS |
+| `src/components/AgendaResults.tsx` | `groupByPage` integration, pageTitles passed to sort/group, `'No page'` i18n mapping |
+| `src/lib/agenda-filters.ts` | Empty-filter path now fetches undated tasks via `listUndatedTasks()`, merges + deduplicates |
+| `src/components/journal/AgendaView.tsx` | batchResolve collects both `parent_id` and `page_id` |
+| `src/lib/i18n.ts` | Added `agenda.groupPage`, `agenda.sortPage`, `agenda.noPage`; updated `agenda.noTasks` |
+| `src/lib/tauri.ts` | Added `listUndatedTasks()` wrapper |
+| `src/lib/bindings.ts` | Regenerated: `page_id` on `BlockRow`, `listUndatedTasks` command |
+| `src/__tests__/fixtures/index.ts` | All factory helpers updated with `page_id: null` |
+| ~37 test files | Added `page_id: null` to BlockRow literals for type safety |
+
+### Stats
+- 102 files changed (+1444 lines, -117 lines)
+- 9 new Rust tests (4 undated tasks, 5 page_id), 1958 Rust tests pass
+- 22 new frontend tests (8 agenda-sort, 2 preferences, 4 sort/group controls, 4 agenda results, 4 agenda-filters), 6524 frontend tests pass
+- 1 item resolved — REVIEW-LATER has 0 open items
+
+---
+
 ## Session 387 — BUG-1/2/3 + UX-182: rich titles, suggestion race, FTS lock, filter pills (2026-04-15)
 
 **4 items resolved. REVIEW-LATER has 1 open item (FEAT-1).**

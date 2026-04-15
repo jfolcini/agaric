@@ -317,7 +317,7 @@ Backend property commands (`set_property`, `set_todo_state`, `set_due_date`, `se
 
 ### Default View
 
-Shows tasks with due or scheduled dates for today, grouped by date (Overdue / Today / Tomorrow / future dates).
+Shows all tasks (both dated and undated), grouped by page (FEAT-1). Default group: page (alphabetical, "No page" at end). Default sort: state (DOING > TODO > DONE), then priority, then date. Undated tasks (todo_state set but no due/scheduled date) are included via `listUndatedTasks` and merged with dated results.
 
 ### Filtering
 
@@ -336,8 +336,10 @@ Shows tasks with due or scheduled dates for today, grouped by date (Overdue / To
 
 Configurable controls persisted in browser storage:
 
-- **Group by**: date, priority, state, or none
-- **Sort by**: date, priority, or state
+- **Group by**: page (default), date, priority, state, or none
+- **Sort by**: state (default), date, priority, or page
+- **Page grouping** (FEAT-1): groups by `page_id` (denormalized column on blocks), resolves titles via `batchResolve`, alphabetical order, "No page" group at end with muted styling. Within-group sort: state > priority > date.
+- **Page sorting** (FEAT-1): alphabetical by page title, then state > priority > date.
 
 ### Projected Agenda
 
