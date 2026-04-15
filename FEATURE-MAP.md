@@ -111,7 +111,7 @@ The default view — one page per day, created automatically.
 
 ### Graph
 
-- **Force-directed page relationship graph** (F-33): `GraphView` component with d3-force simulation. Nodes = pages (circles with truncated labels), edges = `[[links]]` between pages (from `block_links` table). Backend `list_page_links` command rolls up content-block links to parent pages via COALESCE, excludes deleted/non-page blocks, self-links, deduplicates. Zoom/pan via d3-zoom, node drag via d3-drag. Click node to navigate to page. Loading skeleton, error alert, empty state (Network icon). 4 Rust tests + 8 frontend tests.
+- **Force-directed page relationship graph** (F-33): `GraphView` component with d3-force simulation. Nodes = pages (circles with truncated labels), edges = `[[links]]` between pages (from `block_links` table). Backend `list_page_links` command rolls up content-block links to parent pages via COALESCE, excludes deleted/non-page blocks, self-links, groups by source/target with `COUNT(*)` for `ref_count`. Zoom/pan via d3-zoom, node drag via d3-drag. Click node to navigate to page. Loading skeleton, error alert, empty state (Network icon). **Edge thickness** (UX-179): logarithmic stroke-width scaling (`1 + log2(ref_count)`, capped at 6px) + opacity modulation (0.6–1.0). **Hover emphasis** (UX-178): hovered node text enlarged (14px bold) with `paint-order: stroke` halo, non-hovered nodes dimmed (0.3), unconnected edges dimmed (0.15). Focus handler provides identical text emphasis for keyboard users. 6 Rust tests + 21 frontend tests.
 
 ### Page Editor
 
@@ -163,6 +163,7 @@ Markdown-based WYSIWYG editing:
 - Multi-selection (Ctrl+Click, Shift+Click, Ctrl+A) with batch delete and batch todo state
 - **Draft autosave**: content auto-saved every 2s while editing; orphaned drafts recovered on boot
 - **Swipe-to-delete** (mobile): swipe left 80px to reveal delete button, 200px to auto-delete
+- **Context menu "Copy URL"** (UX-180): Right-click or long-press an external link to show "Copy URL" as the first menu item. Detects `.external-link` elements via `closest()`, reads `href` (edit mode) or `data-href` (read mode). `navigator.clipboard.writeText()` + success toast, error handling with `logger.error` + error toast. Works on desktop (right-click) and mobile (long-press). `useBlockTouchLongPress.ts`, `BlockContextMenu.tsx`, `SortableBlock.tsx`. 7 new tests.
 - **Sticky headers** in 6 views: SearchPanel, PageBrowser, PageHeader, HistoryView, ConflictList, AgendaView
 - **Drag-and-drop file attachments** (F-27): Drop files onto a focused block or paste images from clipboard to attach. `onDrop`/`onDragOver`/`onDragLeave`/`onPaste` handlers on the focused `<section>` wrapper. Visual `ring-2 ring-primary` drag-over feedback. Multiple files supported. Paste distinguishes file vs text (returns early for text, letting TipTap handle it). Shared `file-utils.ts` module with `guessMimeType()` (20+ MIME types) and `extractFileInfo()`. Tauri-specific `File.path` limitation documented — shows error toast if path unavailable. 13 file-utils tests + 8 EditableBlock tests.
 

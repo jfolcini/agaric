@@ -1,5 +1,39 @@
 # Session Log
 
+## Session 383 — UX-178/179/180 + M-77: graph improvements, Copy URL, metrics dump (2026-04-15)
+
+**4 items resolved. 2 open items remain in REVIEW-LATER.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| UX-178 (resolved) | Graph node hover emphasis — text 14px bold, stroke halo, dim non-hovered nodes/edges, keyboard focus parity | `GraphView.tsx` |
+| UX-179 (resolved) | Graph edge thickness by reference count — backend GROUP BY + COUNT(*), PageLink.ref_count, log-scaled stroke-width | `compaction.rs`, `pages.rs`, `page_cmd_tests.rs`, `bindings.ts`, `tauri.ts`, `GraphView.tsx` |
+| UX-180 (resolved) | Context menu "Copy URL" for external links — link detection at right-click/long-press, conditional menu item, clipboard + toast | `useBlockTouchLongPress.ts`, `BlockContextMenu.tsx`, `SortableBlock.tsx`, `i18n.ts` |
+| M-77 (resolved) | Periodic materializer metrics dump every 5 min at debug level, resets high-water marks | `coordinator.rs` |
+
+### Implementation
+
+- **UX-178**: mouseenter/mouseleave handlers in GraphView.tsx expanded — text gets `font-size: 14px`, `font-weight: 600`, `paint-order: stroke` halo (3px `var(--background)` stroke). Non-hovered nodes dimmed to 0.3 opacity, unconnected edges to 0.15. Focus/blur handlers provide identical text emphasis for keyboard users. No CSS transitions (instant d3 attribute changes).
+- **UX-179**: Backend SQL changed from `SELECT DISTINCT` to `GROUP BY 1, 2` + `COUNT(*) AS ref_count` (ordinal positions to avoid SQLite alias ambiguity). `PageLink` struct gains `ref_count: i64`. Frontend renders stroke-width via `Math.min(1 + Math.log2(count), 6)` and opacity via `Math.min(0.5 + 0.1 * count, 1)` with defensive `Math.max(1, ref_count ?? 1)` guard. Specta bindings regenerated. 2 new Rust tests (dedup ref_count=2, single link ref_count=1).
+- **UX-180**: `useBlockTouchLongPress` detects `.external-link` via `closest()` at right-click and touchstart, reads `href` / `data-href`. `BlockContextMenu` shows conditional "Copy URL" (Copy icon) as first group when `linkUrl` present. Error handling with `logger.error` + toast on clipboard failure. 7 new tests (3 in useBlockTouchLongPress, 4 in BlockContextMenu).
+- **M-77**: Spawns `tokio::time::interval(300s)` task in both `Materializer::new()` and `with_read_pool()`. Logs 7 metrics fields via `tracing::debug!`. Resets high-water marks after dump. Uses `Ordering::Acquire` for shutdown check (matches consumer pattern).
+
+### Review fixes applied
+- M-77: Changed `Ordering::Relaxed` → `Ordering::Acquire` for shutdown_flag check (reviewer caught synchronization mismatch with Release/Acquire pattern)
+- UX-180: Added try/catch around `navigator.clipboard.writeText()` with `logger.error` and error toast (reviewer caught missing error handling)
+- UX-179 frontend: Added `Math.max(1, ref_count ?? 1)` guard against zero/undefined ref_count (reviewer caught edge case)
+- UX-180: Fixed `exactOptionalPropertyTypes` error in SortableBlock.tsx (conditional spread instead of `linkUrl: undefined`)
+
+### Stats
+- 13 files changed (+417 lines, -23 lines)
+- 6475 frontend tests pass (269 test files)
+- 1939 Rust tests pass
+- 4 items resolved — REVIEW-LATER now has 2 open items
+
+---
+
 ## Session 382 — M-70/71/73/74/75/78: observability improvements (2026-04-15)
 
 **6 items resolved. 6 open items remain in REVIEW-LATER.**
