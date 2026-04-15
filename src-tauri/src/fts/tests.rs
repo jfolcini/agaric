@@ -2089,3 +2089,136 @@ async fn rebuild_fts_index_split_clears_stale_entries() {
         "stale FTS entry should be cleared after split rebuild"
     );
 }
+
+// ======================================================================
+// update_fts_for_block_split tests
+// ======================================================================
+
+#[tokio::test]
+async fn update_fts_for_block_split_indexes_active_block() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(
+        &pool,
+        BLOCK_A,
+        "content",
+        "split indexing works great",
+        None,
+        Some(0),
+    )
+    .await;
+    // Pass pool as both write and read pool (test pool is a single combined pool)
+    update_fts_for_block_split(&pool, &pool, BLOCK_A)
+        .await
+        .unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let results = search_fts(&pool, "split", &page, None, None).await.unwrap();
+    assert_eq!(
+        results.items.len(),
+        1,
+        "split variant should index active block into FTS"
+    );
+    assert_eq!(
+        results.items[0].id, BLOCK_A,
+        "split variant search result should be the indexed block"
+    );
+}
+
+#[tokio::test]
+async fn update_fts_for_block_split_removes_deleted_block() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(
+        &pool,
+        BLOCK_A,
+        "content",
+        "will be deleted soon",
+        None,
+        Some(0),
+    )
+    .await;
+    // First index it
+    update_fts_for_block_split(&pool, &pool, BLOCK_A)
+        .await
+        .unwrap();
+
+    // Soft-delete and re-run split
+    soft_delete_block(&pool, BLOCK_A).await;
+    update_fts_for_block_split(&pool, &pool, BLOCK_A)
+        .await
+        .unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let results = search_fts(&pool, "deleted", &page, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        results.items.len(),
+        0,
+        "split variant should remove deleted block from FTS index"
+    );
+}
+
+#[tokio::test]
+async fn update_fts_for_block_split_removes_conflict_block() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(
+        &pool,
+        BLOCK_A,
+        "content",
+        "conflict block content",
+        None,
+        Some(0),
+    )
+    .await;
+    // First index it
+    update_fts_for_block_split(&pool, &pool, BLOCK_A)
+        .await
+        .unwrap();
+
+    // Mark as conflict and re-run split
+    mark_conflict(&pool, BLOCK_A).await;
+    update_fts_for_block_split(&pool, &pool, BLOCK_A)
+        .await
+        .unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let results = search_fts(&pool, "conflict", &page, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        results.items.len(),
+        0,
+        "split variant should remove conflict block from FTS index"
+    );
+}
+
+#[tokio::test]
+async fn update_fts_for_block_split_handles_missing_block() {
+    let (pool, _dir) = test_pool().await;
+    // Should not error for a block that doesn't exist
+    let result = update_fts_for_block_split(&pool, &pool, "NONEXISTENT00000000000000").await;
+    assert!(
+        result.is_ok(),
+        "split variant should not error for nonexistent block"
+    );
+}
+
+#[tokio::test]
+async fn update_fts_for_block_split_handles_null_content() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_null_content(&pool, BLOCK_A, "content").await;
+
+    update_fts_for_block_split(&pool, &pool, BLOCK_A)
+        .await
+        .unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let results = search_fts(&pool, "content", &page, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        results.items.len(),
+        0,
+        "split variant should not index block with NULL content"
+    );
+}

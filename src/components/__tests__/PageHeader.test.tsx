@@ -36,6 +36,7 @@ let pageStore: StoreApi<PageBlockState>
 
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
+  AlertTriangle: () => <svg data-testid="alert-triangle-icon" />,
   ArrowLeft: () => <svg data-testid="arrow-left-icon" />,
   BookTemplate: () => <svg data-testid="book-template-icon" />,
   CalendarCheck2: () => <svg data-testid="calendar-check2-icon" />,
@@ -47,9 +48,11 @@ vi.mock('lucide-react', () => ({
   Clock: () => <svg data-testid="clock-icon" />,
   Download: () => <svg data-testid="download-icon" />,
   ExternalLink: () => <svg data-testid="external-link-icon" />,
+  Info: () => <svg data-testid="info-icon" />,
   LayoutTemplate: (props: Record<string, unknown>) => (
     <svg data-testid="layout-template-icon" {...props} />
   ),
+  Lightbulb: () => <svg data-testid="lightbulb-icon" />,
   Link: () => <svg data-testid="link-icon" />,
   List: (props: Record<string, unknown>) => <svg data-testid="list-icon" {...props} />,
   MapPin: () => <svg data-testid="map-pin-icon" />,
@@ -59,11 +62,13 @@ vi.mock('lucide-react', () => ({
   Repeat: () => <svg data-testid="repeat-icon" />,
   Settings2: () => <svg data-testid="settings2-icon" />,
   Star: (props: Record<string, unknown>) => <svg data-testid="star-icon" {...props} />,
+  StickyNote: () => <svg data-testid="sticky-note-icon" />,
   Tag: () => <svg data-testid="tag-icon" />,
   Trash2: () => <svg data-testid="trash2-icon" />,
   Undo2: () => <svg data-testid="undo2-icon" />,
   User: () => <svg data-testid="user-icon" />,
   X: () => <svg data-testid="x-icon" />,
+  XCircle: () => <svg data-testid="x-circle-icon" />,
   XIcon: (props: Record<string, unknown>) => <svg data-testid="x-icon" {...props} />,
 }))
 
@@ -1432,5 +1437,77 @@ describe('PageHeader star button (UX-156)', () => {
 
     const starIcon = screen.getByTestId('star-icon')
     expect(starIcon).toHaveAttribute('fill', 'currentColor')
+  })
+})
+
+// ── Rich title rendering (BUG-1) ──────────────────────────────────────────
+
+describe('PageHeader rich title rendering (BUG-1)', () => {
+  const BLOCK_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
+
+  it('plain text title renders as contentEditable', () => {
+    setupTagMock([])
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Plain Title" />)
+
+    const titleEl = screen.getByRole('textbox', { name: /page title/i })
+    expect(titleEl).toHaveAttribute('contenteditable')
+    expect(titleEl).toHaveTextContent('Plain Title')
+  })
+
+  it('title with [[ULID]] renders without contentEditable in display mode', () => {
+    setupTagMock([])
+    useResolveStore.setState({
+      cache: new Map([[BLOCK_ID, { title: 'Linked Page', deleted: false }]]),
+      pagesList: [],
+      version: 1,
+      _preloaded: false,
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title={`See [[${BLOCK_ID}]]`} />)
+
+    const titleEl = screen.getByRole('textbox', { name: /page title/i })
+    expect(titleEl).not.toHaveAttribute('contenteditable')
+  })
+
+  it('clicking rich display transitions to edit mode', async () => {
+    const user = userEvent.setup()
+    setupTagMock([])
+    useResolveStore.setState({
+      cache: new Map([[BLOCK_ID, { title: 'Linked Page', deleted: false }]]),
+      pagesList: [],
+      version: 1,
+      _preloaded: false,
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title={`See [[${BLOCK_ID}]]`} />)
+
+    const titleEl = screen.getByRole('textbox', { name: /page title/i })
+    expect(titleEl).not.toHaveAttribute('contenteditable')
+
+    await user.click(titleEl)
+
+    await waitFor(() => {
+      const editEl = screen.getByRole('textbox', { name: /page title/i })
+      expect(editEl).toHaveAttribute('contenteditable')
+    })
+  })
+
+  it('a11y: no violations with rich title display', async () => {
+    setupTagMock([])
+    useResolveStore.setState({
+      cache: new Map([[BLOCK_ID, { title: 'Linked Page', deleted: false }]]),
+      pagesList: [],
+      version: 1,
+      _preloaded: false,
+    })
+
+    const { container } = renderPageHeader(
+      <PageHeader pageId="PAGE_1" title={`See [[${BLOCK_ID}]]`} />,
+    )
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 })

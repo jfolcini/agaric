@@ -560,14 +560,56 @@ describe('AgendaFilterBuilder', () => {
   })
 
   // -----------------------------------------------------------------------
-  // 24. Property filter chip displays key:value
+  // 24. Property filter chip displays key = value
   // -----------------------------------------------------------------------
-  it('property filter chip displays key:value', () => {
+  it('property filter chip displays key = value', () => {
     const filters: AgendaFilter[] = [{ dimension: 'property', values: ['project:alpha'] }]
     renderBuilder({ filters })
 
-    expect(screen.getByText('Property:')).toBeInTheDocument()
-    expect(screen.getByText('project:alpha')).toBeInTheDocument()
+    expect(screen.getByText('project = alpha')).toBeInTheDocument()
+  })
+
+  // -----------------------------------------------------------------------
+  // 24b. Property filter chip shows key only when no value
+  // -----------------------------------------------------------------------
+  it('property filter chip shows key only when no value', () => {
+    const filters: AgendaFilter[] = [{ dimension: 'property', values: ['project'] }]
+    renderBuilder({ filters })
+
+    expect(screen.getByText('project')).toBeInTheDocument()
+  })
+
+  // -----------------------------------------------------------------------
+  // 24c. Property filter chip has tooltip
+  // -----------------------------------------------------------------------
+  it('property filter chip has tooltip', () => {
+    const filters: AgendaFilter[] = [{ dimension: 'property', values: ['project:alpha'] }]
+    renderBuilder({ filters })
+
+    const editButton = screen.getByText('project = alpha').closest('button')
+    expect(editButton).toHaveAttribute('title', 'project = alpha')
+  })
+
+  // -----------------------------------------------------------------------
+  // 24d. Property filter chip aria-label uses formatted label
+  // -----------------------------------------------------------------------
+  it('property filter chip aria-label uses formatted label', () => {
+    const filters: AgendaFilter[] = [{ dimension: 'property', values: ['project:alpha'] }]
+    renderBuilder({ filters })
+
+    const editButton = screen.getByText('project = alpha').closest('button')
+    expect(editButton).toHaveAttribute('aria-label', expect.stringContaining('project = alpha'))
+  })
+
+  // -----------------------------------------------------------------------
+  // 24e. Non-property filter chip is unchanged
+  // -----------------------------------------------------------------------
+  it('non-property filter chip unchanged', () => {
+    const filters: AgendaFilter[] = [{ dimension: 'status', values: ['TODO'] }]
+    renderBuilder({ filters })
+
+    expect(screen.getByText('Status:')).toBeInTheDocument()
+    expect(screen.getByText('TODO')).toBeInTheDocument()
   })
 
   // -----------------------------------------------------------------------

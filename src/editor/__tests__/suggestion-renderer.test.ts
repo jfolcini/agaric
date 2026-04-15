@@ -776,3 +776,134 @@ describe('outside-click dismissal', () => {
     expect(document.querySelector('.suggestion-popup')).toBeNull()
   })
 })
+
+describe('outside-click deferred registration (BUG-2)', () => {
+  // biome-ignore lint/suspicious/noExplicitAny: minimal mock props for tests
+  function makeProps(): any {
+    return {
+      items: [],
+      command: vi.fn(),
+      clientRect: () =>
+        ({ left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }) as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      editor: {} as any,
+      query: '',
+      range: { from: 0, to: 1 },
+      text: '/',
+      decorationNode: null,
+    }
+  }
+
+  let rafCallbacks: Array<FrameRequestCallback>
+  let rafIdCounter: number
+  let originalRaf: typeof requestAnimationFrame
+
+  beforeEach(() => {
+    rafCallbacks = []
+    rafIdCounter = 1
+    // Save the current (globally-mocked) rAF so we can restore it
+    originalRaf = window.requestAnimationFrame
+    // Override rAF to capture callbacks without executing them
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      rafCallbacks.push(cb)
+      return rafIdCounter++
+    })
+    vi.stubGlobal(
+      'cancelAnimationFrame',
+      vi.fn((id: number) => {
+        // Neutralize the callback at index (id - 1)
+        const idx = id - 1
+        if (idx >= 0 && idx < rafCallbacks.length) {
+          rafCallbacks[idx] = () => {}
+        }
+      }),
+    )
+  })
+
+  afterEach(() => {
+    // Restore the synchronous rAF mock for other test suites
+    vi.stubGlobal('requestAnimationFrame', originalRaf)
+    for (const el of document.querySelectorAll('.suggestion-popup')) {
+      el.remove()
+    }
+  })
+
+  /** Flush all pending rAF callbacks. */
+  function flushRaf() {
+    let safety = 10
+    while (rafCallbacks.length > 0 && safety-- > 0) {
+      const batch = [...rafCallbacks]
+      rafCallbacks = []
+      for (const cb of batch) cb(0)
+    }
+  }
+
+  it('pointerdown during first frame does NOT dismiss popup', () => {
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(makeProps())
+
+    // Popup exists but rAF hasn't fired yet — listener not registered
+    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+
+    // Simulate an outside pointerdown before the frame fires
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+
+    // Popup should still be there — the listener wasn't active yet
+    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+
+    // Cleanup
+    flushRaf()
+    renderer.onExit()
+  })
+
+  it('pointerdown AFTER first frame DOES dismiss popup', () => {
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(makeProps())
+
+    // Flush rAF to register the listener
+    flushRaf()
+
+    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+
+    // Now an outside click should dismiss
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    expect(document.querySelector('.suggestion-popup')).toBeNull()
+  })
+
+  it('onExit before rAF fires does not leak listeners', () => {
+    const addSpy = vi.spyOn(document, 'addEventListener')
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(makeProps())
+
+    // Exit immediately — before rAF fires
+    renderer.onExit()
+
+    // The rAF callback should have been cancelled; flush to confirm it doesn't register
+    addSpy.mockClear()
+    flushRaf()
+
+    // No pointerdown listener should have been registered after onExit
+    const pointerdownCalls = addSpy.mock.calls.filter(([event]) => event === 'pointerdown')
+    expect(pointerdownCalls).toHaveLength(0)
+
+    addSpy.mockRestore()
+  })
+
+  it('rapid onStart → onExit → onStart cycle does not break', () => {
+    const renderer = createSuggestionRenderer()
+
+    // Cycle 1: start then immediately exit (before rAF)
+    renderer.onStart(makeProps())
+    renderer.onExit()
+    expect(document.querySelector('.suggestion-popup')).toBeNull()
+
+    // Cycle 2: start again
+    renderer.onStart(makeProps())
+    flushRaf()
+    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+
+    // Outside click should still work after the rapid cycle
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    expect(document.querySelector('.suggestion-popup')).toBeNull()
+  })
+})

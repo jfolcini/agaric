@@ -287,9 +287,10 @@ pub(super) async fn handle_background_task(
             Some(rp) => cache::reindex_block_links_split(pool, rp, block_id).await,
             None => cache::reindex_block_links(pool, block_id).await,
         },
-        MaterializeTask::UpdateFtsBlock { ref block_id } => {
-            fts::update_fts_for_block(pool, block_id).await
-        }
+        MaterializeTask::UpdateFtsBlock { ref block_id } => match read_pool {
+            Some(rp) => fts::update_fts_for_block_split(pool, rp, block_id).await,
+            None => fts::update_fts_for_block(pool, block_id).await,
+        },
         MaterializeTask::ReindexFtsReferences { ref block_id } => {
             fts::reindex_fts_references(pool, block_id).await
         }

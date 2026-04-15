@@ -176,7 +176,9 @@ pub(super) async fn run_background(
                 continue;
             }
             const MAX_RETRIES: u32 = 2;
-            const INITIAL_BACKOFF_MS: u64 = 50;
+            // Increased from 50ms to reduce retry churn on transient WAL
+            // lock contention; background tasks tolerate longer delays.
+            const INITIAL_BACKOFF_MS: u64 = 150;
             let mut succeeded = false;
             let mut panicked = false;
             let task_clone = task.clone();

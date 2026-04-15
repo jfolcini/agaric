@@ -6,12 +6,17 @@ import { axe } from 'vitest-axe'
 import { PageTitleEditor } from '../PageTitleEditor'
 
 vi.mock('lucide-react', () => ({
+  AlertTriangle: () => <svg data-testid="alert-triangle-icon" />,
   ArrowLeft: () => <svg data-testid="arrow-left-icon" />,
+  Info: () => <svg data-testid="info-icon" />,
+  Lightbulb: () => <svg data-testid="lightbulb-icon" />,
   MoreVertical: () => <svg data-testid="more-vertical-icon" />,
   Plus: () => <svg data-testid="plus-icon" />,
   Redo2: () => <svg data-testid="redo2-icon" />,
+  StickyNote: () => <svg data-testid="sticky-note-icon" />,
   Undo2: () => <svg data-testid="undo2-icon" />,
   X: () => <svg data-testid="x-icon" />,
+  XCircle: () => <svg data-testid="x-circle-icon" />,
 }))
 
 const defaultProps = {

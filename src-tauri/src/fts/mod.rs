@@ -24,7 +24,7 @@ mod tests;
 // Re-export public API
 pub use index::{
     fts_optimize, rebuild_fts_index, rebuild_fts_index_split, reindex_fts_references,
-    remove_fts_for_block, update_fts_for_block,
+    remove_fts_for_block, update_fts_for_block, update_fts_for_block_split,
 };
 pub use search::search_fts;
 pub use strip::strip_for_fts;

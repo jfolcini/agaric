@@ -36,6 +36,26 @@ export type { AgendaSortGroupControlsProps } from './AgendaSortGroupControls'
 export { AgendaSortGroupControls } from './AgendaSortGroupControls'
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a property filter's values for human-readable pill display.
+ * Parses the colon-separated "key:value" format into "key = value",
+ * or just "key" when no value is present.
+ */
+function formatPropertyPill(values: string[]): string {
+  if (values.length === 0) return ''
+  const first = values[0]
+  if (!first) return ''
+  const colonIdx = first.indexOf(':')
+  const key = colonIdx > 0 ? first.slice(0, colonIdx) : first
+  const value = colonIdx > 0 ? first.slice(colonIdx + 1) : ''
+  if (value) return `${key} = ${value}`
+  return key
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -279,38 +299,53 @@ export function AgendaFilterBuilder({
 
         {filters.length > 0 && (
           <ul aria-label={t('agendaFilter.appliedFilters')} className="contents list-none m-0 p-0">
-            {filters.map((filter, idx) => (
-              <li key={filter.dimension} className="contents">
-                <div className="flex items-center gap-0 rounded-full bg-muted text-xs">
-                  <EditFilterPopover
-                    filter={filter}
-                    onUpdate={(values) => handleUpdate(idx, values)}
-                    onRemove={() => handleRemove(idx)}
-                  >
+            {filters.map((filter, idx) => {
+              const isProperty = filter.dimension === 'property'
+              const pillLabel = isProperty
+                ? formatPropertyPill(filter.values)
+                : `${dimensionLabel(filter.dimension)}: ${filter.values.join(', ')}`
+              const pillTooltip = isProperty ? pillLabel : undefined
+
+              return (
+                <li key={filter.dimension} className="contents">
+                  <div className="flex items-center gap-0 rounded-full bg-muted text-xs">
+                    <EditFilterPopover
+                      filter={filter}
+                      onUpdate={(values) => handleUpdate(idx, values)}
+                      onRemove={() => handleRemove(idx)}
+                    >
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 rounded-l-full px-2 py-1 hover:bg-accent cursor-pointer"
+                        title={pillTooltip}
+                        aria-label={t('agendaFilter.editFilter', {
+                          label: pillLabel,
+                        })}
+                      >
+                        {isProperty ? (
+                          <span>{pillLabel}</span>
+                        ) : (
+                          <>
+                            <span className="font-medium">{dimensionLabel(filter.dimension)}:</span>
+                            <span>{filter.values.join(', ')}</span>
+                          </>
+                        )}
+                      </button>
+                    </EditFilterPopover>
                     <button
                       type="button"
-                      className="flex items-center gap-1 rounded-l-full px-2 py-1 hover:bg-accent cursor-pointer"
-                      aria-label={t('agendaFilter.editFilter', {
-                        label: dimensionLabel(filter.dimension),
+                      className="rounded-r-full px-1.5 py-1 text-muted-foreground hover:text-foreground hover:bg-accent"
+                      onClick={() => handleRemove(idx)}
+                      aria-label={t('agendaFilter.removeFilterLabel', {
+                        label: isProperty ? pillLabel : dimensionLabel(filter.dimension),
                       })}
                     >
-                      <span className="font-medium">{dimensionLabel(filter.dimension)}:</span>
-                      <span>{filter.values.join(', ')}</span>
+                      <X className="h-3 w-3" />
                     </button>
-                  </EditFilterPopover>
-                  <button
-                    type="button"
-                    className="rounded-r-full px-1.5 py-1 text-muted-foreground hover:text-foreground hover:bg-accent"
-                    onClick={() => handleRemove(idx)}
-                    aria-label={t('agendaFilter.removeFilterLabel', {
-                      label: dimensionLabel(filter.dimension),
-                    })}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              </li>
-            ))}
+                  </div>
+                </li>
+              )
+            })}
           </ul>
         )}
 

@@ -77,6 +77,62 @@ pub async fn update_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(
     Ok(())
 }
 
+/// Split-pool variant: reads from `read_pool`, writes to `write_pool`.
+/// Reduces write-lock hold time for background materializer tasks.
+///
+/// The read-write gap is acceptable because FTS indexing is eventually
+/// consistent — if a block changes between read and write phases, the
+/// next materializer task will correct the stale entry.
+pub async fn update_fts_for_block_split(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+    block_id: &str,
+) -> Result<(), AppError> {
+    // Phase 1: Read — no write lock needed
+    let row = sqlx::query!(
+        r#"SELECT id, content, deleted_at, is_conflict as "is_conflict: bool" FROM blocks WHERE id = ?"#,
+        block_id
+    )
+    .fetch_optional(read_pool)
+    .await?;
+
+    // Determine what to write
+    let should_delete = match &row {
+        None => true,
+        Some(r) if r.deleted_at.is_some() => true,
+        Some(r) if r.is_conflict => true,
+        Some(r) if r.content.is_none() => true,
+        _ => false,
+    };
+
+    if should_delete {
+        // Phase 2a: Delete only — minimal write lock
+        sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
+            .bind(block_id)
+            .execute(write_pool)
+            .await?;
+        return Ok(());
+    }
+
+    // Phase 1b: Strip content using read pool
+    let content = row.unwrap().content.unwrap();
+    let stripped = strip_for_fts(&content, read_pool).await?;
+
+    // Phase 2b: Write — minimal transaction
+    let mut tx = write_pool.begin().await?;
+    sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
+        .bind(block_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)")
+        .bind(block_id)
+        .bind(&stripped)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Remove a block from the FTS index (for soft-delete/purge).
 pub async fn remove_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
     sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")

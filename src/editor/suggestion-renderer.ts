@@ -83,8 +83,13 @@ export function createSuggestionRenderer(label?: string, pluginKey?: PluginKey) 
   let popup: HTMLDivElement | null = null
   let outsideClickHandler: ((e: PointerEvent) => void) | null = null
   let editorRef: Editor | null = null
+  let deferredRegistrationId: number | null = null
 
   function cleanupListener() {
+    if (deferredRegistrationId !== null) {
+      cancelAnimationFrame(deferredRegistrationId)
+      deferredRegistrationId = null
+    }
     if (outsideClickHandler) {
       document.removeEventListener('pointerdown', outsideClickHandler, true)
       outsideClickHandler = null
@@ -129,7 +134,9 @@ export function createSuggestionRenderer(label?: string, pluginKey?: PluginKey) 
         logger.warn('SuggestionRenderer', 'Position update failed', { label }, err)
       })
 
-      // Dismiss popup on outside click (capture phase, like BlockContextMenu)
+      // Dismiss popup on outside click (capture phase, like BlockContextMenu).
+      // Defer listener registration by one frame to avoid catching pointer events
+      // from the same event loop tick that triggered the popup (BUG-2 fix).
       outsideClickHandler = (e: PointerEvent) => {
         if (popup && !popup.contains(e.target as Node)) {
           logger.warn('SuggestionRenderer', 'outside click — deactivating plugin', { label })
@@ -157,7 +164,13 @@ export function createSuggestionRenderer(label?: string, pluginKey?: PluginKey) 
           popup = null
         }
       }
-      document.addEventListener('pointerdown', outsideClickHandler, true)
+      deferredRegistrationId = requestAnimationFrame(() => {
+        deferredRegistrationId = null
+        // Guard: popup may have been destroyed by onExit before the frame fires
+        if (popup && outsideClickHandler) {
+          document.addEventListener('pointerdown', outsideClickHandler, true)
+        }
+      })
     },
 
     onUpdate(props: SuggestionProps) {
