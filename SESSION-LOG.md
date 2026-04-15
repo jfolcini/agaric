@@ -2,7 +2,7 @@
 
 ## Session 388 — FEAT-1: agenda redesign with page-centric default + denormalized page_id (2026-04-15)
 
-**1 item resolved (FEAT-1). REVIEW-LATER has 0 open items.**
+**1 item resolved (FEAT-1). 5 follow-up items filed: P-17, TEST-7, TEST-8, TEST-9, UX-183.**
 
 ### Resolved items
 
