@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 385 — UX-181: link popover label field (2026-04-15)
+
+**1 item resolved. REVIEW-LATER is empty (0 open items).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| UX-181 (resolved) | Add "Link text" label field to LinkEditPopover — users can set display text when creating/editing external links | `LinkEditPopover.tsx`, `FormattingToolbar.tsx`, `LinkEditPopover.test.tsx`, `FormattingToolbar.test.tsx`, `i18n.ts` |
+
+### Implementation
+
+- **LinkEditPopover**: Added `initialLabel` prop, `label` state, "Link text" input above URL field. `handleApply` uses `insertContent` with link mark for new/changed labels; `setLink` when label unchanged (preserves inline formatting). Grouped label+input pairs with `gap-3`/`gap-1` for visual separation. Touch targets: `[@media(pointer:coarse)]:h-11` on both inputs.
+- **FormattingToolbar**: Imported `getMarkRange` from `@tiptap/core`. Computes `currentLabel` via `getLinkMarkRange` helper + `textBetween`. Ctrl+K inside an existing link uses full mark range (not partial selection). Toolbar button click while editing saves mark range as `savedSelection`. Extracted `getLinkMarkRange` and `getHeadingLevel` helpers to reduce cognitive complexity below biome threshold.
+- **i18n**: Added `linkEdit.label` ("Link text"), `linkEdit.labelPlaceholder` ("Display text (optional)"), `linkEdit.url` ("URL").
+- **Review fixes**: Fixed whitespace comparison bug (compare untrimmed `label === initialLabel`), added `biome-ignore` for TS4111 index signature conflicts.
+- 2 parallel build subagents + 2 parallel review subagents (technical + UX). Review caught 2 critical issues (touch targets, whitespace comparison) and 3 important issues (visual spacing, i18n consistency, field naming) — all fixed before commit.
+
+### Stats
+- 5 files changed (+589 lines, -67 lines)
+- 128 frontend tests pass (51 LinkEditPopover + 77 FormattingToolbar), 13 new tests
+- 1 item resolved — REVIEW-LATER now has 0 open items
+
+---
+
 ## Session 384 — M-72 + M-76: #[instrument] spans + AppError source() (2026-04-15)
 
 **2 items resolved. REVIEW-LATER is empty (0 open items).**
