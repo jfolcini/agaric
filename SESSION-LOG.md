@@ -1,5 +1,36 @@
 # Session Log
 
+## Session 395 — Rust perf optimizations + backend test quality (2026-04-16)
+
+**5 items resolved (PERF-1, PERF-4, PERF-11, TEST-18, TEST-19). REVIEW-LATER 36→31.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| PERF-1 | Replace resolve_root_pages CTE with page_id JOIN + oracle test | 3 files |
+| PERF-4 | Add depth < 100 to 3 SourcePage backlink filter CTEs | 2 files |
+| PERF-11 | Adaptive FTS optimize threshold: max(500, block_count/10K) + cached block count | 4 files |
+| TEST-18 | Strengthen 19 weak is_ok() assertions with DB state verification | 1 file |
+| TEST-19 | Add 4 merge conflict edge case tests (both-delete, null prop, move+delete, missing LCA) | 1 file |
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src-tauri/src/backlink/query.rs` | PERF-1: new page_id JOIN impl + CTE preserved as #[cfg(test)] oracle |
+| `src-tauri/src/backlink/tests.rs` | PERF-1: oracle comparison test + page_id auto-population in helpers; PERF-4: depth filter test |
+| `src-tauri/src/backlink/filters.rs` | PERF-4: depth < 100 on 3 SourcePage CTEs |
+| `src-tauri/src/materializer/dispatch.rs` | PERF-11: adaptive threshold with cached_block_count |
+| `src-tauri/src/materializer/coordinator.rs` | PERF-11: reader_pool field + refresh_block_count_cache method |
+| `src-tauri/src/materializer/metrics.rs` | PERF-11: cached_block_count AtomicU64 field |
+| `src-tauri/src/materializer/tests.rs` | PERF-11: 2 threshold tests; TEST-18: 19 assertions strengthened |
+| `src-tauri/src/merge/tests.rs` | TEST-19: 4 new edge case tests |
+
+### Stats
+- 8 files changed (+1038 lines, -34 lines)
+- 7 new Rust tests (1 oracle, 1 depth filter, 2 threshold, 4 merge edge cases), 19 strengthened; ~1975 Rust tests pass
+
 ## Session 394 — Test quality: axe audits, error paths, mock gaps, assertion fixes (2026-04-16)
 
 **6 items resolved (TEST-1, TEST-3, TEST-15, TEST-16, TEST-17, TEST-24). REVIEW-LATER 42→36.**
