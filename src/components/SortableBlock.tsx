@@ -164,6 +164,12 @@ function SortableBlockInner({
     }
   }, [blockId])
 
+  const handleToggleAttachments = useCallback(() => setShowAttachments((prev) => !prev), [])
+  const handleEditKey = useCallback(
+    (keyInfo: { oldKey: string; value: string }) => setEditingKey(keyInfo),
+    [],
+  )
+
   const filteredProperties = useMemo(
     () =>
       (properties ?? []).filter(
@@ -370,9 +376,9 @@ function SortableBlockInner({
             anyBlockHasChildren={anyBlockHasChildren}
             attachmentCount={attachmentCount}
             showAttachments={showAttachments}
-            onToggleAttachments={() => setShowAttachments((prev) => !prev)}
+            onToggleAttachments={handleToggleAttachments}
             onEditProp={setEditingProp}
-            onEditKey={(keyInfo) => setEditingKey(keyInfo)}
+            onEditKey={handleEditKey}
           />
 
           {/* ── Property edit popover / key rename ────────────────── */}

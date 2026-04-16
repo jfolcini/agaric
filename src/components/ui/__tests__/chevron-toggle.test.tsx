@@ -4,7 +4,7 @@
  * Validates:
  *  - Renders ChevronRight icon when collapsed
  *  - Applies rotate-90 when expanded
- *  - Renders Loader2 spinner when loading=true
+ *  - Renders Spinner when loading=true
  *  - Supports sm and md size variants
  *  - Has no a11y violations
  */

@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { logger } from '@/lib/logger'
+import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import type { NavigateToPageFn } from '../lib/block-events'
@@ -362,7 +363,10 @@ export function UnlinkedReferences({
                       <li
                         key={block.id}
                         data-backlink-item={block.id}
-                        className={`unlinked-reference-item flex items-center gap-3 border-b py-1.5 px-2 last:border-b-0${block.id === focusedBlockId ? ` ${UNLINKED_FOCUS_CLASSES}` : ''}`}
+                        className={cn(
+                          'unlinked-reference-item flex items-center gap-3 border-b py-1.5 px-2 last:border-b-0',
+                          block.id === focusedBlockId && UNLINKED_FOCUS_CLASSES,
+                        )}
                       >
                         <button
                           type="button"

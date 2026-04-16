@@ -1,6 +1,6 @@
 import type { LucideIcon } from 'lucide-react'
 import { Calendar, CalendarDays, Check, Paperclip, Repeat } from 'lucide-react'
-import type React from 'react'
+import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { priorityColor } from '../lib/priority-color'
 import { formatRepeatLabel } from '../lib/repeat-utils'
@@ -123,7 +123,7 @@ export function TaskCheckbox({ state }: { state: string | null | undefined }) {
   const style = TASK_CHECKBOX_STYLES[key] ?? EMPTY_STYLE
   return (
     <div
-      className={`task-checkbox h-4 w-4 rounded border-2 ${style.className}`}
+      className={cn('task-checkbox h-4 w-4 rounded border-2', style.className)}
       data-testid={style.testId}
     >
       {style.icon}
@@ -154,7 +154,7 @@ export interface BlockInlineControlsProps {
   onEditKey: (keyInfo: { oldKey: string; value: string }) => void
 }
 
-export function BlockInlineControls({
+export const BlockInlineControls = React.memo(function BlockInlineControls({
   blockId,
   hasChildren,
   isCollapsed,
@@ -334,4 +334,4 @@ export function BlockInlineControls({
       )}
     </div>
   )
-}
+})

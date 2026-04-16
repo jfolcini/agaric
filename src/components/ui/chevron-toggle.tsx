@@ -7,9 +7,10 @@
  */
 
 import { cva, type VariantProps } from 'class-variance-authority'
-import { ChevronRight, Loader2 } from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
+import { Spinner } from './spinner'
 
 const chevronToggleVariants = cva('shrink-0 transition-transform', {
   variants: {
@@ -40,7 +41,7 @@ export function ChevronToggle({
   className,
 }: ChevronToggleProps) {
   if (loading) {
-    return <Loader2 className={cn(chevronToggleVariants({ size }), 'animate-spin', className)} />
+    return <Spinner className={cn(chevronToggleVariants({ size }), className)} />
   }
 
   return (

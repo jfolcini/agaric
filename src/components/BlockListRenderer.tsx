@@ -182,11 +182,13 @@ export function BlockListRenderer({
     return result
   }, [visibleItems])
 
+  const sortableItems = useMemo(
+    () => [...visibleItems.map((b) => b.id), ...(visibleItems.length > 0 ? [SENTINEL_ID] : [])],
+    [visibleItems],
+  )
+
   return (
-    <SortableContext
-      items={[...visibleItems.map((b) => b.id), ...(visibleItems.length > 0 ? [SENTINEL_ID] : [])]}
-      strategy={verticalListSortingStrategy}
-    >
+    <SortableContext items={sortableItems} strategy={verticalListSortingStrategy}>
       {blocks.length === 0 && !loading ? (
         <EmptyState message={rootParentId ? t('blockTree.emptyPage') : t('blockTree.noBlocks')} />
       ) : (

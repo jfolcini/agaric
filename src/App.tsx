@@ -70,6 +70,7 @@ import { announce } from './lib/announcer'
 import { formatRelativeTime } from './lib/format-relative-time'
 import { logger } from './lib/logger'
 import { createBlock, flushDraft, getConflicts, listBlocks, listDrafts } from './lib/tauri'
+import { cn } from './lib/utils'
 import { useJournalStore } from './stores/journal'
 import { selectPageStack, useNavigationStore, type View } from './stores/navigation'
 import { useResolveStore } from './stores/resolve'
@@ -422,7 +423,10 @@ function App() {
                             )}
                             {item.id === 'status' && (
                               <span
-                                className={`ml-auto h-2.5 w-2.5 rounded-full ${syncDotClass(syncState, syncPeers.length > 0)}`}
+                                className={cn(
+                                  'ml-auto h-2.5 w-2.5 rounded-full',
+                                  syncDotClass(syncState, syncPeers.length > 0),
+                                )}
                                 aria-hidden="true"
                               />
                             )}

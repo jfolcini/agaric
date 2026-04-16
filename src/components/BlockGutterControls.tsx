@@ -71,7 +71,7 @@ interface BlockGutterControlsProps {
   dragListeners?: DraggableSyntheticListeners
 }
 
-export function BlockGutterControls({
+export const BlockGutterControls = React.memo(function BlockGutterControls({
   blockId,
   onDelete,
   onShowHistory,
@@ -125,4 +125,4 @@ export function BlockGutterControls({
       )}
     </>
   )
-}
+})

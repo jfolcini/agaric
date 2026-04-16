@@ -29,6 +29,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { buildPageTree } from '@/lib/page-tree'
 import { getRecentPages } from '@/lib/recent-pages'
 import { getStarredPages, isStarred, toggleStarred } from '@/lib/starred-pages'
+import { cn } from '@/lib/utils'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePageDelete } from '../hooks/usePageDelete'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
@@ -395,7 +396,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
               aria-selected={focusedIndex === index}
               data-page-item
               tabIndex={-1}
-              className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50${focusedIndex === index ? ' ring-2 ring-ring/50 bg-accent/30' : ''}`}
+              className={cn(
+                'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50',
+                focusedIndex === index && 'ring-2 ring-ring/50 bg-accent/30',
+              )}
             >
               <Button
                 variant="ghost"

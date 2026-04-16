@@ -9,6 +9,7 @@
 
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+import { cn } from '@/lib/utils'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BlockRow } from '../lib/tauri'
 import { truncateContent } from '../lib/text-utils'
@@ -107,7 +108,7 @@ export function AlertSection({
                 <span className="min-w-0 flex-1 truncate">
                   {truncateContent(block.content, 120, t('duePanel.emptyContent'))}
                 </span>
-                <span className={`shrink-0 text-xs ${config.dateColor}`}>
+                <span className={cn('shrink-0 text-xs', config.dateColor)}>
                   <span>{block.due_date}</span>
                   {daysOverdue > 0 && (
                     <span className="text-muted-foreground ml-1">

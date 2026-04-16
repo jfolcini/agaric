@@ -12,7 +12,7 @@
 
 import { CalendarDays } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useState } from 'react'
+import { memo, useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -68,7 +68,7 @@ function formatDateISO(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
-export function BlockListItem({
+function BlockListItemInner({
   content,
   contentMaxLength: _contentMaxLength = 120,
   emptyContentFallback = '(empty)',
@@ -90,6 +90,12 @@ export function BlockListItem({
   const { t } = useTranslation()
   const callbacks = useRichContentCallbacks()
   const [popoverOpen, setPopoverOpen] = useState(false)
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: callbacks are non-interactive and stable — only content drives the rendered output
+  const richContent = useMemo(
+    () => (content ? renderRichContent(content, { interactive: false, ...callbacks }) : null),
+    [content],
+  )
 
   const handleDateSelect = useCallback(
     async (date: Date | undefined) => {
@@ -151,9 +157,7 @@ export function BlockListItem({
 
       {/* Block content */}
       <span className={cn('text-sm min-w-0 flex-1 line-clamp-2', contentClassName)}>
-        {content
-          ? renderRichContent(content, { interactive: false, ...callbacks })
-          : emptyContentFallback}
+        {richContent ?? emptyContentFallback}
       </span>
 
       {/* Source page breadcrumb */}
@@ -194,3 +198,6 @@ export function BlockListItem({
     </li>
   )
 }
+
+export const BlockListItem = memo(BlockListItemInner)
+BlockListItem.displayName = 'BlockListItem'
