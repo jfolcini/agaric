@@ -1,5 +1,40 @@
 # Session Log
 
+## Session 401 — Virtualize PageBrowser, GraphView WebWorker, assertion messages (2026-04-16)
+
+**3 items resolved (PERF-5, PERF-9b, TEST-25). REVIEW-LATER 5→2.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| PERF-5 | Virtualize PageBrowser with @tanstack/react-virtual — estimateSize 44px, overscan 5, both flat+tree paths | 2 files |
+| PERF-9b | Move d3-force simulation to WebWorker with start/stop/drag protocol, main-thread fallback | 4 files |
+| TEST-25 | Add ~143 assertion messages to materializer, sync_protocol, sync_net, agenda_cmd test files | 4 files |
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src/components/PageBrowser.tsx` | PERF-5: useVirtualizer, absolute positioning, scrollToIndex |
+| `src/components/__tests__/PageBrowser.test.tsx` | PERF-5: mock virtualizer to render all items |
+| `src/workers/graph-worker-types.ts` | PERF-9b: shared worker message types (new) |
+| `src/workers/graph-worker.ts` | PERF-9b: d3-force WebWorker (new) |
+| `src/components/GraphView.tsx` | PERF-9b: spawn worker, handle tick/done/drag messages, fallback |
+| `src/components/__tests__/GraphView.test.tsx` | PERF-9b: MockWorker, fallback test, TS fixes |
+| `src-tauri/src/materializer/tests.rs` | TEST-25: 68 assertion messages added |
+| `src-tauri/src/sync_protocol/tests.rs` | TEST-25: 49 assertion messages added |
+| `src-tauri/src/sync_net/tests.rs` | TEST-25: 18 assertion messages added |
+| `src-tauri/src/commands/tests/agenda_cmd_tests.rs` | TEST-25: 8 assertion messages added |
+| `package.json` | PERF-5: @tanstack/react-virtual dependency |
+
+### Stats
+- 12 files changed (+1546 lines, -405 lines)
+- 1997 Rust tests pass, ~6564 frontend tests pass
+- ~143 assertion messages added to 4 backend test files
+- New dependency: @tanstack/react-virtual
+- New files: src/workers/graph-worker.ts, src/workers/graph-worker-types.ts
+
 ## Session 400 — E2E settings/attachments/batch-ops + sync network failure tests (2026-04-16)
 
 **5 items resolved (PERF-10b, TEST-12, TEST-13, TEST-14, TEST-21). REVIEW-LATER 10→5.**

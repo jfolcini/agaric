@@ -42,6 +42,7 @@ The default view — one page per day, created automatically.
 ### Pages
 
 - Browse all pages with inline text filter
+- **Virtualized list** (PERF-5): `@tanstack/react-virtual` with 44px estimated row height, overscan 5. Both flat and tree paths render via `getVirtualItems()`. Prevents DOM explosion at scale — enables browsing 100K pages without jank.
 - **Sort dropdown** (UX-59): Sort by Recent (last visited via recent-pages store), Alphabetical (localeCompare, default), or Created (ULID descending). Persisted to localStorage (`page-browser-sort`).
 - PageBrowser filter matches aliases via `resolvePageByAlias` with (alias) badge (UX-153)
 - Namespaced pages (e.g., `work/meetings/standup`) render as collapsible tree hierarchy; hybrid nodes (pages that are also namespaces) show both navigation and expand/collapse
@@ -111,7 +112,7 @@ The default view — one page per day, created automatically.
 
 ### Graph
 
-- **Force-directed page relationship graph** (F-33): `GraphView` component with d3-force simulation. Nodes = pages (circles with truncated labels), edges = `[[links]]` between pages (from `block_links` table). Backend `list_page_links` command rolls up content-block links to parent pages via COALESCE, excludes deleted/non-page blocks, self-links, groups by source/target with `COUNT(*)` for `ref_count`. Zoom/pan via d3-zoom, node drag via d3-drag. Click node to navigate to page. Loading skeleton, error alert, empty state (Network icon). **Edge thickness** (UX-179): logarithmic stroke-width scaling (`1 + log2(ref_count)`, capped at 6px) + opacity modulation (0.6–1.0). **Hover emphasis** (UX-178): hovered node text enlarged (14px bold) with `paint-order: stroke` halo, non-hovered nodes dimmed (0.3), unconnected edges dimmed (0.15). Focus handler provides identical text emphasis for keyboard users. 6 Rust tests + 21 frontend tests.
+- **Force-directed page relationship graph** (F-33): `GraphView` component with d3-force simulation. Nodes = pages (circles with truncated labels), edges = `[[links]]` between pages (from `block_links` table). Backend `list_page_links` command rolls up content-block links to parent pages via COALESCE, excludes deleted/non-page blocks, self-links, groups by source/target with `COUNT(*)` for `ref_count`. Zoom/pan via d3-zoom, node drag via d3-drag. Click node to navigate to page. Loading skeleton, error alert, empty state (Network icon). **Edge thickness** (UX-179): logarithmic stroke-width scaling (`1 + log2(ref_count)`, capped at 6px) + opacity modulation (0.6–1.0). **Hover emphasis** (UX-178): hovered node text enlarged (14px bold) with `paint-order: stroke` halo, non-hovered nodes dimmed (0.3), unconnected edges dimmed (0.15). Focus handler provides identical text emphasis for keyboard users. **WebWorker simulation** (PERF-9b): d3-force runs in `graph-worker.ts` off the main thread via `start`/`stop`/`drag` message protocol. Main thread handles SVG rendering, zoom, drag DOM events. Fallback to main-thread simulation when Worker unavailable. `prefers-reduced-motion` stops after 300 ticks. 6 Rust tests + 26 frontend tests.
 
 ### Page Editor
 
