@@ -1,5 +1,35 @@
 # Session Log
 
+## Session 400 — E2E settings/attachments/batch-ops + sync network failure tests (2026-04-16)
+
+**5 items resolved (PERF-10b, TEST-12, TEST-13, TEST-14, TEST-21). REVIEW-LATER 10→5.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| PERF-10b | Already resolved by PERF-10a — encode phase runs outside tx, write phase is brief BEGIN IMMEDIATE | 0 files (verified only) |
+| TEST-12 | E2E settings.spec.ts — 7 tests: tabs, theme selector, keyboard, data, navigate-and-return | 1 file (new) |
+| TEST-13 | E2E attachments.spec.ts — 5 tests: badge, list toggle, file details, two-click delete. Enhanced tauri-mock | 2 files |
+| TEST-14 | E2E batch-operations.spec.ts — 4 tests: Ctrl+Click, batch toolbar, bulk TODO, Ctrl+A | 1 file (new) |
+| TEST-21 | 5 sync network failure tests: recv timeout, peer drop, send after close, graceful close, invalid JSON | 2 files |
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `e2e/settings.spec.ts` | TEST-12: new E2E spec (7 tests) |
+| `e2e/attachments.spec.ts` | TEST-13: new E2E spec (5 tests) |
+| `e2e/batch-operations.spec.ts` | TEST-14: new E2E spec (4 tests) |
+| `src/lib/tauri-mock.ts` | TEST-13: in-memory attachment Map + __addMockAttachment global |
+| `src-tauri/src/sync_net/tests.rs` | TEST-21: 5 network failure tests |
+| `src-tauri/Cargo.toml` | TEST-21: tokio test-util feature for start_paused |
+
+### Stats
+- 6 files changed (+551 lines, -5 lines)
+- 1997 Rust tests pass (+5 new), ~6564 frontend tests pass
+- 16 new E2E tests (7 + 5 + 4), 5 new Rust network failure tests
+
 ## Session 399 — BUG-5 breadcrumbs, PERF-8 FTS limit, PERF-10a compaction phases, TEST-9/10/11 assertions (2026-04-16)
 
 **6 items resolved (BUG-5, PERF-8, PERF-10a, TEST-9, TEST-10, TEST-11). REVIEW-LATER 16→10.**
