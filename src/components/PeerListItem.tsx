@@ -106,7 +106,7 @@ export function PeerListItem({
                   <Pencil />
                 </Button>
               </PopoverTrigger>
-              <PopoverContent className="w-64 p-3 space-y-2" align="start">
+              <PopoverContent className="w-64 max-w-[calc(100vw-2rem)] p-3 space-y-2" align="start">
                 <p className="text-xs font-medium">{t('device.editAddressTitle')}</p>
                 <Input
                   className="h-7 text-xs"

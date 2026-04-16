@@ -87,7 +87,11 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
         return
       }
 
-      announce(`Task state: ${nextState ? (STATE_LABELS[nextState] ?? nextState) : 'none'}`)
+      announce(
+        i18n.t('announce.taskState', {
+          state: nextState ? (STATE_LABELS[nextState] ?? nextState) : 'none',
+        }),
+      )
     },
     [pageStore],
   )
@@ -119,7 +123,11 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
       }
 
       const PRIORITY_LABELS: Record<string, string> = { '1': 'High', '2': 'Medium', '3': 'Low' }
-      announce(`Priority set to ${nextState ? (PRIORITY_LABELS[nextState] ?? nextState) : 'none'}`)
+      announce(
+        i18n.t('announce.prioritySet', {
+          level: nextState ? (PRIORITY_LABELS[nextState] ?? nextState) : 'none',
+        }),
+      )
     },
     [pageStore],
   )

@@ -70,7 +70,7 @@ export function SearchablePopover<T>({
           {triggerLabel}
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-64 p-2" align="start">
+      <PopoverContent className="w-64 max-w-[calc(100vw-2rem)] p-2" align="start">
         <Input
           value={searchValue}
           onChange={(e) => onSearchChange(e.target.value)}

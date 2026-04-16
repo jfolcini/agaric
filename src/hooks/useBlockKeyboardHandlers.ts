@@ -71,9 +71,9 @@ export function useBlockKeyboardHandlers({
       setFocused(prevBlock.id)
       rovingEditorRef.current.mount(prevBlock.id, prevBlock.content ?? '')
       const preview = prevBlock.content?.slice(0, 50) ?? ''
-      announce(`Editing block: ${preview || 'empty block'}`)
+      announce(t('announce.editingBlock', { preview: preview || t('announce.emptyBlock') }))
     }
-  }, [collapsedVisible, focusedBlockId, setFocused])
+  }, [collapsedVisible, focusedBlockId, setFocused, t])
 
   const handleFocusNext = useCallback(() => {
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
@@ -82,9 +82,9 @@ export function useBlockKeyboardHandlers({
       setFocused(nextBlock.id)
       rovingEditorRef.current.mount(nextBlock.id, nextBlock.content ?? '')
       const preview = nextBlock.content?.slice(0, 50) ?? ''
-      announce(`Editing block: ${preview || 'empty block'}`)
+      announce(t('announce.editingBlock', { preview: preview || t('announce.emptyBlock') }))
     }
-  }, [collapsedVisible, focusedBlockId, setFocused])
+  }, [collapsedVisible, focusedBlockId, setFocused, t])
 
   const handleDeleteBlock = useCallback(() => {
     if (!focusedBlockId) return
@@ -99,7 +99,7 @@ export function useBlockKeyboardHandlers({
     remove(focusedBlockId).finally(() => {
       deleteInProgress.current = false
     })
-    announce('Block deleted')
+    announce(t('announce.blockDeleted'))
     if (idx > 0) {
       const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
       setFocused(prevBlock.id)
@@ -119,8 +119,8 @@ export function useBlockKeyboardHandlers({
     handleFlush()
     indent(focusedBlockId)
     rovingEditorRef.current.mount(focusedBlockId, content)
-    announce('Block indented')
-  }, [focusedBlockId, handleFlush, indent])
+    announce(t('announce.blockIndented'))
+  }, [focusedBlockId, handleFlush, indent, t])
 
   const handleDedent = useCallback(() => {
     if (!focusedBlockId) return
@@ -128,8 +128,8 @@ export function useBlockKeyboardHandlers({
     handleFlush()
     dedent(focusedBlockId)
     rovingEditorRef.current.mount(focusedBlockId, content)
-    announce('Block outdented')
-  }, [focusedBlockId, handleFlush, dedent])
+    announce(t('announce.blockDedented'))
+  }, [focusedBlockId, handleFlush, dedent, t])
 
   const handleMoveUp = useCallback(() => {
     if (!focusedBlockId) return
@@ -137,8 +137,8 @@ export function useBlockKeyboardHandlers({
     handleFlush()
     moveUp(focusedBlockId)
     rovingEditorRef.current.mount(focusedBlockId, content)
-    announce('Block moved up')
-  }, [focusedBlockId, handleFlush, moveUp])
+    announce(t('announce.blockMovedUp'))
+  }, [focusedBlockId, handleFlush, moveUp, t])
 
   const handleMoveDown = useCallback(() => {
     if (!focusedBlockId) return
@@ -146,8 +146,8 @@ export function useBlockKeyboardHandlers({
     handleFlush()
     moveDown(focusedBlockId)
     rovingEditorRef.current.mount(focusedBlockId, content)
-    announce('Block moved down')
-  }, [focusedBlockId, handleFlush, moveDown])
+    announce(t('announce.blockMovedDown'))
+  }, [focusedBlockId, handleFlush, moveDown, t])
 
   const handleMoveUpById = useCallback(
     (id: string) => {
@@ -332,7 +332,7 @@ export function useBlockKeyboardHandlers({
       if (newBlockId) {
         justCreatedBlockIds.current.add(newBlockId)
         setFocused(newBlockId)
-        announce('Block created')
+        announce(t('announce.blockCreated'))
       } else {
         // createBelow returned null (e.g. backend error) — re-mount editor
         // so the user isn't stuck with an unmounted block.
@@ -341,7 +341,7 @@ export function useBlockKeyboardHandlers({
     } finally {
       enterSaveInProgress.current = false
     }
-  }, [focusedBlockId, handleFlush, createBelow, setFocused, justCreatedBlockIds])
+  }, [focusedBlockId, handleFlush, createBelow, setFocused, justCreatedBlockIds, t])
 
   const handleEscapeCancel = useCallback(() => {
     if (!focusedBlockId) return

@@ -100,6 +100,19 @@ const resources = {
       'announce.jumpedToToday': 'Jumped to today',
       'announce.searchOpened': 'Search opened',
       'announce.newPageCreated': 'New page created',
+      'announce.editingBlock': 'Editing block: {{preview}}',
+      'announce.emptyBlock': 'empty block',
+      'announce.blockDeleted': 'Block deleted',
+      'announce.blockIndented': 'Block indented',
+      'announce.blockDedented': 'Block outdented',
+      'announce.blockCreated': 'Block created',
+      'announce.blockMovedUp': 'Block moved up',
+      'announce.blockMovedDown': 'Block moved down',
+      'announce.blockCollapsed': 'Block collapsed',
+      'announce.blockExpanded': 'Block expanded',
+      'announce.taskState': 'Task state: {{state}}',
+      'announce.prioritySet': 'Priority set to {{level}}',
+      'announce.scheduledDateSet': 'Scheduled date set to {{date}}',
 
       // Formatting toolbar
       'toolbar.bold': 'Bold',
@@ -1279,6 +1292,14 @@ const resources = {
       // Sync toasts + aria-labels
       'device.syncComplete': 'Sync complete',
       'device.syncFailed': 'Sync failed',
+
+      // UX-188: Sync event toasts
+      'sync.failedForDevice': 'Sync failed for device {{deviceId}}...',
+      'sync.opsReceived_one': 'Synced {{count}} change from device',
+      'sync.opsReceived_other': 'Synced {{count}} changes from device',
+      'sync.completedWithConflicts':
+        'Sync completed with conflicts \u2014 review in Conflicts view',
+      'sync.failed': 'Sync failed: {{message}}',
       'device.deviceNameLabel': 'Device name',
 
       // History toasts + aria-labels

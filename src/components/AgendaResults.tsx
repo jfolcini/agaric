@@ -105,7 +105,7 @@ function DueDateChip({
       </PopoverTrigger>
       <PopoverContent
         align="start"
-        className="w-64"
+        className="w-64 max-w-[calc(100vw-2rem)]"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}
       >

@@ -57,23 +57,37 @@ export function PageHeaderMenu({
 
   return (
     <div className="flex items-center gap-1">
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label={t('pageHeader.undoAction')}
-        onClick={onUndo}
-      >
-        <Undo2 className="h-3.5 w-3.5" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label={t('pageHeader.redoAction')}
-        disabled={!canRedo}
-        onClick={onRedo}
-      >
-        <Redo2 className="h-3.5 w-3.5" />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t('pageHeader.undoAction')}
+            onClick={onUndo}
+          >
+            <Undo2 className="h-3.5 w-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          {t('pageHeader.undoAction')} {getShortcutKeys('undoLastPageOp')}
+        </TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t('pageHeader.redoAction')}
+            disabled={!canRedo}
+            onClick={onRedo}
+          >
+            <Redo2 className="h-3.5 w-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          {t('pageHeader.redoAction')} {getShortcutKeys('redoLastPageOp')}
+        </TooltipContent>
+      </Tooltip>
       <Tooltip>
         <TooltipTrigger asChild>
           <Button

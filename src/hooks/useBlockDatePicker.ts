@@ -106,7 +106,7 @@ export function useBlockDatePicker({
               b.id === focusedBlockId ? { ...b, scheduled_date: dateStr } : b,
             ),
           }))
-          announce(`Scheduled date set to ${dateStr}`)
+          announce(t('announce.scheduledDateSet', { date: dateStr }))
         } catch {
           toast.error(t('blockTree.setScheduledDateFailed'))
         }

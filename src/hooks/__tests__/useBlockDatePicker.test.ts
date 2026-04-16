@@ -231,7 +231,7 @@ describe('useBlockDatePicker handleDatePick — schedule mode', () => {
       await result.current.handleDatePick(new Date(2025, 2, 10))
     })
 
-    expect(vi.mocked(announce)).toHaveBeenCalledWith('Scheduled date set to 2025-03-10')
+    expect(vi.mocked(announce)).toHaveBeenCalledWith('announce.scheduledDateSet')
   })
 })
 

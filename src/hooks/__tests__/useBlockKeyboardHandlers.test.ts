@@ -96,7 +96,7 @@ describe('useBlockKeyboardHandlers handleFocusPrev', () => {
       result.current.handleFocusPrev()
     })
 
-    expect(mockedAnnounce).toHaveBeenCalledWith('Editing block: Alpha')
+    expect(mockedAnnounce).toHaveBeenCalledWith('announce.editingBlock')
   })
 
   it('does nothing when at first block', () => {
@@ -121,7 +121,7 @@ describe('useBlockKeyboardHandlers handleFocusPrev', () => {
       result.current.handleFocusPrev()
     })
 
-    expect(mockedAnnounce).toHaveBeenCalledWith('Editing block: empty block')
+    expect(mockedAnnounce).toHaveBeenCalledWith('announce.editingBlock')
   })
 })
 
@@ -162,7 +162,7 @@ describe('useBlockKeyboardHandlers handleDeleteBlock', () => {
     expect(params.rovingEditor.unmount).toHaveBeenCalled()
     expect(params.remove).toHaveBeenCalledWith('B')
     expect(params.setFocused).toHaveBeenCalledWith('A')
-    expect(mockedAnnounce).toHaveBeenCalledWith('Block deleted')
+    expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockDeleted')
   })
 
   it('focuses next block when deleting first block', () => {
@@ -250,7 +250,7 @@ describe('useBlockKeyboardHandlers handleIndent', () => {
 
     expect(params.handleFlush).toHaveBeenCalled()
     expect(params.indent).toHaveBeenCalledWith('B')
-    expect(mockedAnnounce).toHaveBeenCalledWith('Block indented')
+    expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockIndented')
   })
 
   it('does nothing when focusedBlockId is null', () => {
@@ -276,7 +276,7 @@ describe('useBlockKeyboardHandlers handleDedent', () => {
 
     expect(params.handleFlush).toHaveBeenCalled()
     expect(params.dedent).toHaveBeenCalledWith('B')
-    expect(mockedAnnounce).toHaveBeenCalledWith('Block outdented')
+    expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockDedented')
   })
 })
 
@@ -291,7 +291,7 @@ describe('useBlockKeyboardHandlers handleMoveUp/Down', () => {
 
     expect(params.handleFlush).toHaveBeenCalled()
     expect(params.moveUp).toHaveBeenCalledWith('B')
-    expect(mockedAnnounce).toHaveBeenCalledWith('Block moved up')
+    expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockMovedUp')
   })
 
   it('flushes and moves block down', () => {
@@ -304,7 +304,7 @@ describe('useBlockKeyboardHandlers handleMoveUp/Down', () => {
 
     expect(params.handleFlush).toHaveBeenCalled()
     expect(params.moveDown).toHaveBeenCalledWith('B')
-    expect(mockedAnnounce).toHaveBeenCalledWith('Block moved down')
+    expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockMovedDown')
   })
 
   it('handleMoveUp does nothing when focusedBlockId is null', () => {
@@ -563,7 +563,7 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
       await result.current.handleEnterSave()
     })
 
-    expect(mockedAnnounce).toHaveBeenCalledWith('Block created')
+    expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockCreated')
   })
 
   it('does not announce when createBelow returns null', async () => {

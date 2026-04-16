@@ -15,6 +15,7 @@
 import { listen } from '@tauri-apps/api/event'
 import { useEffect } from 'react'
 import { toast } from 'sonner'
+import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { getConflicts } from '@/lib/tauri'
 import { pageBlockRegistry } from '@/stores/page-blocks'
@@ -106,7 +107,7 @@ export function useSyncEvents(): void {
 
         // Show toast notification
         if (ops_received > 0) {
-          toast.success(`Synced ${ops_received} change${ops_received === 1 ? '' : 's'} from device`)
+          toast.success(i18n.t('sync.opsReceived', { count: ops_received }))
         }
 
         // Reload blocks if we received ops (data changed).
@@ -123,7 +124,7 @@ export function useSyncEvents(): void {
           getConflicts({ limit: 1 })
             .then((resp) => {
               if (resp.items.length > 0) {
-                toast.warning('Sync completed with conflicts — review in Conflicts view')
+                toast.warning(i18n.t('sync.completedWithConflicts'))
               }
             })
             .catch((err: unknown) => {
@@ -147,7 +148,7 @@ export function useSyncEvents(): void {
       try {
         const { message } = event.payload
         useSyncStore.getState().setState('error', message)
-        toast.error(`Sync failed: ${message}`)
+        toast.error(i18n.t('sync.failed', { message }))
       } catch (err: unknown) {
         logger.error('useSyncEvents', 'sync:error handler failed', undefined, err)
       }

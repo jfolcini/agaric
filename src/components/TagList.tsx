@@ -62,11 +62,11 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       const resp = await listTagsByPrefix({ prefix: '', limit: 500 })
       setTags(resp)
     } catch (error) {
-      logger.warn('TagList', 'failed to load tags', undefined, error)
-      toast.error(`Failed to load tags: ${String(error)}`)
+      logger.error('TagList', 'failed to load tags', undefined, error)
+      toast.error(t('tags.loadFailed'))
     }
     setLoading(false)
-  }, [])
+  }, [t])
 
   useEffect(() => {
     loadTags()
@@ -93,22 +93,25 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       // Update resolve cache so tag_ref nodes display the name, not ULID
       useResolveStore.getState().set(resp.id, name, false)
     } catch (error) {
-      logger.warn('TagList', 'failed to create tag', { name }, error)
-      toast.error(`Failed to create tag: ${String(error)}`)
+      logger.error('TagList', 'failed to create tag', { name }, error)
+      toast.error(t('tags.createFailed'))
     }
     setIsCreating(false)
   }, [newTagName, t])
 
-  const handleDeleteTag = useCallback(async (tagId: string) => {
-    try {
-      await deleteBlock(tagId)
-      setTags((prev) => prev.filter((t) => t.tag_id !== tagId))
-      useResolveStore.getState().set(tagId, '(deleted)', true)
-    } catch (error) {
-      logger.error('TagList', 'failed to delete tag', { tagId }, error)
-      toast.error(`Failed to delete tag: ${String(error)}`)
-    }
-  }, [])
+  const handleDeleteTag = useCallback(
+    async (tagId: string) => {
+      try {
+        await deleteBlock(tagId)
+        setTags((prev) => prev.filter((t) => t.tag_id !== tagId))
+        useResolveStore.getState().set(tagId, '(deleted)', true)
+      } catch (error) {
+        logger.error('TagList', 'failed to delete tag', { tagId }, error)
+        toast.error(t('tags.deleteFailed'))
+      }
+    },
+    [t],
+  )
 
   const handleConfirmDelete = useCallback(() => {
     if (deleteTarget) {

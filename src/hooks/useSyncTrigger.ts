@@ -53,7 +53,7 @@ export function useSyncTrigger() {
           ])
         } catch {
           hadFailure = true
-          toast.error(`Sync failed for device ${peer.peer_id.slice(0, 12)}...`)
+          toast.error(i18n.t('sync.failedForDevice', { deviceId: peer.peer_id.slice(0, 12) }))
         }
       }
       if (mountedRef.current) {
