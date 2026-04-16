@@ -949,3 +949,106 @@ fn sync_message_sync_complete_roundtrip_various() {
         );
     }
 }
+
+// -- 14. Network failure tests ----------------------------------------
+
+#[tokio::test(start_paused = true)]
+async fn recv_times_out_when_peer_is_silent() {
+    let (mut client, server) = test_connection_pair().await;
+
+    // Hold the server connection open but never send anything
+    let _hold = tokio::spawn(async move {
+        let _keep = server;
+        tokio::time::sleep(Duration::from_secs(120)).await;
+    });
+
+    let result = client.recv_json::<serde_json::Value>().await;
+    assert!(result.is_err(), "recv should fail when peer is silent");
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("recv timed out"),
+        "error should mention recv timeout, got: {err_msg}"
+    );
+}
+
+#[tokio::test]
+async fn recv_returns_error_when_peer_drops_connection() {
+    let (mut client, server) = test_connection_pair().await;
+
+    // Drop the server-side connection immediately (no close frame)
+    drop(server);
+
+    let result = client.recv_json::<serde_json::Value>().await;
+    assert!(
+        result.is_err(),
+        "recv should fail when peer drops connection"
+    );
+}
+
+#[tokio::test]
+async fn send_fails_after_peer_closes() {
+    let (mut client, server) = test_connection_pair().await;
+
+    // Server closes gracefully
+    server.close().await.ok();
+
+    // Read the close frame so the client processes the shutdown
+    let _ = client.recv_json::<serde_json::Value>().await;
+
+    // Now sending should fail on the closed connection
+    let result = client
+        .send_json(&serde_json::json!({"hello": "world"}))
+        .await;
+    assert!(
+        result.is_err(),
+        "send should fail after peer has closed the connection"
+    );
+}
+
+#[tokio::test]
+async fn recv_fails_after_graceful_close_by_peer() {
+    let (mut client, server) = test_connection_pair().await;
+
+    // Server sends a WebSocket close frame
+    server.close().await.ok();
+
+    let result = client.recv_json::<serde_json::Value>().await;
+    assert!(
+        result.is_err(),
+        "recv should fail after peer sends close frame"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("connection closed") || err_msg.contains("Close"),
+        "error should indicate connection closed, got: {err_msg}"
+    );
+}
+
+#[tokio::test]
+async fn partial_json_message_is_rejected() {
+    use futures_util::SinkExt;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let (mut client, mut server) = test_connection_pair().await;
+
+    // Send invalid JSON through the raw WebSocket stream
+    match &mut server.inner {
+        super::connection::InnerStream::Test(ws) => {
+            ws.send(Message::Text("{not valid json".into()))
+                .await
+                .expect("raw send should succeed");
+        }
+        _ => unreachable!("test_connection_pair always returns Test variant"),
+    }
+
+    let result = client.recv_json::<serde_json::Value>().await;
+    assert!(
+        result.is_err(),
+        "invalid JSON should cause deserialization error"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("deserialize"),
+        "error should mention deserialization failure, got: {err_msg}"
+    );
+}

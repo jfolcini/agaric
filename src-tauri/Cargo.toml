@@ -87,7 +87,7 @@ criterion = { version = "0.8.2", features = ["async_tokio"] }
 insta = { version = "1.47.0", features = ["yaml", "redactions"] }
 proptest = "1.11.0"
 tempfile = "3.27.0"
-tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
 
 [profile.release]
 strip = "symbols"

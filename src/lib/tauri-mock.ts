@@ -40,6 +40,9 @@ const propertyDefs: Map<string, Record<string, unknown>> = new Map()
 // Page aliases store: page_id → string[]
 const pageAliases: Map<string, string[]> = new Map()
 
+// Attachment store: attachment_id → AttachmentRow-like object
+const attachments: Map<string, Record<string, unknown>> = new Map()
+
 // Op log for undo/redo/history
 interface MockOpLogEntry {
   [key: string]: unknown
@@ -150,6 +153,7 @@ function seedBlocks(): void {
   blockTags.clear()
   propertyDefs.clear()
   pageAliases.clear()
+  attachments.clear()
   counter = 0
   opLog.length = 0
   opSeqCounter = 0
@@ -1570,12 +1574,15 @@ export function setupMock(): void {
       // Attachment commands (F-7)
       // -----------------------------------------------------------------------
 
-      case 'list_attachments':
-        return []
+      case 'list_attachments': {
+        const a = args as Record<string, unknown>
+        const blockId = a['blockId'] as string
+        return [...attachments.values()].filter((att) => att['block_id'] === blockId)
+      }
 
       case 'add_attachment': {
         const a = args as Record<string, unknown>
-        return {
+        const row = {
           id: fakeId(),
           block_id: a['blockId'] as string,
           filename: a['filename'] as string,
@@ -1584,10 +1591,15 @@ export function setupMock(): void {
           fs_path: a['fsPath'] as string,
           created_at: new Date().toISOString(),
         }
+        attachments.set(row.id, row)
+        return row
       }
 
-      case 'delete_attachment':
+      case 'delete_attachment': {
+        const a = args as Record<string, unknown>
+        attachments.delete(a['attachmentId'] as string)
         return null
+      }
 
       // -----------------------------------------------------------------------
       // Projected agenda (repeating tasks)
@@ -1721,4 +1733,24 @@ export function setupMock(): void {
   const w = window as unknown as Record<string, unknown>
   w['__injectMockError'] = injectMockError
   w['__clearMockErrors'] = clearMockErrors
+
+  // Expose attachment seeding to E2E tests
+  w['__addMockAttachment'] = (
+    blockId: string,
+    filename: string,
+    mimeType: string,
+    sizeBytes: number,
+  ) => {
+    const row = {
+      id: fakeId(),
+      block_id: blockId,
+      filename,
+      mime_type: mimeType,
+      size_bytes: sizeBytes,
+      fs_path: `/mock/${filename}`,
+      created_at: new Date().toISOString(),
+    }
+    attachments.set(row.id, row)
+    return row
+  }
 }
