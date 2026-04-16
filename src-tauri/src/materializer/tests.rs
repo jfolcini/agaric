@@ -112,8 +112,16 @@ async fn dispatch_op_create_block_page() {
         }),
     )
     .await;
-    assert!(mat.dispatch_op(&r).await.is_ok());
+    mat.dispatch_op(&r).await.unwrap();
     mat.flush().await.unwrap();
+    let row = sqlx::query_as::<_, (String, String)>(
+        "SELECT block_type, content FROM blocks WHERE id = 'BLK-1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row.0, "page");
+    assert_eq!(row.1, "My page");
 }
 #[tokio::test]
 async fn dispatch_op_create_block_tag() {
@@ -130,8 +138,16 @@ async fn dispatch_op_create_block_tag() {
         }),
     )
     .await;
-    assert!(mat.dispatch_op(&r).await.is_ok());
+    mat.dispatch_op(&r).await.unwrap();
     mat.flush().await.unwrap();
+    let row = sqlx::query_as::<_, (String, String)>(
+        "SELECT block_type, content FROM blocks WHERE id = 'BLK-TAG'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row.0, "tag");
+    assert_eq!(row.1, "urgent");
 }
 #[tokio::test]
 async fn dispatch_op_create_block_content() {
@@ -148,12 +164,22 @@ async fn dispatch_op_create_block_content() {
         }),
     )
     .await;
-    assert!(mat.dispatch_op(&r).await.is_ok());
+    mat.dispatch_op(&r).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    let row = sqlx::query_as::<_, (String, String)>(
+        "SELECT block_type, content FROM blocks WHERE id = 'BLK-C'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row.0, "content");
+    assert_eq!(row.1, "just content");
 }
 #[tokio::test]
 async fn dispatch_op_edit_block() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
+    insert_block_direct(&pool, "BLK-2", "content", "original").await;
     make_op_record(
         &pool,
         OpPayload::CreateBlock(CreateBlockPayload {
@@ -174,12 +200,19 @@ async fn dispatch_op_edit_block() {
         }),
     )
     .await;
-    assert!(mat.dispatch_op(&r).await.is_ok());
+    mat.dispatch_op(&r).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    let row = sqlx::query_as::<_, (String,)>("SELECT content FROM blocks WHERE id = 'BLK-2'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(row.0, "edited");
 }
 #[tokio::test]
 async fn dispatch_op_delete_block() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
+    insert_block_direct(&pool, "BLK-3", "content", "to delete").await;
     let r = make_op_record(
         &pool,
         OpPayload::DeleteBlock(DeleteBlockPayload {
@@ -187,12 +220,24 @@ async fn dispatch_op_delete_block() {
         }),
     )
     .await;
-    assert!(mat.dispatch_op(&r).await.is_ok());
+    mat.dispatch_op(&r).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    let row =
+        sqlx::query_as::<_, (Option<String>,)>("SELECT deleted_at FROM blocks WHERE id = 'BLK-3'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        row.0.is_some(),
+        "deleted_at should be set after DeleteBlock"
+    );
 }
 #[tokio::test]
 async fn dispatch_op_restore_block() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
+    insert_block_direct(&pool, "BLK-R", "content", "was deleted").await;
+    soft_delete_block_direct(&pool, "BLK-R").await;
     let r = make_op_record(
         &pool,
         OpPayload::RestoreBlock(RestoreBlockPayload {
@@ -201,12 +246,23 @@ async fn dispatch_op_restore_block() {
         }),
     )
     .await;
-    assert!(mat.dispatch_op(&r).await.is_ok());
+    mat.dispatch_op(&r).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    let row =
+        sqlx::query_as::<_, (Option<String>,)>("SELECT deleted_at FROM blocks WHERE id = 'BLK-R'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        row.0.is_none(),
+        "deleted_at should be NULL after RestoreBlock"
+    );
 }
 #[tokio::test]
 async fn dispatch_op_purge_block() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
+    insert_block_direct(&pool, "BLK-P", "content", "to purge").await;
     let r = make_op_record(
         &pool,
         OpPayload::PurgeBlock(PurgeBlockPayload {
@@ -214,12 +270,20 @@ async fn dispatch_op_purge_block() {
         }),
     )
     .await;
-    assert!(mat.dispatch_op(&r).await.is_ok());
+    mat.dispatch_op(&r).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    let row = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM blocks WHERE id = 'BLK-P'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(row.0, 0, "block should be gone after PurgeBlock");
 }
 #[tokio::test]
 async fn dispatch_op_add_tag() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
+    insert_block_direct(&pool, "BLK-4", "content", "tagged block").await;
+    insert_block_direct(&pool, "TAG-1", "tag", "my-tag").await;
     let r = make_op_record(
         &pool,
         OpPayload::AddTag(AddTagPayload {
@@ -228,13 +292,24 @@ async fn dispatch_op_add_tag() {
         }),
     )
     .await;
-    assert!(mat.dispatch_op(&r).await.is_ok());
+    mat.dispatch_op(&r).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    let row = sqlx::query_as::<_, (i64,)>(
+        "SELECT COUNT(*) FROM block_tags WHERE block_id = 'BLK-4' AND tag_id = 'TAG-1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row.0, 1, "block_tags row should exist after AddTag");
 }
 #[tokio::test]
 async fn dispatch_op_remove_tag() {
     use crate::op::RemoveTagPayload;
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
+    insert_block_direct(&pool, "BLK-RT", "content", "rt block").await;
+    insert_block_direct(&pool, "TAG-99", "tag", "rm-tag").await;
+    insert_block_tag(&pool, "BLK-RT", "TAG-99").await;
     let r = make_op_record(
         &pool,
         OpPayload::RemoveTag(RemoveTagPayload {
@@ -243,12 +318,21 @@ async fn dispatch_op_remove_tag() {
         }),
     )
     .await;
-    assert!(mat.dispatch_op(&r).await.is_ok());
+    mat.dispatch_op(&r).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    let row = sqlx::query_as::<_, (i64,)>(
+        "SELECT COUNT(*) FROM block_tags WHERE block_id = 'BLK-RT' AND tag_id = 'TAG-99'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row.0, 0, "block_tags row should be gone after RemoveTag");
 }
 #[tokio::test]
 async fn dispatch_op_set_property() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
+    insert_block_direct(&pool, "BLK-5", "content", "prop block").await;
     let r = make_op_record(
         &pool,
         OpPayload::SetProperty(SetPropertyPayload {
@@ -261,12 +345,22 @@ async fn dispatch_op_set_property() {
         }),
     )
     .await;
-    assert!(mat.dispatch_op(&r).await.is_ok());
+    mat.dispatch_op(&r).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    let row = sqlx::query_as::<_, (String,)>(
+        "SELECT value_date FROM block_properties WHERE block_id = 'BLK-5' AND key = 'due'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row.0, "2025-01-15");
 }
 #[tokio::test]
 async fn dispatch_op_delete_property() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
+    insert_block_direct(&pool, "BLK-DP", "content", "dp block").await;
+    insert_property_date(&pool, "BLK-DP", "due", "2025-01-15").await;
     let r = make_op_record(
         &pool,
         OpPayload::DeleteProperty(DeletePropertyPayload {
@@ -275,12 +369,22 @@ async fn dispatch_op_delete_property() {
         }),
     )
     .await;
-    assert!(mat.dispatch_op(&r).await.is_ok());
+    mat.dispatch_op(&r).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    let row = sqlx::query_as::<_, (i64,)>(
+        "SELECT COUNT(*) FROM block_properties WHERE block_id = 'BLK-DP' AND key = 'due'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row.0, 0, "property should be gone after DeleteProperty");
 }
 #[tokio::test]
 async fn dispatch_op_move_block() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
+    insert_block_direct(&pool, "BLK-PARENT", "page", "parent page").await;
+    insert_block_direct(&pool, "BLK-6", "content", "child block").await;
     let r = make_op_record(
         &pool,
         OpPayload::MoveBlock(MoveBlockPayload {
@@ -290,12 +394,22 @@ async fn dispatch_op_move_block() {
         }),
     )
     .await;
-    assert!(mat.dispatch_op(&r).await.is_ok());
+    mat.dispatch_op(&r).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    let row = sqlx::query_as::<_, (Option<String>, i64)>(
+        "SELECT parent_id, position FROM blocks WHERE id = 'BLK-6'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row.0.as_deref(), Some("BLK-PARENT"));
+    assert_eq!(row.1, 2);
 }
 #[tokio::test]
 async fn dispatch_op_add_attachment() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
+    insert_block_direct(&pool, "BLK-A", "content", "attachment block").await;
     let r = make_op_record(
         &pool,
         OpPayload::AddAttachment(AddAttachmentPayload {
@@ -308,12 +422,24 @@ async fn dispatch_op_add_attachment() {
         }),
     )
     .await;
-    assert!(mat.dispatch_op(&r).await.is_ok());
+    mat.dispatch_op(&r).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    let row = sqlx::query_as::<_, (String, String)>(
+        "SELECT filename, mime_type FROM attachments WHERE id = 'att-1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row.0, "photo.png");
+    assert_eq!(row.1, "image/png");
 }
 #[tokio::test]
 async fn dispatch_op_delete_attachment() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
+    insert_block_direct(&pool, "BLK-ATT-DEL", "content", "att block").await;
+    sqlx::query("INSERT INTO attachments (id, block_id, filename, fs_path, mime_type, size_bytes, created_at) VALUES ('att-2', 'BLK-ATT-DEL', 'f.txt', '/tmp/f.txt', 'text/plain', 10, '2025-01-01T00:00:00Z')")
+        .execute(&pool).await.unwrap();
     let r = make_op_record(
         &pool,
         OpPayload::DeleteAttachment(DeleteAttachmentPayload {
@@ -321,7 +447,13 @@ async fn dispatch_op_delete_attachment() {
         }),
     )
     .await;
-    assert!(mat.dispatch_op(&r).await.is_ok());
+    mat.dispatch_op(&r).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    let row = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM attachments WHERE id = 'att-2'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(row.0, 0, "attachment should be gone after DeleteAttachment");
 }
 #[tokio::test]
 async fn dispatch_op_unknown_op_type() {
@@ -345,7 +477,12 @@ async fn dispatch_background_edit() {
         }),
     )
     .await;
-    assert!(mat.dispatch_background(&r).is_ok());
+    mat.dispatch_background(&r).unwrap();
+    mat.flush_background().await.unwrap();
+    assert!(
+        mat.metrics().bg_processed.load(AtomicOrdering::Relaxed) >= 1,
+        "at least one background task should have been processed"
+    );
 }
 #[tokio::test]
 async fn dispatch_background_delete() {
@@ -358,7 +495,12 @@ async fn dispatch_background_delete() {
         }),
     )
     .await;
-    assert!(mat.dispatch_background(&r).is_ok());
+    mat.dispatch_background(&r).unwrap();
+    mat.flush_background().await.unwrap();
+    assert!(
+        mat.metrics().bg_processed.load(AtomicOrdering::Relaxed) >= 1,
+        "at least one background task should have been processed"
+    );
 }
 #[tokio::test]
 async fn enqueue_foreground_any() {
@@ -1006,7 +1148,13 @@ async fn handle_fg_unexpected_reindex() {
 #[tokio::test]
 async fn handle_bg_unexpected_apply() {
     let (pool, _dir) = test_pool().await;
-    assert!(handle_background_task(&pool, &MaterializeTask::ApplyOp(fake_op_record("create_block", r#"{"block_id":"X","block_type":"content","content":"t","parent_id":null,"position":null}"#)), None).await.is_ok());
+    handle_background_task(&pool, &MaterializeTask::ApplyOp(fake_op_record("create_block", r#"{"block_id":"X","block_type":"content","content":"t","parent_id":null,"position":null}"#)), None).await.unwrap();
+    // ApplyOp in the background queue is a no-op — block must NOT be created
+    let row = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM blocks WHERE id = 'X'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(row.0, 0, "ApplyOp in bg queue should be a no-op");
 }
 
 #[tokio::test]
@@ -1816,7 +1964,7 @@ async fn batch_apply_ops_all_succeed_commits() {
 
     let task = MaterializeTask::BatchApplyOps(vec![op1, op2]);
     let result = handle_foreground_task(&pool, &task, &metrics).await;
-    assert!(result.is_ok(), "batch of valid ops should succeed");
+    result.unwrap();
 
     // Both blocks should be visible
     let r1 = sqlx::query("SELECT id FROM blocks WHERE id = 'BATCH_OK_1'")
@@ -2058,7 +2206,7 @@ async fn dispatch_create_block_enqueues_projected_agenda_cache() {
     .await;
 
     // dispatch_background only enqueues bg tasks (no fg)
-    assert!(mat.dispatch_background(&r).is_ok());
+    mat.dispatch_background(&r).unwrap();
 
     // Flush background and verify the projected agenda cache rebuild ran
     // (RebuildProjectedAgendaCache is a no-op on an empty DB but the task
@@ -2131,4 +2279,135 @@ async fn flush_background_completes_tasks_after_barrier() {
         mat.metrics().bg_processed.load(AtomicOrdering::Relaxed) >= 3,
         "should have processed RebuildTagsCache + Barrier + RebuildPagesCache"
     );
+}
+
+// ======================================================================
+// PERF-11: Adaptive FTS optimize threshold — scales with corpus size
+// ======================================================================
+
+#[tokio::test]
+async fn adaptive_fts_threshold_small_db() {
+    // With a small DB (< 5M blocks), the threshold stays at 500.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    insert_block_direct(&pool, "ADAPT_SM", "content", "small db block").await;
+
+    // cached_block_count starts at 0 → threshold = max(500, 0/10_000) = 500
+    assert_eq!(
+        mat.metrics()
+            .cached_block_count
+            .load(AtomicOrdering::Relaxed),
+        0,
+        "cached block count should start at 0 before async refresh"
+    );
+
+    // Simulate 499 prior edits and pin last-optimize to now so the
+    // time-based path does not fire.
+    mat.metrics()
+        .fts_edits_since_optimize
+        .store(499, AtomicOrdering::Relaxed);
+    #[allow(clippy::cast_possible_truncation)]
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    mat.metrics()
+        .fts_last_optimize_ms
+        .store(now_ms, AtomicOrdering::Relaxed);
+
+    // The 500th edit should trigger FtsOptimize and reset the counter.
+    let r = make_op_record(
+        &pool,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id("ADAPT_SM"),
+            to_text: "edited-500".into(),
+            prev_edit: None,
+        }),
+    )
+    .await;
+    assert!(mat.dispatch_edit_background(&r, "content").is_ok());
+
+    assert_eq!(
+        mat.metrics()
+            .fts_edits_since_optimize
+            .load(AtomicOrdering::Relaxed),
+        0,
+        "counter should reset to 0 — FtsOptimize was enqueued at the 500-edit threshold"
+    );
+
+    // Flush to confirm the FtsOptimize task was actually processed.
+    mat.flush_background().await.unwrap();
+}
+
+#[tokio::test]
+async fn adaptive_fts_threshold_large_corpus() {
+    // When cached_block_count is high, the threshold rises above 500.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    insert_block_direct(&pool, "ADAPT_LG", "content", "large db block").await;
+
+    // Simulate a 10 M-block corpus.
+    // threshold = max(500, 10_000_000 / 10_000) = max(500, 1000) = 1000
+    mat.metrics()
+        .cached_block_count
+        .store(10_000_000, AtomicOrdering::Relaxed);
+
+    #[allow(clippy::cast_possible_truncation)]
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    mat.metrics()
+        .fts_last_optimize_ms
+        .store(now_ms, AtomicOrdering::Relaxed);
+
+    // At 500 edits the old fixed threshold would fire, but the adaptive
+    // threshold is 1000, so no optimize yet.
+    mat.metrics()
+        .fts_edits_since_optimize
+        .store(499, AtomicOrdering::Relaxed);
+    let r = make_op_record(
+        &pool,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id("ADAPT_LG"),
+            to_text: "edit-500".into(),
+            prev_edit: None,
+        }),
+    )
+    .await;
+    assert!(mat.dispatch_edit_background(&r, "content").is_ok());
+    assert_eq!(
+        mat.metrics()
+            .fts_edits_since_optimize
+            .load(AtomicOrdering::Relaxed),
+        500,
+        "counter should stay at 500 — threshold is 1000 for a 10M-block corpus"
+    );
+
+    // At 1000 edits the adaptive threshold is reached.
+    mat.metrics()
+        .fts_edits_since_optimize
+        .store(999, AtomicOrdering::Relaxed);
+    mat.metrics()
+        .fts_last_optimize_ms
+        .store(now_ms, AtomicOrdering::Relaxed);
+    let r2 = make_op_record(
+        &pool,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id("ADAPT_LG"),
+            to_text: "edit-1000".into(),
+            prev_edit: None,
+        }),
+    )
+    .await;
+    assert!(mat.dispatch_edit_background(&r2, "content").is_ok());
+    assert_eq!(
+        mat.metrics()
+            .fts_edits_since_optimize
+            .load(AtomicOrdering::Relaxed),
+        0,
+        "counter should reset to 0 — FtsOptimize fires at the 1000-edit adaptive threshold"
+    );
+
+    mat.flush_background().await.unwrap();
 }

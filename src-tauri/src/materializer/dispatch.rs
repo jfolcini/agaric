@@ -121,7 +121,9 @@ impl Materializer {
                     .as_millis() as u64;
                 let last_ms = self.metrics.fts_last_optimize_ms.load(Ordering::Relaxed);
                 let elapsed_ms = now_ms.saturating_sub(last_ms);
-                if (edits >= 500 || elapsed_ms >= 3_600_000)
+                let block_count = self.metrics.cached_block_count.load(Ordering::Relaxed);
+                let threshold = std::cmp::max(500, block_count / 10_000);
+                if (edits >= threshold || elapsed_ms >= 3_600_000)
                     && self
                         .metrics
                         .fts_edits_since_optimize
@@ -132,6 +134,7 @@ impl Materializer {
                     self.metrics
                         .fts_last_optimize_ms
                         .store(now_ms, Ordering::Relaxed);
+                    self.refresh_block_count_cache();
                 }
             }
             "delete_block" => {

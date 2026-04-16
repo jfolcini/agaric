@@ -2,7 +2,9 @@ use super::filters::{
     crockford_decode_char, ms_to_ulid_prefix, parse_iso_to_ms, resolve_filter, ulid_to_ms,
 };
 use super::grouped::{eval_backlink_query_grouped, eval_unlinked_references};
-use super::query::{eval_backlink_query, list_property_keys, resolve_root_pages};
+use super::query::{
+    eval_backlink_query, list_property_keys, resolve_root_pages, resolve_root_pages_cte,
+};
 use super::types::*;
 use crate::db::init_pool;
 use crate::error::AppError;
@@ -22,10 +24,12 @@ async fn test_pool() -> (SqlitePool, TempDir) {
 
 /// Insert a block directly.
 async fn insert_block(pool: &SqlitePool, id: &str, block_type: &str, content: &str) {
-    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)")
+    let page_id: Option<&str> = if block_type == "page" { Some(id) } else { None };
+    sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, ?, ?, ?)")
         .bind(id)
         .bind(block_type)
         .bind(content)
+        .bind(page_id)
         .execute(pool)
         .await
         .unwrap();
@@ -2416,6 +2420,9 @@ async fn fts_contains_mixed_operators_and_terms() {
 // ======================================================================
 
 /// Insert a block with parent_id and position for hierarchy tests.
+///
+/// Auto-computes `page_id`: for pages, `page_id = id`; for children,
+/// inherits the parent's `page_id`.
 async fn insert_block_with_parent(
     pool: &SqlitePool,
     id: &str,
@@ -2424,14 +2431,27 @@ async fn insert_block_with_parent(
     parent_id: Option<&str>,
     position: Option<i64>,
 ) {
+    let page_id: Option<String> = if block_type == "page" {
+        Some(id.to_string())
+    } else if let Some(pid) = parent_id {
+        sqlx::query_scalar::<_, Option<String>>("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(pid)
+            .fetch_optional(pool)
+            .await
+            .unwrap()
+            .flatten()
+    } else {
+        None
+    };
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(id)
     .bind(block_type)
     .bind(content)
     .bind(parent_id)
     .bind(position)
+    .bind(page_id.as_deref())
     .execute(pool)
     .await
     .unwrap();
@@ -2556,6 +2576,69 @@ async fn resolve_root_pages_orphan() {
     assert!(
         result.is_empty(),
         "orphan block (no page ancestor) should be omitted"
+    );
+}
+
+#[tokio::test]
+async fn resolve_root_pages_oracle_cte_vs_page_id() {
+    // Build a nested hierarchy: PAGE -> MID -> DEEP -> LEAF, plus a direct child
+    // and an orphan. Both the CTE oracle and the page_id-based implementation
+    // must return identical results.
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "PAGE_R", "page", "Root Page", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "MID_R",
+        "content",
+        "mid level",
+        Some("PAGE_R"),
+        Some(1),
+    )
+    .await;
+    insert_block_with_parent(
+        &pool,
+        "DEEP_R",
+        "content",
+        "deep level",
+        Some("MID_R"),
+        Some(1),
+    )
+    .await;
+    insert_block_with_parent(
+        &pool,
+        "LEAF_R",
+        "content",
+        "leaf level",
+        Some("DEEP_R"),
+        Some(1),
+    )
+    .await;
+    insert_block_with_parent(
+        &pool,
+        "CHILD_R",
+        "content",
+        "direct child",
+        Some("PAGE_R"),
+        Some(2),
+    )
+    .await;
+    // Orphan: content block with no parent (page_id = NULL)
+    insert_block_with_parent(&pool, "ORPHAN_R", "content", "orphan", None, None).await;
+
+    let mut ids = FxHashSet::default();
+    ids.insert("MID_R".into());
+    ids.insert("DEEP_R".into());
+    ids.insert("LEAF_R".into());
+    ids.insert("CHILD_R".into());
+    ids.insert("ORPHAN_R".into());
+    ids.insert("PAGE_R".into()); // page itself
+
+    let fast = resolve_root_pages(&pool, &ids).await.unwrap();
+    let oracle = resolve_root_pages_cte(&pool, &ids).await.unwrap();
+
+    assert_eq!(
+        fast, oracle,
+        "page_id JOIN must return the same map as the recursive CTE"
     );
 }
 
@@ -2970,6 +3053,90 @@ async fn filter_source_page_exclusion_only_sql_path() {
     assert!(ids.contains(&"BLK_A1"), "BLK_A1 from PAGE_A present");
     assert!(ids.contains(&"BLK_A2"), "BLK_A2 from PAGE_A present");
     assert!(!ids.contains(&"BLK_B1"), "BLK_B1 from PAGE_B excluded");
+}
+
+#[tokio::test]
+async fn filter_source_page_deeply_nested_hierarchy() {
+    // Creates a 5-level deep page hierarchy and verifies the SourcePage
+    // filter correctly discovers all descendants via the depth-limited
+    // recursive CTE (depth < 100).
+    let (pool, _dir) = test_pool().await;
+
+    // Build hierarchy: PAGE_ROOT -> L1 -> L2 -> L3 -> L4 -> LEAF
+    insert_block_with_parent(&pool, "PAGE_ROOT", "page", "Root Page", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "L1",
+        "content",
+        "level 1",
+        Some("PAGE_ROOT"),
+        Some(1),
+    )
+    .await;
+    insert_block_with_parent(&pool, "L2", "content", "level 2", Some("L1"), Some(1)).await;
+    insert_block_with_parent(&pool, "L3", "content", "level 3", Some("L2"), Some(1)).await;
+    insert_block_with_parent(&pool, "L4", "content", "level 4", Some("L3"), Some(1)).await;
+    insert_block_with_parent(&pool, "LEAF", "content", "leaf block", Some("L4"), Some(1)).await;
+
+    // Separate page with its own block (should NOT be included)
+    insert_block_with_parent(&pool, "OTHER_PAGE", "page", "Other Page", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "OTHER_BLK",
+        "content",
+        "other block",
+        Some("OTHER_PAGE"),
+        Some(1),
+    )
+    .await;
+
+    // Target page — both LEAF and OTHER_BLK link to it
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+    insert_block_link(&pool, "LEAF", "TARGET").await;
+    insert_block_link(&pool, "OTHER_BLK", "TARGET").await;
+    let page = default_page();
+
+    // Include PAGE_ROOT — should pick up the deeply nested LEAF (5 levels deep)
+    let filters = vec![BacklinkFilter::SourcePage {
+        included: vec!["PAGE_ROOT".into()],
+        excluded: vec![],
+    }];
+
+    let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+        .await
+        .unwrap();
+    assert_eq!(resp.total_count, 2, "base set has 2 backlinks");
+    assert_eq!(
+        resp.filtered_count, 1,
+        "only LEAF (under PAGE_ROOT) matches"
+    );
+    assert_eq!(resp.items[0].id, "LEAF", "deeply nested LEAF is found");
+
+    // Also verify via resolve_filter directly that all 6 blocks in the
+    // hierarchy are returned (PAGE_ROOT + L1..L4 + LEAF).
+    let incl_filter = BacklinkFilter::SourcePage {
+        included: vec!["PAGE_ROOT".into()],
+        excluded: vec![],
+    };
+    let all_ids = resolve_filter(&pool, &incl_filter, 0).await.unwrap();
+    assert!(
+        all_ids.contains("PAGE_ROOT"),
+        "root itself is in the result set"
+    );
+    assert!(all_ids.contains("L1"), "L1 descendant found");
+    assert!(all_ids.contains("L2"), "L2 descendant found");
+    assert!(all_ids.contains("L3"), "L3 descendant found");
+    assert!(all_ids.contains("L4"), "L4 descendant found");
+    assert!(all_ids.contains("LEAF"), "LEAF descendant found");
+    assert_eq!(
+        all_ids.len(),
+        6,
+        "exactly 6 blocks in the PAGE_ROOT subtree"
+    );
+    assert!(
+        !all_ids.contains("OTHER_BLK"),
+        "OTHER_BLK is not in the PAGE_ROOT subtree"
+    );
 }
 
 // ======================================================================

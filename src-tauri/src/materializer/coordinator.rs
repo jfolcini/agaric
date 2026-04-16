@@ -18,6 +18,7 @@ pub struct Materializer {
     pub(super) bg_tx: Arc<Mutex<Option<mpsc::Sender<MaterializeTask>>>>,
     pub(super) shutdown_flag: Arc<AtomicBool>,
     pub(super) metrics: Arc<QueueMetrics>,
+    pub(super) reader_pool: SqlitePool,
 }
 
 impl Materializer {
@@ -26,6 +27,7 @@ impl Materializer {
         let (bg_tx, bg_rx) = mpsc::channel::<MaterializeTask>(BACKGROUND_CAPACITY);
         let shutdown_flag = Arc::new(AtomicBool::new(false));
         let metrics = Arc::new(QueueMetrics::default());
+        let reader_pool = pool.clone();
         {
             let p = pool.clone();
             let s = shutdown_flag.clone();
@@ -36,6 +38,21 @@ impl Materializer {
             let s = shutdown_flag.clone();
             let m = metrics.clone();
             Self::spawn_task(consumer::run_background(pool, bg_rx, s, m, None));
+        }
+        {
+            let p = reader_pool.clone();
+            let m = metrics.clone();
+            Self::spawn_task(async move {
+                if let Ok(count) = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL",
+                )
+                .fetch_one(&p)
+                .await
+                {
+                    #[allow(clippy::cast_sign_loss)]
+                    m.cached_block_count.store(count as u64, Ordering::Relaxed);
+                }
+            });
         }
         {
             let m = metrics.clone();
@@ -78,6 +95,7 @@ impl Materializer {
             bg_tx: Arc::new(Mutex::new(Some(bg_tx))),
             shutdown_flag,
             metrics,
+            reader_pool,
         }
     }
 
@@ -86,6 +104,7 @@ impl Materializer {
         let (bg_tx, bg_rx) = mpsc::channel::<MaterializeTask>(BACKGROUND_CAPACITY);
         let shutdown_flag = Arc::new(AtomicBool::new(false));
         let metrics = Arc::new(QueueMetrics::default());
+        let reader_pool = read_pool.clone();
         {
             let p = write_pool.clone();
             let s = shutdown_flag.clone();
@@ -104,6 +123,21 @@ impl Materializer {
             ));
         }
         {
+            let p = reader_pool.clone();
+            let m = metrics.clone();
+            Self::spawn_task(async move {
+                if let Ok(count) = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL",
+                )
+                .fetch_one(&p)
+                .await
+                {
+                    #[allow(clippy::cast_sign_loss)]
+                    m.cached_block_count.store(count as u64, Ordering::Relaxed);
+                }
+            });
+        }
+        {
             let m = metrics.clone();
             let s = shutdown_flag.clone();
             Self::spawn_task(async move {
@@ -144,6 +178,7 @@ impl Materializer {
             bg_tx: Arc::new(Mutex::new(Some(bg_tx))),
             shutdown_flag,
             metrics,
+            reader_pool,
         }
     }
 
@@ -155,6 +190,25 @@ impl Materializer {
         tokio::spawn(future);
         #[cfg(not(test))]
         tauri::async_runtime::spawn(future);
+    }
+
+    /// Spawn a lightweight task to refresh the cached block count used for
+    /// the adaptive FTS-optimize threshold.
+    pub(super) fn refresh_block_count_cache(&self) {
+        let pool = self.reader_pool.clone();
+        let metrics = self.metrics.clone();
+        Self::spawn_task(async move {
+            if let Ok(count) =
+                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL")
+                    .fetch_one(&pool)
+                    .await
+            {
+                #[allow(clippy::cast_sign_loss)]
+                metrics
+                    .cached_block_count
+                    .store(count as u64, Ordering::Relaxed);
+            }
+        });
     }
 
     pub async fn enqueue_foreground(&self, task: MaterializeTask) -> Result<(), AppError> {

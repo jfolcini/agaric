@@ -3,9 +3,11 @@ use super::*;
 use crate::dag;
 use crate::error::AppError;
 use crate::hash::compute_op_hash;
+use crate::materializer::Materializer;
 use crate::op::*;
 use crate::op_log::{append_local_op_at, OpRecord};
 use crate::pagination::NULL_POSITION_SENTINEL;
+use crate::sync_protocol::merge_diverged_blocks;
 use crate::ulid::BlockId;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
@@ -1993,4 +1995,458 @@ fn resolve_property_conflict_plus_zero_offset_later_wins() {
         result.winner_device, DEV_B,
         "later +00:00 timestamp should win"
     );
+}
+
+// =====================================================================
+// 17. Edge case: both devices delete the same block
+// =====================================================================
+
+/// When both devices issue `delete_block` for the same block,
+/// `merge_diverged_blocks` should produce zero conflicts and no
+/// duplicate conflict copies.  Dual deletes are idempotent — the
+/// block stays soft-deleted and no resolution op is needed.
+///
+/// The delete_block + delete_block pair doesn't match any conflict
+/// detection query in `merge_diverged_blocks`:
+/// - Section 1 (edit_block divergence): op_type = 'edit_block' only
+/// - Section 2 (set_property LWW): op_type = 'set_property' only
+/// - Section 3 (move_block LWW): op_type = 'move_block' only
+/// - Section 4 (delete vs edit): requires BOTH delete_block AND edit_block
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn merge_both_devices_delete_same_block() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    // 1. Create the block on device A
+    append_local_op_at(
+        &pool,
+        DEV_A,
+        make_create("B1", "some content"),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+
+    // Insert block into blocks table with deleted_at to simulate
+    // the delete having been materialised already.
+    sqlx::query("INSERT INTO blocks (id, block_type, content, deleted_at) VALUES (?, ?, ?, ?)")
+        .bind("B1")
+        .bind("content")
+        .bind("some content")
+        .bind(FIXED_TS)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // 2. Device A deletes the block
+    append_local_op_at(
+        &pool,
+        DEV_A,
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::test_id("B1"),
+        }),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+
+    // 3. Device B also deletes the same block
+    append_local_op_at(
+        &pool,
+        DEV_B,
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::test_id("B1"),
+        }),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+
+    // 4. Call merge_diverged_blocks
+    let results = merge_diverged_blocks(&pool, DEV_A, &materializer, DEV_B)
+        .await
+        .unwrap();
+
+    // 5. Verify: all counters are zero — dual deletes are idempotent
+    assert_eq!(
+        results.conflicts, 0,
+        "dual delete should not produce any text conflicts"
+    );
+    assert_eq!(
+        results.clean_merges, 0,
+        "dual delete should not produce clean merges"
+    );
+    assert_eq!(
+        results.property_lww, 0,
+        "dual delete should not trigger property LWW"
+    );
+    assert_eq!(
+        results.move_lww, 0,
+        "dual delete should not trigger move LWW"
+    );
+    assert_eq!(
+        results.delete_edit_resurrect, 0,
+        "dual delete should not trigger resurrection (no edit op exists)"
+    );
+
+    // 6. Verify no conflict copies were created
+    let conflict_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM blocks WHERE is_conflict = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        conflict_count.0, 0,
+        "dual delete must not create any conflict copies"
+    );
+
+    // 7. Verify block is still deleted
+    let deleted: Option<String> =
+        sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = 'B1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        deleted.is_some(),
+        "block should remain deleted after dual-device delete"
+    );
+
+    materializer.shutdown();
+}
+
+// =====================================================================
+// 18. Edge case: property conflict where one side sets value to NULL
+// =====================================================================
+
+/// Device A clears a property (all value fields = NULL), device B sets
+/// it to "world" with a later timestamp.  `merge_diverged_blocks`
+/// resolves via LWW — device B wins because it has the later timestamp,
+/// regardless of device A's NULL value.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn merge_property_conflict_one_side_null() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    // 1. Create the block
+    append_local_op_at(&pool, DEV_A, make_create("B1", "content"), FIXED_TS.into())
+        .await
+        .unwrap();
+
+    // 2. Device A sets reserved property "priority" = "hello" initially
+    //    (Using a reserved key so that all-NULL clears are valid.)
+    append_local_op_at(
+        &pool,
+        DEV_A,
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id("B1"),
+            key: "priority".into(),
+            value_text: Some("hello".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        }),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+
+    // 3. Device A clears the property (sets all value fields to NULL).
+    //    Reserved keys allow all-null values ("clear the column" semantics).
+    append_local_op_at(
+        &pool,
+        DEV_A,
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id("B1"),
+            key: "priority".into(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        }),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+
+    // 4. Device B sets the property to "world" at a LATER timestamp (B wins)
+    append_local_op_at(
+        &pool,
+        DEV_B,
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id("B1"),
+            key: "priority".into(),
+            value_text: Some("world".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        }),
+        FIXED_TS_LATER.into(),
+    )
+    .await
+    .unwrap();
+
+    // 5. Call merge_diverged_blocks
+    let results = merge_diverged_blocks(&pool, DEV_A, &materializer, DEV_B)
+        .await
+        .unwrap();
+
+    // Device B has the later timestamp (FIXED_TS_LATER) so B wins.
+    // Device A's current local value is NULL, which differs from B's
+    // "world", so the LWW section creates a resolution op.
+    assert_eq!(
+        results.property_lww, 1,
+        "should resolve 1 property conflict via LWW (NULL vs 'world')"
+    );
+
+    // 6. Verify the winning value is "world" (B's value)
+    let resolution_ops: Vec<OpRecord> =
+        crate::op_log::get_ops_since(&pool, DEV_A, 0).await.unwrap();
+    let last_set_prop = resolution_ops
+        .iter()
+        .rev()
+        .find(|op| op.op_type == "set_property")
+        .expect("should have a resolution set_property op");
+    let winner_payload: SetPropertyPayload = serde_json::from_str(&last_set_prop.payload).unwrap();
+    assert_eq!(
+        winner_payload.value_text.as_deref(),
+        Some("world"),
+        "device B (later timestamp) should win, resolving NULL vs 'world'"
+    );
+
+    materializer.shutdown();
+}
+
+// =====================================================================
+// 19. Edge case: move + delete conflict
+// =====================================================================
+
+/// Device A moves a block under a different parent while device B
+/// deletes the same block.
+///
+/// Per the `merge_diverged_blocks` design doc:
+///   "Not handled as a conflict: `move_block` vs `delete_block`.  Both ops
+///    apply in sequence and the block ends up deleted regardless of order
+///    (commutativity).  A move to a new parent followed by a delete still
+///    soft-deletes the block; a delete followed by a move updates a
+///    soft-deleted row's parent (harmless).  No resolution op is needed."
+///
+/// The block ends up deleted.  No conflict copy, no LWW, no resurrection.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn merge_move_plus_delete_handled_gracefully() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    // 1. Create a page with 2 child blocks and a second parent
+    for blk in &["PAGE", "CHILD1", "CHILD2", "OTHER_PARENT"] {
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id(blk),
+                block_type: "content".into(),
+                parent_id: if *blk == "PAGE" || *blk == "OTHER_PARENT" {
+                    None
+                } else {
+                    Some(BlockId::test_id("PAGE"))
+                },
+                position: Some(0),
+                content: format!("{blk} content"),
+            }),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+    }
+
+    // Insert blocks into the blocks table
+    for (id, parent) in &[
+        ("PAGE", None),
+        ("CHILD1", Some("PAGE")),
+        ("CHILD2", Some("PAGE")),
+        ("OTHER_PARENT", None),
+    ] {
+        insert_block(
+            &pool,
+            id,
+            "content",
+            &format!("{id} content"),
+            *parent,
+            Some(0),
+        )
+        .await;
+    }
+
+    // Mark CHILD1 as deleted in blocks table (simulates B's delete materialised)
+    sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = 'CHILD1'")
+        .bind(FIXED_TS)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // 2. Device A moves CHILD1 under OTHER_PARENT
+    append_local_op_at(
+        &pool,
+        DEV_A,
+        OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: BlockId::test_id("CHILD1"),
+            new_parent_id: Some(BlockId::test_id("OTHER_PARENT")),
+            new_position: 0,
+        }),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+
+    // 3. Device B deletes CHILD1
+    append_local_op_at(
+        &pool,
+        DEV_B,
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::test_id("CHILD1"),
+        }),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+
+    // 4. Call merge_diverged_blocks
+    let results = merge_diverged_blocks(&pool, DEV_A, &materializer, DEV_B)
+        .await
+        .unwrap();
+
+    // 5. Verify: move + delete is NOT treated as a conflict.
+    //    - Section 1 (edit divergence): not triggered (no edit_block ops)
+    //    - Section 3 (move LWW): not triggered (only device A has move_block)
+    //    - Section 4 (delete vs edit): not triggered (no edit_block from B)
+    assert_eq!(
+        results.conflicts, 0,
+        "move + delete should not produce text conflicts"
+    );
+    assert_eq!(
+        results.move_lww, 0,
+        "move + delete should not trigger move LWW (only move vs move does)"
+    );
+    assert_eq!(
+        results.delete_edit_resurrect, 0,
+        "move + delete should not trigger resurrection (no edit_block op)"
+    );
+    assert_eq!(
+        results.clean_merges, 0,
+        "move + delete should not produce clean merges"
+    );
+
+    // 6. Verify no conflict copies
+    let conflict_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM blocks WHERE is_conflict = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        conflict_count.0, 0,
+        "move + delete must not create any conflict copies"
+    );
+
+    // 7. Block ends up deleted — the delete wins by commutativity
+    let deleted: Option<String> =
+        sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = 'CHILD1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        deleted.is_some(),
+        "CHILD1 should be deleted — delete wins by commutativity with move"
+    );
+
+    materializer.shutdown();
+}
+
+// =====================================================================
+// 20. Edge case: missing LCA (ancestor block purged from op_log)
+// =====================================================================
+
+/// When device B's edit has `prev_edit = null` (simulating an ancestor
+/// that was purged or a disjoint chain), `find_lca` returns `None`.
+/// `merge_text` then falls back to walking from `op_ours` to find the
+/// `create_block` root and uses its content as the merge ancestor.
+///
+/// This test exercises the full `merge_diverged_blocks` → `merge_block`
+/// → `merge_text` → no-LCA-fallback pipeline, verifying that the merge
+/// completes without crashing and produces sensible output.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn merge_missing_lca_falls_back_to_create_content() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    // 1. Device A creates block B1 with known content
+    append_local_op_at(
+        &pool,
+        DEV_A,
+        make_create("B1", "original\ncontent\n"),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+
+    // 2. Device A edits B1 (prev_edit → A,1 = the create)
+    append_local_op_at(
+        &pool,
+        DEV_A,
+        make_edit("B1", "original\ncontent\nfrom A\n", Some((DEV_A.into(), 1))),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+
+    // 3. Device B edits B1 with prev_edit = null (disjoint chain).
+    //    This simulates a scenario where the common ancestor op has been
+    //    purged from the remote's op_log — device B's edit chain no
+    //    longer connects to A's chain.
+    let b_payload = r#"{"block_id":"B1","to_text":"original\ncontent\nfrom B\n","prev_edit":null}"#;
+    let b_record = make_remote_record(DEV_B, 1, None, "edit_block", b_payload);
+    crate::dag::insert_remote_op(&pool, &b_record)
+        .await
+        .unwrap();
+
+    // Insert B1 into blocks table (needed for potential conflict copy)
+    insert_block(&pool, "B1", "content", "original\ncontent\n", None, Some(0)).await;
+
+    // 4. Call merge_diverged_blocks — the full sync-merge pipeline
+    let results = merge_diverged_blocks(&pool, DEV_A, &materializer, DEV_B)
+        .await
+        .unwrap();
+
+    // 5. Verify: the merge completed without crashing.
+    //    find_lca returns None (disjoint chains), merge_text falls back to
+    //    the create_block content ("original\ncontent\n") as the ancestor.
+    //    Depending on how diffy resolves the concurrent additions at the
+    //    end, we get either a clean merge or a text conflict — but no panic.
+    let total = results.clean_merges + results.conflicts;
+    assert_eq!(
+        total, 1,
+        "merge should process exactly 1 block (either clean or conflict), \
+         got: clean={}, conflict={}",
+        results.clean_merges, results.conflicts
+    );
+
+    // 6. Verify the block still has content after the merge
+    let heads = crate::dag::get_block_edit_heads(&pool, "B1").await.unwrap();
+    let a_head = heads
+        .iter()
+        .find(|(d, _)| d == DEV_A)
+        .expect("device-A should have an edit head after merge");
+    let content = crate::dag::text_at(&pool, &a_head.0, a_head.1)
+        .await
+        .unwrap();
+    assert!(
+        !content.is_empty(),
+        "block should have content after merge (fallback to create_block ancestor worked)"
+    );
+    // The fallback used "original\ncontent\n" (from create_block) as ancestor,
+    // so the merged/conflict result should contain text from device A's edit.
+    assert!(
+        content.contains("original"),
+        "merged content should include text from the create_block ancestor, got: {content}"
+    );
+
+    materializer.shutdown();
 }

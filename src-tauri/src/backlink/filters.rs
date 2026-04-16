@@ -408,10 +408,10 @@ pub(crate) fn resolve_filter<'a>(
                     // Get all descendants of included pages
                     let placeholders = included.iter().map(|_| "?").collect::<Vec<_>>().join(",");
                     let sql = format!(
-                        "WITH RECURSIVE desc(id) AS ( \
-                            SELECT id FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL AND is_conflict = 0 \
+                        "WITH RECURSIVE desc(id, depth) AS ( \
+                            SELECT id, 0 FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL AND is_conflict = 0 \
                             UNION ALL \
-                            SELECT b.id FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                            SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
                         ) SELECT id FROM desc"
                     );
                     let mut q = sqlx::query_scalar::<_, String>(&sql);
@@ -425,10 +425,10 @@ pub(crate) fn resolve_filter<'a>(
                         let excl_placeholders =
                             excluded.iter().map(|_| "?").collect::<Vec<_>>().join(",");
                         let excl_sql = format!(
-                            "WITH RECURSIVE desc(id) AS ( \
-                                SELECT id FROM blocks WHERE id IN ({excl_placeholders}) AND deleted_at IS NULL AND is_conflict = 0 \
+                            "WITH RECURSIVE desc(id, depth) AS ( \
+                                SELECT id, 0 FROM blocks WHERE id IN ({excl_placeholders}) AND deleted_at IS NULL AND is_conflict = 0 \
                                 UNION ALL \
-                                SELECT b.id FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                                SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
                             ) SELECT id FROM desc"
                         );
                         let mut eq = sqlx::query_scalar::<_, String>(&excl_sql);
@@ -448,10 +448,10 @@ pub(crate) fn resolve_filter<'a>(
                     let sql = format!(
                         "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 \
                          AND id NOT IN ( \
-                           WITH RECURSIVE desc(id) AS ( \
-                             SELECT id FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL AND is_conflict = 0 \
+                           WITH RECURSIVE desc(id, depth) AS ( \
+                             SELECT id, 0 FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL AND is_conflict = 0 \
                              UNION ALL \
-                             SELECT b.id FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                             SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
                            ) SELECT id FROM desc \
                          )"
                     );

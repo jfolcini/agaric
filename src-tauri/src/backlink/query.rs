@@ -206,11 +206,54 @@ pub async fn eval_backlink_query(
 // resolve_root_pages (shared helper for grouped queries)
 // ---------------------------------------------------------------------------
 
-/// Resolve each block's root page (topmost ancestor with block_type = 'page').
+/// Resolve each block's root page using the denormalized `page_id` column.
 ///
 /// Returns HashMap<block_id, (root_page_id, root_page_title)>.
-/// Blocks whose ancestor chain doesn't terminate at a page are omitted.
+/// Blocks whose `page_id` is NULL (orphans / tags) are omitted.
 pub(super) async fn resolve_root_pages(
+    pool: &SqlitePool,
+    block_ids: &FxHashSet<String>,
+) -> Result<std::collections::HashMap<String, (String, Option<String>)>, AppError> {
+    if block_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let placeholders = block_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT b.id as block_id, b.page_id as root_id, p.content as root_title \
+         FROM blocks b \
+         JOIN blocks p ON p.id = b.page_id \
+         WHERE b.id IN ({placeholders})"
+    );
+
+    #[derive(sqlx::FromRow)]
+    struct RootPageRow {
+        block_id: String,
+        root_id: String,
+        root_title: Option<String>,
+    }
+
+    let mut query = sqlx::query_as::<_, RootPageRow>(&sql);
+    for id in block_ids {
+        query = query.bind(id.as_str());
+    }
+    let rows = query.fetch_all(pool).await?;
+
+    let mut map = std::collections::HashMap::new();
+    for row in rows {
+        map.insert(row.block_id, (row.root_id, row.root_title));
+    }
+    Ok(map)
+}
+
+// ---------------------------------------------------------------------------
+// resolve_root_pages_cte (recursive CTE oracle — test only)
+// ---------------------------------------------------------------------------
+
+/// Original recursive CTE implementation of `resolve_root_pages`, preserved
+/// as a test oracle per AGENTS.md "Performance Conventions".
+#[cfg(test)]
+pub(super) async fn resolve_root_pages_cte(
     pool: &SqlitePool,
     block_ids: &FxHashSet<String>,
 ) -> Result<std::collections::HashMap<String, (String, Option<String>)>, AppError> {
