@@ -9,6 +9,7 @@
 import { render } from '@testing-library/react'
 import * as React from 'react'
 import { describe, expect, it } from 'vitest'
+import { axe } from 'vitest-axe'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -62,5 +63,32 @@ describe('AlertDialog ref forwarding', () => {
     render(<AlertDialogFooter ref={ref}>Footer</AlertDialogFooter>)
     expect(ref.current).toBeInstanceOf(HTMLDivElement)
     expect(ref.current?.getAttribute('data-slot')).toBe('alert-dialog-footer')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// a11y
+// ---------------------------------------------------------------------------
+
+describe('AlertDialog a11y', () => {
+  it('has no accessibility violations', async () => {
+    const { baseElement } = render(
+      <AlertDialog open>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>This action cannot be undone.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction>Continue</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>,
+    )
+    const results = await axe(baseElement, {
+      rules: { region: { enabled: false } },
+    })
+    expect(results).toHaveNoViolations()
   })
 })

@@ -841,7 +841,10 @@ async fn restore_block_clears_deleted_at() {
         .unwrap();
 
     assert_eq!(resp.block_id, "REST01", "block_id must match");
-    assert!(resp.restored_count >= 1, "at least one block restored");
+    assert_eq!(
+        resp.restored_count, 1,
+        "single block restore should return count 1"
+    );
 
     let row = get_block_inner(&pool, "REST01".into()).await.unwrap();
     assert!(

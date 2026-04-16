@@ -418,6 +418,66 @@ describe('UnfinishedTasks', () => {
     expect(within(olderGroup).getByText('Older task')).toBeInTheDocument()
   })
 
+  // --- Error paths ---
+  describe('error paths', () => {
+    it('queryByProperty rejects — shows empty state', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'query_by_property') {
+          throw new Error('query failure')
+        }
+        return { items: [], next_cursor: null, has_more: false }
+      })
+
+      const { container } = render(<UnfinishedTasks />)
+
+      // Wait for loading to finish
+      await waitFor(() => {
+        expect(screen.queryByRole('status', { busy: true })).not.toBeInTheDocument()
+      })
+
+      // Component shows empty state (no crash, no blocks rendered)
+      expect(screen.queryByTestId('unfinished-tasks')).not.toBeInTheDocument()
+      expect(container.innerHTML).toBe('')
+    })
+
+    it('batchResolve rejects — blocks render without page titles', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'query_by_property') {
+          const params = args as { key: string }
+          const key = params.key
+          const blocks = [makeYesterdayBlock()]
+          const filtered = blocks.filter((b) => {
+            if (key === 'due_date') return b.due_date != null
+            if (key === 'scheduled_date') return b.scheduled_date != null
+            return false
+          })
+          return { items: filtered, next_cursor: null, has_more: false }
+        }
+        if (cmd === 'batch_resolve') {
+          throw new Error('resolve failure')
+        }
+        return { items: [], next_cursor: null, has_more: false }
+      })
+
+      render(<UnfinishedTasks />)
+
+      // Wait for component to render with blocks
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      })
+
+      // Expand the section (collapsed by default)
+      await user.click(screen.getByRole('button', { expanded: false }))
+
+      // Block content should still appear even though title resolution failed
+      expect(screen.getByText('Yesterday task')).toBeInTheDocument()
+
+      // Page title falls back to 'Untitled' since batchResolve failed
+      expect(screen.getByText(/Untitled/)).toBeInTheDocument()
+    })
+  })
+
   it('handles scheduled_date blocks (not just due_date)', async () => {
     const user = userEvent.setup()
     const block = makeBlock({

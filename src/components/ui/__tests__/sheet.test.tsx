@@ -9,6 +9,7 @@
 import { render } from '@testing-library/react'
 import * as React from 'react'
 import { describe, expect, it } from 'vitest'
+import { axe } from 'vitest-axe'
 import {
   Sheet,
   SheetClose,
@@ -56,5 +57,29 @@ describe('Sheet ref forwarding', () => {
     render(<SheetFooter ref={ref}>Footer</SheetFooter>)
     expect(ref.current).toBeInstanceOf(HTMLDivElement)
     expect(ref.current?.getAttribute('data-slot')).toBe('sheet-footer')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// a11y
+// ---------------------------------------------------------------------------
+
+describe('Sheet a11y', () => {
+  it('has no accessibility violations', async () => {
+    const { baseElement } = render(
+      <Sheet open>
+        <SheetContent>
+          <SheetHeader>
+            <SheetTitle>Test Sheet</SheetTitle>
+            <SheetDescription>Test description</SheetDescription>
+          </SheetHeader>
+          <p>Sheet body</p>
+        </SheetContent>
+      </Sheet>,
+    )
+    const results = await axe(baseElement, {
+      rules: { region: { enabled: false } },
+    })
+    expect(results).toHaveNoViolations()
   })
 })

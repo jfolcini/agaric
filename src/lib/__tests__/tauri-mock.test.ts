@@ -2353,6 +2353,61 @@ describe('import_markdown', () => {
 })
 
 // ---------------------------------------------------------------------------
+// LinkMetadata commands (TEST-15)
+// ---------------------------------------------------------------------------
+
+describe('LinkMetadata commands', () => {
+  it('fetch_link_metadata returns LinkMetadata shape with the given url', () => {
+    const result = invoke('fetch_link_metadata', { url: 'https://example.com' }) as Record<
+      string,
+      unknown
+    >
+    expect(result).toMatchObject({
+      url: 'https://example.com',
+      title: 'Mock Title',
+      favicon_url: null,
+      description: null,
+      auth_required: false,
+    })
+    expect(typeof result['fetched_at']).toBe('string')
+  })
+
+  it('get_link_metadata returns LinkMetadata shape with the given url', () => {
+    const result = invoke('get_link_metadata', { url: 'https://other.dev' }) as Record<
+      string,
+      unknown
+    >
+    expect(result).toMatchObject({
+      url: 'https://other.dev',
+      title: 'Mock Title',
+      favicon_url: null,
+      description: null,
+      auth_required: false,
+    })
+    expect(typeof result['fetched_at']).toBe('string')
+  })
+
+  it('clear_link_metadata_auth returns null', () => {
+    const result = invoke('clear_link_metadata_auth', { url: 'https://example.com' })
+    expect(result).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Default case warning (TEST-16)
+// ---------------------------------------------------------------------------
+
+describe('default case warning', () => {
+  it('logs a warning for unhandled commands', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const result = invoke('totally_unknown_command', {})
+    expect(result).toBeNull()
+    expect(warnSpy).toHaveBeenCalledWith('[tauri-mock] Unhandled command: totally_unknown_command')
+    warnSpy.mockRestore()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // list_undated_tasks
 // ---------------------------------------------------------------------------
 

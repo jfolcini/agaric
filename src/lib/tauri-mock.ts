@@ -1677,7 +1677,37 @@ export function setupMock(): void {
       case 'restore_page_to_op':
         return { ops_reverted: 0, non_reversible_skipped: 0, results: [] }
 
+      // -----------------------------------------------------------------------
+      // Link metadata
+      // -----------------------------------------------------------------------
+
+      case 'fetch_link_metadata': {
+        const a = args as Record<string, unknown>
+        return {
+          url: a['url'],
+          title: 'Mock Title',
+          favicon_url: null,
+          description: null,
+          fetched_at: new Date().toISOString(),
+          auth_required: false,
+        }
+      }
+      case 'get_link_metadata': {
+        const a = args as Record<string, unknown>
+        return {
+          url: a['url'],
+          title: 'Mock Title',
+          favicon_url: null,
+          description: null,
+          fetched_at: new Date().toISOString(),
+          auth_required: false,
+        }
+      }
+      case 'clear_link_metadata_auth':
+        return null
+
       default:
+        console.warn(`[tauri-mock] Unhandled command: ${cmd}`)
         return null
     }
   })

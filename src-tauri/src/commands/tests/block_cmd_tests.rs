@@ -104,6 +104,8 @@ async fn create_block_with_parent_sets_parent_id() {
     .await
     .unwrap();
 
+    settle(&mat).await;
+
     let child = create_block_inner(
         &pool,
         DEV,

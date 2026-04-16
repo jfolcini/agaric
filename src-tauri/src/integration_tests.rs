@@ -899,7 +899,10 @@ async fn cursor_pagination_walks_all_blocks_without_duplicates() {
     }
 
     assert_eq!(all_ids.len(), TOTAL, "should collect all {TOTAL} blocks");
-    assert!(page_count >= 2, "should require multiple pages");
+    assert_eq!(
+        page_count, 3,
+        "12 blocks with PAGE_SIZE=5 should produce 3 pages"
+    );
 
     let unique: HashSet<&str> = all_ids.iter().map(String::as_str).collect();
     assert_eq!(unique.len(), TOTAL, "no duplicate blocks across pages");

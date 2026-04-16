@@ -9,6 +9,7 @@
 import { fireEvent, render } from '@testing-library/react'
 import * as React from 'react'
 import { beforeEach, describe, expect, it } from 'vitest'
+import { axe } from 'vitest-axe'
 import {
   Sidebar,
   SidebarContent,
@@ -287,5 +288,46 @@ describe('SidebarProvider interactions', () => {
 
     const wrapper = document.querySelector('[data-slot="sidebar-wrapper"]') as HTMLElement
     expect(wrapper.style.getPropertyValue('--sidebar-width')).toBe('150px')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// a11y
+// ---------------------------------------------------------------------------
+
+describe('Sidebar a11y', () => {
+  beforeEach(() => {
+    Object.defineProperty(window, 'innerWidth', {
+      value: 1024,
+      configurable: true,
+      writable: true,
+    })
+  })
+
+  it('has no accessibility violations', async () => {
+    const { baseElement } = render(
+      <SidebarProvider defaultOpen>
+        <Sidebar>
+          <SidebarHeader>Header</SidebarHeader>
+          <SidebarContent>
+            <SidebarGroup>
+              <SidebarGroupLabel>Group</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton>Item</SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </SidebarContent>
+          <SidebarFooter>Footer</SidebarFooter>
+        </Sidebar>
+      </SidebarProvider>,
+    )
+    const results = await axe(baseElement, {
+      rules: { region: { enabled: false } },
+    })
+    expect(results).toHaveNoViolations()
   })
 })

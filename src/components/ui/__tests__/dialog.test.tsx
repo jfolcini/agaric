@@ -9,6 +9,7 @@
 import { render } from '@testing-library/react'
 import * as React from 'react'
 import { describe, expect, it } from 'vitest'
+import { axe } from 'vitest-axe'
 import {
   Dialog,
   DialogClose,
@@ -60,5 +61,29 @@ describe('Dialog ref forwarding', () => {
     render(<DialogFooter ref={ref}>Footer</DialogFooter>)
     expect(ref.current).toBeInstanceOf(HTMLDivElement)
     expect(ref.current?.getAttribute('data-slot')).toBe('dialog-footer')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// a11y
+// ---------------------------------------------------------------------------
+
+describe('Dialog a11y', () => {
+  it('has no accessibility violations', async () => {
+    const { baseElement } = render(
+      <Dialog open>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Test Dialog</DialogTitle>
+            <DialogDescription>Test description</DialogDescription>
+          </DialogHeader>
+          <p>Dialog body</p>
+        </DialogContent>
+      </Dialog>,
+    )
+    const results = await axe(baseElement, {
+      rules: { region: { enabled: false } },
+    })
+    expect(results).toHaveNoViolations()
   })
 })

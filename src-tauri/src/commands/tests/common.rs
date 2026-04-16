@@ -14,6 +14,12 @@ pub const FIXED_TS: &str = "2025-01-01T00:00:00Z";
 
 // -- Helpers --
 
+/// Wait for background materializer tasks to finish so assertions see
+/// fully-consistent state.
+pub async fn settle(mat: &Materializer) {
+    mat.flush_background().await.unwrap();
+}
+
 /// Creates a temporary SQLite database with all migrations applied.
 pub async fn test_pool() -> (SqlitePool, TempDir) {
     let dir = TempDir::new().unwrap();
