@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 398 — i18n in 25 test files + aria-label fixes in 7 components (2026-04-16)
+
+**4 items resolved (TEST-6, TEST-7, TEST-8, UX-193). REVIEW-LATER 20→16.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| TEST-6 | Replace hardcoded UI labels with t() in 8 app shell test files (~200+ strings) | 8 files |
+| TEST-7 | Replace hardcoded UI labels with t() in 10 agenda/search/filter test files (~150+ strings) | 10 files |
+| TEST-8 | Replace hardcoded UI labels with t() in 5 properties/history test files (~100+ strings) | 5 files |
+| UX-193 | Replace 12 hardcoded aria-label/title attrs with t() in 7 components + 11 i18n keys | 8 files |
+
+### Stats
+- 31 files changed (+917 lines, -746 lines)
+- ~450 hardcoded strings replaced with i18n t() calls across 23 test files + 7 source components
+- ~6560 frontend tests pass
+
 ## Session 397 — Test quality: fixture consolidation, sync errors, link metadata, proptest (2026-04-16)
 
 **5 items resolved (TEST-4, TEST-5, TEST-20, TEST-22, TEST-23). REVIEW-LATER 25→20.**
