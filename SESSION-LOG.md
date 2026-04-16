@@ -1,5 +1,41 @@
 # Session Log
 
+## Session 394 — Test quality: axe audits, error paths, mock gaps, assertion fixes (2026-04-16)
+
+**6 items resolved (TEST-1, TEST-3, TEST-15, TEST-16, TEST-17, TEST-24). REVIEW-LATER 42→36.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| TEST-1 | Add axe a11y audits to 5 UI primitive test files (sidebar, dialog, alert-dialog, sheet, sonner) | 5 files |
+| TEST-3 | Add 2 error-path tests to UnfinishedTasks (query reject + resolve reject) | 1 file |
+| TEST-15 | Add 3 missing LinkMetadata command handlers to tauri-mock | 2 files |
+| TEST-16 | Add console.warn for unhandled commands in tauri-mock default case | 2 files |
+| TEST-17 | Fix 2 inequality assertions → assert_eq! with exact values | 2 files |
+| TEST-24 | Add 2 missing settle() calls + settle helper in block_cmd_tests | 2 files |
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src/components/ui/__tests__/sidebar.test.tsx` | TEST-1: add axe audit with baseElement + region rule disabled |
+| `src/components/ui/__tests__/dialog.test.tsx` | TEST-1: add axe audit for open Dialog |
+| `src/components/ui/__tests__/alert-dialog.test.tsx` | TEST-1: add axe audit for open AlertDialog |
+| `src/components/ui/__tests__/sheet.test.tsx` | TEST-1: add axe audit for open Sheet |
+| `src/components/ui/__tests__/sonner.test.tsx` | TEST-1: add axe audit for Toaster |
+| `src/components/journal/__tests__/UnfinishedTasks.test.tsx` | TEST-3: add 2 error-path tests |
+| `src/lib/tauri-mock.ts` | TEST-15/16: add 3 LinkMetadata handlers + console.warn default |
+| `src/lib/__tests__/tauri-mock.test.ts` | TEST-15/16: add 4 new tests |
+| `src-tauri/src/integration_tests.rs` | TEST-17: assert!(>=2) → assert_eq!(3) |
+| `src-tauri/src/command_integration_tests/block_integration.rs` | TEST-17: assert!(>=1) → assert_eq!(1) |
+| `src-tauri/src/commands/tests/common.rs` | TEST-24: add settle() helper function |
+| `src-tauri/src/commands/tests/block_cmd_tests.rs` | TEST-24: add 2 settle() calls |
+
+### Stats
+- 12 files changed (+288 lines, -2 lines)
+- 13 new tests (5 axe audits, 2 error paths, 4 mock tests, 2 assertion fixes), 6553 frontend + 1962 Rust tests pass
+
 ## Session 393 — UX i18n fixes, popover overflow, undo/redo tooltips (2026-04-16)
 
 **5 items resolved (UX-187, UX-188, UX-189, UX-192, UX-194). REVIEW-LATER 47→42.**
