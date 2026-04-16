@@ -266,4 +266,84 @@ describe('usePaginatedQuery', () => {
     rerender({ qf: qf2 })
     await waitFor(() => expect(result.current.items).toEqual(['b']))
   })
+
+  // ── maxItems cap ────────────────────────────────────────────────
+
+  it('capped is false when items are below maxItems', async () => {
+    const queryFn = vi
+      .fn()
+      .mockResolvedValueOnce(makePage(['a', 'b'], true, 'c1'))
+      .mockResolvedValueOnce(makePage(['c'], false))
+    const { result } = renderHook(() => usePaginatedQuery(queryFn, { maxItems: 10 }))
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.capped).toBe(false)
+
+    await act(async () => result.current.loadMore())
+    expect(result.current.items).toEqual(['a', 'b', 'c'])
+    expect(result.current.capped).toBe(false)
+  })
+
+  it('capped becomes true when items exceed maxItems', async () => {
+    const queryFn = vi
+      .fn()
+      .mockResolvedValueOnce(makePage(['a', 'b', 'c'], true, 'c1'))
+      .mockResolvedValueOnce(makePage(['d', 'e', 'f'], false))
+    const { result } = renderHook(() => usePaginatedQuery(queryFn, { maxItems: 5 }))
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.items).toEqual(['a', 'b', 'c'])
+    expect(result.current.capped).toBe(false)
+
+    await act(async () => result.current.loadMore())
+    // 3 + 3 = 6 > maxItems(5), so items should NOT be appended
+    expect(result.current.items).toEqual(['a', 'b', 'c'])
+    expect(result.current.capped).toBe(true)
+  })
+
+  it('capped resets when queryFn changes', async () => {
+    const qf1 = vi
+      .fn()
+      .mockResolvedValueOnce(makePage(['a', 'b', 'c'], true, 'c1'))
+      .mockResolvedValueOnce(makePage(['d', 'e', 'f'], false))
+    const qf2 = vi.fn().mockResolvedValue(makePage(['x']))
+
+    const { result, rerender } = renderHook(
+      ({ qf }: { qf: (cursor?: string) => Promise<PaginatedResponse<string>> }) =>
+        usePaginatedQuery(qf, { maxItems: 5 }),
+      { initialProps: { qf: qf1 } },
+    )
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    await act(async () => result.current.loadMore())
+    expect(result.current.capped).toBe(true)
+
+    // Switch queryFn — should reset capped
+    rerender({ qf: qf2 })
+    await waitFor(() => expect(result.current.items).toEqual(['x']))
+    expect(result.current.capped).toBe(false)
+  })
+
+  it('respects a custom maxItems value', async () => {
+    const queryFn = vi
+      .fn()
+      .mockResolvedValueOnce(makePage(['a'], true, 'c1'))
+      .mockResolvedValueOnce(makePage(['b'], true, 'c2'))
+      .mockResolvedValueOnce(makePage(['c'], false))
+    const { result } = renderHook(() => usePaginatedQuery(queryFn, { maxItems: 2 }))
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.items).toEqual(['a'])
+    expect(result.current.capped).toBe(false)
+
+    // 1 + 1 = 2, still within cap
+    await act(async () => result.current.loadMore())
+    expect(result.current.items).toEqual(['a', 'b'])
+    expect(result.current.capped).toBe(false)
+
+    // 2 + 1 = 3 > maxItems(2), should cap
+    await act(async () => result.current.loadMore())
+    expect(result.current.items).toEqual(['a', 'b'])
+    expect(result.current.capped).toBe(true)
+  })
 })

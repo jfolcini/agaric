@@ -11,7 +11,9 @@ import { useResolveStore } from '../resolve'
 
 const mockedInvoke = vi.mocked(invoke)
 
-beforeEach(() => {
+beforeEach(async () => {
+  // Flush any pending microtasks from previous test (e.g., debounced version bumps)
+  await new Promise<void>((r) => queueMicrotask(r))
   useResolveStore.setState({
     cache: new Map(),
     pagesList: [],
@@ -25,7 +27,7 @@ beforeEach(() => {
 // preload
 // ---------------------------------------------------------------------------
 describe('preload', () => {
-  it('populates cache from pages and tags', async () => {
+  it('populates cache from pages and tags (with pagination)', async () => {
     const mockPages = [
       { id: 'PAGE_1', content: 'Page One', deleted_at: null },
       { id: 'PAGE_2', content: 'Page Two', deleted_at: null },
@@ -35,8 +37,16 @@ describe('preload', () => {
       { tag_id: 'TAG_2', name: 'tag-two', usage_count: 3, updated_at: '2025-01-01' },
     ]
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return { items: mockPages, next_cursor: null, has_more: false }
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'list_blocks') {
+        if (!args?.cursor) {
+          // First page
+          return { items: [mockPages[0]], next_cursor: 'cursor_1', has_more: true }
+        } else {
+          // Second page
+          return { items: [mockPages[1]], next_cursor: null, has_more: false }
+        }
+      }
       if (cmd === 'list_tags_by_prefix') return mockTags
       return null
     })
@@ -46,6 +56,7 @@ describe('preload', () => {
     const state = useResolveStore.getState()
     expect(state.cache.size).toBe(4)
     expect(state.cache.get('PAGE_1')).toEqual({ title: 'Page One', deleted: false })
+    expect(state.cache.get('PAGE_2')).toEqual({ title: 'Page Two', deleted: false })
     expect(state.cache.get('TAG_1')).toEqual({ title: 'tag-one', deleted: false })
     expect(state.pagesList).toHaveLength(2)
     expect(state.pagesList).toEqual([
@@ -53,6 +64,9 @@ describe('preload', () => {
       { id: 'PAGE_2', title: 'Page Two' },
     ])
     expect(state._preloaded).toBe(true)
+    // Should have called list_blocks twice (pagination)
+    const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
+    expect(listBlocksCalls).toHaveLength(2)
   })
 
   it('uses "Untitled" for pages with null content', async () => {
@@ -233,14 +247,16 @@ describe('preload', () => {
 // set
 // ---------------------------------------------------------------------------
 describe('set', () => {
-  it('adds entry to cache and bumps version', () => {
+  it('adds entry to cache and bumps version (after microtask)', async () => {
     const versionBefore = useResolveStore.getState().version
 
     useResolveStore.getState().set('ID_1', 'My Page', false)
 
     const state = useResolveStore.getState()
     expect(state.cache.get('ID_1')).toEqual({ title: 'My Page', deleted: false })
-    expect(state.version).toBe(versionBefore + 1)
+    // Version bump is debounced via microtask
+    await new Promise<void>((r) => queueMicrotask(r))
+    expect(useResolveStore.getState().version).toBe(versionBefore + 1)
   })
 
   it('updates existing entry', () => {
@@ -265,6 +281,25 @@ describe('set', () => {
 
     const pagesList = useResolveStore.getState().pagesList
     expect(pagesList).toHaveLength(1)
+  })
+
+  it('debounces version bumps across multiple synchronous set() calls (PERF-7)', async () => {
+    const versionBefore = useResolveStore.getState().version
+
+    useResolveStore.getState().set('A', 'Alpha', false)
+    useResolveStore.getState().set('B', 'Beta', false)
+    useResolveStore.getState().set('C', 'Charlie', false)
+
+    // Version hasn't bumped yet (debounced via microtask)
+    expect(useResolveStore.getState().version).toBe(versionBefore)
+    // Data is already in cache though
+    expect(useResolveStore.getState().cache.get('A')).toEqual({ title: 'Alpha', deleted: false })
+    expect(useResolveStore.getState().cache.get('B')).toEqual({ title: 'Beta', deleted: false })
+    expect(useResolveStore.getState().cache.get('C')).toEqual({ title: 'Charlie', deleted: false })
+
+    // After microtask, version bumps exactly once
+    await new Promise<void>((r) => queueMicrotask(r))
+    expect(useResolveStore.getState().version).toBe(versionBefore + 1)
   })
 })
 

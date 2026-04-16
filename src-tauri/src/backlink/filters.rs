@@ -120,6 +120,23 @@ pub(crate) fn resolve_filter<'a>(
 ) -> std::pin::Pin<
     Box<dyn std::future::Future<Output = Result<FxHashSet<String>, AppError>> + Send + 'a>,
 > {
+    resolve_filter_with_candidates(pool, filter, depth, None)
+}
+
+/// Like [`resolve_filter`] but accepts an optional **candidate set**.
+///
+/// When `candidates` is `Some`, certain negative filters (e.g.
+/// `PropertyIsEmpty`) scope their SQL query to the candidate set via
+/// `json_each()` instead of scanning the entire `blocks` table.  This
+/// avoids materialising thousands of rows only to intersect them in Rust.
+pub(crate) fn resolve_filter_with_candidates<'a>(
+    pool: &'a SqlitePool,
+    filter: &'a BacklinkFilter,
+    depth: u32,
+    candidates: Option<&'a FxHashSet<String>>,
+) -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<FxHashSet<String>, AppError>> + Send + 'a>,
+> {
     Box::pin(async move {
         if depth > 50 {
             return Err(AppError::Validation(
@@ -237,7 +254,28 @@ pub(crate) fn resolve_filter<'a>(
 
             BacklinkFilter::PropertyIsEmpty { key } => {
                 // Blocks that do NOT have the property set.
-                // Single query with NOT EXISTS to avoid fetching all block IDs into memory.
+                //
+                // When a candidate set is provided, scope the query to only
+                // those IDs via json_each() — avoids scanning the entire
+                // blocks table just to intersect in Rust afterwards.
+                if let Some(cands) = candidates {
+                    if cands.is_empty() {
+                        return Ok(FxHashSet::default());
+                    }
+                    let json_ids = serde_json::to_string(&cands.iter().collect::<Vec<_>>())?;
+                    let rows = sqlx::query_scalar::<_, String>(
+                        "SELECT value AS id FROM json_each(?1) \
+                         WHERE CAST(value AS TEXT) NOT IN \
+                           (SELECT block_id FROM block_properties WHERE key = ?2)",
+                    )
+                    .bind(&json_ids)
+                    .bind(key)
+                    .fetch_all(pool)
+                    .await?;
+                    return Ok(rows.into_iter().collect());
+                }
+
+                // Fallback: no candidate set — scan all non-deleted blocks.
                 let rows = sqlx::query_scalar::<_, String>(
                     "SELECT b.id FROM blocks b \
                      WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \

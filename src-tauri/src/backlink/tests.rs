@@ -1,5 +1,6 @@
 use super::filters::{
-    crockford_decode_char, ms_to_ulid_prefix, parse_iso_to_ms, resolve_filter, ulid_to_ms,
+    crockford_decode_char, ms_to_ulid_prefix, parse_iso_to_ms, resolve_filter,
+    resolve_filter_with_candidates, ulid_to_ms,
 };
 use super::grouped::{eval_backlink_query_grouped, eval_unlinked_references};
 use super::query::{
@@ -3833,4 +3834,61 @@ async fn eval_unlinked_refs_empty_alias_ignored() {
         resp.groups.is_empty(),
         "empty/whitespace aliases should not cause false matches"
     );
+}
+
+// ======================================================================
+// PropertyIsEmpty — candidate-scoped json_each() path (PERF-3)
+// ======================================================================
+
+#[tokio::test]
+async fn property_is_empty_scoped_to_candidate_set() {
+    let (pool, _dir) = test_pool().await;
+
+    // Create blocks: some with the property, some without.
+    insert_block(&pool, "BLK_A", "content", "Block A").await;
+    insert_block(&pool, "BLK_B", "content", "Block B").await;
+    insert_block(&pool, "BLK_C", "content", "Block C").await;
+    insert_block(&pool, "BLK_D", "content", "Block D").await;
+
+    // BLK_A and BLK_C have the "priority" property set.
+    insert_property(&pool, "BLK_A", "priority", Some("high"), None, None).await;
+    insert_property(&pool, "BLK_C", "priority", Some("low"), None, None).await;
+
+    // Candidate set includes BLK_A (has prop), BLK_B (no prop), BLK_D (no prop).
+    // BLK_C is NOT in the candidate set even though it has the property.
+    let candidates: FxHashSet<String> = ["BLK_A", "BLK_B", "BLK_D"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+    let filter = BacklinkFilter::PropertyIsEmpty {
+        key: "priority".into(),
+    };
+    let set = resolve_filter_with_candidates(&pool, &filter, 0, Some(&candidates))
+        .await
+        .unwrap();
+
+    // Only candidates WITHOUT the property should be returned.
+    assert!(
+        !set.contains("BLK_A"),
+        "BLK_A has 'priority' set — must be excluded"
+    );
+    assert!(
+        set.contains("BLK_B"),
+        "BLK_B lacks 'priority' and is a candidate — must be included"
+    );
+    assert!(
+        set.contains("BLK_D"),
+        "BLK_D lacks 'priority' and is a candidate — must be included"
+    );
+
+    // BLK_C lacks 'priority' is false (it has it), but more importantly it is
+    // NOT in the candidate set, so it must never appear in the result.
+    assert!(
+        !set.contains("BLK_C"),
+        "BLK_C is not in the candidate set — must be excluded"
+    );
+
+    // Exactly 2 results.
+    assert_eq!(set.len(), 2, "expected exactly BLK_B and BLK_D");
 }

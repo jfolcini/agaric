@@ -24,12 +24,16 @@ export interface UsePaginatedQueryOptions {
   onError?: string
   /** Skip the initial fetch when false. Defaults to true. */
   enabled?: boolean
+  /** Maximum number of accumulated items before capping. Defaults to 5000. */
+  maxItems?: number
 }
 
 export interface UsePaginatedQueryResult<T> {
   items: T[]
   loading: boolean
   hasMore: boolean
+  /** True when accumulated items reached the maxItems cap. Consumers can show "Refine your search". */
+  capped: boolean
   /** Error message from the last failed request, or null. Cleared on next success. */
   error: string | null
   /** Fetch the next page. No-op when already loading or no more pages. */
@@ -49,6 +53,7 @@ export function usePaginatedQuery<T>(
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [capped, setCapped] = useState(false)
   const requestIdRef = useRef(0)
 
   // Store options in a ref so `load` only depends on `queryFn`.
@@ -63,9 +68,17 @@ export function usePaginatedQuery<T>(
         const resp = await queryFn(cursor)
         if (requestIdRef.current !== rid) return
         if (cursor) {
-          setItems((prev) => [...prev, ...resp.items])
+          const maxItems = optionsRef.current?.maxItems ?? 5000
+          setItems((prev) => {
+            if (prev.length + resp.items.length > maxItems) {
+              setCapped(true)
+              return prev
+            }
+            return [...prev, ...resp.items]
+          })
         } else {
           setItems(resp.items)
+          setCapped(false)
         }
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
@@ -90,6 +103,7 @@ export function usePaginatedQuery<T>(
   useEffect(() => {
     setNextCursor(null)
     setHasMore(false)
+    setCapped(false)
     if (!enabled) return
     load()
   }, [load, enabled])
@@ -104,5 +118,5 @@ export function usePaginatedQuery<T>(
     load()
   }, [load])
 
-  return { items, loading, hasMore, error, loadMore, reload, setItems }
+  return { items, loading, hasMore, capped, error, loadMore, reload, setItems }
 }

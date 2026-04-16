@@ -40,110 +40,128 @@ interface ResolveStore {
   resolveStatus: (id: string) => 'active' | 'deleted'
 }
 
-export const useResolveStore = create<ResolveStore>((set, get) => ({
-  cache: new Map(),
-  pagesList: [],
-  version: 0,
-  _preloaded: false,
+export const useResolveStore = create<ResolveStore>((set, get) => {
+  let pendingVersionBump = false
 
-  preload: async (_forceRefresh = false) => {
-    try {
-      // Fetch all pages
-      const pagesResp = await listBlocks({ blockType: 'page', limit: 1000 })
-      const pagesList: Array<{ id: string; title: string }> = []
-      const fetchedPages = new Map<string, ResolveEntry>()
-      for (const p of pagesResp.items) {
-        const title = p.content ?? 'Untitled'
-        fetchedPages.set(p.id, { title, deleted: p.deleted_at !== null })
-        pagesList.push({ id: p.id, title })
+  return {
+    cache: new Map(),
+    pagesList: [],
+    version: 0,
+    _preloaded: false,
+
+    preload: async (_forceRefresh = false) => {
+      try {
+        // Fetch all pages with cursor-based pagination
+        const pagesList: Array<{ id: string; title: string }> = []
+        const fetchedPages = new Map<string, ResolveEntry>()
+        let cursor: string | undefined
+        let hasMore = true
+        while (hasMore) {
+          const pagesResp = await listBlocks({ blockType: 'page', limit: 1000, cursor })
+          for (const p of pagesResp.items) {
+            const title = p.content ?? 'Untitled'
+            fetchedPages.set(p.id, { title, deleted: p.deleted_at !== null })
+            pagesList.push({ id: p.id, title })
+          }
+          hasMore = pagesResp.has_more
+          cursor = pagesResp.next_cursor ?? undefined
+        }
+
+        // Fetch all tags
+        const tags = await listTagsByPrefix({ prefix: '' })
+        const fetchedTags = new Map<string, ResolveEntry>()
+        for (const t of tags) {
+          fetchedTags.set(t.tag_id, { title: t.name, deleted: false })
+        }
+
+        // Merge: fetched data always wins over stale cache entries.
+        // Both branches use the same order — forceRefresh is a semantic flag for callers,
+        // not a behavioral switch. Fresh titles must propagate after sync or rename.
+        set((state) => {
+          const cache = new Map([...state.cache, ...fetchedPages, ...fetchedTags])
+          const fetchedIds = new Set(pagesList.map((p) => p.id))
+          const mergedPagesList = [
+            ...pagesList,
+            ...state.pagesList.filter((p) => !fetchedIds.has(p.id)),
+          ]
+          return {
+            cache,
+            pagesList: mergedPagesList,
+            version: state.version + 1,
+            _preloaded: true,
+          }
+        })
+      } catch {
+        // Preload failed — resolve callbacks will use fallbacks
+        set({ _preloaded: true })
       }
+    },
 
-      // Fetch all tags
-      const tags = await listTagsByPrefix({ prefix: '' })
-      const fetchedTags = new Map<string, ResolveEntry>()
-      for (const t of tags) {
-        fetchedTags.set(t.tag_id, { title: t.name, deleted: false })
-      }
-
-      // Merge: fetched data always wins over stale cache entries.
-      // Both branches use the same order — forceRefresh is a semantic flag for callers,
-      // not a behavioral switch. Fresh titles must propagate after sync or rename.
+    set: (id, title, deleted) => {
       set((state) => {
-        const cache = new Map([...state.cache, ...fetchedPages, ...fetchedTags])
-        const fetchedIds = new Set(pagesList.map((p) => p.id))
-        const mergedPagesList = [
-          ...pagesList,
-          ...state.pagesList.filter((p) => !fetchedIds.has(p.id)),
-        ]
-        return {
-          cache,
-          pagesList: mergedPagesList,
-          version: state.version + 1,
-          _preloaded: true,
+        const cache = new Map(state.cache)
+        cache.set(id, { title, deleted })
+        if (cache.size > MAX_CACHE_SIZE) {
+          // Delete oldest entries (first N entries in Map iteration order)
+          const excess = cache.size - MAX_CACHE_SIZE
+          const keys = cache.keys()
+          for (let i = 0; i < excess; i++) {
+            const { value } = keys.next()
+            if (value) cache.delete(value)
+          }
         }
+        // Also update pagesList if it's a new non-deleted entry
+        // (pages created via onCreatePage should appear in picker)
+        const existsInPagesList = state.pagesList.some((p) => p.id === id)
+        let pagesList = existsInPagesList ? state.pagesList : [...state.pagesList, { id, title }]
+        if (pagesList.length > MAX_PAGES_LIST_SIZE) {
+          pagesList = pagesList.slice(-MAX_PAGES_LIST_SIZE)
+        }
+        return { cache, pagesList }
       })
-    } catch {
-      // Preload failed — resolve callbacks will use fallbacks
-      set({ _preloaded: true })
-    }
-  },
-
-  set: (id, title, deleted) => {
-    set((state) => {
-      const cache = new Map(state.cache)
-      cache.set(id, { title, deleted })
-      if (cache.size > MAX_CACHE_SIZE) {
-        // Delete oldest entries (first N entries in Map iteration order)
-        const excess = cache.size - MAX_CACHE_SIZE
-        const keys = cache.keys()
-        for (let i = 0; i < excess; i++) {
-          const { value } = keys.next()
-          if (value) cache.delete(value)
-        }
-      }
-      // Also update pagesList if it's a new non-deleted entry
-      // (pages created via onCreatePage should appear in picker)
-      const existsInPagesList = state.pagesList.some((p) => p.id === id)
-      let pagesList = existsInPagesList ? state.pagesList : [...state.pagesList, { id, title }]
-      if (pagesList.length > MAX_PAGES_LIST_SIZE) {
-        pagesList = pagesList.slice(-MAX_PAGES_LIST_SIZE)
-      }
-      return { cache, pagesList, version: state.version + 1 }
-    })
-  },
-
-  batchSet: (entries) => {
-    if (entries.length === 0) return
-    set((state) => {
-      const cache = new Map(state.cache)
-      for (const e of entries) {
-        cache.set(e.id, {
-          title: e.title,
-          deleted: e.deleted,
+      // Debounce version bump via microtask to avoid re-render storms
+      if (!pendingVersionBump) {
+        pendingVersionBump = true
+        queueMicrotask(() => {
+          set((s) => ({ version: s.version + 1 }))
+          pendingVersionBump = false
         })
       }
-      if (cache.size > MAX_CACHE_SIZE) {
-        // Delete oldest entries (first N entries in Map iteration order)
-        const excess = cache.size - MAX_CACHE_SIZE
-        const keys = cache.keys()
-        for (let i = 0; i < excess; i++) {
-          const { value } = keys.next()
-          if (value) cache.delete(value)
+    },
+
+    batchSet: (entries) => {
+      if (entries.length === 0) return
+      set((state) => {
+        const cache = new Map(state.cache)
+        for (const e of entries) {
+          cache.set(e.id, {
+            title: e.title,
+            deleted: e.deleted,
+          })
         }
-      }
-      return { cache, version: state.version + 1 }
-    })
-  },
+        if (cache.size > MAX_CACHE_SIZE) {
+          // Delete oldest entries (first N entries in Map iteration order)
+          const excess = cache.size - MAX_CACHE_SIZE
+          const keys = cache.keys()
+          for (let i = 0; i < excess; i++) {
+            const { value } = keys.next()
+            if (value) cache.delete(value)
+          }
+        }
+        return { cache, version: state.version + 1 }
+      })
+    },
 
-  resolveTitle: (id) => {
-    const cached = get().cache.get(id)
-    if (cached) return cached.title
-    return `[[${id.slice(0, 8)}...]]`
-  },
+    resolveTitle: (id) => {
+      const cached = get().cache.get(id)
+      if (cached) return cached.title
+      return `[[${id.slice(0, 8)}...]]`
+    },
 
-  resolveStatus: (id) => {
-    const cached = get().cache.get(id)
-    if (cached) return cached.deleted ? 'deleted' : 'active'
-    return 'active'
-  },
-}))
+    resolveStatus: (id) => {
+      const cached = get().cache.get(id)
+      if (cached) return cached.deleted ? 'deleted' : 'active'
+      return 'active'
+    },
+  }
+})

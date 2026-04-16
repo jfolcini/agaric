@@ -28,6 +28,7 @@ import { useNavigationStore } from '@/stores/navigation'
 import { logger } from '../lib/logger'
 import { EmptyState } from './EmptyState'
 import { LoadingSkeleton } from './LoadingSkeleton'
+import { Badge } from './ui/badge'
 import { Button } from './ui/button'
 
 interface GraphNode extends SimulationNodeDatum {
@@ -47,6 +48,7 @@ const GRAPH_CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
 interface GraphCache {
   nodes: GraphNode[]
   edges: GraphEdge[]
+  hasMore: boolean
   timestamp: number
 }
 
@@ -66,7 +68,7 @@ export function GraphView(): React.ReactElement {
   const [error, setError] = useState<string | null>(null)
   const [nodes, setNodes] = useState<GraphNode[]>([])
   const [edges, setEdges] = useState<GraphEdge[]>([])
-
+  const [hasMore, setHasMore] = useState(false)
   // Fetch data with stale-while-revalidate caching (UX-113)
   useEffect(() => {
     let cancelled = false
@@ -75,6 +77,7 @@ export function GraphView(): React.ReactElement {
     if (graphCache) {
       setNodes(graphCache.nodes)
       setEdges(graphCache.edges)
+      setHasMore(graphCache.hasMore)
       setLoading(false)
 
       // If cache is still fresh, skip refetch
@@ -106,10 +109,16 @@ export function GraphView(): React.ReactElement {
           }))
 
         // Update cache
-        graphCache = { nodes: pageNodes, edges: pageEdges, timestamp: Date.now() }
+        graphCache = {
+          nodes: pageNodes,
+          edges: pageEdges,
+          hasMore: pagesResp.has_more,
+          timestamp: Date.now(),
+        }
 
         setNodes(pageNodes)
         setEdges(pageEdges)
+        setHasMore(pagesResp.has_more)
       } catch (err) {
         if (!cancelled) {
           logger.error('GraphView', 'failed to load graph data', undefined, err)
@@ -396,6 +405,15 @@ export function GraphView(): React.ReactElement {
 
   return (
     <div className="graph-view relative h-full w-full" data-testid="graph-view">
+      {hasMore && (
+        <Badge
+          variant="secondary"
+          className="absolute top-2 right-2 z-10"
+          data-testid="graph-truncated-badge"
+        >
+          {t('graph.truncated', { count: nodes.length })}
+        </Badge>
+      )}
       <svg
         ref={svgRef}
         className="w-full h-full min-h-[400px]"

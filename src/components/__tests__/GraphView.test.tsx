@@ -688,4 +688,58 @@ describe('GraphView', () => {
       expect(vi.mocked(logger.error)).not.toHaveBeenCalled()
     })
   })
+
+  describe('truncation warning (PERF-9a)', () => {
+    it('shows truncation badge when has_more is true', async () => {
+      const pagesResponse = {
+        items: [
+          { id: 'page-1', content: 'Page One', block_type: 'page' },
+          { id: 'page-2', content: 'Page Two', block_type: 'page' },
+        ],
+        next_cursor: 'cursor-xyz',
+        has_more: true,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      const badge = screen.getByTestId('graph-truncated-badge')
+      expect(badge).toBeInTheDocument()
+      expect(badge).toHaveTextContent('Showing 2 pages (graph truncated)')
+    })
+
+    it('does not show truncation badge when has_more is false', async () => {
+      const pagesResponse = {
+        items: [
+          { id: 'page-1', content: 'Page One', block_type: 'page' },
+          { id: 'page-2', content: 'Page Two', block_type: 'page' },
+        ],
+        next_cursor: null,
+        has_more: false,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      expect(screen.queryByTestId('graph-truncated-badge')).not.toBeInTheDocument()
+    })
+  })
 })

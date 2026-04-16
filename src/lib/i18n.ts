@@ -467,6 +467,7 @@ const resources = {
       'graph.zoomIn': 'Zoom in',
       'graph.zoomOut': 'Zoom out',
       'graph.zoomReset': 'Fit to view',
+      'graph.truncated': 'Showing {{count}} pages (graph truncated)',
 
       'pageHeader.exportMarkdown': 'Export as Markdown',
       'pageHeader.deletePage': 'Delete page',
