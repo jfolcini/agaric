@@ -1,5 +1,5 @@
 /**
- * Tests for GraphView component (F-33).
+ * Tests for GraphView component (F-33 + PERF-9b).
  *
  * Validates:
  *  - Shows loading skeleton on mount
@@ -8,6 +8,8 @@
  *  - Shows error state on fetch failure
  *  - Has no a11y violations
  *  - Calls navigateToPage from navigation store
+ *  - WebWorker is spawned and terminated on cleanup
+ *  - Falls back to main-thread simulation when Worker is unavailable
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -16,7 +18,7 @@ import { drag } from 'd3-drag'
 import { forceSimulation } from 'd3-force'
 import { select } from 'd3-selection'
 import { zoom } from 'd3-zoom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { logger } from '../../lib/logger'
 import { useNavigationStore } from '../../stores/navigation'
@@ -38,6 +40,8 @@ vi.mock('d3-force', () => ({
     on: vi.fn().mockReturnThis(),
     stop: vi.fn(),
     alpha: vi.fn().mockReturnThis(),
+    alphaDecay: vi.fn().mockReturnThis(),
+    tick: vi.fn(),
     restart: vi.fn(),
     nodes: vi.fn(() => []),
   })),
@@ -79,6 +83,10 @@ vi.mock('d3-selection', () => ({
       style: vi.fn().mockReturnThis(),
       transition: vi.fn().mockReturnThis(),
       duration: vi.fn().mockReturnThis(),
+      filter: vi.fn().mockReturnThis(),
+      datum: vi.fn().mockReturnThis(),
+      select: vi.fn().mockReturnThis(),
+      node: vi.fn().mockReturnValue(null),
     })),
     remove: vi.fn().mockReturnThis(),
     style: vi.fn().mockReturnThis(),
@@ -103,19 +111,99 @@ vi.mock('d3-drag', () => ({
   })),
 }))
 
+// ── MockWorker for WebWorker tests (PERF-9b) ──────────────────────────
+
+// biome-ignore lint/suspicious/noExplicitAny: test mock
+type MessageHandler = (event: { data: any }) => void
+
+class MockWorker {
+  static instances: MockWorker[] = []
+  // biome-ignore lint/suspicious/noExplicitAny: test mock
+  postMessageCalls: any[] = []
+  terminated = false
+  private listeners: Map<string, MessageHandler[]> = new Map()
+
+  // biome-ignore lint/suspicious/noExplicitAny: test mock
+  constructor(_url: any, _opts?: any) {
+    MockWorker.instances.push(this)
+  }
+
+  addEventListener(type: string, handler: MessageHandler) {
+    const list = this.listeners.get(type) ?? []
+    list.push(handler)
+    this.listeners.set(type, list)
+  }
+
+  removeEventListener(type: string, handler: MessageHandler) {
+    const list = this.listeners.get(type) ?? []
+    this.listeners.set(
+      type,
+      list.filter((h) => h !== handler),
+    )
+  }
+
+  // biome-ignore lint/suspicious/noExplicitAny: test mock
+  postMessage(data: any) {
+    this.postMessageCalls.push(data)
+
+    // When receiving 'start', immediately respond with 'done' + positions
+    if (data.type === 'start') {
+      const positions = data.nodes.map((n: { id: string }) => ({
+        id: n.id,
+        x: 100,
+        y: 100,
+      }))
+      // Deliver asynchronously (like a real worker)
+      queueMicrotask(() => {
+        if (!this.terminated) {
+          this.emit('message', { data: { type: 'done', positions } })
+        }
+      })
+    }
+  }
+
+  terminate() {
+    this.terminated = true
+  }
+
+  // biome-ignore lint/suspicious/noExplicitAny: test mock
+  private emit(type: string, event: any) {
+    const list = this.listeners.get(type) ?? []
+    for (const handler of list) {
+      handler(event)
+    }
+  }
+}
+
 const mockedInvoke = vi.mocked(invoke)
 
 const emptyPage = { items: [], next_cursor: null, has_more: false }
 
+// Save original Worker so we can restore it
+const OriginalWorker = globalThis['Worker'] as typeof Worker | undefined
+
 beforeEach(() => {
   vi.clearAllMocks()
   clearGraphCache()
+  MockWorker.instances = []
+  // Stub the global Worker with our MockWorker by default
+  vi.stubGlobal('Worker', MockWorker)
   useNavigationStore.setState({
     currentView: 'graph',
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
     selectedBlockId: null,
   })
+})
+
+afterEach(() => {
+  // Restore the original Worker global
+  if (OriginalWorker) {
+    vi.stubGlobal('Worker', OriginalWorker)
+  } else {
+    // biome-ignore lint/performance/noDelete: test cleanup requires deleting global
+    delete (globalThis as Record<string, unknown>)['Worker']
+  }
 })
 
 describe('GraphView', () => {
@@ -170,7 +258,7 @@ describe('GraphView', () => {
     expect(svg.tagName).toBe('svg')
   })
 
-  it('invokes d3 APIs to set up simulation, zoom, and drag', async () => {
+  it('invokes d3 APIs to set up rendering, zoom, and drag (worker path)', async () => {
     const navigateToPage = vi.fn()
     useNavigationStore.setState({
       currentView: 'graph',
@@ -205,13 +293,20 @@ describe('GraphView', () => {
     // d3-selection: select() is called for the SVG container
     expect(select).toHaveBeenCalled()
 
-    // d3-force: forceSimulation() is called with the nodes data
-    expect(forceSimulation).toHaveBeenCalledTimes(1)
-    expect(forceSimulation).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        expect.objectContaining({ id: 'page-1', label: 'Page One' }),
-        expect.objectContaining({ id: 'page-2', label: 'Page Two' }),
-      ]),
+    // Worker path: forceSimulation is NOT called on the main thread
+    expect(forceSimulation).not.toHaveBeenCalled()
+
+    // Instead a Worker was spawned and received the start message
+    expect(MockWorker.instances).toHaveLength(1)
+    const worker = MockWorker.instances[0] as InstanceType<typeof MockWorker>
+    expect(worker.postMessageCalls).toContainEqual(
+      expect.objectContaining({
+        type: 'start',
+        nodes: expect.arrayContaining([
+          expect.objectContaining({ id: 'page-1', label: 'Page One' }),
+          expect.objectContaining({ id: 'page-2', label: 'Page Two' }),
+        ]),
+      }),
     )
 
     // d3-zoom: zoom() is called for pan/zoom setup
@@ -421,6 +516,7 @@ describe('GraphView', () => {
       const dateSpy = vi.spyOn(Date, 'now').mockReturnValue(realNow + 6 * 60 * 1000)
 
       vi.clearAllMocks()
+      MockWorker.instances = []
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
         if (cmd === 'list_page_links') return Promise.resolve([])
@@ -475,13 +571,16 @@ describe('GraphView', () => {
         expect(screen.getByTestId('graph-view')).toBeInTheDocument()
       })
 
-      // Simulation was called with nodes even though there are no edges
-      expect(forceSimulation).toHaveBeenCalledWith(
-        expect.arrayContaining([
+      // Worker was spawned and received nodes even though there are no edges
+      expect(MockWorker.instances).toHaveLength(1)
+      const worker = MockWorker.instances[0] as InstanceType<typeof MockWorker>
+      expect(worker.postMessageCalls[0]).toMatchObject({
+        type: 'start',
+        nodes: expect.arrayContaining([
           expect.objectContaining({ id: 'page-1' }),
           expect.objectContaining({ id: 'page-2' }),
         ]),
-      )
+      })
     })
   })
 
@@ -740,6 +839,111 @@ describe('GraphView', () => {
       })
 
       expect(screen.queryByTestId('graph-truncated-badge')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('WebWorker (PERF-9b)', () => {
+    it('spawns a Worker and posts start message with graph data', async () => {
+      const pagesResponse = {
+        items: [
+          { id: 'page-1', content: 'Page One', block_type: 'page' },
+          { id: 'page-2', content: 'Page Two', block_type: 'page' },
+        ],
+        next_cursor: null,
+        has_more: false,
+      }
+      const linksResponse = [{ source_id: 'page-1', target_id: 'page-2', ref_count: 1 }]
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve(linksResponse)
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      expect(MockWorker.instances).toHaveLength(1)
+      const worker = MockWorker.instances[0] as InstanceType<typeof MockWorker>
+      const startMsg = worker.postMessageCalls.find(
+        // biome-ignore lint/suspicious/noExplicitAny: test mock
+        (m: any) => m.type === 'start',
+      )
+      expect(startMsg).toBeDefined()
+      expect(startMsg.nodes).toHaveLength(2)
+      expect(startMsg.edges).toHaveLength(1)
+      expect(startMsg.width).toBeGreaterThan(0)
+      expect(startMsg.height).toBeGreaterThan(0)
+    })
+
+    it('terminates the Worker on component unmount', async () => {
+      const pagesResponse = {
+        items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+        next_cursor: null,
+        has_more: false,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      const { unmount } = render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      expect(MockWorker.instances).toHaveLength(1)
+      const worker = MockWorker.instances[0] as InstanceType<typeof MockWorker>
+      expect(worker.terminated).toBe(false)
+
+      unmount()
+
+      expect(worker.terminated).toBe(true)
+    })
+
+    it('falls back to main-thread simulation when Worker is unavailable', async () => {
+      // Remove Worker global to simulate SSR / old environment
+      // biome-ignore lint/performance/noDelete: test requires deleting global
+      delete (globalThis as Record<string, unknown>)['Worker']
+
+      const pagesResponse = {
+        items: [
+          { id: 'page-1', content: 'Page One', block_type: 'page' },
+          { id: 'page-2', content: 'Page Two', block_type: 'page' },
+        ],
+        next_cursor: null,
+        has_more: false,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      // No worker was spawned
+      expect(MockWorker.instances).toHaveLength(0)
+
+      // Main-thread forceSimulation was used as fallback
+      expect(forceSimulation).toHaveBeenCalledTimes(1)
+      expect(forceSimulation).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'page-1', label: 'Page One' }),
+          expect.objectContaining({ id: 'page-2', label: 'Page Two' }),
+        ]),
+      )
     })
   })
 })

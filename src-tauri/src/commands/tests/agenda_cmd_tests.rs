@@ -1426,9 +1426,20 @@ async fn list_undated_tasks_returns_tasks_without_dates() {
         .unwrap();
 
     let resp = list_undated_tasks_inner(&pool, None, None).await.unwrap();
-    assert_eq!(resp.items.len(), 1);
-    assert_eq!(resp.items[0].id, task.id);
-    assert_eq!(resp.items[0].todo_state.as_deref(), Some("TODO"));
+    assert_eq!(
+        resp.items.len(),
+        1,
+        "should return exactly one undated task"
+    );
+    assert_eq!(
+        resp.items[0].id, task.id,
+        "returned task id should match the created task"
+    );
+    assert_eq!(
+        resp.items[0].todo_state.as_deref(),
+        Some("TODO"),
+        "returned task should have TODO state"
+    );
 
     mat.shutdown();
 }
@@ -1522,16 +1533,29 @@ async fn list_undated_tasks_pagination() {
     let page1 = list_undated_tasks_inner(&pool, None, Some(2))
         .await
         .unwrap();
-    assert_eq!(page1.items.len(), 2);
-    assert!(page1.has_more);
-    assert!(page1.next_cursor.is_some());
+    assert_eq!(page1.items.len(), 2, "first page should contain 2 items");
+    assert!(
+        page1.has_more,
+        "first page should indicate more results available"
+    );
+    assert!(
+        page1.next_cursor.is_some(),
+        "first page should provide a cursor for next page"
+    );
 
     // Page 2: use cursor
     let page2 = list_undated_tasks_inner(&pool, page1.next_cursor, Some(2))
         .await
         .unwrap();
-    assert_eq!(page2.items.len(), 1);
-    assert!(!page2.has_more);
+    assert_eq!(
+        page2.items.len(),
+        1,
+        "second page should contain the remaining 1 item"
+    );
+    assert!(
+        !page2.has_more,
+        "second page should indicate no more results"
+    );
 
     mat.shutdown();
 }

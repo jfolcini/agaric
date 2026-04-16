@@ -6,6 +6,7 @@
  * Includes delete with confirmation dialog and toast error feedback.
  */
 
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { FileText, Plus, Search, Star, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -207,6 +208,16 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     return sorted
   }, [pages, filterText, sortOption, showStarredOnly, starredRevision, aliasMatchId])
 
+  const isTreeMode = useMemo(
+    () => filteredPages.some((p) => p.content?.includes('/')),
+    [filteredPages],
+  )
+  const treeNodes = useMemo(
+    () => (isTreeMode ? buildPageTree(filteredPages) : []),
+    [isTreeMode, filteredPages],
+  )
+  const virtualItemCount = isTreeMode ? treeNodes.length : filteredPages.length
+
   const {
     focusedIndex,
     setFocusedIndex,
@@ -226,6 +237,13 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   useEffect(() => {
     setFocusedIndex(0)
   }, [filterText, sortOption, setFocusedIndex])
+
+  const virtualizer = useVirtualizer({
+    count: virtualItemCount,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 44,
+    overscan: 5,
+  })
 
   // Document-level keydown: skip if user is typing in input/select/textarea
   useEffect(() => {
@@ -247,11 +265,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
   // Scroll focused item into view
   useEffect(() => {
-    if (focusedIndex < 0 || !listRef.current) return
-    const items = listRef.current.querySelectorAll('[data-page-item]')
-    const el = items[focusedIndex] as HTMLElement | undefined
-    el?.scrollIntoView({ block: 'nearest' })
-  }, [focusedIndex])
+    if (focusedIndex < 0 || isTreeMode) return
+    virtualizer.scrollToIndex(focusedIndex, { align: 'auto' })
+  }, [focusedIndex, isTreeMode, virtualizer])
 
   const isFiltering = filterText.trim().length > 0 || showStarredOnly
 
@@ -361,7 +377,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
       <div
         ref={listRef}
-        className="page-browser-list space-y-1"
+        className="page-browser-list overflow-y-auto max-h-[calc(100vh-200px)]"
         role="listbox"
         tabIndex={0}
         aria-label={t('pageBrowser.pageList')}
@@ -375,83 +391,128 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                 : t('pageBrowser.noMatches')
             }
           />
-        ) : filteredPages.some((p) => p.content?.includes('/')) ? (
-          buildPageTree(filteredPages).map((node) => (
-            <PageTreeItem
-              key={node.fullPath}
-              node={node}
-              depth={0}
-              onNavigate={(pageId, title) => onPageSelect?.(pageId, title)}
-              onCreateUnder={handleCreateUnder}
-              filterText={filterText.trim()}
-              forceExpand={isFiltering}
-              onDelete={(id, name) => setDeleteTarget({ id, name })}
-            />
-          ))
         ) : (
-          filteredPages.map((page, index) => (
-            <div
-              key={page.id}
-              role="option"
-              aria-selected={focusedIndex === index}
-              data-page-item
-              tabIndex={-1}
-              className={cn(
-                'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50',
-                focusedIndex === index && 'ring-2 ring-ring/50 bg-accent/30',
-              )}
-            >
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={
-                  isStarred(page.id) ? t('pageBrowser.unstarPage') : t('pageBrowser.starPage')
-                }
-                className="star-toggle shrink-0 h-6 w-6 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-star data-[starred=true]:opacity-100 data-[starred=true]:text-star"
-                data-starred={isStarred(page.id)}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  handleToggleStar(page.id)
-                }}
-              >
-                <Star className="h-3.5 w-3.5" fill={isStarred(page.id) ? 'currentColor' : 'none'} />
-              </Button>
-              <button
-                type="button"
-                className="page-browser-item flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
-                onClick={() => onPageSelect?.(page.id, page.content ?? t('pageBrowser.untitled'))}
-              >
-                <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span
-                  className="page-browser-item-title truncate"
-                  title={page.content ?? t('pageBrowser.untitled')}
+          <div
+            style={{
+              height: `${virtualizer.getTotalSize()}px`,
+              width: '100%',
+              position: 'relative',
+            }}
+          >
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              if (isTreeMode) {
+                const node = treeNodes[virtualRow.index]
+                if (!node) return null
+                return (
+                  <div
+                    key={virtualRow.key}
+                    data-index={virtualRow.index}
+                    ref={virtualizer.measureElement}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                  >
+                    <PageTreeItem
+                      node={node}
+                      depth={0}
+                      onNavigate={(pageId, title) => onPageSelect?.(pageId, title)}
+                      onCreateUnder={handleCreateUnder}
+                      filterText={filterText.trim()}
+                      forceExpand={isFiltering}
+                      onDelete={(id, name) => setDeleteTarget({ id, name })}
+                    />
+                  </div>
+                )
+              }
+              const page = filteredPages[virtualRow.index]
+              if (!page) return null
+              const index = virtualRow.index
+              return (
+                <div
+                  key={virtualRow.key}
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
+                  role="option"
+                  aria-selected={focusedIndex === index}
+                  data-page-item
+                  tabIndex={-1}
+                  className={cn(
+                    'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50',
+                    focusedIndex === index && 'ring-2 ring-ring/50 bg-accent/30',
+                  )}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
                 >
-                  <HighlightMatch
-                    text={page.content ?? t('pageBrowser.untitled')}
-                    filterText={filterText.trim()}
-                  />
-                  {aliasMatchId === page.id &&
-                    filterText.trim() !== '' &&
-                    !(page.content ?? '').toLowerCase().includes(filterText.toLowerCase()) && (
-                      <span className="alias-badge text-xs text-muted-foreground">(alias)</span>
-                    )}
-                </span>
-              </button>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={t('pageBrowser.deleteButton')}
-                className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
-                disabled={deletingId === page.id}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setDeleteTarget({ id: page.id, name: page.content ?? t('pageBrowser.untitled') })
-                }}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          ))
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={
+                      isStarred(page.id) ? t('pageBrowser.unstarPage') : t('pageBrowser.starPage')
+                    }
+                    className="star-toggle shrink-0 h-6 w-6 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-star data-[starred=true]:opacity-100 data-[starred=true]:text-star"
+                    data-starred={isStarred(page.id)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleToggleStar(page.id)
+                    }}
+                  >
+                    <Star
+                      className="h-3.5 w-3.5"
+                      fill={isStarred(page.id) ? 'currentColor' : 'none'}
+                    />
+                  </Button>
+                  <button
+                    type="button"
+                    className="page-browser-item flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+                    onClick={() =>
+                      onPageSelect?.(page.id, page.content ?? t('pageBrowser.untitled'))
+                    }
+                  >
+                    <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span
+                      className="page-browser-item-title truncate"
+                      title={page.content ?? t('pageBrowser.untitled')}
+                    >
+                      <HighlightMatch
+                        text={page.content ?? t('pageBrowser.untitled')}
+                        filterText={filterText.trim()}
+                      />
+                      {aliasMatchId === page.id &&
+                        filterText.trim() !== '' &&
+                        !(page.content ?? '').toLowerCase().includes(filterText.toLowerCase()) && (
+                          <span className="alias-badge text-xs text-muted-foreground">(alias)</span>
+                        )}
+                    </span>
+                  </button>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={t('pageBrowser.deleteButton')}
+                    className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
+                    disabled={deletingId === page.id}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setDeleteTarget({
+                        id: page.id,
+                        name: page.content ?? t('pageBrowser.untitled'),
+                      })
+                    }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              )
+            })}
+          </div>
         )}
       </div>
 

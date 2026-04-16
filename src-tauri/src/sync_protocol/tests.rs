@@ -60,7 +60,10 @@ async fn get_local_heads_single_device() {
 
     let heads = get_local_heads(&pool).await.unwrap();
     assert_eq!(heads.len(), 1, "should have exactly one device head");
-    assert_eq!(heads[0].device_id, "device-A");
+    assert_eq!(
+        heads[0].device_id, "device-A",
+        "single device head should be device-A"
+    );
     assert_eq!(heads[0].seq, 3, "head seq should be 3");
     assert!(!heads[0].hash.is_empty(), "hash must not be empty");
 }
@@ -148,7 +151,7 @@ async fn compute_ops_to_send_partial() {
     };
     let ops = compute_ops_to_send(&pool, &[head2]).await.unwrap();
     assert_eq!(ops.len(), 1, "should send only seq 3");
-    assert_eq!(ops[0].seq, 3);
+    assert_eq!(ops[0].seq, 3, "only op sent should be seq 3");
 }
 
 #[tokio::test]
@@ -289,8 +292,16 @@ async fn complete_sync_updates_peer_refs() {
         after.synced_at.is_some(),
         "synced_at should be set after complete_sync"
     );
-    assert_eq!(after.last_hash.as_deref(), Some("hash-received"));
-    assert_eq!(after.last_sent_hash.as_deref(), Some("hash-sent"));
+    assert_eq!(
+        after.last_hash.as_deref(),
+        Some("hash-received"),
+        "last_hash should store received hash"
+    );
+    assert_eq!(
+        after.last_sent_hash.as_deref(),
+        Some("hash-sent"),
+        "last_sent_hash should store sent hash"
+    );
 }
 
 // ── OpTransfer roundtrip ────────────────────────────────────────────
@@ -310,19 +321,46 @@ async fn op_transfer_from_op_record_roundtrip() {
 
     // OpRecord → OpTransfer
     let transfer: OpTransfer = record.clone().into();
-    assert_eq!(transfer.device_id, record.device_id);
-    assert_eq!(transfer.seq, record.seq);
-    assert_eq!(transfer.hash, record.hash);
+    assert_eq!(
+        transfer.device_id, record.device_id,
+        "transfer device_id should match record"
+    );
+    assert_eq!(transfer.seq, record.seq, "transfer seq should match record");
+    assert_eq!(
+        transfer.hash, record.hash,
+        "transfer hash should match record"
+    );
 
     // OpTransfer → OpRecord
     let roundtripped: OpRecord = transfer.into();
-    assert_eq!(roundtripped.device_id, record.device_id);
-    assert_eq!(roundtripped.seq, record.seq);
-    assert_eq!(roundtripped.parent_seqs, record.parent_seqs);
-    assert_eq!(roundtripped.hash, record.hash);
-    assert_eq!(roundtripped.op_type, record.op_type);
-    assert_eq!(roundtripped.payload, record.payload);
-    assert_eq!(roundtripped.created_at, record.created_at);
+    assert_eq!(
+        roundtripped.device_id, record.device_id,
+        "roundtripped device_id should match original"
+    );
+    assert_eq!(
+        roundtripped.seq, record.seq,
+        "roundtripped seq should match original"
+    );
+    assert_eq!(
+        roundtripped.parent_seqs, record.parent_seqs,
+        "roundtripped parent_seqs should match original"
+    );
+    assert_eq!(
+        roundtripped.hash, record.hash,
+        "roundtripped hash should match original"
+    );
+    assert_eq!(
+        roundtripped.op_type, record.op_type,
+        "roundtripped op_type should match original"
+    );
+    assert_eq!(
+        roundtripped.payload, record.payload,
+        "roundtripped payload should match original"
+    );
+    assert_eq!(
+        roundtripped.created_at, record.created_at,
+        "roundtripped created_at should match original"
+    );
 }
 
 // ── SyncOrchestrator ────────────────────────────────────────────────
@@ -431,7 +469,11 @@ async fn orchestrator_full_flow_empty_databases() {
         matches!(msg1, SyncMessage::HeadExchange { ref heads } if heads.is_empty()),
         "empty DB should produce HeadExchange with no heads"
     );
-    assert_eq!(orch.session().state, SyncState::ExchangingHeads);
+    assert_eq!(
+        orch.session().state,
+        SyncState::ExchangingHeads,
+        "state should be ExchangingHeads after start"
+    );
 
     // 2. Receive remote HeadExchange (also empty) → produces OpBatch
     let msg2 = orch
@@ -445,7 +487,11 @@ async fn orchestrator_full_flow_empty_databases() {
         }
         other => panic!("expected OpBatch, got {other:?}"),
     }
-    assert_eq!(orch.session().state, SyncState::StreamingOps);
+    assert_eq!(
+        orch.session().state,
+        SyncState::StreamingOps,
+        "state should be StreamingOps after head exchange"
+    );
 
     // 3. Receive remote OpBatch (empty) → applies + merges → SyncComplete
     let msg3 = orch
@@ -459,8 +505,15 @@ async fn orchestrator_full_flow_empty_databases() {
         Some(SyncMessage::SyncComplete { .. }) => {}
         other => panic!("expected SyncComplete, got {other:?}"),
     }
-    assert_eq!(orch.session().state, SyncState::Complete);
-    assert!(orch.is_complete());
+    assert_eq!(
+        orch.session().state,
+        SyncState::Complete,
+        "state should be Complete after sync"
+    );
+    assert!(
+        orch.is_complete(),
+        "orchestrator should report complete after full flow"
+    );
 
     materializer.shutdown();
 }
@@ -483,8 +536,12 @@ async fn orchestrator_handles_error_message() {
     assert_eq!(
         orch.session().state,
         SyncState::Failed("something broke".into()),
+        "state should be Failed with the error message"
     );
-    assert!(!orch.is_complete());
+    assert!(
+        !orch.is_complete(),
+        "failed orchestrator should not report complete"
+    );
 
     materializer.shutdown();
 }
@@ -507,7 +564,11 @@ async fn orchestrator_handles_reset_required() {
         response.is_none(),
         "ResetRequired should not produce a response"
     );
-    assert_eq!(orch.session().state, SyncState::ResetRequired);
+    assert_eq!(
+        orch.session().state,
+        SyncState::ResetRequired,
+        "state should be ResetRequired after receiving reset message"
+    );
 
     materializer.shutdown();
 }
@@ -534,6 +595,7 @@ async fn orchestrator_rejects_op_batch_before_head_exchange() {
     assert_eq!(
         orch.session().state,
         SyncState::Failed("OpBatch received before HeadExchange".into()),
+        "state should be Failed with descriptive rejection reason"
     );
 
     materializer.shutdown();
@@ -558,7 +620,11 @@ async fn orchestrator_rejects_messages_in_terminal_state() {
     })
     .await
     .unwrap();
-    assert_eq!(orch.session().state, SyncState::Complete);
+    assert_eq!(
+        orch.session().state,
+        SyncState::Complete,
+        "should reach Complete state before terminal test"
+    );
 
     // Now try sending another HeadExchange — should fail
     let result = orch
@@ -587,7 +653,11 @@ async fn orchestrator_accepts_error_in_any_state() {
         })
         .await;
     assert!(result.is_ok(), "Error should be accepted in Idle state");
-    assert_eq!(orch.session().state, SyncState::Failed("test error".into()),);
+    assert_eq!(
+        orch.session().state,
+        SyncState::Failed("test error".into()),
+        "error in Idle should transition to Failed state"
+    );
 
     materializer.shutdown();
 }
@@ -1125,12 +1195,30 @@ async fn merge_no_conflicts_returns_zeros() {
         .await
         .unwrap();
 
-    assert_eq!(results.clean_merges, 0);
-    assert_eq!(results.conflicts, 0);
-    assert_eq!(results.already_up_to_date, 0);
-    assert_eq!(results.property_lww, 0);
-    assert_eq!(results.move_lww, 0);
-    assert_eq!(results.delete_edit_resurrect, 0);
+    assert_eq!(
+        results.clean_merges, 0,
+        "no clean merges expected with single device"
+    );
+    assert_eq!(
+        results.conflicts, 0,
+        "no conflicts expected with single device"
+    );
+    assert_eq!(
+        results.already_up_to_date, 0,
+        "no already-up-to-date expected with single device"
+    );
+    assert_eq!(
+        results.property_lww, 0,
+        "no property LWW expected with single device"
+    );
+    assert_eq!(
+        results.move_lww, 0,
+        "no move LWW expected with single device"
+    );
+    assert_eq!(
+        results.delete_edit_resurrect, 0,
+        "no resurrections expected with single device"
+    );
 
     materializer.shutdown();
 }
@@ -1205,7 +1293,11 @@ async fn orchestrator_accepts_op_batch_in_exchanging_heads() {
 
     // start() → ExchangingHeads
     let _start = orch.start().await.unwrap();
-    assert_eq!(orch.session().state, SyncState::ExchangingHeads);
+    assert_eq!(
+        orch.session().state,
+        SyncState::ExchangingHeads,
+        "state should be ExchangingHeads after start"
+    );
 
     // OpBatch should be accepted in ExchangingHeads
     let result = orch
@@ -1376,13 +1468,21 @@ async fn orchestrator_rejects_head_exchange_in_streaming_state() {
 
     // start() → ExchangingHeads
     let _start = orch.start().await.unwrap();
-    assert_eq!(orch.session().state, SyncState::ExchangingHeads);
+    assert_eq!(
+        orch.session().state,
+        SyncState::ExchangingHeads,
+        "state should be ExchangingHeads after start"
+    );
 
     // Receive remote HeadExchange → StreamingOps
     orch.handle_message(SyncMessage::HeadExchange { heads: vec![] })
         .await
         .unwrap();
-    assert_eq!(orch.session().state, SyncState::StreamingOps);
+    assert_eq!(
+        orch.session().state,
+        SyncState::StreamingOps,
+        "state should be StreamingOps after head exchange"
+    );
 
     // Send a SECOND HeadExchange in StreamingOps → should fail
     let result = orch
@@ -1528,6 +1628,7 @@ async fn orchestrator_rejects_unexpected_peer_device_id() {
     assert_eq!(
         orch.session().state,
         SyncState::Failed("peer device_id mismatch: expected expected-peer, got wrong-peer".into()),
+        "state should be Failed with peer mismatch details"
     );
 
     materializer.shutdown();
@@ -1603,8 +1704,15 @@ async fn orchestrator_responder_handles_head_exchange_in_idle() {
     }
 
     // State should be StreamingOps (waiting for initiator's SyncComplete)
-    assert_eq!(orch.session().state, SyncState::StreamingOps);
-    assert!(!orch.is_terminal());
+    assert_eq!(
+        orch.session().state,
+        SyncState::StreamingOps,
+        "responder should be in StreamingOps after sending OpBatch"
+    );
+    assert!(
+        !orch.is_terminal(),
+        "responder should not be terminal while waiting for initiator"
+    );
 
     materializer.shutdown();
 }
@@ -1631,7 +1739,11 @@ async fn orchestrator_responder_full_flow() {
         matches!(resp1, Some(SyncMessage::OpBatch { .. })),
         "first response should be OpBatch"
     );
-    assert_eq!(orch.session().state, SyncState::StreamingOps);
+    assert_eq!(
+        orch.session().state,
+        SyncState::StreamingOps,
+        "responder should be in StreamingOps after OpBatch reply"
+    );
 
     // 2. Receive SyncComplete from initiator → record sync → done
     let resp2 = orch
@@ -1645,8 +1757,14 @@ async fn orchestrator_responder_full_flow() {
         "SyncComplete should not produce a response"
     );
 
-    assert!(orch.is_complete());
-    assert!(orch.is_terminal());
+    assert!(
+        orch.is_complete(),
+        "responder should be complete after receiving SyncComplete"
+    );
+    assert!(
+        orch.is_terminal(),
+        "responder should be terminal after full flow"
+    );
 
     materializer.shutdown();
 }
@@ -1714,7 +1832,11 @@ async fn opbatch_streaming_sends_in_chunks() {
     );
 
     // Total ops sent should be 2500
-    assert_eq!(orch.session().ops_sent, 2500);
+    assert_eq!(
+        orch.session().ops_sent,
+        2500,
+        "total ops sent should be 2500"
+    );
 
     materializer.shutdown();
 }
@@ -1758,7 +1880,7 @@ async fn opbatch_streaming_single_batch_for_small_logs() {
         "no more batches for small log"
     );
 
-    assert_eq!(orch.session().ops_sent, 500);
+    assert_eq!(orch.session().ops_sent, 500, "total ops sent should be 500");
 
     materializer.shutdown();
 }
@@ -1824,7 +1946,10 @@ async fn receiver_accumulates_multi_batch_ops() {
         5,
         "all 5 ops should be counted as received"
     );
-    assert!(orch.is_complete());
+    assert!(
+        orch.is_complete(),
+        "orchestrator should be complete after receiving all batches"
+    );
 
     // Verify ops were actually inserted into the local database
     let local_ops = op_log::get_ops_since(&local_pool, "remote-dev", 0)
@@ -2395,7 +2520,10 @@ fn json_shape_snapshot_offer_has_size_bytes() {
         size_bytes: 999_999,
     };
     let json: serde_json::Value = serde_json::to_value(&msg).expect("serialize SnapshotOffer");
-    assert_eq!(json["type"], "SnapshotOffer");
+    assert_eq!(
+        json["type"], "SnapshotOffer",
+        "SnapshotOffer must have correct type tag"
+    );
     assert_eq!(
         json["size_bytes"], 999_999,
         "SnapshotOffer must contain size_bytes field"
@@ -2408,7 +2536,10 @@ fn json_shape_sync_complete_has_last_hash() {
         last_hash: "xyz789".into(),
     };
     let json: serde_json::Value = serde_json::to_value(&msg).expect("serialize SyncComplete");
-    assert_eq!(json["type"], "SyncComplete");
+    assert_eq!(
+        json["type"], "SyncComplete",
+        "SyncComplete must have correct type tag"
+    );
     assert_eq!(
         json["last_hash"], "xyz789",
         "SyncComplete must contain last_hash field"
@@ -2421,7 +2552,7 @@ fn json_shape_error_has_message() {
         message: "something broke".into(),
     };
     let json: serde_json::Value = serde_json::to_value(&msg).expect("serialize Error");
-    assert_eq!(json["type"], "Error");
+    assert_eq!(json["type"], "Error", "Error must have correct type tag");
     assert_eq!(
         json["message"], "something broke",
         "Error must contain message field"
@@ -2434,7 +2565,10 @@ fn json_shape_reset_required_has_reason() {
         reason: "compacted".into(),
     };
     let json: serde_json::Value = serde_json::to_value(&msg).expect("serialize ResetRequired");
-    assert_eq!(json["type"], "ResetRequired");
+    assert_eq!(
+        json["type"], "ResetRequired",
+        "ResetRequired must have correct type tag"
+    );
     assert_eq!(
         json["reason"], "compacted",
         "ResetRequired must contain reason field"
@@ -2737,7 +2871,11 @@ async fn orchestrator_errors_on_head_exchange_during_streaming_ops() {
 
     // start() → ExchangingHeads
     let _start = orch.start().await.unwrap();
-    assert_eq!(orch.session().state, SyncState::ExchangingHeads);
+    assert_eq!(
+        orch.session().state,
+        SyncState::ExchangingHeads,
+        "state should be ExchangingHeads after start"
+    );
 
     // Receive remote HeadExchange (empty — both sides have no data) →
     // transitions to StreamingOps
@@ -2780,13 +2918,21 @@ async fn orchestrator_errors_on_op_batch_after_is_last() {
 
     // 1. start() → ExchangingHeads
     let _start = orch.start().await.unwrap();
-    assert_eq!(orch.session().state, SyncState::ExchangingHeads);
+    assert_eq!(
+        orch.session().state,
+        SyncState::ExchangingHeads,
+        "state should be ExchangingHeads after start"
+    );
 
     // 2. Receive HeadExchange → StreamingOps (returns our OpBatch)
     orch.handle_message(SyncMessage::HeadExchange { heads: vec![] })
         .await
         .unwrap();
-    assert_eq!(orch.session().state, SyncState::StreamingOps);
+    assert_eq!(
+        orch.session().state,
+        SyncState::StreamingOps,
+        "state should be StreamingOps after head exchange"
+    );
 
     // 3. Receive OpBatch with is_last=true → applies, merges, → Complete
     let response = orch

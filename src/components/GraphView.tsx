@@ -2,8 +2,9 @@
  * GraphView — force-directed graph of page relationships (F-33).
  *
  * Nodes = pages, edges = [[links]] between pages.
- * Uses d3-force for simulation, SVG for rendering.
- * Click node to navigate to page.
+ * Force simulation runs in a WebWorker (PERF-9b) with a main-thread
+ * fallback when Workers are unavailable.  SVG rendering, zoom, and drag
+ * remain on the main thread.
  */
 
 import { drag } from 'd3-drag'
@@ -26,6 +27,7 @@ import { useTranslation } from 'react-i18next'
 import { listBlocks, listPageLinks } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
 import { logger } from '../lib/logger'
+import type { WorkerOutboundMessage } from '../workers/graph-worker-types'
 import { EmptyState } from './EmptyState'
 import { LoadingSkeleton } from './LoadingSkeleton'
 import { Badge } from './ui/badge'
@@ -157,19 +159,11 @@ export function GraphView(): React.ReactElement {
     const simNodes: GraphNode[] = nodes.map((n) => ({ ...n }))
     const simEdges: GraphEdge[] = edges.map((e) => ({ ...e }))
 
-    // Create simulation
-    const sim = forceSimulation(simNodes)
-      .force(
-        'link',
-        forceLink<GraphNode, GraphEdge>(simEdges)
-          .id((d) => d.id)
-          .distance(60),
-      )
-      .force('charge', forceManyBody().strength(-100))
-      .force('center', forceCenter(width / 2, height / 2))
-      .force('collide', forceCollide(20))
-      .force('x', forceX(width / 2).strength(0.05))
-      .force('y', forceY(height / 2).strength(0.05))
+    // Build a lookup map for quick position updates from the worker
+    const nodeById = new Map<string, GraphNode>()
+    for (const n of simNodes) {
+      nodeById.set(n.id, n)
+    }
 
     // Draw edges
     const link = g
@@ -290,24 +284,42 @@ export function GraphView(): React.ReactElement {
       select(this).select('circle:nth-child(2)').attr('r', 8)
     })
 
-    // Drag behavior
-    const dragBehavior = drag<SVGGElement, GraphNode>()
-      .on('start', (event, d) => {
-        if (!event.active) sim.alpha(0.3).restart()
-        d.fx = d.x
-        d.fy = d.y
-      })
-      .on('drag', (event, d) => {
-        d.fx = event.x
-        d.fy = event.y
-      })
-      .on('end', (event, d) => {
-        if (!event.active) sim.alpha(0).restart()
-        d.fx = null
-        d.fy = null
-      })
+    // ── Helper: apply positions to SVG elements ──────────────────────
+    function applyPositions() {
+      link
+        .attr('x1', (d) => (d.source as GraphNode).x ?? 0)
+        .attr('y1', (d) => (d.source as GraphNode).y ?? 0)
+        .attr('x2', (d) => (d.target as GraphNode).x ?? 0)
+        .attr('y2', (d) => (d.target as GraphNode).y ?? 0)
 
-    node.call(dragBehavior)
+      node.attr('transform', (d) => `translate(${d.x ?? 0},${d.y ?? 0})`)
+    }
+
+    // ── Helper: update simNodes from worker positions ────────────────
+    function applyWorkerPositions(positions: Array<{ id: string; x: number; y: number }>) {
+      for (const pos of positions) {
+        const n = nodeById.get(pos.id)
+        if (n) {
+          n.x = pos.x
+          n.y = pos.y
+        }
+      }
+      // Also propagate into edge source/target objects (d3 resolves string refs
+      // into object refs after forceLink runs, but when the worker resolves them
+      // we still have strings on the main thread).  To keep applyPositions simple
+      // we update edges to point at the simNode objects.
+      for (const e of simEdges) {
+        if (typeof e.source === 'string') {
+          const src = nodeById.get(e.source)
+          if (src) e.source = src
+        }
+        if (typeof e.target === 'string') {
+          const tgt = nodeById.get(e.target)
+          if (tgt) e.target = tgt
+        }
+      }
+      applyPositions()
+    }
 
     // Zoom behavior
     const zoomBehavior: ZoomBehavior<SVGSVGElement, unknown> = zoom<SVGSVGElement, unknown>()
@@ -338,19 +350,131 @@ export function GraphView(): React.ReactElement {
 
     // Respect prefers-reduced-motion (UX-104)
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+    // ── WebWorker path (PERF-9b) ─────────────────────────────────────
+    const hasWorkerSupport = typeof Worker !== 'undefined'
+
+    if (hasWorkerSupport) {
+      const worker = new Worker(new URL('../workers/graph-worker.ts', import.meta.url), {
+        type: 'module',
+      })
+
+      let tickCount = 0
+
+      worker.addEventListener('message', (evt: MessageEvent<WorkerOutboundMessage>) => {
+        const msg = evt.data
+
+        if (msg.type === 'tick') {
+          tickCount++
+          applyWorkerPositions(msg.positions)
+
+          // prefers-reduced-motion: stop after 300 ticks
+          if (prefersReducedMotion && tickCount >= 300) {
+            worker.postMessage({ type: 'stop' })
+          }
+        } else if (msg.type === 'done') {
+          applyWorkerPositions(msg.positions)
+        }
+      })
+
+      // Send initial data to the worker
+      worker.postMessage({
+        type: 'start',
+        nodes: simNodes.map((n) => ({ id: n.id, label: n.label })),
+        edges: simEdges.map((e) => ({
+          source: typeof e.source === 'string' ? e.source : (e.source as GraphNode).id,
+          target: typeof e.target === 'string' ? e.target : (e.target as GraphNode).id,
+          ref_count: e.ref_count,
+        })),
+        width,
+        height,
+      })
+
+      // Drag behavior — communicates with the worker
+      const dragBehavior = drag<SVGGElement, GraphNode>()
+        .on('start', (event, d) => {
+          if (!event.active) {
+            worker.postMessage({
+              type: 'drag',
+              nodeId: d.id,
+              x: event.x,
+              y: event.y,
+              phase: 'start' as const,
+            })
+          }
+          d.fx = d.x
+          d.fy = d.y
+        })
+        .on('drag', (event, d) => {
+          worker.postMessage({
+            type: 'drag',
+            nodeId: d.id,
+            x: event.x,
+            y: event.y,
+            phase: 'drag' as const,
+          })
+          d.fx = event.x
+          d.fy = event.y
+        })
+        .on('end', (event, d) => {
+          if (!event.active) {
+            worker.postMessage({
+              type: 'drag',
+              nodeId: d.id,
+              x: event.x,
+              y: event.y,
+              phase: 'end' as const,
+            })
+          }
+          d.fx = null
+          d.fy = null
+        })
+
+      node.call(dragBehavior)
+
+      return () => {
+        worker.terminate()
+        svg.removeEventListener('keydown', handleZoomKey)
+      }
+    }
+
+    // ── Fallback: main-thread simulation ─────────────────────────────
+    const sim = forceSimulation(simNodes)
+      .force(
+        'link',
+        forceLink<GraphNode, GraphEdge>(simEdges)
+          .id((d) => d.id)
+          .distance(60),
+      )
+      .force('charge', forceManyBody().strength(-100))
+      .force('center', forceCenter(width / 2, height / 2))
+      .force('collide', forceCollide(20))
+      .force('x', forceX(width / 2).strength(0.05))
+      .force('y', forceY(height / 2).strength(0.05))
+
+    // Drag behavior (main-thread fallback)
+    const dragBehavior = drag<SVGGElement, GraphNode>()
+      .on('start', (event, d) => {
+        if (!event.active) sim.alpha(0.3).restart()
+        d.fx = d.x
+        d.fy = d.y
+      })
+      .on('drag', (event, d) => {
+        d.fx = event.x
+        d.fy = event.y
+      })
+      .on('end', (event, d) => {
+        if (!event.active) sim.alpha(0).restart()
+        d.fx = null
+        d.fy = null
+      })
+
+    node.call(dragBehavior)
+
     if (prefersReducedMotion) {
       sim.alphaDecay(1)
       sim.tick(300)
-
-      // Render final static layout once
-      link
-        .attr('x1', (d) => (d.source as GraphNode).x ?? 0)
-        .attr('y1', (d) => (d.source as GraphNode).y ?? 0)
-        .attr('x2', (d) => (d.target as GraphNode).x ?? 0)
-        .attr('y2', (d) => (d.target as GraphNode).y ?? 0)
-
-      node.attr('transform', (d) => `translate(${d.x ?? 0},${d.y ?? 0})`)
-
+      applyPositions()
       sim.stop()
       return () => {
         sim.stop()
@@ -360,13 +484,7 @@ export function GraphView(): React.ReactElement {
 
     // Tick handler — update positions
     sim.on('tick', () => {
-      link
-        .attr('x1', (d) => (d.source as GraphNode).x ?? 0)
-        .attr('y1', (d) => (d.source as GraphNode).y ?? 0)
-        .attr('x2', (d) => (d.target as GraphNode).x ?? 0)
-        .attr('y2', (d) => (d.target as GraphNode).y ?? 0)
-
-      node.attr('transform', (d) => `translate(${d.x ?? 0},${d.y ?? 0})`)
+      applyPositions()
     })
 
     return () => {

@@ -20,6 +20,27 @@ import { axe } from 'vitest-axe'
 import { emptyPage, makePage } from '../../__tests__/fixtures'
 import { PageBrowser } from '../PageBrowser'
 
+// Mock @tanstack/react-virtual to render all items (jsdom has zero-height containers)
+vi.mock('@tanstack/react-virtual', () => {
+  const scrollToIndex = vi.fn()
+  const measureElement = () => {}
+  return {
+    useVirtualizer: (opts: { count: number; estimateSize: () => number }) => ({
+      getVirtualItems: () =>
+        Array.from({ length: opts.count }, (_, i) => ({
+          index: i,
+          key: i,
+          start: i * opts.estimateSize(),
+          size: opts.estimateSize(),
+          end: (i + 1) * opts.estimateSize(),
+        })),
+      getTotalSize: () => opts.count * opts.estimateSize(),
+      scrollToIndex,
+      measureElement,
+    }),
+  }
+})
+
 vi.mock('sonner', () => ({
   toast: {
     error: vi.fn(),

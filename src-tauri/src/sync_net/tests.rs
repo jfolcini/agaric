@@ -60,9 +60,12 @@ fn sync_message_roundtrip_head_exchange() {
     let parsed: SyncMessage = serde_json::from_str(&json).unwrap();
     match parsed {
         SyncMessage::HeadExchange { heads } => {
-            assert_eq!(heads.len(), 1);
-            assert_eq!(heads[0].device_id, "dev-1");
-            assert_eq!(heads[0].seq, 42);
+            assert_eq!(heads.len(), 1, "should contain exactly one device head");
+            assert_eq!(
+                heads[0].device_id, "dev-1",
+                "device_id should survive roundtrip"
+            );
+            assert_eq!(heads[0].seq, 42, "seq should survive roundtrip");
         }
         other => panic!("expected HeadExchange, got {other:?}"),
     }
@@ -86,9 +89,12 @@ fn sync_message_roundtrip_op_batch() {
     let parsed: SyncMessage = serde_json::from_str(&json).unwrap();
     match parsed {
         SyncMessage::OpBatch { ops, is_last } => {
-            assert_eq!(ops.len(), 1);
-            assert_eq!(ops[0].op_type, "create_block");
-            assert!(is_last);
+            assert_eq!(ops.len(), 1, "should contain exactly one op transfer");
+            assert_eq!(
+                ops[0].op_type, "create_block",
+                "op_type should survive roundtrip"
+            );
+            assert!(is_last, "is_last flag should survive roundtrip");
         }
         other => panic!("expected OpBatch, got {other:?}"),
     }
@@ -103,7 +109,10 @@ fn sync_message_roundtrip_reset_required() {
     let parsed: SyncMessage = serde_json::from_str(&json).unwrap();
     match parsed {
         SyncMessage::ResetRequired { reason } => {
-            assert_eq!(reason, "hash divergence");
+            assert_eq!(
+                reason, "hash divergence",
+                "reason string should survive roundtrip"
+            );
         }
         other => panic!("expected ResetRequired, got {other:?}"),
     }
@@ -118,7 +127,7 @@ fn sync_message_roundtrip_sync_complete() {
     let parsed: SyncMessage = serde_json::from_str(&json).unwrap();
     match parsed {
         SyncMessage::SyncComplete { last_hash } => {
-            assert_eq!(last_hash, "aaa");
+            assert_eq!(last_hash, "aaa", "last_hash should survive roundtrip");
         }
         other => panic!("expected SyncComplete, got {other:?}"),
     }
@@ -148,9 +157,12 @@ fn discovered_peer_fields() {
         addresses: vec!["192.168.1.5".parse().unwrap()],
         port: 9876,
     };
-    assert_eq!(peer.device_id, "abc-123");
-    assert_eq!(peer.addresses.len(), 1);
-    assert_eq!(peer.port, 9876);
+    assert_eq!(
+        peer.device_id, "abc-123",
+        "device_id should match constructed value"
+    );
+    assert_eq!(peer.addresses.len(), 1, "should contain one address");
+    assert_eq!(peer.port, 9876, "port should match constructed value");
 }
 
 // -- 5. Server / client round-trip ------------------------------------
@@ -228,7 +240,10 @@ fn sync_message_roundtrip_error() {
     let parsed: SyncMessage = serde_json::from_str(&json).unwrap();
     match parsed {
         SyncMessage::Error { message } => {
-            assert_eq!(message, "unexpected protocol state");
+            assert_eq!(
+                message, "unexpected protocol state",
+                "error message should survive roundtrip"
+            );
         }
         other => panic!("expected Error, got {other:?}"),
     }
@@ -696,8 +711,15 @@ async fn mtls_full_handshake_both_sides_see_peer_identity() {
     let msg: SyncMessage = client_conn.recv_json().await.unwrap();
     match msg {
         SyncMessage::HeadExchange { heads } => {
-            assert_eq!(heads.len(), 1);
-            assert_eq!(heads[0].device_id, "alice");
+            assert_eq!(
+                heads.len(),
+                1,
+                "server-to-client message should contain one head"
+            );
+            assert_eq!(
+                heads[0].device_id, "alice",
+                "server head device_id should be alice"
+            );
         }
         other => panic!("expected HeadExchange from server, got {other:?}"),
     }
@@ -717,8 +739,15 @@ async fn mtls_full_handshake_both_sides_see_peer_identity() {
     let msg: SyncMessage = server_conn.recv_json().await.unwrap();
     match msg {
         SyncMessage::HeadExchange { heads } => {
-            assert_eq!(heads.len(), 1);
-            assert_eq!(heads[0].device_id, "bob");
+            assert_eq!(
+                heads.len(),
+                1,
+                "client-to-server message should contain one head"
+            );
+            assert_eq!(
+                heads[0].device_id, "bob",
+                "client head device_id should be bob"
+            );
         }
         other => panic!("expected HeadExchange from client, got {other:?}"),
     }
@@ -788,7 +817,10 @@ async fn mtls_reconnection_with_correct_cert_hash_succeeds() {
     let msg: SyncMessage = client_conn2.recv_json().await.unwrap();
     match msg {
         SyncMessage::SyncComplete { last_hash } => {
-            assert_eq!(last_hash, "hash_a");
+            assert_eq!(
+                last_hash, "hash_a",
+                "pinned reconnection should deliver correct message"
+            );
         }
         other => panic!("expected SyncComplete, got {other:?}"),
     }
@@ -854,7 +886,10 @@ async fn mtls_tofu_store_and_verify_round_trip() {
         .peer_cert_hash()
         .expect("should capture server cert hash on first use");
     tofu_store.insert("device-a".to_string(), stored_hash.clone());
-    assert_eq!(stored_hash, cert_device_a_v1.cert_hash);
+    assert_eq!(
+        stored_hash, cert_device_a_v1.cert_hash,
+        "TOFU stored hash should match server cert"
+    );
 
     conn.close().await.ok();
     server_v1.shutdown().await;

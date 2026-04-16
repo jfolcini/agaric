@@ -79,23 +79,29 @@ async fn insert_property_date(pool: &SqlitePool, block_id: &str, key: &str, valu
 async fn new_creates_materializer_with_functional_queues() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool);
-    assert!(mat
-        .try_enqueue_background(MaterializeTask::RebuildTagsCache)
-        .is_ok());
+    assert!(
+        mat.try_enqueue_background(MaterializeTask::RebuildTagsCache)
+            .is_ok(),
+        "new materializer should accept background tasks"
+    );
 }
 #[tokio::test]
 async fn clone_shares_queues_both_can_enqueue() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool);
     let mat2 = mat.clone();
-    assert!(mat
-        .enqueue_background(MaterializeTask::RebuildTagsCache)
-        .await
-        .is_ok());
-    assert!(mat2
-        .enqueue_background(MaterializeTask::RebuildPagesCache)
-        .await
-        .is_ok());
+    assert!(
+        mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await
+            .is_ok(),
+        "original clone should enqueue successfully"
+    );
+    assert!(
+        mat2.enqueue_background(MaterializeTask::RebuildPagesCache)
+            .await
+            .is_ok(),
+        "second clone should enqueue successfully"
+    );
 }
 #[tokio::test]
 async fn dispatch_op_create_block_page() {
@@ -120,8 +126,8 @@ async fn dispatch_op_create_block_page() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(row.0, "page");
-    assert_eq!(row.1, "My page");
+    assert_eq!(row.0, "page", "block_type should be page");
+    assert_eq!(row.1, "My page", "content should match created page title");
 }
 #[tokio::test]
 async fn dispatch_op_create_block_tag() {
@@ -146,8 +152,8 @@ async fn dispatch_op_create_block_tag() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(row.0, "tag");
-    assert_eq!(row.1, "urgent");
+    assert_eq!(row.0, "tag", "block_type should be tag");
+    assert_eq!(row.1, "urgent", "content should match created tag name");
 }
 #[tokio::test]
 async fn dispatch_op_create_block_content() {
@@ -172,8 +178,11 @@ async fn dispatch_op_create_block_content() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(row.0, "content");
-    assert_eq!(row.1, "just content");
+    assert_eq!(row.0, "content", "block_type should be content");
+    assert_eq!(
+        row.1, "just content",
+        "content should match created block text"
+    );
 }
 #[tokio::test]
 async fn dispatch_op_edit_block() {
@@ -206,7 +215,7 @@ async fn dispatch_op_edit_block() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(row.0, "edited");
+    assert_eq!(row.0, "edited", "content should be updated after EditBlock");
 }
 #[tokio::test]
 async fn dispatch_op_delete_block() {
@@ -353,7 +362,10 @@ async fn dispatch_op_set_property() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(row.0, "2025-01-15");
+    assert_eq!(
+        row.0, "2025-01-15",
+        "value_date should match the set property date"
+    );
 }
 #[tokio::test]
 async fn dispatch_op_delete_property() {
@@ -402,8 +414,12 @@ async fn dispatch_op_move_block() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(row.0.as_deref(), Some("BLK-PARENT"));
-    assert_eq!(row.1, 2);
+    assert_eq!(
+        row.0.as_deref(),
+        Some("BLK-PARENT"),
+        "parent_id should be set after MoveBlock"
+    );
+    assert_eq!(row.1, 2, "position should be updated after MoveBlock");
 }
 #[tokio::test]
 async fn dispatch_op_add_attachment() {
@@ -430,8 +446,11 @@ async fn dispatch_op_add_attachment() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(row.0, "photo.png");
-    assert_eq!(row.1, "image/png");
+    assert_eq!(row.0, "photo.png", "filename should match added attachment");
+    assert_eq!(
+        row.1, "image/png",
+        "mime_type should match added attachment"
+    );
 }
 #[tokio::test]
 async fn dispatch_op_delete_attachment() {
@@ -459,10 +478,12 @@ async fn dispatch_op_delete_attachment() {
 async fn dispatch_op_unknown_op_type() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool);
-    assert!(mat
-        .dispatch_op(&fake_op_record("unknown_future_op", "{}"))
-        .await
-        .is_ok());
+    assert!(
+        mat.dispatch_op(&fake_op_record("unknown_future_op", "{}"))
+            .await
+            .is_ok(),
+        "unknown op type should not cause an error"
+    );
 }
 #[tokio::test]
 async fn dispatch_background_edit() {
@@ -506,38 +527,48 @@ async fn dispatch_background_delete() {
 async fn enqueue_foreground_any() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool);
-    assert!(mat
-        .enqueue_foreground(MaterializeTask::RebuildTagsCache)
-        .await
-        .is_ok());
+    assert!(
+        mat.enqueue_foreground(MaterializeTask::RebuildTagsCache)
+            .await
+            .is_ok(),
+        "should enqueue foreground task successfully"
+    );
 }
 #[tokio::test]
 async fn enqueue_background_all() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool);
-    assert!(mat
-        .enqueue_background(MaterializeTask::RebuildTagsCache)
-        .await
-        .is_ok());
-    assert!(mat
-        .enqueue_background(MaterializeTask::RebuildPagesCache)
-        .await
-        .is_ok());
-    assert!(mat
-        .enqueue_background(MaterializeTask::ReindexBlockLinks {
+    assert!(
+        mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await
+            .is_ok(),
+        "should enqueue RebuildTagsCache in background"
+    );
+    assert!(
+        mat.enqueue_background(MaterializeTask::RebuildPagesCache)
+            .await
+            .is_ok(),
+        "should enqueue RebuildPagesCache in background"
+    );
+    assert!(
+        mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
             block_id: "blk-x".into()
         })
         .await
-        .is_ok());
+        .is_ok(),
+        "should enqueue ReindexBlockLinks in background"
+    );
 }
 #[tokio::test]
 async fn try_enqueue_background_drops_when_full() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool);
     for _ in 0..2000 {
-        assert!(mat
-            .try_enqueue_background(MaterializeTask::RebuildTagsCache)
-            .is_ok());
+        assert!(
+            mat.try_enqueue_background(MaterializeTask::RebuildTagsCache)
+                .is_ok(),
+            "try_enqueue should accept tasks when not full"
+        );
     }
 }
 #[tokio::test]
@@ -546,25 +577,31 @@ async fn try_enqueue_after_shutdown_err() {
     let mat = Materializer::new(pool);
     mat.shutdown();
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(mat
-        .try_enqueue_background(MaterializeTask::RebuildTagsCache)
-        .is_err());
+    assert!(
+        mat.try_enqueue_background(MaterializeTask::RebuildTagsCache)
+            .is_err(),
+        "try_enqueue should fail after shutdown"
+    );
 }
 #[tokio::test]
 async fn shutdown_stops_consumers() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool);
-    assert!(mat
-        .enqueue_background(MaterializeTask::RebuildTagsCache)
-        .await
-        .is_ok());
+    assert!(
+        mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await
+            .is_ok(),
+        "should enqueue before shutdown"
+    );
     mat.flush_background().await.unwrap();
     mat.shutdown();
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(mat
-        .enqueue_background(MaterializeTask::RebuildTagsCache)
-        .await
-        .is_err());
+    assert!(
+        mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await
+            .is_err(),
+        "enqueue should fail after shutdown"
+    );
 }
 #[tokio::test]
 async fn shutdown_when_full() {
@@ -575,13 +612,17 @@ async fn shutdown_when_full() {
     }
     mat.shutdown();
     tokio::time::sleep(Duration::from_millis(150)).await;
-    assert!(mat
-        .try_enqueue_background(MaterializeTask::RebuildTagsCache)
-        .is_err());
-    assert!(mat
-        .enqueue_foreground(MaterializeTask::RebuildTagsCache)
-        .await
-        .is_err());
+    assert!(
+        mat.try_enqueue_background(MaterializeTask::RebuildTagsCache)
+            .is_err(),
+        "try_enqueue should fail after shutdown when full"
+    );
+    assert!(
+        mat.enqueue_foreground(MaterializeTask::RebuildTagsCache)
+            .await
+            .is_err(),
+        "foreground enqueue should fail after shutdown when full"
+    );
 }
 #[tokio::test]
 async fn metrics_bg() {
@@ -594,7 +635,10 @@ async fn metrics_bg() {
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
-    assert!(mat.metrics().bg_processed.load(AtomicOrdering::Relaxed) >= 1);
+    assert!(
+        mat.metrics().bg_processed.load(AtomicOrdering::Relaxed) >= 1,
+        "should have processed at least one background task"
+    );
 }
 #[tokio::test]
 async fn metrics_fg() {
@@ -615,7 +659,10 @@ async fn metrics_fg() {
         .await
         .unwrap();
     mat.flush_foreground().await.unwrap();
-    assert!(mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 1);
+    assert!(
+        mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 1,
+        "should have processed at least one foreground task"
+    );
 }
 #[tokio::test]
 async fn consumer_survives() {
@@ -633,10 +680,12 @@ async fn consumer_survives() {
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
-    assert!(mat
-        .enqueue_background(MaterializeTask::RebuildTagsCache)
-        .await
-        .is_ok());
+    assert!(
+        mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await
+            .is_ok(),
+        "consumer should survive processing multiple tasks"
+    );
 }
 #[tokio::test]
 async fn flush_fg() {
@@ -657,7 +706,10 @@ async fn flush_fg() {
         .await
         .unwrap();
     mat.flush_foreground().await.unwrap();
-    assert!(mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 1);
+    assert!(
+        mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 1,
+        "flush_foreground should process at least one task"
+    );
 }
 #[tokio::test]
 async fn flush_bg() {
@@ -667,7 +719,10 @@ async fn flush_bg() {
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
-    assert!(mat.metrics().bg_processed.load(AtomicOrdering::Relaxed) >= 1);
+    assert!(
+        mat.metrics().bg_processed.load(AtomicOrdering::Relaxed) >= 1,
+        "flush_background should process at least one task"
+    );
 }
 #[tokio::test]
 async fn flush_both() {
@@ -691,8 +746,14 @@ async fn flush_both() {
         .await
         .unwrap();
     mat.flush().await.unwrap();
-    assert!(mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 1);
-    assert!(mat.metrics().bg_processed.load(AtomicOrdering::Relaxed) >= 1);
+    assert!(
+        mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 1,
+        "flush should process foreground tasks"
+    );
+    assert!(
+        mat.metrics().bg_processed.load(AtomicOrdering::Relaxed) >= 1,
+        "flush should process background tasks"
+    );
 }
 
 #[test]
@@ -705,12 +766,17 @@ fn dedup_barrier() {
         MaterializeTask::RebuildTagsCache,
         MaterializeTask::Barrier(n2),
     ]);
-    assert_eq!(d.len(), 3);
+    assert_eq!(
+        d.len(),
+        3,
+        "dedup should keep one RebuildTagsCache and both barriers"
+    );
     assert_eq!(
         d.iter()
             .filter(|t| matches!(t, MaterializeTask::Barrier(_)))
             .count(),
-        2
+        2,
+        "barriers should never be deduped"
     );
 }
 #[test]
@@ -723,7 +789,11 @@ fn dedup_cache() {
         MaterializeTask::RebuildPagesCache,
         MaterializeTask::RebuildTagsCache,
     ]);
-    assert_eq!(d.len(), 3);
+    assert_eq!(
+        d.len(),
+        3,
+        "dedup should collapse duplicate cache rebuild tasks"
+    );
 }
 #[test]
 fn dedup_block_links() {
@@ -742,7 +812,11 @@ fn dedup_block_links() {
             block_id: "c".into(),
         },
     ]);
-    assert_eq!(d.len(), 4);
+    assert_eq!(
+        d.len(),
+        4,
+        "dedup should collapse same block_id reindex but keep distinct ones"
+    );
 }
 #[test]
 fn dedup_apply_op() {
@@ -754,23 +828,32 @@ fn dedup_apply_op() {
         MaterializeTask::RebuildTagsCache,
         MaterializeTask::ApplyOp(r),
     ]);
-    assert_eq!(d.len(), 4);
+    assert_eq!(
+        d.len(),
+        4,
+        "dedup should keep all ApplyOp tasks and collapse duplicate cache tasks"
+    );
     assert_eq!(
         d.iter()
             .filter(|t| matches!(t, MaterializeTask::ApplyOp(_)))
             .count(),
-        3
+        3,
+        "ApplyOp tasks should never be deduped"
     );
 }
 #[test]
 fn dedup_empty() {
-    assert!(dedup_tasks(vec![]).is_empty());
+    assert!(
+        dedup_tasks(vec![]).is_empty(),
+        "dedup of empty input should be empty"
+    );
 }
 #[test]
 fn dedup_single() {
     assert_eq!(
         dedup_tasks(vec![MaterializeTask::RebuildTagsCache]).len(),
-        1
+        1,
+        "dedup of single task should return one task"
     );
 }
 #[test]
@@ -788,7 +871,8 @@ fn dedup_same_reindex() {
             }
         ])
         .len(),
-        1
+        1,
+        "identical reindex tasks should dedup to one"
     );
 }
 #[test]
@@ -812,7 +896,8 @@ fn dedup_fts_update() {
             }
         ])
         .len(),
-        3
+        3,
+        "duplicate fts update tasks for same block_id should be collapsed"
     );
 }
 #[test]
@@ -830,7 +915,8 @@ fn dedup_fts_remove() {
             }
         ])
         .len(),
-        2
+        2,
+        "duplicate fts remove tasks for same block_id should be collapsed"
     );
 }
 #[test]
@@ -848,7 +934,8 @@ fn dedup_fts_reindex_ref() {
             }
         ])
         .len(),
-        2
+        2,
+        "duplicate fts reindex references for same block_id should be collapsed"
     );
 }
 #[test]
@@ -863,7 +950,8 @@ fn dedup_fts_update_remove() {
             }
         ])
         .len(),
-        2
+        2,
+        "update and remove for same block should both be kept as different task types"
     );
 }
 #[test]
@@ -876,7 +964,11 @@ fn dedup_fts_optimize() {
         MaterializeTask::RebuildTagsCache,
         MaterializeTask::FtsOptimize,
     ]);
-    assert_eq!(d.len(), 3);
+    assert_eq!(
+        d.len(),
+        3,
+        "duplicate FtsOptimize and RebuildFtsIndex should each collapse to one"
+    );
 }
 #[test]
 fn dedup_hash() {
@@ -899,7 +991,8 @@ fn dedup_hash() {
             }
         ])
         .len(),
-        3
+        3,
+        "dedup should collapse by task type and block_id together"
     );
 }
 
@@ -920,8 +1013,15 @@ fn batch_groups() {
         )),
         MaterializeTask::RebuildTagsCache,
     ]);
-    assert_eq!(groups.len(), 3);
-    assert!(groups.last().unwrap().0.is_none());
+    assert_eq!(
+        groups.len(),
+        3,
+        "should produce 3 groups: blk-A, blk-B, and ungrouped"
+    );
+    assert!(
+        groups.last().unwrap().0.is_none(),
+        "last group should have no block_id for non-ApplyOp tasks"
+    );
 }
 #[test]
 fn batch_order() {
@@ -939,11 +1039,18 @@ fn batch_order() {
             r#"{"block_id":"blk-X","to_text":"third"}"#,
         )),
     ]);
-    assert_eq!(groups.len(), 1);
-    assert_eq!(groups[0].1.len(), 3);
+    assert_eq!(
+        groups.len(),
+        1,
+        "all ops for same block should be in one group"
+    );
+    assert_eq!(groups[0].1.len(), 3, "group should contain all 3 ops");
     for (i, exp) in ["first", "second", "third"].iter().enumerate() {
         match &groups[0].1[i] {
-            MaterializeTask::ApplyOp(r) => assert!(r.payload.contains(exp)),
+            MaterializeTask::ApplyOp(r) => assert!(
+                r.payload.contains(exp),
+                "op at index {i} should contain '{exp}'"
+            ),
             o => panic!("expected ApplyOp, got {o:?}"),
         }
     }
@@ -984,20 +1091,39 @@ async fn parallel_groups() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(ca.as_deref(), Some("updated-A"));
+    assert_eq!(
+        ca.as_deref(),
+        Some("updated-A"),
+        "block PAR_A content should be updated"
+    );
     let cb: Option<String> = sqlx::query_scalar!("SELECT content FROM blocks WHERE id = 'PAR_B'")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(cb.as_deref(), Some("updated-B"));
-    assert!(mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 2);
+    assert_eq!(
+        cb.as_deref(),
+        Some("updated-B"),
+        "block PAR_B content should be updated"
+    );
+    assert!(
+        mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 2,
+        "should process at least 2 foreground tasks for parallel groups"
+    );
 }
 
 #[test]
 fn high_water_zero() {
     let m = QueueMetrics::default();
-    assert_eq!(m.fg_high_water.load(AtomicOrdering::Relaxed), 0);
-    assert_eq!(m.bg_high_water.load(AtomicOrdering::Relaxed), 0);
+    assert_eq!(
+        m.fg_high_water.load(AtomicOrdering::Relaxed),
+        0,
+        "fg high water should start at zero"
+    );
+    assert_eq!(
+        m.bg_high_water.load(AtomicOrdering::Relaxed),
+        0,
+        "bg high water should start at zero"
+    );
 }
 #[tokio::test]
 async fn high_water_fg() {
@@ -1015,7 +1141,10 @@ async fn high_water_fg() {
     )
     .await;
     mat.dispatch_op(&r).await.unwrap();
-    assert!(mat.metrics().fg_high_water.load(AtomicOrdering::Relaxed) >= 1);
+    assert!(
+        mat.metrics().fg_high_water.load(AtomicOrdering::Relaxed) >= 1,
+        "fg high water should increase after dispatch_op"
+    );
 }
 #[tokio::test]
 async fn high_water_bg() {
@@ -1024,7 +1153,10 @@ async fn high_water_bg() {
     mat.enqueue_background(MaterializeTask::RebuildTagsCache)
         .await
         .unwrap();
-    assert!(mat.metrics().bg_high_water.load(AtomicOrdering::Relaxed) >= 1);
+    assert!(
+        mat.metrics().bg_high_water.load(AtomicOrdering::Relaxed) >= 1,
+        "bg high water should increase after enqueue_background"
+    );
 }
 #[tokio::test]
 async fn status_info() {
@@ -1032,8 +1164,14 @@ async fn status_info() {
     let mat = Materializer::new(pool.clone());
     tokio::time::sleep(Duration::from_millis(10)).await;
     let s = mat.status();
-    assert_eq!(s.fg_high_water, 0);
-    assert_eq!(s.bg_high_water, 0);
+    assert_eq!(
+        s.fg_high_water, 0,
+        "initial fg high water in status should be zero"
+    );
+    assert_eq!(
+        s.bg_high_water, 0,
+        "initial bg high water in status should be zero"
+    );
     let r = make_op_record(
         &pool,
         OpPayload::CreateBlock(CreateBlockPayload {
@@ -1046,7 +1184,10 @@ async fn status_info() {
     )
     .await;
     mat.dispatch_op(&r).await.unwrap();
-    assert!(mat.status().fg_high_water >= 1);
+    assert!(
+        mat.status().fg_high_water >= 1,
+        "fg high water should rise after dispatching an op"
+    );
 }
 
 #[tokio::test]
@@ -1064,20 +1205,36 @@ async fn error_counters_zero() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool);
     let m = mat.metrics();
-    assert_eq!(m.fg_errors.load(AtomicOrdering::Relaxed), 0);
-    assert_eq!(m.bg_errors.load(AtomicOrdering::Relaxed), 0);
-    assert_eq!(m.fg_panics.load(AtomicOrdering::Relaxed), 0);
-    assert_eq!(m.bg_panics.load(AtomicOrdering::Relaxed), 0);
+    assert_eq!(
+        m.fg_errors.load(AtomicOrdering::Relaxed),
+        0,
+        "fg errors should start at zero"
+    );
+    assert_eq!(
+        m.bg_errors.load(AtomicOrdering::Relaxed),
+        0,
+        "bg errors should start at zero"
+    );
+    assert_eq!(
+        m.fg_panics.load(AtomicOrdering::Relaxed),
+        0,
+        "fg panics should start at zero"
+    );
+    assert_eq!(
+        m.bg_panics.load(AtomicOrdering::Relaxed),
+        0,
+        "bg panics should start at zero"
+    );
 }
 #[tokio::test]
 async fn status_error_counters() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool);
     let s = mat.status();
-    assert_eq!(s.fg_errors, 0);
-    assert_eq!(s.bg_errors, 0);
-    assert_eq!(s.fg_panics, 0);
-    assert_eq!(s.bg_panics, 0);
+    assert_eq!(s.fg_errors, 0, "status fg_errors should start at zero");
+    assert_eq!(s.bg_errors, 0, "status bg_errors should start at zero");
+    assert_eq!(s.fg_panics, 0, "status fg_panics should start at zero");
+    assert_eq!(s.bg_panics, 0, "status bg_panics should start at zero");
 }
 
 #[tokio::test]
@@ -1096,54 +1253,69 @@ async fn handle_fg_apply_op() {
     assert!(
         handle_foreground_task(&pool, &task, &QueueMetrics::default())
             .await
-            .is_ok()
+            .is_ok(),
+        "handle_foreground_task should succeed for valid ApplyOp"
     );
     let c: Option<String> = sqlx::query_scalar!("SELECT content FROM blocks WHERE id = 'NOOP_BLK'")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(c.as_deref(), Some("modified"));
+    assert_eq!(
+        c.as_deref(),
+        Some("modified"),
+        "content should be updated by foreground ApplyOp"
+    );
 }
 #[tokio::test]
 async fn handle_fg_barrier() {
     let (pool, _dir) = test_pool().await;
     let n = Arc::new(tokio::sync::Notify::new());
-    assert!(handle_foreground_task(
-        &pool,
-        &MaterializeTask::Barrier(Arc::clone(&n)),
-        &QueueMetrics::default()
-    )
-    .await
-    .is_ok());
+    assert!(
+        handle_foreground_task(
+            &pool,
+            &MaterializeTask::Barrier(Arc::clone(&n)),
+            &QueueMetrics::default()
+        )
+        .await
+        .is_ok(),
+        "barrier task should succeed"
+    );
     assert!(
         tokio::time::timeout(Duration::from_millis(100), n.notified())
             .await
-            .is_ok()
+            .is_ok(),
+        "barrier notify should fire within timeout"
     );
 }
 #[tokio::test]
 async fn handle_fg_unexpected() {
     let (pool, _dir) = test_pool().await;
-    assert!(handle_foreground_task(
-        &pool,
-        &MaterializeTask::RebuildTagsCache,
-        &QueueMetrics::default()
-    )
-    .await
-    .is_ok());
+    assert!(
+        handle_foreground_task(
+            &pool,
+            &MaterializeTask::RebuildTagsCache,
+            &QueueMetrics::default()
+        )
+        .await
+        .is_ok(),
+        "unexpected task in foreground should not error"
+    );
 }
 #[tokio::test]
 async fn handle_fg_unexpected_reindex() {
     let (pool, _dir) = test_pool().await;
-    assert!(handle_foreground_task(
-        &pool,
-        &MaterializeTask::ReindexBlockLinks {
-            block_id: "01FAKE00000000000000000000".into()
-        },
-        &QueueMetrics::default()
-    )
-    .await
-    .is_ok());
+    assert!(
+        handle_foreground_task(
+            &pool,
+            &MaterializeTask::ReindexBlockLinks {
+                block_id: "01FAKE00000000000000000000".into()
+            },
+            &QueueMetrics::default()
+        )
+        .await
+        .is_ok(),
+        "unexpected reindex task in foreground should not error"
+    );
 }
 #[tokio::test]
 async fn handle_bg_unexpected_apply() {
@@ -1180,10 +1352,21 @@ async fn tags_cache_after_create_tag() {
         .fetch_optional(&pool)
         .await
         .unwrap();
-    assert!(row.is_some());
+    assert!(
+        row.is_some(),
+        "tags_cache should have a row for the created tag"
+    );
     let row = row.unwrap();
-    assert_eq!(row.get::<String, _>("name"), "urgent");
-    assert_eq!(row.get::<i32, _>("usage_count"), 0);
+    assert_eq!(
+        row.get::<String, _>("name"),
+        "urgent",
+        "tag name in cache should match created tag"
+    );
+    assert_eq!(
+        row.get::<i32, _>("usage_count"),
+        0,
+        "usage_count should be 0 for a new tag with no references"
+    );
 }
 #[tokio::test]
 async fn pages_cache_after_create_page() {
@@ -1208,8 +1391,15 @@ async fn pages_cache_after_create_page() {
         .fetch_optional(&pool)
         .await
         .unwrap();
-    assert!(row.is_some());
-    assert_eq!(row.unwrap().get::<String, _>("title"), "My Test Page");
+    assert!(
+        row.is_some(),
+        "pages_cache should have a row for the created page"
+    );
+    assert_eq!(
+        row.unwrap().get::<String, _>("title"),
+        "My Test Page",
+        "page title in cache should match created page"
+    );
 }
 #[tokio::test]
 async fn tags_cache_after_delete() {
@@ -1234,7 +1424,8 @@ async fn tags_cache_after_delete() {
             .fetch_optional(&pool)
             .await
             .unwrap()
-            .is_some()
+            .is_some(),
+        "tag should exist in cache before deletion"
     );
     soft_delete_block_direct(&pool, "TAG_DEL_1").await;
     let del = make_op_record(
@@ -1251,7 +1442,8 @@ async fn tags_cache_after_delete() {
             .fetch_optional(&pool)
             .await
             .unwrap()
-            .is_none()
+            .is_none(),
+        "tag should be removed from cache after deletion"
     );
 }
 #[tokio::test]
@@ -1280,7 +1472,8 @@ async fn tags_usage_count() {
             .await
             .unwrap()
             .get::<i32, _>("usage_count"),
-        0
+        0,
+        "usage_count should be 0 before any tag is applied"
     );
     insert_block_tag(&pool, "BLK_USE_1", "TAG_USE_1").await;
     let add = make_op_record(
@@ -1299,7 +1492,8 @@ async fn tags_usage_count() {
             .await
             .unwrap()
             .get::<i32, _>("usage_count"),
-        1
+        1,
+        "usage_count should be 1 after adding tag to one block"
     );
 }
 #[tokio::test]
@@ -1327,10 +1521,21 @@ async fn agenda_cache_after_set_property() {
         .fetch_optional(&pool)
         .await
         .unwrap();
-    assert!(row.is_some());
+    assert!(
+        row.is_some(),
+        "agenda_cache should have a row after setting a date property"
+    );
     let row = row.unwrap();
-    assert_eq!(row.get::<String, _>("date"), "2025-03-15");
-    assert_eq!(row.get::<String, _>("source"), "property:due");
+    assert_eq!(
+        row.get::<String, _>("date"),
+        "2025-03-15",
+        "agenda date should match the set property value"
+    );
+    assert_eq!(
+        row.get::<String, _>("source"),
+        "property:due",
+        "agenda source should indicate the property key"
+    );
 }
 
 #[tokio::test]
@@ -1356,14 +1561,23 @@ async fn apply_op_create() {
             .fetch_optional(&pool)
             .await
             .unwrap();
-    assert!(row.is_some());
+    assert!(row.is_some(), "block should exist after apply_op create");
     let row = row.unwrap();
-    assert_eq!(row.get::<String, _>("block_type"), "content");
+    assert_eq!(
+        row.get::<String, _>("block_type"),
+        "content",
+        "block_type should match created block"
+    );
     assert_eq!(
         row.get::<Option<String>, _>("content").as_deref(),
-        Some("hello from remote")
+        Some("hello from remote"),
+        "content should match created block text"
     );
-    assert_eq!(row.get::<Option<i64>, _>("position"), Some(1));
+    assert_eq!(
+        row.get::<Option<i64>, _>("position"),
+        Some(1),
+        "position should match created block position"
+    );
 }
 #[tokio::test]
 async fn apply_op_create_idempotent() {
@@ -1391,7 +1605,8 @@ async fn apply_op_create_idempotent() {
             .unwrap()
             .get::<Option<String>, _>("content")
             .as_deref(),
-        Some("original")
+        Some("original"),
+        "idempotent create should not overwrite existing block content"
     );
 }
 #[tokio::test]
@@ -1418,7 +1633,8 @@ async fn apply_op_edit() {
             .unwrap()
             .get::<Option<String>, _>("content")
             .as_deref(),
-        Some("after edit")
+        Some("after edit"),
+        "content should reflect the edit operation"
     );
 }
 #[tokio::test]
@@ -1442,7 +1658,8 @@ async fn apply_op_delete() {
             .await
             .unwrap()
             .get::<Option<String>, _>("deleted_at")
-            .is_some()
+            .is_some(),
+        "deleted_at should be set after apply_op delete"
     );
 }
 #[tokio::test]
@@ -1468,7 +1685,8 @@ async fn apply_op_restore() {
             .await
             .unwrap()
             .get::<Option<String>, _>("deleted_at")
-            .is_none()
+            .is_none(),
+        "deleted_at should be cleared after apply_op restore"
     );
 }
 #[tokio::test]
@@ -1491,7 +1709,8 @@ async fn apply_op_purge() {
             .fetch_optional(&pool)
             .await
             .unwrap()
-            .is_none()
+            .is_none(),
+        "block should be physically removed after apply_op purge"
     );
 }
 #[tokio::test]
@@ -1518,9 +1737,14 @@ async fn apply_op_move() {
         .unwrap();
     assert_eq!(
         row.get::<Option<String>, _>("parent_id").as_deref(),
-        Some("APPLY_MOVE_PARENT")
+        Some("APPLY_MOVE_PARENT"),
+        "parent_id should be set after apply_op move"
     );
-    assert_eq!(row.get::<Option<i64>, _>("position"), Some(5));
+    assert_eq!(
+        row.get::<Option<i64>, _>("position"),
+        Some(5),
+        "position should be updated after apply_op move"
+    );
 }
 #[tokio::test]
 async fn apply_op_add_tag() {
@@ -1546,7 +1770,10 @@ async fn apply_op_add_tag() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(count, 1);
+    assert_eq!(
+        count, 1,
+        "block_tags row should exist after apply_op add_tag"
+    );
 }
 #[tokio::test]
 async fn apply_op_invalid_payload() {
@@ -1589,9 +1816,21 @@ async fn fg_retry_success() {
     )
     .await;
     process_single_foreground_task(&pool, MaterializeTask::ApplyOp(r), &metrics).await;
-    assert_eq!(metrics.fg_processed.load(AtomicOrdering::Relaxed), 1);
-    assert_eq!(metrics.fg_errors.load(AtomicOrdering::Relaxed), 0);
-    assert_eq!(metrics.fg_panics.load(AtomicOrdering::Relaxed), 0);
+    assert_eq!(
+        metrics.fg_processed.load(AtomicOrdering::Relaxed),
+        1,
+        "should count one processed task"
+    );
+    assert_eq!(
+        metrics.fg_errors.load(AtomicOrdering::Relaxed),
+        0,
+        "successful task should not increment errors"
+    );
+    assert_eq!(
+        metrics.fg_panics.load(AtomicOrdering::Relaxed),
+        0,
+        "successful task should not increment panics"
+    );
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fg_retry_barrier() {
@@ -1603,8 +1842,16 @@ async fn fg_retry_barrier() {
         &metrics,
     )
     .await;
-    assert_eq!(metrics.fg_processed.load(AtomicOrdering::Relaxed), 1);
-    assert_eq!(metrics.fg_errors.load(AtomicOrdering::Relaxed), 0);
+    assert_eq!(
+        metrics.fg_processed.load(AtomicOrdering::Relaxed),
+        1,
+        "barrier should count as one processed task"
+    );
+    assert_eq!(
+        metrics.fg_errors.load(AtomicOrdering::Relaxed),
+        0,
+        "barrier should not increment errors"
+    );
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fg_retry_bad_payload() {
@@ -1616,9 +1863,21 @@ async fn fg_retry_bad_payload() {
         &metrics,
     )
     .await;
-    assert_eq!(metrics.fg_processed.load(AtomicOrdering::Relaxed), 1);
-    assert_eq!(metrics.fg_errors.load(AtomicOrdering::Relaxed), 1);
-    assert_eq!(metrics.fg_panics.load(AtomicOrdering::Relaxed), 0);
+    assert_eq!(
+        metrics.fg_processed.load(AtomicOrdering::Relaxed),
+        1,
+        "bad payload should still count as processed"
+    );
+    assert_eq!(
+        metrics.fg_errors.load(AtomicOrdering::Relaxed),
+        1,
+        "bad payload should increment error counter"
+    );
+    assert_eq!(
+        metrics.fg_panics.load(AtomicOrdering::Relaxed),
+        0,
+        "bad payload should not cause a panic"
+    );
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fg_lifecycle() {
@@ -1637,8 +1896,15 @@ async fn fg_lifecycle() {
     .await;
     mat.dispatch_op(&r).await.unwrap();
     mat.flush().await.unwrap();
-    assert!(mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 1);
-    assert_eq!(mat.metrics().fg_errors.load(AtomicOrdering::Relaxed), 0);
+    assert!(
+        mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 1,
+        "lifecycle should process at least one foreground task"
+    );
+    assert_eq!(
+        mat.metrics().fg_errors.load(AtomicOrdering::Relaxed),
+        0,
+        "lifecycle should have no errors"
+    );
     mat.shutdown();
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1652,7 +1918,11 @@ async fn apply_op_failure_propagated() {
     .await
     .unwrap();
     mat.flush().await.unwrap();
-    assert_eq!(mat.metrics().fg_errors.load(AtomicOrdering::Relaxed), 1);
+    assert_eq!(
+        mat.metrics().fg_errors.load(AtomicOrdering::Relaxed),
+        1,
+        "invalid payload should propagate as an error"
+    );
     mat.shutdown();
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1675,7 +1945,11 @@ async fn batch_partial_failure() {
         .await
         .unwrap();
     mat.flush().await.unwrap();
-    assert_eq!(mat.metrics().fg_errors.load(AtomicOrdering::Relaxed), 1);
+    assert_eq!(
+        mat.metrics().fg_errors.load(AtomicOrdering::Relaxed),
+        1,
+        "batch with a bad op should count one error"
+    );
     mat.shutdown();
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1697,7 +1971,11 @@ async fn apply_op_success() {
         .await
         .unwrap();
     mat.flush().await.unwrap();
-    assert_eq!(mat.metrics().fg_errors.load(AtomicOrdering::Relaxed), 0);
+    assert_eq!(
+        mat.metrics().fg_errors.load(AtomicOrdering::Relaxed),
+        0,
+        "successful apply_op should have zero errors"
+    );
     mat.shutdown();
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1713,7 +1991,10 @@ async fn with_read_pool() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(count, 1);
+    assert_eq!(
+        count, 1,
+        "tags_cache should have one entry after rebuild with read pool"
+    );
     mat.shutdown();
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1723,13 +2004,14 @@ async fn bg_with_read_pool() {
     assert!(
         handle_background_task(&pool, &MaterializeTask::RebuildTagsCache, Some(&pool))
             .await
-            .is_ok()
+            .is_ok(),
+        "background task should succeed with explicit read pool"
     );
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tags_cache")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(count, 1);
+    assert_eq!(count, 1, "tags_cache should have one entry using read pool");
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bg_without_read_pool() {
@@ -1738,13 +2020,17 @@ async fn bg_without_read_pool() {
     assert!(
         handle_background_task(&pool, &MaterializeTask::RebuildTagsCache, None)
             .await
-            .is_ok()
+            .is_ok(),
+        "background task should succeed without explicit read pool"
     );
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tags_cache")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(count, 1);
+    assert_eq!(
+        count, 1,
+        "tags_cache should have one entry without read pool"
+    );
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cleanup_orphaned_attachments() {
@@ -1760,7 +2046,10 @@ async fn reserved_key_todo_state() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     sqlx::query("INSERT INTO blocks (id, block_type, content, position, is_conflict) VALUES ('BLK-RES', 'content', 'test', 1, 0)").execute(&pool).await.unwrap();
-    assert!(is_reserved_property_key("todo_state"));
+    assert!(
+        is_reserved_property_key("todo_state"),
+        "todo_state should be a reserved property key"
+    );
     let r = make_op_record(
         &pool,
         OpPayload::SetProperty(SetPropertyPayload {
@@ -1780,14 +2069,21 @@ async fn reserved_key_todo_state() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(ts, Some("DONE".into()));
+    assert_eq!(
+        ts,
+        Some("DONE".into()),
+        "todo_state column should be set to DONE"
+    );
     let pc: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM block_properties WHERE block_id = 'BLK-RES' AND key = 'todo_state'",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(pc, 0);
+    assert_eq!(
+        pc, 0,
+        "reserved key should not be stored in block_properties"
+    );
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_reserved_key() {
@@ -1809,7 +2105,10 @@ async fn delete_reserved_key() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert!(after.is_none());
+    assert!(
+        after.is_none(),
+        "todo_state should be cleared after deleting reserved property"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1887,7 +2186,10 @@ async fn concurrent_dispatch() {
         h.await.unwrap();
     }
     mat.flush().await.unwrap();
-    assert!(mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 10);
+    assert!(
+        mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 10,
+        "should process at least 10 concurrent dispatch ops"
+    );
 }
 
 // ======================================================================
@@ -2259,7 +2561,11 @@ async fn flush_background_completes_tasks_after_barrier() {
         tag_row.is_some(),
         "tags_cache should contain BAR_TAG_1 after flush"
     );
-    assert_eq!(tag_row.unwrap().get::<String, _>("name"), "barrier-tag-1");
+    assert_eq!(
+        tag_row.unwrap().get::<String, _>("name"),
+        "barrier-tag-1",
+        "tag name in cache should match after flush"
+    );
 
     let page_row = sqlx::query("SELECT title FROM pages_cache WHERE page_id = 'BAR_PAGE_1'")
         .fetch_optional(&pool)
@@ -2271,7 +2577,8 @@ async fn flush_background_completes_tasks_after_barrier() {
     );
     assert_eq!(
         page_row.unwrap().get::<String, _>("title"),
-        "barrier-page-1"
+        "barrier-page-1",
+        "page title in cache should match after flush"
     );
 
     // Both tasks (+ the barrier itself) should be counted.
@@ -2325,7 +2632,10 @@ async fn adaptive_fts_threshold_small_db() {
         }),
     )
     .await;
-    assert!(mat.dispatch_edit_background(&r, "content").is_ok());
+    assert!(
+        mat.dispatch_edit_background(&r, "content").is_ok(),
+        "dispatch_edit_background should succeed for small db"
+    );
 
     assert_eq!(
         mat.metrics()
@@ -2375,7 +2685,10 @@ async fn adaptive_fts_threshold_large_corpus() {
         }),
     )
     .await;
-    assert!(mat.dispatch_edit_background(&r, "content").is_ok());
+    assert!(
+        mat.dispatch_edit_background(&r, "content").is_ok(),
+        "dispatch_edit_background should succeed under adaptive threshold"
+    );
     assert_eq!(
         mat.metrics()
             .fts_edits_since_optimize
@@ -2400,7 +2713,10 @@ async fn adaptive_fts_threshold_large_corpus() {
         }),
     )
     .await;
-    assert!(mat.dispatch_edit_background(&r2, "content").is_ok());
+    assert!(
+        mat.dispatch_edit_background(&r2, "content").is_ok(),
+        "dispatch_edit_background should succeed at adaptive threshold"
+    );
     assert_eq!(
         mat.metrics()
             .fts_edits_since_optimize
