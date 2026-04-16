@@ -24,7 +24,7 @@ import { type ZoomBehavior, zoom, zoomIdentity } from 'd3-zoom'
 import { Maximize2, Minus, Network, Plus } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { listBlocks, listPageLinks } from '@/lib/tauri'
+import { listBlocks, listPageLinks, listTagsByPrefix } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
 import { logger } from '../lib/logger'
 import type { WorkerOutboundMessage } from '../workers/graph-worker-types'
@@ -32,6 +32,7 @@ import { EmptyState } from './EmptyState'
 import { LoadingSkeleton } from './LoadingSkeleton'
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 
 interface GraphNode extends SimulationNodeDatum {
   id: string
@@ -54,11 +55,18 @@ interface GraphCache {
   timestamp: number
 }
 
-let graphCache: GraphCache | null = null
+const graphCacheMap = new Map<string, GraphCache>()
+
+/** Sentinel value for "All pages" in the tag filter (Radix Select doesn't support value=""). */
+const TAG_ALL = '__none__'
+
+function getCacheKey(tagId: string | null): string {
+  return tagId ?? TAG_ALL
+}
 
 /** @internal — exported for test isolation only. */
 export function clearGraphCache(): void {
-  graphCache = null
+  graphCacheMap.clear()
 }
 
 export function GraphView(): React.ReactElement {
@@ -71,9 +79,22 @@ export function GraphView(): React.ReactElement {
   const [nodes, setNodes] = useState<GraphNode[]>([])
   const [edges, setEdges] = useState<GraphEdge[]>([])
   const [hasMore, setHasMore] = useState(false)
+  const [tags, setTags] = useState<Array<{ tag_id: string; name: string }>>([])
+  const [selectedTagId, setSelectedTagId] = useState<string | null>(null)
+
+  // Fetch available tags on mount
+  useEffect(() => {
+    listTagsByPrefix({ prefix: '' })
+      .then((result) => setTags(result ?? []))
+      .catch((err) => logger.error('GraphView', 'Failed to load tags', undefined, err))
+  }, [])
+
   // Fetch data with stale-while-revalidate caching (UX-113)
   useEffect(() => {
     let cancelled = false
+
+    const cacheKey = getCacheKey(selectedTagId)
+    const graphCache = graphCacheMap.get(cacheKey) ?? null
 
     // Serve cached data immediately if available
     if (graphCache) {
@@ -89,13 +110,20 @@ export function GraphView(): React.ReactElement {
     async function fetchData() {
       try {
         const [pagesResp, links] = await Promise.all([
-          listBlocks({ blockType: 'page', limit: 5000 }),
+          selectedTagId
+            ? listBlocks({ tagId: selectedTagId, limit: 5000 })
+            : listBlocks({ blockType: 'page', limit: 5000 }),
           listPageLinks(),
         ])
 
         if (cancelled) return
 
-        const pageNodes: GraphNode[] = pagesResp.items.map((p) => ({
+        // When filtering by tag, the API may return non-page blocks — keep only pages
+        const items = selectedTagId
+          ? pagesResp.items.filter((p) => p.block_type === 'page')
+          : pagesResp.items
+
+        const pageNodes: GraphNode[] = items.map((p) => ({
           id: p.id,
           label: p.content || 'Untitled',
         }))
@@ -111,12 +139,12 @@ export function GraphView(): React.ReactElement {
           }))
 
         // Update cache
-        graphCache = {
+        graphCacheMap.set(cacheKey, {
           nodes: pageNodes,
           edges: pageEdges,
           hasMore: pagesResp.has_more,
           timestamp: Date.now(),
-        }
+        })
 
         setNodes(pageNodes)
         setEdges(pageEdges)
@@ -137,7 +165,7 @@ export function GraphView(): React.ReactElement {
     return () => {
       cancelled = true
     }
-  }, [t])
+  }, [t, selectedTagId])
 
   // D3 simulation
   useEffect(() => {
@@ -523,13 +551,37 @@ export function GraphView(): React.ReactElement {
 
   return (
     <div className="graph-view relative h-full w-full" data-testid="graph-view">
+      {/* Tag filter dropdown */}
+      <div className="absolute top-2 left-2 z-10" data-testid="graph-tag-filter">
+        <Select
+          value={selectedTagId ?? TAG_ALL}
+          onValueChange={(value) => {
+            setSelectedTagId(value === TAG_ALL ? null : value)
+            setLoading(true)
+          }}
+        >
+          <SelectTrigger size="sm" className="w-[180px]" aria-label={t('graph.filterByTag')}>
+            <SelectValue placeholder={t('graph.allPages')} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={TAG_ALL}>{t('graph.allPages')}</SelectItem>
+            {tags.map((tag) => (
+              <SelectItem key={tag.tag_id} value={tag.tag_id}>
+                {tag.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
       {hasMore && (
         <Badge
           variant="secondary"
           className="absolute top-2 right-2 z-10"
           data-testid="graph-truncated-badge"
         >
-          {t('graph.truncated', { count: nodes.length })}
+          {selectedTagId
+            ? t('graph.truncated', { count: nodes.length })
+            : t('graph.truncatedFilterHint', { count: nodes.length })}
         </Badge>
       )}
       <svg

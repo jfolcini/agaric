@@ -482,6 +482,141 @@ async fn create_conflict_copy_avoids_position_collision() {
     );
 }
 
+#[tokio::test]
+async fn conflict_copy_includes_tags() {
+    let (pool, _dir) = test_pool().await;
+
+    // Insert a tag block (block_type = 'tag')
+    insert_block(&pool, "TAG1", "tag", "urgent", None, None).await;
+
+    // Insert the original block
+    insert_block(&pool, "BT1", "content", "tagged block", None, Some(1)).await;
+
+    // Associate the tag with the block
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind("BT1")
+        .bind("TAG1")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Create a conflict copy
+    let record = create_conflict_copy(&pool, DEV_A, "BT1", "conflict text", "Text")
+        .await
+        .unwrap();
+
+    let payload: CreateBlockPayload = serde_json::from_str(&record.payload).unwrap();
+    let new_id = payload.block_id.as_str();
+
+    // Verify the conflict copy has the same tag
+    let tags: Vec<(String,)> = sqlx::query_as("SELECT tag_id FROM block_tags WHERE block_id = ?")
+        .bind(new_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(tags.len(), 1, "conflict copy should have 1 tag");
+    assert_eq!(
+        tags[0].0, "TAG1",
+        "conflict copy should inherit tag TAG1 from original"
+    );
+}
+
+#[tokio::test]
+async fn conflict_copy_includes_properties() {
+    let (pool, _dir) = test_pool().await;
+
+    // Insert the original block
+    insert_block(&pool, "BP1", "content", "block with props", None, Some(1)).await;
+
+    // Insert a property on the block
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
+        .bind("BP1")
+        .bind("effort")
+        .bind("2h")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Create a conflict copy
+    let record = create_conflict_copy(&pool, DEV_A, "BP1", "conflict text", "Text")
+        .await
+        .unwrap();
+
+    let payload: CreateBlockPayload = serde_json::from_str(&record.payload).unwrap();
+    let new_id = payload.block_id.as_str();
+
+    // Verify the conflict copy has the same property
+    let props: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT key, value_text FROM block_properties WHERE block_id = ?")
+            .bind(new_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+
+    assert_eq!(props.len(), 1, "conflict copy should have 1 property");
+    assert_eq!(props[0].0, "effort", "property key should be 'effort'");
+    assert_eq!(
+        props[0].1,
+        Some("2h".to_owned()),
+        "property value_text should be '2h'"
+    );
+}
+
+#[tokio::test]
+async fn conflict_copy_includes_task_fields() {
+    let (pool, _dir) = test_pool().await;
+
+    // Insert a block with task fields via raw SQL
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, todo_state, priority, due_date) \
+         VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
+    )
+    .bind("TF1")
+    .bind("content")
+    .bind("task block")
+    .bind(1_i64)
+    .bind("TODO")
+    .bind("1")
+    .bind("2026-01-15")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Create a conflict copy
+    let record = create_conflict_copy(&pool, DEV_A, "TF1", "conflict task", "Text")
+        .await
+        .unwrap();
+
+    let payload: CreateBlockPayload = serde_json::from_str(&record.payload).unwrap();
+    let new_id = payload.block_id.as_str();
+
+    // Verify the conflict copy has the task fields
+    let row = sqlx::query!(
+        "SELECT todo_state, priority, due_date FROM blocks WHERE id = ?",
+        new_id
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        row.todo_state,
+        Some("TODO".to_owned()),
+        "conflict copy should inherit todo_state"
+    );
+    assert_eq!(
+        row.priority,
+        Some("1".to_owned()),
+        "conflict copy should inherit priority"
+    );
+    assert_eq!(
+        row.due_date,
+        Some("2026-01-15".to_owned()),
+        "conflict copy should inherit due_date"
+    );
+}
+
 // =====================================================================
 // 3. resolve_property_conflict tests
 // =====================================================================

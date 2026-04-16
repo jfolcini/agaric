@@ -111,6 +111,59 @@ vi.mock('d3-drag', () => ({
   })),
 }))
 
+// Mock the Radix-based Select to render as native <select>/<option> for jsdom compatibility.
+vi.mock('@/components/ui/select', () => {
+  const React = require('react')
+  const Ctx = React.createContext({})
+
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
+  function Select({ value, onValueChange, children }: any) {
+    const triggerPropsRef = React.useRef({})
+    return React.createElement(
+      Ctx.Provider,
+      { value: { value, onValueChange, triggerPropsRef } },
+      children,
+    )
+  }
+
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
+  function SelectTrigger({ size, className, ...props }: any) {
+    const ctx = React.useContext(Ctx)
+    Object.assign(ctx.triggerPropsRef.current, { size, className, ...props })
+    return null
+  }
+
+  function SelectValue() {
+    return null
+  }
+
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
+  function SelectContent({ children }: any) {
+    const ctx = React.useContext(Ctx)
+    const tp = ctx.triggerPropsRef.current
+    return React.createElement(
+      'select',
+      {
+        value: ctx.value ?? '',
+        // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
+        onChange: (e: any) => ctx.onValueChange?.(e.target.value),
+        'aria-label': tp['aria-label'],
+        className: tp.className,
+        'data-size': tp.size,
+        'data-testid': 'graph-tag-select',
+      },
+      children,
+    )
+  }
+
+  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
+  function SelectItem({ value, children }: any) {
+    return React.createElement('option', { value }, children)
+  }
+
+  return { Select, SelectTrigger, SelectValue, SelectContent, SelectItem }
+})
+
 // ── MockWorker for WebWorker tests (PERF-9b) ──────────────────────────
 
 // biome-ignore lint/suspicious/noExplicitAny: test mock
@@ -813,7 +866,7 @@ describe('GraphView', () => {
 
       const badge = screen.getByTestId('graph-truncated-badge')
       expect(badge).toBeInTheDocument()
-      expect(badge).toHaveTextContent('Showing 2 pages (graph truncated)')
+      expect(badge).toHaveTextContent('Showing 2 of many pages')
     })
 
     it('does not show truncation badge when has_more is false', async () => {
@@ -944,6 +997,215 @@ describe('GraphView', () => {
           expect.objectContaining({ id: 'page-2', label: 'Page Two' }),
         ]),
       )
+    })
+  })
+
+  describe('tag filter (PERF-9c)', () => {
+    it('renders the tag filter dropdown', async () => {
+      const pagesResponse = {
+        items: [
+          { id: 'page-1', content: 'Page One', block_type: 'page' },
+          { id: 'page-2', content: 'Page Two', block_type: 'page' },
+        ],
+        next_cursor: null,
+        has_more: false,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_tags_by_prefix')
+          return Promise.resolve([
+            { tag_id: 'tag-1', name: 'Work', usage_count: 5, updated_at: '' },
+          ])
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      // The tag filter container is present
+      expect(screen.getByTestId('graph-tag-filter')).toBeInTheDocument()
+      // The native select (mocked Select) is rendered
+      expect(screen.getByTestId('graph-tag-select')).toBeInTheDocument()
+    })
+
+    it('re-fetches with tagId when a tag is selected', async () => {
+      const pagesResponse = {
+        items: [
+          { id: 'page-1', content: 'Page One', block_type: 'page' },
+          { id: 'page-2', content: 'Page Two', block_type: 'page' },
+        ],
+        next_cursor: null,
+        has_more: false,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_tags_by_prefix')
+          return Promise.resolve([
+            { tag_id: 'tag-1', name: 'Work', usage_count: 5, updated_at: '' },
+          ])
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      // Clear mocks to track new calls
+      vi.mocked(invoke).mockClear()
+      MockWorker.instances = []
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      // Select a tag
+      const selectEl = screen.getByTestId('graph-tag-select')
+      fireEvent.change(selectEl, { target: { value: 'tag-1' } })
+
+      await waitFor(() => {
+        // Verify listBlocks was called with tagId
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'list_blocks',
+          expect.objectContaining({
+            tagId: 'tag-1',
+            blockType: null,
+          }),
+        )
+      })
+    })
+
+    it('returns to all pages when filter is cleared', async () => {
+      const pagesResponse = {
+        items: [
+          { id: 'page-1', content: 'Page One', block_type: 'page' },
+          { id: 'page-2', content: 'Page Two', block_type: 'page' },
+        ],
+        next_cursor: null,
+        has_more: false,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_tags_by_prefix')
+          return Promise.resolve([
+            { tag_id: 'tag-1', name: 'Work', usage_count: 5, updated_at: '' },
+          ])
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      // Select a tag first
+      fireEvent.change(screen.getByTestId('graph-tag-select'), { target: { value: 'tag-1' } })
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'list_blocks',
+          expect.objectContaining({
+            tagId: 'tag-1',
+          }),
+        )
+      })
+
+      // Wait for loading to finish and graph-view to re-appear
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-tag-select')).toBeInTheDocument()
+      })
+
+      // Clear mocks
+      vi.mocked(invoke).mockClear()
+      MockWorker.instances = []
+      // Clear graph cache so the __none__ key is not still fresh
+      clearGraphCache()
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      // Re-query the select element (the old one was unmounted during loading)
+      fireEvent.change(screen.getByTestId('graph-tag-select'), { target: { value: '__none__' } })
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'list_blocks',
+          expect.objectContaining({
+            blockType: 'page',
+            tagId: null,
+          }),
+        )
+      })
+    })
+
+    it('filters tag results to only pages', async () => {
+      // When filtering by tag, the API may return mixed block types
+      const mixedResponse = {
+        items: [
+          { id: 'page-1', content: 'Page One', block_type: 'page' },
+          { id: 'block-1', content: 'A heading block', block_type: 'heading' },
+          { id: 'page-2', content: 'Page Two', block_type: 'page' },
+          { id: 'block-2', content: 'Some text', block_type: 'text' },
+        ],
+        next_cursor: null,
+        has_more: false,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(mixedResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_tags_by_prefix')
+          return Promise.resolve([
+            { tag_id: 'tag-1', name: 'Work', usage_count: 5, updated_at: '' },
+          ])
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      // Select a tag to trigger filtered fetch
+      const selectEl = screen.getByTestId('graph-tag-select')
+      fireEvent.change(selectEl, { target: { value: 'tag-1' } })
+
+      await waitFor(() => {
+        // Verify the worker received only page nodes (non-page blocks filtered out)
+        const latestWorker = MockWorker.instances[MockWorker.instances.length - 1] as InstanceType<
+          typeof MockWorker
+        >
+        const startMsg = latestWorker?.postMessageCalls.find(
+          // biome-ignore lint/suspicious/noExplicitAny: test mock
+          (m: any) => m.type === 'start',
+        )
+        expect(startMsg).toBeDefined()
+        // Only 2 page nodes, not the heading or text blocks
+        expect(startMsg.nodes).toHaveLength(2)
+        expect(startMsg.nodes).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: 'page-1', label: 'Page One' }),
+            expect.objectContaining({ id: 'page-2', label: 'Page Two' }),
+          ]),
+        )
+      })
     })
   })
 })

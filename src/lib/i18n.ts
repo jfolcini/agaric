@@ -474,6 +474,9 @@ const resources = {
       'graph.zoomOut': 'Zoom out',
       'graph.zoomReset': 'Fit to view',
       'graph.truncated': 'Showing {{count}} pages (graph truncated)',
+      'graph.filterByTag': 'Filter by tag',
+      'graph.allPages': 'All pages',
+      'graph.truncatedFilterHint': 'Showing {{count}} of many pages \u2014 filter by tag to focus',
 
       'pageHeader.exportMarkdown': 'Export as Markdown',
       'pageHeader.deletePage': 'Delete page',

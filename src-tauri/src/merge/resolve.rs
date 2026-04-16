@@ -26,7 +26,7 @@ pub async fn create_conflict_copy(
 ) -> Result<OpRecord, AppError> {
     // 1. Query the original block for metadata
     let original = sqlx::query!(
-        "SELECT block_type, parent_id, position FROM blocks WHERE id = ?",
+        "SELECT block_type, parent_id, position, todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ?",
         original_block_id
     )
     .fetch_optional(pool)
@@ -40,6 +40,10 @@ pub async fn create_conflict_copy(
     let block_type = original.block_type;
     let parent_id = original.parent_id;
     let position = original.position;
+    let todo_state = original.todo_state;
+    let priority = original.priority;
+    let due_date = original.due_date;
+    let scheduled_date = original.scheduled_date;
 
     // 2. Generate a new block ID
     let new_block_id = BlockId::new();
@@ -79,8 +83,8 @@ pub async fn create_conflict_copy(
 
     // Insert into blocks table
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict, conflict_source, conflict_type) \
-         VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict, conflict_source, conflict_type, todo_state, priority, due_date, scheduled_date) \
+         VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)",
     )
     .bind(new_block_id.as_str())
     .bind(&block_type)
@@ -89,6 +93,31 @@ pub async fn create_conflict_copy(
     .bind(new_position)
     .bind(original_block_id)
     .bind(conflict_type)
+    .bind(&todo_state)
+    .bind(&priority)
+    .bind(&due_date)
+    .bind(&scheduled_date)
+    .execute(&mut *tx)
+    .await?;
+
+    // Copy tags from the original block
+    sqlx::query(
+        "INSERT INTO block_tags (block_id, tag_id) \
+         SELECT ?1, tag_id FROM block_tags WHERE block_id = ?2",
+    )
+    .bind(new_block_id.as_str())
+    .bind(original_block_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // Copy properties from the original block
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) \
+         SELECT ?1, key, value_text, value_num, value_date, value_ref \
+         FROM block_properties WHERE block_id = ?2"
+    )
+    .bind(new_block_id.as_str())
+    .bind(original_block_id)
     .execute(&mut *tx)
     .await?;
 
