@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import type { LucideIcon } from 'lucide-react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '../../lib/i18n'
 
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
@@ -91,7 +92,7 @@ describe('BlockGutterControls', () => {
 
     const dragHandle = screen.getByTestId('drag-handle')
     expect(dragHandle).toBeInTheDocument()
-    expect(dragHandle).toHaveAttribute('aria-label', 'Reorder block (drag or use keyboard)')
+    expect(dragHandle).toHaveAttribute('aria-label', t('block.reorder'))
     expect(screen.getByTestId('grip-vertical-icon')).toBeInTheDocument()
   })
 
@@ -200,9 +201,7 @@ describe('BlockGutterControls tooltip visibility', () => {
     await user.hover(screen.getByTestId('drag-handle'))
 
     await waitFor(() => {
-      expect(
-        screen.getByRole('tooltip', { name: 'Reorder (drag or keyboard)' }),
-      ).toBeInTheDocument()
+      expect(screen.getByRole('tooltip', { name: t('block.reorderTip') })).toBeInTheDocument()
     })
   })
 
@@ -214,7 +213,7 @@ describe('BlockGutterControls tooltip visibility', () => {
     await user.hover(screen.getByRole('button', { name: /delete block/i }))
 
     await waitFor(() => {
-      expect(screen.getByRole('tooltip', { name: 'Delete block' })).toBeInTheDocument()
+      expect(screen.getByRole('tooltip', { name: t('block.delete') })).toBeInTheDocument()
     })
   })
 
@@ -226,7 +225,7 @@ describe('BlockGutterControls tooltip visibility', () => {
     await user.hover(screen.getByRole('button', { name: /block history/i }))
 
     await waitFor(() => {
-      expect(screen.getByRole('tooltip', { name: 'Block history' })).toBeInTheDocument()
+      expect(screen.getByRole('tooltip', { name: t('block.history') })).toBeInTheDocument()
     })
   })
 })

@@ -17,6 +17,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '../../lib/i18n'
 import { SettingsView } from '../SettingsView'
 
 // Mock child components to isolate SettingsView logic
@@ -120,12 +121,12 @@ describe('SettingsView', () => {
 
     const tabs = screen.getAllByRole('tab')
     expect(tabs).toHaveLength(6)
-    expect(tabs[0]).toHaveTextContent('General')
-    expect(tabs[1]).toHaveTextContent('Properties')
-    expect(tabs[2]).toHaveTextContent('Appearance')
-    expect(tabs[3]).toHaveTextContent('Keyboard')
-    expect(tabs[4]).toHaveTextContent('Data')
-    expect(tabs[5]).toHaveTextContent('Sync & Devices')
+    expect(tabs[0]).toHaveTextContent(t('settings.tabGeneral'))
+    expect(tabs[1]).toHaveTextContent(t('settings.tabProperties'))
+    expect(tabs[2]).toHaveTextContent(t('settings.tabAppearance'))
+    expect(tabs[3]).toHaveTextContent(t('settings.tabKeyboard'))
+    expect(tabs[4]).toHaveTextContent(t('settings.tabData'))
+    expect(tabs[5]).toHaveTextContent(t('settings.tabSync'))
   })
 
   it('General tab shows task states section by default', () => {
@@ -139,7 +140,7 @@ describe('SettingsView', () => {
     const user = userEvent.setup()
     render(<SettingsView />)
 
-    const propertiesTab = screen.getByRole('tab', { name: 'Properties' })
+    const propertiesTab = screen.getByRole('tab', { name: t('settings.tabProperties') })
     await user.click(propertiesTab)
 
     expect(screen.getByTestId('property-definitions-list')).toBeInTheDocument()
@@ -149,15 +150,15 @@ describe('SettingsView', () => {
     const user = userEvent.setup()
     render(<SettingsView />)
 
-    const appearanceTab = screen.getByRole('tab', { name: 'Appearance' })
+    const appearanceTab = screen.getByRole('tab', { name: t('settings.tabAppearance') })
     await user.click(appearanceTab)
 
     // Theme select should be present
-    const themeSelect = screen.getByLabelText('Theme')
+    const themeSelect = screen.getByLabelText(t('settings.themeLabel'))
     expect(themeSelect).toBeInTheDocument()
 
     // Font size select should be present
-    const fontSizeSelect = screen.getByLabelText('Font Size')
+    const fontSizeSelect = screen.getByLabelText(t('settings.fontSizeLabel'))
     expect(fontSizeSelect).toBeInTheDocument()
   })
 
@@ -165,7 +166,7 @@ describe('SettingsView', () => {
     const user = userEvent.setup()
     render(<SettingsView />)
 
-    const syncTab = screen.getByRole('tab', { name: 'Sync & Devices' })
+    const syncTab = screen.getByRole('tab', { name: t('settings.tabSync') })
     await user.click(syncTab)
 
     expect(screen.getByTestId('device-management')).toBeInTheDocument()
@@ -176,12 +177,12 @@ describe('SettingsView', () => {
     render(<SettingsView />)
 
     // Default: General tab is active
-    const generalTab = screen.getByRole('tab', { name: 'General' })
+    const generalTab = screen.getByRole('tab', { name: t('settings.tabGeneral') })
     expect(generalTab).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('task-states-section')).toBeInTheDocument()
 
     // Switch to Properties
-    const propertiesTab = screen.getByRole('tab', { name: 'Properties' })
+    const propertiesTab = screen.getByRole('tab', { name: t('settings.tabProperties') })
     await user.click(propertiesTab)
     expect(propertiesTab).toHaveAttribute('aria-selected', 'true')
     expect(generalTab).toHaveAttribute('aria-selected', 'false')
@@ -189,13 +190,13 @@ describe('SettingsView', () => {
     expect(screen.queryByTestId('task-states-section')).not.toBeInTheDocument()
 
     // Switch to Appearance
-    const appearanceTab = screen.getByRole('tab', { name: 'Appearance' })
+    const appearanceTab = screen.getByRole('tab', { name: t('settings.tabAppearance') })
     await user.click(appearanceTab)
     expect(appearanceTab).toHaveAttribute('aria-selected', 'true')
     expect(screen.queryByTestId('property-definitions-list')).not.toBeInTheDocument()
 
     // Switch to Sync
-    const syncTab = screen.getByRole('tab', { name: 'Sync & Devices' })
+    const syncTab = screen.getByRole('tab', { name: t('settings.tabSync') })
     await user.click(syncTab)
     expect(syncTab).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('device-management')).toBeInTheDocument()
@@ -206,10 +207,10 @@ describe('SettingsView', () => {
     render(<SettingsView />)
 
     // Navigate to Appearance tab
-    const appearanceTab = screen.getByRole('tab', { name: 'Appearance' })
+    const appearanceTab = screen.getByRole('tab', { name: t('settings.tabAppearance') })
     await user.click(appearanceTab)
 
-    const themeSelect = screen.getByLabelText('Theme')
+    const themeSelect = screen.getByLabelText(t('settings.themeLabel'))
 
     // Default should be system/auto
     expect(themeSelect).toHaveValue('system')
@@ -236,10 +237,10 @@ describe('SettingsView', () => {
     render(<SettingsView />)
 
     // Navigate to Appearance tab
-    const appearanceTab = screen.getByRole('tab', { name: 'Appearance' })
+    const appearanceTab = screen.getByRole('tab', { name: t('settings.tabAppearance') })
     await user.click(appearanceTab)
 
-    const fontSizeSelect = screen.getByLabelText('Font Size')
+    const fontSizeSelect = screen.getByLabelText(t('settings.fontSizeLabel'))
 
     // Default should be medium
     expect(fontSizeSelect).toHaveValue('medium')
@@ -269,7 +270,7 @@ describe('SettingsView', () => {
   it('renders Keyboard tab', () => {
     render(<SettingsView />)
 
-    const keyboardTab = screen.getByRole('tab', { name: 'Keyboard' })
+    const keyboardTab = screen.getByRole('tab', { name: t('settings.tabKeyboard') })
     expect(keyboardTab).toBeInTheDocument()
   })
 
@@ -277,7 +278,7 @@ describe('SettingsView', () => {
     const user = userEvent.setup()
     render(<SettingsView />)
 
-    const keyboardTab = screen.getByRole('tab', { name: 'Keyboard' })
+    const keyboardTab = screen.getByRole('tab', { name: t('settings.tabKeyboard') })
     await user.click(keyboardTab)
 
     expect(keyboardTab).toHaveAttribute('aria-selected', 'true')

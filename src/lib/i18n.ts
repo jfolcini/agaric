@@ -93,6 +93,10 @@ const resources = {
       'journal.loadCalendarFailed': 'Failed to load calendar',
       'journal.rescheduled': 'Task rescheduled to {{date}}',
       'journal.rescheduleFailed': 'Failed to reschedule task',
+      'journal.goToDailyView': 'Go to daily view for {{date}}',
+      'journal.agendaCountBadge': '{{count}} {{label}} items, click to view',
+      'journal.backlinkCountBadge': '{{count}} references, click to view',
+      'journal.openInEditorLabel': 'Open {{date}} in editor',
 
       // Announcements
       'announce.navigatedToPrevious': 'Navigated to previous day/week/month',
@@ -243,6 +247,7 @@ const resources = {
       'attachments.clickAgain': 'Click the delete button again to confirm.',
       'block.attachments': '{{count}} attachment(s)',
       'block.attachmentsTip': '{{count}} attachment(s) — click to toggle',
+      'attachment.openFile': 'Open file {{filename}}',
 
       // Errors
       'error.generic': 'Something went wrong',
@@ -489,6 +494,10 @@ const resources = {
       'pageHeader.starPage': 'Star this page',
       'pageHeader.unstarPage': 'Unstar this page',
 
+      // Page Tree (aria-labels)
+      'pageTree.delete': 'Delete {{path}}',
+      'pageTree.createUnder': 'Create page under {{path}}',
+
       // Page Browser
       'pageBrowser.newPagePlaceholder': 'New page name...',
       'pageBrowser.newPage': 'New Page',
@@ -650,6 +659,10 @@ const resources = {
       'propertiesView.deleteTooltip': 'Delete property',
       'propertiesView.editOptionsTooltip': 'Edit options',
       'propertiesView.noFilterResults': 'No properties match your search',
+      'properties.deleteDefinition': 'Delete property {{key}}',
+
+      // Task states (aria-labels)
+      'settings.removeState': 'Remove state {{state}}',
 
       // Tags
       'tags.loadFailed': 'Failed to load tags',
@@ -944,6 +957,7 @@ const resources = {
       'backlink.ascSort': 'Asc',
       'backlink.descSort': 'Desc',
       'backlink.showingCount': 'Showing {{filtered}} of {{total}} backlinks',
+      'backlinks.linkMention': 'Link it: replace mention in block {{blockId}}',
 
       // Conflict list
       'conflict.emptyContent': '(empty)',
@@ -972,6 +986,7 @@ const resources = {
       'conflict.viewOriginalLabel': 'View original block for {{id}}',
       'conflict.keepIncomingLabel': 'Keep incoming version for block {{id}}',
       'conflict.discardConflictLabel': 'Discard conflict for block {{id}}',
+      'conflicts.sourceDevice': 'Source device',
 
       // Pairing
       'pairing.cancelFailed': 'Failed to cancel pairing',

@@ -92,6 +92,7 @@ vi.mock('@/components/ui/select', () => {
 })
 
 import { toast } from 'sonner'
+import { t } from '@/lib/i18n'
 import { PropertyRowEditor } from '../PropertyRowEditor'
 
 const mockedToastError = vi.mocked(toast.error)
@@ -146,7 +147,9 @@ describe('PropertyRowEditor rendering', () => {
       />,
     )
 
-    const input = screen.getByLabelText('author value') as HTMLInputElement
+    const input = screen.getByLabelText(
+      t('pageProperty.valueLabel', { key: 'author' }),
+    ) as HTMLInputElement
     expect(input.type).toBe('text')
     expect(input.value).toBe('Alice')
   })
@@ -162,7 +165,9 @@ describe('PropertyRowEditor rendering', () => {
       />,
     )
 
-    const input = screen.getByLabelText('priority value') as HTMLInputElement
+    const input = screen.getByLabelText(
+      t('pageProperty.valueLabel', { key: 'priority' }),
+    ) as HTMLInputElement
     expect(input.type).toBe('number')
     expect(input.value).toBe('42')
   })
@@ -178,7 +183,9 @@ describe('PropertyRowEditor rendering', () => {
       />,
     )
 
-    const input = screen.getByLabelText('due value') as HTMLInputElement
+    const input = screen.getByLabelText(
+      t('pageProperty.valueLabel', { key: 'due' }),
+    ) as HTMLInputElement
     expect(input.type).toBe('text')
     expect(input.value).toBe('2026-06-15')
   })
@@ -194,7 +201,9 @@ describe('PropertyRowEditor rendering', () => {
       />,
     )
 
-    const select = screen.getByLabelText('stage value') as HTMLSelectElement
+    const select = screen.getByLabelText(
+      t('pageProperty.valueLabel', { key: 'stage' }),
+    ) as HTMLSelectElement
     expect(select.tagName).toBe('SELECT')
     expect(select.value).toBe('DOING')
     const opts = Array.from(select.options).map((o) => o.value)
@@ -214,7 +223,9 @@ describe('PropertyRowEditor rendering', () => {
       />,
     )
 
-    const input = screen.getByLabelText('unknown value') as HTMLInputElement
+    const input = screen.getByLabelText(
+      t('pageProperty.valueLabel', { key: 'unknown' }),
+    ) as HTMLInputElement
     expect(input.type).toBe('text')
     expect(input.value).toBe('val')
   })
@@ -230,7 +241,9 @@ describe('PropertyRowEditor rendering', () => {
       />,
     )
 
-    const input = screen.getByLabelText('empty value') as HTMLInputElement
+    const input = screen.getByLabelText(
+      t('pageProperty.valueLabel', { key: 'empty' }),
+    ) as HTMLInputElement
     expect(input.value).toBe('')
   })
 })
@@ -249,7 +262,7 @@ describe('PropertyRowEditor editing', () => {
       />,
     )
 
-    const input = screen.getByLabelText('author value')
+    const input = screen.getByLabelText(t('pageProperty.valueLabel', { key: 'author' }))
     await user.click(input)
     await user.type(input, 'Bob')
     await user.tab()
@@ -270,7 +283,7 @@ describe('PropertyRowEditor editing', () => {
       />,
     )
 
-    const input = screen.getByLabelText('author value')
+    const input = screen.getByLabelText(t('pageProperty.valueLabel', { key: 'author' }))
     await user.click(input)
     await user.tab()
 
@@ -290,7 +303,9 @@ describe('PropertyRowEditor editing', () => {
       />,
     )
 
-    const select = screen.getByLabelText('stage value') as HTMLSelectElement
+    const select = screen.getByLabelText(
+      t('pageProperty.valueLabel', { key: 'stage' }),
+    ) as HTMLSelectElement
     await user.selectOptions(select, 'DONE')
 
     expect(onSave).toHaveBeenCalledWith('DONE')
@@ -309,7 +324,9 @@ describe('PropertyRowEditor editing', () => {
       />,
     )
 
-    const select = screen.getByLabelText('stage value') as HTMLSelectElement
+    const select = screen.getByLabelText(
+      t('pageProperty.valueLabel', { key: 'stage' }),
+    ) as HTMLSelectElement
     await user.selectOptions(select, '__none__')
 
     expect(onSave).toHaveBeenCalledWith('')
@@ -328,7 +345,9 @@ describe('PropertyRowEditor editing', () => {
       />,
     )
 
-    const deleteBtn = screen.getByLabelText('Delete property author')
+    const deleteBtn = screen.getByLabelText(
+      t('pageProperty.deletePropertyLabel', { key: 'author' }),
+    )
     await user.click(deleteBtn)
 
     expect(onDelete).toHaveBeenCalledTimes(1)
@@ -349,7 +368,7 @@ describe('PropertyRowEditor NL date input', () => {
       />,
     )
 
-    const input = screen.getByLabelText('due value')
+    const input = screen.getByLabelText(t('pageProperty.valueLabel', { key: 'due' }))
     await user.click(input)
     await user.type(input, 'tomorrow')
     await user.tab()
@@ -372,7 +391,7 @@ describe('PropertyRowEditor NL date input', () => {
       />,
     )
 
-    const input = screen.getByLabelText('due value')
+    const input = screen.getByLabelText(t('pageProperty.valueLabel', { key: 'due' }))
     await user.click(input)
     await user.type(input, '2025-04-15')
     await user.tab()
@@ -392,7 +411,7 @@ describe('PropertyRowEditor NL date input', () => {
       />,
     )
 
-    const input = screen.getByLabelText('due value')
+    const input = screen.getByLabelText(t('pageProperty.valueLabel', { key: 'due' }))
     await user.click(input)
     await user.type(input, 'today')
 
@@ -414,7 +433,7 @@ describe('PropertyRowEditor NL date input', () => {
       />,
     )
 
-    const input = screen.getByLabelText('due value')
+    const input = screen.getByLabelText(t('pageProperty.valueLabel', { key: 'due' }))
     await user.click(input)
     await user.type(input, 'not a date')
     await user.tab()
@@ -433,8 +452,10 @@ describe('PropertyRowEditor NL date input', () => {
       />,
     )
 
-    const input = screen.getByLabelText('due value') as HTMLInputElement
-    expect(input.placeholder).toBe('today, +3d, Apr 15, 2025-04-15')
+    const input = screen.getByLabelText(
+      t('pageProperty.valueLabel', { key: 'due' }),
+    ) as HTMLInputElement
+    expect(input.placeholder).toBe(t('property.datePlaceholder'))
   })
 })
 
@@ -450,7 +471,9 @@ describe('PropertyRowEditor select options editing', () => {
       />,
     )
 
-    expect(screen.getByLabelText('Edit options for stage')).toBeInTheDocument()
+    expect(
+      screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })),
+    ).toBeInTheDocument()
   })
 
   it('does not show edit options button for non-select properties', () => {
@@ -479,13 +502,19 @@ describe('PropertyRowEditor select options editing', () => {
       />,
     )
 
-    await user.click(screen.getByLabelText('Edit options for stage'))
+    await user.click(screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('New option value')).toBeInTheDocument()
-      expect(screen.getByLabelText('Remove option TODO')).toBeInTheDocument()
-      expect(screen.getByLabelText('Remove option DOING')).toBeInTheDocument()
-      expect(screen.getByLabelText('Remove option DONE')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('pageProperty.newOptionLabel'))).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.removeOptionLabel', { option: 'TODO' })),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.removeOptionLabel', { option: 'DOING' })),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.removeOptionLabel', { option: 'DONE' })),
+      ).toBeInTheDocument()
     })
   })
 
@@ -510,14 +539,14 @@ describe('PropertyRowEditor select options editing', () => {
       />,
     )
 
-    await user.click(screen.getByLabelText('Edit options for stage'))
+    await user.click(screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('New option value')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('pageProperty.newOptionLabel'))).toBeInTheDocument()
     })
 
-    await user.type(screen.getByLabelText('New option value'), 'DONE')
-    await user.click(screen.getByLabelText('Add option'))
+    await user.type(screen.getByLabelText(t('pageProperty.newOptionLabel')), 'DONE')
+    await user.click(screen.getByLabelText(t('pageProperty.addOptionLabel')))
 
     await user.click(screen.getByRole('button', { name: /save options/i }))
 
@@ -549,13 +578,17 @@ describe('PropertyRowEditor select options editing', () => {
       />,
     )
 
-    await user.click(screen.getByLabelText('Edit options for stage'))
+    await user.click(screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Remove option DOING')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.removeOptionLabel', { option: 'DOING' })),
+      ).toBeInTheDocument()
     })
 
-    await user.click(screen.getByLabelText('Remove option DOING'))
+    await user.click(
+      screen.getByLabelText(t('pageProperty.removeOptionLabel', { option: 'DOING' })),
+    )
 
     await user.click(screen.getByRole('button', { name: /save options/i }))
 
@@ -581,7 +614,7 @@ describe('PropertyRowEditor select options editing', () => {
       />,
     )
 
-    await user.click(screen.getByLabelText('Edit options for stage'))
+    await user.click(screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })))
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /save options/i })).toBeInTheDocument()
@@ -590,7 +623,7 @@ describe('PropertyRowEditor select options editing', () => {
     await user.click(screen.getByRole('button', { name: /save options/i }))
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Failed to update options')
+      expect(mockedToastError).toHaveBeenCalledWith(t('pageProperty.updateOptionsFailed'))
     })
   })
 
@@ -606,18 +639,20 @@ describe('PropertyRowEditor select options editing', () => {
       />,
     )
 
-    await user.click(screen.getByLabelText('Edit options for stage'))
+    await user.click(screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('New option value')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('pageProperty.newOptionLabel'))).toBeInTheDocument()
     })
 
-    await user.type(screen.getByLabelText('New option value'), 'DOING')
+    await user.type(screen.getByLabelText(t('pageProperty.newOptionLabel')), 'DOING')
     await user.keyboard('{Enter}')
 
     // The new option should appear in the list
     await waitFor(() => {
-      expect(screen.getByLabelText('Remove option DOING')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.removeOptionLabel', { option: 'DOING' })),
+      ).toBeInTheDocument()
     })
   })
 })
@@ -666,10 +701,10 @@ describe('PropertyRowEditor ref picker', () => {
     )
 
     // Should render a button (not an input) for ref properties
-    const btn = screen.getByLabelText('linked_page value')
+    const btn = screen.getByLabelText(t('pageProperty.valueLabel', { key: 'linked_page' }))
     expect(btn.tagName).toBe('BUTTON')
     // Should show placeholder text
-    expect(btn).toHaveTextContent('Search pages...')
+    expect(btn).toHaveTextContent(t('block.searchPages'))
   })
 
   it('displays resolved page title when value_ref is set', async () => {
@@ -715,7 +750,7 @@ describe('PropertyRowEditor ref picker', () => {
       />,
     )
 
-    await user.click(screen.getByLabelText('linked_page value'))
+    await user.click(screen.getByLabelText(t('pageProperty.valueLabel', { key: 'linked_page' })))
 
     await waitFor(() => {
       expect(screen.getByText('Page One')).toBeInTheDocument()
@@ -747,13 +782,13 @@ describe('PropertyRowEditor ref picker', () => {
       />,
     )
 
-    await user.click(screen.getByLabelText('linked_page value'))
+    await user.click(screen.getByLabelText(t('pageProperty.valueLabel', { key: 'linked_page' })))
 
     await waitFor(() => {
       expect(screen.getByText('Alpha Page')).toBeInTheDocument()
     })
 
-    const searchInput = screen.getByLabelText('Search pages...')
+    const searchInput = screen.getByLabelText(t('block.searchPages'))
     await user.type(searchInput, 'Beta')
 
     await waitFor(() => {
@@ -786,7 +821,7 @@ describe('PropertyRowEditor ref picker', () => {
       />,
     )
 
-    await user.click(screen.getByLabelText('linked_page value'))
+    await user.click(screen.getByLabelText(t('pageProperty.valueLabel', { key: 'linked_page' })))
 
     await waitFor(() => {
       expect(screen.getByText('Target Page')).toBeInTheDocument()
@@ -828,17 +863,17 @@ describe('PropertyRowEditor ref picker', () => {
       />,
     )
 
-    await user.click(screen.getByLabelText('linked_page value'))
+    await user.click(screen.getByLabelText(t('pageProperty.valueLabel', { key: 'linked_page' })))
 
     await waitFor(() => {
       expect(screen.getByText('Only Page')).toBeInTheDocument()
     })
 
-    const searchInput = screen.getByLabelText('Search pages...')
+    const searchInput = screen.getByLabelText(t('block.searchPages'))
     await user.type(searchInput, 'zzz_nonexistent')
 
     await waitFor(() => {
-      expect(screen.getByText('No pages found')).toBeInTheDocument()
+      expect(screen.getByText(t('block.noPagesFound'))).toBeInTheDocument()
     })
   })
 
@@ -855,10 +890,10 @@ describe('PropertyRowEditor ref picker', () => {
       />,
     )
 
-    await user.click(screen.getByLabelText('linked_page value'))
+    await user.click(screen.getByLabelText(t('pageProperty.valueLabel', { key: 'linked_page' })))
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Failed to load pages')
+      expect(mockedToastError).toHaveBeenCalledWith(t('pageProperty.loadPagesFailed'))
     })
   })
 

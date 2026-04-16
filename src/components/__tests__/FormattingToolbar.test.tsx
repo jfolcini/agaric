@@ -19,6 +19,7 @@ import userEvent from '@testing-library/user-event'
 import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '../../lib/i18n'
 import { FormattingToolbar } from '../FormattingToolbar'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
@@ -218,35 +219,39 @@ describe('FormattingToolbar', () => {
 
     it('has role="toolbar" with aria-label', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      const toolbar = screen.getByRole('toolbar', { name: 'Formatting' })
+      const toolbar = screen.getByRole('toolbar', { name: t('toolbar.formatting') })
       expect(toolbar).toBeInTheDocument()
     })
 
     it('renders all twenty-two formatting buttons', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
-      expect(screen.getByRole('button', { name: 'Bold' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Italic' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Code' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Strikethrough' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Highlight' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'External link' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Internal link' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Insert tag' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Code block language' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Blockquote' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Heading level' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Ordered list' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Divider' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Callout' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Cycle priority' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Insert date' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Set due date' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Set scheduled date' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Toggle TODO state' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Redo' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Discard changes' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.bold') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.italic') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.code') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.strikethrough') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.highlight') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.link') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.internalLink') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.insertTag') })).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') }),
+      ).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.blockquote') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.headingLevel') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.orderedList') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.divider') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.callout') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.cyclePriority') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.insertDate') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.setDueDate') })).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: t('toolbar.setScheduledDate') }),
+      ).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.todoToggle') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.undo') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.redo') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.discard') })).toBeInTheDocument()
     })
 
     it('renders separators between button groups', () => {
@@ -266,7 +271,7 @@ describe('FormattingToolbar', () => {
       mockEditorState.bold = true
       render(<FormattingToolbar editor={makeEditor()} />)
 
-      const btn = screen.getByRole('button', { name: 'Bold' })
+      const btn = screen.getByRole('button', { name: t('toolbar.bold') })
       expect(btn).toHaveAttribute('aria-pressed', 'true')
       expect(btn.className).toContain('bg-accent')
     })
@@ -275,7 +280,7 @@ describe('FormattingToolbar', () => {
       mockEditorState.italic = true
       render(<FormattingToolbar editor={makeEditor()} />)
 
-      const btn = screen.getByRole('button', { name: 'Italic' })
+      const btn = screen.getByRole('button', { name: t('toolbar.italic') })
       expect(btn).toHaveAttribute('aria-pressed', 'true')
       expect(btn.className).toContain('bg-accent')
     })
@@ -284,7 +289,7 @@ describe('FormattingToolbar', () => {
       mockEditorState.code = true
       render(<FormattingToolbar editor={makeEditor()} />)
 
-      const btn = screen.getByRole('button', { name: 'Code' })
+      const btn = screen.getByRole('button', { name: t('toolbar.code') })
       expect(btn).toHaveAttribute('aria-pressed', 'true')
       expect(btn.className).toContain('bg-accent')
     })
@@ -292,7 +297,14 @@ describe('FormattingToolbar', () => {
     it('shows marks as not pressed when inactive', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
-      for (const label of ['Bold', 'Italic', 'Code', 'Strikethrough', 'Highlight', 'Blockquote']) {
+      for (const label of [
+        t('toolbar.bold'),
+        t('toolbar.italic'),
+        t('toolbar.code'),
+        t('toolbar.strikethrough'),
+        t('toolbar.highlight'),
+        t('toolbar.blockquote'),
+      ]) {
         const btn = screen.getByRole('button', { name: label })
         expect(btn).toHaveAttribute('aria-pressed', 'false')
         // Check that bg-accent is NOT a standalone class (hover:bg-accent is expected from ghost variant)
@@ -308,25 +320,25 @@ describe('FormattingToolbar', () => {
     it('disables Undo when canUndo is false', () => {
       mockEditorState.canUndo = false
       render(<FormattingToolbar editor={makeEditor()} />)
-      expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: t('toolbar.undo') })).toBeDisabled()
     })
 
     it('enables Undo when canUndo is true', () => {
       mockEditorState.canUndo = true
       render(<FormattingToolbar editor={makeEditor()} />)
-      expect(screen.getByRole('button', { name: 'Undo' })).not.toBeDisabled()
+      expect(screen.getByRole('button', { name: t('toolbar.undo') })).not.toBeDisabled()
     })
 
     it('disables Redo when canRedo is false', () => {
       mockEditorState.canRedo = false
       render(<FormattingToolbar editor={makeEditor()} />)
-      expect(screen.getByRole('button', { name: 'Redo' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: t('toolbar.redo') })).toBeDisabled()
     })
 
     it('enables Redo when canRedo is true', () => {
       mockEditorState.canRedo = true
       render(<FormattingToolbar editor={makeEditor()} />)
-      expect(screen.getByRole('button', { name: 'Redo' })).not.toBeDisabled()
+      expect(screen.getByRole('button', { name: t('toolbar.redo') })).not.toBeDisabled()
     })
   })
 
@@ -335,7 +347,7 @@ describe('FormattingToolbar', () => {
   describe('button actions', () => {
     it('toggles bold via editor chain on pointerdown', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: 'Bold' })
+      const btn = screen.getByRole('button', { name: t('toolbar.bold') })
 
       const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
       const preventSpy = vi.spyOn(event, 'preventDefault')
@@ -350,7 +362,7 @@ describe('FormattingToolbar', () => {
 
     it('toggles italic via editor chain on pointerdown', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Italic' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.italic') }))
 
       expect(mockToggleItalic).toHaveBeenCalled()
       expect(mockRun).toHaveBeenCalled()
@@ -358,7 +370,7 @@ describe('FormattingToolbar', () => {
 
     it('toggles code via editor chain on pointerdown', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Code' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.code') }))
 
       expect(mockToggleCode).toHaveBeenCalled()
       expect(mockRun).toHaveBeenCalled()
@@ -367,7 +379,7 @@ describe('FormattingToolbar', () => {
     it('triggers undo via editor chain on pointerdown', () => {
       mockEditorState.canUndo = true
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Undo' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.undo') }))
 
       expect(mockUndo).toHaveBeenCalled()
       expect(mockRun).toHaveBeenCalled()
@@ -376,7 +388,7 @@ describe('FormattingToolbar', () => {
     it('triggers redo via editor chain on pointerdown', () => {
       mockEditorState.canRedo = true
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Redo' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.redo') }))
 
       expect(mockRedo).toHaveBeenCalled()
       expect(mockRun).toHaveBeenCalled()
@@ -389,7 +401,7 @@ describe('FormattingToolbar', () => {
     it('opens link popover when clicking External link button', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
-      const linkBtn = screen.getByRole('button', { name: 'External link' })
+      const linkBtn = screen.getByRole('button', { name: t('toolbar.link') })
       const popover = linkBtn.closest('[data-popover]') as HTMLElement
       expect(popover).toHaveAttribute('data-open', 'false')
 
@@ -397,7 +409,7 @@ describe('FormattingToolbar', () => {
 
       // After re-render, find the popover wrapping the link button again
       const popoverAfter = screen
-        .getByRole('button', { name: 'External link' })
+        .getByRole('button', { name: t('toolbar.link') })
         .closest('[data-popover]') as HTMLElement
       expect(popoverAfter).toHaveAttribute('data-open', 'true')
     })
@@ -425,7 +437,7 @@ describe('FormattingToolbar', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
       // Open the popover first
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'External link' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.link') }))
       // After re-render the popover index changes; find the popover that wraps the close button
       const closeBtn = screen.getByTestId('close-popover')
       const popover = closeBtn.closest('[data-popover]') as HTMLElement
@@ -442,7 +454,7 @@ describe('FormattingToolbar', () => {
     it('opens popover on Ctrl+K custom event from editor DOM', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
-      const linkBtn = screen.getByRole('button', { name: 'External link' })
+      const linkBtn = screen.getByRole('button', { name: t('toolbar.link') })
       const popover = linkBtn.closest('[data-popover]') as HTMLElement
       expect(popover).toHaveAttribute('data-open', 'false')
 
@@ -452,7 +464,7 @@ describe('FormattingToolbar', () => {
       })
 
       const popoverAfter = screen
-        .getByRole('button', { name: 'External link' })
+        .getByRole('button', { name: t('toolbar.link') })
         .closest('[data-popover]') as HTMLElement
       expect(popoverAfter).toHaveAttribute('data-open', 'true')
     })
@@ -469,7 +481,7 @@ describe('FormattingToolbar', () => {
         )
       })
 
-      const linkBtn = screen.getByRole('button', { name: 'External link' })
+      const linkBtn = screen.getByRole('button', { name: t('toolbar.link') })
       const popoverAfter = linkBtn.closest('[data-popover]') as HTMLElement
       expect(popoverAfter).toHaveAttribute('data-open', 'true')
 
@@ -484,7 +496,7 @@ describe('FormattingToolbar', () => {
       mockEditorState.link = true
       mockGetAttributes.mockReturnValue({ href: 'https://example.com' })
       render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: 'External link' })
+      const btn = screen.getByRole('button', { name: t('toolbar.link') })
       expect(btn).toHaveAttribute('aria-pressed', 'true')
       expect(btn.className).toContain('bg-accent')
     })
@@ -545,7 +557,7 @@ describe('FormattingToolbar', () => {
     it('toggles code block via editor chain', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       // Code block button is now a popover — click opens it, select "Plain text" to toggle
-      const btn = screen.getByRole('button', { name: 'Code block language' })
+      const btn = screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') })
       fireEvent.pointerDown(btn)
       // The popover content shows language options including "Plain text"
       const popoverContents = screen.getAllByTestId('popover-content')
@@ -558,7 +570,7 @@ describe('FormattingToolbar', () => {
     it('shows Code block as pressed when active', () => {
       mockEditorState.codeBlock = true
       render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: 'Code block language' })
+      const btn = screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') })
       expect(btn).toHaveAttribute('aria-pressed', 'true')
       expect(btn.className).toContain('bg-accent')
     })
@@ -588,14 +600,14 @@ describe('FormattingToolbar', () => {
       const spy = vi.fn()
       document.addEventListener('cycle-priority', spy)
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Cycle priority' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.cyclePriority') }))
       expect(spy).toHaveBeenCalledOnce()
       document.removeEventListener('cycle-priority', spy)
     })
 
     it('shows "P" with no dot when no priority is set', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: 'Cycle priority' })
+      const btn = screen.getByRole('button', { name: t('toolbar.cyclePriority') })
       expect(btn.textContent).toBe('P')
       expect(btn.querySelector('.rounded-full')).toBeNull()
       expect(btn).toHaveAttribute('aria-pressed', 'false')
@@ -603,7 +615,7 @@ describe('FormattingToolbar', () => {
 
     it('shows "P1" with red dot for priority 1', () => {
       render(<FormattingToolbar editor={makeEditor()} currentPriority="1" />)
-      const btn = screen.getByRole('button', { name: 'Cycle priority' })
+      const btn = screen.getByRole('button', { name: t('toolbar.cyclePriority') })
       expect(btn.textContent).toContain('P1')
       const dot = btn.querySelector('.rounded-full')
       expect(dot).toBeInTheDocument()
@@ -614,7 +626,7 @@ describe('FormattingToolbar', () => {
 
     it('shows "P2" with yellow dot for priority 2', () => {
       render(<FormattingToolbar editor={makeEditor()} currentPriority="2" />)
-      const btn = screen.getByRole('button', { name: 'Cycle priority' })
+      const btn = screen.getByRole('button', { name: t('toolbar.cyclePriority') })
       expect(btn.textContent).toContain('P2')
       const dot = btn.querySelector('.rounded-full')
       expect(dot).toBeInTheDocument()
@@ -624,7 +636,7 @@ describe('FormattingToolbar', () => {
 
     it('shows "P3" with blue dot for priority 3', () => {
       render(<FormattingToolbar editor={makeEditor()} currentPriority="3" />)
-      const btn = screen.getByRole('button', { name: 'Cycle priority' })
+      const btn = screen.getByRole('button', { name: t('toolbar.cyclePriority') })
       expect(btn.textContent).toContain('P3')
       const dot = btn.querySelector('.rounded-full')
       expect(dot).toBeInTheDocument()
@@ -634,7 +646,7 @@ describe('FormattingToolbar', () => {
 
     it('prevents default on pointerdown to preserve editor focus', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: 'Cycle priority' })
+      const btn = screen.getByRole('button', { name: t('toolbar.cyclePriority') })
       const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
       const prevented = !btn.dispatchEvent(event)
       expect(prevented).toBe(true)
@@ -648,14 +660,14 @@ describe('FormattingToolbar', () => {
       const spy = vi.fn()
       document.addEventListener('open-date-picker', spy)
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Insert date' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.insertDate') }))
       expect(spy).toHaveBeenCalledOnce()
       document.removeEventListener('open-date-picker', spy)
     })
 
     it('date button prevents default to preserve editor focus', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: 'Insert date' })
+      const btn = screen.getByRole('button', { name: t('toolbar.insertDate') })
       const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
       const prevented = !btn.dispatchEvent(event)
       expect(prevented).toBe(true)
@@ -667,13 +679,13 @@ describe('FormattingToolbar', () => {
   describe('internal link button', () => {
     it('inserts [[ into the editor to trigger the block link picker', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Internal link' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.internalLink') }))
       expect(mockInsertContent).toHaveBeenCalledWith('[[')
     })
 
     it('prevents default on pointerdown to preserve editor focus', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: 'Internal link' })
+      const btn = screen.getByRole('button', { name: t('toolbar.internalLink') })
       const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
       const prevented = !btn.dispatchEvent(event)
       expect(prevented).toBe(true)
@@ -681,7 +693,7 @@ describe('FormattingToolbar', () => {
 
     it('inserts [[ when no text is selected', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Internal link' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.internalLink') }))
 
       expect(mockInsertContent).toHaveBeenCalledWith('[[')
       expect(mockRun).toHaveBeenCalled()
@@ -694,7 +706,7 @@ describe('FormattingToolbar', () => {
       ;(editor as any).state.selection = { from: 5, to: 15 }
 
       render(<FormattingToolbar editor={editor} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Internal link' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.internalLink') }))
 
       expect(mockResolveBlockLinkFromSelection).toHaveBeenCalled()
       expect(mockInsertContent).not.toHaveBeenCalled()
@@ -706,13 +718,13 @@ describe('FormattingToolbar', () => {
   describe('tag button', () => {
     it('inserts @ into the editor to trigger the tag picker', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Insert tag' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.insertTag') }))
       expect(mockInsertContent).toHaveBeenCalledWith('@')
     })
 
     it('prevents default on pointerdown to preserve editor focus', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: 'Insert tag' })
+      const btn = screen.getByRole('button', { name: t('toolbar.insertTag') })
       const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
       const prevented = !btn.dispatchEvent(event)
       expect(prevented).toBe(true)
@@ -725,28 +737,32 @@ describe('FormattingToolbar', () => {
     it('all buttons have correct aria-labels', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
-      expect(screen.getByRole('button', { name: 'Bold' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Italic' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Code' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Strikethrough' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Highlight' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'External link' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Internal link' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Insert tag' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Code block language' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Blockquote' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Heading level' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Ordered list' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Divider' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Callout' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Cycle priority' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Insert date' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Set due date' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Set scheduled date' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Toggle TODO state' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Redo' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Discard changes' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.bold') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.italic') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.code') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.strikethrough') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.highlight') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.link') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.internalLink') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.insertTag') })).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') }),
+      ).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.blockquote') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.headingLevel') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.orderedList') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.divider') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.callout') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.cyclePriority') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.insertDate') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.setDueDate') })).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: t('toolbar.setScheduledDate') }),
+      ).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.todoToggle') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.undo') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.redo') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.discard') })).toBeInTheDocument()
     })
   })
 
@@ -755,13 +771,13 @@ describe('FormattingToolbar', () => {
   describe('aria-controls', () => {
     it('sets aria-controls to editor-{blockId} when blockId is provided', () => {
       render(<FormattingToolbar editor={makeEditor()} blockId="B1" />)
-      const toolbar = screen.getByRole('toolbar', { name: 'Formatting' })
+      const toolbar = screen.getByRole('toolbar', { name: t('toolbar.formatting') })
       expect(toolbar).toHaveAttribute('aria-controls', 'editor-B1')
     })
 
     it('does not set aria-controls when blockId is omitted', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      const toolbar = screen.getByRole('toolbar', { name: 'Formatting' })
+      const toolbar = screen.getByRole('toolbar', { name: t('toolbar.formatting') })
       expect(toolbar).not.toHaveAttribute('aria-controls')
     })
   })
@@ -771,14 +787,14 @@ describe('FormattingToolbar', () => {
   describe('due date button', () => {
     it('renders with aria-label "Set due date"', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      expect(screen.getByRole('button', { name: 'Set due date' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.setDueDate') })).toBeInTheDocument()
     })
 
     it('dispatches open-due-date-picker custom event on pointerdown', () => {
       const spy = vi.fn()
       document.addEventListener('open-due-date-picker', spy)
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Set due date' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.setDueDate') }))
       expect(spy).toHaveBeenCalledOnce()
       document.removeEventListener('open-due-date-picker', spy)
     })
@@ -789,14 +805,16 @@ describe('FormattingToolbar', () => {
   describe('scheduled date button', () => {
     it('renders with aria-label "Set scheduled date"', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      expect(screen.getByRole('button', { name: 'Set scheduled date' })).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: t('toolbar.setScheduledDate') }),
+      ).toBeInTheDocument()
     })
 
     it('dispatches open-scheduled-date-picker custom event on pointerdown', () => {
       const spy = vi.fn()
       document.addEventListener('open-scheduled-date-picker', spy)
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Set scheduled date' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.setScheduledDate') }))
       expect(spy).toHaveBeenCalledOnce()
       document.removeEventListener('open-scheduled-date-picker', spy)
     })
@@ -807,14 +825,14 @@ describe('FormattingToolbar', () => {
   describe('TODO cycle button', () => {
     it('renders with aria-label "Toggle TODO state"', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      expect(screen.getByRole('button', { name: 'Toggle TODO state' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.todoToggle') })).toBeInTheDocument()
     })
 
     it('dispatches toggle-todo-state custom event on pointerdown', () => {
       const spy = vi.fn()
       document.addEventListener('toggle-todo-state', spy)
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Toggle TODO state' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.todoToggle') }))
       expect(spy).toHaveBeenCalledOnce()
       document.removeEventListener('toggle-todo-state', spy)
     })
@@ -825,30 +843,30 @@ describe('FormattingToolbar', () => {
   describe('structure buttons', () => {
     it('renders Ordered list button with aria-label', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: 'Ordered list' })
+      const btn = screen.getByRole('button', { name: t('toolbar.orderedList') })
       expect(btn).toBeInTheDocument()
-      expect(btn).toHaveAttribute('aria-label', 'Ordered list')
+      expect(btn).toHaveAttribute('aria-label', t('toolbar.orderedList'))
     })
 
     it('renders Divider button with aria-label', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: 'Divider' })
+      const btn = screen.getByRole('button', { name: t('toolbar.divider') })
       expect(btn).toBeInTheDocument()
-      expect(btn).toHaveAttribute('aria-label', 'Divider')
+      expect(btn).toHaveAttribute('aria-label', t('toolbar.divider'))
     })
 
     it('renders Callout button with aria-label', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: 'Callout' })
+      const btn = screen.getByRole('button', { name: t('toolbar.callout') })
       expect(btn).toBeInTheDocument()
-      expect(btn).toHaveAttribute('aria-label', 'Callout')
+      expect(btn).toHaveAttribute('aria-label', t('toolbar.callout'))
     })
 
     it('dispatches insert-ordered-list event on pointerdown', () => {
       const spy = vi.fn()
       document.addEventListener('insert-ordered-list', spy)
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Ordered list' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.orderedList') }))
       expect(spy).toHaveBeenCalledOnce()
       document.removeEventListener('insert-ordered-list', spy)
     })
@@ -857,7 +875,7 @@ describe('FormattingToolbar', () => {
       const spy = vi.fn()
       document.addEventListener('insert-divider', spy)
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Divider' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.divider') }))
       expect(spy).toHaveBeenCalledOnce()
       document.removeEventListener('insert-divider', spy)
     })
@@ -866,14 +884,14 @@ describe('FormattingToolbar', () => {
       const spy = vi.fn()
       document.addEventListener('insert-callout', spy)
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Callout' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.callout') }))
       expect(spy).toHaveBeenCalledOnce()
       document.removeEventListener('insert-callout', spy)
     })
 
     it('prevents default on pointerdown to preserve editor focus', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      for (const label of ['Ordered list', 'Divider', 'Callout']) {
+      for (const label of [t('toolbar.orderedList'), t('toolbar.divider'), t('toolbar.callout')]) {
         const btn = screen.getByRole('button', { name: label })
         const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
         const prevented = !btn.dispatchEvent(event)
@@ -893,7 +911,7 @@ describe('FormattingToolbar', () => {
     it('renders heading button and shows level when heading is active', () => {
       mockEditorState.headingLevel = 2
       render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: 'Heading level' })
+      const btn = screen.getByRole('button', { name: t('toolbar.headingLevel') })
       expect(btn).toBeInTheDocument()
       expect(btn).toHaveAttribute('aria-pressed', 'true')
       expect(btn.className).toContain('bg-accent')
@@ -902,7 +920,7 @@ describe('FormattingToolbar', () => {
 
     it('heading button uses icon-xs size matching other toolbar buttons', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: 'Heading level' })
+      const btn = screen.getByRole('button', { name: t('toolbar.headingLevel') })
       // icon-xs size class includes size-6
       expect(btn.className).toContain('size-6')
     })
@@ -917,7 +935,7 @@ describe('FormattingToolbar', () => {
       for (let i = 1; i <= 6; i++) {
         expect(headingPopover.textContent).toContain(`H${i}`)
       }
-      expect(headingPopover.textContent).toContain('Paragraph')
+      expect(headingPopover.textContent).toContain(t('toolbar.paragraph'))
     })
   })
 
@@ -926,14 +944,14 @@ describe('FormattingToolbar', () => {
   describe('discard button', () => {
     it('renders with aria-label "Discard changes"', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      expect(screen.getByRole('button', { name: 'Discard changes' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('toolbar.discard') })).toBeInTheDocument()
     })
 
     it('dispatches discard-block-edit custom event on pointerdown', () => {
       const spy = vi.fn()
       document.addEventListener('discard-block-edit', spy)
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Discard changes' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.discard') }))
       expect(spy).toHaveBeenCalledOnce()
       document.removeEventListener('discard-block-edit', spy)
     })
@@ -944,7 +962,7 @@ describe('FormattingToolbar', () => {
   describe('toolbar overflow', () => {
     it('wraps toolbar in ScrollArea for narrow screens', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      const toolbar = screen.getByRole('toolbar', { name: 'Formatting' })
+      const toolbar = screen.getByRole('toolbar', { name: t('toolbar.formatting') })
       const scrollArea = toolbar.closest('[data-slot="scroll-area"]')
       expect(scrollArea).toBeInTheDocument()
     })
@@ -955,20 +973,20 @@ describe('FormattingToolbar', () => {
   describe('code block language popover', () => {
     it('renders code block language popover button', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: 'Code block language' })
+      const btn = screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') })
       expect(btn).toBeInTheDocument()
     })
 
     it('opens code block language popover on click', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: 'Code block language' })
+      const btn = screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') })
       const popover = btn.closest('[data-popover]') as HTMLElement
       expect(popover).toHaveAttribute('data-open', 'false')
 
       fireEvent.pointerDown(btn)
 
       const popoverAfter = screen
-        .getByRole('button', { name: 'Code block language' })
+        .getByRole('button', { name: t('toolbar.codeBlockLanguage') })
         .closest('[data-popover]') as HTMLElement
       expect(popoverAfter).toHaveAttribute('data-open', 'true')
     })
@@ -1037,7 +1055,7 @@ describe('FormattingToolbar', () => {
       mockEditorState.codeBlockLanguage = 'javascript'
       render(<FormattingToolbar editor={makeEditor()} />)
 
-      const btn = screen.getByRole('button', { name: 'Code block language' })
+      const btn = screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') })
       expect(btn.textContent).toContain('JS')
     })
 
@@ -1046,7 +1064,7 @@ describe('FormattingToolbar', () => {
       mockEditorState.codeBlockLanguage = 'typescript'
       render(<FormattingToolbar editor={makeEditor()} />)
 
-      const btn = screen.getByRole('button', { name: 'Code block language' })
+      const btn = screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') })
       expect(btn.textContent).toContain('TS')
     })
 
@@ -1055,7 +1073,7 @@ describe('FormattingToolbar', () => {
       mockEditorState.codeBlockLanguage = ''
       render(<FormattingToolbar editor={makeEditor()} />)
 
-      const btn = screen.getByRole('button', { name: 'Code block language' })
+      const btn = screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') })
       // Should only have the icon, no text label
       expect(btn.querySelector('.text-\\[10px\\]')).toBeNull()
     })
@@ -1066,7 +1084,7 @@ describe('FormattingToolbar', () => {
       const { container } = render(<FormattingToolbar editor={makeEditor()} />)
 
       // Open the popover
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Code block language' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') }))
 
       expect(await axe(container)).toHaveNoViolations()
     })

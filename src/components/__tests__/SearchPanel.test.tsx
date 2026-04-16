@@ -21,6 +21,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 import { addRecentPage } from '../../lib/recent-pages'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { SearchPanel } from '../SearchPanel'
@@ -106,7 +107,7 @@ function textContent(text: string) {
 describe('SearchPanel', () => {
   it('renders search input', () => {
     render(<SearchPanel />)
-    expect(screen.getByPlaceholderText('Search blocks...')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText(t('search.searchPlaceholder'))).toBeInTheDocument()
   })
 
   it('shows no results before first search', () => {
@@ -124,7 +125,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'test')
 
     await waitFor(() => {
@@ -153,7 +154,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     fireEvent.change(input, { target: { value: 'query' } })
 
     const searchBtn = screen.getByRole('button', { name: /Search/i })
@@ -179,7 +180,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'nothing')
 
     await waitFor(() => {
@@ -193,7 +194,7 @@ describe('SearchPanel', () => {
 
     const { container } = render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'slow')
 
     const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
@@ -218,7 +219,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'result')
 
     const loadMoreBtn = await screen.findByRole('button', { name: /Load more/i })
@@ -257,7 +258,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     fireEvent.change(input, { target: { value: 'debounce' } })
 
     // Not yet called — debounce timer hasn't fired
@@ -286,7 +287,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'test')
 
     await waitFor(() => {
@@ -305,7 +306,7 @@ describe('SearchPanel', () => {
   it('shows CJK notice for CJK input', () => {
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     fireEvent.change(input, { target: { value: '你好' } })
 
     expect(screen.getByText(/CJK search is limited/)).toBeInTheDocument()
@@ -314,7 +315,7 @@ describe('SearchPanel', () => {
   it('does not show CJK notice for Latin input', () => {
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     fireEvent.change(input, { target: { value: 'hello' } })
 
     expect(screen.queryByText(/CJK search is limited/)).not.toBeInTheDocument()
@@ -337,7 +338,7 @@ describe('SearchPanel', () => {
   it('does not search for whitespace-only input', () => {
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     fireEvent.change(input, { target: { value: '   ' } })
     const form = input.closest('form')
     if (form) fireEvent.submit(form)
@@ -350,7 +351,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'fail')
 
     // Wait for the rejected promise to settle — component should not crash
@@ -360,7 +361,7 @@ describe('SearchPanel', () => {
 
     // Should show error toast
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to search')
+      expect(toast.error).toHaveBeenCalledWith(t('search.failed'))
     })
 
     // No results shown
@@ -392,7 +393,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'child')
 
     await waitFor(() => {
@@ -442,7 +443,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'page')
 
     await waitFor(() => {
@@ -479,7 +480,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'root')
 
     await waitFor(() => {
@@ -512,7 +513,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'child')
 
     await waitFor(() => {
@@ -524,7 +525,7 @@ describe('SearchPanel', () => {
     await user.click(screen.getByText(textContent('child block')))
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to load search results')
+      expect(toast.error).toHaveBeenCalledWith(t('search.loadResultsFailed'))
     })
   })
 
@@ -535,7 +536,7 @@ describe('SearchPanel', () => {
   it('does not invoke search for explicitly empty query on submit', async () => {
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, '')
 
     expect(mockedInvoke).not.toHaveBeenCalled()
@@ -549,7 +550,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, longQuery)
 
     await waitFor(() => {
@@ -572,7 +573,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, '<script>alert("xss")</script>')
 
     await waitFor(() => {
@@ -586,7 +587,7 @@ describe('SearchPanel', () => {
     })
 
     // Component should not crash — verify it's still mounted
-    expect(screen.getByPlaceholderText('Search blocks...')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText(t('search.searchPlaceholder'))).toBeInTheDocument()
   })
 
   it('debounces rapid-fire typing and only fires for the final value', async () => {
@@ -600,7 +601,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
 
     // Rapid-fire typing: each change restarts the debounce
     fireEvent.change(input, { target: { value: 'h' } })
@@ -654,7 +655,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'page')
 
     // Wait for first page
@@ -691,7 +692,7 @@ describe('SearchPanel', () => {
 
     const { container } = render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'loading')
 
     // Spinner should be visible because loading is true (form submit sets loading immediately)
@@ -718,7 +719,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'child')
 
     await waitFor(() => {
@@ -762,15 +763,15 @@ describe('SearchPanel', () => {
 
   it('search input is auto-focused on mount', () => {
     render(<SearchPanel />)
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     expect(input).toHaveFocus()
   })
 
   it('shows minimum character hint for short queries', () => {
     render(<SearchPanel />)
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     fireEvent.change(input, { target: { value: 'ab' } })
-    expect(screen.getByText('Search requires at least 3 characters')).toBeInTheDocument()
+    expect(screen.getByText(t('search.minCharsHint'))).toBeInTheDocument()
   })
 
   it('results container has role=listbox', async () => {
@@ -781,7 +782,7 @@ describe('SearchPanel', () => {
     })
 
     render(<SearchPanel />)
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'test')
 
     await waitFor(() => {
@@ -804,7 +805,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    expect(screen.getByText('Recent')).toBeInTheDocument()
+    expect(screen.getByText(t('search.recentTitle'))).toBeInTheDocument()
     expect(screen.getByText('Page One')).toBeInTheDocument()
     expect(screen.getByText('Page Two')).toBeInTheDocument()
   })
@@ -812,7 +813,7 @@ describe('SearchPanel', () => {
   it('does not show recent section when localStorage is empty', () => {
     render(<SearchPanel />)
 
-    expect(screen.queryByText('Recent')).not.toBeInTheDocument()
+    expect(screen.queryByText(t('search.recentTitle'))).not.toBeInTheDocument()
   })
 
   it('hides recent section when user types a query', () => {
@@ -822,12 +823,12 @@ describe('SearchPanel', () => {
     )
 
     render(<SearchPanel />)
-    expect(screen.getByText('Recent')).toBeInTheDocument()
+    expect(screen.getByText(t('search.recentTitle'))).toBeInTheDocument()
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     fireEvent.change(input, { target: { value: 'search' } })
 
-    expect(screen.queryByText('Recent')).not.toBeInTheDocument()
+    expect(screen.queryByText(t('search.recentTitle'))).not.toBeInTheDocument()
   })
 
   it('navigates to page when clicking a recent item', async () => {
@@ -865,7 +866,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'page')
 
     await waitFor(() => {
@@ -898,7 +899,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'child')
 
     await waitFor(() => {
@@ -969,15 +970,15 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'test')
 
     await waitFor(() => {
-      expect(screen.getByText('2 results found')).toBeInTheDocument()
+      expect(screen.getByText(t('search.resultsCount', { count: 2 }))).toBeInTheDocument()
     })
 
     // The result count should be visible (not sr-only)
-    const countSpan = screen.getByText('2 results found')
+    const countSpan = screen.getByText(t('search.resultsCount', { count: 2 }))
     expect(countSpan).not.toHaveClass('sr-only')
     expect(countSpan).toHaveClass('text-xs')
   })
@@ -991,7 +992,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'test')
 
     await waitFor(() => {
@@ -1026,7 +1027,7 @@ describe('SearchPanel', () => {
 
     render(<SearchPanel />)
 
-    const input = screen.getByPlaceholderText('Search blocks...')
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'child')
 
     // Wait for the breadcrumb to appear
@@ -1059,7 +1060,7 @@ describe('SearchPanel', () => {
 
       render(<SearchPanel />)
 
-      const input = screen.getByPlaceholderText('Search blocks...')
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
       typeAndSubmit(input, 'test')
 
       await waitFor(() => {
@@ -1106,7 +1107,7 @@ describe('SearchPanel', () => {
 
       render(<SearchPanel />)
 
-      const input = screen.getByPlaceholderText('Search blocks...')
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
       typeAndSubmit(input, 'enter')
 
       await waitFor(() => {
@@ -1156,7 +1157,7 @@ describe('SearchPanel', () => {
 
       render(<SearchPanel />)
 
-      const input = screen.getByPlaceholderText('Search blocks...')
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
       typeAndSubmit(input, 'highlight')
 
       await waitFor(() => {
@@ -1189,8 +1190,8 @@ describe('SearchPanel', () => {
       render(<SearchPanel />)
 
       expect(screen.getByTestId('filter-chip-bar')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: '+ Page' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: '+ Tag' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('search.addPage') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('search.addTag') })).toBeInTheDocument()
     })
 
     it('shows "in: Page Name" chip after selecting a page filter', async () => {
@@ -1212,7 +1213,7 @@ describe('SearchPanel', () => {
       render(<SearchPanel />)
 
       // Click "+ Page" to open the page picker popover
-      await user.click(screen.getByRole('button', { name: '+ Page' }))
+      await user.click(screen.getByRole('button', { name: t('search.addPage') }))
 
       // Wait for pages to load and click the page
       await waitFor(() => {
@@ -1239,7 +1240,7 @@ describe('SearchPanel', () => {
       render(<SearchPanel />)
 
       // Click "+ Tag" to open the tag picker popover
-      await user.click(screen.getByRole('button', { name: '+ Tag' }))
+      await user.click(screen.getByRole('button', { name: t('search.addTag') }))
 
       // Wait for tags to load
       await waitFor(() => {
@@ -1273,7 +1274,7 @@ describe('SearchPanel', () => {
       render(<SearchPanel />)
 
       // Add a page filter
-      await user.click(screen.getByRole('button', { name: '+ Page' }))
+      await user.click(screen.getByRole('button', { name: t('search.addPage') }))
       await waitFor(() => {
         expect(screen.getByText('Test Page')).toBeInTheDocument()
       })
@@ -1284,7 +1285,7 @@ describe('SearchPanel', () => {
       })
 
       // Remove the page filter
-      await user.click(screen.getByRole('button', { name: 'Remove page filter' }))
+      await user.click(screen.getByRole('button', { name: t('search.removePageFilter') }))
 
       await waitFor(() => {
         expect(screen.queryByText('in: Test Page')).not.toBeInTheDocument()
@@ -1302,7 +1303,7 @@ describe('SearchPanel', () => {
       render(<SearchPanel />)
 
       // Add a tag filter
-      await user.click(screen.getByRole('button', { name: '+ Tag' }))
+      await user.click(screen.getByRole('button', { name: t('search.addTag') }))
       await waitFor(() => {
         expect(screen.getByText('#work')).toBeInTheDocument()
       })
@@ -1313,7 +1314,9 @@ describe('SearchPanel', () => {
       })
 
       // Remove the tag filter
-      await user.click(screen.getByRole('button', { name: 'Remove tag work' }))
+      await user.click(
+        screen.getByRole('button', { name: t('search.removeTagFilter', { name: 'work' }) }),
+      )
 
       await waitFor(() => {
         expect(screen.queryByText('#work')).not.toBeInTheDocument()
@@ -1339,10 +1342,10 @@ describe('SearchPanel', () => {
       render(<SearchPanel />)
 
       // Clear all should not be visible initially
-      expect(screen.queryByText('Clear all')).not.toBeInTheDocument()
+      expect(screen.queryByText(t('search.clearAll'))).not.toBeInTheDocument()
 
       // Add a page filter
-      await user.click(screen.getByRole('button', { name: '+ Page' }))
+      await user.click(screen.getByRole('button', { name: t('search.addPage') }))
       await waitFor(() => {
         expect(screen.getByText('My Page')).toBeInTheDocument()
       })
@@ -1353,15 +1356,15 @@ describe('SearchPanel', () => {
       })
 
       // Clear all should be visible now
-      expect(screen.getByText('Clear all')).toBeInTheDocument()
+      expect(screen.getByText(t('search.clearAll'))).toBeInTheDocument()
 
       // Click Clear all
-      await user.click(screen.getByText('Clear all'))
+      await user.click(screen.getByText(t('search.clearAll')))
 
       // All chips removed
       await waitFor(() => {
         expect(screen.queryByText('in: My Page')).not.toBeInTheDocument()
-        expect(screen.queryByText('Clear all')).not.toBeInTheDocument()
+        expect(screen.queryByText(t('search.clearAll'))).not.toBeInTheDocument()
       })
     })
 
@@ -1384,7 +1387,7 @@ describe('SearchPanel', () => {
       render(<SearchPanel />)
 
       // Add a page filter
-      await user.click(screen.getByRole('button', { name: '+ Page' }))
+      await user.click(screen.getByRole('button', { name: t('search.addPage') }))
       await waitFor(() => {
         expect(screen.getByText('Filtered Page')).toBeInTheDocument()
       })
@@ -1402,7 +1405,7 @@ describe('SearchPanel', () => {
       })
 
       // Search with filter active
-      const input = screen.getByPlaceholderText('Search blocks...')
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
       typeAndSubmit(input, 'test')
 
       await waitFor(() => {
@@ -1435,7 +1438,7 @@ describe('SearchPanel', () => {
       const { container } = render(<SearchPanel />)
 
       // Add a page filter
-      await user.click(screen.getByRole('button', { name: '+ Page' }))
+      await user.click(screen.getByRole('button', { name: t('search.addPage') }))
       await waitFor(() => {
         expect(screen.getByText('A11y Page')).toBeInTheDocument()
       })
@@ -1470,7 +1473,7 @@ describe('SearchPanel', () => {
 
       render(<SearchPanel />)
 
-      const input = screen.getByPlaceholderText('Search blocks...')
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
       typeAndSubmit(input, 'test')
 
       await waitFor(() => {
@@ -1510,7 +1513,7 @@ describe('SearchPanel', () => {
 
       render(<SearchPanel />)
 
-      const input = screen.getByPlaceholderText('Search blocks...')
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
       typeAndSubmit(input, 'test')
 
       await waitFor(() => {

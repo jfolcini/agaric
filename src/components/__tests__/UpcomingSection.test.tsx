@@ -17,6 +17,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 
 import { makeBlock as _makeBlock } from '../../__tests__/fixtures'
 import { UpcomingSection } from '../UpcomingSection'
@@ -41,7 +42,7 @@ describe('UpcomingSection', () => {
 
     render(<UpcomingSection blocks={blocks} pageTitles={defaultTitles} />)
 
-    expect(screen.getByText('Upcoming')).toBeInTheDocument()
+    expect(screen.getByText(t('duePanel.upcomingTitle'))).toBeInTheDocument()
     expect(screen.getByText('(2)')).toBeInTheDocument()
   })
 

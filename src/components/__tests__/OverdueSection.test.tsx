@@ -17,6 +17,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 
 import { makeBlock as _makeBlock } from '../../__tests__/fixtures'
 import { OverdueSection } from '../OverdueSection'
@@ -41,7 +42,7 @@ describe('OverdueSection', () => {
 
     render(<OverdueSection blocks={blocks} pageTitles={defaultTitles} />)
 
-    expect(screen.getByText('Overdue')).toBeInTheDocument()
+    expect(screen.getByText(t('duePanel.overdueTitle'))).toBeInTheDocument()
     expect(screen.getByText('(2)')).toBeInTheDocument()
   })
 

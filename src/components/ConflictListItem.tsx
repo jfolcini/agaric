@@ -122,7 +122,7 @@ export function ConflictListItem({
           </span>
           <span className="conflict-timestamp">{getConflictTimestamp(block)}</span>
           {deviceName != null && (
-            <span className="conflict-device" title="Source device">
+            <span className="conflict-device" title={t('conflicts.sourceDevice')}>
               From: {deviceName}
             </span>
           )}

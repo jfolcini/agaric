@@ -17,6 +17,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 import type { BacklinkFilter } from '../../lib/tauri'
 import { FilterPillRow, filterSummary } from '../FilterPillRow'
 
@@ -46,7 +47,7 @@ describe('FilterPillRow', () => {
   it('renders a semantic list with correct aria-label', () => {
     const { container } = render(<FilterPillRow filters={defaultFilters} onRemove={vi.fn()} />)
 
-    const list = container.querySelector('ul[aria-label="Applied filters"]')
+    const list = container.querySelector(`ul[aria-label="${t('backlink.appliedFiltersLabel')}"]`)
     expect(list).toBeInTheDocument()
     const items = list?.querySelectorAll('li')
     expect(items).toHaveLength(2)

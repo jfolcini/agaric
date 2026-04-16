@@ -92,6 +92,7 @@ vi.mock('@/components/ui/select', () => {
 })
 
 import { toast } from 'sonner'
+import { t } from '@/lib/i18n'
 import { PagePropertyTable } from '../PagePropertyTable'
 
 const mockedToastError = vi.mocked(toast.error)
@@ -164,7 +165,7 @@ describe('PagePropertyTable rendering', () => {
     await waitFor(() => {
       const toggle = screen.getByRole('button', { name: /Properties/ })
       expect(toggle).toBeInTheDocument()
-      expect(toggle).toHaveTextContent('Properties')
+      expect(toggle).toHaveTextContent(t('pageProperty.propertiesButton'))
     })
     // Should not show any property rows when collapsed
     expect(screen.queryByLabelText(/value$/i)).not.toBeInTheDocument()
@@ -180,7 +181,9 @@ describe('PagePropertyTable rendering', () => {
     await user.click(toggle)
 
     await waitFor(() => {
-      expect(screen.getByLabelText('status value')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.valueLabel', { key: 'status' })),
+      ).toBeInTheDocument()
     })
   })
 
@@ -206,7 +209,7 @@ describe('PagePropertyTable rendering', () => {
 
     await waitFor(() => {
       const toggle = screen.getByRole('button', { name: /Properties/ })
-      expect(toggle).toHaveTextContent('Properties (2)')
+      expect(toggle).toHaveTextContent(`${t('pageProperty.propertiesButton')} (2)`)
     })
   })
 })
@@ -220,7 +223,9 @@ describe('PagePropertyTable property display', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      const input = screen.getByLabelText('author value') as HTMLInputElement
+      const input = screen.getByLabelText(
+        t('pageProperty.valueLabel', { key: 'author' }),
+      ) as HTMLInputElement
       expect(input).toBeInTheDocument()
       expect(input.type).toBe('text')
       expect(input.value).toBe('Alice')
@@ -235,7 +240,9 @@ describe('PagePropertyTable property display', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      const input = screen.getByLabelText('priority value') as HTMLInputElement
+      const input = screen.getByLabelText(
+        t('pageProperty.valueLabel', { key: 'priority' }),
+      ) as HTMLInputElement
       expect(input.type).toBe('number')
       expect(input.value).toBe('42')
     })
@@ -249,7 +256,9 @@ describe('PagePropertyTable property display', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      const input = screen.getByLabelText('due value') as HTMLInputElement
+      const input = screen.getByLabelText(
+        t('pageProperty.valueLabel', { key: 'due' }),
+      ) as HTMLInputElement
       expect(input.type).toBe('text')
       expect(input.value).toBe('2026-06-15')
     })
@@ -266,7 +275,9 @@ describe('PagePropertyTable property display', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      const select = screen.getByLabelText('stage value') as HTMLSelectElement
+      const select = screen.getByLabelText(
+        t('pageProperty.valueLabel', { key: 'stage' }),
+      ) as HTMLSelectElement
       expect(select.tagName).toBe('SELECT')
       expect(select.value).toBe('DOING')
       // Check options
@@ -287,10 +298,14 @@ describe('PagePropertyTable property editing', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('author value')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.valueLabel', { key: 'author' })),
+      ).toBeInTheDocument()
     })
 
-    const input = screen.getByLabelText('author value') as HTMLInputElement
+    const input = screen.getByLabelText(
+      t('pageProperty.valueLabel', { key: 'author' }),
+    ) as HTMLInputElement
     await user.clear(input)
     await user.type(input, 'Bob')
     await user.tab()
@@ -315,10 +330,14 @@ describe('PagePropertyTable property editing', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('priority value')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.valueLabel', { key: 'priority' })),
+      ).toBeInTheDocument()
     })
 
-    const input = screen.getByLabelText('priority value') as HTMLInputElement
+    const input = screen.getByLabelText(
+      t('pageProperty.valueLabel', { key: 'priority' }),
+    ) as HTMLInputElement
     await user.clear(input)
     await user.type(input, '99')
     await user.tab()
@@ -346,10 +365,14 @@ describe('PagePropertyTable property editing', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('stage value')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.valueLabel', { key: 'stage' })),
+      ).toBeInTheDocument()
     })
 
-    const select = screen.getByLabelText('stage value') as HTMLSelectElement
+    const select = screen.getByLabelText(
+      t('pageProperty.valueLabel', { key: 'stage' }),
+    ) as HTMLSelectElement
     await user.selectOptions(select, 'DONE')
 
     await waitFor(() => {
@@ -372,10 +395,14 @@ describe('PagePropertyTable property editing', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Delete property author')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.deletePropertyLabel', { key: 'author' })),
+      ).toBeInTheDocument()
     })
 
-    await user.click(screen.getByLabelText('Delete property author'))
+    await user.click(
+      screen.getByLabelText(t('pageProperty.deletePropertyLabel', { key: 'author' })),
+    )
 
     // Confirmation dialog should appear
     await waitFor(() => {
@@ -407,13 +434,19 @@ describe('PagePropertyTable property editing', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('author value')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.valueLabel', { key: 'author' })),
+      ).toBeInTheDocument()
     })
 
     // Delete should be visible for custom property
-    expect(screen.getByLabelText('Delete property author')).toBeInTheDocument()
+    expect(
+      screen.getByLabelText(t('pageProperty.deletePropertyLabel', { key: 'author' })),
+    ).toBeInTheDocument()
     // Delete should NOT be visible for non-deletable builtin property
-    expect(screen.queryByLabelText('Delete property created_at')).not.toBeInTheDocument()
+    expect(
+      screen.queryByLabelText(t('pageProperty.deletePropertyLabel', { key: 'created_at' })),
+    ).not.toBeInTheDocument()
   })
 })
 
@@ -424,7 +457,7 @@ describe('PagePropertyTable add property flow', () => {
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Property picker')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('pageProperty.pickerLabel'))).toBeInTheDocument()
       expect(screen.getByText('Status')).toBeInTheDocument()
       expect(screen.getByText('Weight')).toBeInTheDocument()
     })
@@ -437,10 +470,10 @@ describe('PagePropertyTable add property flow', () => {
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Search definitions')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('pageProperty.searchLabel'))).toBeInTheDocument()
     })
 
-    await user.type(screen.getByLabelText('Search definitions'), 'stat')
+    await user.type(screen.getByLabelText(t('pageProperty.searchLabel')), 'stat')
 
     await waitFor(() => {
       expect(screen.getByText('Status')).toBeInTheDocument()
@@ -545,10 +578,10 @@ describe('PagePropertyTable add property flow', () => {
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Search definitions')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('pageProperty.searchLabel'))).toBeInTheDocument()
     })
 
-    await user.type(screen.getByLabelText('Search definitions'), 'newfield')
+    await user.type(screen.getByLabelText(t('pageProperty.searchLabel')), 'newfield')
 
     // Click the "Create" prompt
     await waitFor(() => {
@@ -558,7 +591,7 @@ describe('PagePropertyTable add property flow', () => {
 
     // Should show type selector
     await waitFor(() => {
-      expect(screen.getByLabelText('Value type')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('pageProperty.valueTypeLabel'))).toBeInTheDocument()
     })
 
     // Click "Create definition" button
@@ -599,10 +632,10 @@ describe('PagePropertyTable add property flow', () => {
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Search definitions')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('pageProperty.searchLabel'))).toBeInTheDocument()
     })
 
-    await user.type(screen.getByLabelText('Search definitions'), 'myref')
+    await user.type(screen.getByLabelText(t('pageProperty.searchLabel')), 'myref')
 
     await waitFor(() => {
       expect(screen.getByText(/Create "myref"/)).toBeInTheDocument()
@@ -610,10 +643,10 @@ describe('PagePropertyTable add property flow', () => {
     await user.click(screen.getByText(/Create "myref"/))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Value type')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('pageProperty.valueTypeLabel'))).toBeInTheDocument()
     })
 
-    const select = screen.getByLabelText('Value type') as HTMLSelectElement
+    const select = screen.getByLabelText(t('pageProperty.valueTypeLabel')) as HTMLSelectElement
     const opts = Array.from(select.options).map((o) => o.value)
     expect(opts).toContain('ref')
   })
@@ -642,7 +675,7 @@ describe('PagePropertyTable error handling', () => {
     render(<PagePropertyTable pageId="PAGE_1" />)
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Failed to load properties')
+      expect(mockedToastError).toHaveBeenCalledWith(t('pageProperty.loadFailed'))
     })
   })
 
@@ -663,16 +696,20 @@ describe('PagePropertyTable error handling', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('author value')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.valueLabel', { key: 'author' })),
+      ).toBeInTheDocument()
     })
 
-    const input = screen.getByLabelText('author value') as HTMLInputElement
+    const input = screen.getByLabelText(
+      t('pageProperty.valueLabel', { key: 'author' }),
+    ) as HTMLInputElement
     await user.clear(input)
     await user.type(input, 'Bob')
     await user.tab()
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Failed to save property')
+      expect(mockedToastError).toHaveBeenCalledWith(t('pageProperty.saveFailed'))
     })
   })
 })
@@ -691,10 +728,14 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Delete property author')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.deletePropertyLabel', { key: 'author' })),
+      ).toBeInTheDocument()
     })
 
-    await user.click(screen.getByLabelText('Delete property author'))
+    await user.click(
+      screen.getByLabelText(t('pageProperty.deletePropertyLabel', { key: 'author' })),
+    )
 
     // Confirm in the dialog
     await waitFor(() => {
@@ -703,7 +744,7 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     await user.click(screen.getByRole('button', { name: /^Delete$/i }))
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Failed to delete property')
+      expect(mockedToastError).toHaveBeenCalledWith(t('pageProperty.deleteFailed'))
     })
   })
 
@@ -725,7 +766,7 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     await user.click(screen.getByText('Status'))
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Failed to add property')
+      expect(mockedToastError).toHaveBeenCalledWith(t('pageProperty.addFailed'))
     })
   })
 
@@ -754,7 +795,7 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     await user.click(screen.getByText('Status'))
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Failed to add property')
+      expect(mockedToastError).toHaveBeenCalledWith(t('pageProperty.addFailed'))
     })
   })
 
@@ -770,10 +811,10 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Search definitions')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('pageProperty.searchLabel'))).toBeInTheDocument()
     })
 
-    await user.type(screen.getByLabelText('Search definitions'), 'status')
+    await user.type(screen.getByLabelText(t('pageProperty.searchLabel')), 'status')
 
     await waitFor(() => {
       expect(screen.getByText(/Create "status"/)).toBeInTheDocument()
@@ -806,10 +847,10 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Search definitions')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('pageProperty.searchLabel'))).toBeInTheDocument()
     })
 
-    await user.type(screen.getByLabelText('Search definitions'), 'newprop')
+    await user.type(screen.getByLabelText(t('pageProperty.searchLabel')), 'newprop')
 
     await waitFor(() => {
       expect(screen.getByText(/Create "newprop"/)).toBeInTheDocument()
@@ -822,7 +863,7 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     await user.click(screen.getByRole('button', { name: /create definition/i }))
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Failed to create property definition')
+      expect(mockedToastError).toHaveBeenCalledWith(t('property.createDefFailed'))
     })
   })
 
@@ -841,10 +882,10 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Search definitions')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('pageProperty.searchLabel'))).toBeInTheDocument()
     })
 
-    await user.type(screen.getByLabelText('Search definitions'), 'myprop')
+    await user.type(screen.getByLabelText(t('pageProperty.searchLabel')), 'myprop')
 
     await waitFor(() => {
       expect(screen.getByText(/Create "myprop"/)).toBeInTheDocument()
@@ -867,7 +908,7 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     const { container } = render(<PagePropertyTable pageId="PAGE_1" />)
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Failed to load properties')
+      expect(mockedToastError).toHaveBeenCalledWith(t('pageProperty.loadFailed'))
     })
 
     // Component should not crash — should either render nothing or a degraded state
@@ -898,7 +939,9 @@ describe('PagePropertyTable accessibility', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('author value')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.valueLabel', { key: 'author' })),
+      ).toBeInTheDocument()
     })
 
     await waitFor(async () => {
@@ -917,10 +960,14 @@ describe('PagePropertyTable validation and confirmation', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('priority value')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.valueLabel', { key: 'priority' })),
+      ).toBeInTheDocument()
     })
 
-    const input = screen.getByLabelText('priority value') as HTMLInputElement
+    const input = screen.getByLabelText(
+      t('pageProperty.valueLabel', { key: 'priority' }),
+    ) as HTMLInputElement
     // Override the value property to bypass jsdom's number-input sanitization
     // (jsdom rejects non-numeric characters on type="number" inputs)
     Object.defineProperty(input, 'value', {
@@ -932,7 +979,7 @@ describe('PagePropertyTable validation and confirmation', () => {
     fireEvent.blur(input)
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Invalid number value')
+      expect(mockedToastError).toHaveBeenCalledWith(t('property.invalidNumber'))
     })
   })
 
@@ -944,10 +991,14 @@ describe('PagePropertyTable validation and confirmation', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Delete property author')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.deletePropertyLabel', { key: 'author' })),
+      ).toBeInTheDocument()
     })
 
-    await user.click(screen.getByLabelText('Delete property author'))
+    await user.click(
+      screen.getByLabelText(t('pageProperty.deletePropertyLabel', { key: 'author' })),
+    )
 
     await waitFor(() => {
       expect(screen.getByText(/Delete this property\?/i)).toBeInTheDocument()
@@ -967,10 +1018,14 @@ describe('PagePropertyTable validation and confirmation', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Delete property author')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.deletePropertyLabel', { key: 'author' })),
+      ).toBeInTheDocument()
     })
 
-    await user.click(screen.getByLabelText('Delete property author'))
+    await user.click(
+      screen.getByLabelText(t('pageProperty.deletePropertyLabel', { key: 'author' })),
+    )
 
     // Dialog should be open
     await waitFor(() => {
@@ -1003,7 +1058,9 @@ describe('PagePropertyTable edit select options', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Edit options for stage')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })),
+      ).toBeInTheDocument()
     })
   })
 
@@ -1015,7 +1072,9 @@ describe('PagePropertyTable edit select options', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('author value')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.valueLabel', { key: 'author' })),
+      ).toBeInTheDocument()
     })
     expect(screen.queryByLabelText(/Edit options for/)).not.toBeInTheDocument()
   })
@@ -1031,17 +1090,25 @@ describe('PagePropertyTable edit select options', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Edit options for stage')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })),
+      ).toBeInTheDocument()
     })
 
-    await user.click(screen.getByLabelText('Edit options for stage'))
+    await user.click(screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('New option value')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('pageProperty.newOptionLabel'))).toBeInTheDocument()
       // All three options should be listed in the popover
-      expect(screen.getByLabelText('Remove option TODO')).toBeInTheDocument()
-      expect(screen.getByLabelText('Remove option DOING')).toBeInTheDocument()
-      expect(screen.getByLabelText('Remove option DONE')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.removeOptionLabel', { option: 'TODO' })),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.removeOptionLabel', { option: 'DOING' })),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.removeOptionLabel', { option: 'DONE' })),
+      ).toBeInTheDocument()
     })
   })
 
@@ -1056,17 +1123,19 @@ describe('PagePropertyTable edit select options', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Edit options for stage')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })),
+      ).toBeInTheDocument()
     })
 
-    await user.click(screen.getByLabelText('Edit options for stage'))
+    await user.click(screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('New option value')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('pageProperty.newOptionLabel'))).toBeInTheDocument()
     })
 
-    await user.type(screen.getByLabelText('New option value'), 'DONE')
-    await user.click(screen.getByLabelText('Add option'))
+    await user.type(screen.getByLabelText(t('pageProperty.newOptionLabel')), 'DONE')
+    await user.click(screen.getByLabelText(t('pageProperty.addOptionLabel')))
 
     // Click Save
     await user.click(screen.getByRole('button', { name: /save options/i }))
@@ -1090,17 +1159,23 @@ describe('PagePropertyTable edit select options', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Edit options for stage')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })),
+      ).toBeInTheDocument()
     })
 
-    await user.click(screen.getByLabelText('Edit options for stage'))
+    await user.click(screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Remove option DOING')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.removeOptionLabel', { option: 'DOING' })),
+      ).toBeInTheDocument()
     })
 
     // Remove "DOING"
-    await user.click(screen.getByLabelText('Remove option DOING'))
+    await user.click(
+      screen.getByLabelText(t('pageProperty.removeOptionLabel', { option: 'DOING' })),
+    )
 
     // Click Save
     await user.click(screen.getByRole('button', { name: /save options/i }))
@@ -1128,10 +1203,12 @@ describe('PagePropertyTable edit select options', () => {
     await user.click(screen.getByRole('button', { name: /Properties/ }))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Edit options for stage')).toBeInTheDocument()
+      expect(
+        screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })),
+      ).toBeInTheDocument()
     })
 
-    await user.click(screen.getByLabelText('Edit options for stage'))
+    await user.click(screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })))
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /save options/i })).toBeInTheDocument()
@@ -1140,7 +1217,7 @@ describe('PagePropertyTable edit select options', () => {
     await user.click(screen.getByRole('button', { name: /save options/i }))
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Failed to update options')
+      expect(mockedToastError).toHaveBeenCalledWith(t('pageProperty.updateOptionsFailed'))
     })
   })
 })
@@ -1162,7 +1239,7 @@ describe('PagePropertyTable task-only property filtering', () => {
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Property picker')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('pageProperty.pickerLabel'))).toBeInTheDocument()
     })
 
     // Task-only properties should be filtered
@@ -1182,7 +1259,7 @@ describe('PagePropertyTable task-only property filtering', () => {
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Property picker')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('pageProperty.pickerLabel'))).toBeInTheDocument()
     })
 
     expect(screen.getByText('Linked Page')).toBeInTheDocument()
@@ -1227,7 +1304,7 @@ describe('PagePropertyTable forceExpanded', () => {
 
     // Should auto-expand and open add-property popover
     await waitFor(() => {
-      expect(screen.getByLabelText('Property picker')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('pageProperty.pickerLabel'))).toBeInTheDocument()
     })
   })
 

@@ -17,6 +17,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 import { FilterSortControls } from '../FilterSortControls'
 
 // Mock the Radix-based Select to render as native <select>/<option> for jsdom compatibility.
@@ -89,7 +90,7 @@ describe('FilterSortControls', () => {
   it('renders sort dropdown', () => {
     render(<FilterSortControls {...defaultProps} />)
 
-    expect(screen.getByLabelText('Sort by')).toBeInTheDocument()
+    expect(screen.getByLabelText(t('backlink.sortByLabel'))).toBeInTheDocument()
   })
 
   it('renders sort direction toggle button', () => {
@@ -101,13 +102,13 @@ describe('FilterSortControls', () => {
   it('shows property keys as sort options', () => {
     render(<FilterSortControls {...defaultProps} />)
 
-    const select = screen.getByLabelText('Sort by')
+    const select = screen.getByLabelText(t('backlink.sortByLabel'))
     const options = select.querySelectorAll('option')
 
     // __none__ + Created + 3 property keys = 5 options
     expect(options).toHaveLength(5)
-    expect(options[0]).toHaveTextContent('Default order')
-    expect(options[1]).toHaveTextContent('Created')
+    expect(options[0]).toHaveTextContent(t('backlink.defaultOrderOption'))
+    expect(options[1]).toHaveTextContent(t('backlink.createdOption'))
     expect(options[2]).toHaveTextContent('todo')
     expect(options[3]).toHaveTextContent('priority')
     expect(options[4]).toHaveTextContent('due')
@@ -119,7 +120,7 @@ describe('FilterSortControls', () => {
 
     render(<FilterSortControls {...defaultProps} onSortTypeChange={onSortTypeChange} />)
 
-    await user.selectOptions(screen.getByLabelText('Sort by'), 'Created')
+    await user.selectOptions(screen.getByLabelText(t('backlink.sortByLabel')), 'Created')
 
     expect(onSortTypeChange).toHaveBeenCalledWith('Created')
   })
@@ -130,7 +131,7 @@ describe('FilterSortControls', () => {
 
     render(<FilterSortControls {...defaultProps} onSortTypeChange={onSortTypeChange} />)
 
-    await user.selectOptions(screen.getByLabelText('Sort by'), 'due')
+    await user.selectOptions(screen.getByLabelText(t('backlink.sortByLabel')), 'due')
 
     expect(onSortTypeChange).toHaveBeenCalledWith('due')
   })
@@ -147,7 +148,7 @@ describe('FilterSortControls', () => {
       />,
     )
 
-    await user.selectOptions(screen.getByLabelText('Sort by'), '__none__')
+    await user.selectOptions(screen.getByLabelText(t('backlink.sortByLabel')), '__none__')
 
     expect(onSortTypeChange).toHaveBeenCalledWith('')
   })
@@ -186,19 +187,19 @@ describe('FilterSortControls', () => {
   it('shows Desc label when sort direction is Desc', () => {
     render(<FilterSortControls {...defaultProps} sort={{ type: 'Created', dir: 'Desc' }} />)
 
-    expect(screen.getByText('Desc')).toBeInTheDocument()
+    expect(screen.getByText(t('backlink.descSort'))).toBeInTheDocument()
   })
 
   it('shows Asc label when sort direction is Asc', () => {
     render(<FilterSortControls {...defaultProps} sort={{ type: 'Created', dir: 'Asc' }} />)
 
-    expect(screen.getByText('Asc')).toBeInTheDocument()
+    expect(screen.getByText(t('backlink.ascSort'))).toBeInTheDocument()
   })
 
   it('reflects current sort value in the select when sort is Created', () => {
     render(<FilterSortControls {...defaultProps} sort={{ type: 'Created', dir: 'Desc' }} />)
 
-    const select = screen.getByLabelText('Sort by')
+    const select = screen.getByLabelText(t('backlink.sortByLabel'))
     expect(select).toHaveValue('Created')
   })
 
@@ -210,21 +211,21 @@ describe('FilterSortControls', () => {
       />,
     )
 
-    const select = screen.getByLabelText('Sort by')
+    const select = screen.getByLabelText(t('backlink.sortByLabel'))
     expect(select).toHaveValue('due')
   })
 
   it('shows __none__ as selected when sort is null', () => {
     render(<FilterSortControls {...defaultProps} sort={null} />)
 
-    const select = screen.getByLabelText('Sort by')
+    const select = screen.getByLabelText(t('backlink.sortByLabel'))
     expect(select).toHaveValue('__none__')
   })
 
   it('applies size="sm" to sort select trigger', () => {
     render(<FilterSortControls {...defaultProps} />)
 
-    const select = screen.getByLabelText('Sort by')
+    const select = screen.getByLabelText(t('backlink.sortByLabel'))
     expect(select).toHaveAttribute('data-size', 'sm')
   })
 

@@ -13,6 +13,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '../../lib/i18n'
 import {
   Sidebar,
   SidebarContent,
@@ -157,7 +158,7 @@ describe('Sidebar', () => {
 
     // SidebarRail has aria-label for accessibility
     const rail = document.querySelector('[data-sidebar="rail"]')
-    expect(rail).toHaveAttribute('aria-label', 'Toggle Sidebar')
+    expect(rail).toHaveAttribute('aria-label', t('sidebar.toggleSidebar'))
 
     // SidebarTrigger has accessible name via sr-only text
     const triggers = screen.getAllByRole('button', { name: /toggle sidebar/i })

@@ -1,5 +1,6 @@
 import { File, FileText, Image as ImageIcon } from 'lucide-react'
 import type React from 'react'
+import { useTranslation } from 'react-i18next'
 import { formatSize, getAssetUrl } from '../lib/attachment-utils'
 import { openUrl } from '../lib/open-url'
 import { ImageResizeToolbar } from './ImageResizeToolbar'
@@ -42,6 +43,7 @@ export function AttachmentRenderer({
   onLightboxOpen,
   onPdfOpen,
 }: AttachmentRendererProps): React.ReactElement | null {
+  const { t } = useTranslation()
   if (attachments.length === 0) return null
 
   return (
@@ -102,7 +104,7 @@ export function AttachmentRenderer({
             key={att.id}
             type="button"
             className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent/50 active:bg-accent/70 hover:text-foreground"
-            aria-label={`Open file ${att.filename}`}
+            aria-label={t('attachment.openFile', { filename: att.filename })}
             onClick={(e) => {
               e.stopPropagation()
               if (att.mime_type === 'application/pdf') {

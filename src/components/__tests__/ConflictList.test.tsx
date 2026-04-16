@@ -28,6 +28,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { ulidToDate } from '@/lib/format'
+import { t } from '@/lib/i18n'
 import { emptyPage, makeConflict } from '../../__tests__/fixtures'
 import { announce } from '../../lib/announcer'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
@@ -199,7 +200,7 @@ describe('ConflictList', () => {
     await user.click(keepBtn)
 
     // Confirmation dialog is shown
-    expect(screen.getByText('Keep incoming version?')).toBeInTheDocument()
+    expect(screen.getByText(t('conflict.keepIncomingTitle'))).toBeInTheDocument()
 
     // Confirm
     const yesKeepBtn = screen.getByRole('button', { name: /Yes, keep/i })
@@ -233,7 +234,7 @@ describe('ConflictList', () => {
     const discardBtn = await screen.findByRole('button', { name: /Discard conflict for block/i })
     await user.click(discardBtn)
 
-    expect(screen.getByText('Discard conflict?')).toBeInTheDocument()
+    expect(screen.getByText(t('conflict.discardTitle'))).toBeInTheDocument()
 
     // delete_block should NOT have been called yet
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
@@ -242,7 +243,7 @@ describe('ConflictList', () => {
     const noBtn = screen.getByRole('button', { name: /No/i })
     await user.click(noBtn)
 
-    expect(screen.queryByText('Discard conflict?')).not.toBeInTheDocument()
+    expect(screen.queryByText(t('conflict.discardTitle'))).not.toBeInTheDocument()
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
   })
 
@@ -260,12 +261,12 @@ describe('ConflictList', () => {
     const discardBtn = await screen.findByRole('button', { name: /Discard conflict for block/i })
     await user.click(discardBtn)
 
-    expect(screen.getByText('Discard conflict?')).toBeInTheDocument()
+    expect(screen.getByText(t('conflict.discardTitle'))).toBeInTheDocument()
 
     // Press Escape to dismiss
     await user.keyboard('{Escape}')
 
-    expect(screen.queryByText('Discard conflict?')).not.toBeInTheDocument()
+    expect(screen.queryByText(t('conflict.discardTitle'))).not.toBeInTheDocument()
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
   })
 
@@ -460,7 +461,7 @@ describe('ConflictList', () => {
 
     // Should show error toast
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to load conflicts')
+      expect(toast.error).toHaveBeenCalledWith(t('conflict.loadFailed'))
     })
   })
 
@@ -485,7 +486,9 @@ describe('ConflictList', () => {
     await user.click(yesKeepBtn)
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to resolve conflict: permission denied')
+      expect(toast.error).toHaveBeenCalledWith(
+        t('conflict.resolveError', { error: 'permission denied' }),
+      )
     })
   })
 
@@ -509,7 +512,7 @@ describe('ConflictList', () => {
     await user.click(yesBtn)
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to discard conflict: db locked')
+      expect(toast.error).toHaveBeenCalledWith(t('conflict.discardError', { error: 'db locked' }))
     })
   })
 
@@ -538,9 +541,9 @@ describe('ConflictList', () => {
 
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith(
-        'Kept selected version',
+        t('conflict.keptSelectedVersion'),
         expect.objectContaining({
-          action: expect.objectContaining({ label: 'Undo' }),
+          action: expect.objectContaining({ label: t('conflict.undoButton') }),
         }),
       )
     })
@@ -569,9 +572,9 @@ describe('ConflictList', () => {
 
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith(
-        'Conflict discarded',
+        t('conflict.conflictDiscarded'),
         expect.objectContaining({
-          action: expect.objectContaining({ label: 'Undo' }),
+          action: expect.objectContaining({ label: t('conflict.undoButton') }),
         }),
       )
     })
@@ -708,7 +711,7 @@ describe('ConflictList', () => {
     render(<ConflictList />)
 
     // Should show fallback text for the original
-    expect(await screen.findByText('(original not available)')).toBeInTheDocument()
+    expect(await screen.findByText(t('conflict.originalNotAvailable'))).toBeInTheDocument()
 
     // Incoming content is still shown
     expect(screen.getByText('conflict text')).toBeInTheDocument()
@@ -728,7 +731,7 @@ describe('ConflictList', () => {
     await user.click(keepBtn)
 
     // Dialog should be visible
-    expect(screen.getByText('Keep incoming version?')).toBeInTheDocument()
+    expect(screen.getByText(t('conflict.keepIncomingTitle'))).toBeInTheDocument()
     expect(
       screen.getByText(/This will replace the current content with the incoming version\./),
     ).toBeInTheDocument()
@@ -757,7 +760,7 @@ describe('ConflictList', () => {
     // Open Keep confirmation
     const keepBtn = await screen.findByRole('button', { name: /Keep/i })
     await user.click(keepBtn)
-    expect(screen.getByText('Keep incoming version?')).toBeInTheDocument()
+    expect(screen.getByText(t('conflict.keepIncomingTitle'))).toBeInTheDocument()
 
     // Confirm
     const yesKeepBtn = screen.getByRole('button', { name: /Yes, keep/i })
@@ -783,9 +786,9 @@ describe('ConflictList', () => {
 
     // Success toast
     expect(toast.success).toHaveBeenCalledWith(
-      'Kept selected version',
+      t('conflict.keptSelectedVersion'),
       expect.objectContaining({
-        action: expect.objectContaining({ label: 'Undo' }),
+        action: expect.objectContaining({ label: t('conflict.undoButton') }),
       }),
     )
   })
@@ -803,14 +806,14 @@ describe('ConflictList', () => {
     // Open Keep confirmation
     const keepBtn = await screen.findByRole('button', { name: /Keep/i })
     await user.click(keepBtn)
-    expect(screen.getByText('Keep incoming version?')).toBeInTheDocument()
+    expect(screen.getByText(t('conflict.keepIncomingTitle'))).toBeInTheDocument()
 
     // Cancel
     const cancelBtn = screen.getByRole('button', { name: /Cancel/i })
     await user.click(cancelBtn)
 
     // Dialog should be dismissed
-    expect(screen.queryByText('Keep incoming version?')).not.toBeInTheDocument()
+    expect(screen.queryByText(t('conflict.keepIncomingTitle'))).not.toBeInTheDocument()
 
     // No edit/delete calls
     expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
@@ -1101,9 +1104,9 @@ describe('ConflictList', () => {
     // Should show the partial-success toast
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith(
-        'Updated original but failed to remove conflict copy.',
+        t('conflict.updateSuccessDeleteFailed'),
         expect.objectContaining({
-          action: expect.objectContaining({ label: 'Retry delete' }),
+          action: expect.objectContaining({ label: t('conflict.retryDeleteButton') }),
         }),
       )
     })
@@ -1290,9 +1293,7 @@ describe('ConflictList', () => {
 
     const typeBadge = container.querySelector('.conflict-type-badge')
     expect(typeBadge).toBeTruthy()
-    expect(typeBadge?.getAttribute('aria-label')).toBe(
-      'Text conflict — content edited on multiple devices',
-    )
+    expect(typeBadge?.getAttribute('aria-label')).toBe(t('conflict.typeText'))
   })
 
   // --- #651-C5 Sync event listener and Refresh button ---
@@ -1532,18 +1533,16 @@ describe('ConflictList', () => {
     // Verify partial failure toast with retry action
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith(
-        'Updated original but failed to remove conflict copy.',
+        t('conflict.updateSuccessDeleteFailed'),
         expect.objectContaining({
-          action: expect.objectContaining({ label: 'Retry delete' }),
+          action: expect.objectContaining({ label: t('conflict.retryDeleteButton') }),
         }),
       )
     })
 
     // Extract and invoke the retry action
     const successCalls = vi.mocked(toast.success).mock.calls
-    const retryCall = successCalls.find(
-      ([msg]) => msg === 'Updated original but failed to remove conflict copy.',
-    )
+    const retryCall = successCalls.find(([msg]) => msg === t('conflict.updateSuccessDeleteFailed'))
     expect(retryCall).toBeTruthy()
     // biome-ignore lint/suspicious/noExplicitAny: test mock extraction
     const retryAction = (retryCall?.[1] as any).action
@@ -1583,16 +1582,16 @@ describe('ConflictList', () => {
     // Verify toast has Undo action
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith(
-        'Kept selected version',
+        t('conflict.keptSelectedVersion'),
         expect.objectContaining({
-          action: expect.objectContaining({ label: 'Undo' }),
+          action: expect.objectContaining({ label: t('conflict.undoButton') }),
         }),
       )
     })
 
     // Extract and invoke the undo action
     const successCalls = vi.mocked(toast.success).mock.calls
-    const undoCall = successCalls.find(([msg]) => msg === 'Kept selected version')
+    const undoCall = successCalls.find(([msg]) => msg === t('conflict.keptSelectedVersion'))
     expect(undoCall).toBeTruthy()
     // biome-ignore lint/suspicious/noExplicitAny: test mock extraction
     const undoAction = (undoCall?.[1] as any).action
@@ -1641,16 +1640,16 @@ describe('ConflictList', () => {
     // Verify toast has Undo action
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith(
-        'Conflict discarded',
+        t('conflict.conflictDiscarded'),
         expect.objectContaining({
-          action: expect.objectContaining({ label: 'Undo' }),
+          action: expect.objectContaining({ label: t('conflict.undoButton') }),
         }),
       )
     })
 
     // Extract and invoke the undo action
     const successCalls = vi.mocked(toast.success).mock.calls
-    const undoCall = successCalls.find(([msg]) => msg === 'Conflict discarded')
+    const undoCall = successCalls.find(([msg]) => msg === t('conflict.conflictDiscarded'))
     expect(undoCall).toBeTruthy()
     // biome-ignore lint/suspicious/noExplicitAny: test mock extraction
     const undoAction = (undoCall?.[1] as any).action
@@ -1717,7 +1716,7 @@ describe('ConflictList', () => {
       expect(container.querySelector('.conflict-property-diff')).toBeTruthy()
     })
 
-    expect(screen.getByText('Property changes')).toBeInTheDocument()
+    expect(screen.getByText(t('conflict.propertyChanges'))).toBeInTheDocument()
     expect(screen.getByText(/State:/)).toBeInTheDocument()
     expect(screen.getByText(/Priority:/)).toBeInTheDocument()
   })
@@ -1772,7 +1771,7 @@ describe('ConflictList', () => {
       expect(container.querySelector('.conflict-move-diff')).toBeTruthy()
     })
 
-    expect(screen.getByText('Move conflict')).toBeInTheDocument()
+    expect(screen.getByText(t('conflict.moveConflictHeader'))).toBeInTheDocument()
     expect(screen.getByText(/Parent:/)).toBeInTheDocument()
   })
 
@@ -1852,7 +1851,7 @@ describe('ConflictList', () => {
     const checkboxes = screen.getAllByRole('checkbox')
     await user.click(checkboxes[0] as HTMLElement)
 
-    expect(screen.getByText('1 selected')).toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 1 }))).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Keep all/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Discard all/i })).toBeInTheDocument()
   })
@@ -1881,7 +1880,7 @@ describe('ConflictList', () => {
     const selectAllBtn = screen.getByRole('button', { name: /Select all/i })
     await user.click(selectAllBtn)
 
-    expect(screen.getByText('2 selected')).toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 2 }))).toBeInTheDocument()
 
     // All checkboxes should be checked
     const allCheckboxes = screen.getAllByRole('checkbox')
@@ -1920,14 +1919,14 @@ describe('ConflictList', () => {
     await user.click(checkboxes[0] as HTMLElement)
     await user.click(checkboxes[1] as HTMLElement)
 
-    expect(screen.getByText('2 selected')).toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 2 }))).toBeInTheDocument()
 
     // Click "Keep all"
     const keepAllBtn = screen.getByRole('button', { name: /Keep all/i })
     await user.click(keepAllBtn)
 
     // Confirm dialog
-    expect(screen.getByText('Keep all selected?')).toBeInTheDocument()
+    expect(screen.getByText(t('conflict.keepAllSelectedTitle'))).toBeInTheDocument()
     const confirmBtn = screen.getByRole('button', { name: /Yes, keep all/i })
     await user.click(confirmBtn)
 
@@ -1974,7 +1973,7 @@ describe('ConflictList', () => {
     await user.click(discardAllBtn)
 
     // Confirm dialog
-    expect(screen.getByText('Discard all selected?')).toBeInTheDocument()
+    expect(screen.getByText(t('conflict.discardAllSelectedTitle'))).toBeInTheDocument()
     const confirmBtn = screen.getByRole('button', { name: /Yes, discard all/i })
     await user.click(confirmBtn)
 
@@ -2019,7 +2018,7 @@ describe('ConflictList', () => {
     const checkbox = screen.getAllByRole('checkbox')[0] as HTMLElement
     await user.click(checkbox)
 
-    expect(screen.getByText('1 selected')).toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 1 }))).toBeInTheDocument()
 
     await waitFor(async () => {
       const results = await axe(document.body, {
@@ -2073,7 +2072,7 @@ describe('ConflictList', () => {
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
-        expect.stringContaining('1 of 2 operations failed'),
+        t('conflict.batchError', { failCount: 1, count: 2 }),
         expect.objectContaining({ duration: 5000 }),
       )
     })
@@ -2437,7 +2436,7 @@ describe('ConflictList', () => {
     await user.click(yesKeepBtn)
 
     await waitFor(() => {
-      expect(announce).toHaveBeenCalledWith('Conflict resolved — kept incoming version')
+      expect(announce).toHaveBeenCalledWith(t('conflict.resolvedAnnounce'))
     })
   })
 
@@ -2465,7 +2464,7 @@ describe('ConflictList', () => {
     await user.click(yesBtn)
 
     await waitFor(() => {
-      expect(announce).toHaveBeenCalledWith('Conflict discarded')
+      expect(announce).toHaveBeenCalledWith(t('conflict.discardedAnnounce'))
     })
   })
 
@@ -2508,7 +2507,7 @@ describe('ConflictList', () => {
     await user.click(confirmBtn)
 
     await waitFor(() => {
-      expect(announce).toHaveBeenCalledWith('Kept 2 conflict(s)')
+      expect(announce).toHaveBeenCalledWith(t('conflict.batchKeptCount', { count: 2 }))
     })
   })
 
@@ -2550,7 +2549,7 @@ describe('ConflictList', () => {
     await user.click(confirmBtn)
 
     await waitFor(() => {
-      expect(announce).toHaveBeenCalledWith('Discarded 2 conflict(s)')
+      expect(announce).toHaveBeenCalledWith(t('conflict.batchDiscardedCount', { count: 2 }))
     })
   })
 })

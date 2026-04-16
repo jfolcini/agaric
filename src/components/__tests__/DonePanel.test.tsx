@@ -20,6 +20,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 
 vi.mock('../../lib/tauri', () => ({
   queryByProperty: vi.fn(),
@@ -132,7 +133,7 @@ describe('DonePanel', () => {
 
     render(<DonePanel date="2025-06-15" />)
 
-    expect(await screen.findByText('3 Completed')).toBeInTheDocument()
+    expect(await screen.findByText(t('donePanel.header', { count: 3 }))).toBeInTheDocument()
   })
 
   // 1b. Singular count
@@ -145,7 +146,7 @@ describe('DonePanel', () => {
 
     render(<DonePanel date="2025-06-15" />)
 
-    expect(await screen.findByText('1 Completed')).toBeInTheDocument()
+    expect(await screen.findByText(t('donePanel.headerOne'))).toBeInTheDocument()
   })
 
   // 2. Returns null when no items (UX-130)
@@ -181,10 +182,10 @@ describe('DonePanel', () => {
 
     render(<DonePanel date="2025-06-15" />)
 
-    await screen.findByText('3 Completed')
+    await screen.findByText(t('donePanel.header', { count: 3 }))
 
     // Group headers should show page titles with counts, sorted alphabetically
-    const section = screen.getByLabelText('Completed items')
+    const section = screen.getByLabelText(t('donePanel.completedItems'))
     const groupHeaders = section.querySelectorAll('.done-panel-group-header')
     expect(groupHeaders).toHaveLength(2)
     expect(groupHeaders[0]).toHaveTextContent('Alpha Page (2)')
@@ -208,7 +209,7 @@ describe('DonePanel', () => {
 
     render(<DonePanel date="2025-06-15" />)
 
-    await screen.findByText('3 Completed')
+    await screen.findByText(t('donePanel.header', { count: 3 }))
 
     // Blocks should be sorted by ID descending: CCC > BBB > AAA
     const items = screen.getAllByText(/first created|second created|third created/)
@@ -284,7 +285,7 @@ describe('DonePanel', () => {
 
     render(<DonePanel date="2025-06-15" />)
 
-    await screen.findByText('2 Completed')
+    await screen.findByText(t('donePanel.header', { count: 2 }))
 
     const checkIcons = screen.getAllByTestId('check-circle')
     expect(checkIcons).toHaveLength(2)
@@ -354,11 +355,11 @@ describe('DonePanel', () => {
     // Content should be visible (expanded by default)
     expect(await screen.findByText('visible block')).toBeInTheDocument()
 
-    const section = screen.getByLabelText('Completed items')
+    const section = screen.getByLabelText(t('donePanel.completedItems'))
     expect(section.querySelector('.done-panel-content')).toBeInTheDocument()
 
     // Click header to collapse
-    const header = screen.getByText('1 Completed')
+    const header = screen.getByText(t('donePanel.headerOne'))
     await user.click(header)
 
     // Content should be hidden
@@ -500,7 +501,7 @@ describe('DonePanel', () => {
     await waitFor(() => {
       const groupHeaders = document.querySelectorAll('.done-panel-group-header')
       expect(groupHeaders).toHaveLength(1)
-      expect(groupHeaders[0]).toHaveTextContent('Untitled (1)')
+      expect(groupHeaders[0]).toHaveTextContent(`${t('donePanel.untitled')} (1)`)
     })
   })
 
@@ -531,7 +532,7 @@ describe('DonePanel', () => {
     // Existing block should still be visible
     expect(screen.getByText('existing block')).toBeInTheDocument()
     // Header still shows correct count from initial load
-    expect(screen.getByText('1 Completed')).toBeInTheDocument()
+    expect(screen.getByText(t('donePanel.headerOne'))).toBeInTheDocument()
   })
 
   // 17. batchResolve rejects on load more → new blocks added, old titles preserved
@@ -571,12 +572,12 @@ describe('DonePanel', () => {
     })
 
     // PAGE1 group still has its resolved title from initial load
-    const section = screen.getByLabelText('Completed items')
+    const section = screen.getByLabelText(t('donePanel.completedItems'))
     const groupHeaders = section.querySelectorAll('.done-panel-group-header')
     expect(groupHeaders).toHaveLength(2)
     // Groups sorted alphabetically: "Resolved Page" < "Untitled"
     expect(groupHeaders[0]).toHaveTextContent('Resolved Page (1)')
-    expect(groupHeaders[1]).toHaveTextContent('Untitled (1)')
+    expect(groupHeaders[1]).toHaveTextContent(`${t('donePanel.untitled')} (1)`)
   })
 
   // 18. Does not render blocks with empty content (UX-129)
@@ -596,7 +597,7 @@ describe('DonePanel', () => {
     render(<DonePanel date="2025-06-15" />)
 
     // Only the 2 non-empty blocks should render
-    expect(await screen.findByText('2 Completed')).toBeInTheDocument()
+    expect(await screen.findByText(t('donePanel.header', { count: 2 }))).toBeInTheDocument()
     expect(screen.getByText('real done task')).toBeInTheDocument()
     expect(screen.getByText('another done task')).toBeInTheDocument()
 
@@ -623,7 +624,7 @@ describe('DonePanel', () => {
     render(<DonePanel date="2026-04-13" excludePageId="PAGE_1" />)
 
     // Only the 2 non-excluded blocks should render
-    expect(await screen.findByText('2 Completed')).toBeInTheDocument()
+    expect(await screen.findByText(t('donePanel.header', { count: 2 }))).toBeInTheDocument()
     expect(screen.getByText('other-page task')).toBeInTheDocument()
     expect(screen.getByText('third-page task')).toBeInTheDocument()
 

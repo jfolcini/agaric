@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '../../lib/i18n'
 import { resetTabIdCounter, selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { TabBar } from '../TabBar'
 
@@ -77,7 +78,7 @@ describe('TabBar', () => {
 
       render(<TabBar />)
 
-      expect(screen.getByText('Untitled')).toBeInTheDocument()
+      expect(screen.getByText(t('tabs.untitled'))).toBeInTheDocument()
     })
 
     it('marks the active tab with aria-selected=true', () => {

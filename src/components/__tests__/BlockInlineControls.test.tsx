@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '../../lib/i18n'
 
 vi.mock('lucide-react', () => ({
   Calendar: (props: { size: number; className?: string }) => (
@@ -270,12 +271,12 @@ describe('BlockInlineControls', () => {
 
   it('shows expand label when collapsed', () => {
     renderControls(makeProps({ hasChildren: true, isCollapsed: true }))
-    expect(screen.getByRole('button', { name: 'Expand children' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: t('block.expandChildren') })).toBeInTheDocument()
   })
 
   it('shows collapse label when expanded', () => {
     renderControls(makeProps({ hasChildren: true, isCollapsed: false }))
-    expect(screen.getByRole('button', { name: 'Collapse children' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: t('block.collapseChildren') })).toBeInTheDocument()
   })
 
   it('passes isExpanded=true when expanded', () => {

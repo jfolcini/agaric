@@ -58,7 +58,7 @@ export function TaskStatesSection(): React.ReactElement {
             <button
               type="button"
               className="ml-0.5 hover:text-destructive active:text-destructive active:scale-95"
-              aria-label={`Remove state ${s}`}
+              aria-label={t('settings.removeState', { state: s })}
               onClick={() => {
                 if (s) handleRemove(s)
               }}

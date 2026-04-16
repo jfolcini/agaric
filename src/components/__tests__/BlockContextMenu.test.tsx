@@ -27,6 +27,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '../../lib/i18n'
 import { BlockContextMenu, type BlockContextMenuProps } from '../BlockContextMenu'
 
 vi.mock('@floating-ui/dom', () => ({
@@ -77,21 +78,21 @@ describe('BlockContextMenu', () => {
     renderMenu()
 
     const menu = screen.getByRole('menu')
-    expect(within(menu).getByText('Delete')).toBeInTheDocument()
-    expect(within(menu).getByText('Indent')).toBeInTheDocument()
-    expect(within(menu).getByText('Dedent')).toBeInTheDocument()
-    expect(within(menu).getByText('Move Up')).toBeInTheDocument()
-    expect(within(menu).getByText('Move Down')).toBeInTheDocument()
-    expect(within(menu).getByText('Collapse')).toBeInTheDocument()
-    expect(within(menu).getByText('Set as TODO')).toBeInTheDocument()
-    expect(within(menu).getByText('Set priority 1')).toBeInTheDocument()
+    expect(within(menu).getByText(t('contextMenu.delete'))).toBeInTheDocument()
+    expect(within(menu).getByText(t('contextMenu.indent'))).toBeInTheDocument()
+    expect(within(menu).getByText(t('contextMenu.dedent'))).toBeInTheDocument()
+    expect(within(menu).getByText(t('contextMenu.moveUp'))).toBeInTheDocument()
+    expect(within(menu).getByText(t('contextMenu.moveDown'))).toBeInTheDocument()
+    expect(within(menu).getByText(t('contextMenu.collapse'))).toBeInTheDocument()
+    expect(within(menu).getByText(t('contextMenu.setTodo'))).toBeInTheDocument()
+    expect(within(menu).getByText(t('contextMenu.setPriority1'))).toBeInTheDocument()
   })
 
   it('clicking Delete calls onDelete with blockId and closes menu', async () => {
     const user = userEvent.setup()
     const { props } = renderMenu()
 
-    await user.click(screen.getByText('Delete'))
+    await user.click(screen.getByText(t('contextMenu.delete')))
 
     expect(props.onDelete).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
@@ -101,7 +102,7 @@ describe('BlockContextMenu', () => {
     const user = userEvent.setup()
     const { props } = renderMenu()
 
-    await user.click(screen.getByText('Indent'))
+    await user.click(screen.getByText(t('contextMenu.indent')))
 
     expect(props.onIndent).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
@@ -111,7 +112,7 @@ describe('BlockContextMenu', () => {
     const user = userEvent.setup()
     const { props } = renderMenu()
 
-    await user.click(screen.getByText('Dedent'))
+    await user.click(screen.getByText(t('contextMenu.dedent')))
 
     expect(props.onDedent).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
@@ -121,7 +122,7 @@ describe('BlockContextMenu', () => {
     const user = userEvent.setup()
     const { props } = renderMenu()
 
-    await user.click(screen.getByText('Set as TODO'))
+    await user.click(screen.getByText(t('contextMenu.setTodo')))
 
     expect(props.onToggleTodo).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
@@ -131,7 +132,7 @@ describe('BlockContextMenu', () => {
     const user = userEvent.setup()
     const { props } = renderMenu()
 
-    await user.click(screen.getByText('Set priority 1'))
+    await user.click(screen.getByText(t('contextMenu.setPriority1')))
 
     expect(props.onTogglePriority).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
@@ -141,7 +142,7 @@ describe('BlockContextMenu', () => {
     const user = userEvent.setup()
     const { props } = renderMenu()
 
-    await user.click(screen.getByText('Move Up'))
+    await user.click(screen.getByText(t('contextMenu.moveUp')))
 
     expect(props.onMoveUp).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
@@ -151,7 +152,7 @@ describe('BlockContextMenu', () => {
     const user = userEvent.setup()
     const { props } = renderMenu()
 
-    await user.click(screen.getByText('Move Down'))
+    await user.click(screen.getByText(t('contextMenu.moveDown')))
 
     expect(props.onMoveDown).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
@@ -161,7 +162,7 @@ describe('BlockContextMenu', () => {
     const user = userEvent.setup()
     const { props } = renderMenu({ hasChildren: true, isCollapsed: false })
 
-    await user.click(screen.getByText('Collapse'))
+    await user.click(screen.getByText(t('contextMenu.collapse')))
 
     expect(props.onToggleCollapse).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
@@ -171,7 +172,7 @@ describe('BlockContextMenu', () => {
     const user = userEvent.setup()
     const { props } = renderMenu({ hasChildren: true, isCollapsed: true })
 
-    await user.click(screen.getByText('Expand'))
+    await user.click(screen.getByText(t('contextMenu.expand')))
 
     expect(props.onToggleCollapse).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
@@ -181,50 +182,50 @@ describe('BlockContextMenu', () => {
 
   it('shows "TODO → DOING" when todoState is TODO', () => {
     renderMenu({ todoState: 'TODO' })
-    expect(screen.getByText('TODO → DOING')).toBeInTheDocument()
+    expect(screen.getByText(t('contextMenu.todoToDoing'))).toBeInTheDocument()
   })
 
   it('shows "DOING → DONE" when todoState is DOING', () => {
     renderMenu({ todoState: 'DOING' })
-    expect(screen.getByText('DOING → DONE')).toBeInTheDocument()
+    expect(screen.getByText(t('contextMenu.doingToDone'))).toBeInTheDocument()
   })
 
   it('shows "DONE → Clear" when todoState is DONE', () => {
     renderMenu({ todoState: 'DONE' })
-    expect(screen.getByText('DONE → Clear')).toBeInTheDocument()
+    expect(screen.getByText(t('contextMenu.doneToClear'))).toBeInTheDocument()
   })
 
   it('shows "Priority 1 → 2" when priority is 1', () => {
     renderMenu({ priority: '1' })
-    expect(screen.getByText('Priority 1 → 2')).toBeInTheDocument()
+    expect(screen.getByText(t('contextMenu.priority1To2'))).toBeInTheDocument()
   })
 
   it('shows "Priority 2 → 3" when priority is 2', () => {
     renderMenu({ priority: '2' })
-    expect(screen.getByText('Priority 2 → 3')).toBeInTheDocument()
+    expect(screen.getByText(t('contextMenu.priority2To3'))).toBeInTheDocument()
   })
 
   it('shows "Priority 3 → Clear" when priority is 3', () => {
     renderMenu({ priority: '3' })
-    expect(screen.getByText('Priority 3 → Clear')).toBeInTheDocument()
+    expect(screen.getByText(t('contextMenu.priority3ToClear'))).toBeInTheDocument()
   })
 
   // ── Collapse/Expand visibility ─────────────────────────────────
 
   it('does not show Collapse/Expand when hasChildren is false', () => {
     renderMenu({ hasChildren: false })
-    expect(screen.queryByText('Collapse')).not.toBeInTheDocument()
-    expect(screen.queryByText('Expand')).not.toBeInTheDocument()
+    expect(screen.queryByText(t('contextMenu.collapse'))).not.toBeInTheDocument()
+    expect(screen.queryByText(t('contextMenu.expand'))).not.toBeInTheDocument()
   })
 
   it('shows Collapse when hasChildren is true and isCollapsed is false', () => {
     renderMenu({ hasChildren: true, isCollapsed: false })
-    expect(screen.getByText('Collapse')).toBeInTheDocument()
+    expect(screen.getByText(t('contextMenu.collapse'))).toBeInTheDocument()
   })
 
   it('shows Expand when hasChildren is true and isCollapsed is true', () => {
     renderMenu({ hasChildren: true, isCollapsed: true })
-    expect(screen.getByText('Expand')).toBeInTheDocument()
+    expect(screen.getByText(t('contextMenu.expand'))).toBeInTheDocument()
   })
 
   // ── Keyboard navigation ─────────────────────────────────────────
@@ -403,9 +404,9 @@ describe('BlockContextMenu', () => {
     })
 
     // No action items should be shown; "No actions available" fallback
-    expect(screen.queryByText('Delete')).not.toBeInTheDocument()
-    expect(screen.queryByText('Indent')).not.toBeInTheDocument()
-    expect(screen.getByText('No actions available')).toBeInTheDocument()
+    expect(screen.queryByText(t('contextMenu.delete'))).not.toBeInTheDocument()
+    expect(screen.queryByText(t('contextMenu.indent'))).not.toBeInTheDocument()
+    expect(screen.getByText(t('contextMenu.noActions'))).toBeInTheDocument()
   })
 
   it('has no a11y violations', async () => {
@@ -427,7 +428,7 @@ describe('BlockContextMenu', () => {
     renderMenu()
 
     const menu = screen.getByRole('menu')
-    expect(menu).toHaveAttribute('aria-label', 'Block actions')
+    expect(menu).toHaveAttribute('aria-label', t('contextMenu.blockActions'))
   })
 
   it('focused menu item has focus-visible highlight classes', () => {
@@ -447,20 +448,20 @@ describe('BlockContextMenu', () => {
   it('does not render History item when onShowHistory is not provided', () => {
     renderMenu({ onShowHistory: undefined })
 
-    expect(screen.queryByText('History')).not.toBeInTheDocument()
+    expect(screen.queryByText(t('contextMenu.history'))).not.toBeInTheDocument()
   })
 
   it('renders History item when onShowHistory is provided', () => {
     renderMenu({ onShowHistory: vi.fn() })
 
-    expect(screen.getByText('History')).toBeInTheDocument()
+    expect(screen.getByText(t('contextMenu.history'))).toBeInTheDocument()
   })
 
   it('clicking History calls onShowHistory with blockId and closes menu', async () => {
     const user = userEvent.setup()
     const { props } = renderMenu({ onShowHistory: vi.fn() })
 
-    await user.click(screen.getByText('History'))
+    await user.click(screen.getByText(t('contextMenu.history')))
 
     expect(props.onShowHistory).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
@@ -479,20 +480,20 @@ describe('BlockContextMenu', () => {
   it('renders Merge item when onMerge is provided', () => {
     renderMenu({ onMerge: vi.fn() })
 
-    expect(screen.getByText('Merge with previous')).toBeInTheDocument()
+    expect(screen.getByText(t('contextMenu.merge'))).toBeInTheDocument()
   })
 
   it('does not render Merge item when onMerge is not provided', () => {
     renderMenu({ onMerge: undefined })
 
-    expect(screen.queryByText('Merge with previous')).not.toBeInTheDocument()
+    expect(screen.queryByText(t('contextMenu.merge'))).not.toBeInTheDocument()
   })
 
   it('clicking Merge calls onMerge with blockId and closes menu', async () => {
     const user = userEvent.setup()
     const { props } = renderMenu({ onMerge: vi.fn() })
 
-    await user.click(screen.getByText('Merge with previous'))
+    await user.click(screen.getByText(t('contextMenu.merge')))
 
     expect(props.onMerge).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
@@ -543,7 +544,7 @@ describe('BlockContextMenu', () => {
     const { props } = renderMenu({ position: { x: 100, y: 200 } })
 
     // Menu should still be interactive even though positioning failed
-    await user.click(screen.getByText('Delete'))
+    await user.click(screen.getByText(t('contextMenu.delete')))
 
     expect(props.onDelete).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
@@ -575,13 +576,13 @@ describe('BlockContextMenu', () => {
   it('renders "Copy URL" item when linkUrl is provided', () => {
     renderMenu({ linkUrl: 'https://example.com' })
 
-    expect(screen.getByText('Copy URL')).toBeInTheDocument()
+    expect(screen.getByText(t('contextMenu.copyUrl'))).toBeInTheDocument()
   })
 
   it('does not render "Copy URL" item when linkUrl is undefined', () => {
     renderMenu({ linkUrl: undefined })
 
-    expect(screen.queryByText('Copy URL')).not.toBeInTheDocument()
+    expect(screen.queryByText(t('contextMenu.copyUrl'))).not.toBeInTheDocument()
   })
 
   it('clicking "Copy URL" copies to clipboard and shows toast', async () => {
@@ -594,7 +595,7 @@ describe('BlockContextMenu', () => {
 
     const { props } = renderMenu({ linkUrl: 'https://example.com/page' })
 
-    fireEvent.click(screen.getByText('Copy URL'))
+    fireEvent.click(screen.getByText(t('contextMenu.copyUrl')))
 
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith('https://example.com/page')
@@ -606,6 +607,6 @@ describe('BlockContextMenu', () => {
     renderMenu({ linkUrl: 'https://example.com' })
 
     const items = screen.getAllByRole('menuitem')
-    expect(items[0]).toHaveTextContent('Copy URL')
+    expect(items[0]).toHaveTextContent(t('contextMenu.copyUrl'))
   })
 })

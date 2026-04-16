@@ -18,6 +18,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 import { PropertiesView } from '../PropertiesView'
 
 vi.mock('sonner', () => ({
@@ -102,7 +103,7 @@ describe('PropertiesView', () => {
 
     render(<PropertiesView />)
 
-    expect(screen.getByText('Property Definitions')).toBeInTheDocument()
+    expect(screen.getByText(t('propertiesView.title'))).toBeInTheDocument()
   })
 
   it('shows loading state initially', () => {
@@ -142,7 +143,7 @@ describe('PropertiesView', () => {
 
     render(<PropertiesView />)
 
-    expect(await screen.findByText('No property definitions yet')).toBeInTheDocument()
+    expect(await screen.findByText(t('propertiesView.empty'))).toBeInTheDocument()
   })
 
   it('create button creates a new definition', async () => {
@@ -153,14 +154,14 @@ describe('PropertiesView', () => {
     render(<PropertiesView />)
 
     await waitFor(() => {
-      expect(screen.getByText('No property definitions yet')).toBeInTheDocument()
+      expect(screen.getByText(t('propertiesView.empty'))).toBeInTheDocument()
     })
 
     // Mock createPropertyDef response
     mockedInvoke.mockResolvedValueOnce(makePropDef('my-prop', 'text'))
 
     // Type the key and submit
-    const keyInput = screen.getByPlaceholderText('Property key')
+    const keyInput = screen.getByPlaceholderText(t('propertiesView.createKey'))
     await user.type(keyInput, 'my-prop')
 
     const createBtn = screen.getByRole('button', { name: /Create/i })
@@ -180,7 +181,7 @@ describe('PropertiesView', () => {
     expect(keyInput).toHaveValue('')
 
     // Success toast
-    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Property definition created')
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith(t('propertiesView.created'))
   })
 
   it('delete button shows confirmation dialog', async () => {
@@ -196,12 +197,8 @@ describe('PropertiesView', () => {
     await user.click(deleteBtn)
 
     // AlertDialog should appear
-    expect(await screen.findByText('Delete this property definition?')).toBeInTheDocument()
-    expect(
-      screen.getByText(
-        'Blocks using this property will keep their values, but the definition will be removed.',
-      ),
-    ).toBeInTheDocument()
+    expect(await screen.findByText(t('propertiesView.deleteConfirm'))).toBeInTheDocument()
+    expect(screen.getByText(t('propertiesView.deleteDesc'))).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Delete/i })).toBeInTheDocument()
   })
@@ -231,7 +228,7 @@ describe('PropertiesView', () => {
     })
 
     // Success toast
-    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Property definition deleted')
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith(t('propertiesView.deleted'))
   })
 
   it('search filters definitions by key', async () => {
@@ -250,7 +247,7 @@ describe('PropertiesView', () => {
     expect(screen.getByText('Due Date')).toBeInTheDocument()
 
     // Type in the search
-    const searchInput = screen.getByPlaceholderText('Search properties...')
+    const searchInput = screen.getByPlaceholderText(t('propertiesView.search'))
     await user.type(searchInput, 'pri')
 
     // Only 'priority' should be visible (displayed as 'Priority')
@@ -292,7 +289,7 @@ describe('PropertiesView', () => {
 
     render(<PropertiesView />)
 
-    expect(screen.getByText('Task States')).toBeInTheDocument()
+    expect(screen.getByText(t('propertiesView.taskStates'))).toBeInTheDocument()
   })
 
   it('shows default task states', async () => {
@@ -303,7 +300,7 @@ describe('PropertiesView', () => {
     expect(screen.getByText('TODO')).toBeInTheDocument()
     expect(screen.getByText('DOING')).toBeInTheDocument()
     expect(screen.getByText('DONE')).toBeInTheDocument()
-    expect(screen.getByText('none')).toBeInTheDocument()
+    expect(screen.getByText(t('task.noneState'))).toBeInTheDocument()
   })
 
   it('disables create button when key matches existing definition', async () => {
@@ -316,7 +313,7 @@ describe('PropertiesView', () => {
       expect(screen.getByText('Status')).toBeInTheDocument()
     })
 
-    const keyInput = screen.getByPlaceholderText('Property key')
+    const keyInput = screen.getByPlaceholderText(t('propertiesView.createKey'))
     await user.type(keyInput, 'status')
 
     const createBtn = screen.getByRole('button', { name: /Create/i })
@@ -333,10 +330,10 @@ describe('PropertiesView', () => {
       expect(screen.getByText('Status')).toBeInTheDocument()
     })
 
-    const keyInput = screen.getByPlaceholderText('Property key')
+    const keyInput = screen.getByPlaceholderText(t('propertiesView.createKey'))
     await user.type(keyInput, 'status')
 
-    expect(screen.getByText('A property with this key already exists')).toBeInTheDocument()
+    expect(screen.getByText(t('propertiesView.duplicateKey'))).toBeInTheDocument()
   })
 
   it('enables create button when key is unique', async () => {
@@ -349,7 +346,7 @@ describe('PropertiesView', () => {
       expect(screen.getByText('Status')).toBeInTheDocument()
     })
 
-    const keyInput = screen.getByPlaceholderText('Property key')
+    const keyInput = screen.getByPlaceholderText(t('propertiesView.createKey'))
     await user.type(keyInput, 'new_key')
 
     const createBtn = screen.getByRole('button', { name: /Create/i })
@@ -383,7 +380,7 @@ describe('PropertiesView', () => {
 
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to load property definitions'),
+        t('property.errorLoad', { error: String(new Error('DB read error')) }),
       )
     })
 
@@ -391,7 +388,7 @@ describe('PropertiesView', () => {
     expect(screen.queryByTestId('properties-loading')).not.toBeInTheDocument()
 
     // Empty state shown because definitions stayed empty
-    expect(screen.getByText('No property definitions yet')).toBeInTheDocument()
+    expect(screen.getByText(t('propertiesView.empty'))).toBeInTheDocument()
   })
 
   it('shows error toast when creating a definition fails', async () => {
@@ -402,13 +399,13 @@ describe('PropertiesView', () => {
     render(<PropertiesView />)
 
     await waitFor(() => {
-      expect(screen.getByText('No property definitions yet')).toBeInTheDocument()
+      expect(screen.getByText(t('propertiesView.empty'))).toBeInTheDocument()
     })
 
     // Mock create to reject
     mockedInvoke.mockRejectedValueOnce(new Error('Duplicate key'))
 
-    const keyInput = screen.getByPlaceholderText('Property key')
+    const keyInput = screen.getByPlaceholderText(t('propertiesView.createKey'))
     await user.type(keyInput, 'my-prop')
 
     const createBtn = screen.getByRole('button', { name: /Create/i })
@@ -416,7 +413,7 @@ describe('PropertiesView', () => {
 
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to create property definition'),
+        t('property.errorCreate', { error: String(new Error('Duplicate key')) }),
       )
     })
 
@@ -451,7 +448,7 @@ describe('PropertiesView', () => {
 
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to delete property definition'),
+        t('property.errorDelete', { error: String(new Error('Backend error')) }),
       )
     })
 
@@ -475,7 +472,7 @@ describe('PropertiesView', () => {
     await user.click(editBtn)
 
     // Modify the options input (avoid brackets — userEvent treats [ as key descriptor)
-    const optionsInput = screen.getByLabelText('Options JSON')
+    const optionsInput = screen.getByLabelText(t('propertiesView.optionsJsonLabel'))
     await user.clear(optionsInput)
     await user.type(optionsInput, 'open,closed,pending')
 
@@ -487,7 +484,7 @@ describe('PropertiesView', () => {
 
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to update options'),
+        t('property.errorUpdate', { error: String(new Error('Invalid JSON')) }),
       )
     })
 

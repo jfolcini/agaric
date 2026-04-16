@@ -9,6 +9,7 @@
 
 import { FileText, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { HighlightMatch } from '@/components/HighlightMatch'
 import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
@@ -33,6 +34,7 @@ export function PageTreeItem({
   forceExpand,
   onDelete,
 }: PageTreeItemProps) {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(true) // namespaces start expanded
 
   if (node.pageId && node.children.length === 0) {
@@ -58,7 +60,7 @@ export function PageTreeItem({
             variant="ghost"
             size="icon-xs"
             className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive [@media(pointer:coarse)]:opacity-100 [@media(pointer:coarse)]:h-[44px] [@media(pointer:coarse)]:w-[44px]"
-            aria-label={`Delete ${node.fullPath}`}
+            aria-label={t('pageTree.delete', { path: node.fullPath })}
             onClick={(e) => {
               e.stopPropagation()
               onDelete(leafId, node.fullPath)
@@ -89,7 +91,7 @@ export function PageTreeItem({
           <button
             type="button"
             className="opacity-0 group-hover:opacity-100 h-5 w-5 flex items-center justify-center rounded hover:bg-accent transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 [@media(pointer:coarse)]:opacity-100 [@media(pointer:coarse)]:h-[44px] [@media(pointer:coarse)]:w-[44px] active:bg-accent active:scale-95"
-            aria-label={`Create page under ${node.fullPath}`}
+            aria-label={t('pageTree.createUnder', { path: node.fullPath })}
             onClick={(e) => {
               e.stopPropagation()
               onCreateUnder(node.fullPath)

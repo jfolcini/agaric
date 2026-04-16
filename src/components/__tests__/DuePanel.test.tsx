@@ -20,6 +20,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 import { clearProjectedCache } from '../../hooks/useDuePanelData'
 
 vi.mock('../../lib/tauri', () => ({
@@ -110,7 +111,7 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    expect(await screen.findByText('3 Agenda')).toBeInTheDocument()
+    expect(await screen.findByText(t('duePanel.header', { count: 3 }))).toBeInTheDocument()
   })
 
   // 1b. Singular count
@@ -123,7 +124,7 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    expect(await screen.findByText('1 Agenda')).toBeInTheDocument()
+    expect(await screen.findByText(t('duePanel.headerOne'))).toBeInTheDocument()
   })
 
   // 2. Returns null when all sources are empty (UX-152)
@@ -140,7 +141,7 @@ describe('DuePanel', () => {
     await waitFor(() => {
       expect(container.innerHTML).toBe('')
     })
-    expect(screen.queryByLabelText('Agenda')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(t('duePanel.duePanelLabel'))).not.toBeInTheDocument()
   })
 
   // 3. Groups blocks by todo_state in correct order (DOING > TODO > DONE > null)
@@ -158,15 +159,15 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    await screen.findByText('4 Agenda')
+    await screen.findByText(t('duePanel.header', { count: 4 }))
 
     // Verify group headers appear in correct order
     const groupHeaders = screen.getAllByText(/^(DOING|TODO|DONE|Other)$/)
     expect(groupHeaders).toHaveLength(4)
-    expect(groupHeaders[0]).toHaveTextContent('DOING')
-    expect(groupHeaders[1]).toHaveTextContent('TODO')
-    expect(groupHeaders[2]).toHaveTextContent('DONE')
-    expect(groupHeaders[3]).toHaveTextContent('Other')
+    expect(groupHeaders[0]).toHaveTextContent(t('duePanel.groupDoing'))
+    expect(groupHeaders[1]).toHaveTextContent(t('duePanel.groupTodo'))
+    expect(groupHeaders[2]).toHaveTextContent(t('duePanel.groupDone'))
+    expect(groupHeaders[3]).toHaveTextContent(t('duePanel.groupOther'))
   })
 
   // 4. Sorts by priority within group (1 > 2 > 3 > null)
@@ -184,7 +185,7 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    await screen.findByText('4 Agenda')
+    await screen.findByText(t('duePanel.header', { count: 4 }))
 
     // Get all block text items within the TODO group
     const items = screen.getAllByText(/priority (one|two|three)|no priority/)
@@ -377,11 +378,11 @@ describe('DuePanel', () => {
     // Content should be visible (expanded by default)
     expect(await screen.findByText('visible block')).toBeInTheDocument()
 
-    const section = screen.getByLabelText('Agenda')
+    const section = screen.getByLabelText(t('duePanel.duePanelLabel'))
     expect(section.querySelector('.due-panel-content')).toBeInTheDocument()
 
     // Click header to collapse
-    const header = screen.getByText('1 Agenda')
+    const header = screen.getByText(t('duePanel.headerOne'))
     await user.click(header)
 
     // Content should be hidden
@@ -663,7 +664,7 @@ describe('DuePanel', () => {
     render(<DuePanel date="2025-06-15" />)
 
     // All blocks are from due_date — falls back to "N Agenda" format
-    expect(await screen.findByText('2 Agenda')).toBeInTheDocument()
+    expect(await screen.findByText(t('duePanel.header', { count: 2 }))).toBeInTheDocument()
   })
 
   // 20. Panel returns null when all sources are empty (UX-152 supersedes B-43)
@@ -684,7 +685,7 @@ describe('DuePanel', () => {
     await waitFor(() => {
       expect(container.innerHTML).toBe('')
     })
-    expect(screen.queryByLabelText('Agenda')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(t('duePanel.duePanelLabel'))).not.toBeInTheDocument()
   })
 
   // --- Projected agenda entries (repeating tasks) ---
@@ -858,7 +859,7 @@ describe('DuePanel', () => {
 
       render(<DuePanel date={todayStr} />)
 
-      expect(await screen.findByText('Overdue')).toBeInTheDocument()
+      expect(await screen.findByText(t('duePanel.overdueTitle'))).toBeInTheDocument()
       expect(screen.getByText(/Overdue task/)).toBeInTheDocument()
     })
 
@@ -868,7 +869,7 @@ describe('DuePanel', () => {
       render(<DuePanel date="2025-06-15" />)
 
       await waitFor(() => {
-        expect(screen.queryByText('Overdue')).not.toBeInTheDocument()
+        expect(screen.queryByText(t('duePanel.overdueTitle'))).not.toBeInTheDocument()
       })
     })
 
@@ -895,7 +896,7 @@ describe('DuePanel', () => {
       render(<DuePanel date={todayStr} />)
 
       await waitFor(() => {
-        expect(screen.queryByText('Overdue')).not.toBeInTheDocument()
+        expect(screen.queryByText(t('duePanel.overdueTitle'))).not.toBeInTheDocument()
       })
     })
   })
@@ -1008,7 +1009,7 @@ describe('DuePanel', () => {
       })
 
       render(<DuePanel date={todayStr} />)
-      expect(await screen.findByText('Upcoming')).toBeInTheDocument()
+      expect(await screen.findByText(t('duePanel.upcomingTitle'))).toBeInTheDocument()
       expect(screen.getByText(/Due soon task/)).toBeInTheDocument()
     })
 
@@ -1021,7 +1022,7 @@ describe('DuePanel', () => {
 
       render(<DuePanel date={todayStr} />)
       await waitFor(() => {
-        expect(screen.queryByText('Upcoming')).not.toBeInTheDocument()
+        expect(screen.queryByText(t('duePanel.upcomingTitle'))).not.toBeInTheDocument()
       })
     })
   })
@@ -1063,7 +1064,7 @@ describe('DuePanel', () => {
       })
 
       // UX-152: Panel returns null when all sources are empty
-      expect(screen.queryByLabelText('Agenda')).not.toBeInTheDocument()
+      expect(screen.queryByLabelText(t('duePanel.duePanelLabel'))).not.toBeInTheDocument()
     })
 
     it('batchResolve rejection after listBlocks still renders blocks without page titles', async () => {
@@ -1080,7 +1081,7 @@ describe('DuePanel', () => {
       expect(await screen.findByText('resilient block')).toBeInTheDocument()
 
       // Page title falls back to 'Untitled' since batchResolve failed
-      expect(screen.getByText('Untitled')).toBeInTheDocument()
+      expect(screen.getByText(t('duePanel.untitled'))).toBeInTheDocument()
     })
 
     it('listProjectedAgenda rejection shows toast error and no projected section', async () => {
@@ -1151,7 +1152,7 @@ describe('DuePanel', () => {
 
       // Overdue section should not appear
       await waitFor(() => {
-        expect(screen.queryByText('Overdue')).not.toBeInTheDocument()
+        expect(screen.queryByText(t('duePanel.overdueTitle'))).not.toBeInTheDocument()
       })
 
       // UX-152: Panel returns null when all sources are empty
@@ -1180,7 +1181,7 @@ describe('DuePanel', () => {
       })
 
       // Upcoming section should not appear
-      expect(screen.queryByText('Upcoming')).not.toBeInTheDocument()
+      expect(screen.queryByText(t('duePanel.upcomingTitle'))).not.toBeInTheDocument()
 
       // UX-152: Panel returns null when all sources are empty
       await waitFor(() => {
@@ -1218,7 +1219,7 @@ describe('DuePanel', () => {
       expect(screen.getByText('first block')).toBeInTheDocument()
 
       // Component still renders without crashing
-      expect(screen.getByLabelText('Agenda')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('duePanel.duePanelLabel'))).toBeInTheDocument()
     })
   })
 })

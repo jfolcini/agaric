@@ -25,6 +25,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 import { HistoryView } from '../HistoryView'
 
 vi.mock('sonner', () => ({
@@ -123,7 +124,7 @@ describe('HistoryView', () => {
 
     render(<HistoryView />)
 
-    expect(await screen.findByText('No history entries found')).toBeInTheDocument()
+    expect(await screen.findByText(t('history.noEntriesFound'))).toBeInTheDocument()
   })
 
   it('renders history entries with correct badges, timestamps, previews', async () => {
@@ -168,7 +169,7 @@ describe('HistoryView', () => {
     expect(checkbox).toBeChecked()
 
     // Selection toolbar should appear
-    expect(screen.getByText('1 selected')).toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 1 }))).toBeInTheDocument()
 
     await user.click(checkbox)
     expect(checkbox).not.toBeChecked()
@@ -207,7 +208,7 @@ describe('HistoryView', () => {
     expect(checkboxes[1]).toBeChecked()
     expect(checkboxes[2]).toBeChecked()
 
-    expect(screen.getByText('3 selected')).toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 3 }))).toBeInTheDocument()
   })
 
   it('arrow key navigation moves focus', async () => {
@@ -288,12 +289,8 @@ describe('HistoryView', () => {
     // Press Enter
     await user.keyboard('{Enter}')
 
-    expect(screen.getByText('Revert 1 operations?')).toBeInTheDocument()
-    expect(
-      screen.getByText(
-        'This will create 1 new operations that reverse the selected changes. The original operations remain in history.',
-      ),
-    ).toBeInTheDocument()
+    expect(screen.getByText(t('history.revertTitle', { count: 1 }))).toBeInTheDocument()
+    expect(screen.getByText(t('history.revertDescription', { count: 1 }))).toBeInTheDocument()
   })
 
   it('confirmation dialog "Revert" calls revertOps with correct ops in reverse chronological order', async () => {
@@ -319,13 +316,13 @@ describe('HistoryView', () => {
     // Select all via Ctrl+A
     await user.keyboard('{Control>}a{/Control}')
 
-    expect(screen.getByText('3 selected')).toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 3 }))).toBeInTheDocument()
 
     // Click "Revert selected" button
     await user.click(screen.getByRole('button', { name: /Revert selected/ }))
 
     // Confirmation dialog appears
-    expect(screen.getByText('Revert 3 operations?')).toBeInTheDocument()
+    expect(screen.getByText(t('history.revertTitle', { count: 3 }))).toBeInTheDocument()
 
     // Click Revert in dialog
     await user.click(screen.getByRole('button', { name: /^Revert$/ }))
@@ -481,11 +478,11 @@ describe('HistoryView', () => {
     // Select first item
     const items = screen.getAllByTestId(/^history-item-/)
     await user.click(items[0] as HTMLElement)
-    expect(screen.getByText('1 selected')).toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 1 }))).toBeInTheDocument()
 
     // Select second item
     await user.click(items[1] as HTMLElement)
-    expect(screen.getByText('2 selected')).toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 2 }))).toBeInTheDocument()
   })
 
   it('"Clear selection" button clears all', async () => {
@@ -505,14 +502,14 @@ describe('HistoryView', () => {
     const items = screen.getAllByTestId(/^history-item-/)
     await user.click(items[0] as HTMLElement)
 
-    expect(screen.getByText('1 selected')).toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 1 }))).toBeInTheDocument()
 
     // Click Clear selection
     await user.click(screen.getByRole('button', { name: /Clear selection/ }))
 
     // Toolbar stays visible but shows 0 selected with disabled buttons
-    expect(screen.queryByText('1 selected')).not.toBeInTheDocument()
-    expect(screen.getByText('0 selected')).toBeInTheDocument()
+    expect(screen.queryByText(t('batch.selectedCount', { count: 1 }))).not.toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 0 }))).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Revert selected/ })).toBeDisabled()
     expect(screen.getByRole('button', { name: /Clear selection/ })).toBeDisabled()
   })
@@ -533,14 +530,14 @@ describe('HistoryView', () => {
     // Select item
     const items = screen.getAllByTestId(/^history-item-/)
     await user.click(items[0] as HTMLElement)
-    expect(screen.getByText('1 selected')).toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 1 }))).toBeInTheDocument()
 
     // Press Escape
     await user.keyboard('{Escape}')
 
     // Selection should be cleared but toolbar stays visible
-    expect(screen.queryByText('1 selected')).not.toBeInTheDocument()
-    expect(screen.getByText('0 selected')).toBeInTheDocument()
+    expect(screen.queryByText(t('batch.selectedCount', { count: 1 }))).not.toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 0 }))).toBeInTheDocument()
   })
 
   it('toolbar is visible even when nothing is selected', async () => {
@@ -556,7 +553,7 @@ describe('HistoryView', () => {
     await screen.findByText('item 1')
 
     // Toolbar should be visible with 0 selected
-    expect(screen.getByText('0 selected')).toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 0 }))).toBeInTheDocument()
     expect(screen.getByRole('toolbar', { name: /0 selected/ })).toBeInTheDocument()
 
     // Buttons should be disabled
@@ -611,8 +608,8 @@ describe('HistoryView', () => {
 
     // Should render error banner and empty state, not crash
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent('Failed to load history')
-      expect(screen.getByText('No history entries found')).toBeInTheDocument()
+      expect(screen.getByRole('alert')).toHaveTextContent(t('history.loadFailed'))
+      expect(screen.getByText(t('history.noEntriesFound'))).toBeInTheDocument()
     })
   })
 
@@ -636,7 +633,7 @@ describe('HistoryView', () => {
     // Ctrl+A to select all
     await user.keyboard('{Control>}a{/Control}')
 
-    expect(screen.getByText('2 selected')).toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 2 }))).toBeInTheDocument()
 
     const checkboxes = screen.getAllByRole('checkbox')
     expect(checkboxes[0]).toBeChecked() // edit_block
@@ -661,7 +658,7 @@ describe('HistoryView', () => {
     await user.click(item)
 
     // Should not show selection toolbar
-    expect(screen.queryByText('1 selected')).not.toBeInTheDocument()
+    expect(screen.queryByText(t('batch.selectedCount', { count: 1 }))).not.toBeInTheDocument()
   })
 
   it('has no a11y violations with empty state', async () => {
@@ -691,18 +688,18 @@ describe('HistoryView', () => {
     // Select the entry
     const items = screen.getAllByTestId(/^history-item-/)
     await user.click(items[0] as HTMLElement)
-    expect(screen.getByText('1 selected')).toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 1 }))).toBeInTheDocument()
 
     // Open confirmation dialog via Enter
     await user.keyboard('{Enter}')
-    expect(screen.getByText('Revert 1 operations?')).toBeInTheDocument()
+    expect(screen.getByText(t('history.revertTitle', { count: 1 }))).toBeInTheDocument()
 
     // Click Cancel
     await user.click(screen.getByRole('button', { name: /Cancel/ }))
 
     // Dialog should be closed
     await waitFor(() => {
-      expect(screen.queryByText('Revert 1 operations?')).not.toBeInTheDocument()
+      expect(screen.queryByText(t('history.revertTitle', { count: 1 }))).not.toBeInTheDocument()
     })
 
     // revertOps should NOT have been called (only the initial list_page_history invoke)
@@ -711,7 +708,7 @@ describe('HistoryView', () => {
     // Selection should be preserved
     const checkbox = screen.getByRole('checkbox', { name: /Select operation edit_block #1/ })
     expect(checkbox).toBeChecked()
-    expect(screen.getByText('1 selected')).toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 1 }))).toBeInTheDocument()
   })
 
   it('handles revert error gracefully', async () => {
@@ -738,13 +735,13 @@ describe('HistoryView', () => {
 
     // Open dialog and confirm revert
     await user.click(screen.getByRole('button', { name: /Revert selected/ }))
-    expect(screen.getByText('Revert 1 operations?')).toBeInTheDocument()
+    expect(screen.getByText(t('history.revertTitle', { count: 1 }))).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /^Revert$/ }))
 
     // Dialog should close
     await waitFor(() => {
-      expect(screen.queryByText('Revert 1 operations?')).not.toBeInTheDocument()
+      expect(screen.queryByText(t('history.revertTitle', { count: 1 }))).not.toBeInTheDocument()
     })
 
     // Component should not crash — entries are still visible
@@ -785,7 +782,7 @@ describe('HistoryView', () => {
     // Select the entry
     const items = screen.getAllByTestId(/^history-item-/)
     await user.click(items[0] as HTMLElement)
-    expect(screen.getByText('1 selected')).toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 1 }))).toBeInTheDocument()
 
     // Open dialog and confirm
     await user.click(screen.getByRole('button', { name: /Revert selected/ }))
@@ -798,7 +795,7 @@ describe('HistoryView', () => {
     })
 
     // Selection should be cleared
-    expect(screen.queryByText('1 selected')).not.toBeInTheDocument()
+    expect(screen.queryByText(t('batch.selectedCount', { count: 1 }))).not.toBeInTheDocument()
 
     // New data should be visible
     expect(await screen.findByText('reverse op')).toBeInTheDocument()
@@ -826,7 +823,7 @@ describe('HistoryView', () => {
     const items = screen.getAllByTestId(/^history-item-/)
     await user.click(items[0] as HTMLElement)
     await user.click(items[1] as HTMLElement)
-    expect(screen.getByText('2 selected')).toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 2 }))).toBeInTheDocument()
 
     // Open dialog and confirm
     await user.click(screen.getByRole('button', { name: /Revert selected/ }))
@@ -834,11 +831,11 @@ describe('HistoryView', () => {
 
     // Wait for dialog to close
     await waitFor(() => {
-      expect(screen.queryByText('Revert 2 operations?')).not.toBeInTheDocument()
+      expect(screen.queryByText(t('history.revertTitle', { count: 2 }))).not.toBeInTheDocument()
     })
 
     // Selection should still be preserved
-    expect(screen.getByText('2 selected')).toBeInTheDocument()
+    expect(screen.getByText(t('batch.selectedCount', { count: 2 }))).toBeInTheDocument()
 
     const checkboxes = screen.getAllByRole('checkbox')
     expect(checkboxes[0]).toBeChecked()
@@ -928,7 +925,7 @@ describe('HistoryView', () => {
 
     // Error banner should appear
     const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('Failed to load history')
+    expect(alert).toHaveTextContent(t('history.loadFailed'))
 
     // Retry button should be visible
     const retryBtn = screen.getByRole('button', { name: /Retry/ })
@@ -967,7 +964,7 @@ describe('HistoryView', () => {
     await user.click(screen.getByRole('button', { name: /^Revert$/ }))
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Failed to revert operations')
+      expect(mockedToastError).toHaveBeenCalledWith(t('history.revertFailed'))
     })
   })
 
@@ -1087,7 +1084,7 @@ describe('HistoryView', () => {
       await user.click(screen.getByRole('button', { name: /^Restore$/ }))
 
       await waitFor(() => {
-        expect(mockedToastSuccess).toHaveBeenCalledWith('3 operations reverted successfully')
+        expect(mockedToastSuccess).toHaveBeenCalledWith(t('history.restoreSuccess', { count: 3 }))
       })
     })
 
@@ -1112,7 +1109,7 @@ describe('HistoryView', () => {
       await user.click(screen.getByRole('button', { name: /^Restore$/ }))
 
       await waitFor(() => {
-        expect(mockedToastWarning).toHaveBeenCalledWith('1 non-reversible operations were skipped')
+        expect(mockedToastWarning).toHaveBeenCalledWith(t('history.restoreSkipped', { count: 1 }))
       })
     })
 
@@ -1136,7 +1133,7 @@ describe('HistoryView', () => {
       await user.click(screen.getByRole('button', { name: /^Restore$/ }))
 
       await waitFor(() => {
-        expect(mockedToastError).toHaveBeenCalledWith('Failed to restore — please try again')
+        expect(mockedToastError).toHaveBeenCalledWith(t('history.restoreFailed'))
       })
     })
   })

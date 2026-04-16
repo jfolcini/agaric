@@ -19,6 +19,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 import { makeBlock } from '../../__tests__/fixtures'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { TagFilterPanel } from '../TagFilterPanel'
@@ -85,12 +86,12 @@ afterEach(() => {
 describe('TagFilterPanel', () => {
   it('renders prefix input', () => {
     render(<TagFilterPanel />)
-    expect(screen.getByPlaceholderText('Search tags by prefix...')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))).toBeInTheDocument()
   })
 
   it('renders Tag Filter heading', () => {
     render(<TagFilterPanel />)
-    expect(screen.getByText('Tag Filter')).toBeInTheDocument()
+    expect(screen.getByText(t('tagFilter.title'))).toBeInTheDocument()
   })
 
   it('renders AND/OR/NOT mode toggle', () => {
@@ -108,7 +109,7 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     fireEvent.change(input, { target: { value: 'work' } })
 
     // Not yet called — debounce timer hasn't fired
@@ -135,7 +136,7 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     // The matching portion should be bolded
@@ -149,7 +150,7 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     expect(findTagSpan(/work \(5\)/)).toBeInTheDocument()
@@ -165,7 +166,7 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     const addBtn = screen.getByRole('button', { name: /Add/i })
@@ -177,8 +178,10 @@ describe('TagFilterPanel', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     // Tag badge should appear in selected section
-    expect(screen.getByText('Selected:')).toBeInTheDocument()
-    expect(screen.getByLabelText('Remove tag work')).toBeInTheDocument()
+    expect(screen.getByText(t('tagFilter.selectedLabel'))).toBeInTheDocument()
+    expect(
+      screen.getByLabelText(t('tagFilter.removeTagLabel', { name: 'work' })),
+    ).toBeInTheDocument()
   })
 
   it('removes a tag from selection when × is clicked', async () => {
@@ -186,7 +189,7 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     const addBtn = screen.getByRole('button', { name: /Add/i })
@@ -197,14 +200,16 @@ describe('TagFilterPanel', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     // Badge should be present
-    const removeBtn = screen.getByLabelText('Remove tag work')
+    const removeBtn = screen.getByLabelText(t('tagFilter.removeTagLabel', { name: 'work' }))
 
     await user.click(removeBtn)
     await vi.advanceTimersByTimeAsync(0)
 
     // Badge should be gone
-    expect(screen.queryByText('Selected:')).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('Remove tag work')).not.toBeInTheDocument()
+    expect(screen.queryByText(t('tagFilter.selectedLabel'))).not.toBeInTheDocument()
+    expect(
+      screen.queryByLabelText(t('tagFilter.removeTagLabel', { name: 'work' })),
+    ).not.toBeInTheDocument()
   })
 
   it('toggles AND/OR/NOT mode', async () => {
@@ -247,7 +252,7 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     const addBtn = screen.getByRole('button', { name: /Add/i })
@@ -280,7 +285,7 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     const addBtn = screen.getByRole('button', { name: /Add/i })
@@ -332,7 +337,7 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     const addBtn = screen.getByRole('button', { name: /Add/i })
@@ -343,18 +348,18 @@ describe('TagFilterPanel', () => {
     await user.click(addBtn)
     await vi.advanceTimersByTimeAsync(0)
 
-    expect(screen.getByText('No matching blocks found.')).toBeInTheDocument()
+    expect(screen.getByText(t('tagFilter.noMatchesFound'))).toBeInTheDocument()
   })
 
   it('does not show results before any tag is selected', () => {
     render(<TagFilterPanel />)
-    expect(screen.queryByText('No matching blocks found.')).not.toBeInTheDocument()
-    expect(screen.queryByText('Results')).not.toBeInTheDocument()
+    expect(screen.queryByText(t('tagFilter.noMatchesFound'))).not.toBeInTheDocument()
+    expect(screen.queryByText(t('tagFilter.resultsTitle'))).not.toBeInTheDocument()
   })
 
   it('shows "Select tags above" feedback when no tags are selected', () => {
     render(<TagFilterPanel />)
-    expect(screen.getByText('Select tags above to filter blocks')).toBeInTheDocument()
+    expect(screen.getByText(t('tagFilter.selectTagsMessage'))).toBeInTheDocument()
   })
 
   it('shows match summary feedback when tags are selected and results exist', async () => {
@@ -363,7 +368,7 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     const addBtn = screen.getByRole('button', { name: /Add/i })
@@ -393,7 +398,7 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     const addBtn = screen.getByRole('button', { name: /Add/i })
@@ -419,7 +424,7 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     fireEvent.change(input, { target: { value: 'fail' } })
 
     await act(async () => {
@@ -427,7 +432,7 @@ describe('TagFilterPanel', () => {
     })
 
     // Component should not crash
-    expect(screen.getByPlaceholderText('Search tags by prefix...')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))).toBeInTheDocument()
   })
 
   it('shows error toast when tag loading fails', async () => {
@@ -435,14 +440,14 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     fireEvent.change(input, { target: { value: 'fail' } })
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300)
     })
 
-    expect(mockedToastError).toHaveBeenCalledWith('Failed to load tags')
+    expect(mockedToastError).toHaveBeenCalledWith(t('tags.loadFailed'))
   })
 
   it('hides already-selected tags from matching results', async () => {
@@ -453,7 +458,7 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     // Both tags visible
@@ -489,7 +494,7 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     const addBtn = screen.getByRole('button', { name: /Add/i })
@@ -542,7 +547,7 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     const addBtn = screen.getByRole('button', { name: /Add/i })
@@ -584,7 +589,7 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     const addBtn = screen.getByRole('button', { name: /Add/i })
@@ -624,7 +629,7 @@ describe('TagFilterPanel', () => {
     const notBtn = screen.getByRole('button', { name: /^NOT$/i })
     await user.click(notBtn)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     const addBtn = screen.getByRole('button', { name: /Add/i })
@@ -658,7 +663,7 @@ describe('TagFilterPanel', () => {
     const notBtn = screen.getByRole('button', { name: /^NOT$/i })
     await user.click(notBtn)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     const addBtn = screen.getByRole('button', { name: /Add/i })
@@ -701,7 +706,7 @@ describe('TagFilterPanel', () => {
     const notBtn = screen.getByRole('button', { name: /^NOT$/i })
     await user.click(notBtn)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     const addBtn = screen.getByRole('button', { name: /Add/i })
@@ -736,7 +741,7 @@ describe('TagFilterPanel', () => {
   describe('keyboard interaction', () => {
     it('search input is keyboard-accessible with proper aria-label', () => {
       render(<TagFilterPanel />)
-      const input = screen.getByLabelText('Search tags by prefix')
+      const input = screen.getByLabelText(t('tagFilter.searchLabel'))
       expect(input.tagName).toBe('INPUT')
       input.focus()
       expect(document.activeElement).toBe(input)
@@ -749,7 +754,7 @@ describe('TagFilterPanel', () => {
       ])
       render(<TagFilterPanel />)
 
-      const input = screen.getByPlaceholderText('Search tags by prefix...')
+      const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
       await typeAndWaitForTags(input, 'work')
 
       const addBtns = screen.getAllByRole('button', { name: /Add/i })
@@ -764,7 +769,7 @@ describe('TagFilterPanel', () => {
       mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
       render(<TagFilterPanel />)
 
-      const input = screen.getByPlaceholderText('Search tags by prefix...')
+      const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
       await typeAndWaitForTags(input, 'work')
 
       mockedInvoke.mockResolvedValue(emptyPage)
@@ -773,7 +778,7 @@ describe('TagFilterPanel', () => {
       await vi.advanceTimersByTimeAsync(0)
 
       // Remove button has aria-label for screen readers and keyboard users
-      const removeBtn = screen.getByLabelText('Remove tag work')
+      const removeBtn = screen.getByLabelText(t('tagFilter.removeTagLabel', { name: 'work' }))
       expect(removeBtn.tagName).toBe('BUTTON')
       expect(removeBtn).toHaveAttribute('type', 'button')
     })
@@ -784,11 +789,11 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     // The "Matching tags" heading should be inside a <section>
-    const heading = screen.getByText('Matching tags')
+    const heading = screen.getByText(t('tagFilter.matchingTagsTitle'))
     const section = heading.closest('section')
     expect(section).not.toBeNull()
     expect(section?.tagName).toBe('SECTION')
@@ -801,7 +806,7 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     const addBtn = screen.getByRole('button', { name: /Add/i })
@@ -832,7 +837,7 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     // Matching tags should be visible
@@ -853,7 +858,7 @@ describe('TagFilterPanel', () => {
 
     const { container } = render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     fireEvent.change(input, { target: { value: 'work' } })
 
     // Wait for debounce without fake timers
@@ -880,7 +885,7 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     const addBtn = screen.getByRole('button', { name: /Add/i })
@@ -925,7 +930,7 @@ describe('TagFilterPanel', () => {
 
     render(<TagFilterPanel />)
 
-    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
     const addBtn = screen.getByRole('button', { name: /Add/i })

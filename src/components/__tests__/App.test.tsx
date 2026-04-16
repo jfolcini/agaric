@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { App } from '../../App'
 import { announce } from '../../lib/announcer'
+import { t } from '../../lib/i18n'
 import { logger } from '../../lib/logger'
 import { useBootStore } from '../../stores/boot'
 import { useJournalStore } from '../../stores/journal'
@@ -113,12 +114,12 @@ describe('App', () => {
 
     // Sidebar should have all 6 nav items
     const sidebar = getSidebar()
-    expect(sidebar.getByText('Journal')).toBeInTheDocument()
-    expect(sidebar.getByText('Pages')).toBeInTheDocument()
-    expect(sidebar.getByText('Tags')).toBeInTheDocument()
-    expect(sidebar.getByText('Trash')).toBeInTheDocument()
-    expect(sidebar.getByText('Status')).toBeInTheDocument()
-    expect(sidebar.getByText('Conflicts')).toBeInTheDocument()
+    expect(sidebar.getByText(t('sidebar.journal'))).toBeInTheDocument()
+    expect(sidebar.getByText(t('sidebar.pages'))).toBeInTheDocument()
+    expect(sidebar.getByText(t('sidebar.tags'))).toBeInTheDocument()
+    expect(sidebar.getByText(t('sidebar.trash'))).toBeInTheDocument()
+    expect(sidebar.getByText(t('sidebar.status'))).toBeInTheDocument()
+    expect(sidebar.getByText(t('sidebar.conflicts'))).toBeInTheDocument()
   })
 
   it('renders the app branding', async () => {
@@ -150,11 +151,11 @@ describe('App', () => {
 
     // Click Pages in sidebar
     const sidebar = getSidebar()
-    await user.click(sidebar.getByText('Pages'))
+    await user.click(sidebar.getByText(t('sidebar.pages')))
 
     // PageBrowser should render with its new-page input
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('New page name...')).toBeInTheDocument()
+      expect(screen.getByPlaceholderText(t('pageBrowser.newPagePlaceholder'))).toBeInTheDocument()
     })
   })
 
@@ -168,13 +169,13 @@ describe('App', () => {
 
     // Click Tags in sidebar
     const sidebar = getSidebar()
-    await user.click(sidebar.getByText('Tags'))
+    await user.click(sidebar.getByText(t('sidebar.tags')))
 
     // TagList should render
     await waitFor(() => {
       expect(screen.getByPlaceholderText('New tag name...')).toBeInTheDocument()
     })
-    expect(screen.getByRole('button', { name: /Add Tag/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: t('tag.addTag') })).toBeInTheDocument()
   })
 
   it('switches to Trash view', async () => {
@@ -187,13 +188,11 @@ describe('App', () => {
 
     // Click Trash in sidebar
     const sidebar = getSidebar()
-    await user.click(sidebar.getByText('Trash'))
+    await user.click(sidebar.getByText(t('sidebar.trash')))
 
     // TrashView should render its empty state
     await waitFor(() => {
-      expect(
-        screen.getByText(/Nothing in trash\. Deleted items will appear here\./),
-      ).toBeInTheDocument()
+      expect(screen.getByText(t('trash.emptyMessage'))).toBeInTheDocument()
     })
   })
 
@@ -221,11 +220,11 @@ describe('App', () => {
 
     // Click Status in sidebar
     const sidebar = getSidebar()
-    await user.click(sidebar.getByText('Status'))
+    await user.click(sidebar.getByText(t('sidebar.status')))
 
     // StatusPanel should render
     await waitFor(() => {
-      expect(screen.getByText('Materializer Status')).toBeInTheDocument()
+      expect(screen.getByText(t('status.materializerStatusTitle'))).toBeInTheDocument()
     })
   })
 
@@ -239,15 +238,11 @@ describe('App', () => {
 
     // Click Conflicts in sidebar
     const sidebar = getSidebar()
-    await user.click(sidebar.getByText('Conflicts'))
+    await user.click(sidebar.getByText(t('sidebar.conflicts')))
 
     // ConflictList should render its empty state
     await waitFor(() => {
-      expect(
-        screen.getByText(
-          /No conflicts\. Conflicts appear when the same block is edited on multiple devices\./,
-        ),
-      ).toBeInTheDocument()
+      expect(screen.getByText(t('conflict.noConflicts'))).toBeInTheDocument()
     })
   })
 
@@ -262,13 +257,13 @@ describe('App', () => {
     const sidebar = getSidebar()
 
     // Go to Pages
-    await user.click(sidebar.getByText('Pages'))
+    await user.click(sidebar.getByText(t('sidebar.pages')))
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('New page name...')).toBeInTheDocument()
+      expect(screen.getByPlaceholderText(t('pageBrowser.newPagePlaceholder'))).toBeInTheDocument()
     })
 
     // Go back to Journal
-    await user.click(sidebar.getByText('Journal'))
+    await user.click(sidebar.getByText(t('sidebar.journal')))
 
     // Journal should render again with tri-mode tabs
     await waitFor(() => {
@@ -292,16 +287,22 @@ describe('App', () => {
       expect(screen.getByText('Agaric')).toBeInTheDocument()
     })
     const sidebar = getSidebar()
-    const journalBtn = sidebar.getByText('Journal').closest('[data-sidebar="menu-button"]')
+    const journalBtn = sidebar
+      .getByText(t('sidebar.journal'))
+      .closest('[data-sidebar="menu-button"]')
     expect(journalBtn).toHaveAttribute('data-active', 'true')
-    const pagesBtn = sidebar.getByText('Pages').closest('[data-sidebar="menu-button"]')
+    const pagesBtn = sidebar.getByText(t('sidebar.pages')).closest('[data-sidebar="menu-button"]')
     expect(pagesBtn).toHaveAttribute('data-active', 'false')
-    await user.click(sidebar.getByText('Pages'))
+    await user.click(sidebar.getByText(t('sidebar.pages')))
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('New page name...')).toBeInTheDocument()
+      expect(screen.getByPlaceholderText(t('pageBrowser.newPagePlaceholder'))).toBeInTheDocument()
     })
-    const journalBtnAfter = sidebar.getByText('Journal').closest('[data-sidebar="menu-button"]')
-    const pagesBtnAfter = sidebar.getByText('Pages').closest('[data-sidebar="menu-button"]')
+    const journalBtnAfter = sidebar
+      .getByText(t('sidebar.journal'))
+      .closest('[data-sidebar="menu-button"]')
+    const pagesBtnAfter = sidebar
+      .getByText(t('sidebar.pages'))
+      .closest('[data-sidebar="menu-button"]')
     expect(pagesBtnAfter).toHaveAttribute('data-active', 'true')
     expect(journalBtnAfter).toHaveAttribute('data-active', 'false')
   })
@@ -404,7 +405,7 @@ describe('App', () => {
     fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
 
     await waitFor(() => {
-      expect(announce).toHaveBeenCalledWith('Search opened')
+      expect(announce).toHaveBeenCalledWith(t('announce.searchOpened'))
     })
   })
 
@@ -431,7 +432,7 @@ describe('App', () => {
     fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
 
     await waitFor(() => {
-      expect(announce).toHaveBeenCalledWith('New page created')
+      expect(announce).toHaveBeenCalledWith(t('announce.newPageCreated'))
     })
   })
 
@@ -453,7 +454,7 @@ describe('App', () => {
         const state = useJournalStore.getState()
         expect(state.currentDate.getTime()).toBe(subDays(startDate, 1).getTime())
       })
-      expect(announce).toHaveBeenCalledWith('Navigated to previous day/week/month')
+      expect(announce).toHaveBeenCalledWith(t('announce.navigatedToPrevious'))
     })
 
     it('Alt+ArrowRight navigates to next day in daily mode', async () => {
@@ -471,7 +472,7 @@ describe('App', () => {
         const state = useJournalStore.getState()
         expect(state.currentDate.getTime()).toBe(addDays(startDate, 1).getTime())
       })
-      expect(announce).toHaveBeenCalledWith('Navigated to next day/week/month')
+      expect(announce).toHaveBeenCalledWith(t('announce.navigatedToNext'))
     })
 
     it('Alt+ArrowLeft navigates to previous week in weekly mode', async () => {
@@ -489,7 +490,7 @@ describe('App', () => {
         const state = useJournalStore.getState()
         expect(state.currentDate.getTime()).toBe(subWeeks(startDate, 1).getTime())
       })
-      expect(announce).toHaveBeenCalledWith('Navigated to previous day/week/month')
+      expect(announce).toHaveBeenCalledWith(t('announce.navigatedToPrevious'))
     })
 
     it('Alt+ArrowRight navigates to next week in weekly mode', async () => {
@@ -507,7 +508,7 @@ describe('App', () => {
         const state = useJournalStore.getState()
         expect(state.currentDate.getTime()).toBe(addWeeks(startDate, 1).getTime())
       })
-      expect(announce).toHaveBeenCalledWith('Navigated to next day/week/month')
+      expect(announce).toHaveBeenCalledWith(t('announce.navigatedToNext'))
     })
 
     it('Alt+ArrowLeft navigates to previous month in monthly mode', async () => {
@@ -525,7 +526,7 @@ describe('App', () => {
         const state = useJournalStore.getState()
         expect(state.currentDate.getTime()).toBe(subMonths(startDate, 1).getTime())
       })
-      expect(announce).toHaveBeenCalledWith('Navigated to previous day/week/month')
+      expect(announce).toHaveBeenCalledWith(t('announce.navigatedToPrevious'))
     })
 
     it('Alt+ArrowRight navigates to next month in monthly mode', async () => {
@@ -543,7 +544,7 @@ describe('App', () => {
         const state = useJournalStore.getState()
         expect(state.currentDate.getTime()).toBe(addMonths(startDate, 1).getTime())
       })
-      expect(announce).toHaveBeenCalledWith('Navigated to next day/week/month')
+      expect(announce).toHaveBeenCalledWith(t('announce.navigatedToNext'))
     })
 
     it('Alt+T jumps to today', async () => {
@@ -564,7 +565,7 @@ describe('App', () => {
         const diff = Math.abs(state.currentDate.getTime() - beforePress.getTime())
         expect(diff).toBeLessThan(5000)
       })
-      expect(announce).toHaveBeenCalledWith('Jumped to today')
+      expect(announce).toHaveBeenCalledWith(t('announce.jumpedToToday'))
     })
 
     it('Alt+T (uppercase) also jumps to today', async () => {
@@ -579,7 +580,7 @@ describe('App', () => {
       fireEvent.keyDown(document, { key: 'T', altKey: true })
 
       await waitFor(() => {
-        expect(announce).toHaveBeenCalledWith('Jumped to today')
+        expect(announce).toHaveBeenCalledWith(t('announce.jumpedToToday'))
       })
     })
 
@@ -763,7 +764,7 @@ describe('App', () => {
       })
 
       const sidebar = getSidebar()
-      expect(sidebar.getByText('Toggle theme')).toBeInTheDocument()
+      expect(sidebar.getByText(t('sidebar.toggleTheme'))).toBeInTheDocument()
     })
 
     it('toggles theme on click', async () => {
@@ -791,7 +792,7 @@ describe('App', () => {
         expect(screen.getByText('Agaric')).toBeInTheDocument()
       })
 
-      expect(screen.getByTestId('last-synced')).toHaveTextContent('Never synced')
+      expect(screen.getByTestId('last-synced')).toHaveTextContent(t('sidebar.lastSyncedNever'))
     })
 
     it('shows last synced time when lastSyncedAt is set', async () => {
@@ -882,7 +883,7 @@ describe('App', () => {
       fireEvent.keyDown(document, { key: '?' })
 
       await waitFor(() => {
-        expect(screen.getByText('Quick Reference')).toBeInTheDocument()
+        expect(screen.getByText(t('shortcuts.title'))).toBeInTheDocument()
       })
     })
 
@@ -895,15 +896,17 @@ describe('App', () => {
       fireEvent.keyDown(document, { key: '?' })
 
       await waitFor(() => {
-        expect(screen.getByText('Quick Reference')).toBeInTheDocument()
+        expect(screen.getByText(t('shortcuts.title'))).toBeInTheDocument()
       })
 
       // Scope to the shortcuts table to avoid collisions with sidebar nav items
       const shortcutsTable = screen.getByTestId('shortcuts-table')
-      expect(within(shortcutsTable).getByText('Navigation')).toBeInTheDocument()
-      expect(within(shortcutsTable).getByText('Editing')).toBeInTheDocument()
-      expect(within(shortcutsTable).getByText('Global')).toBeInTheDocument()
-      expect(within(shortcutsTable).getByText('Journal')).toBeInTheDocument()
+      expect(
+        within(shortcutsTable).getByText(t('keyboard.category.navigation')),
+      ).toBeInTheDocument()
+      expect(within(shortcutsTable).getByText(t('keyboard.category.editing'))).toBeInTheDocument()
+      expect(within(shortcutsTable).getByText(t('keyboard.category.global'))).toBeInTheDocument()
+      expect(within(shortcutsTable).getByText(t('keyboard.category.journal'))).toBeInTheDocument()
     })
 
     it('clicking sidebar Shortcuts button also opens the panel', async () => {
@@ -914,10 +917,10 @@ describe('App', () => {
       })
 
       const sidebar = getSidebar()
-      await user.click(sidebar.getByText('Shortcuts'))
+      await user.click(sidebar.getByText(t('sidebar.shortcuts')))
 
       await waitFor(() => {
-        expect(screen.getByText('Quick Reference')).toBeInTheDocument()
+        expect(screen.getByText(t('shortcuts.title'))).toBeInTheDocument()
       })
     })
   })
@@ -936,10 +939,10 @@ describe('App', () => {
 
       // BootGate should show the error screen
       await waitFor(() => {
-        expect(screen.getByText('Failed to start')).toBeInTheDocument()
+        expect(screen.getByText(t('boot.failedToStart'))).toBeInTheDocument()
       })
       expect(screen.getByText('Database corrupted')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('action.retry') })).toBeInTheDocument()
     })
 
     it('Ctrl+N shows error toast when page creation fails', async () => {
@@ -959,7 +962,7 @@ describe('App', () => {
       fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
 
       await waitFor(() => {
-        expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to create page')
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('error.createPageFailed'))
       })
 
       // Navigation should NOT have changed
@@ -983,10 +986,10 @@ describe('App', () => {
       })
 
       const sidebar = getSidebar()
-      await user.click(sidebar.getByText('New Page'))
+      await user.click(sidebar.getByText(t('sidebar.newPage')))
 
       await waitFor(() => {
-        expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to create page')
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('error.createPageFailed'))
       })
 
       // Navigation should NOT have changed
@@ -1056,7 +1059,7 @@ describe('App', () => {
       await waitFor(() => {
         expect(screen.getByText('Agaric')).toBeInTheDocument()
       })
-      const skipLink = screen.getByText('Skip to main content')
+      const skipLink = screen.getByText(t('accessibility.skipToMain'))
       expect(skipLink).toBeInTheDocument()
       expect(skipLink.tagName).toBe('A')
       expect(skipLink).toHaveAttribute('href', '#main-content')
@@ -1067,7 +1070,7 @@ describe('App', () => {
       await waitFor(() => {
         expect(screen.getByText('Agaric')).toBeInTheDocument()
       })
-      const skipLink = screen.getByText('Skip to main content')
+      const skipLink = screen.getByText(t('accessibility.skipToMain'))
       expect(skipLink).toHaveClass('sr-only')
     })
 

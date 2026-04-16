@@ -77,7 +77,7 @@ export function DaySection({
                 type="button"
                 className="hover:text-primary hover:underline underline-offset-2 cursor-pointer transition-colors"
                 onClick={() => navigateToDate(entry.date, 'daily')}
-                aria-label={`Go to daily view for ${entry.displayDate}`}
+                aria-label={t('journal.goToDailyView', { date: entry.displayDate })}
               >
                 {entry.displayDate}
               </button>
@@ -108,7 +108,7 @@ export function DaySection({
                       'hover:opacity-80',
                     )}
                     onClick={() => goToDateAndPanel(entry.date, 'due')}
-                    aria-label={`${count} ${label} items, click to view`}
+                    aria-label={t('journal.agendaCountBadge', { count, label })}
                   >
                     {displayCount} {label}
                   </button>
@@ -119,7 +119,9 @@ export function DaySection({
                   type="button"
                   className="inline-flex items-center rounded-full bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/20 active:bg-primary/30"
                   onClick={() => goToDateAndPanel(entry.date, 'references')}
-                  aria-label={`${backlinkCounts[entry.pageId]} references, click to view`}
+                  aria-label={t('journal.backlinkCountBadge', {
+                    count: backlinkCounts[entry.pageId],
+                  })}
                 >
                   {(backlinkCounts[entry.pageId] ?? 0) > 99 ? '99+' : backlinkCounts[entry.pageId]}{' '}
                   {t('journal.refsBadge')}
@@ -131,7 +133,7 @@ export function DaySection({
             <Button
               variant="ghost"
               size="icon-xs"
-              aria-label={`Open ${entry.dateStr} in editor`}
+              aria-label={t('journal.openInEditorLabel', { date: entry.dateStr })}
               onClick={() => onNavigateToPage(entry.pageId as string, entry.dateStr)}
             >
               <ExternalLink className="h-3.5 w-3.5" />

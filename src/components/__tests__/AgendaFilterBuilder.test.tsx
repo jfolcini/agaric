@@ -21,6 +21,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 
 vi.mock('@/components/ui/select', () => {
   const React = require('react')
@@ -114,9 +115,9 @@ describe('AgendaFilterBuilder', () => {
     const filters: AgendaFilter[] = [{ dimension: 'status', values: ['TODO'] }]
     renderBuilder({ filters })
 
-    const list = screen.getByLabelText('Applied filters')
+    const list = screen.getByLabelText(t('agendaFilter.appliedFilters'))
     expect(list).toBeInTheDocument()
-    expect(within(list).getByText('Status:')).toBeInTheDocument()
+    expect(within(list).getByText(`${t('agendaFilter.status')}:`)).toBeInTheDocument()
     expect(within(list).getByText('TODO')).toBeInTheDocument()
   })
 
@@ -127,7 +128,7 @@ describe('AgendaFilterBuilder', () => {
     const filters: AgendaFilter[] = [{ dimension: 'status', values: ['TODO', 'DOING'] }]
     renderBuilder({ filters })
 
-    expect(screen.getByText('Status:')).toBeInTheDocument()
+    expect(screen.getByText(`${t('agendaFilter.status')}:`)).toBeInTheDocument()
     expect(screen.getByText('TODO, DOING')).toBeInTheDocument()
   })
 
@@ -144,7 +145,11 @@ describe('AgendaFilterBuilder', () => {
     renderBuilder({ filters, onFiltersChange })
 
     // Click the X on the Status chip
-    await user.click(screen.getByLabelText('Remove Status filter'))
+    await user.click(
+      screen.getByLabelText(
+        t('agendaFilter.removeFilterLabel', { label: t('agendaFilter.status') }),
+      ),
+    )
 
     expect(onFiltersChange).toHaveBeenCalledWith([{ dimension: 'priority', values: ['1'] }])
   })
@@ -159,14 +164,14 @@ describe('AgendaFilterBuilder', () => {
     ]
     renderBuilder({ filters })
 
-    expect(screen.getByText('Filters combined with AND')).toBeInTheDocument()
+    expect(screen.getByText(t('agendaFilter.combinedWithAnd'))).toBeInTheDocument()
   })
 
   it('does not show "Filters combined with AND" with only 1 filter', () => {
     const filters: AgendaFilter[] = [{ dimension: 'status', values: ['TODO'] }]
     renderBuilder({ filters })
 
-    expect(screen.queryByText('Filters combined with AND')).not.toBeInTheDocument()
+    expect(screen.queryByText(t('agendaFilter.combinedWithAnd'))).not.toBeInTheDocument()
   })
 
   // -----------------------------------------------------------------------
@@ -179,11 +184,11 @@ describe('AgendaFilterBuilder', () => {
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
 
     const list = screen.getByRole('list', { name: /Filter dimensions/i })
-    expect(within(list).getByText('Status')).toBeInTheDocument()
-    expect(within(list).getByText('Priority')).toBeInTheDocument()
-    expect(within(list).getByText('Due date')).toBeInTheDocument()
-    expect(within(list).getByText('Created date')).toBeInTheDocument()
-    expect(within(list).getByText('Tag')).toBeInTheDocument()
+    expect(within(list).getByText(t('agendaFilter.status'))).toBeInTheDocument()
+    expect(within(list).getByText(t('agendaFilter.priority'))).toBeInTheDocument()
+    expect(within(list).getByText(t('agendaFilter.dueDate'))).toBeInTheDocument()
+    expect(within(list).getByText(t('agendaFilter.createdDate'))).toBeInTheDocument()
+    expect(within(list).getByText(t('agendaFilter.tag'))).toBeInTheDocument()
   })
 
   // -----------------------------------------------------------------------
@@ -194,7 +199,7 @@ describe('AgendaFilterBuilder', () => {
     renderBuilder()
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
-    await user.click(screen.getByText('Status'))
+    await user.click(screen.getByText(t('agendaFilter.status')))
 
     const group = screen.getByRole('group', { name: /Status options/i })
     expect(within(group).getByLabelText('TODO')).toBeInTheDocument()
@@ -230,7 +235,7 @@ describe('AgendaFilterBuilder', () => {
     renderBuilder()
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
-    await user.click(screen.getByText('Priority'))
+    await user.click(screen.getByText(t('agendaFilter.priority')))
 
     const group = screen.getByRole('group', { name: /Priority options/i })
     expect(within(group).getByLabelText('1')).toBeInTheDocument()
@@ -246,9 +251,9 @@ describe('AgendaFilterBuilder', () => {
     renderBuilder()
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
-    await user.click(screen.getByText('Tag'))
+    await user.click(screen.getByText(t('agendaFilter.tag')))
 
-    expect(screen.getByLabelText('Tag name')).toBeInTheDocument()
+    expect(screen.getByLabelText(t('agendaFilter.tagName'))).toBeInTheDocument()
     expect(screen.getByRole('combobox')).toBeInTheDocument()
   })
 
@@ -271,7 +276,7 @@ describe('AgendaFilterBuilder', () => {
     renderBuilder({ onFiltersChange })
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
-    await user.click(screen.getByText('Tag'))
+    await user.click(screen.getByText(t('agendaFilter.tag')))
 
     await user.type(screen.getByRole('combobox'), 'wor')
 
@@ -298,10 +303,10 @@ describe('AgendaFilterBuilder', () => {
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
 
-    const statusBtn = screen.getByText('Status').closest('button')
+    const statusBtn = screen.getByText(t('agendaFilter.status')).closest('button')
     expect(statusBtn).toBeDisabled()
 
-    const priorityBtn = screen.getByText('Priority').closest('button')
+    const priorityBtn = screen.getByText(t('agendaFilter.priority')).closest('button')
     expect(priorityBtn).not.toBeDisabled()
   })
 
@@ -317,7 +322,7 @@ describe('AgendaFilterBuilder', () => {
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
 
     // Pick the Status dimension
-    await user.click(screen.getByText('Status'))
+    await user.click(screen.getByText(t('agendaFilter.status')))
 
     // Check TODO and DOING
     await user.click(screen.getByLabelText('TODO'))
@@ -339,7 +344,7 @@ describe('AgendaFilterBuilder', () => {
     renderBuilder()
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
-    await user.click(screen.getByText('Status'))
+    await user.click(screen.getByText(t('agendaFilter.status')))
 
     const applyBtn = screen.getByRole('button', { name: /Apply filter/i })
     expect(applyBtn).toBeDisabled()
@@ -356,7 +361,7 @@ describe('AgendaFilterBuilder', () => {
     const { container } = renderBuilder()
     const legend = container.querySelector('fieldset legend')
     expect(legend).toBeInTheDocument()
-    expect(legend).toHaveTextContent('Agenda filters')
+    expect(legend).toHaveTextContent(t('agendaFilter.agendaFilters'))
     expect(legend).toHaveClass('sr-only')
   })
 
@@ -365,7 +370,9 @@ describe('AgendaFilterBuilder', () => {
   // -----------------------------------------------------------------------
   it('does not render applied filters list when no filters active', () => {
     const { container } = renderBuilder()
-    expect(container.querySelector('ul[aria-label="Applied filters"]')).not.toBeInTheDocument()
+    expect(
+      container.querySelector(`ul[aria-label="${t('agendaFilter.appliedFilters')}"]`),
+    ).not.toBeInTheDocument()
   })
 
   // -----------------------------------------------------------------------
@@ -376,7 +383,7 @@ describe('AgendaFilterBuilder', () => {
     renderBuilder()
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
-    await user.click(screen.getByText('Due date'))
+    await user.click(screen.getByText(t('agendaFilter.dueDate')))
 
     const group = screen.getByRole('group', { name: /Due date options/i })
     expect(within(group).getByLabelText('Today')).toBeInTheDocument()
@@ -395,8 +402,7 @@ describe('AgendaFilterBuilder', () => {
     renderBuilder()
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
-    await user.click(screen.getByText('Scheduled date'))
-
+    await user.click(screen.getByText(t('agendaFilter.scheduledDate')))
     const group = screen.getByRole('group', { name: /Scheduled date options/i })
     expect(within(group).getByLabelText('Today')).toBeInTheDocument()
     expect(within(group).getByLabelText('This week')).toBeInTheDocument()
@@ -416,7 +422,7 @@ describe('AgendaFilterBuilder', () => {
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
 
     const list = screen.getByRole('list', { name: /Filter dimensions/i })
-    expect(within(list).getByText('Completed date')).toBeInTheDocument()
+    expect(within(list).getByText(t('agendaFilter.completedDate'))).toBeInTheDocument()
   })
 
   it('completedDate dimension shows past-oriented choices', async () => {
@@ -424,7 +430,7 @@ describe('AgendaFilterBuilder', () => {
     renderBuilder()
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
-    await user.click(screen.getByText('Completed date'))
+    await user.click(screen.getByText(t('agendaFilter.completedDate')))
 
     const group = screen.getByRole('group', { name: /Completed date options/i })
     expect(within(group).getByLabelText('Today')).toBeInTheDocument()
@@ -438,7 +444,7 @@ describe('AgendaFilterBuilder', () => {
     renderBuilder()
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
-    await user.click(screen.getByText('Completed date'))
+    await user.click(screen.getByText(t('agendaFilter.completedDate')))
 
     const group = screen.getByRole('group', { name: /Completed date options/i })
     expect(within(group).queryByLabelText('Overdue')).not.toBeInTheDocument()
@@ -455,8 +461,7 @@ describe('AgendaFilterBuilder', () => {
     renderBuilder()
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
-    await user.click(screen.getByText('Created date'))
-
+    await user.click(screen.getByText(t('agendaFilter.createdDate')))
     const group = screen.getByRole('group', { name: /Created date options/i })
     expect(within(group).getByLabelText('Today')).toBeInTheDocument()
     expect(within(group).getByLabelText('This week')).toBeInTheDocument()
@@ -504,7 +509,7 @@ describe('AgendaFilterBuilder', () => {
     renderBuilder()
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
-    await user.click(screen.getByText('Status'))
+    await user.click(screen.getByText(t('agendaFilter.status')))
 
     const group = screen.getByRole('group', { name: /Status options/i })
     expect(within(group).getByLabelText('TODO')).toBeInTheDocument()
@@ -523,7 +528,7 @@ describe('AgendaFilterBuilder', () => {
     renderBuilder()
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
     const list = screen.getByRole('list', { name: /Filter dimensions/i })
-    expect(within(list).getByText('Property')).toBeInTheDocument()
+    expect(within(list).getByText(t('agendaFilter.property'))).toBeInTheDocument()
   })
 
   // -----------------------------------------------------------------------
@@ -539,10 +544,10 @@ describe('AgendaFilterBuilder', () => {
     renderBuilder()
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
-    await user.click(screen.getByText('Property'))
+    await user.click(screen.getByText(t('agendaFilter.property')))
 
-    expect(screen.getByLabelText('Property key')).toBeInTheDocument()
-    expect(screen.getByLabelText('Value (optional)')).toBeInTheDocument()
+    expect(screen.getByLabelText(t('agendaFilter.propertyKey'))).toBeInTheDocument()
+    expect(screen.getByLabelText(t('agendaFilter.propertyValue'))).toBeInTheDocument()
   })
 
   // -----------------------------------------------------------------------
@@ -555,7 +560,7 @@ describe('AgendaFilterBuilder', () => {
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
 
-    const propertyBtn = screen.getByText('Property').closest('button')
+    const propertyBtn = screen.getByText(t('agendaFilter.property')).closest('button')
     expect(propertyBtn).not.toBeDisabled()
   })
 
@@ -608,7 +613,7 @@ describe('AgendaFilterBuilder', () => {
     const filters: AgendaFilter[] = [{ dimension: 'status', values: ['TODO'] }]
     renderBuilder({ filters })
 
-    expect(screen.getByText('Status:')).toBeInTheDocument()
+    expect(screen.getByText(`${t('agendaFilter.status')}:`)).toBeInTheDocument()
     expect(screen.getByText('TODO')).toBeInTheDocument()
   })
 
@@ -624,7 +629,7 @@ describe('AgendaFilterBuilder', () => {
     renderBuilder()
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
-    await user.click(screen.getByText('Tag'))
+    await user.click(screen.getByText(t('agendaFilter.tag')))
 
     const combobox = screen.getByRole('combobox')
     await user.type(combobox, 'wor')
@@ -676,7 +681,7 @@ describe('AgendaFilterBuilder', () => {
     renderBuilder()
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
-    await user.click(screen.getByText('Property'))
+    await user.click(screen.getByText(t('agendaFilter.property')))
 
     // Wait for the rejected promise to settle and the picker to render
     await waitFor(() => {
@@ -684,7 +689,7 @@ describe('AgendaFilterBuilder', () => {
     })
 
     // The property key select should render but with no real keys — only the placeholder
-    const select = screen.getByLabelText('Property key')
+    const select = screen.getByLabelText(t('agendaFilter.propertyKey'))
     expect(select).toBeInTheDocument()
     const options = within(select).queryAllByRole('option')
     // Only the placeholder "__none__" option should be present, no real keys
@@ -717,15 +722,15 @@ describe('AgendaSortGroupControls', () => {
   // 19. Renders sort/group controls (buttons visible)
   it('renders sort and group control buttons', () => {
     renderSortGroup()
-    expect(screen.getByLabelText('Group by')).toBeInTheDocument()
-    expect(screen.getByLabelText('Sort by')).toBeInTheDocument()
+    expect(screen.getByLabelText(t('agenda.groupBy'))).toBeInTheDocument()
+    expect(screen.getByLabelText(t('agenda.sortBy'))).toBeInTheDocument()
   })
 
   // 20. Shows current selections
   it('shows current group and sort selections', () => {
     renderSortGroup({ groupBy: 'priority', sortBy: 'state' })
-    expect(screen.getByLabelText('Group by')).toHaveTextContent('Priority')
-    expect(screen.getByLabelText('Sort by')).toHaveTextContent('State')
+    expect(screen.getByLabelText(t('agenda.groupBy'))).toHaveTextContent(t('agenda.groupPriority'))
+    expect(screen.getByLabelText(t('agenda.sortBy'))).toHaveTextContent(t('agenda.sortState'))
   })
 
   // 21. Clicking group-by button shows options, selecting one calls onGroupByChange
@@ -734,17 +739,17 @@ describe('AgendaSortGroupControls', () => {
     const onGroupByChange = vi.fn()
     renderSortGroup({ onGroupByChange })
 
-    await user.click(screen.getByLabelText('Group by'))
+    await user.click(screen.getByLabelText(t('agenda.groupBy')))
 
     // All group options should be visible
-    const groupList = screen.getByRole('list', { name: 'Group by' })
-    expect(within(groupList).getByText('Date')).toBeInTheDocument()
-    expect(within(groupList).getByText('Priority')).toBeInTheDocument()
-    expect(within(groupList).getByText('State')).toBeInTheDocument()
-    expect(within(groupList).getByText('None')).toBeInTheDocument()
+    const groupList = screen.getByRole('list', { name: t('agenda.groupBy') })
+    expect(within(groupList).getByText(t('agenda.groupDate'))).toBeInTheDocument()
+    expect(within(groupList).getByText(t('agenda.groupPriority'))).toBeInTheDocument()
+    expect(within(groupList).getByText(t('agenda.groupState'))).toBeInTheDocument()
+    expect(within(groupList).getByText(t('agenda.groupNone'))).toBeInTheDocument()
 
     // Select Priority
-    await user.click(within(groupList).getByText('Priority'))
+    await user.click(within(groupList).getByText(t('agenda.groupPriority')))
     expect(onGroupByChange).toHaveBeenCalledWith('priority')
   })
 
@@ -754,16 +759,16 @@ describe('AgendaSortGroupControls', () => {
     const onSortByChange = vi.fn()
     renderSortGroup({ onSortByChange })
 
-    await user.click(screen.getByLabelText('Sort by'))
+    await user.click(screen.getByLabelText(t('agenda.sortBy')))
 
     // All sort options should be visible
-    const sortList = screen.getByRole('list', { name: 'Sort by' })
-    expect(within(sortList).getByText('Date')).toBeInTheDocument()
-    expect(within(sortList).getByText('Priority')).toBeInTheDocument()
-    expect(within(sortList).getByText('State')).toBeInTheDocument()
+    const sortList = screen.getByRole('list', { name: t('agenda.sortBy') })
+    expect(within(sortList).getByText(t('agenda.sortDate'))).toBeInTheDocument()
+    expect(within(sortList).getByText(t('agenda.sortPriority'))).toBeInTheDocument()
+    expect(within(sortList).getByText(t('agenda.sortState'))).toBeInTheDocument()
 
     // Select State
-    await user.click(within(sortList).getByText('State'))
+    await user.click(within(sortList).getByText(t('agenda.sortState')))
     expect(onSortByChange).toHaveBeenCalledWith('state')
   })
 
