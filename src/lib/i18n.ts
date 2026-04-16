@@ -327,6 +327,7 @@ const resources = {
       'unlinkedRefs.loadingMore': 'Loading more unlinked references',
       'unlinkedRefs.loadMoreLabel': 'Load more unlinked references',
       'unlinkedRefs.mentionsFrom': 'Unlinked mentions from {{title}}',
+      'unlinkedRefs.truncated': 'Results truncated — refine search',
 
       // Done Panel
       'donePanel.headerOne': '1 Completed',

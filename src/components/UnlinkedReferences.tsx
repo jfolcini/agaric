@@ -54,6 +54,7 @@ export function UnlinkedReferences({
   const [hasMore, setHasMore] = useState(false)
   const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [truncated, setTruncated] = useState(false)
   const [filters, setFilters] = useState<BacklinkFilter[]>([])
   const [sort, setSort] = useState<BacklinkSort | null>(null)
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
@@ -89,6 +90,7 @@ export function UnlinkedReferences({
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
         setTotalCount(resp.total_count)
+        setTruncated(resp.truncated)
       } catch (err) {
         logger.error('UnlinkedReferences', 'Failed to load unlinked references', { pageId }, err)
         toast.error(t('unlinkedRefs.loadFailed'))
@@ -401,6 +403,11 @@ export function UnlinkedReferences({
                   ariaLabel={t('unlinkedRefs.loadMoreLabel')}
                   ariaLoadingLabel={t('unlinkedRefs.loadingMore')}
                 />
+                {truncated && (
+                  <p className="px-3 py-1.5 text-xs text-muted-foreground italic">
+                    {t('unlinkedRefs.truncated')}
+                  </p>
+                )}
               </>
             )}
           </ListViewState>

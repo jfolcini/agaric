@@ -205,7 +205,7 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
       await result.current.handleBatchDelete()
     })
 
-    expect(vi.mocked(toast.error)).toHaveBeenCalled()
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.deleteFailedMessage')
   })
 
   it('shows success toast on success', async () => {
@@ -216,7 +216,7 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
       await result.current.handleBatchDelete()
     })
 
-    expect(vi.mocked(toast.success)).toHaveBeenCalled()
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('blockTree.deletedMessage')
   })
 
   it('resets batchDeleteConfirm after delete', async () => {

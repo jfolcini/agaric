@@ -78,7 +78,7 @@ export function AlertSection({
         {blocks
           .sort((a, b) => (a.due_date ?? '').localeCompare(b.due_date ?? ''))
           .map((block) => {
-            const pageTitle = block.parent_id ? pageTitles.get(block.parent_id) : undefined
+            const pageTitle = block.page_id ? pageTitles.get(block.page_id) : undefined
             const dueDate = block.due_date ? new Date(`${block.due_date}T00:00:00`) : null
             const daysOverdue = dueDate
               ? Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24))
@@ -89,15 +89,15 @@ export function AlertSection({
                 variant={variant}
                 tabIndex={0}
                 onClick={() => {
-                  if (block.parent_id && onNavigateToPage) {
-                    onNavigateToPage(block.parent_id, pageTitle ?? '', block.id)
+                  if (block.page_id && onNavigateToPage) {
+                    onNavigateToPage(block.page_id, pageTitle ?? '', block.id)
                   }
                 }}
                 onKeyDown={(e) => {
                   if (e.key !== 'Enter' && e.key !== ' ') return
                   e.preventDefault()
-                  if (block.parent_id && onNavigateToPage) {
-                    onNavigateToPage(block.parent_id, pageTitle ?? '', block.id)
+                  if (block.page_id && onNavigateToPage) {
+                    onNavigateToPage(block.page_id, pageTitle ?? '', block.id)
                   }
                 }}
               >

@@ -129,7 +129,13 @@ describe('AttachmentList', () => {
 
     // First click — confirmation toast
     await user.click(deleteBtn)
-    expect(mockedToast).toHaveBeenCalled()
+    expect(mockedToast).toHaveBeenCalledWith(
+      'Delete "to-delete.txt"?',
+      expect.objectContaining({
+        description: 'Click the delete button again to confirm.',
+        duration: 3000,
+      }),
+    )
 
     // Mock delete_attachment response
     mockedInvoke.mockResolvedValueOnce(undefined)
@@ -137,7 +143,7 @@ describe('AttachmentList', () => {
     // Second click — actually deletes
     await user.click(deleteBtn)
     expect(mockedInvoke).toHaveBeenCalledWith('delete_attachment', { attachmentId: 'a1' })
-    expect(mockedToastSuccess).toHaveBeenCalled()
+    expect(mockedToastSuccess).toHaveBeenCalledWith('Deleted to-delete.txt')
   })
 
   it('resets pending delete state after timeout', async () => {

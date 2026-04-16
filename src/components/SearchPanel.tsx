@@ -111,7 +111,7 @@ export function SearchPanel(): React.ReactElement {
 
   // Resolve page titles for breadcrumbs when results change
   useEffect(() => {
-    const parentIds = results.map((b) => b.parent_id).filter((id): id is string => id != null)
+    const parentIds = results.map((b) => b.page_id).filter((id): id is string => id != null)
     if (parentIds.length === 0) return
     batchResolve(parentIds)
       .then((resolved) => {
@@ -522,12 +522,12 @@ export function SearchPanel(): React.ReactElement {
                   contentClassName="line-clamp-2"
                   highlightText={debouncedQuery}
                 >
-                  {block.parent_id && pageTitles.get(block.parent_id) && (
+                  {block.page_id && pageTitles.get(block.page_id) && (
                     <p className="text-xs text-muted-foreground mt-1">
                       in:{' '}
                       <PageLink
-                        pageId={block.parent_id}
-                        title={pageTitles.get(block.parent_id) ?? ''}
+                        pageId={block.page_id}
+                        title={pageTitles.get(block.page_id) ?? ''}
                       />
                     </p>
                   )}

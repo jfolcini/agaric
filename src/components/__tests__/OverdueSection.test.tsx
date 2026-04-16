@@ -29,6 +29,7 @@ const makeBlock = (overrides: Parameters<typeof _makeBlock>[0] = {}) =>
     block_type: 'block',
     content: 'overdue block',
     parent_id: 'PAGE1',
+    page_id: 'PAGE1',
     todo_state: 'TODO',
     due_date: '2025-01-01',
     ...overrides,
@@ -106,7 +107,9 @@ describe('OverdueSection', () => {
 
     render(
       <OverdueSection
-        blocks={[makeBlock({ id: 'BK1', parent_id: 'PAGE1', content: 'click me' })]}
+        blocks={[
+          makeBlock({ id: 'BK1', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'click me' }),
+        ]}
         pageTitles={new Map([['PAGE1', 'Source Page']])}
         onNavigateToPage={onNavigate}
       />,
@@ -124,7 +127,9 @@ describe('OverdueSection', () => {
 
     render(
       <OverdueSection
-        blocks={[makeBlock({ id: 'BK2', parent_id: 'PAGE1', content: 'key block' })]}
+        blocks={[
+          makeBlock({ id: 'BK2', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'key block' }),
+        ]}
         pageTitles={new Map([['PAGE1', 'Key Page']])}
         onNavigateToPage={onNavigate}
       />,
@@ -155,7 +160,7 @@ describe('OverdueSection', () => {
 
     render(
       <OverdueSection
-        blocks={[makeBlock({ id: 'B1', parent_id: null, content: 'orphan' })]}
+        blocks={[makeBlock({ id: 'B1', parent_id: null, page_id: null, content: 'orphan' })]}
         pageTitles={new Map()}
         onNavigateToPage={onNavigate}
       />,

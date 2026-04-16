@@ -63,7 +63,7 @@ function makeBlock(overrides: Record<string, unknown> = {}) {
     priority: null,
     due_date: '2025-06-15',
     scheduled_date: null,
-    page_id: null,
+    page_id: 'PAGE1',
     ...overrides,
   }
 }
@@ -124,7 +124,7 @@ describe('useDuePanelData', () => {
 
   it('resolves page titles via batchResolve', async () => {
     mockedListBlocks.mockResolvedValue({
-      items: [makeBlock({ id: 'B1', parent_id: 'PAGE1' })],
+      items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', page_id: 'PAGE1' })],
       next_cursor: null,
       has_more: false,
     })
@@ -397,6 +397,7 @@ describe('useDuePanelData', () => {
         makeBlock({
           id: 'B1',
           parent_id: 'PAGE1',
+          page_id: 'PAGE1',
           content: `Link to [[${ULID_A}]] and tag #[${ULID_B}]`,
         }),
       ],
@@ -449,6 +450,7 @@ describe('useDuePanelData', () => {
         makeBlock({
           id: 'OD1',
           parent_id: 'POVER',
+          page_id: 'POVER',
           due_date: yesterdayStr,
           todo_state: 'TODO',
           content: `Overdue ref [[${ULID_REF}]]`,
@@ -491,6 +493,7 @@ describe('useDuePanelData', () => {
         makeBlock({
           id: 'UP1',
           parent_id: 'PUPCOMING',
+          page_id: 'PUPCOMING',
           due_date: tomorrowStr,
           todo_state: 'TODO',
           content: `Upcoming ref [[${ULID_REF}]]`,
@@ -525,6 +528,7 @@ describe('useDuePanelData', () => {
         block: makeBlock({
           id: 'PROJ1',
           parent_id: 'PPROJ',
+          page_id: 'PPROJ',
           content: `Projected ref [[${ULID_REF}]]`,
         }),
         projected_date: '2025-06-15',

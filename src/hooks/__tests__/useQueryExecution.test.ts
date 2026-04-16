@@ -36,7 +36,7 @@ describe('useQueryExecution', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'query_by_tags') {
         return {
-          items: [makeBlock({ id: 'B1', content: 'Tagged block', parent_id: 'P1' })],
+          items: [makeBlock({ id: 'B1', content: 'Tagged block', parent_id: 'P1', page_id: 'P1' })],
           next_cursor: null,
           has_more: false,
         }
@@ -128,7 +128,14 @@ describe('useQueryExecution', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') {
         return {
-          items: [makeBlock({ id: 'B1', content: 'Child block', parent_id: 'TARGET1' })],
+          items: [
+            makeBlock({
+              id: 'B1',
+              content: 'Child block',
+              parent_id: 'TARGET1',
+              page_id: 'TARGET1',
+            }),
+          ],
           next_cursor: null,
           has_more: false,
         }

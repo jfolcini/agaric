@@ -733,7 +733,7 @@ describe('BlockListItem — handleDateSelect', () => {
     })
 
     await waitFor(() => {
-      expect(vi.mocked(toast.error)).toHaveBeenCalled()
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to reschedule task')
     })
   })
 

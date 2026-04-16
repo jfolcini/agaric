@@ -13,7 +13,9 @@ use crate::error::AppError;
 ///
 /// Accepts a `&mut SqliteConnection` (typically from a read transaction) so
 /// that all SELECT queries see a consistent point-in-time view of the database.
-async fn collect_tables(conn: &mut SqliteConnection) -> Result<SnapshotTables, AppError> {
+pub(crate) async fn collect_tables(
+    conn: &mut SqliteConnection,
+) -> Result<SnapshotTables, AppError> {
     let blocks: Vec<BlockSnapshot> = sqlx::query_as!(
         BlockSnapshot,
         "SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict, conflict_source, todo_state, priority, due_date, scheduled_date FROM blocks"
@@ -74,7 +76,7 @@ async fn collect_tables(conn: &mut SqliteConnection) -> Result<SnapshotTables, A
 ///
 /// Returns [`AppError::Snapshot`] if the op_log is empty — a snapshot without
 /// any ops to reference is meaningless.
-async fn collect_frontier(
+pub(crate) async fn collect_frontier(
     conn: &mut SqliteConnection,
 ) -> Result<(BTreeMap<String, i64>, String), AppError> {
     let rows = sqlx::query!("SELECT device_id, MAX(seq) as max_seq FROM op_log GROUP BY device_id")
@@ -165,9 +167,20 @@ pub const DEFAULT_RETENTION_DAYS: u64 = 90;
 /// Compact the op log: create a snapshot and purge ops older than `retention_days`.
 /// Returns `Some(snapshot_id)` if compaction occurred, `None` if no old ops exist.
 ///
-/// All steps (count check, snapshot creation, op purge, old-snapshot cleanup)
-/// are wrapped in a single `BEGIN IMMEDIATE` transaction so that concurrent
-/// calls cannot interleave between them.
+/// The work is split into three phases to minimise the time the exclusive
+/// write-lock is held (PERF-10a):
+///
+/// 1. **Read phase** — a DEFERRED read transaction collects all table rows
+///    and the op frontier (`up_to_seqs`).  No write lock is acquired.
+/// 2. **Encode phase** — CBOR + zstd compression runs outside any
+///    transaction (pure computation).
+/// 3. **Write phase** — a brief `BEGIN IMMEDIATE` transaction inserts the
+///    snapshot row, deletes old ops, and cleans up old snapshots.
+///
+/// **Stale-read safety**: between phases 1 and 3 new ops may arrive.  The
+/// DELETE in phase 3 is bounded by *both* `created_at < cutoff` *and*
+/// `seq <= up_to_seqs[device_id]`, so ops that were not yet visible during
+/// the read phase can never be deleted.
 pub async fn compact_op_log(
     pool: &SqlitePool,
     device_id: &str,
@@ -178,31 +191,33 @@ pub async fn compact_op_log(
     // with op_log.created_at timestamps (F03).
     let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
-    // BEGIN IMMEDIATE — acquire the write lock upfront so the count check,
-    // snapshot creation, op purge, and cleanup are all atomic.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // ── Phase 1: Read (DEFERRED read transaction, no write lock) ─────
+    // A DEFERRED tx acquires a read-lock on the first SELECT and holds it
+    // until commit, giving us a consistent point-in-time view.
+    let mut read_tx = pool.begin().await?;
 
     // Check if any ops exist before the cutoff
     let count: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM op_log WHERE created_at < ?",
         cutoff_str
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut *read_tx)
     .await?;
 
     if count == 0 {
-        tx.commit().await?;
+        read_tx.commit().await?;
         return Ok(None);
     }
 
-    // Create snapshot inline (cannot delegate to create_snapshot which starts
-    // its own transaction — SQLite does not support nested transactions).
     let snapshot_id = crate::ulid::SnapshotId::new().into_string();
 
-    // Collect tables and frontier within this transaction for consistency.
-    let tables = collect_tables(&mut tx).await?;
-    let (up_to_seqs, up_to_hash) = collect_frontier(&mut tx).await?;
+    // Collect tables and frontier within this read transaction for consistency.
+    let tables = collect_tables(&mut read_tx).await?;
+    let (up_to_seqs, up_to_hash) = collect_frontier(&mut read_tx).await?;
 
+    read_tx.commit().await?;
+
+    // ── Phase 2: Encode (pure computation, no DB) ────────────────────
     let data = SnapshotData {
         schema_version: SCHEMA_VERSION,
         snapshot_device_id: device_id.to_string(),
@@ -212,6 +227,11 @@ pub async fn compact_op_log(
     };
 
     let encoded = encode_snapshot(&data)?;
+
+    // ── Phase 3: Write (brief BEGIN IMMEDIATE transaction) ───────────
+    // Only the INSERT, UPDATE, DELETE, and cleanup happen under the
+    // exclusive write lock.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     // Step 1: INSERT with status='pending'
     sqlx::query(
@@ -231,11 +251,18 @@ pub async fn compact_op_log(
         .execute(&mut *tx)
         .await?;
 
-    // Purge old ops (only those before the cutoff)
-    sqlx::query("DELETE FROM op_log WHERE created_at < ?")
-        .bind(&cutoff_str)
-        .execute(&mut *tx)
-        .await?;
+    // Purge old ops: bounded by BOTH the time cutoff AND the snapshot
+    // frontier.  The seq guard ensures that ops written after the Phase 1
+    // read (which would have seq > up_to_seqs[device]) are never deleted,
+    // even if their created_at happens to be before the cutoff.
+    for (dev_id, max_seq) in &data.up_to_seqs {
+        sqlx::query("DELETE FROM op_log WHERE created_at < ?1 AND device_id = ?2 AND seq <= ?3")
+            .bind(&cutoff_str)
+            .bind(dev_id)
+            .bind(max_seq)
+            .execute(&mut *tx)
+            .await?;
+    }
 
     // Cleanup old snapshots (inlined to stay within this transaction)
     let keep: i64 = 3;

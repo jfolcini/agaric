@@ -121,6 +121,7 @@ const emptyResponse = {
   has_more: false,
   total_count: 0,
   filtered_count: 0,
+  truncated: false,
 }
 
 beforeEach(() => {
@@ -168,6 +169,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
@@ -206,6 +208,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 5,
       filtered_count: 5,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
@@ -226,6 +229,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
@@ -270,6 +274,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 3,
       filtered_count: 3,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
@@ -295,6 +300,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 2,
       filtered_count: 2,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
@@ -315,6 +321,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
@@ -347,6 +354,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 2,
       filtered_count: 2,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
@@ -384,6 +392,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
@@ -408,6 +417,7 @@ describe('UnlinkedReferences', () => {
       has_more: true,
       total_count: 2,
       filtered_count: 2,
+      truncated: false,
     }
     const page2 = {
       groups: [makeGroup('P2', 'Page Two', [{ id: 'B2', content: 'block 2' }])],
@@ -415,6 +425,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 2,
       filtered_count: 2,
+      truncated: false,
     }
     let callCount = 0
     mockedListUnlinked.mockImplementation(async () => {
@@ -460,6 +471,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp1)
 
@@ -478,6 +490,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp2)
 
@@ -550,6 +563,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
@@ -574,6 +588,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
@@ -606,6 +621,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
@@ -625,6 +641,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
     mockedEditBlock.mockRejectedValueOnce(new Error('backend error'))
@@ -650,6 +667,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
     mockedEditBlock.mockResolvedValueOnce({
@@ -687,6 +705,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
     mockedEditBlock.mockResolvedValueOnce({
@@ -729,6 +748,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
@@ -763,6 +783,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
@@ -786,6 +807,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
@@ -809,6 +831,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
@@ -843,6 +866,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
@@ -870,6 +894,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
@@ -902,6 +927,7 @@ describe('UnlinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
 
@@ -911,5 +937,48 @@ describe('UnlinkedReferences', () => {
       expect(mockedListTagsByPrefix).toHaveBeenCalledWith({ prefix: '' })
       expect(mockedListPropertyKeys).toHaveBeenCalled()
     })
+  })
+
+  // Truncation notice
+  it('shows truncation notice when response is truncated', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: true,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+
+    // Expand
+    await user.click(screen.getByRole('button', { name: /unlinked reference/i }))
+
+    expect(await screen.findByText('Results truncated — refine search')).toBeInTheDocument()
+  })
+
+  it('does not show truncation notice when response is not truncated', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+
+    // Expand
+    await user.click(screen.getByRole('button', { name: /unlinked reference/i }))
+
+    await screen.findByText('mention text')
+
+    expect(screen.queryByText('Results truncated — refine search')).not.toBeInTheDocument()
   })
 })

@@ -180,7 +180,7 @@ describe('RescheduleDropZone', () => {
     fireEvent.drop(zone, { dataTransfer: makeDataTransfer('block-fail') })
 
     await waitFor(() => {
-      expect(mockToast.error).toHaveBeenCalled()
+      expect(mockToast.error).toHaveBeenCalledWith('Failed to reschedule task')
     })
   })
 

@@ -64,9 +64,9 @@ describe('QueryResultList', () => {
     expect(screen.queryByText('DONE')).not.toBeInTheDocument()
   })
 
-  it('calls onNavigate when clicking a result with parent_id', async () => {
+  it('calls onNavigate when clicking a result with page_id', async () => {
     const onNavigate = vi.fn()
-    const results = [makeBlock({ id: 'B1', content: 'Click me', parent_id: 'P1' })]
+    const results = [makeBlock({ id: 'B1', content: 'Click me', parent_id: 'P1', page_id: 'P1' })]
     const user = userEvent.setup()
 
     render(<QueryResultList results={results} pageTitles={new Map()} onNavigate={onNavigate} />)
@@ -77,9 +77,9 @@ describe('QueryResultList', () => {
     expect(onNavigate).toHaveBeenCalledWith('P1')
   })
 
-  it('does not call onNavigate when parent_id is null', async () => {
+  it('does not call onNavigate when page_id is null', async () => {
     const onNavigate = vi.fn()
-    const results = [makeBlock({ id: 'B1', content: 'No parent', parent_id: null })]
+    const results = [makeBlock({ id: 'B1', content: 'No parent', parent_id: null, page_id: null })]
     const user = userEvent.setup()
 
     render(<QueryResultList results={results} pageTitles={new Map()} onNavigate={onNavigate} />)
@@ -90,8 +90,8 @@ describe('QueryResultList', () => {
     expect(onNavigate).not.toHaveBeenCalled()
   })
 
-  it('renders page title link when pageTitles map has the parent_id', () => {
-    const results = [makeBlock({ id: 'B1', content: 'With page', parent_id: 'P1' })]
+  it('renders page title link when pageTitles map has the page_id', () => {
+    const results = [makeBlock({ id: 'B1', content: 'With page', parent_id: 'P1', page_id: 'P1' })]
     const pageTitles = new Map([['P1', 'My Page']])
 
     render(<QueryResultList results={results} pageTitles={pageTitles} />)
@@ -99,8 +99,10 @@ describe('QueryResultList', () => {
     expect(screen.getByRole('link', { name: 'My Page' })).toBeInTheDocument()
   })
 
-  it('does not render page link when pageTitles map lacks parent_id', () => {
-    const results = [makeBlock({ id: 'B1', content: 'No page link', parent_id: 'P1' })]
+  it('does not render page link when pageTitles map lacks page_id', () => {
+    const results = [
+      makeBlock({ id: 'B1', content: 'No page link', parent_id: 'P1', page_id: 'P1' }),
+    ]
 
     render(<QueryResultList results={results} pageTitles={new Map()} />)
 
@@ -141,7 +143,13 @@ describe('QueryResultList', () => {
 
   it('has no a11y violations', async () => {
     const results = [
-      makeBlock({ id: 'B1', content: 'Accessible item', todo_state: 'TODO', parent_id: null }),
+      makeBlock({
+        id: 'B1',
+        content: 'Accessible item',
+        todo_state: 'TODO',
+        parent_id: null,
+        page_id: null,
+      }),
     ]
 
     const { container } = render(<QueryResultList results={results} pageTitles={new Map()} />)
@@ -187,8 +195,8 @@ describe('QueryResultList', () => {
   it('navigates on Enter key', async () => {
     const onNavigate = vi.fn()
     const results = [
-      makeBlock({ id: 'B1', content: 'First', parent_id: 'P1' }),
-      makeBlock({ id: 'B2', content: 'Second', parent_id: 'P2' }),
+      makeBlock({ id: 'B1', content: 'First', parent_id: 'P1', page_id: 'P1' }),
+      makeBlock({ id: 'B2', content: 'Second', parent_id: 'P2', page_id: 'P2' }),
     ]
     const user = userEvent.setup()
 

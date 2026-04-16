@@ -213,7 +213,7 @@ describe('DuePanel', () => {
   // 6. Shows source page breadcrumb from batchResolve
   it('shows source page breadcrumb from batchResolve', async () => {
     mockedListBlocks.mockResolvedValue({
-      items: [makeBlock({ id: 'B1', parent_id: 'PAGE1' })],
+      items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', page_id: 'PAGE1' })],
       next_cursor: null,
       has_more: false,
     })
@@ -698,6 +698,7 @@ describe('DuePanel', () => {
             id: 'PROJ1',
             content: 'Projected task',
             parent_id: 'PAGE1',
+            page_id: 'PAGE1',
             todo_state: 'TODO',
             priority: '2',
             due_date: '2026-04-13',
@@ -734,6 +735,7 @@ describe('DuePanel', () => {
             id: 'PROJ2',
             content: 'Navigate me',
             parent_id: 'PAGE2',
+            page_id: 'PAGE2',
             todo_state: 'TODO',
             due_date: '2026-04-20',
           }),
@@ -814,6 +816,7 @@ describe('DuePanel', () => {
             id: 'B1',
             content: 'Real block',
             parent_id: 'PAGE1',
+            page_id: 'PAGE1',
             todo_state: 'TODO',
             due_date: '2025-06-15',
           }),
@@ -848,6 +851,7 @@ describe('DuePanel', () => {
             id: 'OVERDUE1',
             content: 'Overdue task',
             parent_id: 'P1',
+            page_id: 'P1',
             todo_state: 'TODO',
             priority: '1',
             due_date: '2025-01-01',
@@ -1031,7 +1035,14 @@ describe('DuePanel', () => {
   it('clicking page title in breadcrumb navigates to the page', async () => {
     const user = userEvent.setup()
     mockedListBlocks.mockResolvedValue({
-      items: [makeBlock({ id: 'BK1', parent_id: 'PAGE1', content: 'breadcrumb nav test' })],
+      items: [
+        makeBlock({
+          id: 'BK1',
+          parent_id: 'PAGE1',
+          page_id: 'PAGE1',
+          content: 'breadcrumb nav test',
+        }),
+      ],
       next_cursor: null,
       has_more: false,
     })
@@ -1069,7 +1080,9 @@ describe('DuePanel', () => {
 
     it('batchResolve rejection after listBlocks still renders blocks without page titles', async () => {
       mockedListBlocks.mockResolvedValueOnce({
-        items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', content: 'resilient block' })],
+        items: [
+          makeBlock({ id: 'B1', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'resilient block' }),
+        ],
         next_cursor: null,
         has_more: false,
       })
@@ -1114,6 +1127,7 @@ describe('DuePanel', () => {
             id: 'PROJ1',
             content: 'Projected task',
             parent_id: 'PAGE2',
+            page_id: 'PAGE2',
             todo_state: 'TODO',
             due_date: '2025-06-15',
           }),

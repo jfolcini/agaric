@@ -168,9 +168,9 @@ describe('DonePanel', () => {
   it('groups blocks by source page with page titles', async () => {
     mockedQueryByProperty.mockResolvedValue({
       items: [
-        makeBlock({ id: 'B1', parent_id: 'PAGE1', content: 'block in alpha' }),
-        makeBlock({ id: 'B2', parent_id: 'PAGE2', content: 'block in beta' }),
-        makeBlock({ id: 'B3', parent_id: 'PAGE1', content: 'another in alpha' }),
+        makeBlock({ id: 'B1', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'block in alpha' }),
+        makeBlock({ id: 'B2', parent_id: 'PAGE2', page_id: 'PAGE2', content: 'block in beta' }),
+        makeBlock({ id: 'B3', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'another in alpha' }),
       ],
       next_cursor: null,
       has_more: false,
@@ -196,9 +196,9 @@ describe('DonePanel', () => {
   it('sorts blocks by ID descending within groups', async () => {
     mockedQueryByProperty.mockResolvedValue({
       items: [
-        makeBlock({ id: 'AAA', parent_id: 'PAGE1', content: 'first created' }),
-        makeBlock({ id: 'CCC', parent_id: 'PAGE1', content: 'third created' }),
-        makeBlock({ id: 'BBB', parent_id: 'PAGE1', content: 'second created' }),
+        makeBlock({ id: 'AAA', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'first created' }),
+        makeBlock({ id: 'CCC', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'third created' }),
+        makeBlock({ id: 'BBB', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'second created' }),
       ],
       next_cursor: null,
       has_more: false,
@@ -235,7 +235,7 @@ describe('DonePanel', () => {
   // 6. Shows source page breadcrumb from batchResolve
   it('shows source page breadcrumb from batchResolve', async () => {
     mockedQueryByProperty.mockResolvedValue({
-      items: [makeBlock({ id: 'B1', parent_id: 'PAGE1' })],
+      items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', page_id: 'PAGE1' })],
       next_cursor: null,
       has_more: false,
     })
@@ -435,7 +435,7 @@ describe('DonePanel', () => {
   it('clicking page title in group header navigates to that page', async () => {
     const user = userEvent.setup()
     mockedQueryByProperty.mockResolvedValue({
-      items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', content: 'done task' })],
+      items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'done task' })],
       next_cursor: null,
       has_more: false,
     })
@@ -486,7 +486,7 @@ describe('DonePanel', () => {
   // 15. batchResolve rejects on initial load → blocks shown with Untitled group header
   it('shows blocks with Untitled group when batchResolve rejects on initial load', async () => {
     mockedQueryByProperty.mockResolvedValueOnce({
-      items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', content: 'done task' })],
+      items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'done task' })],
       next_cursor: null,
       has_more: false,
     })
@@ -541,12 +541,16 @@ describe('DonePanel', () => {
 
     mockedQueryByProperty
       .mockResolvedValueOnce({
-        items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', content: 'first block' })],
+        items: [
+          makeBlock({ id: 'B1', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'first block' }),
+        ],
         next_cursor: 'cursor_2',
         has_more: true,
       })
       .mockResolvedValueOnce({
-        items: [makeBlock({ id: 'B2', parent_id: 'PAGE2', content: 'second block' })],
+        items: [
+          makeBlock({ id: 'B2', parent_id: 'PAGE2', page_id: 'PAGE2', content: 'second block' }),
+        ],
         next_cursor: null,
         has_more: false,
       })
@@ -609,9 +613,9 @@ describe('DonePanel', () => {
   it('excludes blocks whose parent_id matches excludePageId', async () => {
     mockedQueryByProperty.mockResolvedValue({
       items: [
-        makeBlock({ id: 'B1', parent_id: 'PAGE_1', content: 'same-page task' }),
-        makeBlock({ id: 'B2', parent_id: 'PAGE_2', content: 'other-page task' }),
-        makeBlock({ id: 'B3', parent_id: 'PAGE_3', content: 'third-page task' }),
+        makeBlock({ id: 'B1', parent_id: 'PAGE_1', page_id: 'PAGE_1', content: 'same-page task' }),
+        makeBlock({ id: 'B2', parent_id: 'PAGE_2', page_id: 'PAGE_2', content: 'other-page task' }),
+        makeBlock({ id: 'B3', parent_id: 'PAGE_3', page_id: 'PAGE_3', content: 'third-page task' }),
       ],
       next_cursor: null,
       has_more: false,

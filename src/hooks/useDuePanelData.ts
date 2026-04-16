@@ -121,7 +121,7 @@ export function useDuePanelData({
           const contentRefs = overdue.flatMap((b) => (b.content ? extractUlidRefs(b.content) : []))
           const idsToResolve = [
             ...new Set([
-              ...overdue.map((b) => b.parent_id).filter((id): id is string => id != null),
+              ...overdue.map((b) => b.page_id).filter((id): id is string => id != null),
               ...contentRefs,
             ]),
           ]
@@ -187,7 +187,7 @@ export function useDuePanelData({
           const contentRefs = upcoming.flatMap((b) => (b.content ? extractUlidRefs(b.content) : []))
           const idsToResolve = [
             ...new Set([
-              ...upcoming.map((b) => b.parent_id).filter((id): id is string => id != null),
+              ...upcoming.map((b) => b.page_id).filter((id): id is string => id != null),
               ...contentRefs,
             ]),
           ]
@@ -242,7 +242,7 @@ export function useDuePanelData({
         // Resolve parent page titles
         const allBlocks = cursor ? [...blocks, ...nonEmptyItems] : nonEmptyItems
         const uniqueParentIds = [
-          ...new Set(allBlocks.map((b) => b.parent_id).filter((id): id is string => id != null)),
+          ...new Set(allBlocks.map((b) => b.page_id).filter((id): id is string => id != null)),
         ]
         if (uniqueParentIds.length > 0) {
           const resolved = await batchResolve(uniqueParentIds)
@@ -298,7 +298,7 @@ export function useDuePanelData({
         )
         const idsToResolve = [
           ...new Set([
-            ...nonEmptyItems.map((b) => b.parent_id).filter((id): id is string => id != null),
+            ...nonEmptyItems.map((b) => b.page_id).filter((id): id is string => id != null),
             ...contentRefs,
           ]),
         ]
@@ -361,7 +361,7 @@ export function useDuePanelData({
           const idsToResolve = [
             ...new Set([
               ...nonEmptyEntries
-                .map((e) => e.block.parent_id)
+                .map((e) => e.block.page_id)
                 .filter((id): id is string => id != null),
               ...contentRefs,
             ]),

@@ -55,7 +55,6 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
           // Resolve page titles for breadcrumbs
           const idsToResolve = new Set<string>()
           for (const b of result.blocks) {
-            if (b.parent_id) idsToResolve.add(b.parent_id)
             if (b.page_id) idsToResolve.add(b.page_id)
           }
           const uniqueIds = [...idsToResolve]

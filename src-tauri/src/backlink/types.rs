@@ -138,4 +138,8 @@ pub struct GroupedBacklinkResponse {
     pub has_more: bool,
     pub total_count: usize,
     pub filtered_count: usize,
+    /// `true` when the FTS query hit the internal row cap (10 000) and results
+    /// may be incomplete.  Only relevant for unlinked-reference queries; regular
+    /// grouped backlink queries always set this to `false`.
+    pub truncated: bool,
 }

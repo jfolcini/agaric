@@ -304,10 +304,10 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                                 />
                               ) : undefined
                             }
-                            pageId={block.parent_id}
+                            pageId={block.page_id}
                             pageTitle={
-                              block.parent_id
-                                ? (pageTitles.get(block.parent_id) ?? t('duePanel.untitled'))
+                              block.page_id
+                                ? (pageTitles.get(block.page_id) ?? t('duePanel.untitled'))
                                 : ''
                             }
                             breadcrumbArrow={t('duePanel.breadcrumbArrow')}
@@ -343,16 +343,16 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                             key={`projected-${entry.block.id}-${entry.source}`}
                             className="flex items-center gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:bg-muted/50 active:bg-muted/70 transition-colors"
                             onClick={() => {
-                              if (!entry.block.parent_id || !onNavigateToPage) return
-                              const title = pageTitles.get(entry.block.parent_id) ?? ''
-                              onNavigateToPage(entry.block.parent_id, title, entry.block.id)
+                              if (!entry.block.page_id || !onNavigateToPage) return
+                              const title = pageTitles.get(entry.block.page_id) ?? ''
+                              onNavigateToPage(entry.block.page_id, title, entry.block.id)
                             }}
                             onKeyDown={(e) => {
                               if (e.key !== 'Enter' && e.key !== ' ') return
                               e.preventDefault()
-                              if (!entry.block.parent_id || !onNavigateToPage) return
-                              const title = pageTitles.get(entry.block.parent_id) ?? ''
-                              onNavigateToPage(entry.block.parent_id, title, entry.block.id)
+                              if (!entry.block.page_id || !onNavigateToPage) return
+                              const title = pageTitles.get(entry.block.page_id) ?? ''
+                              onNavigateToPage(entry.block.page_id, title, entry.block.id)
                             }}
                           >
                             <span className="text-xs font-mono opacity-60">

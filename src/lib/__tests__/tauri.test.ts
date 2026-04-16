@@ -1640,6 +1640,7 @@ describe('listBacklinksGrouped', () => {
     has_more: false,
     total_count: 0,
     filtered_count: 0,
+    truncated: false,
   }
 
   it('invokes list_backlinks_grouped with pageId mapped to blockId', async () => {
@@ -1686,6 +1687,7 @@ describe('listUnlinkedReferences', () => {
     has_more: false,
     total_count: 0,
     filtered_count: 0,
+    truncated: false,
   }
 
   it('invokes list_unlinked_references with pageId', async () => {

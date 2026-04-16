@@ -5737,7 +5737,7 @@ describe('H-9: auto-create first block on empty page', () => {
     renderBlockTree({ parentId: 'PAGE_1' })
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalled()
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to create first block')
     })
   })
 

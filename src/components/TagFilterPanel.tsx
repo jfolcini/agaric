@@ -131,7 +131,7 @@ export function TagFilterPanel(): React.ReactElement {
   // Resolve page titles for breadcrumbs when results change
   useEffect(() => {
     const parentIds = [
-      ...new Set(results.map((b) => b.parent_id).filter((id): id is string => id != null)),
+      ...new Set(results.map((b) => b.page_id).filter((id): id is string => id != null)),
     ]
     if (parentIds.length === 0) return
     batchResolve(parentIds)
@@ -463,12 +463,12 @@ export function TagFilterPanel(): React.ReactElement {
                     onClick={() => handleResultClick(block)}
                     contentClassName="whitespace-pre-wrap"
                   >
-                    {block.parent_id && pageTitles.get(block.parent_id) && (
+                    {block.page_id && pageTitles.get(block.page_id) && (
                       <p className="text-xs text-muted-foreground mt-1">
                         {t('tagFilter.inPage')}{' '}
                         <PageLink
-                          pageId={block.parent_id}
-                          title={pageTitles.get(block.parent_id) ?? ''}
+                          pageId={block.page_id}
+                          title={pageTitles.get(block.page_id) ?? ''}
                         />
                       </p>
                     )}

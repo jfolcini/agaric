@@ -2579,6 +2579,196 @@ async fn apply_snapshot_caches_are_empty_after_restore() {
     );
 }
 
+// =======================================================================
+// compact_read_phase_collects_data (PERF-10a)
+// =======================================================================
+
+/// Verify that the read-phase helpers (`collect_tables`, `collect_frontier`)
+/// correctly gather all table data and the op frontier within a read
+/// transaction, matching what `compact_op_log` uses in Phase 1.
+#[tokio::test]
+async fn compact_read_phase_collects_data() {
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-read";
+
+    // Insert blocks, tags, properties, and ops
+    insert_block(&pool, "blk-r1", "read phase block").await;
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, is_conflict) \
+         VALUES ('tag-r1', 'tag', 'readtag', 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES ('blk-r1', 'tag-r1')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) \
+         VALUES ('blk-r1', 'status', 'draft')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    insert_op_at(&pool, device_id, "blk-r1", "2025-01-01T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "blk-r2", "2025-01-02T00:00:00Z").await;
+
+    // Use a DEFERRED read transaction, same as compact_op_log Phase 1
+    let mut read_tx = pool.begin().await.unwrap();
+    let tables: SnapshotTables = collect_tables(&mut read_tx).await.unwrap();
+    let (frontier, hash): (BTreeMap<String, i64>, String) =
+        collect_frontier(&mut read_tx).await.unwrap();
+    read_tx.commit().await.unwrap();
+
+    // Verify tables collected
+    assert_eq!(
+        tables.blocks.len(),
+        2,
+        "read phase should collect both blocks"
+    );
+    assert_eq!(
+        tables.block_tags.len(),
+        1,
+        "read phase should collect block_tags"
+    );
+    assert_eq!(
+        tables.block_properties.len(),
+        1,
+        "read phase should collect block_properties"
+    );
+
+    // Verify frontier
+    assert!(
+        frontier.contains_key(device_id),
+        "frontier should include {device_id}"
+    );
+    assert_eq!(
+        frontier[device_id], 2,
+        "frontier should record max seq = 2 for {device_id}"
+    );
+    assert!(!hash.is_empty(), "frontier hash should not be empty");
+}
+
+// =======================================================================
+// compact_stale_read_safety (PERF-10a)
+// =======================================================================
+
+/// Verify stale-read safety: ops written between Phase 1 (read) and
+/// Phase 3 (write) are preserved because the DELETE is bounded by the
+/// `up_to_seqs` frontier recorded at read time.
+#[tokio::test]
+async fn compact_stale_read_safety() {
+    let (pool, _dir) = test_pool().await;
+
+    // Insert an old op for device A
+    insert_block(&pool, "blk-old", "old").await;
+    insert_op_at(&pool, "dev-A", "blk-old", "2024-01-01T00:00:00Z").await;
+
+    // Insert a recent op for a different device (B) — this simulates an
+    // op that arrives between Phase 1 read and Phase 3 write in a real
+    // concurrent scenario.
+    insert_block(&pool, "blk-new", "new").await;
+    let now = crate::now_rfc3339();
+    insert_op_at(&pool, "dev-B", "blk-new", &now).await;
+
+    // Run compaction — the frontier will include both devices, but the
+    // time cutoff should only remove dev-A's old op.
+    let result = compact_op_log(&pool, "dev-A", DEFAULT_RETENTION_DAYS)
+        .await
+        .unwrap();
+    assert!(result.is_some(), "compaction should occur");
+
+    // dev-B's recent op must survive
+    let remaining: Vec<(String, i64)> =
+        sqlx::query_as("SELECT device_id, seq FROM op_log ORDER BY device_id, seq")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+
+    assert_eq!(
+        remaining.len(),
+        1,
+        "only dev-B's recent op should survive compaction"
+    );
+    assert_eq!(
+        remaining[0].0, "dev-B",
+        "surviving op should belong to dev-B"
+    );
+
+    // Verify the snapshot captured both devices in its frontier
+    let (_, snap_data) = get_latest_snapshot(&pool).await.unwrap().unwrap();
+    let decoded = decode_snapshot(&snap_data).unwrap();
+    assert!(
+        decoded.up_to_seqs.contains_key("dev-A"),
+        "snapshot frontier should include dev-A"
+    );
+    assert!(
+        decoded.up_to_seqs.contains_key("dev-B"),
+        "snapshot frontier should include dev-B"
+    );
+}
+
+// =======================================================================
+// compact_stale_read_seq_guard (PERF-10a)
+// =======================================================================
+
+/// Directly verify the seq-bounded DELETE guard: manually execute the
+/// Phase 3 DELETE logic with a stale frontier and confirm that ops
+/// beyond the frontier are preserved.
+#[tokio::test]
+async fn compact_stale_read_seq_guard() {
+    let (pool, _dir) = test_pool().await;
+
+    // Insert 3 old ops for the same device (seq 1, 2, 3)
+    insert_block(&pool, "blk-s1", "s1").await;
+    insert_op_at(&pool, "dev-1", "blk-s1", "2024-01-01T00:00:00Z").await;
+    insert_block(&pool, "blk-s2", "s2").await;
+    insert_op_at(&pool, "dev-1", "blk-s2", "2024-01-02T00:00:00Z").await;
+    insert_block(&pool, "blk-s3", "s3").await;
+    insert_op_at(&pool, "dev-1", "blk-s3", "2024-01-03T00:00:00Z").await;
+
+    // Simulate a "stale" frontier that only saw up to seq 2
+    let stale_frontier: BTreeMap<String, i64> = [("dev-1".to_string(), 2)].into_iter().collect();
+
+    let cutoff_str = "2025-01-01T00:00:00.000Z"; // all ops are before this
+
+    // Execute the same per-device DELETE that compact_op_log Phase 3 uses
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    for (dev_id, max_seq) in &stale_frontier {
+        sqlx::query("DELETE FROM op_log WHERE created_at < ?1 AND device_id = ?2 AND seq <= ?3")
+            .bind(cutoff_str)
+            .bind(dev_id)
+            .bind(max_seq)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+    }
+    tx.commit().await.unwrap();
+
+    // seq 1 and 2 should be deleted; seq 3 survives because seq > stale max_seq
+    let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        remaining, 1,
+        "op at seq 3 should survive the seq-bounded DELETE"
+    );
+
+    let surviving_seq: i64 = sqlx::query_scalar!("SELECT seq FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        surviving_seq, 3,
+        "the surviving op should be seq 3 (beyond stale frontier)"
+    );
+}
+
 // ===========================================================================
 // Property-based tests (proptest) — CBOR codec roundtrip
 // ===========================================================================

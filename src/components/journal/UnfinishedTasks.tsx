@@ -169,7 +169,7 @@ export function UnfinishedTasks({
         setBlocks(merged)
 
         // Resolve page titles for breadcrumbs
-        const parentIds = [...new Set(merged.map((b) => b.parent_id).filter(Boolean))] as string[]
+        const parentIds = [...new Set(merged.map((b) => b.page_id).filter(Boolean))] as string[]
         if (parentIds.length > 0) {
           try {
             const resolved = await batchResolve(parentIds)
@@ -278,10 +278,8 @@ export function UnfinishedTasks({
                             )}
                           </>
                         }
-                        pageId={block.parent_id}
-                        pageTitle={
-                          pageTitles.get(block.parent_id ?? '') ?? t('unfinished.untitled')
-                        }
+                        pageId={block.page_id}
+                        pageTitle={pageTitles.get(block.page_id ?? '') ?? t('unfinished.untitled')}
                         breadcrumbArrow={t('unfinished.breadcrumbArrow')}
                         className="hover:bg-accent/50 active:bg-accent/70"
                         onClick={() => handleBlockClick(block)}

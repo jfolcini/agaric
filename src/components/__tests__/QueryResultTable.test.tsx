@@ -155,7 +155,7 @@ describe('QueryResultTable', () => {
 
     render(
       <QueryResultTable
-        results={[makeBlock({ id: 'B1', content: 'Navigate me', parent_id: 'P1' })]}
+        results={[makeBlock({ id: 'B1', content: 'Navigate me', parent_id: 'P1', page_id: 'P1' })]}
         columns={[{ key: 'content', label: 'Content' }]}
         pageTitles={new Map()}
         sortKey={null}
@@ -177,7 +177,7 @@ describe('QueryResultTable', () => {
 
     render(
       <QueryResultTable
-        results={[makeBlock({ id: 'B1', content: 'No parent', parent_id: null })]}
+        results={[makeBlock({ id: 'B1', content: 'No parent', parent_id: null, page_id: null })]}
         columns={[{ key: 'content', label: 'Content' }]}
         pageTitles={new Map()}
         sortKey={null}
@@ -198,7 +198,7 @@ describe('QueryResultTable', () => {
 
     render(
       <QueryResultTable
-        results={[makeBlock({ id: 'B1', content: 'Task', parent_id: 'P1' })]}
+        results={[makeBlock({ id: 'B1', content: 'Task', parent_id: 'P1', page_id: 'P1' })]}
         columns={[{ key: 'content', label: 'Content' }]}
         pageTitles={pageTitles}
         sortKey={null}
@@ -213,7 +213,7 @@ describe('QueryResultTable', () => {
   it('renders empty Page cell when no page title available', () => {
     render(
       <QueryResultTable
-        results={[makeBlock({ id: 'B1', content: 'Task', parent_id: 'P1' })]}
+        results={[makeBlock({ id: 'B1', content: 'Task', parent_id: 'P1', page_id: 'P1' })]}
         columns={[{ key: 'content', label: 'Content' }]}
         pageTitles={new Map()}
         sortKey={null}
@@ -274,7 +274,13 @@ describe('QueryResultTable', () => {
     const { container } = render(
       <QueryResultTable
         results={[
-          makeBlock({ id: 'B1', content: 'Accessible task', todo_state: 'TODO', parent_id: 'P1' }),
+          makeBlock({
+            id: 'B1',
+            content: 'Accessible task',
+            todo_state: 'TODO',
+            parent_id: 'P1',
+            page_id: 'P1',
+          }),
         ]}
         columns={columns}
         pageTitles={new Map([['P1', 'Page']])}

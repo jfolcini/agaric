@@ -1211,6 +1211,7 @@ describe('StaticBlock', () => {
             {
               id: 'BLK_RES_1',
               parent_id: 'PARENT_1',
+              page_id: 'PARENT_1',
               content: 'Result block',
               position: 0,
               block_type: 'text',

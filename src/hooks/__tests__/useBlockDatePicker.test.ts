@@ -270,7 +270,7 @@ describe('useBlockDatePicker handleDatePick — repeat-until mode', () => {
       await result.current.handleDatePick(new Date(2025, 0, 1))
     })
 
-    expect(vi.mocked(toast.success)).toHaveBeenCalled()
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('blockTree.repeatUntilMessage')
   })
 })
 

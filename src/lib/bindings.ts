@@ -970,7 +970,13 @@ export type Draft = { block_id: string; content: string; updated_at: string }
 /**
  * Response for grouped backlink queries — backlinks organized by source page.
  */
-export type GroupedBacklinkResponse = { groups: BacklinkGroup[]; next_cursor: string | null; has_more: boolean; total_count: number; filtered_count: number }
+export type GroupedBacklinkResponse = { groups: BacklinkGroup[]; next_cursor: string | null; has_more: boolean; total_count: number; filtered_count: number;
+/**
+ * `true` when the FTS query hit the internal row cap (10 000) and results
+ * may be incomplete.  Only relevant for unlinked-reference queries; regular
+ * grouped backlink queries always set this to `false`.
+ */
+truncated: boolean }
 /**
  * Row returned by block history queries (op_log entries for a block).
  */

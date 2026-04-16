@@ -56,6 +56,7 @@ pub async fn eval_backlink_query_grouped(
             has_more: false,
             total_count: 0,
             filtered_count: 0,
+            truncated: false,
         });
     }
 
@@ -85,6 +86,7 @@ pub async fn eval_backlink_query_grouped(
             has_more: false,
             total_count,
             filtered_count: 0,
+            truncated: false,
         });
     }
 
@@ -152,6 +154,7 @@ pub async fn eval_backlink_query_grouped(
             has_more: false,
             total_count,
             filtered_count,
+            truncated: false,
         });
     }
 
@@ -241,6 +244,7 @@ pub async fn eval_backlink_query_grouped(
         has_more,
         total_count,
         filtered_count,
+        truncated: false,
     })
 }
 
@@ -311,6 +315,7 @@ pub async fn eval_unlinked_references(
             has_more: false,
             total_count: 0,
             filtered_count: 0,
+            truncated: false,
         });
     }
 
@@ -326,8 +331,10 @@ pub async fn eval_unlinked_references(
             .join(" OR ")
     };
 
-    // 3. FTS5 query to find blocks mentioning the title, excluding linked blocks
-    let matching_ids: FxHashSet<String> = sqlx::query_scalar::<_, String>(
+    // 3. FTS5 query to find blocks mentioning the title, excluding linked blocks.
+    //    Cap at 10 001 rows so we can detect truncation (return at most 10 000).
+    const FTS_ROW_CAP: usize = 10_000;
+    let fts_rows: Vec<String> = sqlx::query_scalar::<_, String>(
         "SELECT fb.block_id \
          FROM fts_blocks fb \
          JOIN blocks b ON b.id = fb.block_id \
@@ -336,14 +343,20 @@ pub async fn eval_unlinked_references(
            AND b.is_conflict = 0 \
            AND fb.block_id NOT IN ( \
              SELECT source_id FROM block_links WHERE target_id = ?2 \
-           )",
+           ) \
+         LIMIT 10001",
     )
     .bind(&fts_query)
     .bind(page_id)
     .fetch_all(pool)
-    .await?
-    .into_iter()
-    .collect();
+    .await?;
+
+    let truncated = fts_rows.len() > FTS_ROW_CAP;
+    let matching_ids: FxHashSet<String> = if truncated {
+        fts_rows.into_iter().take(FTS_ROW_CAP).collect()
+    } else {
+        fts_rows.into_iter().collect()
+    };
 
     if matching_ids.is_empty() {
         return Ok(GroupedBacklinkResponse {
@@ -352,6 +365,7 @@ pub async fn eval_unlinked_references(
             has_more: false,
             total_count: 0,
             filtered_count: 0,
+            truncated,
         });
     }
 
@@ -426,6 +440,7 @@ pub async fn eval_unlinked_references(
             has_more: false,
             total_count,
             filtered_count,
+            truncated,
         });
     }
 
@@ -498,5 +513,6 @@ pub async fn eval_unlinked_references(
         has_more,
         total_count,
         filtered_count,
+        truncated,
     })
 }

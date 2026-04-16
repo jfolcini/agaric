@@ -16,20 +16,20 @@ export function resolveBlockDisplay(
     ? resolveBlockTitle(block.id) || truncateContent(block.content, 80)
     : truncateContent(block.content, 80)
 
-  const pageTitle = block.parent_id ? pageTitles.get(block.parent_id) : undefined
+  const pageTitle = block.page_id ? pageTitles.get(block.page_id) : undefined
 
   return { title, pageTitle }
 }
 
 /**
- * Navigate to the parent page of a block, if the block has a parent_id and an
+ * Navigate to the parent page of a block, if the block has a page_id and an
  * onNavigate callback is provided.
  */
 export function handleBlockNavigation(
   block: BlockRow,
   onNavigate?: ((pageId: string) => void) | undefined,
 ): void {
-  if (block.parent_id && onNavigate) {
-    onNavigate(block.parent_id)
+  if (block.page_id && onNavigate) {
+    onNavigate(block.page_id)
   }
 }

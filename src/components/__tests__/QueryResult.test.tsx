@@ -157,7 +157,7 @@ describe('QueryResult', () => {
               priority: null,
               due_date: null,
               scheduled_date: null,
-              page_id: null,
+              page_id: 'P1',
             },
           ],
           next_cursor: null,
@@ -262,7 +262,7 @@ describe('QueryResult', () => {
               priority: null,
               due_date: null,
               scheduled_date: null,
-              page_id: null,
+              page_id: 'P1',
             },
           ],
           next_cursor: null,
@@ -302,7 +302,7 @@ describe('QueryResult', () => {
               priority: '1',
               due_date: null,
               scheduled_date: null,
-              page_id: null,
+              page_id: 'P1',
             },
           ],
           next_cursor: null,
@@ -351,7 +351,7 @@ describe('QueryResult', () => {
               priority: null,
               due_date: null,
               scheduled_date: null,
-              page_id: null,
+              page_id: 'TARGET1',
             },
           ],
           next_cursor: null,
@@ -421,7 +421,7 @@ describe('QueryResult', () => {
               priority: null,
               due_date: null,
               scheduled_date: null,
-              page_id: null,
+              page_id: 'P1',
             },
           ],
           next_cursor: null,
@@ -518,7 +518,15 @@ describe('QueryResult – table mode', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'query_by_tags') {
         return {
-          items: [makeBlock({ id: 'B1', content: 'Task A', parent_id: 'P1', todo_state: 'TODO' })],
+          items: [
+            makeBlock({
+              id: 'B1',
+              content: 'Task A',
+              parent_id: 'P1',
+              page_id: 'P1',
+              todo_state: 'TODO',
+            }),
+          ],
           next_cursor: null,
           has_more: false,
         }
@@ -538,7 +546,13 @@ describe('QueryResult – table mode', () => {
 
   it('renders as table when table:true in query params', async () => {
     mockTagResults([
-      makeBlock({ id: 'B1', content: 'Task A', parent_id: 'P1', todo_state: 'TODO' }),
+      makeBlock({
+        id: 'B1',
+        content: 'Task A',
+        parent_id: 'P1',
+        page_id: 'P1',
+        todo_state: 'TODO',
+      }),
     ])
 
     render(<QueryResult expression={TABLE_EXPRESSION} />)
@@ -556,6 +570,7 @@ describe('QueryResult – table mode', () => {
         id: 'B1',
         content: 'Task A',
         parent_id: 'P1',
+        page_id: 'P1',
         todo_state: 'TODO',
         priority: '1',
         due_date: '2025-06-01',
@@ -564,6 +579,7 @@ describe('QueryResult – table mode', () => {
         id: 'B2',
         content: 'Task B',
         parent_id: 'P1',
+        page_id: 'P1',
         todo_state: 'DONE',
         priority: '2',
         due_date: null,
@@ -593,8 +609,20 @@ describe('QueryResult – table mode', () => {
 
   it('clicking column header sorts results', async () => {
     mockTagResults([
-      makeBlock({ id: 'B1', content: 'Beta task', parent_id: 'P1', todo_state: 'TODO' }),
-      makeBlock({ id: 'B2', content: 'Alpha task', parent_id: 'P1', todo_state: 'DONE' }),
+      makeBlock({
+        id: 'B1',
+        content: 'Beta task',
+        parent_id: 'P1',
+        page_id: 'P1',
+        todo_state: 'TODO',
+      }),
+      makeBlock({
+        id: 'B2',
+        content: 'Alpha task',
+        parent_id: 'P1',
+        page_id: 'P1',
+        todo_state: 'DONE',
+      }),
     ])
 
     const user = userEvent.setup()
@@ -634,7 +662,13 @@ describe('QueryResult – table mode', () => {
   it('table content cells are clickable and navigate', async () => {
     const onNavigate = vi.fn()
     mockTagResults([
-      makeBlock({ id: 'B1', content: 'Navigate me', parent_id: 'P1', todo_state: 'TODO' }),
+      makeBlock({
+        id: 'B1',
+        content: 'Navigate me',
+        parent_id: 'P1',
+        page_id: 'P1',
+        todo_state: 'TODO',
+      }),
     ])
 
     const user = userEvent.setup()
@@ -656,6 +690,7 @@ describe('QueryResult – table mode', () => {
         id: 'B1',
         content: 'Accessible task',
         parent_id: 'P1',
+        page_id: 'P1',
         todo_state: 'TODO',
         priority: '1',
       }),
@@ -730,7 +765,13 @@ describe('QueryResult – multi-filter (filtered)', () => {
       if (cmd === 'query_by_property') {
         return {
           items: [
-            makeBlock({ id: 'B1', content: 'TODO task', parent_id: 'P1', todo_state: 'TODO' }),
+            makeBlock({
+              id: 'B1',
+              content: 'TODO task',
+              parent_id: 'P1',
+              page_id: 'P1',
+              todo_state: 'TODO',
+            }),
           ],
           next_cursor: null,
           has_more: false,
@@ -763,6 +804,7 @@ describe('QueryResult – multi-filter (filtered)', () => {
         id: 'B1',
         content: 'High-pri TODO',
         parent_id: 'P1',
+        page_id: 'P1',
         todo_state: 'TODO',
         priority: '1',
       }),
@@ -770,6 +812,7 @@ describe('QueryResult – multi-filter (filtered)', () => {
         id: 'B2',
         content: 'Low-pri TODO',
         parent_id: 'P1',
+        page_id: 'P1',
         todo_state: 'TODO',
         priority: '3',
       }),
@@ -779,6 +822,7 @@ describe('QueryResult – multi-filter (filtered)', () => {
         id: 'B1',
         content: 'High-pri TODO',
         parent_id: 'P1',
+        page_id: 'P1',
         todo_state: 'TODO',
         priority: '1',
       }),
@@ -786,6 +830,7 @@ describe('QueryResult – multi-filter (filtered)', () => {
         id: 'B3',
         content: 'High-pri DONE',
         parent_id: 'P1',
+        page_id: 'P1',
         todo_state: 'DONE',
         priority: '1',
       }),
@@ -817,12 +862,36 @@ describe('QueryResult – multi-filter (filtered)', () => {
 
   it('tag + property combination works', async () => {
     const tagBlocks = [
-      makeBlock({ id: 'B1', content: 'Tagged TODO', parent_id: 'P1', todo_state: 'TODO' }),
-      makeBlock({ id: 'B2', content: 'Tagged DONE', parent_id: 'P1', todo_state: 'DONE' }),
+      makeBlock({
+        id: 'B1',
+        content: 'Tagged TODO',
+        parent_id: 'P1',
+        page_id: 'P1',
+        todo_state: 'TODO',
+      }),
+      makeBlock({
+        id: 'B2',
+        content: 'Tagged DONE',
+        parent_id: 'P1',
+        page_id: 'P1',
+        todo_state: 'DONE',
+      }),
     ]
     const propertyBlocks = [
-      makeBlock({ id: 'B1', content: 'Tagged TODO', parent_id: 'P1', todo_state: 'TODO' }),
-      makeBlock({ id: 'B3', content: 'Untagged TODO', parent_id: 'P1', todo_state: 'TODO' }),
+      makeBlock({
+        id: 'B1',
+        content: 'Tagged TODO',
+        parent_id: 'P1',
+        page_id: 'P1',
+        todo_state: 'TODO',
+      }),
+      makeBlock({
+        id: 'B3',
+        content: 'Untagged TODO',
+        parent_id: 'P1',
+        page_id: 'P1',
+        todo_state: 'TODO',
+      }),
     ]
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -856,6 +925,7 @@ describe('QueryResult – multi-filter (filtered)', () => {
               id: 'B1',
               content: 'Filtered task',
               parent_id: 'P1',
+              page_id: 'P1',
               todo_state: 'TODO',
               priority: '1',
             }),
@@ -882,8 +952,8 @@ describe('QueryResult – multi-filter (filtered)', () => {
   })
 
   it('shows empty state when filtered results have no intersection', async () => {
-    const set1 = [makeBlock({ id: 'B1', content: 'Only in set 1', parent_id: 'P1' })]
-    const set2 = [makeBlock({ id: 'B2', content: 'Only in set 2', parent_id: 'P1' })]
+    const set1 = [makeBlock({ id: 'B1', content: 'Only in set 1', parent_id: 'P1', page_id: 'P1' })]
+    const set2 = [makeBlock({ id: 'B2', content: 'Only in set 2', parent_id: 'P1', page_id: 'P1' })]
 
     let callCount = 0
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -999,7 +1069,7 @@ describe('QueryResult – error paths', () => {
             priority: null,
             due_date: null,
             scheduled_date: null,
-            page_id: null,
+            page_id: 'P1',
           },
         ],
         next_cursor: null,
@@ -1029,7 +1099,7 @@ describe('QueryResult – error paths', () => {
             priority: '1',
             due_date: null,
             scheduled_date: null,
-            page_id: null,
+            page_id: 'P2',
           },
         ],
         next_cursor: null,
@@ -1060,7 +1130,9 @@ describe('QueryResult – pagination', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'query_by_tags') {
         return {
-          items: [makeBlock({ id: 'B1', content: 'First page item', parent_id: 'P1' })],
+          items: [
+            makeBlock({ id: 'B1', content: 'First page item', parent_id: 'P1', page_id: 'P1' }),
+          ],
           next_cursor: 'cursor1',
           has_more: true,
         }
@@ -1442,7 +1514,7 @@ describe('QueryResult – Edit Query button', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'query_by_tags') {
         return {
-          items: [makeBlock({ id: 'B1', content: 'Result item', parent_id: 'P1' })],
+          items: [makeBlock({ id: 'B1', content: 'Result item', parent_id: 'P1', page_id: 'P1' })],
           next_cursor: null,
           has_more: false,
         }

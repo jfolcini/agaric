@@ -398,7 +398,7 @@ describe('BlockPropertyEditor', () => {
       fireEvent.blur(input)
 
       await waitFor(() => {
-        expect(mockToastError).toHaveBeenCalled()
+        expect(mockToastError).toHaveBeenCalledWith('Failed to rename property')
       })
     })
 

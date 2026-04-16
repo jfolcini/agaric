@@ -9,7 +9,7 @@
  *  - Navigation on click
  *  - Navigation on keyboard (Enter)
  *  - Renders due_date for each block
- *  - Does not navigate when parent_id is null
+ *  - Does not navigate when page_id is null
  *  - a11y audit passes (axe)
  */
 
@@ -29,6 +29,7 @@ const makeBlock = (overrides: Parameters<typeof _makeBlock>[0] = {}) =>
     block_type: 'block',
     content: 'upcoming block',
     parent_id: 'PAGE1',
+    page_id: 'PAGE1',
     todo_state: 'TODO',
     due_date: '2025-07-01',
     ...overrides,
@@ -95,7 +96,9 @@ describe('UpcomingSection', () => {
 
     render(
       <UpcomingSection
-        blocks={[makeBlock({ id: 'BK1', parent_id: 'PAGE1', content: 'click me' })]}
+        blocks={[
+          makeBlock({ id: 'BK1', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'click me' }),
+        ]}
         pageTitles={new Map([['PAGE1', 'Source Page']])}
         onNavigateToPage={onNavigate}
       />,
@@ -113,7 +116,9 @@ describe('UpcomingSection', () => {
 
     render(
       <UpcomingSection
-        blocks={[makeBlock({ id: 'BK2', parent_id: 'PAGE1', content: 'key block' })]}
+        blocks={[
+          makeBlock({ id: 'BK2', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'key block' }),
+        ]}
         pageTitles={new Map([['PAGE1', 'Key Page']])}
         onNavigateToPage={onNavigate}
       />,
@@ -144,7 +149,7 @@ describe('UpcomingSection', () => {
 
     render(
       <UpcomingSection
-        blocks={[makeBlock({ id: 'B1', parent_id: null, content: 'orphan' })]}
+        blocks={[makeBlock({ id: 'B1', parent_id: null, page_id: null, content: 'orphan' })]}
         pageTitles={new Map()}
         onNavigateToPage={onNavigate}
       />,

@@ -131,6 +131,7 @@ const makeBlock = (overrides: Parameters<typeof _makeBlock>[0] = {}) =>
     block_type: 'block',
     content: 'test block',
     parent_id: 'PAGE1',
+    page_id: 'PAGE1',
     due_date: '2025-06-15',
     ...overrides,
   })
@@ -188,7 +189,7 @@ describe('AgendaView', () => {
       blocks: [
         makeBlock({ id: 'B1', parent_id: 'PAGE1' }),
         makeBlock({ id: 'B2', parent_id: 'PAGE1' }),
-        makeBlock({ id: 'B3', parent_id: 'PAGE2' }),
+        makeBlock({ id: 'B3', parent_id: 'PAGE2', page_id: 'PAGE2' }),
       ],
       hasMore: false,
       cursor: null,
@@ -252,7 +253,7 @@ describe('AgendaView', () => {
     mockedExecuteAgendaFilters.mockResolvedValue({
       blocks: [
         makeBlock({ id: 'B1', parent_id: 'PAGE1' }),
-        makeBlock({ id: 'B2', parent_id: 'PAGE2' }),
+        makeBlock({ id: 'B2', parent_id: 'PAGE2', page_id: 'PAGE2' }),
       ],
       hasMore: false,
       cursor: null,
@@ -279,7 +280,7 @@ describe('AgendaView', () => {
   })
 
   // 6b. Resolves page_ids for page grouping
-  it('resolves page_ids in addition to parent_ids via batchResolve', async () => {
+  it('resolves page_ids via batchResolve', async () => {
     mockedExecuteAgendaFilters.mockResolvedValue({
       blocks: [
         makeBlock({ id: 'B1', parent_id: 'PARENT1', page_id: 'PAGEROOT1' }),
@@ -290,8 +291,6 @@ describe('AgendaView', () => {
       cursor: null,
     })
     mockedBatchResolve.mockResolvedValue([
-      { id: 'PARENT1', title: 'Parent One', block_type: 'block', deleted: false },
-      { id: 'PARENT2', title: 'Parent Two', block_type: 'block', deleted: false },
       { id: 'PAGEROOT1', title: 'Page Root One', block_type: 'page', deleted: false },
       { id: 'PAGEROOT2', title: 'Page Root Two', block_type: 'page', deleted: false },
     ])
@@ -303,21 +302,20 @@ describe('AgendaView', () => {
       const titles = JSON.parse(results.getAttribute('data-page-titles') ?? '[]')
       expect(titles).toEqual(
         expect.arrayContaining([
-          ['PARENT1', 'Parent One'],
-          ['PARENT2', 'Parent Two'],
           ['PAGEROOT1', 'Page Root One'],
           ['PAGEROOT2', 'Page Root Two'],
         ]),
       )
     })
 
-    // batchResolve should be called with parent_ids AND page_ids (deduplicated)
+    // batchResolve should only be called with page_ids (deduplicated, nulls removed)
     expect(mockedBatchResolve).toHaveBeenCalledTimes(1)
     const resolvedIds = mockedBatchResolve.mock.calls[0]?.[0] as string[]
-    expect(resolvedIds).toContain('PARENT1')
-    expect(resolvedIds).toContain('PARENT2')
     expect(resolvedIds).toContain('PAGEROOT1')
     expect(resolvedIds).toContain('PAGEROOT2')
+    // parent_ids should NOT be included (source now only collects page_id)
+    expect(resolvedIds).not.toContain('PARENT1')
+    expect(resolvedIds).not.toContain('PARENT2')
     // null page_id should not be included
     expect(resolvedIds).not.toContain(null)
   })
@@ -531,7 +529,7 @@ describe('AgendaView', () => {
   // 14. Blocks capped at 200
   it('caps displayed blocks at 200', async () => {
     const manyBlocks = Array.from({ length: 250 }, (_, i) =>
-      makeBlock({ id: `B${i}`, parent_id: `P${i % 10}` }),
+      makeBlock({ id: `B${i}`, parent_id: `P${i % 10}`, page_id: `P${i % 10}` }),
     )
     mockedExecuteAgendaFilters.mockResolvedValue({
       blocks: manyBlocks,

@@ -1552,7 +1552,7 @@ describe('EditableBlock', () => {
         })
       })
 
-      expect(mockToastError).toHaveBeenCalled()
+      expect(mockToastError).toHaveBeenCalledWith(expect.stringContaining('file path'))
       expect(mockAddAttachment).not.toHaveBeenCalled()
     })
 
@@ -1577,8 +1577,14 @@ describe('EditableBlock', () => {
         })
       })
 
-      expect(mockAddAttachment).toHaveBeenCalled()
-      expect(mockToastError).toHaveBeenCalled()
+      expect(mockAddAttachment).toHaveBeenCalledWith({
+        blockId: 'BLK_1',
+        filename: 'test.png',
+        mimeType: 'image/png',
+        sizeBytes: 7,
+        fsPath: '/tmp/test.png',
+      })
+      expect(mockToastError).toHaveBeenCalledWith(expect.stringContaining('attach file'))
     })
 
     it('handles paste with image files', async () => {
@@ -1607,7 +1613,7 @@ describe('EditableBlock', () => {
         sizeBytes: 7,
         fsPath: '/tmp/screenshot.png',
       })
-      expect(mockToastSuccess).toHaveBeenCalled()
+      expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining('screenshot.png'))
     })
 
     it('ignores paste without files', async () => {

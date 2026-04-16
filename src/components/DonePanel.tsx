@@ -70,7 +70,7 @@ export function DonePanel({
         // Resolve parent page titles
         const allBlocks = cursor ? [...blocks, ...nonEmptyItems] : nonEmptyItems
         const uniqueParentIds = [
-          ...new Set(allBlocks.map((b) => b.parent_id).filter((id): id is string => id != null)),
+          ...new Set(allBlocks.map((b) => b.page_id).filter((id): id is string => id != null)),
         ]
         if (uniqueParentIds.length > 0) {
           const resolved = await batchResolve(uniqueParentIds)
@@ -119,9 +119,7 @@ export function DonePanel({
 
         // Resolve parent page titles
         const uniqueParentIds = [
-          ...new Set(
-            nonEmptyItems.map((b) => b.parent_id).filter((id): id is string => id != null),
-          ),
+          ...new Set(nonEmptyItems.map((b) => b.page_id).filter((id): id is string => id != null)),
         ]
         if (uniqueParentIds.length > 0) {
           const resolved = await batchResolve(uniqueParentIds)
@@ -168,9 +166,9 @@ export function DonePanel({
   const grouped = (() => {
     const groupMap = new Map<string, { pageId: string; title: string; items: BlockRow[] }>()
     for (const block of blocks) {
-      const pageId = block.parent_id ?? '__none__'
-      const title = block.parent_id
-        ? (pageTitles.get(block.parent_id) ?? t('donePanel.untitled'))
+      const pageId = block.page_id ?? '__none__'
+      const title = block.page_id
+        ? (pageTitles.get(block.page_id) ?? t('donePanel.untitled'))
         : t('donePanel.untitled')
       if (!groupMap.has(pageId)) {
         groupMap.set(pageId, { pageId, title, items: [] })
@@ -292,10 +290,10 @@ export function DonePanel({
                               metadata={
                                 <CheckCircle2 className="done-panel-check h-4 w-4 shrink-0 text-status-done-foreground" />
                               }
-                              pageId={block.parent_id}
+                              pageId={block.page_id}
                               pageTitle={
-                                block.parent_id
-                                  ? (pageTitles.get(block.parent_id) ?? t('donePanel.untitled'))
+                                block.page_id
+                                  ? (pageTitles.get(block.page_id) ?? t('donePanel.untitled'))
                                   : ''
                               }
                               breadcrumbArrow={t('donePanel.breadcrumbArrow')}

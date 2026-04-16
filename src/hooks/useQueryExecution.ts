@@ -166,7 +166,7 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
         setHasMore(responseHasMore)
 
         // Resolve parent page titles
-        const parentIds = items.map((b) => b.parent_id).filter((id): id is string => id != null)
+        const parentIds = items.map((b) => b.page_id).filter((id): id is string => id != null)
         if (parentIds.length > 0) {
           const resolved = await batchResolve([...new Set(parentIds)])
           if (isLoadMore) {

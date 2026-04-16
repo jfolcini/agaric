@@ -21,7 +21,7 @@ function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
     priority: null,
     due_date: null,
     scheduled_date: null,
-    page_id: null,
+    page_id: 'page-1',
     ...overrides,
   }
 }
@@ -31,7 +31,7 @@ function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
 // ---------------------------------------------------------------------------
 describe('resolveBlockDisplay', () => {
   it('returns the resolved block title and page title (happy path)', () => {
-    const block = makeBlock({ id: 'b1', parent_id: 'p1', content: 'raw content' })
+    const block = makeBlock({ id: 'b1', parent_id: 'p1', page_id: 'p1', content: 'raw content' })
     const pageTitles = new Map([['p1', 'My Page']])
     const resolveBlockTitle = vi.fn().mockReturnValue('Resolved Title')
 
@@ -41,8 +41,8 @@ describe('resolveBlockDisplay', () => {
     expect(resolveBlockTitle).toHaveBeenCalledWith('b1')
   })
 
-  it('returns undefined pageTitle when parent_id is null', () => {
-    const block = makeBlock({ parent_id: null, content: 'some content' })
+  it('returns undefined pageTitle when page_id is null', () => {
+    const block = makeBlock({ parent_id: null, page_id: null, content: 'some content' })
     const pageTitles = new Map<string, string>()
 
     const result = resolveBlockDisplay(block, pageTitles)
@@ -50,8 +50,8 @@ describe('resolveBlockDisplay', () => {
     expect(result.pageTitle).toBeUndefined()
   })
 
-  it('returns undefined pageTitle when parent_id is not in the map', () => {
-    const block = makeBlock({ parent_id: 'unknown-page' })
+  it('returns undefined pageTitle when page_id is not in the map', () => {
+    const block = makeBlock({ parent_id: 'unknown-page', page_id: 'unknown-page' })
     const pageTitles = new Map<string, string>()
 
     const result = resolveBlockDisplay(block, pageTitles)
@@ -94,8 +94,8 @@ describe('resolveBlockDisplay', () => {
 // handleBlockNavigation
 // ---------------------------------------------------------------------------
 describe('handleBlockNavigation', () => {
-  it('calls onNavigate with parent_id when both are present', () => {
-    const block = makeBlock({ parent_id: 'page-42' })
+  it('calls onNavigate with page_id when both are present', () => {
+    const block = makeBlock({ parent_id: 'page-42', page_id: 'page-42' })
     const onNavigate = vi.fn()
 
     handleBlockNavigation(block, onNavigate)
@@ -103,8 +103,8 @@ describe('handleBlockNavigation', () => {
     expect(onNavigate).toHaveBeenCalledWith('page-42')
   })
 
-  it('does not call onNavigate when parent_id is null', () => {
-    const block = makeBlock({ parent_id: null })
+  it('does not call onNavigate when page_id is null', () => {
+    const block = makeBlock({ parent_id: null, page_id: null })
     const onNavigate = vi.fn()
 
     handleBlockNavigation(block, onNavigate)
@@ -113,14 +113,14 @@ describe('handleBlockNavigation', () => {
   })
 
   it('does nothing when onNavigate is undefined', () => {
-    const block = makeBlock({ parent_id: 'page-1' })
+    const block = makeBlock({ parent_id: 'page-1', page_id: 'page-1' })
 
     // Should not throw
     expect(() => handleBlockNavigation(block, undefined)).not.toThrow()
   })
 
-  it('does nothing when both parent_id and onNavigate are missing', () => {
-    const block = makeBlock({ parent_id: null })
+  it('does nothing when both page_id and onNavigate are missing', () => {
+    const block = makeBlock({ parent_id: null, page_id: null })
 
     expect(() => handleBlockNavigation(block)).not.toThrow()
   })

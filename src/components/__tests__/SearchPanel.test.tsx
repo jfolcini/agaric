@@ -54,6 +54,7 @@ const makeSearchResult = (overrides?: Partial<Record<string, unknown>>) => ({
   block_type: 'content',
   content: 'test content',
   parent_id: null,
+  page_id: null,
   position: 1,
   deleted_at: null,
   is_conflict: false,
@@ -383,6 +384,7 @@ describe('SearchPanel', () => {
         makeSearchResult({
           id: 'CHILD1',
           parent_id: 'PARENT1',
+          page_id: 'PARENT1',
           content: 'child content',
           block_type: 'content',
         }),
@@ -503,6 +505,7 @@ describe('SearchPanel', () => {
         makeSearchResult({
           id: 'CHILD1',
           parent_id: 'PARENT1',
+          page_id: 'PARENT1',
           content: 'child block',
           block_type: 'content',
         }),
@@ -709,6 +712,7 @@ describe('SearchPanel', () => {
         makeSearchResult({
           id: 'CHILD1',
           parent_id: 'PARENT1',
+          page_id: 'PARENT1',
           content: 'child block',
           block_type: 'content',
         }),
@@ -889,6 +893,7 @@ describe('SearchPanel', () => {
         makeSearchResult({
           id: 'CHILD1',
           parent_id: 'PARENT1',
+          page_id: 'PARENT1',
           content: 'child content',
           block_type: 'content',
         }),
@@ -1013,6 +1018,7 @@ describe('SearchPanel', () => {
         makeSearchResult({
           id: 'CHILD1',
           parent_id: 'PARENT1',
+          page_id: 'PARENT1',
           content: 'child with breadcrumb',
           block_type: 'content',
         }),
@@ -1098,6 +1104,7 @@ describe('SearchPanel', () => {
             id: 'B1',
             content: 'enter result',
             parent_id: 'PARENT1',
+            page_id: 'PARENT1',
             block_type: 'content',
           }),
         ],

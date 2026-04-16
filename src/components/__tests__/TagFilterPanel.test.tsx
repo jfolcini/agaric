@@ -505,6 +505,7 @@ describe('TagFilterPanel', () => {
         makeBlock({
           id: 'CHILD1',
           parent_id: 'PARENT1',
+          page_id: 'PARENT1',
           content: 'tagged content',
           block_type: 'content',
         }),
@@ -898,6 +899,7 @@ describe('TagFilterPanel', () => {
             makeBlock({
               id: 'B1',
               parent_id: 'PAGE1',
+              page_id: 'PAGE1',
               content: 'tagged block',
               block_type: 'content',
             }),
@@ -943,6 +945,7 @@ describe('TagFilterPanel', () => {
             makeBlock({
               id: 'B1',
               parent_id: 'PAGE1',
+              page_id: 'PAGE1',
               content: 'tagged block',
               block_type: 'content',
             }),

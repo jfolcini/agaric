@@ -348,7 +348,7 @@ describe('PageBlockStore', () => {
 
       await store.getState().edit('A', 'new')
 
-      expect(toast.error).toHaveBeenCalled()
+      expect(toast.error).toHaveBeenCalledWith('Failed to save')
     })
 
     it('does not crash when editing a block that does not exist in the store', async () => {

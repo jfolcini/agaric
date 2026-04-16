@@ -121,6 +121,7 @@ const emptyGrouped = {
   has_more: false,
   total_count: 0,
   filtered_count: 0,
+  truncated: false,
 }
 
 function mockInvokeWith(groupedResponse: unknown, extras?: Record<string, unknown>) {
@@ -191,6 +192,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 5,
       filtered_count: 5,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -207,6 +209,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -224,6 +227,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -269,6 +273,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 3,
       filtered_count: 3,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -286,6 +291,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -303,6 +309,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -337,6 +344,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 3,
       filtered_count: 3,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -365,6 +373,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 7,
       filtered_count: 7,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -394,6 +403,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -417,6 +427,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -438,6 +449,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -461,6 +473,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -482,6 +495,7 @@ describe('LinkedReferences', () => {
       has_more: true,
       total_count: 2,
       filtered_count: 2,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -502,6 +516,7 @@ describe('LinkedReferences', () => {
       has_more: true,
       total_count: 2,
       filtered_count: 2,
+      truncated: false,
     }
     const page2 = {
       groups: [makeGroup('P2', 'Page Two', [{ id: 'B2', content: 'block 2' }])],
@@ -509,6 +524,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 2,
       filtered_count: 2,
+      truncated: false,
     }
     let callCount = 0
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
@@ -553,6 +569,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -603,6 +620,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp1)
 
@@ -624,6 +642,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp2)
 
@@ -652,6 +671,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -673,6 +693,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -696,6 +717,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 2,
       filtered_count: 2,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -734,6 +756,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -754,6 +777,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -786,6 +810,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -804,6 +829,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -823,6 +849,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -855,6 +882,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -885,6 +913,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 3,
       filtered_count: 3,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -910,6 +939,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -944,6 +974,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -983,6 +1014,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -1010,6 +1042,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -1055,6 +1088,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 
@@ -1111,6 +1145,7 @@ describe('LinkedReferences', () => {
       has_more: true,
       total_count: 2,
       filtered_count: 2,
+      truncated: false,
     }
     let callCount = 0
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
@@ -1218,6 +1253,7 @@ describe('LinkedReferences', () => {
       has_more: false,
       total_count: 1,
       filtered_count: 1,
+      truncated: false,
     }
     mockInvokeWith(resp)
 

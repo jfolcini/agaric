@@ -1132,6 +1132,7 @@ export function setupMock(): void {
           has_more: false,
           total_count: totalCount,
           filtered_count: totalCount,
+          truncated: false,
         }
       }
 
@@ -1329,6 +1330,7 @@ export function setupMock(): void {
           has_more: false,
           total_count: backlinkItems.length,
           filtered_count: backlinkItems.length,
+          truncated: false,
         }
       }
 
@@ -1343,6 +1345,7 @@ export function setupMock(): void {
             has_more: false,
             total_count: 0,
             filtered_count: 0,
+            truncated: false,
           }
         const pageTitle = ((page['content'] as string) ?? '').toLowerCase()
         if (!pageTitle)
@@ -1352,6 +1355,7 @@ export function setupMock(): void {
             has_more: false,
             total_count: 0,
             filtered_count: 0,
+            truncated: false,
           }
         // Find blocks that mention the page title as text but don't have a [[link]]
         const LINK_RE_UL = /\[\[([0-9A-Z]{26})\]\]/g
@@ -1387,6 +1391,7 @@ export function setupMock(): void {
           has_more: false,
           total_count: unlinked.length,
           filtered_count: unlinked.length,
+          truncated: false,
         }
       }
 
