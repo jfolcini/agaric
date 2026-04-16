@@ -114,6 +114,9 @@ function notifyUndoNewAction(rootParentId: string | null): void {
 // ── Store factory ────────────────────────────────────────────────────────
 
 export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
+  /** Guard: block IDs currently being split. Prevents re-entrant splitBlock calls. */
+  const splitInProgress = new Set<string>()
+
   return createStore<PageBlockState>((set, get) => ({
     blocks: [],
     rootParentId: pageId,
@@ -256,33 +259,42 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     },
 
     splitBlock: async (blockId: string, markdown: string) => {
-      const doc = parse(markdown)
-      const blocks = doc.content ?? []
-      if (blocks.length <= 1) {
-        const content =
-          blocks.length === 1
-            ? serialize({ type: 'doc', content: [blocks[0] as (typeof blocks)[number]] })
-            : ''
-        if (content !== markdown) await get().edit(blockId, content)
-        return
-      }
+      if (splitInProgress.has(blockId)) return
+      splitInProgress.add(blockId)
+      try {
+        const doc = parse(markdown)
+        const blocks = doc.content ?? []
+        if (blocks.length <= 1) {
+          const content =
+            blocks.length === 1
+              ? serialize({ type: 'doc', content: [blocks[0] as (typeof blocks)[number]] })
+              : ''
+          if (content !== markdown) await get().edit(blockId, content)
+          return
+        }
 
-      const nonEmpty = blocks.filter(
-        (b) => b.type !== 'paragraph' || (b.content && b.content.length > 0),
-      )
-      if (nonEmpty.length === 0) return
+        const nonEmpty = blocks.filter(
+          (b) => b.type !== 'paragraph' || (b.content && b.content.length > 0),
+        )
+        if (nonEmpty.length === 0) return
 
-      const first = serialize({ type: 'doc', content: [nonEmpty[0] as (typeof nonEmpty)[number]] })
-      await get().edit(blockId, first)
-
-      let lastId = blockId
-      for (let i = 1; i < nonEmpty.length; i++) {
-        const content = serialize({
+        const first = serialize({
           type: 'doc',
-          content: [nonEmpty[i] as (typeof nonEmpty)[number]],
+          content: [nonEmpty[0] as (typeof nonEmpty)[number]],
         })
-        const newId = await get().createBelow(lastId, content)
-        if (newId) lastId = newId
+        await get().edit(blockId, first)
+
+        let lastId = blockId
+        for (let i = 1; i < nonEmpty.length; i++) {
+          const content = serialize({
+            type: 'doc',
+            content: [nonEmpty[i] as (typeof nonEmpty)[number]],
+          })
+          const newId = await get().createBelow(lastId, content)
+          if (newId) lastId = newId
+        }
+      } finally {
+        splitInProgress.delete(blockId)
       }
     },
 

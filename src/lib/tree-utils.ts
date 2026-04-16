@@ -57,11 +57,14 @@ export function buildFlatTree(
 
   // DFS flatten
   const result: FlatBlock[] = []
+  const visited = new Set<string>()
 
   function dfs(parentId: string | null, depth: number): void {
     const children = childrenMap.get(parentId)
     if (!children) return
     for (const child of children) {
+      if (visited.has(child.id)) continue
+      visited.add(child.id)
       result.push({ ...child, depth })
       dfs(child.id, depth + 1)
     }

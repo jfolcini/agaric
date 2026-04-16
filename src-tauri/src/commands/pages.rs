@@ -366,11 +366,14 @@ pub async fn list_page_links_inner(pool: &SqlitePool) -> Result<Vec<PageLink>, A
          JOIN blocks tb ON tb.id = bl.target_id
              AND tb.block_type = 'page'
              AND tb.deleted_at IS NULL
+             AND tb.is_conflict = 0
          JOIN blocks sb ON sb.id = bl.source_id
              AND sb.deleted_at IS NULL
+             AND sb.is_conflict = 0
          LEFT JOIN blocks pb ON pb.id = sb.parent_id
              AND pb.deleted_at IS NULL
              AND pb.block_type = 'page'
+             AND pb.is_conflict = 0
          WHERE COALESCE(sb.parent_id, bl.source_id) != bl.target_id
              AND (sb.parent_id IS NULL OR pb.id IS NOT NULL)
          GROUP BY 1, 2",

@@ -3413,3 +3413,17 @@ async fn set_todo_state_done_with_repeat_until_without_dates_still_creates_sibli
 
     mat.shutdown();
 }
+
+// ─── delete_property_def builtin guard (BUG-11) ─────────────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_def_rejects_builtin_key() {
+    let (pool, _dir) = test_pool().await;
+
+    let result = delete_property_def_inner(&pool, "todo_state".into()).await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("builtin")),
+        "deleting a builtin property key must return Validation error, got: {result:?}"
+    );
+}

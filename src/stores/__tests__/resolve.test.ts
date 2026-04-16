@@ -111,14 +111,14 @@ describe('preload', () => {
     expect(versionAfter).toBe(versionBefore + 1)
   })
 
-  it('preserves concurrent set() calls (merge, not replace)', async () => {
+  it('fetched data overwrites concurrent set() calls on preload', async () => {
     // Simulate a set() call that lands before preload finishes
     useResolveStore.getState().set('NEW_PAGE', 'Created During Preload', false)
 
     const mockPages = [
       { id: 'PAGE_1', content: 'Page One', deleted_at: null },
-      // DB also has an older version of NEW_PAGE
-      { id: 'NEW_PAGE', content: 'Old DB Title', deleted_at: null },
+      // DB also has a version of NEW_PAGE
+      { id: 'NEW_PAGE', content: 'DB Title', deleted_at: null },
     ]
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -130,8 +130,8 @@ describe('preload', () => {
     await useResolveStore.getState().preload()
 
     const state = useResolveStore.getState()
-    // The concurrent set() entry must win over fetched data
-    expect(state.cache.get('NEW_PAGE')).toEqual({ title: 'Created During Preload', deleted: false })
+    // Fetched data wins over stale cache entries
+    expect(state.cache.get('NEW_PAGE')).toEqual({ title: 'DB Title', deleted: false })
     // Other fetched entries should still be present
     expect(state.cache.get('PAGE_1')).toEqual({ title: 'Page One', deleted: false })
   })
@@ -180,12 +180,12 @@ describe('preload', () => {
     })
   })
 
-  it('preload without forceRefresh preserves concurrent set() calls (B-7)', async () => {
-    // Simulate a set() call that represents a local edit happening concurrently
+  it('preload without forceRefresh overwrites stale cache with fetched data (B-7)', async () => {
+    // Simulate a set() call that represents stale cached data
     useResolveStore.getState().set('PAGE_EDITED', 'Local Edit Title', false)
 
-    // Backend returns an older version of the same page
-    const mockPages = [{ id: 'PAGE_EDITED', content: 'Stale Backend Title', deleted_at: null }]
+    // Backend returns the latest version of the same page
+    const mockPages = [{ id: 'PAGE_EDITED', content: 'Fresh Backend Title', deleted_at: null }]
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return { items: mockPages, next_cursor: null, has_more: false }
@@ -193,13 +193,37 @@ describe('preload', () => {
       return null
     })
 
-    // Default preload (forceRefresh=false) — cache wins
+    // Default preload (forceRefresh=false) — fetched data wins
     await useResolveStore.getState().preload()
 
     const state = useResolveStore.getState()
-    // The concurrent set() entry must win over fetched data
+    // Fetched data overwrites stale cache entries
     expect(state.cache.get('PAGE_EDITED')).toEqual({
-      title: 'Local Edit Title',
+      title: 'Fresh Backend Title',
+      deleted: false,
+    })
+  })
+
+  it('fresh data overwrites stale cache on non-force-refresh preload (BUG-6)', async () => {
+    // Prime cache with a stale page title
+    useResolveStore.getState().set('PAGE_SYNC', 'Old Title Before Sync', false)
+
+    // After sync, backend returns a DIFFERENT title for the same ID
+    const mockPages = [{ id: 'PAGE_SYNC', content: 'Renamed Title After Sync', deleted_at: null }]
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: mockPages, next_cursor: null, has_more: false }
+      if (cmd === 'list_tags_by_prefix') return []
+      return null
+    })
+
+    // Normal preload (forceRefresh=false)
+    await useResolveStore.getState().preload(false)
+
+    const state = useResolveStore.getState()
+    // Fresh fetched data must overwrite the stale cache entry
+    expect(state.cache.get('PAGE_SYNC')).toEqual({
+      title: 'Renamed Title After Sync',
       deleted: false,
     })
   })

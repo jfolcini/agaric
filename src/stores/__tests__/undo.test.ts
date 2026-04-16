@@ -156,11 +156,10 @@ describe('useUndoStore', () => {
       expect(pageState?.redoStack).toHaveLength(1)
     })
 
-    it('handles rapid undo calls without race condition', async () => {
-      // Set up two sequential mock responses
+    it('rejects concurrent undo on the same page (re-entrancy guard)', async () => {
+      // Set up one mock response (only the first undo executes)
       const result1 = makeUndoResult({ deviceId: 'dev1', seq: 5, newSeq: 6 })
-      const result2 = makeUndoResult({ deviceId: 'dev1', seq: 4, newSeq: 5 })
-      mockedUndoPageOp.mockResolvedValueOnce(result1).mockResolvedValueOnce(result2)
+      mockedUndoPageOp.mockResolvedValueOnce(result1)
 
       // Fire two undos simultaneously
       const [r1, r2] = await Promise.all([
@@ -168,18 +167,30 @@ describe('useUndoStore', () => {
         useUndoStore.getState().undo('page1'),
       ])
 
-      // Both should succeed
+      // First succeeds, second is rejected by re-entrancy guard
       expect(r1).not.toBeNull()
-      expect(r2).not.toBeNull()
+      expect(r2).toBeNull()
 
-      // undoDepth should be 2 (not 1)
+      // undoDepth should be 1 (only one undo executed)
       const state = useUndoStore.getState().pages.get('page1')
-      expect(state?.undoDepth).toBe(2)
+      expect(state?.undoDepth).toBe(1)
 
-      // Backend should have been called with different depths
+      // Backend should have been called once
+      expect(mockedUndoPageOp).toHaveBeenCalledTimes(1)
+      expect(mockedUndoPageOp).toHaveBeenCalledWith({ pageId: 'page1', undoDepth: 0 })
+    })
+
+    it('clears undo re-entrancy guard after completion — next undo works', async () => {
+      // First undo
+      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 5 }))
+      await useUndoStore.getState().undo('page1')
+      expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(1)
+
+      // Second undo (sequential) — should work because guard is cleared
+      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 4 }))
+      await useUndoStore.getState().undo('page1')
+      expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(2)
       expect(mockedUndoPageOp).toHaveBeenCalledTimes(2)
-      expect(mockedUndoPageOp).toHaveBeenNthCalledWith(1, { pageId: 'page1', undoDepth: 0 })
-      expect(mockedUndoPageOp).toHaveBeenNthCalledWith(2, { pageId: 'page1', undoDepth: 1 })
     })
 
     it('caps redoStack at MAX_REDO_STACK entries', async () => {
@@ -269,6 +280,50 @@ describe('useUndoStore', () => {
         { pageId: 'page1' },
         err,
       )
+    })
+
+    it('rejects concurrent redo on the same page (re-entrancy guard)', async () => {
+      // Set up: undo twice to populate redo stack
+      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+      await useUndoStore.getState().undo('page1')
+      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 4 }))
+      await useUndoStore.getState().undo('page1')
+
+      expect(useUndoStore.getState().pages.get('page1')?.redoStack).toHaveLength(2)
+
+      // Set up one redo mock (only first redo executes)
+      mockedRedoPageOp.mockResolvedValueOnce(makeUndoResult({ isRedo: true }))
+
+      // Fire two redos simultaneously
+      const [r1, r2] = await Promise.all([
+        useUndoStore.getState().redo('page1'),
+        useUndoStore.getState().redo('page1'),
+      ])
+
+      // First succeeds, second is rejected by re-entrancy guard
+      expect(r1).not.toBeNull()
+      expect(r2).toBeNull()
+
+      // Only one redo executed
+      expect(mockedRedoPageOp).toHaveBeenCalledTimes(1)
+    })
+
+    it('clears redo re-entrancy guard after completion — next redo works', async () => {
+      // Set up: undo twice to populate redo stack
+      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+      await useUndoStore.getState().undo('page1')
+      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 4 }))
+      await useUndoStore.getState().undo('page1')
+
+      // First redo
+      mockedRedoPageOp.mockResolvedValueOnce(makeUndoResult({ isRedo: true }))
+      await useUndoStore.getState().redo('page1')
+
+      // Second redo (sequential) — should work because guard is cleared
+      mockedRedoPageOp.mockResolvedValueOnce(makeUndoResult({ isRedo: true }))
+      await useUndoStore.getState().redo('page1')
+
+      expect(mockedRedoPageOp).toHaveBeenCalledTimes(2)
     })
   })
 

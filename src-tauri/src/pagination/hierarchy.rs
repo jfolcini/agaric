@@ -41,7 +41,7 @@ pub async fn list_children(
                 conflict_type, todo_state, priority, due_date, scheduled_date,
                 page_id
          FROM blocks
-         WHERE parent_id IS ?1 AND deleted_at IS NULL
+         WHERE parent_id IS ?1 AND deleted_at IS NULL AND is_conflict = 0
            AND (?2 IS NULL OR (
                 position > ?3
                 OR (position = ?3 AND id > ?4)))
@@ -88,7 +88,7 @@ pub async fn list_by_type(
                 conflict_type, todo_state, priority, due_date, scheduled_date,
                 page_id
          FROM blocks
-         WHERE block_type = ?1 AND deleted_at IS NULL
+         WHERE block_type = ?1 AND deleted_at IS NULL AND is_conflict = 0
            AND (?2 IS NULL OR id > ?3)
          ORDER BY id ASC
          LIMIT ?4"#,

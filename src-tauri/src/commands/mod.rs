@@ -630,7 +630,12 @@ impl RepeatingBlockRow {
 #[cfg(not(tarpaulin_include))]
 fn sanitize_internal_error(err: AppError) -> AppError {
     match &err {
-        AppError::Database(_) | AppError::Migration(_) | AppError::Io(_) | AppError::Json(_) => {
+        AppError::Database(_)
+        | AppError::Migration(_)
+        | AppError::Io(_)
+        | AppError::Json(_)
+        | AppError::Channel(_)
+        | AppError::Snapshot(_) => {
             tracing::warn!(error = %err, "internal error suppressed during sanitization");
             AppError::InvalidOperation("an internal error occurred".into())
         }

@@ -439,6 +439,47 @@ async fn list_children_excludes_soft_deleted() {
 }
 
 #[tokio::test]
+async fn list_children_excludes_conflict_blocks() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "PARENT01", "page", "parent", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "CHILD001",
+        "content",
+        "normal child",
+        Some("PARENT01"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "CHILD002",
+        "content",
+        "conflict child",
+        Some("PARENT01"),
+        Some(2),
+    )
+    .await;
+
+    // Mark CHILD002 as a conflict copy
+    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
+        .bind("CHILD002")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_children(&pool, Some("PARENT01"), &page).await.unwrap();
+
+    assert_eq!(resp.items.len(), 1, "conflict child must be excluded");
+    assert_eq!(
+        resp.items[0].id, "CHILD001",
+        "only non-conflict child should be returned"
+    );
+}
+
+#[tokio::test]
 async fn list_children_sentinel_positions_sort_after_positioned() {
     let (pool, _dir) = test_pool().await;
 
@@ -649,6 +690,30 @@ async fn list_by_type_excludes_soft_deleted() {
     assert_eq!(
         resp.items[1].id, "PAGE0003",
         "second alive page block, PAGE0002 excluded"
+    );
+}
+
+#[tokio::test]
+async fn list_by_type_excludes_conflict_blocks() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "PAGE0001", "page", "Normal Page", None, None).await;
+    insert_block(&pool, "PAGE0002", "page", "Conflict Page", None, None).await;
+
+    // Mark PAGE0002 as a conflict copy
+    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
+        .bind("PAGE0002")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_by_type(&pool, "page", &page).await.unwrap();
+
+    assert_eq!(resp.items.len(), 1, "conflict page must be excluded");
+    assert_eq!(
+        resp.items[0].id, "PAGE0001",
+        "only non-conflict page should be returned"
     );
 }
 

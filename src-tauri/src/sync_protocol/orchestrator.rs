@@ -295,7 +295,12 @@ impl SyncOrchestrator {
                     ops_received: self.session.ops_received,
                     ops_sent: self.session.ops_sent,
                 });
-                let remote_id = self.remote_device_id.clone().unwrap_or_default();
+                let remote_id = self.remote_device_id.clone().unwrap_or_else(|| {
+                    tracing::warn!(
+                        "remote_device_id not set at merge phase — using empty fallback"
+                    );
+                    String::new()
+                });
                 let merge_results = merge_diverged_blocks(
                     &self.pool,
                     &self.device_id,
@@ -333,7 +338,12 @@ impl SyncOrchestrator {
 
             // ---- SyncComplete -----------------------------------------------
             SyncMessage::SyncComplete { last_hash } => {
-                let peer_id = self.remote_device_id.clone().unwrap_or_default();
+                let peer_id = self.remote_device_id.clone().unwrap_or_else(|| {
+                    tracing::warn!(
+                        "remote_device_id not set at SyncComplete — using empty fallback"
+                    );
+                    String::new()
+                });
                 let last_sent_hash = self
                     .pending_ops_to_send
                     .last()

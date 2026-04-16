@@ -725,7 +725,10 @@ pub async fn restore_all_deleted_inner(
     let mut op_records = Vec::new();
     // Append one RestoreBlock op per root for sync compatibility
     for root in &roots {
-        let deleted_at_ref = root.deleted_at.clone().unwrap_or_default();
+        let deleted_at_ref = root
+            .deleted_at
+            .clone()
+            .expect("query guarantees deleted_at IS NOT NULL");
         let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
             block_id: BlockId::from_trusted(&root.id),
             deleted_at_ref,

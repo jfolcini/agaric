@@ -46,7 +46,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => ({
   version: 0,
   _preloaded: false,
 
-  preload: async (forceRefresh = false) => {
+  preload: async (_forceRefresh = false) => {
     try {
       // Fetch all pages
       const pagesResp = await listBlocks({ blockType: 'page', limit: 1000 })
@@ -65,12 +65,11 @@ export const useResolveStore = create<ResolveStore>((set, get) => ({
         fetchedTags.set(t.tag_id, { title: t.name, deleted: false })
       }
 
-      // Merge: when force-refreshing (e.g. after sync), fetched data wins over cached data.
-      // Normal preload preserves concurrent set() calls by letting cache win.
+      // Merge: fetched data always wins over stale cache entries.
+      // Both branches use the same order — forceRefresh is a semantic flag for callers,
+      // not a behavioral switch. Fresh titles must propagate after sync or rename.
       set((state) => {
-        const cache = forceRefresh
-          ? new Map([...state.cache, ...fetchedPages, ...fetchedTags])
-          : new Map([...fetchedPages, ...fetchedTags, ...state.cache])
+        const cache = new Map([...state.cache, ...fetchedPages, ...fetchedTags])
         const fetchedIds = new Set(pagesList.map((p) => p.id))
         const mergedPagesList = [
           ...pagesList,

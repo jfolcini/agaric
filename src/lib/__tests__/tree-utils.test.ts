@@ -127,6 +127,18 @@ describe('buildFlatTree', () => {
     const result = buildFlatTree(blocks)
     expect(result.map((b) => b.id)).toEqual(['a', 'c', 'b'])
   })
+
+  it('handles cycles in block data without infinite recursion (BUG-9)', () => {
+    // Corrupted data: A→B→A cycle
+    const blocks = [mkBlock('A', 'B', 1), mkBlock('B', 'A', 1)]
+    const result = buildFlatTree(blocks, 'A')
+    // Should return a finite result without stack overflow
+    expect(result.length).toBeLessThanOrEqual(2)
+    // Each block appears at most once
+    const ids = result.map((b) => b.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(ids).toContain('B')
+  })
 })
 
 // ── getDragDescendants ───────────────────────────────────────────────────

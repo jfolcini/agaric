@@ -489,6 +489,12 @@ pub async fn update_property_def_options_inner(
 /// Returns error if the key doesn't exist.
 #[instrument(skip(pool), err)]
 pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result<(), AppError> {
+    if crate::op::is_builtin_property_key(&key) {
+        return Err(AppError::Validation(
+            "cannot delete builtin property definition".into(),
+        ));
+    }
+
     let result = sqlx::query("DELETE FROM property_definitions WHERE key = ?")
         .bind(&key)
         .execute(pool)

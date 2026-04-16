@@ -92,6 +92,11 @@ function getOrCreatePage(pages: Map<string, PageUndoState>, pageId: string): Pag
 }
 
 export const useUndoStore = create<UndoStore>((set, get) => {
+  /** Guard: page IDs with undo currently in progress. */
+  const undoInProgress = new Set<string>()
+  /** Guard: page IDs with redo currently in progress. */
+  const redoInProgress = new Set<string>()
+
   // ---------------------------------------------------------------------------
   // Single-op helpers (extracted from the original undo/redo actions)
   // ---------------------------------------------------------------------------
@@ -219,100 +224,115 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     pages: new Map(),
 
     undo: async (pageId: string) => {
-      // Capture the initial undo depth before any undo calls
-      const initialDepth = getOrCreatePage(get().pages, pageId).undoDepth
-
-      // Perform the first single undo
-      const firstResult = await performSingleUndo(pageId)
-      if (!firstResult) return null
-
-      // Try to extend the group by checking history timestamps
-      let groupSize = 1
+      if (undoInProgress.has(pageId)) {
+        logger.warn('UndoStore', 'undo already in progress, skipping', { pageId })
+        return null
+      }
+      undoInProgress.add(pageId)
       try {
-        const history = await listPageHistory({
-          pageId,
-          limit: Math.max(50, (initialDepth + 20) * 2),
-        })
+        // Capture the initial undo depth before any undo calls
+        const initialDepth = getOrCreatePage(get().pages, pageId).undoDepth
 
-        // Filter to undoable ops (exclude undo/redo reverse ops, matching backend logic)
-        const undoableOps = history.items.filter(
-          (o) => !o.op_type.startsWith('undo_') && !o.op_type.startsWith('redo_'),
-        )
+        // Perform the first single undo
+        const firstResult = await performSingleUndo(pageId)
+        if (!firstResult) return null
 
-        // The first undo targeted the op at index initialDepth (newest-first order)
-        let lastUndoneIndex = initialDepth
-
-        // Keep undoing consecutive ops within the time window by the same device
-        while (lastUndoneIndex + 1 < undoableOps.length) {
-          const lastOp = undoableOps[lastUndoneIndex] as (typeof undoableOps)[number]
-          const nextOp = undoableOps[lastUndoneIndex + 1] as (typeof undoableOps)[number]
-
-          if (!isWithinUndoGroup(lastOp.created_at, nextOp.created_at)) break
-          if (lastOp.device_id !== nextOp.device_id) break
-
-          const result = await performSingleUndo(pageId)
-          if (!result) break
-
-          groupSize++
-          lastUndoneIndex++
-        }
-      } catch (err) {
-        logger.error('UndoStore', 'history fetch failed', { pageId }, err)
-        // History fetch failed — graceful fallback, just the single undo
-      }
-
-      // Record group size for redo (always, even for single ops)
-      set((state) => {
-        const newPages = new Map(state.pages)
-        const current = newPages.get(pageId)
-        if (current) {
-          newPages.set(pageId, {
-            ...current,
-            redoGroupSizes: [...current.redoGroupSizes, groupSize],
+        // Try to extend the group by checking history timestamps
+        let groupSize = 1
+        try {
+          const history = await listPageHistory({
+            pageId,
+            limit: Math.max(50, (initialDepth + 20) * 2),
           })
+
+          // Filter to undoable ops (exclude undo/redo reverse ops, matching backend logic)
+          const undoableOps = history.items.filter(
+            (o) => !o.op_type.startsWith('undo_') && !o.op_type.startsWith('redo_'),
+          )
+
+          // The first undo targeted the op at index initialDepth (newest-first order)
+          let lastUndoneIndex = initialDepth
+
+          // Keep undoing consecutive ops within the time window by the same device
+          while (lastUndoneIndex + 1 < undoableOps.length) {
+            const lastOp = undoableOps[lastUndoneIndex] as (typeof undoableOps)[number]
+            const nextOp = undoableOps[lastUndoneIndex + 1] as (typeof undoableOps)[number]
+
+            if (!isWithinUndoGroup(lastOp.created_at, nextOp.created_at)) break
+            if (lastOp.device_id !== nextOp.device_id) break
+
+            const result = await performSingleUndo(pageId)
+            if (!result) break
+
+            groupSize++
+            lastUndoneIndex++
+          }
+        } catch (err) {
+          logger.error('UndoStore', 'history fetch failed', { pageId }, err)
+          // History fetch failed — graceful fallback, just the single undo
         }
-        return { pages: newPages }
-      })
 
-      return firstResult
-    },
-
-    redo: async (pageId: string) => {
-      const pageState = getOrCreatePage(get().pages, pageId)
-      if (pageState.redoStack.length === 0) return null
-
-      // Determine group size from the most recent batch undo
-      const groupSize =
-        pageState.redoGroupSizes.length > 0
-          ? (pageState.redoGroupSizes[pageState.redoGroupSizes.length - 1] as number)
-          : 1
-
-      let firstResult: UndoResult | null = null
-      let redoneCount = 0
-
-      for (let i = 0; i < groupSize; i++) {
-        const result = await performSingleRedo(pageId)
-        if (!result) break
-        if (i === 0) firstResult = result
-        redoneCount++
-      }
-
-      // Pop the group size after at least one successful redo
-      if (redoneCount > 0 && pageState.redoGroupSizes.length > 0) {
+        // Record group size for redo (always, even for single ops)
         set((state) => {
           const newPages = new Map(state.pages)
           const current = newPages.get(pageId)
-          if (current && current.redoGroupSizes.length > 0) {
+          if (current) {
             newPages.set(pageId, {
               ...current,
-              redoGroupSizes: current.redoGroupSizes.slice(0, -1),
+              redoGroupSizes: [...current.redoGroupSizes, groupSize],
             })
           }
           return { pages: newPages }
         })
-      }
 
-      return firstResult
+        return firstResult
+      } finally {
+        undoInProgress.delete(pageId)
+      }
+    },
+
+    redo: async (pageId: string) => {
+      if (redoInProgress.has(pageId)) return null
+      redoInProgress.add(pageId)
+      try {
+        const pageState = getOrCreatePage(get().pages, pageId)
+        if (pageState.redoStack.length === 0) return null
+
+        // Determine group size from the most recent batch undo
+        const groupSize =
+          pageState.redoGroupSizes.length > 0
+            ? (pageState.redoGroupSizes[pageState.redoGroupSizes.length - 1] as number)
+            : 1
+
+        let firstResult: UndoResult | null = null
+        let redoneCount = 0
+
+        for (let i = 0; i < groupSize; i++) {
+          const result = await performSingleRedo(pageId)
+          if (!result) break
+          if (i === 0) firstResult = result
+          redoneCount++
+        }
+
+        // Pop the group size after at least one successful redo
+        if (redoneCount > 0 && pageState.redoGroupSizes.length > 0) {
+          set((state) => {
+            const newPages = new Map(state.pages)
+            const current = newPages.get(pageId)
+            if (current && current.redoGroupSizes.length > 0) {
+              newPages.set(pageId, {
+                ...current,
+                redoGroupSizes: current.redoGroupSizes.slice(0, -1),
+              })
+            }
+            return { pages: newPages }
+          })
+        }
+
+        return firstResult
+      } finally {
+        redoInProgress.delete(pageId)
+      }
     },
 
     canRedo: (pageId: string) => {

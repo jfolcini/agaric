@@ -657,6 +657,92 @@ describe('PageBlockStore', () => {
       expect(blocks[0]?.content).toBe('hello')
       expect(blocks[1]?.content).toBe('world')
     })
+
+    it('rejects a second concurrent splitBlock on the same block (re-entrancy guard)', async () => {
+      const block = makeBlock({ id: 'A', position: 0, content: '' })
+      store.setState({ blocks: [block] })
+
+      // Mocks for the first (and only) splitBlock that executes:
+      // edit_block for 'line1'
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'A',
+        block_type: 'text',
+        content: 'line1',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+      })
+      // create_block for 'line2'
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'B',
+        block_type: 'text',
+        content: 'line2',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+      })
+
+      // Fire two splitBlocks simultaneously on the same block
+      await Promise.all([
+        store.getState().splitBlock('A', 'line1\nline2'),
+        store.getState().splitBlock('A', 'line1\nline2'),
+      ])
+
+      // Only the first splitBlock should have made backend calls (edit + create = 2)
+      expect(mockedInvoke).toHaveBeenCalledTimes(2)
+
+      const blocks = store.getState().blocks
+      expect(blocks).toHaveLength(2)
+      expect(blocks[0]?.content).toBe('line1')
+      expect(blocks[1]?.content).toBe('line2')
+    })
+
+    it('clears re-entrancy guard after completion — next splitBlock works', async () => {
+      const block = makeBlock({ id: 'A', position: 0, content: '' })
+      store.setState({ blocks: [block] })
+
+      // First splitBlock on block A
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'A',
+        block_type: 'text',
+        content: 'line1',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+      })
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'B',
+        block_type: 'text',
+        content: 'line2',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+      })
+
+      await store.getState().splitBlock('A', 'line1\nline2')
+      expect(mockedInvoke).toHaveBeenCalledTimes(2)
+
+      // Second splitBlock on same block A — should work (guard cleared)
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'A',
+        block_type: 'text',
+        content: 'x',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+      })
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'C',
+        block_type: 'text',
+        content: 'y',
+        parent_id: null,
+        position: 2,
+        deleted_at: null,
+      })
+
+      await store.getState().splitBlock('A', 'x\ny')
+      expect(mockedInvoke).toHaveBeenCalledTimes(4)
+    })
   })
 
   // ---------------------------------------------------------------------------
