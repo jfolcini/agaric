@@ -1,5 +1,50 @@
 # Session Log
 
+## Session 390 — Resolve 9 bugs: stale cache, re-entrancy guards, conflict filters, safety guards (2026-04-16)
+
+**9 items resolved (BUG-6, BUG-7, BUG-8, BUG-9, BUG-10, BUG-11, BUG-13, BUG-16, SYNC-1). REVIEW-LATER 69→60.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| BUG-6 | Fix resolve store stale cache merge order — fresh fetched data always wins on preload | 2 files |
+| BUG-7 | Add splitBlock re-entrancy guard — prevents interleaved block creation on rapid paste+Enter | 2 files |
+| BUG-8 | Add undo/redo re-entrancy guards — prevents concurrent undo/redo from reading stale undoDepth | 2 files |
+| BUG-9 | Add cycle detection to buildFlatTree — visited Set prevents infinite recursion on corrupted data | 2 files |
+| BUG-10 | Add missing is_conflict=0 filter to list_children, list_by_type, list_page_links_inner | 4 files |
+| BUG-11 | Add builtin property key guard to delete_property_def_inner | 2 files |
+| BUG-13 | Replace unwrap_or_default with expect in restore_all_deleted_inner | 1 file |
+| BUG-16 | Add Channel+Snapshot to sanitize_internal_error match arm | 1 file |
+| SYNC-1 | Replace unwrap_or_default with unwrap_or_else + tracing::warn for remote_device_id | 1 file |
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src/stores/resolve.ts` | BUG-6: both forceRefresh branches now use same merge order (fresh wins) |
+| `src/stores/__tests__/resolve.test.ts` | BUG-6: update 2 existing tests + add 1 new BUG-6 regression test |
+| `src/stores/page-blocks.ts` | BUG-7: add splitInProgress Set guard inside createPageBlockStore with try/finally |
+| `src/stores/__tests__/page-blocks.test.ts` | BUG-7: add 2 tests (concurrent rejection + guard cleanup) |
+| `src/stores/undo.ts` | BUG-8: add undoInProgress/redoInProgress Set guards inside create() with try/finally + logger.warn |
+| `src/stores/__tests__/undo.test.ts` | BUG-8: replace "rapid undo" test with re-entrancy tests; add 4 new redo guard tests |
+| `src/lib/tree-utils.ts` | BUG-9: add visited Set to DFS in buildFlatTree |
+| `src/lib/__tests__/tree-utils.test.ts` | BUG-9: add cycle detection test (A→B→A cycle) |
+| `src-tauri/src/pagination/hierarchy.rs` | BUG-10: add AND is_conflict = 0 to list_children + list_by_type |
+| `src-tauri/src/commands/pages.rs` | BUG-10: add is_conflict = 0 to all 3 JOINs in list_page_links_inner |
+| `src-tauri/src/pagination/tests.rs` | BUG-10: add 2 conflict exclusion tests (list_children + list_by_type) |
+| `src-tauri/src/commands/properties.rs` | BUG-11: add is_builtin_property_key guard before DELETE |
+| `src-tauri/src/commands/tests/property_cmd_tests.rs` | BUG-11: add delete_property_def_rejects_builtin_key test |
+| `src-tauri/src/commands/blocks/crud.rs` | BUG-13: .unwrap_or_default() → .expect("query guarantees...") |
+| `src-tauri/src/commands/mod.rs` | BUG-16: add Channel + Snapshot to sanitize match arm |
+| `src-tauri/src/sync_protocol/orchestrator.rs` | SYNC-1: .unwrap_or_default() → .unwrap_or_else(tracing::warn + empty fallback) at 2 sites |
+| `src-tauri/.sqlx/query-*.json` (2 files) | BUG-10: updated sqlx cache for modified queries |
+
+### Stats
+- 18 files changed (+453 lines, -136 lines)
+- 10 new Rust tests (2 conflict exclusion, 1 builtin guard), 1961 Rust tests pass
+- 9 new frontend tests (2 splitBlock guard, 4 undo/redo guard, 1 resolve cache, 1 cycle detection, 1 updated), 6541 frontend tests pass
+
 ## Session 389 — Resolve BUG-4 + 5 FEAT-1 follow-ups (2026-04-16)
 
 **6 items resolved (BUG-4, P-17, TEST-7, TEST-8, TEST-9, UX-183). REVIEW-LATER cleared to 0.**
