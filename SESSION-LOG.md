@@ -1,5 +1,31 @@
 # Session Log
 
+## Session 402 — Conflict copy tags/properties + GraphView tag filter (2026-04-16)
+
+**2 items resolved (MAINT-4, PERF-9c). REVIEW-LATER 2→0. All items cleared.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| MAINT-4 | Conflict copies now include tags, properties, and task fields (todo_state, priority, due/scheduled dates) | 2 files |
+| PERF-9c | GraphView tag filter dropdown — filter pages by tag before rendering, cache keyed by filter, truncation hint | 3 files |
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src-tauri/src/merge/resolve.rs` | MAINT-4: copy block_tags + block_properties + task fields to conflict copy |
+| `src-tauri/src/merge/tests.rs` | MAINT-4: 3 new tests (tags, properties, task fields) |
+| `src/components/GraphView.tsx` | PERF-9c: tag filter state, filtered fetch, cache keyed by tag, filter UI |
+| `src/components/__tests__/GraphView.test.tsx` | PERF-9c: 4 new tests + Select mock |
+| `src/lib/i18n.ts` | PERF-9c: 3 new i18n keys (filterByTag, allPages, truncatedFilterHint) |
+
+### Stats
+- 5 files changed (+494 lines, -13 lines)
+- 2000 Rust tests pass (+3 new), ~6564 frontend tests pass (+4 new)
+- REVIEW-LATER fully cleared: 0 open items (200+ resolved across 101 sessions)
+
 ## Session 401 — Virtualize PageBrowser, GraphView WebWorker, assertion messages (2026-04-16)
 
 **3 items resolved (PERF-5, PERF-9b, TEST-25). REVIEW-LATER 5→2.**
