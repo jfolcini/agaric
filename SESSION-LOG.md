@@ -1,5 +1,45 @@
 # Session Log
 
+## Session 392 — Rust bugs, frontend fixes, docs update (2026-04-16)
+
+**7 items resolved (BUG-12, BUG-14, BUG-15, MAINT-3, UX-190, UX-191, DOC-1). REVIEW-LATER 54→47.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| BUG-12 | Fix barrier race in background materializer — defer barrier notify until batch loop completes | 2 files |
+| BUG-14 | Add depth-clamping warning to import — ParseOutput struct with blocks + warnings | 2 files |
+| BUG-15 | Add upper bound (1000) on undo_depth to prevent large OFFSET scans | 2 files |
+| MAINT-3 | Rename listBacklinksGrouped param pageId → blockId to match backend | 3 files |
+| UX-190 | Add logger.error() to 5 catch blocks in useBlockTags.ts | 1 file |
+| UX-191 | Replace onMouseEnter/Leave with onPointerEnter/Leave in AttachmentRenderer | 3 files |
+| DOC-1 | Update ARCHITECTURE.md snapshot section — correct cache table count, captured tables, B-57 | 1 file |
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src-tauri/src/materializer/consumer.rs` | BUG-12: collect barrier Notifys, fire after batch loop |
+| `src-tauri/src/materializer/tests.rs` | BUG-12: add flush_background_completes_tasks_after_barrier test |
+| `src-tauri/src/import.rs` | BUG-14: add ParseOutput struct, track clamped_count, emit warning |
+| `src-tauri/src/commands/pages.rs` | BUG-14: destructure ParseOutput in import_markdown_inner |
+| `src-tauri/src/commands/history.rs` | BUG-15: add undo_depth > 1000 validation |
+| `src-tauri/src/commands/tests/history_cmd_tests.rs` | BUG-15: add test_undo_page_op_inner_rejects_undo_depth_exceeding_max |
+| `src/lib/tauri.ts` | MAINT-3: rename pageId → blockId in listBacklinksGrouped |
+| `src/components/LinkedReferences.tsx` | MAINT-3: update caller to pass blockId |
+| `src/lib/__tests__/tauri.test.ts` | MAINT-3: update 3 test call sites |
+| `src/hooks/useBlockTags.ts` | UX-190: add logger import + logger.error in 5 catch blocks |
+| `src/components/AttachmentRenderer.tsx` | UX-191: onMouseEnter/Leave → onPointerEnter/Leave |
+| `src/components/__tests__/AttachmentRenderer.test.tsx` | UX-191: update fireEvent calls |
+| `src/components/__tests__/StaticBlock.test.tsx` | UX-191: update fireEvent.mouseEnter → pointerEnter |
+| `ARCHITECTURE.md` | DOC-1: correct snapshot section (all 6 caches deleted, prop_defs/aliases captured) |
+
+### Stats
+- 14 files changed (+195 lines, -68 lines)
+- 3 new Rust tests, 1962 Rust tests pass
+- 6541 frontend tests pass
+
 ## Session 391 — Frontend perf optimizations + maintenance consolidation (2026-04-16)
 
 **6 items resolved (UX-183, UX-184, UX-185, UX-186, MAINT-1, MAINT-2). REVIEW-LATER 60→54.**
