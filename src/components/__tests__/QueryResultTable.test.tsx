@@ -2,41 +2,12 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import type { BlockRow } from '../../lib/tauri'
+import { makeBlock } from '../../__tests__/fixtures'
 import { useNavigationStore } from '../../stores/navigation'
 import type { TableColumn } from '../QueryResultTable'
 import { QueryResultTable } from '../QueryResultTable'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
-
-function makeBlock(
-  overrides: Partial<{
-    id: string
-    content: string
-    parent_id: string | null
-    todo_state: string | null
-    priority: string | null
-    due_date: string | null
-    scheduled_date: string | null
-    page_id: null
-  }> = {},
-): BlockRow {
-  return {
-    id: overrides.id ?? 'B1',
-    block_type: 'content',
-    content: overrides.content ?? 'Test block',
-    parent_id: overrides.parent_id ?? null,
-    position: 1,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: overrides.todo_state ?? null,
-    priority: overrides.priority ?? null,
-    due_date: overrides.due_date ?? null,
-    scheduled_date: overrides.scheduled_date ?? null,
-    page_id: null,
-  }
-}
 
 const defaultColumns: TableColumn[] = [
   { key: 'content', label: 'Content' },

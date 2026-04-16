@@ -2657,3 +2657,171 @@ fn serde_roundtrip_max_u64_snapshot_offer() {
         "SnapshotOffer with u64::MAX must survive roundtrip"
     );
 }
+
+// ======================================================================
+// TEST-20 — Sync error handling tests
+// ======================================================================
+
+/// A batch containing [valid_op, bad_hash_op] must be rejected atomically:
+/// the function returns an error and the valid op's effects are rolled back
+/// (i.e. never committed to the op log).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_remote_ops_rollback_on_integrity_error() {
+    // Create a valid op on a "remote" database so it gets a correct hash
+    let (remote_pool, _remote_dir) = test_pool().await;
+    let valid_op = append_local_op_at(
+        &remote_pool,
+        "remote-dev",
+        test_create_payload("BLK-VALID"),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+
+    let valid_transfer: OpTransfer = valid_op.into();
+
+    // Build a second op with a corrupted hash (will fail integrity check)
+    let bad_transfer = OpTransfer {
+        device_id: "remote-dev".into(),
+        seq: 99,
+        parent_seqs: None,
+        hash: "BADHASH0000000000000000000000000000000000000000000000000000000000".to_string(),
+        op_type: "edit_block".into(),
+        payload: r#"{"block_id":"BLK-NONEXISTENT","to_text":"bad"}"#.into(),
+        created_at: FIXED_TS.into(),
+    };
+
+    // Apply a batch of [valid_op, bad_op] on a fresh "local" database
+    let (local_pool, _local_dir) = test_pool().await;
+    let materializer = Materializer::new(local_pool.clone());
+
+    let result = apply_remote_ops(
+        &local_pool,
+        &materializer,
+        vec![valid_transfer.clone(), bad_transfer],
+    )
+    .await;
+
+    // The entire batch must be rejected
+    assert!(
+        result.is_err(),
+        "batch containing a bad-hash op must be rejected"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("integrity check failed"),
+        "error must mention integrity check, got: {err_msg}"
+    );
+
+    // The valid op must NOT be present in the local database (rollback)
+    let ops_in_local = crate::op_log::get_ops_since(&local_pool, "remote-dev", 0)
+        .await
+        .unwrap();
+    assert!(
+        ops_in_local.is_empty(),
+        "valid op must not be inserted when batch is rejected — \
+         expected 0 ops, found {}",
+        ops_in_local.len()
+    );
+
+    materializer.shutdown();
+}
+
+/// Sending a HeadExchange while the orchestrator is in StreamingOps state
+/// must be rejected as a state-machine violation.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_errors_on_head_exchange_during_streaming_ops() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+
+    // start() → ExchangingHeads
+    let _start = orch.start().await.unwrap();
+    assert_eq!(orch.session().state, SyncState::ExchangingHeads);
+
+    // Receive remote HeadExchange (empty — both sides have no data) →
+    // transitions to StreamingOps
+    orch.handle_message(SyncMessage::HeadExchange { heads: vec![] })
+        .await
+        .unwrap();
+    assert_eq!(
+        orch.session().state,
+        SyncState::StreamingOps,
+        "should be in StreamingOps after first HeadExchange"
+    );
+
+    // Send another HeadExchange — must be rejected
+    let duplicate_result = orch
+        .handle_message(SyncMessage::HeadExchange { heads: vec![] })
+        .await;
+    assert!(
+        duplicate_result.is_err(),
+        "HeadExchange in StreamingOps must be rejected"
+    );
+
+    // State should transition to Failed with a descriptive message
+    assert_eq!(
+        orch.session().state,
+        SyncState::Failed("HeadExchange received in wrong state".into()),
+        "state must be Failed after invalid HeadExchange"
+    );
+
+    materializer.shutdown();
+}
+
+/// Sending an OpBatch after an earlier OpBatch with `is_last: true` must be
+/// rejected because the orchestrator has already transitioned to a terminal
+/// state (Complete).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_errors_on_op_batch_after_is_last() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+
+    // 1. start() → ExchangingHeads
+    let _start = orch.start().await.unwrap();
+    assert_eq!(orch.session().state, SyncState::ExchangingHeads);
+
+    // 2. Receive HeadExchange → StreamingOps (returns our OpBatch)
+    orch.handle_message(SyncMessage::HeadExchange { heads: vec![] })
+        .await
+        .unwrap();
+    assert_eq!(orch.session().state, SyncState::StreamingOps);
+
+    // 3. Receive OpBatch with is_last=true → applies, merges, → Complete
+    let response = orch
+        .handle_message(SyncMessage::OpBatch {
+            ops: vec![],
+            is_last: true,
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(response, Some(SyncMessage::SyncComplete { .. })),
+        "final OpBatch should produce SyncComplete"
+    );
+    assert_eq!(
+        orch.session().state,
+        SyncState::Complete,
+        "state must be Complete after is_last=true batch"
+    );
+
+    // 4. Send another OpBatch — must be rejected (terminal state)
+    let late_batch_result = orch
+        .handle_message(SyncMessage::OpBatch {
+            ops: vec![],
+            is_last: true,
+        })
+        .await;
+    assert!(
+        late_batch_result.is_err(),
+        "OpBatch after is_last=true must be rejected"
+    );
+    let err_msg = late_batch_result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("terminal state"),
+        "error must mention terminal state, got: {err_msg}"
+    );
+
+    materializer.shutdown();
+}

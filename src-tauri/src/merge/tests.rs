@@ -2450,3 +2450,96 @@ async fn merge_missing_lca_falls_back_to_create_content() {
 
     materializer.shutdown();
 }
+
+// ===========================================================================
+// Property-based tests (proptest) — merge determinism
+// ===========================================================================
+
+mod proptest_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Strategy for generating multi-line text suitable for three-way merge.
+    fn arb_text() -> impl Strategy<Value = String> {
+        proptest::collection::vec("[a-zA-Z0-9 ,.!]{0,40}", 1..6)
+            .prop_map(|lines| lines.join("\n") + "\n")
+    }
+
+    /// Strategy for generating valid RFC 3339 timestamps with UTC offset.
+    fn arb_timestamp() -> impl Strategy<Value = String> {
+        (
+            2020u32..2030,
+            1u32..13,
+            1u32..29,
+            0u32..24,
+            0u32..60,
+            0u32..60,
+        )
+            .prop_map(|(y, m, d, h, min, s)| {
+                format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}+00:00")
+            })
+    }
+
+    proptest! {
+        /// `diffy::merge` is deterministic: same inputs always produce the same output.
+        #[test]
+        fn three_way_merge_deterministic(
+            ancestor in arb_text(),
+            ours in arb_text(),
+            theirs in arb_text(),
+        ) {
+            let r1 = diffy::merge(&ancestor, &ours, &theirs);
+            let r2 = diffy::merge(&ancestor, &ours, &theirs);
+            match (&r1, &r2) {
+                (Ok(m1), Ok(m2)) => {
+                    prop_assert_eq!(m1, m2, "clean merge must be deterministic");
+                }
+                (Err(c1), Err(c2)) => {
+                    prop_assert_eq!(c1, c2, "conflict output must be deterministic");
+                }
+                _ => {
+                    prop_assert!(
+                        false,
+                        "merge results must be consistent (both Ok or both Err)"
+                    );
+                }
+            }
+        }
+
+        /// LWW property resolution is commutative: swapping argument order
+        /// does not change the winner.
+        #[test]
+        fn property_conflict_resolution_is_commutative(
+            ts_a in arb_timestamp(),
+            ts_b in arb_timestamp(),
+            dev_a in "[a-z]{3,10}",
+            dev_b in "[a-z]{3,10}",
+            seq_a in 1i64..1000,
+            seq_b in 1i64..1000,
+            val_a in "[a-z]{1,10}",
+            val_b in "[a-z]{1,10}",
+        ) {
+            // Skip trivially identical ops (same device + same seq)
+            prop_assume!(dev_a != dev_b || seq_a != seq_b);
+
+            let op_a = make_prop_record(&dev_a, seq_a, &ts_a, "B1", "prio", &val_a);
+            let op_b = make_prop_record(&dev_b, seq_b, &ts_b, "B1", "prio", &val_b);
+
+            let result_ab = resolve_property_conflict(&op_a, &op_b)
+                .expect("resolve_property_conflict must succeed for valid set_property ops");
+            let result_ba = resolve_property_conflict(&op_b, &op_a)
+                .expect("resolve_property_conflict must succeed for valid set_property ops");
+
+            prop_assert_eq!(
+                &result_ab.winner_device,
+                &result_ba.winner_device,
+                "winner_device must be the same regardless of argument order"
+            );
+            prop_assert_eq!(
+                result_ab.winner_seq,
+                result_ba.winner_seq,
+                "winner_seq must be the same regardless of argument order"
+            );
+        }
+    }
+}

@@ -115,8 +115,8 @@ vi.mock('../../AgendaResults', () => ({
   },
 }))
 
+import { makeBlock as _makeBlock } from '../../../__tests__/fixtures'
 import { executeAgendaFilters } from '../../../lib/agenda-filters'
-import type { BlockRow } from '../../../lib/tauri'
 import { batchResolve, queryByProperty } from '../../../lib/tauri'
 import { AgendaView } from '../AgendaView'
 
@@ -124,24 +124,16 @@ const mockedExecuteAgendaFilters = vi.mocked(executeAgendaFilters)
 const mockedBatchResolve = vi.mocked(batchResolve)
 const mockedQueryByProperty = vi.mocked(queryByProperty)
 
-function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
-  return {
+/** Shared factory + domain defaults for AgendaView tests. */
+const makeBlock = (overrides: Parameters<typeof _makeBlock>[0] = {}) =>
+  _makeBlock({
     id: 'B1',
     block_type: 'block',
     content: 'test block',
     parent_id: 'PAGE1',
-    page_id: null,
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
     due_date: '2025-06-15',
-    scheduled_date: null,
     ...overrides,
-  }
-}
+  })
 
 beforeEach(() => {
   vi.clearAllMocks()

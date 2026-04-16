@@ -67,7 +67,7 @@ vi.mock('@/components/ui/button', () => ({
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 
 import { toast } from 'sonner'
-import type { BlockRow } from '../../lib/tauri'
+import { makeBlock } from '../../__tests__/fixtures'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../../lib/tauri'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { DuePanel } from '../DuePanel'
@@ -77,25 +77,6 @@ const mockedBatchResolve = vi.mocked(batchResolve)
 const mockedListProjectedAgenda = vi.mocked(listProjectedAgenda)
 const mockedQueryByProperty = vi.mocked(queryByProperty)
 const mockedToastError = vi.mocked(toast.error)
-
-function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
-  return {
-    id: 'B1',
-    block_type: 'block',
-    content: 'test block',
-    parent_id: 'PAGE1',
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: '2025-06-15',
-    scheduled_date: null,
-    page_id: 'PAGE1',
-    ...overrides,
-  }
-}
 
 const emptyResponse = {
   items: [],
@@ -249,7 +230,9 @@ describe('DuePanel', () => {
     const user = userEvent.setup()
     const onNavigate = vi.fn()
     mockedListBlocks.mockResolvedValue({
-      items: [makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE1', content: 'click me' })],
+      items: [
+        makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'click me' }),
+      ],
       next_cursor: null,
       has_more: false,
     })
@@ -271,7 +254,14 @@ describe('DuePanel', () => {
     const user = userEvent.setup()
     const onNavigate = vi.fn()
     mockedListBlocks.mockResolvedValue({
-      items: [makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE1', content: 'keyboard block' })],
+      items: [
+        makeBlock({
+          id: 'BLOCK_1',
+          parent_id: 'PAGE1',
+          page_id: 'PAGE1',
+          content: 'keyboard block',
+        }),
+      ],
       next_cursor: null,
       has_more: false,
     })

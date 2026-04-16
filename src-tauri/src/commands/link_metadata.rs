@@ -90,6 +90,252 @@ pub async fn clear_link_metadata_auth(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::init_pool;
+    use crate::link_metadata::{self, LinkMetadata};
+    use sqlx::SqlitePool;
+    use tempfile::TempDir;
+
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        (pool, dir)
+    }
+
+    // ==================================================================
+    // fetch_link_metadata_inner tests
+    // ==================================================================
+
+    #[tokio::test]
+    async fn cache_hit_returns_cached_data_without_http() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert fresh metadata (fetched "now") directly into the DB.
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let meta = LinkMetadata {
+            url: "https://example.com/cached".to_string(),
+            title: Some("Cached Title".to_string()),
+            favicon_url: Some("https://example.com/favicon.ico".to_string()),
+            description: Some("Cached description".to_string()),
+            fetched_at: now.clone(),
+            auth_required: false,
+        };
+        link_metadata::upsert(&pool, &meta).await.unwrap();
+
+        // Call the inner function — should return cached data without HTTP.
+        let result = fetch_link_metadata_inner(&pool, "https://example.com/cached".to_string())
+            .await
+            .unwrap();
+
+        // The fetched_at timestamp must match what we inserted, proving no
+        // network fetch occurred (a fresh fetch would set a new timestamp).
+        assert_eq!(
+            result.fetched_at, now,
+            "fetched_at must match the cached row — no HTTP fetch should have happened"
+        );
+        assert_eq!(result.title.as_deref(), Some("Cached Title"));
+        assert_eq!(
+            result.favicon_url.as_deref(),
+            Some("https://example.com/favicon.ico")
+        );
+        assert_eq!(result.description.as_deref(), Some("Cached description"));
+        assert!(!result.auth_required);
+    }
+
+    #[tokio::test]
+    async fn cache_hit_preserves_auth_required_flag() {
+        let (pool, _dir) = test_pool().await;
+
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let meta = LinkMetadata {
+            url: "https://private.example.com".to_string(),
+            title: None,
+            favicon_url: None,
+            description: None,
+            fetched_at: now.clone(),
+            auth_required: true,
+        };
+        link_metadata::upsert(&pool, &meta).await.unwrap();
+
+        let result = fetch_link_metadata_inner(&pool, "https://private.example.com".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(result.fetched_at, now, "should return cached row");
+        assert!(
+            result.auth_required,
+            "auth_required flag must be preserved from cache"
+        );
+    }
+
+    #[tokio::test]
+    async fn cache_miss_triggers_http_fetch() {
+        let (pool, _dir) = test_pool().await;
+
+        // No cached entry exists. Call with an unreachable URL so the HTTP
+        // fetch fails, proving the function attempted a network call.
+        let result =
+            fetch_link_metadata_inner(&pool, "http://127.0.0.1:1/nonexistent".to_string()).await;
+
+        assert!(
+            result.is_err(),
+            "should error because HTTP fetch to unreachable URL fails"
+        );
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Network error") || err_msg.contains("error"),
+            "error should mention network/fetch failure, got: {err_msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_cache_triggers_refetch() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert metadata that is 8 days old (stale by the 7-day threshold).
+        let eight_days_ago = (chrono::Utc::now() - chrono::Duration::days(8))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let meta = LinkMetadata {
+            url: "http://127.0.0.1:1/stale-entry".to_string(),
+            title: Some("Stale Title".to_string()),
+            favicon_url: None,
+            description: None,
+            fetched_at: eight_days_ago,
+            auth_required: false,
+        };
+        link_metadata::upsert(&pool, &meta).await.unwrap();
+
+        // The stale entry should cause a refetch attempt, which will fail
+        // because the URL is unreachable.
+        let result =
+            fetch_link_metadata_inner(&pool, "http://127.0.0.1:1/stale-entry".to_string()).await;
+
+        assert!(
+            result.is_err(),
+            "stale cache should trigger HTTP refetch (which fails for unreachable URL)"
+        );
+    }
+
+    #[tokio::test]
+    async fn cache_hit_with_all_none_fields() {
+        let (pool, _dir) = test_pool().await;
+
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let meta = LinkMetadata {
+            url: "https://minimal.example.com".to_string(),
+            title: None,
+            favicon_url: None,
+            description: None,
+            fetched_at: now.clone(),
+            auth_required: false,
+        };
+        link_metadata::upsert(&pool, &meta).await.unwrap();
+
+        let result = fetch_link_metadata_inner(&pool, "https://minimal.example.com".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(result.fetched_at, now);
+        assert!(result.title.is_none());
+        assert!(result.favicon_url.is_none());
+        assert!(result.description.is_none());
+        assert!(!result.auth_required);
+    }
+
+    // ==================================================================
+    // get_link_metadata_inner tests
+    // ==================================================================
+
+    #[tokio::test]
+    async fn get_inner_returns_none_when_no_cache() {
+        let (pool, _dir) = test_pool().await;
+
+        let result = get_link_metadata_inner(&pool, "https://missing.example.com".to_string())
+            .await
+            .unwrap();
+
+        assert!(result.is_none(), "should return None for uncached URL");
+    }
+
+    #[tokio::test]
+    async fn get_inner_returns_cached_metadata() {
+        let (pool, _dir) = test_pool().await;
+
+        let meta = LinkMetadata {
+            url: "https://cached.example.com".to_string(),
+            title: Some("Cached".to_string()),
+            favicon_url: Some("https://cached.example.com/icon.png".to_string()),
+            description: Some("A cached page".to_string()),
+            fetched_at: "2025-06-01T10:00:00.000Z".to_string(),
+            auth_required: false,
+        };
+        link_metadata::upsert(&pool, &meta).await.unwrap();
+
+        let result = get_link_metadata_inner(&pool, "https://cached.example.com".to_string())
+            .await
+            .unwrap()
+            .expect("should return Some for cached URL");
+
+        assert_eq!(result.url, "https://cached.example.com");
+        assert_eq!(result.title.as_deref(), Some("Cached"));
+        assert_eq!(result.description.as_deref(), Some("A cached page"));
+    }
+
+    // ==================================================================
+    // clear_link_metadata_auth_inner tests
+    // ==================================================================
+
+    #[tokio::test]
+    async fn clear_auth_inner_resets_flag_and_updates_timestamp() {
+        let (pool, _dir) = test_pool().await;
+
+        let meta = LinkMetadata {
+            url: "https://auth.example.com".to_string(),
+            title: Some("Auth Page".to_string()),
+            favicon_url: None,
+            description: None,
+            fetched_at: "2025-01-15T12:00:00.000Z".to_string(),
+            auth_required: true,
+        };
+        link_metadata::upsert(&pool, &meta).await.unwrap();
+
+        clear_link_metadata_auth_inner(&pool, "https://auth.example.com".to_string())
+            .await
+            .unwrap();
+
+        let cached = link_metadata::get_cached(&pool, "https://auth.example.com")
+            .await
+            .unwrap()
+            .expect("metadata should still exist after clearing auth flag");
+
+        assert!(
+            !cached.auth_required,
+            "auth_required should be false after clear"
+        );
+        assert_ne!(
+            cached.fetched_at, "2025-01-15T12:00:00.000Z",
+            "fetched_at should be updated to now"
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_auth_inner_noop_when_url_missing() {
+        let (pool, _dir) = test_pool().await;
+
+        // Should succeed silently even if the URL doesn't exist.
+        let result =
+            clear_link_metadata_auth_inner(&pool, "https://nonexistent.example.com".to_string())
+                .await;
+
+        assert!(
+            result.is_ok(),
+            "clearing auth on nonexistent URL should not error"
+        );
+    }
+
+    // ==================================================================
+    // is_stale tests (existing)
+    // ==================================================================
 
     #[test]
     fn is_stale_fresh_entry() {

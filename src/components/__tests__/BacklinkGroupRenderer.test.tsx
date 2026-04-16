@@ -17,6 +17,7 @@ import userEvent from '@testing-library/user-event'
 import { Component, type ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { makeBlock } from '../../__tests__/fixtures'
 import type { BacklinkGroup, BlockRow } from '../../lib/tauri'
 import { BacklinkGroupRenderer } from '../BacklinkGroupRenderer'
 import { renderRichContent } from '../StaticBlock'
@@ -46,24 +47,6 @@ vi.mock('../StaticBlock', () => ({
   renderRichContent: vi.fn((content: string, _options?: unknown) => content),
 }))
 
-function makeBlock(id: string, content: string | null): BlockRow {
-  return {
-    id,
-    block_type: 'content',
-    content,
-    parent_id: 'P1',
-    position: 1,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: null,
-  }
-}
-
 function makeGroup(pageId: string, pageTitle: string | null, blocks: BlockRow[]): BacklinkGroup {
   return { page_id: pageId, page_title: pageTitle, blocks }
 }
@@ -80,7 +63,7 @@ beforeEach(() => {
 
 describe('BacklinkGroupRenderer', () => {
   it('renders group header with title and block count', () => {
-    const groups = [makeGroup('P1', 'My Page', [makeBlock('B1', 'block content')])]
+    const groups = [makeGroup('P1', 'My Page', [makeBlock({ id: 'B1', content: 'block content' })])]
 
     render(
       <BacklinkGroupRenderer
@@ -97,7 +80,7 @@ describe('BacklinkGroupRenderer', () => {
   })
 
   it('renders collapsed group without showing blocks', () => {
-    const groups = [makeGroup('P1', 'Page One', [makeBlock('B1', 'hidden block')])]
+    const groups = [makeGroup('P1', 'Page One', [makeBlock({ id: 'B1', content: 'hidden block' })])]
 
     render(
       <BacklinkGroupRenderer
@@ -115,7 +98,9 @@ describe('BacklinkGroupRenderer', () => {
   })
 
   it('renders expanded group with blocks visible', () => {
-    const groups = [makeGroup('P1', 'Page One', [makeBlock('B1', 'visible block')])]
+    const groups = [
+      makeGroup('P1', 'Page One', [makeBlock({ id: 'B1', content: 'visible block' })]),
+    ]
 
     render(
       <BacklinkGroupRenderer
@@ -134,7 +119,7 @@ describe('BacklinkGroupRenderer', () => {
   it('calls onToggleGroup when header is clicked', async () => {
     const user = userEvent.setup()
     const onToggle = vi.fn()
-    const groups = [makeGroup('P1', 'Page One', [makeBlock('B1', 'block')])]
+    const groups = [makeGroup('P1', 'Page One', [makeBlock({ id: 'B1', content: 'block' })])]
 
     render(
       <BacklinkGroupRenderer
@@ -152,7 +137,11 @@ describe('BacklinkGroupRenderer', () => {
   })
 
   it('renders child blocks with badge, content, and truncated ID', () => {
-    const groups = [makeGroup('P1', 'Page', [makeBlock('01HAAAAA00000000000001', 'My block text')])]
+    const groups = [
+      makeGroup('P1', 'Page', [
+        makeBlock({ id: '01HAAAAA00000000000001', content: 'My block text' }),
+      ]),
+    ]
 
     render(
       <BacklinkGroupRenderer
@@ -174,7 +163,7 @@ describe('BacklinkGroupRenderer', () => {
   })
 
   it('handles null page_title with "Untitled"', () => {
-    const groups = [makeGroup('P1', null, [makeBlock('B1', 'block')])]
+    const groups = [makeGroup('P1', null, [makeBlock({ id: 'B1', content: 'block' })])]
 
     render(
       <BacklinkGroupRenderer
@@ -192,8 +181,11 @@ describe('BacklinkGroupRenderer', () => {
 
   it('renders multiple groups', () => {
     const groups = [
-      makeGroup('P1', 'Page One', [makeBlock('B1', 'block 1')]),
-      makeGroup('P2', 'Page Two', [makeBlock('B2', 'block 2'), makeBlock('B3', 'block 3')]),
+      makeGroup('P1', 'Page One', [makeBlock({ id: 'B1', content: 'block 1' })]),
+      makeGroup('P2', 'Page Two', [
+        makeBlock({ id: 'B2', content: 'block 2' }),
+        makeBlock({ id: 'B3', content: 'block 3' }),
+      ]),
     ]
 
     render(
@@ -217,7 +209,7 @@ describe('BacklinkGroupRenderer', () => {
   it('calls handleBlockClick when a block item is clicked', async () => {
     const user = userEvent.setup()
     const onClick = vi.fn()
-    const block = makeBlock('B1', 'clickable block')
+    const block = makeBlock({ id: 'B1', content: 'clickable block' })
     const groups = [makeGroup('P1', 'Page', [block])]
 
     render(
@@ -238,7 +230,7 @@ describe('BacklinkGroupRenderer', () => {
   it('calls handleBlockKeyDown on keyboard events', async () => {
     const user = userEvent.setup()
     const onKeyDown = vi.fn()
-    const block = makeBlock('B1', 'keyboard block')
+    const block = makeBlock({ id: 'B1', content: 'keyboard block' })
     const groups = [makeGroup('P1', 'Page', [block])]
 
     render(
@@ -262,7 +254,7 @@ describe('BacklinkGroupRenderer', () => {
   })
 
   it('shows "Empty" for blocks with null content', () => {
-    const groups = [makeGroup('P1', 'Page', [makeBlock('B1', null)])]
+    const groups = [makeGroup('P1', 'Page', [makeBlock({ id: 'B1', content: null })])]
 
     render(
       <BacklinkGroupRenderer
@@ -279,7 +271,7 @@ describe('BacklinkGroupRenderer', () => {
   })
 
   it('has accessible aria-label on block lists', () => {
-    const groups = [makeGroup('P1', 'Page One', [makeBlock('B1', 'block')])]
+    const groups = [makeGroup('P1', 'Page One', [makeBlock({ id: 'B1', content: 'block' })])]
 
     render(
       <BacklinkGroupRenderer
@@ -296,7 +288,9 @@ describe('BacklinkGroupRenderer', () => {
   })
 
   it('has no a11y violations', async () => {
-    const groups = [makeGroup('P1', 'Page One', [makeBlock('B1', 'accessible block')])]
+    const groups = [
+      makeGroup('P1', 'Page One', [makeBlock({ id: 'B1', content: 'accessible block' })]),
+    ]
 
     const { container } = render(
       <BacklinkGroupRenderer
@@ -316,7 +310,7 @@ describe('BacklinkGroupRenderer', () => {
   })
 
   it('has no a11y violations with collapsed group', async () => {
-    const groups = [makeGroup('P1', 'Page One', [makeBlock('B1', 'hidden block')])]
+    const groups = [makeGroup('P1', 'Page One', [makeBlock({ id: 'B1', content: 'hidden block' })])]
 
     const { container } = render(
       <BacklinkGroupRenderer
@@ -405,7 +399,7 @@ describe('BacklinkGroupRenderer', () => {
         throw new Error('parse failure')
       })
 
-      const groups = [makeGroup('P1', 'Page', [makeBlock('B1', 'bad content')])]
+      const groups = [makeGroup('P1', 'Page', [makeBlock({ id: 'B1', content: 'bad content' })])]
 
       render(
         <TestErrorBoundary>
@@ -432,9 +426,9 @@ describe('BacklinkGroupRenderer', () => {
     it('renders "(empty)" for every null-content block in a group', () => {
       const groups = [
         makeGroup('P1', 'Page', [
-          makeBlock('B1', null),
-          makeBlock('B2', null),
-          makeBlock('B3', 'valid'),
+          makeBlock({ id: 'B1', content: null }),
+          makeBlock({ id: 'B2', content: null }),
+          makeBlock({ id: 'B3', content: 'valid' }),
         ]),
       ]
 

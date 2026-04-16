@@ -61,28 +61,20 @@ vi.mock('@/components/ui/button', () => ({
   ),
 }))
 
-import type { BlockRow } from '../../lib/tauri'
+import { makeBlock as _makeBlock } from '../../__tests__/fixtures'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { AgendaResults, type AgendaResultsProps } from '../AgendaResults'
 
-function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
-  return {
+/** Shared factory + domain defaults for AgendaResults tests. */
+const makeBlock = (overrides: Parameters<typeof _makeBlock>[0] = {}) =>
+  _makeBlock({
     id: 'B1',
     block_type: 'block',
     content: 'test block',
     parent_id: 'PAGE1',
-    page_id: null,
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
     todo_state: 'TODO',
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
     ...overrides,
-  }
-}
+  })
 
 const noopFn = () => {}
 

@@ -18,27 +18,20 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import type { BlockRow } from '../../lib/tauri'
+import { makeBlock as _makeBlock } from '../../__tests__/fixtures'
 import { OverdueSection } from '../OverdueSection'
 
-function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
-  return {
+/** Shared factory + domain defaults for OverdueSection tests. */
+const makeBlock = (overrides: Parameters<typeof _makeBlock>[0] = {}) =>
+  _makeBlock({
     id: 'B1',
     block_type: 'block',
     content: 'overdue block',
     parent_id: 'PAGE1',
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
     todo_state: 'TODO',
-    priority: null,
     due_date: '2025-01-01',
-    scheduled_date: null,
-    page_id: null,
     ...overrides,
-  }
-}
+  })
 
 describe('OverdueSection', () => {
   const defaultTitles = new Map([['PAGE1', 'My Page']])

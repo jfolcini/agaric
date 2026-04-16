@@ -2578,3 +2578,151 @@ async fn apply_snapshot_caches_are_empty_after_restore() {
         "projected_agenda_cache must be empty after restore (no materializer run)"
     );
 }
+
+// ===========================================================================
+// Property-based tests (proptest) — CBOR codec roundtrip
+// ===========================================================================
+
+mod proptest_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Strategy for generating an arbitrary `BlockSnapshot`.
+    fn arb_block_snapshot() -> impl Strategy<Value = BlockSnapshot> {
+        (
+            "BLK_[0-9]{1,4}",                           // id
+            "content|page",                             // block_type
+            proptest::option::of("[a-zA-Z0-9 ]{0,50}"), // content
+            proptest::option::of("BLK_[0-9]{1,4}"),     // parent_id
+            proptest::option::of(0i64..1000),           // position
+        )
+            .prop_map(
+                |(id, block_type, content, parent_id, position)| BlockSnapshot {
+                    id,
+                    block_type,
+                    content,
+                    parent_id,
+                    position,
+                    deleted_at: None,
+                    is_conflict: 0,
+                    conflict_source: None,
+                    todo_state: None,
+                    priority: None,
+                    due_date: None,
+                    scheduled_date: None,
+                },
+            )
+    }
+
+    /// Strategy for generating an arbitrary `BlockTagSnapshot`.
+    fn arb_block_tag() -> impl Strategy<Value = BlockTagSnapshot> {
+        ("BLK_[0-9]{1,4}", "tag_[a-z]{2,6}")
+            .prop_map(|(block_id, tag_id)| BlockTagSnapshot { block_id, tag_id })
+    }
+
+    /// Strategy for generating an arbitrary `BlockPropertySnapshot`.
+    fn arb_block_property() -> impl Strategy<Value = BlockPropertySnapshot> {
+        (
+            "BLK_[0-9]{1,4}",
+            "[a-z_]{2,8}",
+            proptest::option::of("[a-zA-Z0-9]{0,20}"),
+        )
+            .prop_map(|(block_id, key, value_text)| BlockPropertySnapshot {
+                block_id,
+                key,
+                value_text,
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            })
+    }
+
+    /// Strategy for generating an arbitrary `BlockLinkSnapshot`.
+    fn arb_block_link() -> impl Strategy<Value = BlockLinkSnapshot> {
+        ("BLK_[0-9]{1,4}", "BLK_[0-9]{1,4}").prop_map(|(source_id, target_id)| BlockLinkSnapshot {
+            source_id,
+            target_id,
+        })
+    }
+
+    /// Strategy for generating an arbitrary `AttachmentSnapshot`.
+    fn arb_attachment() -> impl Strategy<Value = AttachmentSnapshot> {
+        (
+            "ATT_[0-9]{1,4}",
+            "BLK_[0-9]{1,4}",
+            "image/png|application/pdf|text/plain",
+            "[a-z]{3,8}\\.[a-z]{3}",
+            1i64..1_000_000,
+            "attachments/[a-z]{3,10}",
+        )
+            .prop_map(|(id, block_id, mime_type, filename, size_bytes, fs_path)| {
+                AttachmentSnapshot {
+                    id,
+                    block_id,
+                    mime_type,
+                    filename,
+                    size_bytes,
+                    fs_path,
+                    created_at: "2025-01-01T00:00:00Z".into(),
+                    deleted_at: None,
+                }
+            })
+    }
+
+    /// Strategy for generating a complete `SnapshotData` with random fields.
+    fn arb_snapshot_data() -> impl Strategy<Value = SnapshotData> {
+        (
+            "dev-[a-z0-9]{3,10}",                                   // snapshot_device_id
+            "[a-f0-9]{16,64}",                                      // up_to_hash
+            proptest::collection::vec(arb_block_snapshot(), 0..=5), // blocks
+            proptest::collection::vec(arb_block_tag(), 0..3),       // block_tags
+            proptest::collection::vec(arb_block_property(), 0..3),  // block_properties
+            proptest::collection::vec(arb_block_link(), 0..3),      // block_links
+            proptest::collection::vec(arb_attachment(), 0..2),      // attachments
+            proptest::collection::btree_map("dev-[a-z]{2,8}", 1i64..1000, 0..3), // up_to_seqs
+        )
+            .prop_map(
+                |(device_id, hash, blocks, tags, props, links, atts, seqs)| SnapshotData {
+                    schema_version: SCHEMA_VERSION,
+                    snapshot_device_id: device_id,
+                    up_to_seqs: seqs,
+                    up_to_hash: hash,
+                    tables: SnapshotTables {
+                        blocks,
+                        block_tags: tags,
+                        block_properties: props,
+                        block_links: links,
+                        attachments: atts,
+                        property_definitions: vec![],
+                        page_aliases: vec![],
+                    },
+                },
+            )
+    }
+
+    proptest! {
+        /// CBOR codec round-trip: encode → decode preserves all fields.
+        #[test]
+        fn snapshot_cbor_roundtrip(data in arb_snapshot_data()) {
+            let encoded = encode_snapshot(&data).expect("encode must succeed");
+            let decoded = decode_snapshot(&encoded).expect("decode must succeed");
+
+            // Compare via JSON serialization since SnapshotData doesn't derive PartialEq.
+            let original_json = serde_json::to_string(&data).expect("serialize original");
+            let decoded_json = serde_json::to_string(&decoded).expect("serialize decoded");
+            prop_assert_eq!(
+                original_json,
+                decoded_json,
+                "decoded snapshot must equal original (compared via JSON serialization)"
+            );
+        }
+
+        /// Encoding is deterministic: the same data always produces identical bytes.
+        #[test]
+        fn snapshot_encode_deterministic(data in arb_snapshot_data()) {
+            let enc1 = encode_snapshot(&data).expect("encode #1");
+            let enc2 = encode_snapshot(&data).expect("encode #2");
+            prop_assert_eq!(enc1, enc2, "encoding the same data must produce identical bytes");
+        }
+    }
+}

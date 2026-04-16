@@ -17,30 +17,12 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { makeBlock } from '../../../__tests__/fixtures'
 import type { BlockRow } from '../../../lib/tauri'
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
 const mockedInvoke = vi.mocked(invoke)
-
-function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
-  return {
-    id: 'B1',
-    block_type: 'content',
-    content: 'Test task',
-    parent_id: 'PAGE_1',
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: 'TODO',
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: 'PAGE_1',
-    ...overrides,
-  }
-}
 
 /** Format a Date as YYYY-MM-DD in local time (matches component's toLocalDateStr). */
 function toLocalDateStr(d: Date): string {
@@ -64,15 +46,37 @@ function daysAgo(n: number): string {
 
 // Build test blocks with dates relative to today
 function makeYesterdayBlock(id = 'Y1', content = 'Yesterday task'): BlockRow {
-  return makeBlock({ id, content, todo_state: 'TODO', due_date: daysAgo(1) })
+  return makeBlock({
+    id,
+    content,
+    todo_state: 'TODO',
+    due_date: daysAgo(1),
+    parent_id: 'PAGE_1',
+    page_id: 'PAGE_1',
+  })
 }
 
 function makeThisWeekBlock(id = 'W1', content = 'This week task'): BlockRow {
-  return makeBlock({ id, content, todo_state: 'DOING', due_date: daysAgo(3) })
+  return makeBlock({
+    id,
+    content,
+    todo_state: 'DOING',
+    due_date: daysAgo(3),
+    parent_id: 'PAGE_1',
+    page_id: 'PAGE_1',
+  })
 }
 
 function makeOlderBlock(id = 'O1', content = 'Older task'): BlockRow {
-  return makeBlock({ id, content, todo_state: 'TODO', due_date: daysAgo(14), priority: '1' })
+  return makeBlock({
+    id,
+    content,
+    todo_state: 'TODO',
+    due_date: daysAgo(14),
+    priority: '1',
+    parent_id: 'PAGE_1',
+    page_id: 'PAGE_1',
+  })
 }
 
 // ── Mock setup ──────────────────────────────────────────────────────

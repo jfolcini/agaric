@@ -100,32 +100,13 @@ vi.mock('../PageLink', () => ({
   ),
 }))
 
+import { makeBlock } from '../../__tests__/fixtures'
 import { logger } from '../../lib/logger'
-import type { BlockRow } from '../../lib/tauri'
 import { batchResolve, queryByProperty } from '../../lib/tauri'
 import { DonePanel } from '../DonePanel'
 
 const mockedQueryByProperty = vi.mocked(queryByProperty)
 const mockedBatchResolve = vi.mocked(batchResolve)
-
-function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
-  return {
-    id: 'B1',
-    block_type: 'block',
-    content: 'test block',
-    parent_id: 'PAGE1',
-    position: 0,
-    deleted_at: null,
-    is_conflict: false,
-    conflict_type: null,
-    todo_state: 'DONE',
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: 'PAGE1',
-    ...overrides,
-  }
-}
 
 const emptyResponse = {
   items: [],
@@ -271,7 +252,9 @@ describe('DonePanel', () => {
     const user = userEvent.setup()
     const onNavigate = vi.fn()
     mockedQueryByProperty.mockResolvedValue({
-      items: [makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE1', content: 'click me' })],
+      items: [
+        makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'click me' }),
+      ],
       next_cursor: null,
       has_more: false,
     })
