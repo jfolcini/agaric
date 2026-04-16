@@ -1,5 +1,39 @@
 # Session Log
 
+## Session 396 — Perf: paginate preload, debounce, json_each, maxItems, graph warning + DatePicker tests (2026-04-16)
+
+**6 items resolved (PERF-2, PERF-3, PERF-6, PERF-7, PERF-9a, TEST-2). REVIEW-LATER 31→25.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| PERF-2 | Paginate useResolveStore.preload() — loop with cursor until has_more=false | 2 files |
+| PERF-3 | Scope PropertyIsEmpty filter to candidate set via json_each() | 2 files |
+| PERF-6 | Add maxItems cap (5000) to usePaginatedQuery with capped flag | 2 files |
+| PERF-7 | Debounce set() version bumps via queueMicrotask | 2 files |
+| PERF-9a | GraphView truncation Badge when has_more=true | 3 files |
+| TEST-2 | Add 6 component tests for BlockDatePicker | 1 file (new) |
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src/stores/resolve.ts` | PERF-2: pagination loop; PERF-7: queueMicrotask debounce in set() |
+| `src/stores/__tests__/resolve.test.ts` | PERF-2: paginated mock; PERF-7: debounce test |
+| `src-tauri/src/backlink/filters.rs` | PERF-3: resolve_filter_with_candidates + json_each SQL |
+| `src-tauri/src/backlink/tests.rs` | PERF-3: property_is_empty_scoped_to_candidate_set test |
+| `src/hooks/usePaginatedQuery.ts` | PERF-6: maxItems param + capped state |
+| `src/hooks/__tests__/usePaginatedQuery.test.ts` | PERF-6: 4 new tests |
+| `src/components/GraphView.tsx` | PERF-9a: hasMore state + Badge |
+| `src/components/__tests__/GraphView.test.tsx` | PERF-9a: 2 truncation tests |
+| `src/lib/i18n.ts` | PERF-9a: graph.truncated key |
+| `src/components/block-tree/__tests__/BlockDatePicker.test.tsx` | TEST-2: 6 new tests (new file) |
+
+### Stats
+- 10 files changed (+566 lines, -107 lines)
+- 13 new tests (1 pagination, 1 debounce, 1 json_each, 4 maxItems, 2 truncation, 6 DatePicker); ~1980 Rust + ~6560 frontend tests pass
+
 ## Session 395 — Rust perf optimizations + backend test quality (2026-04-16)
 
 **5 items resolved (PERF-1, PERF-4, PERF-11, TEST-18, TEST-19). REVIEW-LATER 36→31.**
