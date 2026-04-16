@@ -1,5 +1,61 @@
 # Session Log
 
+## Session 399 — BUG-5 breadcrumbs, PERF-8 FTS limit, PERF-10a compaction phases, TEST-9/10/11 assertions (2026-04-16)
+
+**6 items resolved (BUG-5, PERF-8, PERF-10a, TEST-9, TEST-10, TEST-11). REVIEW-LATER 16→10.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| BUG-5 | Replace parent_id with page_id for breadcrumbs in 10 source + 15 test files | 25 files |
+| PERF-8 | Add LIMIT 10001 to unlinked refs FTS query + truncated flag + UI notice | 8 files |
+| PERF-10a | Split compact_op_log into 3 phases (read/encode/write), seq-bounded DELETE | 3 files |
+| TEST-9 | Strengthen 4 weak assertions in EditableBlock.test.tsx | 1 file |
+| TEST-10 | Strengthen 1 weak assertion in page-blocks.test.ts | 1 file |
+| TEST-11 | Strengthen 16 weak assertions across 7 test files | 7 files |
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src-tauri/src/snapshot/create.rs` | PERF-10a: 3-phase compact_op_log, pub(crate) helpers |
+| `src-tauri/src/snapshot/mod.rs` | PERF-10a: re-export collect_tables/collect_frontier |
+| `src-tauri/src/snapshot/tests.rs` | PERF-10a: 3 new safety tests |
+| `src-tauri/src/backlink/types.rs` | PERF-8: truncated field on GroupedBacklinkResponse |
+| `src-tauri/src/backlink/grouped.rs` | PERF-8: LIMIT 10001 + truncation detection |
+| `src/components/UnlinkedReferences.tsx` | PERF-8: truncated state + UI notice |
+| `src/lib/i18n.ts` | PERF-8: unlinkedRefs.truncated key |
+| `src/lib/bindings.ts` | PERF-8: regenerated specta bindings |
+| `src/lib/tauri-mock.ts` | PERF-8: truncated: false on mock responses |
+| `src/lib/query-result-utils.ts` | BUG-5: parent_id → page_id |
+| `src/components/AlertSection.tsx` | BUG-5: parent_id → page_id |
+| `src/components/DuePanel.tsx` | BUG-5: parent_id → page_id |
+| `src/components/DonePanel.tsx` | BUG-5: parent_id → page_id |
+| `src/components/SearchPanel.tsx` | BUG-5: parent_id → page_id |
+| `src/components/TagFilterPanel.tsx` | BUG-5: parent_id → page_id |
+| `src/components/journal/UnfinishedTasks.tsx` | BUG-5: parent_id → page_id |
+| `src/components/journal/AgendaView.tsx` | BUG-5: simplified to page_id only |
+| `src/hooks/useDuePanelData.ts` | BUG-5: parent_id → page_id (5 locations) |
+| `src/hooks/useQueryExecution.ts` | BUG-5: parent_id → page_id |
+| `src/components/__tests__/EditableBlock.test.tsx` | TEST-9: 4 assertions strengthened |
+| `src/stores/__tests__/page-blocks.test.ts` | TEST-10: 1 assertion strengthened |
+| `src/hooks/__tests__/useBlockDatePicker.test.ts` | TEST-11: 1 assertion strengthened |
+| `src/hooks/__tests__/useBlockMultiSelect.test.ts` | TEST-11: 4 assertions strengthened |
+| `src/components/__tests__/AttachmentList.test.tsx` | TEST-11: 5 assertions strengthened |
+| `src/components/__tests__/BlockListItem.test.tsx` | TEST-11: 2 assertions strengthened |
+| `src/components/__tests__/BlockPropertyEditor.test.tsx` | TEST-11: 2 assertions strengthened |
+| `src/components/journal/__tests__/RescheduleDropZone.test.tsx` | TEST-11: 1 assertion strengthened |
+| `src/components/__tests__/BlockTree.test.tsx` | TEST-11: 1 assertion strengthened |
+| 15 additional test files | BUG-5 + PERF-8: page_id fixtures + truncated: false |
+
+### Stats
+- 46 files changed (+692 lines, -181 lines)
+- 1992 Rust tests pass, ~6564 frontend tests pass
+- 3 new Rust tests (PERF-10a compaction safety)
+- 2 new frontend tests (PERF-8 truncation notice)
+- 21 weak assertions strengthened (TEST-9/10/11)
+
 ## Session 398 — i18n in 25 test files + aria-label fixes in 7 components (2026-04-16)
 
 **4 items resolved (TEST-6, TEST-7, TEST-8, UX-193). REVIEW-LATER 20→16.**
