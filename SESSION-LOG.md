@@ -1,5 +1,40 @@
 # Session Log
 
+## Session 391 — Frontend perf optimizations + maintenance consolidation (2026-04-16)
+
+**6 items resolved (UX-183, UX-184, UX-185, UX-186, MAINT-1, MAINT-2). REVIEW-LATER 60→54.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| UX-183 | Wrap BlockGutterControls, BlockInlineControls, BlockListItem in React.memo | 3 files |
+| UX-184 | Extract SortableBlock inline callbacks to useCallback with stable deps | 1 file |
+| UX-185 | Memoize renderRichContent in BlockListItem with useMemo keyed on content | 1 file (same as UX-183) |
+| UX-186 | Memoize SortableContext items array in BlockListRenderer with useMemo | 1 file |
+| MAINT-1 | Replace template literal className with cn() in 5 components | 5 files |
+| MAINT-2 | Replace Loader2+animate-spin with Spinner in ChevronToggle | 1 file |
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src/components/BlockGutterControls.tsx` | UX-183: wrap export in React.memo |
+| `src/components/BlockInlineControls.tsx` | UX-183: wrap export in React.memo; MAINT-1: template literal → cn() |
+| `src/components/BlockListItem.tsx` | UX-183: wrap export in memo(); UX-185: useMemo for renderRichContent |
+| `src/components/SortableBlock.tsx` | UX-184: extract 2 inline callbacks to useCallback |
+| `src/components/BlockListRenderer.tsx` | UX-186: extract SortableContext items to useMemo |
+| `src/components/PageBrowser.tsx` | MAINT-1: template literal → cn() |
+| `src/components/UnlinkedReferences.tsx` | MAINT-1: template literal → cn() |
+| `src/App.tsx` | MAINT-1: template literal → cn() |
+| `src/components/AlertSection.tsx` | MAINT-1: template literal → cn() |
+| `src/components/ui/chevron-toggle.tsx` | MAINT-2: Loader2+animate-spin → Spinner |
+| `src/components/ui/__tests__/chevron-toggle.test.tsx` | MAINT-2: update test name to reflect Spinner |
+
+### Stats
+- 11 files changed (+53 lines, -24 lines)
+- 0 new tests, 6541 frontend tests pass (+ pre-existing BacklinkFilterBuilder failures unrelated to changes)
+
 ## Session 390 — Resolve 9 bugs: stale cache, re-entrancy guards, conflict filters, safety guards (2026-04-16)
 
 **9 items resolved (BUG-6, BUG-7, BUG-8, BUG-9, BUG-10, BUG-11, BUG-13, BUG-16, SYNC-1). REVIEW-LATER 69→60.**
