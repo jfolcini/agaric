@@ -220,7 +220,7 @@ File: `src/components/ui/button.tsx` (button variants), `src/components/Sortable
 
 - **Use `onPointerDown` / `onPointerEnter`** — never `onMouseDown` / `onMouseEnter`. Pointer events work on mouse, touch, and stylus.
 - **FormattingToolbar:** All 14 handlers use `onPointerDown` with `e.preventDefault()` to prevent editor focus loss.
-- **Hover-reveal controls:** `opacity-0 → opacity-100` on group hover (desktop). Always visible on touch devices.
+- **Hover-reveal controls:** `opacity-0 → opacity-100` on group hover (desktop). Always visible on touch devices — **except** block gutter controls (drag handle, history, delete), which remain hover/focus-reveal on touch to preserve screen real estate. Mobile users access these actions via long-press context menu or block-active state instead.
 
 ### Drag & Drop Sensors
 
@@ -1285,7 +1285,7 @@ Before shipping any UI change, verify:
 
 6. **Hard-coded colors instead of tokens** — One-off `text-gray-500` or `bg-slate-100` values drift from the theme. Use semantic tokens (`text-muted-foreground`, `bg-secondary`) so dark mode works automatically.
 
-7. **Hover-only interactions** — Hover doesn't exist on touch. Hover-reveal controls (delete buttons, drag handles) must have touch alternatives — either always-visible or triggered by long-press/context menu.
+7. **Hover-only interactions** — Hover doesn't exist on touch. Hover-reveal controls (delete buttons, drag handles) must have touch alternatives — either always-visible or triggered by long-press/context menu. **Exception:** Block gutter controls (`BlockGutterControls`) intentionally omit `[@media(pointer:coarse)]:opacity-100` — screen real estate on mobile is too valuable for always-visible gutter buttons. These are accessible via long-press context menu, block-active state, and focus-within.
 
 8. **Missing `prefers-reduced-motion` check** — The global CSS rule handles most cases, but custom `requestAnimationFrame` loops or JS-driven animations need manual checks.
 
