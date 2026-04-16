@@ -237,7 +237,7 @@ pub async fn import_markdown_inner(
     content: String,
     filename: Option<String>,
 ) -> Result<ImportResult, AppError> {
-    let parsed = import::parse_logseq_markdown(&content);
+    let parse_output = import::parse_logseq_markdown(&content);
 
     // Derive page title from filename (strip .md extension)
     let page_title = filename
@@ -263,12 +263,12 @@ pub async fn import_markdown_inner(
 
     let mut blocks_created: i64 = 0;
     let mut properties_set: i64 = 0;
-    let mut warnings: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = parse_output.warnings;
 
     // Track parent stack: (depth, block_id)
     let mut parent_stack: Vec<(usize, String)> = vec![(0, page_id.clone())];
 
-    for block in &parsed {
+    for block in &parse_output.blocks {
         // Find the correct parent: pop stack until we find a parent at depth < block.depth
         while parent_stack.len() > 1 && parent_stack.last().is_some_and(|(d, _)| *d >= block.depth)
         {

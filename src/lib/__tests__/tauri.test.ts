@@ -1645,7 +1645,7 @@ describe('listBacklinksGrouped', () => {
   it('invokes list_backlinks_grouped with pageId mapped to blockId', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyResponse)
 
-    const result = await listBacklinksGrouped({ pageId: 'PAGE1' })
+    const result = await listBacklinksGrouped({ blockId: 'PAGE1' })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('list_backlinks_grouped', {
@@ -1663,7 +1663,7 @@ describe('listBacklinksGrouped', () => {
     const sort = { type: 'Created' as const, dir: 'Desc' as const }
     mockedInvoke.mockResolvedValueOnce(emptyResponse)
 
-    await listBacklinksGrouped({ pageId: 'PAGE1', filters, sort, cursor: 'cur1', limit: 10 })
+    await listBacklinksGrouped({ blockId: 'PAGE1', filters, sort, cursor: 'cur1', limit: 10 })
 
     expect(mockedInvoke).toHaveBeenCalledWith('list_backlinks_grouped', {
       blockId: 'PAGE1',
@@ -1951,7 +1951,7 @@ describe('cross-cutting', () => {
     await redoPageOp({ undoDeviceId: 'd', undoSeq: 1 })
     await computeEditDiff({ deviceId: 'd', seq: 1 })
     await queryBacklinksFiltered({ blockId: 'id' })
-    await listBacklinksGrouped({ pageId: 'id' })
+    await listBacklinksGrouped({ blockId: 'id' })
     await listUnlinkedReferences({ pageId: 'id' })
     await listPropertyKeys()
     await createPropertyDef({ key: 'k', valueType: 'text' })

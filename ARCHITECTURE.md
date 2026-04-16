@@ -1094,14 +1094,13 @@ SnapshotData {
 
 Cache tables (`tags_cache`, `pages_cache`, `agenda_cache`, `block_tag_inherited`,
 `projected_agenda_cache`, FTS5) are **not included** — they rebuild from core tables on first
-materializer dispatch after a RESET. Note: `apply_snapshot()` currently only deletes 4 of these
-6 cache tables (`tags_cache`, `pages_cache`, `agenda_cache`, `fts_blocks`); `block_tag_inherited`
-and `projected_agenda_cache` are left with stale data until the materializer rebuilds them.
+materializer dispatch after a RESET. `apply_snapshot()` deletes all 6 cache tables before
+restoring core data, ensuring no stale cache entries survive.
 
-**Known gap (B-57):** `property_definitions` and `page_aliases` are NOT captured in snapshots.
-Restoring a snapshot loses property type metadata and page aliases. `apply_snapshot()` docstring
-says "caller is responsible for triggering cache rebuilds" but no current caller does — cache
-tables are left empty until the next materializer dispatch.
+`property_definitions` and `page_aliases` are captured in snapshots (added with backward-compatible
+`#[serde(default)]` fields at SCHEMA_VERSION 2). Restoring a snapshot preserves property type
+metadata and page aliases. Note: snapshot restoration is implemented but not yet used in sync —
+the orchestrator rejects `SnapshotOffer` messages.
 
 **Rejected:** SQLite backup API dump (large, version-coupled), full op replay from op 1 (correct
 but slow), JSON instead of CBOR (2–5x larger).

@@ -401,6 +401,11 @@ pub async fn undo_page_op_inner(
             "undo_depth must be non-negative".into(),
         ));
     }
+    if undo_depth > 1000 {
+        return Err(AppError::Validation(
+            "undo_depth exceeds maximum of 1000".into(),
+        ));
+    }
 
     use crate::reverse;
 

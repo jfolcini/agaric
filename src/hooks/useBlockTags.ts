@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { i18n } from '../lib/i18n'
+import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
 import { addTag, createBlock, listBlocks, listTagsForBlock, removeTag } from '../lib/tauri'
 import { usePageBlockStoreApi } from '../stores/page-blocks'
@@ -39,7 +40,8 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
       .then((resp) => {
         setAllTags(resp.items.map((t: BlockRow) => ({ id: t.id, name: t.content ?? '' })))
       })
-      .catch(() => {
+      .catch((error) => {
+        logger.error('useBlockTags', 'Failed to load all tags', undefined, error)
         toast.error(i18n.t('tags.loadFailed'))
       })
   }, [])
@@ -54,7 +56,8 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
           setAppliedTagIds(new Set(tagIds))
           setLoading(false)
         })
-        .catch(() => {
+        .catch((error) => {
+          logger.error('useBlockTags', 'Failed to load tags for block', { blockId }, error)
           toast.error(i18n.t('tags.loadFailed'))
           setLoading(false)
         })
@@ -71,7 +74,8 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
         const { rootParentId } = pageStore.getState()
         if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
         setAppliedTagIds((prev) => new Set([...prev, tagId]))
-      } catch {
+      } catch (error) {
+        logger.error('useBlockTags', 'Failed to add tag', { blockId, tagId }, error)
         toast.error(i18n.t('tags.addFailed'))
       }
     },
@@ -90,7 +94,8 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
           next.delete(tagId)
           return next
         })
-      } catch {
+      } catch (error) {
+        logger.error('useBlockTags', 'Failed to remove tag', { blockId, tagId }, error)
         toast.error(i18n.t('tags.deleteFailed'))
       }
     },
@@ -112,7 +117,8 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
           setAppliedTagIds((prev) => new Set([...prev, resp.id]))
         }
-      } catch {
+      } catch (error) {
+        logger.error('useBlockTags', 'Failed to create tag', { blockId, name: trimmed }, error)
         toast.error(i18n.t('tags.createFailed'))
       }
     },

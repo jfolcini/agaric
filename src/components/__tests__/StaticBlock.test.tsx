@@ -901,7 +901,7 @@ describe('StaticBlock', () => {
       const { container } = renderWithImage()
 
       const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]') as Element
-      fireEvent.mouseEnter(wrapper)
+      fireEvent.pointerEnter(wrapper)
 
       const btn = screen.getByTestId('image-resize-25')
       fireEvent.click(btn)

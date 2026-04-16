@@ -508,14 +508,14 @@ export function queryBacklinksFiltered(params: {
 
 /** Query backlinks grouped by source page, with filters and pagination. */
 export function listBacklinksGrouped(params: {
-  pageId: string
+  blockId: string
   filters?: BacklinkFilter[] | undefined
   sort?: BacklinkSort | undefined
   cursor?: string | undefined
   limit?: number | undefined
 }): Promise<GroupedBacklinkResponse> {
   return invoke('list_backlinks_grouped', {
-    blockId: params.pageId,
+    blockId: params.blockId,
     filters: params.filters ?? null,
     sort: params.sort ?? null,
     cursor: params.cursor ?? null,

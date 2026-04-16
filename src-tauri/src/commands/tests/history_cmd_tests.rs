@@ -167,3 +167,16 @@ async fn test_compute_edit_diff_inner_invalid_op_returns_not_found() {
         "should return NotFound for a nonexistent op, got: {result:?}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_undo_page_op_inner_rejects_undo_depth_exceeding_max() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let result = undo_page_op_inner(&pool, DEV, &mat, "some-page".into(), 1001).await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("undo_depth exceeds maximum of 1000")),
+        "should return Validation error for undo_depth > 1000, got: {result:?}"
+    );
+}

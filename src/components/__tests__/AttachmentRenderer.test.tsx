@@ -131,9 +131,9 @@ describe('AttachmentRenderer', () => {
       />,
     )
     const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]') as Element
-    fireEvent.mouseEnter(wrapper)
+    fireEvent.pointerEnter(wrapper)
     expect(onHoveredChange).toHaveBeenCalledWith(true)
-    fireEvent.mouseLeave(wrapper)
+    fireEvent.pointerLeave(wrapper)
     expect(onHoveredChange).toHaveBeenCalledWith(false)
   })
 

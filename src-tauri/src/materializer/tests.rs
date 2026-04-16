@@ -2072,3 +2072,63 @@ async fn dispatch_create_block_enqueues_projected_agenda_cache() {
         "should have processed at least 2 background tasks (tag inheritance + projected agenda cache)"
     );
 }
+
+// BUG-12: Barrier race — tasks after a barrier in the same batch must
+// complete before the barrier signals the caller.
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn flush_background_completes_tasks_after_barrier() {
+    use sqlx::Row;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Insert two tag blocks so the cache rebuilds have data to process.
+    insert_block_direct(&pool, "BAR_TAG_1", "tag", "barrier-tag-1").await;
+    insert_block_direct(&pool, "BAR_PAGE_1", "page", "barrier-page-1").await;
+
+    // Enqueue: RebuildTagsCache, then a Barrier, then RebuildPagesCache.
+    // Before the fix the barrier would signal immediately, and the pages
+    // cache rebuild that follows it in the same batch could run AFTER
+    // flush_background() returned.
+    mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+        .await
+        .unwrap();
+    mat.enqueue_background(MaterializeTask::RebuildPagesCache)
+        .await
+        .unwrap();
+
+    // flush_background sends its own Barrier and waits on it.
+    mat.flush_background().await.unwrap();
+
+    // After flush returns, BOTH cache rebuilds must have completed.
+    let tag_row = sqlx::query("SELECT name FROM tags_cache WHERE tag_id = 'BAR_TAG_1'")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(
+        tag_row.is_some(),
+        "tags_cache should contain BAR_TAG_1 after flush"
+    );
+    assert_eq!(tag_row.unwrap().get::<String, _>("name"), "barrier-tag-1");
+
+    let page_row = sqlx::query("SELECT title FROM pages_cache WHERE page_id = 'BAR_PAGE_1'")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(
+        page_row.is_some(),
+        "pages_cache should contain BAR_PAGE_1 after flush — task after barrier was not completed before signal"
+    );
+    assert_eq!(
+        page_row.unwrap().get::<String, _>("title"),
+        "barrier-page-1"
+    );
+
+    // Both tasks (+ the barrier itself) should be counted.
+    assert!(
+        mat.metrics().bg_processed.load(AtomicOrdering::Relaxed) >= 3,
+        "should have processed RebuildTagsCache + Barrier + RebuildPagesCache"
+    );
+}

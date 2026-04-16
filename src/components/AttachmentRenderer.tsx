@@ -57,8 +57,8 @@ export function AttachmentRenderer({
               className="relative inline-block"
               style={{ maxWidth: `${imageWidth}%` }}
               data-testid="image-resize-wrapper"
-              onMouseEnter={() => onImageHoveredChange(true)}
-              onMouseLeave={() => onImageHoveredChange(false)}
+              onPointerEnter={() => onImageHoveredChange(true)}
+              onPointerLeave={() => onImageHoveredChange(false)}
               onClick={(e) => e.stopPropagation()}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {

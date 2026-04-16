@@ -77,7 +77,7 @@ export function LinkedReferences({
         }
 
         const resp = await listBacklinksGrouped({
-          pageId,
+          blockId: pageId,
           ...(allFilters.length > 0 && { filters: allFilters }),
           ...(sort != null && { sort }),
           limit: 50,

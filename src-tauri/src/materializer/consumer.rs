@@ -163,15 +163,11 @@ pub(super) async fn run_background(
         let total_before = batch.len();
         let deduped = dedup_tasks(batch);
         let dedup_count = (total_before - deduped.len()) as u64;
+        let mut pending_barriers: Vec<Arc<tokio::sync::Notify>> = Vec::new();
         for task in deduped {
             let rp_ref = read_pool.as_ref();
-            if matches!(&task, MaterializeTask::Barrier(_)) {
-                let pool_clone = pool.clone();
-                let result = tokio::task::spawn(async move {
-                    handle_background_task(&pool_clone, &task, None).await
-                })
-                .await;
-                log_consumer_result("bg", &result);
+            if let MaterializeTask::Barrier(ref notify) = task {
+                pending_barriers.push(Arc::clone(notify));
                 metrics.bg_processed.fetch_add(1, Ordering::Relaxed);
                 continue;
             }
@@ -233,6 +229,9 @@ pub(super) async fn run_background(
                 metrics.bg_errors.fetch_add(1, Ordering::Relaxed);
             }
             metrics.bg_processed.fetch_add(1, Ordering::Relaxed);
+        }
+        for barrier in pending_barriers {
+            barrier.notify_one();
         }
         metrics.bg_deduped.fetch_add(dedup_count, Ordering::Relaxed);
         if shutdown_flag.load(Ordering::Acquire) {
