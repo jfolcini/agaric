@@ -1,5 +1,41 @@
 # Session Log
 
+## Session 393 — UX i18n fixes, popover overflow, undo/redo tooltips (2026-04-16)
+
+**5 items resolved (UX-187, UX-188, UX-189, UX-192, UX-194). REVIEW-LATER 47→42.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| UX-187 | Replace 11 hardcoded announce() strings with t() calls in 3 hooks + 13 i18n keys | 5 files |
+| UX-188 | Replace 4 hardcoded sync toast messages with i18n.t() + 4 sync.* keys (plural-aware) | 3 files |
+| UX-189 | Replace 3 hardcoded TagList toast.error() with t() + upgrade logger.warn→error | 1 file |
+| UX-192 | Add max-w-[calc(100vw-2rem)] mobile overflow guard to 3 PopoverContent instances | 3 files |
+| UX-194 | Wrap Undo/Redo buttons in Tooltip with keyboard shortcut hints | 1 file |
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src/lib/i18n.ts` | UX-187/188: add 18 new i18n keys (13 announce.*, 4 sync.*, 1 unused) |
+| `src/hooks/useBlockKeyboardHandlers.ts` | UX-187: 8 announce() → t() |
+| `src/hooks/useBlockProperties.ts` | UX-187: 2 announce() → i18n.t() with interpolation |
+| `src/hooks/useBlockDatePicker.ts` | UX-187: 1 announce() → t() |
+| `src/hooks/useSyncTrigger.ts` | UX-188: 1 hardcoded toast → i18n.t() |
+| `src/hooks/useSyncEvents.ts` | UX-188: 3 hardcoded toasts → i18n.t() |
+| `src/components/TagList.tsx` | UX-189: 3 toast.error() → t(), logger.warn → logger.error |
+| `src/hooks/__tests__/useBlockKeyboardHandlers.test.ts` | UX-187: update 8 announce assertions |
+| `src/hooks/__tests__/useBlockDatePicker.test.ts` | UX-187: update 1 announce assertion |
+| `src/components/AgendaResults.tsx` | UX-192: add max-w mobile guard |
+| `src/components/PeerListItem.tsx` | UX-192: add max-w mobile guard |
+| `src/components/SearchablePopover.tsx` | UX-192: add max-w mobile guard |
+| `src/components/PageHeaderMenu.tsx` | UX-194: wrap undo/redo in Tooltip with getShortcutKeys() |
+
+### Stats
+- 13 files changed (+113 lines, -66 lines)
+- 0 new tests, 6541 frontend tests pass
+
 ## Session 392 — Rust bugs, frontend fixes, docs update (2026-04-16)
 
 **7 items resolved (BUG-12, BUG-14, BUG-15, MAINT-3, UX-190, UX-191, DOC-1). REVIEW-LATER 54→47.**
