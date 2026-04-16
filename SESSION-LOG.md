@@ -1,5 +1,43 @@
 # Session Log
 
+## Session 397 — Test quality: fixture consolidation, sync errors, link metadata, proptest (2026-04-16)
+
+**5 items resolved (TEST-4, TEST-5, TEST-20, TEST-22, TEST-23). REVIEW-LATER 25→20.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| TEST-4 | Replace local makeBlock() in 5 agenda test files with shared fixture | 5 files |
+| TEST-5 | Replace local makeBlock() in 6 panel/query test files with shared fixture | 6 files |
+| TEST-20 | Add 3 sync error handling tests (rollback, state violation, terminal rejection) | 1 file |
+| TEST-22 | Add 10 tests for link metadata commands (cache hit/miss/stale, auth, clear) | 1 file |
+| TEST-23 | Add 4 proptest blocks (CBOR roundtrip, encode determinism, merge determinism, LWW commutativity) | 2 files |
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src/components/__tests__/AgendaResults.test.tsx` | TEST-4: shared fixture import |
+| `src/components/journal/__tests__/AgendaView.test.tsx` | TEST-4: shared fixture import |
+| `src/components/__tests__/OverdueSection.test.tsx` | TEST-4: shared fixture import |
+| `src/components/__tests__/UpcomingSection.test.tsx` | TEST-4: shared fixture import |
+| `src/components/__tests__/AlertSection.test.tsx` | TEST-4: shared fixture import |
+| `src/components/__tests__/DuePanel.test.tsx` | TEST-5: shared fixture import |
+| `src/components/__tests__/DonePanel.test.tsx` | TEST-5: shared fixture import |
+| `src/components/journal/__tests__/UnfinishedTasks.test.tsx` | TEST-5: shared fixture import |
+| `src/components/__tests__/QueryResultTable.test.tsx` | TEST-5: shared fixture import |
+| `src/components/__tests__/QueryResultList.test.tsx` | TEST-5: shared fixture import |
+| `src/components/__tests__/BacklinkGroupRenderer.test.tsx` | TEST-5: shared fixture + positional→override conversion |
+| `src-tauri/src/sync_protocol/tests.rs` | TEST-20: 3 sync error tests |
+| `src-tauri/src/commands/link_metadata.rs` | TEST-22: 10 cache/auth tests |
+| `src-tauri/src/snapshot/tests.rs` | TEST-23: 2 CBOR proptest blocks |
+| `src-tauri/src/merge/tests.rs` | TEST-23: 2 merge proptest blocks |
+
+### Stats
+- 15 files changed (+754 lines, -223 lines)
+- 17 new Rust tests (3 sync + 10 link_metadata + 4 proptest); ~2000 Rust + ~6560 frontend tests pass
+
 ## Session 396 — Perf: paginate preload, debounce, json_each, maxItems, graph warning + DatePicker tests (2026-04-16)
 
 **6 items resolved (PERF-2, PERF-3, PERF-6, PERF-7, PERF-9a, TEST-2). REVIEW-LATER 31→25.**
