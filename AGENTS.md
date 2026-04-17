@@ -24,9 +24,9 @@ See **[BUILD.md](BUILD.md)** for the full build guide (prerequisites, platform-s
 # Quick reference
 cargo tauri dev              # Dev mode with hot reload
 cargo tauri build            # Production build (per-platform)
-npm run test                 # Vitest (~6000 tests)
-cd src-tauri && cargo nextest run   # Rust tests (~1700 tests)
-npx playwright test          # E2E tests (21 spec files)
+npm run test                 # Vitest (6500+ tests)
+cd src-tauri && cargo nextest run   # Rust tests (2000+ tests)
+npx playwright test          # E2E tests (26 spec files)
 cargo tauri android build --target aarch64 --debug   # Android debug APK
 cargo tauri android build --target aarch64            # Android release APK (~24 MB)
 prek run --all-files         # Pre-commit hooks
@@ -42,10 +42,11 @@ prek run --all-files         # Pre-commit hooks
 6. **sqlx compile-time queries** — `query!` / `query_as!` / `query_scalar!`. `.sqlx/` cache committed. Run `cargo sqlx prepare` after SQL changes.
 7. **PRAGMA foreign_keys = ON** — enforced on every connection (both pools)
 8. **ULID uppercase normalization** — Crockford base32 for blake3 hash determinism
+9. **Recursive CTEs over `blocks` must filter `is_conflict = 0`** in the recursive member, and bound `depth < 100` to prevent runaway recursion on corrupted data. Conflict copies leak into results otherwise.
 
 ## Architectural Stability
 
-The architecture is mature and robust. **Do not introduce significant architectural changes** (new tables, new op types, new stores, new materializer queues, new sync message types) without explicit user approval. Most features should be expressible within existing abstractions:
+Do not introduce significant architectural changes (new tables, new op types, new stores, new materializer queues, new sync message types) without explicit user approval. Most features should be expressible within existing abstractions:
 
 - **Properties system is the primary extension point.** New per-block metadata (effort, assignee, repeat rules, end conditions, custom fields) should use `block_properties` + `property_definitions` — not new columns on `blocks` or new tables. The typed key-value model (text/number/date/ref) is deliberately flexible.
 - **New slash commands, filter dimensions, UI components** are additive and low-risk. Prefer these over structural changes.
@@ -66,12 +67,12 @@ Agaric is a **single-user, multi-device, local-first** application with **no clo
 - **File:** `notes.db` in `~/.local/share/com.agaric.app/` (Linux) or app data dir (Android)
 - **WAL mode**, foreign keys ON on every connection
 - **Pool:** 2 writers + 4 readers (6 total)
-- **Migrations:** `src-tauri/migrations/` (27 files) — auto-run on pool init
-- **Schema:** 15 tables + 1 FTS5 virtual table (trigram tokenizer), 24 indexes, 2 triggers
+- **Migrations:** `src-tauri/migrations/` — auto-run on pool init (append-only, never modify shipped migrations)
+- **Schema:** 18 tables + 2 virtual tables (FTS5 trigram tokenizer + FTS5 `_config`), ~26 indexes, 2 triggers
 
 ## Frontend Architecture
 
-- **State:** 8 Zustand stores — `useBootStore`, `useBlockStore` (focus/selection only), `useNavigationStore`, `useJournalStore`, `usePageBlocksStore` (per-page factory with context provider + registry), `useResolveStore`, `useUndoStore`, `useSyncStore`
+- **State:** 8 Zustand stores — `useBootStore`, `useBlockStore` (focus/selection only), `useNavigationStore`, `useJournalStore`, `usePageBlockStore` (per-page factory via `createPageBlockStore(pageId)` + `PageBlockContext` provider), `useResolveStore`, `useUndoStore`, `useSyncStore`
 - **Editor:** Single roving TipTap instance with 10 custom extensions (TagRef, BlockLink, BlockRef, ExternalLink, AtTagPicker, BlockLinkPicker, BlockRefPicker, PropertyPicker, CheckboxInputRule, SlashCommand)
 - **Serializer:** Custom Markdown serializer (`src/editor/markdown-serializer.ts`) — zero external deps, handles `#[ULID]` and `[[ULID]]` tokens
 - **Sync hooks:** `useSyncTrigger` (exponential backoff periodic sync), `useSyncEvents` (Tauri event listener), `useOnlineStatus` (navigator.onLine)
@@ -152,12 +153,12 @@ Components exceeding ~500 lines are candidates for extraction. The established p
 
 ## Backend Architecture
 
-- **Error handling:** `AppError` enum (11 variants) serializes to `{ kind, message }` for Tauri 2 IPC. Specta-derived TS bindings.
+- **Error handling:** `AppError` enum (11 variants: `Database`, `Migration`, `Io`, `Json`, `Ulid`, `NotFound`, `InvalidOperation`, `Channel`, `Snapshot`, `Validation`, `NonReversible`) serializes to `{ kind, message }` for Tauri 2 IPC. Specta-derived TS bindings.
 - **Undo/redo:** Two-tier model. In-editor: TipTap/ProseMirror history (cleared on blur). Page-level: `reverse.rs` computes inverse ops from op log. Non-reversible: `purge_block`, `delete_attachment`.
 - **Materializer:** Foreground queue (256 cap, core tables + `BatchApplyOps`) + background queue (1024 cap, caches/FTS). Auto-dedup, silent drop on backpressure. Background tasks use split read/write pools — reads from reader pool, writes only for the final transaction. Foreground consumer batch-drains and parallelizes independent block_id groups via JoinSet.
 - **Tag inheritance:** Materialized `block_tag_inherited` table, maintained transactionally by command handlers + background rebuild task. Replaces recursive CTEs for `include_inherited=true` queries.
-- **Commands:** 75 Tauri command handlers in `commands.rs`. Each has an `inner_*` function taking `&SqlitePool` for testability.
-- **Sync daemon:** `sync_daemon.rs` — background task with mDNS discovery, TLS WebSocket server, initiator-side sync via `SyncOrchestrator`. Per-peer backoff via `SyncScheduler`.
+- **Commands:** ~80 Tauri command handlers in `src-tauri/src/commands/` (split across files by domain: `blocks/`, `pages.rs`, `tags.rs`, `properties.rs`, `agenda.rs`, `attachments.rs`, `history.rs`, `journal.rs`, `queries.rs`, `sync_cmds.rs`, `compaction.rs`, `drafts.rs`, `link_metadata.rs`, `logging.rs`). Each command has an `inner_*` function taking `&SqlitePool` for testability.
+- **Sync daemon:** `sync_daemon/` — background task with mDNS discovery, TLS WebSocket server, initiator-side sync via `SyncOrchestrator`. Per-peer backoff via `SyncScheduler`. Supports file (attachment) transfer alongside op sync.
 - **Sync cert:** `sync_cert.rs` — persistent TLS certificate (generate-once-then-load pattern). `PersistedCert` managed state.
 
 ## TypeScript Bindings (specta)
@@ -171,7 +172,7 @@ cd src-tauri && cargo test -- specta_tests --ignored
 
 ## Pre-commit & CI
 
-- **Pre-commit:** `prek.toml` — 15 hooks, file-type-aware (Rust hooks skip when no `.rs` staged, etc.)
+- **Pre-commit:** `prek.toml` — file-type-aware hooks (Rust hooks skip when no `.rs` staged, etc.) covering biome, tsc, vitest, license check, depcheck, knip, cargo fmt/clippy/nextest/deny/machete
 - **CI:** `.github/workflows/ci.yml` — 3 jobs: `check` (lint/test on Linux), `build` (matrix: Linux + Windows + macOS), `android-build`
 
 ## Testing Conventions
@@ -179,8 +180,9 @@ cd src-tauri && cargo test -- specta_tests --ignored
 - **Minimum bar:** Every exported function gets happy-path + error-path tests. Components get render + interaction + `axe(container)` a11y tests. **Every component with Tauri IPC calls must have error-path tests** — mock invoke rejection and verify graceful degradation (toast, fallback UI, no crash).
 - **Test location:** `#[cfg(test)] mod tests` for Rust, `__tests__/` dirs for frontend.
 - **Frameworks:** vitest-axe, fast-check (property tests), insta (Rust snapshots)
-- **Benchmarks:** Criterion — manual only (`cd src-tauri && cargo bench`), never in CI. 24 bench files with 40+ benchmarks covering 62/72 non-trivial commands, parameterized at multiple scales (100/1K/10K/100K).
+- **Benchmarks:** Criterion — manual only (`cd src-tauri && cargo bench`), never in CI. 24 bench files in `src-tauri/benches/`, parameterized at multiple scales (100/1K/10K/100K where relevant).
 - **Tarpaulin:** Expensive (~60s). Only run when working on coverage gaps.
+- **Exact count assertions:** Prefer `assert_eq!(count, 5)` over `assert!(count >= 1)`. Inequality assertions hide duplicate results and missing filters.
 - **Silent catch blocks forbidden:** Never use `.catch(() => {})`. Use `logger.warn` or `logger.error` for all catch blocks — silent error swallowing masks real bugs.
 - **Detailed conventions:** `src-tauri/tests/AGENTS.md` (Rust), `src/__tests__/AGENTS.md` (frontend)
 
@@ -203,19 +205,29 @@ Strict compiler and linter settings are enabled project-wide. **Do not weaken th
 
 ## Performance Conventions
 
-Scalability analysis (session 302) established baseline performance at 100K blocks:
+Baseline performance at 100K blocks (established by benchmarks):
 
 - **O(1) operations** (PK lookups, property gets) — ~23µs regardless of scale. No action needed.
 - **Paginated lists** — cursor pagination keeps individual page loads fast even at 100K.
 - **Batch operations** — use `json_each()` for batch resolve/count. Single query, not N+1.
-- **Graph/agenda queries** — superlinear at 100K (see REVIEW-LATER for P-15, P-16). Frontend caching can mitigate.
-- **Lazy hash computation rejected** — breaks sync protocol integrity. `verify_op_record()` in `sync_protocol.rs` requires upfront hashes.
+- **Graph/agenda queries** — superlinear at 100K (see REVIEW-LATER for known items). Frontend caching can mitigate.
+- **Lazy hash computation rejected** — breaks sync protocol integrity. `verify_op_record()` in `sync_protocol` requires upfront hashes.
 - **CTE oracle pattern:** When optimizing a query (e.g., replacing recursive CTEs with materialized tables), preserve the old implementation as a `#[cfg(test)]` oracle function and add a test verifying both paths produce identical results.
+- **Split read/write pool pattern for background rebuild tasks:** read from reader pool, acquire write connection only for the final INSERT/DELETE transaction. Reduces write-connection hold time.
+
+## Backend Patterns (commonly caught in review)
+
+1. **Recursive CTE correctness:** every descendant walk (`list_children`, `list_page_links`, cascade ops) must include `AND is_conflict = 0` in the recursive member AND a `depth < 100` bound. Missing filter leaks conflict copies as phantom rows; missing bound allows runaway recursion on corrupted data.
+2. **Transaction wrapping for atomic multi-op sequences:** when a feature requires multiple ops atomically (e.g., create block + set property for recurrence), use `_in_tx` variants or wrap in `BEGIN IMMEDIATE`. All-or-nothing semantics must be verified in tests.
+3. **Batch via `json_each()`, not N+1:** when resolving/counting many IDs, pass a JSON array and use `json_each()` with a single query. See `backlink/query.rs` and `fts.rs` for examples.
+4. **`total_count` uses post-filter count:** when a query filters after fetch (self-reference filtering in backlinks, etc.), set `total_count` from filtered length, not pre-filter length.
+5. **Materializer error propagation:** `ApplyOp` / `BatchApplyOps` tasks must propagate errors for retry, not swallow with `.ok()`. Background cache rebuild errors must bubble up so retry logic can kick in.
+6. **Multi-row INSERT for bulk data:** use chunked `INSERT INTO ... VALUES (?,?,...), (?,?,...)` with a `MAX_SQL_PARAMS` constant (SQLite limit ~999, chunk size depends on columns-per-row). See `apply_snapshot`.
 
 ## Android
 
-- **Status:** Both debug and release APKs build, install, and launch successfully (2026-04-02).
-- **Release APK:** 24 MB (vs 402 MB debug). ProGuard/R8 minification works — keep rules verified.
+- **Status:** Both debug and release APKs build, install, and launch successfully.
+- **Release APK:** ~24 MB (vs ~400 MB debug). ProGuard/R8 minification works — keep rules verified.
 - **Generated project:** `src-tauri/gen/android/`
 - **Min SDK:** 24, **Target SDK:** 36, **NDK:** 27
 - **Emulator AVD:** `spike_test` (x86_64, API 34) — start with `emulator -avd spike_test -gpu host &`

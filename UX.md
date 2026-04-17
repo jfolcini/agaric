@@ -1,6 +1,6 @@
 # UX Baseline — Agaric App
 
-Consolidated best practices implemented across the app. New components, features, and visual changes should follow these patterns. This document is the UX equivalent of the test `AGENTS.md` files — a reference for anyone building UI in this project.
+Reference for building UI in this project. Pair with `AGENTS.md` (§ Frontend Development Guidelines) which defines the component hierarchy and mandatory patterns.
 
 ## Overview
 
@@ -22,7 +22,9 @@ Consolidated best practices implemented across the app. New components, features
 
 File: `src/index.css`
 
-All colors are defined as CSS custom properties using OKLCH color space. Light and dark themes share the same semantic names — never hard-code hex/rgb values.
+All colors are defined as CSS custom properties in OKLCH. Light and dark themes share the same semantic names — never hard-code hex/rgb values.
+
+**Base tokens:**
 
 | Token | Light | Dark | Usage |
 |-------|-------|------|-------|
@@ -36,19 +38,33 @@ All colors are defined as CSS custom properties using OKLCH color space. Light a
 | `--border` | very light gray | medium dark gray | Borders, separators |
 | `--sidebar` | off-white | — | Sidebar background |
 
-**Rule:** Reference tokens via `var(--primary)`, `bg-primary`, `text-destructive`, etc. Never introduce one-off color literals unless they are semantic (e.g., priority badges with explicit color-coding for colorblind support).
+**Semantic tokens** (prefer these over raw colors — full list in `src/index.css`):
+
+| Category | Tokens (each usually with `-foreground` pair) | Usage |
+|----------|-----------------------------------------------|-------|
+| Status | `--status-active`, `--status-done`, `--status-pending` | List items / row state |
+| Task | `--task-doing`, `--task-done`, `--task-custom` | TODO-state checkbox fills |
+| Priority | `--priority-urgent`, `--priority-high`, `--priority-normal`, `--priority-foreground` | Priority badges (see below) |
+| Conflict | `--conflict-text`, `--conflict-move` (+ foreground) | Conflict copies, three-way merge UI |
+| Operation type | `--op-create`, `--op-edit`, `--op-move`, `--op-tag` | History/timeline entries |
+| Date source | `--date-due`, `--date-scheduled`, `--date-property` | Agenda item date badges |
+| Alert | `--alert-tip`, `--alert-error`, `--alert-note`, `--alert-info`, `--alert-warning` (+ `-foreground`, `-border`) | Callout blocks |
+| Indicator | `--indicator-repeat`, `--indicator-scheduled` | Inline icons/markers |
+| Misc | `--block-ref-foreground` | Inline block-ref tokens |
+
+**Rule:** Reference tokens via `var(--primary)`, `bg-primary`, `text-destructive`, etc. Never hardcode Tailwind color classes (`bg-red-100`, `text-amber-600`) when a semantic token exists.
 
 ### Priority Badge Colors
 
-File: `src/components/SortableBlock.tsx`
+Files: `src/lib/priority-color.ts`, `src/components/ui/priority-badge.tsx`. Semantic tokens defined in `src/index.css`.
 
-| Priority | Light | Dark | Extra |
-|----------|-------|------|-------|
-| A (High) | `bg-red-100 text-red-700` | `bg-red-900/30 text-red-400` | `ring-2 ring-red-400` |
-| B (Medium) | `bg-yellow-100 text-yellow-700` | `bg-yellow-900/30 text-yellow-400` | — |
-| C (Low) | `bg-blue-100 text-blue-700` | `bg-blue-900/30 text-blue-400` | `border-dashed border-blue-400` |
+Priority badges use semantic tokens (NOT hardcoded Tailwind colors). Use `priorityColor(p)` or the `PriorityBadge` CVA variant — never inline `bg-red-100` etc.
 
-A gets a ring, C gets a dashed border — both distinguishable without color (colorblind-safe).
+| Priority | Token class | Semantic token | Colorblind-safe cue |
+|----------|-------------|-----------------|---------------------|
+| 1 (Urgent / A) | `bg-priority-urgent text-priority-foreground` | `--priority-urgent` | (add ring in contexts where higher emphasis needed) |
+| 2 (High / B) | `bg-priority-high text-priority-foreground` | `--priority-high` | — |
+| 3 (Normal / C) | `bg-priority-normal text-priority-foreground` | `--priority-normal` | (add dashed border in contexts where lower emphasis needed) |
 
 ### Task Checkbox Colors
 
@@ -715,7 +731,7 @@ Toolbar button groups are defined as config arrays in `src/lib/toolbar-config.ts
 
 ### Shared Component Inventory
 
-Key reusable components extracted across sessions 237-299. Check these before building something new:
+Key reusable components. Check these before building something new:
 
 | Component | File | Purpose |
 |-----------|------|---------|
@@ -1293,7 +1309,7 @@ Before shipping any UI change, verify:
 
 10. **DnD activation too sensitive on mobile** — Without the 250ms delay, every scroll gesture triggers a drag. The split sensor config (distance for desktop, delay for mobile) is deliberate.
 
-11. **Silent catch blocks** — Every `catch` must either `toast.error()` with a specific message or `console.error()` at minimum. Silent error swallowing was found in 17 handlers during the Session 18 audit.
+11. **Silent catch blocks** — Every `catch` must either `toast.error()` with a specific message or `console.error()` at minimum. Silent error swallowing was found in 17 handlers.
 
 12. **Inline confirmation instead of AlertDialog** — Custom confirmation `<div>` elements don't trap focus or handle Escape. Always use Radix `<AlertDialog>` for destructive actions.
 
@@ -1309,257 +1325,105 @@ Before shipping any UI change, verify:
 
 18. **Stale selection state** — `selectedBlockIds` must be cleaned up: `remove()` clears the deleted block, `load()` clears all selections on page navigation. Batch delete must filter descendant blocks to avoid double-deleting.
 
-19. **`flushSync` needed on editor blur** — When `handleBlur` calls `edit()` or `splitBlock()`, the store update must complete before the editor unmounts. Wrap in `flushSync()` to ensure React renders the store change synchronously. Without this, the editor disappears before the save completes. (Session 237, B-5/B-6)
+19. **`flushSync` needed on editor blur** — When `handleBlur` calls `edit()` or `splitBlock()`, the store update must complete before the editor unmounts. Wrap in `flushSync()` to ensure React renders the store change synchronously. Without this, the editor disappears before the save completes.
 
-20. **Position capture before async gap** — When handling input rules with async operations (e.g., `[[text]]` link resolution), capture the insertion position *before* any `await`. After the async gap, the cursor may have moved. Use `insertContentAt(savedPos, ...)` instead of relative cursor operations. (Session 229, B-6)
+20. **Position capture before async gap** — When handling input rules with async operations (e.g., `[[text]]` link resolution), capture the insertion position *before* any `await`. After the async gap, the cursor may have moved. Use `insertContentAt(savedPos, ...)` instead of relative cursor operations.
 
-21. **Suggestion popup steals keyboard events** — When a suggestion popup (slash commands, tag picker, page picker) is visible, Enter/Tab/Escape/Backspace must pass through to the Suggestion plugin instead of being intercepted by the block keyboard handler's capture-phase listener. Check `isSuggestionPopupVisible()` before handling these keys. (Session 228)
+21. **Suggestion popup steals keyboard events** — When a suggestion popup (slash commands, tag picker, page picker) is visible, Enter/Tab/Escape/Backspace must pass through to the Suggestion plugin instead of being intercepted by the block keyboard handler's capture-phase listener. Check `isSuggestionPopupVisible()` before handling these keys.
 
-22. **Re-entrancy in async handlers** — `handleDeleteBlock`, `handleEnterSave`, and similar async handlers can be invoked multiple times concurrently (double-click, rapid keyboard). Use a ref-based guard (`deleteInProgress`, `enterSaveInProgress`) with `.finally()` reset. (Sessions 228-229)
+22. **Re-entrancy in async handlers** — `handleDeleteBlock`, `handleEnterSave`, and similar async handlers can be invoked multiple times concurrently (double-click, rapid keyboard). Use a ref-based guard (`deleteInProgress`, `enterSaveInProgress`) with `.finally()` reset.
 
-23. **`outline-none` vs `outline-hidden`** — `outline-none` conflicts with `focus-visible:outline-1`. Use `outline-hidden` instead, which properly hides the outline without conflicting with focus-visible styles. (Session 264, UX-27)
+23. **`outline-none` vs `outline-hidden`** — `outline-none` conflicts with `focus-visible:outline-1`. Use `outline-hidden` instead, which properly hides the outline without conflicting with focus-visible styles.
 
-24. **Race condition in save/discard** — When `saveDraft()` and `discardDraft()` can race (e.g., interval timer fires during unmount cleanup), use a version counter. The `useDraftAutosave` hook increments a version ref on discard; the save callback checks it hasn't changed before writing. (Session 242, B-13)
+24. **Race condition in save/discard** — When `saveDraft()` and `discardDraft()` can race (e.g., interval timer fires during unmount cleanup), use a version counter. The `useDraftAutosave` hook increments a version ref on discard; the save callback checks it hasn't changed before writing.
 
-25. **Map spread order in cache updates** — `new Map([...state.cache, ...fetchedData])` puts fetched data last (wins on conflict). `new Map([...fetchedData, ...state.cache])` puts cache last (stale data wins). After sync, force-refresh must put fetched data last. (Session 230, B-7)
+25. **Map spread order in cache updates** — `new Map([...state.cache, ...fetchedData])` puts fetched data last (wins on conflict). `new Map([...fetchedData, ...state.cache])` puts cache last (stale data wins). After sync, force-refresh must put fetched data last.
 
-26. **Tab key stealing browser focus navigation** — Don't bind Tab/Shift+Tab for app shortcuts (like indent/dedent). It breaks standard browser focus navigation and makes the app inaccessible to keyboard-only users. Use Ctrl+Shift+Arrow instead. (Session 234)
+26. **Tab key stealing browser focus navigation** — Don't bind Tab/Shift+Tab for app shortcuts (like indent/dedent). It breaks standard browser focus navigation and makes the app inaccessible to keyboard-only users. Use Ctrl+Shift+Arrow instead.
 
-27. **SVG elements need explicit keyboard handling** — SVG `<circle>` and `<rect>` elements don't get keyboard events by default. Add `tabindex="0"`, `role="button"`, and explicit `keydown` handlers for Enter/Space. For touch targets, add an invisible larger circle behind the visible element. (Session 293/296)
+27. **SVG elements need explicit keyboard handling** — SVG `<circle>` and `<rect>` elements don't get keyboard events by default. Add `tabindex="0"`, `role="button"`, and explicit `keydown` handlers for Enter/Space. For touch targets, add an invisible larger circle behind the visible element.
 
-28. **JS-driven animations ignore global reduced-motion CSS** — The global `prefers-reduced-motion` CSS rule only handles CSS animations. d3-force simulations, requestAnimationFrame loops, and other JS-driven animations must check `window.matchMedia('(prefers-reduced-motion: reduce)')` and skip or instantly complete. (Session 296, UX-104)
+28. **JS-driven animations ignore global reduced-motion CSS** — The global `prefers-reduced-motion` CSS rule only handles CSS animations. d3-force simulations, requestAnimationFrame loops, and other JS-driven animations must check `window.matchMedia('(prefers-reduced-motion: reduce)')` and skip or instantly complete.
 
-29. **Gutter buttons need pointer-events management** — Hover-reveal gutter buttons (`opacity-0`) still receive pointer events and block clicks on elements behind them. Add `pointer-events-none` when hidden, `pointer-events-auto` on all visibility triggers (group-hover, coarse pointer, focus-within, focus-visible). (Session 216, H-12)
+29. **Gutter buttons need pointer-events management** — Hover-reveal gutter buttons (`opacity-0`) still receive pointer events and block clicks on elements behind them. Add `pointer-events-none` when hidden, `pointer-events-auto` on all visibility triggers (group-hover, coarse pointer, focus-within, focus-visible).
 
-30. **@floating-ui/dom for popup positioning** — Never write manual coordinate math for popup placement. Use `computePosition()` with `offset()`, `flip()`, `shift()` middleware. Replaced ~65 lines of buggy clamp/flip code in suggestion-renderer.ts. (Session 208, H-9)
+30. **@floating-ui/dom for popup positioning** — Never write manual coordinate math for popup placement. Use `computePosition()` with `offset()`, `flip()`, `shift()` middleware. Replaced ~65 lines of buggy clamp/flip code in suggestion-renderer.ts.
 
-31. **Missing cleanup on unmount** — Event listeners added in `useEffect` must be cleaned up on unmount. Leaked listeners cause memory leaks and stale closure bugs. (Session 207)
+31. **Missing cleanup on unmount** — Event listeners added in `useEffect` must be cleaned up on unmount. Leaked listeners cause memory leaks and stale closure bugs.
 
-32. **Exhaustive useEffect dependencies** — Missing dependencies cause stale closures and subtle bugs. Fix all exhaustive-deps warnings. (Sessions 195, 200)
+32. **Exhaustive useEffect dependencies** — Missing dependencies cause stale closures and subtle bugs. Fix all exhaustive-deps warnings.
 
-33. **Inline styles instead of Tailwind** — Inline `style={}` doesn't benefit from Tailwind's responsive utilities, dark mode, or design tokens. Always use Tailwind classes. (Session 202)
+33. **Inline styles instead of Tailwind** — Inline `style={}` doesn't benefit from Tailwind's responsive utilities, dark mode, or design tokens. Always use Tailwind classes.
 
-34. **Missing axe audits in component tests** — Every new component test should include `axe(container)` to catch accessibility regressions automatically. (Sessions 177, 195)
+34. **Missing axe audits in component tests** — Every new component test should include `axe(container)` to catch accessibility regressions automatically.
 
-35. **Missing Escape handler in popovers** — All popovers and modals must close on Escape key. Radix components handle this, but custom popovers need explicit `keydown` handlers. (Session 207)
+35. **Missing Escape handler in popovers** — All popovers and modals must close on Escape key. Radix components handle this, but custom popovers need explicit `keydown` handlers.
 
-36. **Property type initialization not type-aware** — `buildInitParams()` in `property-save-utils.ts` must be used for property creation. It returns type-appropriate defaults (number→0, date→today, text/select→'', ref→null). Sending `valueText: ''` for non-text types causes silent failures. (Session 232)
+36. **Property type initialization not type-aware** — `buildInitParams()` in `property-save-utils.ts` must be used for property creation. It returns type-appropriate defaults (number→0, date→today, text/select→'', ref→null). Sending `valueText: ''` for non-text types causes silent failures.
 
-37. **Tag filters using ULIDs instead of names** — User-facing filters should accept human-readable values, not internal IDs. `TagValuePicker` provides searchable autocomplete; `queryTag()` resolves names to IDs. (Session 235)
+37. **Tag filters using ULIDs instead of names** — User-facing filters should accept human-readable values, not internal IDs. `TagValuePicker` provides searchable autocomplete; `queryTag()` resolves names to IDs.
 
-38. **Hardcoded English in test assertions** — Tests that assert on hardcoded English strings break when those strings are replaced with `t()` i18n calls. Use `t('key')` in assertions, or query by role/aria-label. (Sessions 293, 297)
+38. **Hardcoded English in test assertions** — Tests that assert on hardcoded English strings break when those strings are replaced with `t()` i18n calls. Use `t('key')` in assertions, or query by role/aria-label.
 
 ## Lessons Learned
 
-Patterns, antipatterns, and best practices discovered during 300+ sessions of development. Each lesson is grounded in specific implementation experiences with session references for traceability.
+Non-obvious patterns discovered across many sessions. Items already covered by earlier sections of this doc are omitted — this section is only for the subtle gotchas.
 
-### Component Design Patterns
+### Interaction & Timing
 
-**1.1 Extract shared UI components immediately** (Sessions 203, 204, 210) — When multiple components need the same UI pattern, extract to a shared component immediately. Duplication leads to divergent styling, behavior, and accessibility. **Rule:** If you're copy-pasting a component pattern, extract it first.
-
-**1.2 Collapsible sections need consistent headers** (Sessions 204, 205) — Use `CollapsiblePanelHeader` for all collapsible sections. **Rule:** Use `CollapsiblePanelHeader` for all collapsible sections.
-
-**1.3 Config-driven components scale better than conditional branches** (Session 201) — When a component has 5+ similar items, use a config array instead of inline JSX. **Rule:** If you have 5+ similar items, use a config array.
-
-**1.4 Touch targets must be 44px minimum on coarse pointers** (Sessions 195, 197, 202, 203) — Use `[@media(pointer:coarse)]:min-h-[44px]` on all interactive elements. **Rule:** Every button/link needs 44px touch targets.
-
-**1.5 Responsive text sizing prevents readability issues** (Sessions 202, 223) — Don't use `text-[10px]` or `text-xs` for content on mobile. **Rule:** Never use text smaller than 12px on mobile.
-
-**1.6 Empty states should be helpful, not silent** (Sessions 186, 198) — When a list/panel is empty, show a message explaining why. **Rule:** Every list component must have an `EmptyState` message.
-
-**1.7 Loading states need visual feedback** (Sessions 203, 204) — Use `LoadingSkeleton` component for all async data loading. **Rule:** Use `LoadingSkeleton` for all async data loading.
-
-**1.8 Overflow handling requires explicit CSS** (Sessions 197, 199, 202) — Long text will break layouts. Use `truncate`, `line-clamp-N`, or `flex-wrap`. **Rule:** Every text container must have explicit overflow handling.
-
-**1.9 Choose Dialog vs Sheet vs AlertDialog vs inline panel deliberately** (Session 213) — Quick confirm = AlertDialog, complex form = Dialog, scrollable side content = Sheet, in-page content = inline panel.
-
-**1.10 Extract hooks before components grow past 500 lines** (Sessions 237, 295, 298, 299) — Large components (BlockTree 1085→808, StaticBlock 846→237, QueryResult 452→238) were made manageable by extracting hooks. **Rule:** If a component exceeds 500 lines, audit for extractable hooks.
-
-**1.11 Generic components replace duplicate picker patterns** (Sessions 298, 235) — `SearchablePopover<T>` replaced duplicate picker blocks. **Rule:** If you're building a searchable picker, use `SearchablePopover<T>` or extend it.
-
-**1.12 Config-driven toolbar with factory functions** (Sessions 201, 298) — Toolbar config arrays extracted to `lib/toolbar-config.ts` factory functions. **Rule:** Toolbar-style components with 5+ similar items should use config arrays in a separate `lib/*-config.ts` file.
-
-**1.13 Shared component inventory must be checked before building** (Sessions 237-299) — Over 16 shared UI components were extracted. Duplication was the #1 source of REVIEW-LATER maintenance items. **Rule:** Check the Shared Component Inventory table above before building any new component.
-
-**1.14 ListViewState pattern for consistent loading/empty/loaded branching** (Session 244) — Six components had near-identical conditional rendering. **Rule:** Use the ListViewState pattern for any component that fetches and displays a list.
-
-### Interaction Design
-
-**2.1 Blur-to-save requires special handling with popovers** (Sessions 65, 186, 195) — Use `checkVisibility()` API to detect visibility before blur-save. **Rule:** Use `checkVisibility()` to detect visibility before blur-save.
-
-**2.2 Delete buttons should use onPointerDown, not onClick** (Session 195) — Delete buttons in lists need to fire before focus changes. **Rule:** Delete buttons use `onPointerDown` + `onClick` fallback.
-
-**2.3 Keyboard listeners need capture phase + stopPropagation** (Sessions 195, 207) — Priority keyboard listeners use `capture:true` + `stopPropagation`.
-
-**2.4 Outside-click dismissal needs cleanup** (Session 207) — Outside-click listeners must have cleanup on unmount.
-
-**2.5 Enter creates new sibling, not newline** (Session 95) — Enter = new sibling, Shift+Enter = newline.
-
-**2.6 Empty block cleanup prevents clutter** (Session 95) — Auto-delete empty blocks created by Enter key.
-
-**2.7 Cycling buttons should show current state** (Session 195) — Cycling buttons display current state.
-
-**2.8 Undo actions should have toast feedback** (Session 128) — Undo actions show toast feedback with 6s duration.
-
-**2.9 Partial failure should show retry** (Sessions 128, 131) — Partial failure toasts include retry action with 5s duration.
-
-**2.10 Breadcrumbs should be clickable** (Sessions 205, 209) — All page breadcrumbs are clickable via `PageLink`.
-
-**2.11 Group headers should show counts** (Sessions 209, 210) — Group headers include item counts.
-
-**2.12 Colored pills communicate status at a glance** (Sessions 209, 210, 123) — Use consistent semantic colors from `date-property-colors.ts`.
-
-**2.13 Popovers need max-width and responsive positioning** (Sessions 197, 198, 202) — Popovers use `max-w-[calc(100vw-2rem)]` on mobile.
-
-**2.14 Hover states need active states on touch** (Sessions 202, 217) — All `hover:` styles get `active:` equivalents.
-
-**2.15 Silent errors are never acceptable** (Sessions 166, 186, 198) — Never silently swallow errors.
-
-**2.16 Suggestion popup keyboard passthrough** (Session 228) — Keyboard handlers must check for visible suggestion popups before intercepting Enter/Tab/Escape/Backspace.
-
-**2.17 Re-entrancy guards on async handlers** (Sessions 228, 229) — All async handlers that mutate state need a ref-based re-entrancy guard with `.finally()` reset.
-
-**2.18 Capture DOM positions before async gaps** (Session 229) — Capture insertion positions before any async operation in editor input rules.
-
-**2.19 flushSync for editor blur saves** (Session 237) — Use `flushSync()` when blur handlers must persist state before unmount.
-
-**2.20 @floating-ui/dom for all popup positioning** (Session 208) — Never write manual popup positioning math. Use `@floating-ui/dom`.
-
-**2.21 Gutter buttons need pointer-events management** (Session 216) — Hidden interactive elements must have `pointer-events-none`.
+- **Blur-to-save needs `checkVisibility()` guard.** Popovers/pickers must not trigger save on blur. Check visibility before persisting.
+- **`onPointerDown` before `onClick` for buttons that disappear on focus change** (delete buttons in a hover-reveal gutter, for example). `onClick` fires after focus moves and the re-render hides the button.
+- **Capture-phase keydown + `stopPropagation()`** when the handler must fire before ProseMirror (e.g., Enter to split blocks). Attach on `parentElement`, not the editor element.
+- **Suggestion popup keyboard passthrough.** When a suggestion popup (slash/tag/page picker) is visible, `Enter`/`Tab`/`Escape`/`Backspace` must pass through to the popup. Block keyboard handlers check `isSuggestionPopupVisible()` first.
+- **Re-entrancy guards on async handlers** (rapid double-click/double-Enter). Use a `useRef(false)` declared at hook/component top level, set true in `try`, reset in `finally`.
+- **Capture DOM/editor state before any `await`.** After an async gap, cursor/selection/focus may have moved. Save `pos = editor.state.selection.from` and `blockId = store.getState().focusedBlockId` first, then use the saved values.
+- **`flushSync()` in editor blur.** When `handleBlur` calls `edit()` + `splitBlock()`, wrap in `flushSync()` so the store update renders before the editor unmounts.
+- **Version-counter pattern for save/discard races.** Draft autosave uses a ref counter: save captures the version before `await`; if the version incremented (discard fired), the save is dropped.
+- **Map merge order for cache updates.** `new Map([...staleCache, ...freshData])` — fresh data must be spread LAST so it wins on conflict. Reversed order silently keeps stale data.
+- **Optimistic edits need rollback.** Capture `previousContent` before the optimistic update, restore it (and toast an error) on IPC rejection.
 
 ### Accessibility
 
-**3.1 Focus rings on all interactive elements** (Sessions 195, 203, 204) — All interactive elements have `focus-visible:ring-2`.
+- **`outline-hidden`, not `outline-none`.** `outline-none` conflicts with `focus-visible:outline-1`.
+- **SVG interactive elements need explicit keyboard support.** Add `tabindex="0"`, `role="button"`, and `keydown` handlers for Enter/Space. For touch, add an invisible larger hit area behind the visible element.
+- **Dynamic `aria-label` on toggle buttons.** Expand/collapse icons change meaning — label must reflect current state.
+- **Skip-to-main link.** `sr-only` anchor visible on focus that targets `#main-content`.
+- **Announce state changes** via `announce()` (singleton in `src/lib/announcer.ts`). Use the double-RAF pattern; pass i18n keys, not English.
+- **Tab/Shift-Tab are browser focus navigation** — don't bind them for app shortcuts (indent/dedent etc.). Use `Ctrl+Shift+Arrow` instead.
 
-**3.2 Aria-labels required for icon-only buttons** (Sessions 195, 205, 208) — Icon-only buttons always have `aria-label`.
+### Motion & Animation
 
-**3.3 Aria-pressed for toggle buttons** (Sessions 153, 223) — Toggle buttons have `aria-pressed`.
+- **JS-driven animations must check `prefers-reduced-motion` manually.** The global CSS rule only covers CSS animations. d3-force, `requestAnimationFrame` loops, etc. must check `window.matchMedia('(prefers-reduced-motion: reduce)')` and skip or instant-complete.
 
-**3.4 Aria-describedby links warnings to inputs** (Session 196) — Warnings linked to inputs via `aria-describedby`.
+### Positioning & Layout
 
-**3.5 Announce state changes to screen readers** (Sessions 166, 195) — State changes are announced via `announce()`.
+- **`@floating-ui/dom` only** for popup placement. Use `computePosition()` with `offset() + flip() + shift()` middleware — never hand-roll coordinate math.
+- **Gutter/hover-reveal buttons need `pointer-events: none` when hidden.** Invisible (`opacity-0`) elements still receive pointer events and block clicks on things behind them. Toggle `pointer-events-auto` on all visibility triggers (group-hover, coarse pointer, focus-within, focus-visible).
+- **Popovers on mobile:** `max-w-[calc(100vw-2rem)]` and responsive positioning — otherwise they clip off-screen.
 
-**3.6 Keyboard shortcuts should be documented** (Sessions 195, 203) — All keyboard shortcuts documented in help panel + tooltips.
+### Data & State
 
-**3.7 Expand/collapse buttons need dynamic aria-label** (Session 114) — Expand/collapse buttons have dynamic aria-labels.
+- **Store initial state `loading: true`** when the store fetches on mount. `loading: false` causes a flash of empty state before data arrives.
+- **Per-page stores via context.** When a component can render multiple independent instances (per-page block stores, per-page undo state), use per-instance stores created via a factory + React context, not global singletons.
+- **Individual Zustand selectors** over destructuring — `useBlockStore(s => s.focusedBlockId)` re-renders only on that slice. `const { focusedBlockId } = useBlockStore()` re-renders on every state change (bad for per-block components).
+- **Property type initialization must be type-aware.** Use `buildInitParams()` in `property-save-utils.ts` to get type-appropriate defaults (number→0, date→today, text/select→'', ref→null). Sending `valueText: ''` for non-text types silently fails.
+- **User-facing filters use names, not ULIDs.** Resolve to IDs via `TagValuePicker` / `queryTag()`.
 
-**3.8 useListKeyboardNavigation for all navigable lists** (Sessions 215, 265) — Arrow-key navigation, Home/End, Enter selection via shared hook across 6+ components. **Rule:** All keyboard-navigable lists use `useListKeyboardNavigation` hook.
+### Code Quality
 
-**3.9 ARIA grid pattern for calendar-like components** (Session 288) — MonthlyDayCell uses `gridcell`/`grid`/`row`/`columnheader` roles. **Rule:** Calendar/grid UIs use ARIA grid pattern.
-
-**3.10 Skip-to-main link for keyboard navigation** (Session 265) — Sr-only anchor visible on focus, targets `#main-content`. **Rule:** App must have a skip-to-main link.
-
-**3.11 SVG elements need explicit keyboard/touch support** (Sessions 293, 296) — SVG interactive elements need `tabindex`, `role`, keydown handlers, and invisible hit areas for touch.
-
-**3.12 JS animations must check prefers-reduced-motion** (Session 296) — d3-force simulations must check `window.matchMedia('(prefers-reduced-motion: reduce)')`.
-
-**3.13 outline-hidden instead of outline-none** (Session 264) — `outline-none` conflicts with `focus-visible:outline-1`. Use `outline-hidden` instead.
-
-### Visual Design & Consistency
-
-**4.1 Property names formatted consistently** (Session 198) — Use `formatPropertyName()` for all property name display.
-
-**4.2 Built-in properties should have icons** (Sessions 198, 206) — Built-in properties display icons via `BUILTIN_PROPERTY_ICONS`.
-
-**4.3 Spacing should be consistent across panels** (Sessions 206, 192) — Panels use consistent spacing.
-
-**4.4 Use design system colors, never arbitrary** (Session 192) — Always use design system colors, never arbitrary colors.
-
-**4.5 Date chips should have consistent styling** (Sessions 57, 93, 200) — Use `DateChip` component for all date displays.
-
-**4.6 Semantic alert tokens for callout blocks** (Session 293) — Use `--alert-*` semantic tokens for callout/alert styling. Never hardcode Tailwind colors for stateful UI.
-
-**4.7 Animation and transition tokens prevent inconsistency** (Session 272) — Use `--duration-*` and `--ease-*` tokens for all animations.
-
-**4.8 Typography scale tokens ensure readable hierarchy** (Session 275) — Use typography scale tokens and responsive overrides for headings.
-
-**4.9 Semantic color migration pattern** (Sessions 237, 243) — New colors are always semantic tokens. Hardcoded Tailwind colors are migration debt.
-
-### Touch / Mobile
-
-**5.1 Pointer events are better than mouse events** (Sessions 166, 195) — Use pointer events instead of mouse events.
-
-**5.2 Coarse pointer media query for touch-specific styles** (Sessions 166, 195, 202, 203) — Touch-specific styles use `[@media(pointer:coarse)]`.
-
-**5.3 Gutter buttons visible on touch** (Session 195) — Gutter buttons use `[@media(pointer:coarse)]:opacity-100`.
-
-**5.4 Dialog close buttons need touch sizing** (Session 195) — Dialog close buttons have 44px touch targets.
-
-**5.5 Form inputs should stack on mobile** (Sessions 199, 202) — Forms use `flex-col sm:flex-row` for responsive stacking.
-
-### Performance UX
-
-**6.1 Debounce search input** (Session 201) — Search inputs use `useDebouncedCallback` with 300ms delay.
-
-**6.2 Lazy load heavy components** (Sessions 112, 186) — Heavy components are lazy-loaded.
-
-**6.3 Batch queries instead of N+1** (Sessions 62, 130, 209) — Use batch queries to avoid N+1 problems.
-
-**6.4 Skeleton loaders improve perceived performance** (Session 203) — Use `LoadingSkeleton` for all async data loading.
-
-**6.5 Optimistic updates improve responsiveness** (Session 136) — Implement optimistic updates for mutations.
-
-**6.6 useShallow prevents unnecessary Zustand re-renders** (Session 243) — Wrap multi-value Zustand selectors with `useShallow`.
-
-**6.7 Ref-based callbacks prevent dependency cascade** (Session 278) — Callbacks passed to many consumers should be ref-stabilized.
-
-**6.8 N+1 queries solved with LEFT JOIN batching** (Session 273) — Batch per-item queries into the parent query with LEFT JOINs when possible.
-
-**6.9 Split read/write paths in background tasks** (Session 256) — Background tasks should read from read pool, only write-lock for the final mutation.
-
-**6.10 Frontend caching for expensive views** (Session 302) — Views that fetch expensive data should cache results and show stale data while refreshing.
-
-### State Management UX
-
-**7.1 Selection state orthogonal to focus** (Session 133) — Selection and focus are separate store slices.
-
-**7.2 Standard multi-select patterns** (Session 133) — Multi-select uses Ctrl+Click (toggle) and Shift+Click (range).
-
-**7.3 Escape clears selection** (Sessions 133, 138) — Escape clears selection when not editing.
-
-**7.4 Selection clears on page navigation** (Session 138) — Selection clears on page navigation.
-
-**7.5 Collapse state persists in localStorage** (Session 105) — Collapse state persists in localStorage.
-
-**7.6 Cache eviction prevents memory leaks** (Session 80) — Caches have max size with oldest-first eviction.
-
-**7.7 Undo history clears on page navigation** (Session 80) — Undo history clears on page navigation.
-
-**7.8 Per-page store pattern for multi-instance components** (Session 223) — When a component can render multiple instances with independent state, use per-instance stores via React context.
-
-**7.9 Version counter prevents save/discard race conditions** (Session 242) — When save and discard can race, use a version counter to detect stale saves.
-
-**7.10 Map spread order matters for cache updates** (Session 230) — When merging caches, ensure the freshest data is spread last.
-
-**7.11 FeatureErrorBoundary per section** (Session 237) — Wrap each major section with FeatureErrorBoundary.
-
-### Sync & Offline UX
-
-**8.1 Sync state should be visible** (Sessions 146, 147) — Sync status is always visible in header.
-
-**8.2 Offline state should be graceful** (Session 146) — App continues to work offline with local-only changes.
-
-**8.3 Online event triggers immediate sync** (Session 146) — Online event triggers immediate sync.
-
-**8.4 Sync timeouts should be generous** (Session 146) — Sync timeouts are 60s+ to avoid false failures.
-
-### Error Handling UX
-
-**9.1 Validation errors should be inline** (Sessions 104, 196) — Validation errors appear inline with `aria-describedby`.
-
-**9.2 Backend errors should surface to user** (Session 104) — Backend errors surface to user.
-
-**9.3 Error recovery should be automatic when possible** (Session 249) — Implement automatic error recovery when possible.
+- **No silent catch blocks.** Every `catch` calls `logger.warn` / `logger.error` (or surfaces via `toast.error`), never `.catch(() => {})`.
+- **Cleanup event listeners on unmount.** Any `useEffect` that adds a listener needs a cleanup return — otherwise memory leaks and stale closures.
+- **No inline `style={{...}}`** for values that have Tailwind utilities or tokens. Inline styles bypass responsive utilities, dark mode, and tokens.
+- **Extract when components pass ~500 lines.** Extract hooks first, presentational sub-components next. Keep re-exports for backward compatibility.
+- **Check the Shared Component Inventory before building** a new component. Duplication is consistently the #1 source of REVIEW-LATER debt.
 
 ### Key Principles
 
-1. **Consistency** — Use shared components, design system colors, and consistent spacing everywhere. Check the Shared Component Inventory before building.
-2. **Mobile-first** — Always consider touch users. Use `[@media(pointer:coarse)]` for touch-specific styles. 44px minimum touch targets.
-3. **Accessibility** — Add aria-labels, focus rings, and semantic HTML. Test with axe. Use `useListKeyboardNavigation` for navigable lists. Check `prefers-reduced-motion` for JS animations.
-4. **Feedback** — Show loading states, error messages, and confirmation dialogs. Never silently fail. Toast with undo for reversible destructive actions.
-5. **Performance** — Debounce search, lazy-load, batch queries, use `useShallow`, ref-stabilize callbacks. Cache expensive views.
-6. **User control** — Let users undo, clear selections, and navigate easily. Keyboard shortcut customization.
-7. **Graceful degradation** — App works offline, handles errors gracefully via FeatureErrorBoundary, provides fallbacks.
-8. **Extract early** — If a component exceeds 500 lines, extract hooks. If a pattern repeats twice, extract a shared component. Config arrays for toolbars.
-9. **Token-first** — Colors, durations, easings, typography all go through CSS custom properties. Never hardcode values that have tokens.
-10. **Guard concurrent operations** — Re-entrancy guards on async handlers, version counters for race conditions, position capture before async gaps.
+1. **Consistency** — use shared components, tokens, and established patterns.
+2. **Mobile-first** — touch-friendly (44px min), coarse-pointer handling, responsive stacking.
+3. **Accessibility** — `aria-label`, focus rings, semantic HTML, keyboard navigation, `prefers-reduced-motion`.
+4. **Feedback** — loading states, error toasts, confirmations. Never silently fail.
+5. **Performance** — debounce search, lazy-load heavy views, batch queries, cache expensive views.
+6. **Graceful degradation** — offline-first, `FeatureErrorBoundary` per section, sensible fallbacks.
+7. **Token-first** — colors, durations, typography all via CSS custom properties.
+8. **Guard concurrent operations** — re-entrancy refs, version counters, position capture across async gaps.

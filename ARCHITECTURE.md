@@ -1439,13 +1439,12 @@ SAN: localhost/127.0.0.1). `SyncServer` binds to a random port, accepts TLS+WebS
 `SyncOrchestrator` is a state machine (`SyncState` enum) that drives the sync flow:
 
 ```
-Idle → ExchangingHeads → StreamingOps → ApplyingOps → Merging → Complete
-                                                              ↘ ResetRequired
-                                                              ↘ Failed
+Idle → ExchangingHeads → StreamingOps → ApplyingOps → Merging → TransferringFiles → Complete
+                                                                                  ↘ ResetRequired
+                                                                                  ↘ Failed
 ```
 
-**Messages** (`SyncMessage` enum): `HeadExchange`, `OpBatch`, `ResetRequired`, `SnapshotOffer`,
-`SnapshotAccept`, `SnapshotReject`, `SyncComplete`, `Error`.
+**Messages** (`SyncMessage` enum in `sync_protocol/types.rs`): op-sync messages `HeadExchange`, `OpBatch`, `ResetRequired`, `SnapshotOffer`, `SnapshotAccept`, `SnapshotReject`, `SyncComplete`, `Error`; file-transfer messages `FileRequest`, `FileOffer`, `FileReceived`, `FileTransferComplete`.
 
 **Flow:**
 
@@ -1609,8 +1608,7 @@ architectural changes were required.
 
 ## 20. Tauri Command API
 
-75 total commands (including 11 sync/pairing). Each has an `inner_*` function taking `&SqlitePool` for
-testability. All use cursor-based pagination where applicable.
+80+ total commands (including sync/pairing/file-transfer), split across `src-tauri/src/commands/` by domain: `blocks/` (crud + move + list + fetch), `pages.rs`, `tags.rs`, `properties.rs`, `agenda.rs`, `attachments.rs`, `history.rs`, `journal.rs`, `queries.rs`, `sync_cmds.rs`, `compaction.rs`, `drafts.rs`, `link_metadata.rs`, `logging.rs`. Each has an `inner_*` function taking `&SqlitePool` for testability. All use cursor-based pagination where applicable.
 
 ### Block Operations (9)
 
@@ -1721,18 +1719,15 @@ testability. All use cursor-based pagination where applicable.
 
 ---
 
-## 21. Rust Backend Modules (33)
+## 21. Rust Backend Modules
 
-backlink_query, cache, commands, dag, db, device, draft, error, fts, hash, import, materializer,
-merge, op, op_log, pagination, pairing, peer_refs, recovery, recurrence, reverse, snapshot,
-soft_delete, sync_cert, sync_daemon, sync_events, sync_net, sync_protocol, sync_scheduler,
-tag_inheritance, tag_query, ulid, word_diff
+`backlink`, `cache`, `commands`, `dag`, `db`, `device`, `draft`, `error`, `fts`, `hash`, `import`, `link_metadata`, `materializer`, `merge`, `op`, `op_log`, `pagination`, `pairing`, `peer_refs`, `recovery`, `recurrence`, `reverse`, `snapshot`, `soft_delete`, `sync_cert`, `sync_daemon`, `sync_events`, `sync_files`, `sync_net`, `sync_protocol`, `sync_scheduler`, `tag_inheritance`, `tag_query`, `ulid`, `word_diff`
 
 ---
 
 ## 22. Scalability Characteristics
 
-Benchmark-driven analysis at 100K blocks (session 302). All measurements via Criterion on
+Benchmark-driven analysis at 100K blocks. All measurements via Criterion on
 SQLite WAL mode with 2-writer + 4-reader pool.
 
 | Operation | 100 | 1K | 10K | 100K | Verdict |

@@ -37,13 +37,13 @@ src/
 │   ├── smoke.test.ts
 │   ├── boot-store.test.ts
 │   └── fixtures/index.ts         # Shared fixture factories (makeBlock, makePage, etc.)
-├── components/__tests__/         # Component tests (.test.tsx) — 121 files
+├── components/__tests__/         # Component tests (.test.tsx) — 125+ files
 │   ├── App.test.tsx
 │   ├── PageBrowser.test.tsx
 │   ├── EditableBlock.test.tsx
 │   ├── SearchPanel.test.tsx
 │   └── ...
-├── editor/__tests__/             # Editor logic tests — 17 files
+├── editor/__tests__/             # Editor logic tests — 18+ files
 │   ├── markdown-serializer.test.ts        # Example-based
 │   ├── markdown-serializer.property.test.ts # fast-check
 │   ├── extensions.test.ts
@@ -54,7 +54,7 @@ src/
 │   ├── page-blocks.test.ts
 │   ├── navigation.test.ts
 │   └── undo.test.ts
-├── hooks/__tests__/              # Hook tests — 43 files
+├── hooks/__tests__/              # Hook tests — 45+ files
 │   ├── useViewportObserver.test.ts
 │   ├── useBlockCollapse.test.ts
 │   ├── useBlockZoom.test.ts
@@ -65,7 +65,7 @@ src/
 │   ├── tree-utils.test.ts
 │   ├── date-utils.test.ts
 │   └── ...
-e2e/                              # 21 Playwright spec files
+e2e/                              # 26 Playwright spec files
 ├── smoke.spec.ts                 # App load, nav items, no console errors
 ├── editor-lifecycle.spec.ts      # CRUD blocks, navigation, deletion
 ├── undo-redo-blocks.spec.ts      # Page-level undo/redo flows
@@ -512,26 +512,26 @@ RTL `cleanup()` is registered manually in `afterEach` since vitest globals are d
 
 16. **`flushSync()` ordering in editor blur** — When `handleBlur` calls `edit()` then `splitBlock()`, the store update must complete before React unmounts the editor. Wrap both calls in `flushSync()` to force synchronous rendering. Without it, the store renders after the editor unmounts, and the edit is lost. Tests should verify call ordering (edit before split, both before unmount).
 
-17. **Component extraction requires regression verification** — When extracting hooks/components from a large file (e.g., BlockTree → useBlockCollapse, useBlockZoom, BlockListRenderer), each extracted piece needs its own test file. After extraction, run the full test suite to verify no regressions. The M-1 BlockTree refactor (1184→1028 lines) verified 262 tests across 8 extracted modules.
+17. **Component extraction requires regression verification** — When extracting hooks/components from a large file (e.g., BlockTree → useBlockCollapse, useBlockZoom, BlockListRenderer), each extracted piece needs its own test file. After extraction, run the full test suite to verify no regressions. Maintain backward-compatible re-exports from the original file so existing imports keep working.
 
-18. **`onPointerDown` vs `onClick` for timing-sensitive buttons** — When a button must fire before a focus/blur cycle (e.g., delete button in a gutter that disappears on blur), use `onPointerDown` (fires before focus changes) with an `onClick` fallback for keyboard accessibility. Session 195 fixed a bug where the delete button was unclickable because `onClick` fired after focus moved and re-render hid the button.
+18. **`onPointerDown` vs `onClick` for timing-sensitive buttons** — When a button must fire before a focus/blur cycle (e.g., delete button in a gutter that disappears on blur), use `onPointerDown` (fires before focus changes) with an `onClick` fallback for keyboard accessibility. Using only `onClick` can leave the button unreachable because focus moves and a re-render hides it before `onClick` fires.
 
-19. **Capture-phase keydown on `parentElement`** — When the component's keydown handler must fire before ProseMirror's (e.g., Enter for block splitting), attach the listener to `parentElement` with `capture: true` + `stopPropagation()` when handled. Direct listeners on the editor element race with ProseMirror. Session 195 fixed Enter key handling this way.
+19. **Capture-phase keydown on `parentElement`** — When the component's keydown handler must fire before ProseMirror's (e.g., Enter for block splitting), attach the listener to `parentElement` with `capture: true` + `stopPropagation()` when handled. Direct listeners on the editor element race with ProseMirror.
 
-20. **`shouldSplitOnBlur()` replaces naive newline check** — `handleBlur` must NOT use `content.includes('\n')` to decide whether to split — code blocks contain newlines that are NOT split boundaries. Use `shouldSplitOnBlur()` which checks for actual multi-paragraph structure. Session 242 (B-9) fixed false splits on code blocks.
+20. **`shouldSplitOnBlur()` replaces naive newline check** — `handleBlur` must NOT use `content.includes('\n')` to decide whether to split — code blocks contain newlines that are NOT split boundaries. Use `shouldSplitOnBlur()` which checks for actual multi-paragraph structure.
 
-21. **Optimistic edits need rollback on failure** — `edit()` must capture `previousContent` before the update. If the backend `invoke` fails, roll back the store to `previousContent` and show an error toast. Session 242 (B-10) fixed lost content on transient backend errors.
+21. **Optimistic edits need rollback on failure** — `edit()` must capture `previousContent` before the update. If the backend `invoke` fails, roll back the store to `previousContent` and show an error toast. Tests must cover the rejection path.
 
-22. **Draft autosave race condition** — `saveDraft()` and `discardDraft()` can race when a user blurs the editor during an autosave cycle. Use a version counter: `saveDraft` captures the version before the async call; if the version has incremented (meaning `discardDraft` was called), the save is silently dropped. Session 242 (B-13) fixed this with a version counter pattern.
+22. **Draft autosave race condition** — `saveDraft()` and `discardDraft()` can race when a user blurs the editor during an autosave cycle. Use a version counter: `saveDraft` captures the version before the async call; if the version has incremented (meaning `discardDraft` was called), the save is silently dropped.
 
-23. **EDITOR_PORTAL_SELECTORS must include all overlays** — When adding new overlay elements that appear "inside" the editor area (context menus, pickers), their container class must be added to `EDITOR_PORTAL_SELECTORS` in `EditableBlock.tsx`. Otherwise, clicking the overlay triggers `handleBlur`, saving/splitting content prematurely. Session 242 (B-15) added `.block-context-menu`.
+23. **EDITOR_PORTAL_SELECTORS must include all overlays** — When adding new overlay elements that appear "inside" the editor area (context menus, pickers, date pickers), their container class/selector must be added to `EDITOR_PORTAL_SELECTORS` in `EditableBlock.tsx`. Otherwise, clicking the overlay triggers `handleBlur`, saving/splitting content prematurely.
 
-24. **Radix Dialog vs AlertDialog for user input** — Use `Dialog` (not `AlertDialog`) when the modal needs user input (text fields, selects). `AlertDialog` traps focus in a way that makes `autoFocus` on input fields unreliable. `ConfirmDialog` uses `AlertDialog` (confirm/cancel only); input modals use `Dialog`. Session 192 migrated PairingDialog from AlertDialog to Dialog for this reason.
+24. **Radix Dialog vs AlertDialog for user input** — Use `Dialog` (not `AlertDialog`) when the modal needs user input (text fields, selects). `AlertDialog` traps focus in a way that makes `autoFocus` on input fields unreliable. `ConfirmDialog` uses `AlertDialog` (confirm/cancel only); input modals use `Dialog`.
 
-25. **Guard `Array.isArray()` on IPC responses** — Some Tauri commands may return non-array values when the backend returns an unexpected type. When the component calls `.map()` on the result, a crash occurs. Add `Array.isArray(result)` guards before `.map()` calls on IPC responses. Session 198 fixed `PageHeader` crashing when `getPageAliases` returned a non-array.
+25. **Guard `Array.isArray()` on IPC responses** — Some Tauri commands may return non-array values when the backend returns an unexpected type. When the component calls `.map()` on the result, a crash occurs. Add `Array.isArray(result)` guards before `.map()` calls on IPC responses.
 
-26. **Early-persist in `useEditorBlur` must check `shouldSplitOnBlur()`** — The early-persist path (step 3) calls `edit()` for new blocks with content but does NOT return — it falls through to the normal blur logic. If the content contains newlines (multi-paragraph), `shouldSplitOnBlur()` will be true and `splitBlock()` will run after `edit()` already saved the unsplit content. This can produce duplicate operations. Either return after early-persist or check `shouldSplitOnBlur()` before persisting.
+26. **Early-persist in `useEditorBlur` must check `shouldSplitOnBlur()`** — The early-persist path calls `edit()` for new blocks with content but does NOT return — it falls through to the normal blur logic. If the content contains newlines (multi-paragraph), `shouldSplitOnBlur()` will be true and `splitBlock()` will run after `edit()` already saved the unsplit content. This produces duplicate operations. Either return after early-persist or check `shouldSplitOnBlur()` before persisting.
 
-27. **Hook dependency arrays must include all read variables** — `useBlockSlashCommands` and `useBlockDatePicker` have incomplete dependency arrays (missing `pageStore`, `pagesListRef`, `rootParentId`, etc.). Variables read inside `useCallback` must be in the dep array or accessed via `useRef` to avoid stale closures. Use `biome-ignore` with a clear justification if intentionally omitting a dependency.
+27. **Hook dependency arrays must include all read variables** — Variables read inside `useCallback`/`useMemo`/`useEffect` must be in the dep array or accessed via `useRef` to avoid stale closures. Use `biome-ignore` with a clear justification comment if intentionally omitting a dependency.
 
-28. **Re-entrancy guard refs must be at hook/component level** — Refs used as re-entrancy guards (e.g., `deleteInProgress`, `enterSaveInProgress`) must be declared with `useRef` at the hook or component top level, not inside a regular function or callback. Declaring them inside a non-hook function recreates the ref on every call, defeating the guard. `useBlockKeyboardHandlers` demonstrates the correct pattern — refs declared at hook level with `useRef()`, maintaining identity across renders.
+28. **Re-entrancy guard refs must be at hook/component level** — Refs used as re-entrancy guards (e.g., `deleteInProgress`, `enterSaveInProgress`) must be declared with `useRef` at the hook or component top level, not inside a regular function or callback. Declaring them inside a non-hook function recreates the ref on every call, defeating the guard. See `useBlockKeyboardHandlers` as the reference pattern.

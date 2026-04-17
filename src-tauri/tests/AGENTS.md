@@ -2,12 +2,12 @@
 
 ## Overview
 
-Three test layers, ~1700+ tests total:
+Three test layers, 2000+ tests total:
 
 | Layer | Location | What it tests |
 |-------|----------|---------------|
-| **Unit** | `src/<module>.rs` → `mod tests` | Single-module logic: serde, hashing, pagination math, error formatting |
-| **Integration** | `src/integration_tests.rs`, `src/command_integration_tests.rs`, `src/sync_integration_tests.rs` | Cross-module pipelines through the full command stack |
+| **Unit** | `src/<module>.rs` → `mod tests` (or `src/<module>/tests.rs`) | Single-module logic: serde, hashing, pagination math, error formatting |
+| **Integration** | `src/integration_tests.rs`, `src/command_integration_tests/`, `src/sync_integration_tests.rs` | Cross-module pipelines through the full command stack |
 | **Benchmarks** | `benches/*.rs` | Criterion microbenchmarks (24 bench files, never in CI) |
 
 Additionally: `src/lib.rs` contains `specta_tests` for TypeScript binding verification.
@@ -60,16 +60,16 @@ cargo bench               # all 24 benches
 
 ### Inline unit tests (every module)
 
-Every `src/<module>.rs` has a `#[cfg(test)] mod tests` block. Modules with inline tests:
-`backlink_query`, `cache`, `commands`, `dag`, `db`, `device`, `draft`, `error`, `fts`, `hash`, `import`, `materializer`, `merge`, `op`, `op_log`, `pagination`, `pairing`, `peer_refs`, `recovery`, `recurrence`, `reverse`, `snapshot`, `soft_delete`, `sync_cert`, `sync_daemon`, `sync_events`, `sync_net`, `sync_protocol`, `sync_scheduler`, `tag_inheritance`, `tag_query`, `ulid`, `word_diff`
+Every `src/<module>.rs` has a `#[cfg(test)] mod tests` block (or a separate `src/<module>/tests.rs` file included via `mod tests` in `mod.rs` for larger modules like `backlink`, `cache`). Modules with tests include:
+`backlink`, `cache`, `commands`, `dag`, `db`, `device`, `draft`, `error`, `fts`, `hash`, `import`, `materializer`, `merge`, `op`, `op_log`, `pagination`, `pairing`, `peer_refs`, `recovery`, `recurrence`, `reverse`, `snapshot`, `soft_delete`, `sync_cert`, `sync_daemon`, `sync_events`, `sync_files`, `sync_net`, `sync_protocol`, `sync_scheduler`, `tag_inheritance`, `tag_query`, `ulid`, `word_diff`.
 
 ### Cross-module integration tests
 
-- **`src/integration_tests.rs`** (~1750 lines) — End-to-end pipelines: create → op log → materializer → cache → pagination → soft-delete → restore → purge. Seven test groups: op ordering/hash chains, crash recovery, cascade delete/purge, pagination, position handling, materializer dispatch, edit sequences.
-- **`src/command_integration_tests.rs`** (~8300 lines) — API contract tests for every `*_inner` command function. Happy paths, error variants, edge cases, cross-cutting lifecycle. Tests every Tauri command as if calling from the frontend.
-- **`src/sync_integration_tests.rs`** (~1700 lines) — Sync protocol integration tests: message serialization, peer handling, conflict resolution.
+- **`src/integration_tests.rs`** — End-to-end pipelines: create → op log → materializer → cache → pagination → soft-delete → restore → purge. Seven test groups: op ordering/hash chains, crash recovery, cascade delete/purge, pagination, position handling, materializer dispatch, edit sequences.
+- **`src/command_integration_tests/`** (module directory with ~11 files: `block_integration.rs`, `page_integration.rs`, `tag_integration.rs`, `property_integration.rs`, `backlink_integration.rs`, `lifecycle_integration.rs`, `sync_integration.rs`, `trash_integration.rs`, `undo_integration.rs`, plus `common.rs` + `mod.rs`) — API contract tests for every `*_inner` command function. Happy paths, error variants, edge cases, cross-cutting lifecycle. Tests every Tauri command as if calling from the frontend.
+- **`src/sync_integration_tests.rs`** — Sync protocol integration tests: message serialization, peer handling, conflict resolution.
 
-All three files are `#[cfg(test)] mod` includes in `lib.rs` — they compile as part of the lib crate's test binary, not as separate test binaries.
+All three are `#[cfg(test)] mod` includes in `lib.rs` — they compile as part of the lib crate's test binary, not as separate test binaries.
 
 ### Benchmarks
 
@@ -229,7 +229,7 @@ Tests sync message serialization, peer communication flows, and conflict resolut
 
 ### Where snapshots live
 
-`src/snapshots/` — 25 `.snap` files. Naming: `agaric_lib__<module>__tests__<test_name>.snap`.
+`src/snapshots/` — `.snap` files. Naming: `agaric_lib__<module>__tests__<test_name>.snap`.
 
 ### Modules using snapshots
 
@@ -411,26 +411,22 @@ criterion_main!(benches);
 
 14. **ULID normalization in hash tests** — ULIDs are uppercase Crockford base32 before blake3 hashing (for cross-device determinism). Hardcoded test ULIDs must be uppercase (`"01HZ..."` not `"01hz..."`). Lowercase ULIDs produce different hashes and will break hash-chain assertions.
 
-15. **Visibility changes for benchmarks** — Bench files are separate crates and can only access `pub` items. When adding benchmarks for `*_inner` command functions, you may need to widen visibility from `pub(crate)` to `pub`. This is acceptable for `*_inner` functions that are the testable entry points. Sessions 300-301 changed 6 functions from `pub(crate)` to `pub` for this reason.
+15. **Visibility changes for benchmarks** — Bench files are separate crates and can only access `pub` items. When adding benchmarks for `*_inner` command functions, you may need to widen visibility from `pub(crate)` to `pub`. This is acceptable for `*_inner` functions that are the testable entry points.
 
-16. **Recursive CTE tests must verify nested structures** — When testing tree operations (restore, cascade delete, move), verify that nested blocks are discovered. A flat page-scoped query (`WHERE parent_id = ?`) misses grandchildren — use recursive CTEs. This was caught during review of `restore_page_to_op` (session 287): the initial implementation used a flat query and missed nested blocks.
+16. **Recursive CTE tests must verify nested structures** — When testing tree operations (restore, cascade delete, move), verify that nested blocks are discovered. A flat page-scoped query (`WHERE parent_id = ?`) misses grandchildren — use a recursive CTE with `AND is_conflict = 0` and `depth < 100` bounds.
 
-17. **Sentinel values need dedicated test branches** — Special values like `__all__` for `page_id` mean "global scope" and require different SQL (no CTE). Tests must cover both specific-page and sentinel paths. Session 196 found that the `__all__` branch needed a runtime `query_as` without a CTE, separate from the normal paginated path.
+17. **Sentinel values need dedicated test branches** — Special values like `__all__` for `page_id` mean "global scope" and require different SQL (no CTE). Tests must cover both specific-page and sentinel paths.
 
-18. **Adding command parameters breaks integration tests mechanically** — When adding new parameters to `*_inner` functions (e.g., adding `agenda_date_start`/`agenda_date_end` to `list_blocks_inner`), ALL call sites in the integration test files must be updated. This is purely mechanical (adding the new param at every call site) but can touch 30+ locations. The compiler catches all of them — just fix each one.
+18. **Adding command parameters breaks integration tests mechanically** — When adding new parameters to `*_inner` functions, ALL call sites in the integration test files must be updated. This is purely mechanical (adding the new param at every call site) but can touch 30+ locations. The compiler catches all of them.
 
-19. **Materializer error propagation** — Materializer tasks (`ApplyOp`, `BatchApplyOps`) must propagate errors for retry, not swallow them with `.ok()`. Session 237 (batch 84) fixed a bug where errors were silently dropped, preventing retry on transient failures. Tests should verify that materializer task errors bubble up.
+19. **Materializer error propagation** — Materializer tasks (`ApplyOp`, `BatchApplyOps`) must propagate errors for retry, not swallow them with `.ok()`. Silently dropping errors prevents retry on transient failures. Tests should verify that materializer task errors bubble up.
 
-20. **Batch INSERT via multi-row VALUES for performance** — When inserting many rows (e.g., snapshot apply), use chunked multi-row `INSERT INTO ... VALUES (?,?,...), (?,?,...), ...` with a `MAX_SQL_PARAMS` constant. SQLite has a parameter limit (~999), so chunk sizes must account for columns-per-row. Session 172 applied this to `apply_snapshot` with per-table chunk sizes (blocks=83, tags=499, props=166, links=499, attachments=124).
+20. **Batch INSERT via multi-row VALUES for performance** — When inserting many rows (e.g., `apply_snapshot`), use chunked multi-row `INSERT INTO ... VALUES (?,?,...), (?,?,...), ...` with a `MAX_SQL_PARAMS` constant. SQLite has a parameter limit (~999), so chunk sizes must account for columns-per-row (e.g., blocks=83, tags=499, props=166, links=499, attachments=124 rows per chunk).
 
-21. **`is_builtin_property_key()` guards on delete** — Built-in property keys (11 keys: `todo_state`, `priority`, `due_date`, `scheduled_date`, `created_at`, `completed_at`, `repeat`, `repeat-until`, `repeat-count`, `repeat-seq`, `repeat-origin`) cannot be deleted by users. The `delete_property_inner` command validates against `is_builtin_property_key()` and returns `Validation` error. Tests must verify this guard rejects built-in keys.
+21. **`is_builtin_property_key()` guards on delete** — Built-in property keys (11: `todo_state`, `priority`, `due_date`, `scheduled_date`, `created_at`, `completed_at`, `repeat`, `repeat-until`, `repeat-count`, `repeat-seq`, `repeat-origin`) cannot be deleted by users. `delete_property_inner` validates against `is_builtin_property_key()` and returns `Validation`. Tests must verify this guard rejects built-in keys.
 
-22. **`total_count` must use post-filter count** — When a query filters results after the initial fetch (e.g., self-reference filtering in backlinks), `total_count` must be set from the filtered length, not the pre-filter length. Session 196 caught this bug: `matching_ids.len()` was used before filtering, causing inflated counts.
+22. **`total_count` must use post-filter count** — When a query filters results after the initial fetch (e.g., self-reference filtering in backlinks), `total_count` must be set from the filtered length, not the pre-filter length. Otherwise pagination reports inflated totals.
 
-23. **Purge tests must verify ALL 14 cleanup tables** — When adding a new table with FK to `blocks`, add a test case in `purge_block` tests verifying rows are cleaned. Session 305 code review discovered that `page_aliases` and `projected_agenda_cache` are missing from both `purge_block_inner` and the materializer's `PurgeBlock` handler. See ARCHITECTURE.md purge table inventory.
+23. **Purge must clean all tables with FK to `blocks`** — When adding a new table referencing `blocks`, add a cleanup step in `purge_block_inner` (cascade queries in `commands/blocks/crud.rs`) AND in the materializer's `PurgeBlock` handler. Add a test case verifying rows are deleted. Current cleanup covers all known tables including `page_aliases` and `projected_agenda_cache`.
 
-24. **`list_agenda_range` now has 7 unit tests in pagination/tests.rs** (session 362). `list_page_history` still has partial coverage — flagged in session 305.
-
-25. **`edge_case_tests.rs` false-positive assertion** — `assert!(count >= 0)` at line 147 of `f13_sql_injection_block_type_returns_validation_error` always passes because `COUNT(*)` is never negative. Replace with `assert!(count >= 1)` or a schema existence check.
-
-26. **Snapshot restore must be followed by cache rebuild** — `apply_snapshot()` wipes cache tables (`tags_cache`, `pages_cache`, `agenda_cache`, `fts_blocks`) but does NOT rebuild them. No current caller triggers cache rebuilds after restore. Test snapshots should verify cache state post-restore or explicitly rebuild.
+24. **Snapshot restore wipes caches but does NOT rebuild them** — `apply_snapshot()` in `src/snapshot/restore.rs` deletes `tags_cache`, `pages_cache`, `agenda_cache`, `projected_agenda_cache`, `fts_blocks`, then inserts snapshot data. Caller is responsible for triggering cache rebuilds and FTS re-index. Tests that restore must rebuild caches before asserting on cache state.
