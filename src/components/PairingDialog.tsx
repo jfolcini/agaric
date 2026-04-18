@@ -127,7 +127,10 @@ export function PairingDialog({
     return () => {
       cancelled = true
       // Cancel any in-progress pairing when the dialog closes or unmounts
-      cancelPairing().catch(() => toast.error(t('pairing.cancelFailed')))
+      cancelPairing().catch((err) => {
+        logger.warn('PairingDialog', 'cancelPairing on close/unmount failed', undefined, err)
+        toast.error(t('pairing.cancelFailed'))
+      })
     }
   }, [open, init, t])
 

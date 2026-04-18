@@ -115,22 +115,15 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
             // descendant. Mirror of the cascade in `commands/blocks/crud.rs`
             // delete_block_inner, applied by the materializer on remote ops.
             //
-            // Recursive member filters `is_conflict = 0` so conflict copies
-            // (which share parent_id with the original) don't get swept into
-            // the cascade — they have their own independent lifecycle
-            // (invariant #9). `depth < 100` bounds runaway recursion on
-            // corrupted data.
-            sqlx::query(
-                "WITH RECURSIVE descendants(id, depth) AS ( \
-                     SELECT id, 0 FROM blocks WHERE id = ? \
-                     UNION ALL \
-                     SELECT b.id, d.depth + 1 FROM blocks b \
-                     INNER JOIN descendants d ON b.parent_id = d.id \
-                     WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
-                 ) \
-                 UPDATE blocks SET deleted_at = ? \
+            // `descendants_cte_active!()` filters `is_conflict = 0` (conflict
+            // copies have independent lifecycles — invariant #9) AND
+            // `deleted_at IS NULL` (don't re-sweep already-deleted subtrees).
+            // Shared CTE lives in `crate::block_descendants`.
+            sqlx::query(concat!(
+                crate::descendants_cte_active!(),
+                "UPDATE blocks SET deleted_at = ? \
                  WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
-            )
+            ))
             .bind(p.block_id.as_str())
             .bind(now)
             .execute(&mut *conn)
@@ -143,21 +136,15 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
             // `deleted_at_ref` timestamp — i.e., the exact cohort that
             // `delete_block` soft-deleted together.
             //
-            // Recursive member filters `is_conflict = 0` — conflict copies
-            // have independent deleted_at timestamps and must not be
-            // bulk-restored with the original (invariant #9). `depth < 100`
-            // bounds the walk.
-            sqlx::query(
-                "WITH RECURSIVE descendants(id, depth) AS ( \
-                     SELECT id, 0 FROM blocks WHERE id = ? \
-                     UNION ALL \
-                     SELECT b.id, d.depth + 1 FROM blocks b \
-                     INNER JOIN descendants d ON b.parent_id = d.id \
-                     WHERE b.is_conflict = 0 AND d.depth < 100 \
-                 ) \
-                 UPDATE blocks SET deleted_at = NULL \
+            // `descendants_cte_standard!()` filters `is_conflict = 0` —
+            // conflict copies have independent deleted_at timestamps and
+            // must not be bulk-restored with the original (invariant #9).
+            // Shared CTE lives in `crate::block_descendants`.
+            sqlx::query(concat!(
+                crate::descendants_cte_standard!(),
+                "UPDATE blocks SET deleted_at = NULL \
                  WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
-            )
+            ))
             .bind(p.block_id.as_str())
             .bind(&p.deleted_at_ref)
             .execute(&mut *conn)
@@ -170,9 +157,7 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
             sqlx::query("PRAGMA defer_foreign_keys = ON")
                 .execute(&mut *conn)
                 .await?;
-            // Shared CTE body reused across every cleanup statement below.
-            // Tracks the target block + all descendants (regardless of
-            // soft-delete status) so purge wipes every trace.
+            // Shared purge CTE from `crate::block_descendants`.
             //
             // PURGE intentionally does NOT filter `is_conflict = 0` — the
             // goal is to erase every row that descends from the purged
@@ -180,116 +165,124 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
             // CTE in the codebase that walks conflicts on purpose
             // (invariant #9 allows this documented exception). `depth < 100`
             // still bounds runaway recursion on corrupted data.
-            const DESC_CTE: &str = "WITH RECURSIVE descendants(id, depth) AS ( \
-                 SELECT id, 0 FROM blocks WHERE id = ? \
-                 UNION ALL \
-                 SELECT b.id, d.depth + 1 FROM blocks b \
-                 INNER JOIN descendants d ON b.parent_id = d.id \
-                 WHERE d.depth < 100 \
-             )";
-            sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM block_tags \
+            sqlx::query(concat!(
+                crate::descendants_cte_purge!(),
+                "DELETE FROM block_tags \
                  WHERE block_id IN (SELECT id FROM descendants) \
                     OR tag_id IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
             .await?;
-            sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM block_tag_inherited \
+            sqlx::query(concat!(
+                crate::descendants_cte_purge!(),
+                "DELETE FROM block_tag_inherited \
                  WHERE block_id IN (SELECT id FROM descendants) \
                     OR inherited_from IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
             .await?;
-            sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM block_properties \
+            sqlx::query(concat!(
+                crate::descendants_cte_purge!(),
+                "DELETE FROM block_properties \
                  WHERE block_id IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
             .await?;
-            sqlx::query(&format!(
-                "{DESC_CTE} UPDATE block_properties SET value_ref = NULL \
+            sqlx::query(concat!(
+                crate::descendants_cte_purge!(),
+                "UPDATE block_properties SET value_ref = NULL \
                  WHERE value_ref IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
             .await?;
-            sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM block_links \
+            sqlx::query(concat!(
+                crate::descendants_cte_purge!(),
+                "DELETE FROM block_links \
                  WHERE source_id IN (SELECT id FROM descendants) \
                     OR target_id IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
             .await?;
-            sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM agenda_cache \
+            sqlx::query(concat!(
+                crate::descendants_cte_purge!(),
+                "DELETE FROM agenda_cache \
                  WHERE block_id IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
             .await?;
-            sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM tags_cache \
+            sqlx::query(concat!(
+                crate::descendants_cte_purge!(),
+                "DELETE FROM tags_cache \
                  WHERE tag_id IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
             .await?;
-            sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM pages_cache \
+            sqlx::query(concat!(
+                crate::descendants_cte_purge!(),
+                "DELETE FROM pages_cache \
                  WHERE page_id IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
             .await?;
-            sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM attachments \
+            sqlx::query(concat!(
+                crate::descendants_cte_purge!(),
+                "DELETE FROM attachments \
                  WHERE block_id IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
             .await?;
-            sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM block_drafts \
+            sqlx::query(concat!(
+                crate::descendants_cte_purge!(),
+                "DELETE FROM block_drafts \
                  WHERE block_id IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
             .await?;
-            sqlx::query(&format!(
-                "{DESC_CTE} UPDATE blocks SET conflict_source = NULL \
+            sqlx::query(concat!(
+                crate::descendants_cte_purge!(),
+                "UPDATE blocks SET conflict_source = NULL \
                  WHERE conflict_source IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
             .await?;
-            sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM fts_blocks \
+            sqlx::query(concat!(
+                crate::descendants_cte_purge!(),
+                "DELETE FROM fts_blocks \
                  WHERE block_id IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
             .await?;
-            sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM page_aliases \
+            sqlx::query(concat!(
+                crate::descendants_cte_purge!(),
+                "DELETE FROM page_aliases \
                  WHERE page_id IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
             .await?;
-            sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM projected_agenda_cache \
+            sqlx::query(concat!(
+                crate::descendants_cte_purge!(),
+                "DELETE FROM projected_agenda_cache \
                  WHERE block_id IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
             .await?;
-            sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM blocks \
+            sqlx::query(concat!(
+                crate::descendants_cte_purge!(),
+                "DELETE FROM blocks \
                  WHERE id IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
@@ -338,22 +331,49 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
         OpType::SetProperty => {
             let p: SetPropertyPayload = serde_json::from_str(&record.payload)?;
             if is_reserved_property_key(&p.key) {
-                let col = match p.key.as_str() {
-                    "todo_state" => "todo_state",
-                    "priority" => "priority",
-                    "due_date" => "due_date",
-                    "scheduled_date" => "scheduled_date",
-                    _ => unreachable!(),
-                };
-                let value = match col {
-                    "due_date" | "scheduled_date" => &p.value_date,
-                    _ => &p.value_text,
-                };
-                sqlx::query(&format!("UPDATE blocks SET {col} = ? WHERE id = ?"))
-                    .bind(value)
-                    .bind(p.block_id.as_str())
-                    .execute(&mut *conn)
-                    .await?;
+                // Match-arms preserve compile-time SQL validation.
+                let block_id = p.block_id.as_str();
+                match p.key.as_str() {
+                    "todo_state" => {
+                        sqlx::query!(
+                            "UPDATE blocks SET todo_state = ? WHERE id = ?",
+                            p.value_text,
+                            block_id
+                        )
+                        .execute(&mut *conn)
+                        .await?;
+                    }
+                    "priority" => {
+                        sqlx::query!(
+                            "UPDATE blocks SET priority = ? WHERE id = ?",
+                            p.value_text,
+                            block_id
+                        )
+                        .execute(&mut *conn)
+                        .await?;
+                    }
+                    "due_date" => {
+                        sqlx::query!(
+                            "UPDATE blocks SET due_date = ? WHERE id = ?",
+                            p.value_date,
+                            block_id
+                        )
+                        .execute(&mut *conn)
+                        .await?;
+                    }
+                    "scheduled_date" => {
+                        sqlx::query!(
+                            "UPDATE blocks SET scheduled_date = ? WHERE id = ?",
+                            p.value_date,
+                            block_id
+                        )
+                        .execute(&mut *conn)
+                        .await?;
+                    }
+                    other => unreachable!(
+                        "is_reserved_property_key('{other}') returned true for an unrecognised key"
+                    ),
+                }
             } else {
                 sqlx::query(
                     "INSERT OR REPLACE INTO block_properties \
@@ -373,17 +393,36 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
         OpType::DeleteProperty => {
             let p: DeletePropertyPayload = serde_json::from_str(&record.payload)?;
             if is_reserved_property_key(&p.key) {
-                let col = match p.key.as_str() {
-                    "todo_state" => "todo_state",
-                    "priority" => "priority",
-                    "due_date" => "due_date",
-                    "scheduled_date" => "scheduled_date",
-                    _ => unreachable!(),
-                };
-                sqlx::query(&format!("UPDATE blocks SET {col} = NULL WHERE id = ?"))
-                    .bind(p.block_id.as_str())
-                    .execute(&mut *conn)
-                    .await?;
+                // Match-arms preserve compile-time SQL validation.
+                let block_id = p.block_id.as_str();
+                match p.key.as_str() {
+                    "todo_state" => {
+                        sqlx::query!("UPDATE blocks SET todo_state = NULL WHERE id = ?", block_id)
+                            .execute(&mut *conn)
+                            .await?;
+                    }
+                    "priority" => {
+                        sqlx::query!("UPDATE blocks SET priority = NULL WHERE id = ?", block_id)
+                            .execute(&mut *conn)
+                            .await?;
+                    }
+                    "due_date" => {
+                        sqlx::query!("UPDATE blocks SET due_date = NULL WHERE id = ?", block_id)
+                            .execute(&mut *conn)
+                            .await?;
+                    }
+                    "scheduled_date" => {
+                        sqlx::query!(
+                            "UPDATE blocks SET scheduled_date = NULL WHERE id = ?",
+                            block_id
+                        )
+                        .execute(&mut *conn)
+                        .await?;
+                    }
+                    other => unreachable!(
+                        "is_reserved_property_key('{other}') returned true for an unrecognised key"
+                    ),
+                }
             } else {
                 sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
                     .bind(p.block_id.as_str())

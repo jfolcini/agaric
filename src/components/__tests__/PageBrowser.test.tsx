@@ -42,57 +42,8 @@ vi.mock('@tanstack/react-virtual', () => {
   }
 })
 
-vi.mock('@/components/ui/select', () => {
-  const React = require('react')
-  const Ctx = React.createContext({})
-
-  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
-  function Select({ value, onValueChange, children, disabled }: any) {
-    const triggerPropsRef = React.useRef({})
-    return React.createElement(
-      Ctx.Provider,
-      { value: { value, onValueChange, triggerPropsRef, disabled } },
-      children,
-    )
-  }
-
-  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
-  function SelectTrigger({ size, className, ...props }: any) {
-    const ctx = React.useContext(Ctx)
-    Object.assign(ctx.triggerPropsRef.current, { size, className, ...props })
-    return null
-  }
-
-  function SelectValue() {
-    return null
-  }
-
-  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
-  function SelectContent({ children }: any) {
-    const ctx = React.useContext(Ctx)
-    const tp = ctx.triggerPropsRef.current
-    return React.createElement(
-      'select',
-      {
-        value: ctx.value ?? '',
-        // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
-        onChange: (e: any) => ctx.onValueChange?.(e.target.value),
-        disabled: ctx.disabled,
-        'aria-label': tp['aria-label'],
-        className: tp.className,
-        'data-size': tp.size,
-      },
-      children,
-    )
-  }
-
-  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
-  function SelectItem({ value, children }: any) {
-    return React.createElement('option', { value }, children)
-  }
-
-  return { Select, SelectTrigger, SelectValue, SelectContent, SelectItem }
-})
+// Radix Select is mocked globally via the shared mock in src/test-setup.ts
+// (see src/__tests__/mocks/ui-select.tsx).
 
 vi.mock('@/lib/recent-pages', () => ({
   getRecentPages: vi.fn(() => []),

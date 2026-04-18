@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { logger } from '@/lib/logger'
 import { buildInitParams, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { usePropertySave } from '../hooks/usePropertySave'
 import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
@@ -46,7 +47,8 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
         setProperties(Array.isArray(props) ? props : [])
         setDefinitions(Array.isArray(defs) ? defs : [])
       })
-      .catch(() => {
+      .catch((err) => {
+        logger.warn('PagePropertyTable', 'load properties/defs failed', { pageId }, err)
         toast.error(t('pageProperty.loadFailed'))
       })
       .finally(() => setLoading(false))
@@ -103,7 +105,8 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
         await setProperty(params)
         const updated = await getProperties(pageId)
         setProperties(updated)
-      } catch {
+      } catch (err) {
+        logger.warn('PagePropertyTable', 'add property failed', { pageId }, err)
         toast.error(t('pageProperty.addFailed'))
       }
     },

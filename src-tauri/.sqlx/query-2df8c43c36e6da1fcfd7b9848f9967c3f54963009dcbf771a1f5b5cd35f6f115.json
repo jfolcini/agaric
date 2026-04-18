@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE block_properties SET value_ref = NULL WHERE value_ref IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "2df8c43c36e6da1fcfd7b9848f9967c3f54963009dcbf771a1f5b5cd35f6f115"
+}

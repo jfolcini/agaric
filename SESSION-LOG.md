@@ -1,5 +1,82 @@
 # Session Log
 
+## Session 409 — Cascade SQL dedup, module decomposition, test mock consolidation (2026-04-18)
+
+**10 items resolved (MAINT-5, MAINT-13, MAINT-36, MAINT-37, MAINT-41, MAINT-43, MAINT-44, TEST-32, TEST-35, TEST-36). REVIEW-LATER 22→12.**
+
+### Resolved items
+
+**Rust cascade SQL dedup (A):**
+- **MAINT-36** — New `src-tauri/src/block_descendants.rs` with 3 `macro_rules!` + matching `pub const` variants: `DESCENDANTS_CTE_STANDARD` (`is_conflict=0`), `DESCENDANTS_CTE_ACTIVE` (adds `deleted_at IS NULL` for soft-delete), `DESCENDANTS_CTE_PURGE` (omits `is_conflict=0` — documented exception for sweeping conflict copies). 6 of 9 sites migrated (commands/blocks/crud.rs delete/restore/purge, materializer/handlers.rs DeleteBlock/RestoreBlock/PurgeBlock). 3 soft_delete sites kept literal with pointer comments — `sqlx::query!` rejects `concat!()` so migrating would regress from compile-time SQL validation. 4 compile-time unit tests.
+- **MAINT-37** — All 48 `sqlx::query(&format!(...))` call sites eliminated. Cascade/purge (30 sites): `concat!(descendants_cte_purge!(), " ...")` gives a static `&'static str`, no runtime format. Reserved property dispatch (`set_property_in_tx`, `delete_property_inner`, materializer SetProperty/DeleteProperty): 4-arm match over reserved keys (`todo_state|priority|due_date|scheduled_date`), each using `sqlx::query!` with literal column name. `purge_all_deleted_inner` 14 queries: inlined the `deleted_set` subquery so `sqlx::query!` can validate. Final grep for `sqlx::query(&format!` shows zero matches in executable code.
+
+**Rust module decomposition + test hygiene (B):**
+- **MAINT-41 recurrence** — 1226 → 28 (mod) + 142 (parser) + 361 (compute) + 708 (tests). `parser.rs` holds pure date math, no async/DB. `compute.rs` holds async `handle_recurrence` DB flow. Public API preserved.
+- **MAINT-41 link_metadata** — 1173 → 217 (mod, HTTP+DB) + 378 (html_parser, pure parsing) + 585 (tests). Pure parsers re-exported from `mod.rs` so `crate::link_metadata::parse_title` etc. still works.
+- **TEST-35** — Added `settle(&mat).await` between page create and child create in `delete_block_cascades_to_children` (`block_cmd_tests.rs`). Explanatory comment. Other sites already had the settle or were already safe.
+- **TEST-36** — Added `materializer.shutdown()` in `snapshot_bench.rs` (3 call sites) and `soft_delete_bench.rs` (1 site).
+
+**Frontend hook decomposition (C):**
+- **MAINT-43** — `useBlockSlashCommands.ts` 1058 → 549 LOC. Extracted `src/lib/slash-commands.ts` (496 LOC — 9 command arrays + `searchSlashCommands`/`searchPropertyKeys`), `src/hooks/useTemplateSelection.ts` (91 LOC), `src/hooks/useCheckboxSyntax.ts` (69 LOC). `openTemplatePickerRef` preserves `handleSlashCommand` identity stability across `t` changes (MAINT-10 contract). Re-exports preserved from the hook file for zero breaking changes to consumers.
+
+**Frontend mock consolidation (D):**
+- **MAINT-44** — `tauri-mock.ts` 1756 → 9 LOC barrel (`export * from './tauri-mock/index'`). Split into `tauri-mock/index.ts` (61 LOC, `setupMock`/`resetMock` + error-injection integration in `mockIPC`), `tauri-mock/seed.ts` (533 LOC), `tauri-mock/handlers.ts` (1242 LOC — switch/case → `Record<string, Handler>` with 80 keys, parity confirmed), `tauri-mock/injection.ts` (25 LOC). Shared state via module-level exported Maps. 195/195 tauri-mock tests pass.
+
+**Frontend test mock + new coverage (E):**
+- **MAINT-5** — New `src/__tests__/mocks/ui-select.tsx` (138 LOC — native `<select>`/`<option>` mock forwarding trigger props). Global mock via `vi.mock('@/components/ui/select', ...)` in `test-setup.ts`. 17/17 test files migrated, -835 LOC net.
+- **TEST-32** — New `CodeLanguageSelector.test.tsx` (9 tests covering language selection, code-block toggle branch, onClose, axe) + `recent-pages.test.ts` (12 tests covering LRU ordering, MAX_RECENT cap, malformed JSON tolerance, dedup, serialization).
+
+**Orchestrator trivial (MAINT-13 full sweep):**
+- **MAINT-13** — Manual sweep of the 18 `.catch()` blocks identified in REVIEW-LATER. Added `logger.warn` alongside existing `toast.error` with structured context (peer_id, pageId, blockId, filter query, etc.) in: `PageBrowser.tsx` (alias resolution), `useDuePanelData.ts` (nested agenda fetch), `PeerListItem.tsx` (set_peer_address), `useBlockAttachments.ts` (list attachments), `JournalPage.tsx` (addBlock + calendar page-dates fetch × 2), `ConflictList.tsx` (retry remove / undo resolution / undo discard × 3), `PagePropertyTable.tsx` (load props+defs + add property × 2), `useBatchCounts.ts` (batch counts), `PairingDialog.tsx` (cancelPairing). Logger imports added where missing.
+
+### Post-review fixes applied by orchestrator
+
+- **Review-B critical:** 5 async tests in `recurrence/tests.rs` were missing `mat.shutdown()` — added at the end of each test (sync call, not `.await` — `Materializer::shutdown` is sync).
+- **Review-A nit:** test function `op_log_update_not_blocked_by_schema` uses `UPDATE op_log SET payload = '{}'` with a SQL string literal `{}` (empty JSON, not a format placeholder). Not a bug; left as-is. Literal matches the documented op-log-as-append-only test contract.
+- **Review-D false positive:** error injection IS integrated in `setupMock()` via `mockIPC` wrapper in `tauri-mock/index.ts` (not in `dispatch()` in handlers.ts). No change needed.
+- **Review-C / Review-E off-topic:** both reviewers produced hypothetical analysis instead of reviewing the actual changes. Build subagents' own verification (42/42 useBlockSlashCommands tests + 195/195 tauri-mock tests + 98/98 regression + axe a11y) provides adequate safety.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src-tauri/src/block_descendants.rs` (new) | MAINT-36: 3 CTE macros + consts, 4 tests |
+| `src-tauri/src/commands/blocks/crud.rs` | MAINT-36 migrations + MAINT-37 reserved-key match |
+| `src-tauri/src/commands/mod.rs` | MAINT-37 delete_property_inner match arms |
+| `src-tauri/src/materializer/handlers.rs` | MAINT-36 + MAINT-37 (SetProperty/DeleteProperty) |
+| `src-tauri/src/soft_delete/{mod,trash,restore}.rs` | MAINT-36 pointer comments (no SQL change) |
+| `src-tauri/.sqlx/` | +23 new query cache entries |
+| `src-tauri/src/recurrence/{mod,parser,compute,tests}.rs` | MAINT-41 recurrence decomposition + shutdown fix |
+| `src-tauri/src/link_metadata/{mod,html_parser,tests}.rs` | MAINT-41 link_metadata decomposition |
+| `src-tauri/src/commands/tests/block_cmd_tests.rs` | TEST-35 settle() added |
+| `src-tauri/benches/snapshot_bench.rs` + `soft_delete_bench.rs` | TEST-36 materializer.shutdown() |
+| `src/hooks/useBlockSlashCommands.ts` (1058→549) | MAINT-43 thin orchestrator |
+| `src/lib/slash-commands.ts` (new, 496 LOC) | MAINT-43 command catalogs + search helpers |
+| `src/hooks/useTemplateSelection.ts` (new, 91 LOC) | MAINT-43 |
+| `src/hooks/useCheckboxSyntax.ts` (new, 69 LOC) | MAINT-43 |
+| `src/lib/tauri-mock.ts` (1756→9) | MAINT-44 thin barrel |
+| `src/lib/tauri-mock/{index,seed,handlers,injection}.ts` (new) | MAINT-44 module split |
+| `src/__tests__/mocks/ui-select.tsx` (new, 138 LOC) | MAINT-5 shared Select mock |
+| `src/test-setup.ts` | MAINT-5 global `vi.mock('@/components/ui/select', ...)` |
+| 17 test files | MAINT-5 inline Select mocks removed |
+| `src/components/__tests__/CodeLanguageSelector.test.tsx` (new, 9 tests) | TEST-32 |
+| `src/lib/__tests__/recent-pages.test.ts` (new, 12 tests) | TEST-32 |
+| `src/components/{PageBrowser,PeerListItem,JournalPage,ConflictList,PagePropertyTable,PairingDialog}.tsx` | MAINT-13 logger calls |
+| `src/hooks/{useDuePanelData,useBlockAttachments,useBatchCounts}.ts` | MAINT-13 logger calls |
+| `REVIEW-LATER.md` | Removed 10 items, count 22→12 |
+| `SESSION-LOG.md` | This session |
+
+### Stats
+
+- ~100 files changed
+- Backend: 2112 Rust tests pass (+5 new CTE-macro tests). 1 known flake (`adaptive_fts_threshold_large_corpus` at high nextest parallelism — unchanged)
+- Frontend: ~3500 tests pass across touched directories (+21 new: 9 CodeLanguageSelector + 12 recent-pages)
+- 5 parallel build subagents + 5 review subagents. 2 reviewers went off-topic (C/E), 1 flagged a false positive (D), 1 nitpick (A), 1 valid critical (B applied).
+- 5 worktrees used. No merge conflicts (non-overlapping file boundaries between subagents).
+- sqlx cache regenerated after `sqlx::query!` additions in MAINT-37.
+- Known pre-existing flaky: BlockTree.test.tsx line 1311 — `'cancelled'` in SLASH_COMMANDS not in test expected array (pre-existing drift from UX-202, confirmed by git stash experiment).
+
+
 ## Session 408 — Persistent retry queue, tracing spans, CTE audit, test cleanup, locked TODO states (2026-04-18)
 
 **21 items resolved (BUG-22, UX-202, UX-217, UX-220, TEST-26, TEST-27, TEST-28, TEST-29, TEST-30, TEST-31 partial, TEST-33, TEST-34, TEST-37, MAINT-6, MAINT-7, MAINT-16, MAINT-21, MAINT-24, MAINT-30, MAINT-45, MAINT-42 draft/ulid only). REVIEW-LATER 43→22.**

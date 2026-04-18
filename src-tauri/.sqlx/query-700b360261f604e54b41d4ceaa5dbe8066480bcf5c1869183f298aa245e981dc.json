@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM attachments WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "700b360261f604e54b41d4ceaa5dbe8066480bcf5c1869183f298aa245e981dc"
+}

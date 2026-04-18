@@ -749,6 +749,11 @@ async fn delete_block_cascades_to_children() {
     )
     .await
     .unwrap();
+    // Creating a page dispatches background materializer tasks (pages cache
+    // rebuild, page_id updates). Wait for them to complete before adding a
+    // child — otherwise the child's parent FK resolution can race with the
+    // materializer's page-cache transaction and fail intermittently.
+    settle(&mat).await;
 
     let _child = create_block_inner(
         &pool,

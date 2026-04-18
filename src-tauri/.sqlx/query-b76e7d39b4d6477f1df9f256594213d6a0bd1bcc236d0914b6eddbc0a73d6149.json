@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM page_aliases WHERE page_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "b76e7d39b4d6477f1df9f256594213d6a0bd1bcc236d0914b6eddbc0a73d6149"
+}

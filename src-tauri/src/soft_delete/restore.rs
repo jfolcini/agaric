@@ -10,6 +10,10 @@ use crate::error::AppError;
 /// Recursive member filters `is_conflict = 0` — conflict copies have
 /// independent lifecycles and must not be bulk-restored with the original
 /// (invariant #9). `depth < 100` bounds the walk.
+///
+/// Canonical CTE in `crate::block_descendants::DESCENDANTS_CTE_STANDARD`.
+/// This site inlines the SQL because `sqlx::query!` requires a string
+/// literal and cannot accept `concat!()` of a `macro_rules!` expansion.
 pub async fn restore_block(
     pool: &SqlitePool,
     block_id: &str,

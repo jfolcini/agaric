@@ -86,6 +86,10 @@ fn bench_create_snapshot(c: &mut Criterion) {
                 })
             },
         );
+
+        // Shut down the background materializer before the next iteration
+        // so its task doesn't outlive this benchmark.
+        rt.block_on(async { materializer.shutdown() });
     }
 
     group.finish();
@@ -140,6 +144,13 @@ fn bench_apply_snapshot(c: &mut Criterion) {
                 })
             },
         );
+
+        // Shut down both materializers so their background tasks don't
+        // outlive this benchmark iteration.
+        rt.block_on(async {
+            materializer.shutdown();
+            target_mat.shutdown();
+        });
     }
 
     group.finish();

@@ -20,6 +20,7 @@ import { select } from 'd3-selection'
 import { zoom } from 'd3-zoom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 import { logger } from '../../lib/logger'
 import { useNavigationStore } from '../../stores/navigation'
 import { clearGraphCache, GraphView } from '../GraphView'
@@ -111,58 +112,9 @@ vi.mock('d3-drag', () => ({
   })),
 }))
 
-// Mock the Radix-based Select to render as native <select>/<option> for jsdom compatibility.
-vi.mock('@/components/ui/select', () => {
-  const React = require('react')
-  const Ctx = React.createContext({})
-
-  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
-  function Select({ value, onValueChange, children }: any) {
-    const triggerPropsRef = React.useRef({})
-    return React.createElement(
-      Ctx.Provider,
-      { value: { value, onValueChange, triggerPropsRef } },
-      children,
-    )
-  }
-
-  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
-  function SelectTrigger({ size, className, ...props }: any) {
-    const ctx = React.useContext(Ctx)
-    Object.assign(ctx.triggerPropsRef.current, { size, className, ...props })
-    return null
-  }
-
-  function SelectValue() {
-    return null
-  }
-
-  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
-  function SelectContent({ children }: any) {
-    const ctx = React.useContext(Ctx)
-    const tp = ctx.triggerPropsRef.current
-    return React.createElement(
-      'select',
-      {
-        value: ctx.value ?? '',
-        // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
-        onChange: (e: any) => ctx.onValueChange?.(e.target.value),
-        'aria-label': tp['aria-label'],
-        className: tp.className,
-        'data-size': tp.size,
-        'data-testid': 'graph-tag-select',
-      },
-      children,
-    )
-  }
-
-  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock — no real type needed
-  function SelectItem({ value, children }: any) {
-    return React.createElement('option', { value }, children)
-  }
-
-  return { Select, SelectTrigger, SelectValue, SelectContent, SelectItem }
-})
+// Radix Select is mocked globally via the shared mock in src/test-setup.ts
+// (see src/__tests__/mocks/ui-select.tsx). Tests query the rendered native
+// <select> by its aria-label ("Filter by tag"), which the trigger forwards.
 
 // ── MockWorker for WebWorker tests (PERF-9b) ──────────────────────────
 
@@ -1071,7 +1023,7 @@ describe('GraphView', () => {
       // The tag filter container is present
       expect(screen.getByTestId('graph-tag-filter')).toBeInTheDocument()
       // The native select (mocked Select) is rendered
-      expect(screen.getByTestId('graph-tag-select')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('graph.filterByTag'))).toBeInTheDocument()
     })
 
     it('re-fetches with tagId when a tag is selected', async () => {
@@ -1111,7 +1063,7 @@ describe('GraphView', () => {
       })
 
       // Select a tag
-      const selectEl = screen.getByTestId('graph-tag-select')
+      const selectEl = screen.getByLabelText(t('graph.filterByTag'))
       fireEvent.change(selectEl, { target: { value: 'tag-1' } })
 
       await waitFor(() => {
@@ -1153,7 +1105,9 @@ describe('GraphView', () => {
       })
 
       // Select a tag first
-      fireEvent.change(screen.getByTestId('graph-tag-select'), { target: { value: 'tag-1' } })
+      fireEvent.change(screen.getByLabelText(t('graph.filterByTag')), {
+        target: { value: 'tag-1' },
+      })
 
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith(
@@ -1166,7 +1120,7 @@ describe('GraphView', () => {
 
       // Wait for loading to finish and graph-view to re-appear
       await waitFor(() => {
-        expect(screen.getByTestId('graph-tag-select')).toBeInTheDocument()
+        expect(screen.getByLabelText(t('graph.filterByTag'))).toBeInTheDocument()
       })
 
       // Clear mocks
@@ -1182,7 +1136,9 @@ describe('GraphView', () => {
       })
 
       // Re-query the select element (the old one was unmounted during loading)
-      fireEvent.change(screen.getByTestId('graph-tag-select'), { target: { value: '__none__' } })
+      fireEvent.change(screen.getByLabelText(t('graph.filterByTag')), {
+        target: { value: '__none__' },
+      })
 
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith(
@@ -1225,7 +1181,7 @@ describe('GraphView', () => {
       })
 
       // Select a tag to trigger filtered fetch
-      const selectEl = screen.getByTestId('graph-tag-select')
+      const selectEl = screen.getByLabelText(t('graph.filterByTag'))
       fireEvent.change(selectEl, { target: { value: 'tag-1' } })
 
       await waitFor(() => {

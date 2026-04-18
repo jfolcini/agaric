@@ -37,57 +37,8 @@ vi.mock('lucide-react', () => ({
   X: () => <svg data-testid="x-icon" />,
 }))
 
-vi.mock('@/components/ui/select', () => {
-  const React = require('react')
-  const Ctx = React.createContext({})
-
-  function Select({
-    value,
-    onValueChange,
-    children,
-  }: {
-    value?: string
-    onValueChange?: (v: string) => void
-    children?: React.ReactNode
-  }) {
-    const triggerPropsRef = React.useRef({})
-    return React.createElement(
-      Ctx.Provider,
-      { value: { value, onValueChange, triggerPropsRef } },
-      children,
-    )
-  }
-
-  function SelectTrigger({ size, className, ...props }: Record<string, unknown>) {
-    const ctx = React.useContext(Ctx)
-    Object.assign(ctx.triggerPropsRef.current, { size, className, ...props })
-    return null
-  }
-
-  function SelectValue() {
-    return null
-  }
-
-  function SelectContent({ children }: { children?: React.ReactNode }) {
-    const ctx = React.useContext(Ctx)
-    const tp = ctx.triggerPropsRef.current
-    return React.createElement(
-      'select',
-      {
-        value: ctx.value ?? '',
-        onChange: (e: React.ChangeEvent<HTMLSelectElement>) => ctx.onValueChange?.(e.target.value),
-        'aria-label': tp['aria-label'],
-      },
-      children,
-    )
-  }
-
-  function SelectItem({ value, children }: { value: string; children?: React.ReactNode }) {
-    return React.createElement('option', { value }, children)
-  }
-
-  return { Select, SelectTrigger, SelectValue, SelectContent, SelectItem }
-})
+// Radix Select is mocked globally via the shared mock in src/test-setup.ts
+// (see src/__tests__/mocks/ui-select.tsx).
 
 import { toast } from 'sonner'
 import { t } from '@/lib/i18n'

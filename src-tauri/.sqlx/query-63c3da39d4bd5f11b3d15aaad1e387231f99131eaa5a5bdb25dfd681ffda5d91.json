@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM block_tags WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL) OR tag_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "63c3da39d4bd5f11b3d15aaad1e387231f99131eaa5a5bdb25dfd681ffda5d91"
+}

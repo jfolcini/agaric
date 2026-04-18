@@ -523,17 +523,37 @@ async fn delete_property_core(
 
     // 4. Materialize: delete/clear the property
     if is_reserved_property_key(&key) {
-        let col = match key.as_str() {
-            "todo_state" => "todo_state",
-            "priority" => "priority",
-            "due_date" => "due_date",
-            "scheduled_date" => "scheduled_date",
-            _ => unreachable!(),
-        };
-        sqlx::query(&format!("UPDATE blocks SET {col} = NULL WHERE id = ?"))
-            .bind(&block_id)
-            .execute(&mut *tx)
-            .await?;
+        // Match-arms with explicit `sqlx::query!` per column — preserves
+        // compile-time SQL validation. Reserved keys are a closed set
+        // (see `is_reserved_property_key`) so the match is exhaustive.
+        match key.as_str() {
+            "todo_state" => {
+                sqlx::query!("UPDATE blocks SET todo_state = NULL WHERE id = ?", block_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            "priority" => {
+                sqlx::query!("UPDATE blocks SET priority = NULL WHERE id = ?", block_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            "due_date" => {
+                sqlx::query!("UPDATE blocks SET due_date = NULL WHERE id = ?", block_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            "scheduled_date" => {
+                sqlx::query!(
+                    "UPDATE blocks SET scheduled_date = NULL WHERE id = ?",
+                    block_id
+                )
+                .execute(&mut *tx)
+                .await?;
+            }
+            _ => unreachable!(
+                "is_reserved_property_key('{key}') returned true for an unrecognised key"
+            ),
+        }
     } else {
         sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
             .bind(&block_id)

@@ -4,58 +4,8 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-vi.mock('@/components/ui/select', () => {
-  const React = require('react')
-  const Ctx = React.createContext({})
-
-  function Select({
-    value,
-    onValueChange,
-    children,
-  }: {
-    value?: string
-    onValueChange?: (v: string) => void
-    children?: React.ReactNode
-  }) {
-    const triggerPropsRef = React.useRef({})
-    return React.createElement(
-      Ctx.Provider,
-      { value: { value, onValueChange, triggerPropsRef } },
-      children,
-    )
-  }
-
-  function SelectTrigger({ size, className, ...props }: Record<string, unknown>) {
-    const ctx = React.useContext(Ctx)
-    Object.assign(ctx.triggerPropsRef.current, { size, className, ...props })
-    return null
-  }
-
-  function SelectValue() {
-    return null
-  }
-
-  function SelectContent({ children }: { children?: React.ReactNode }) {
-    const ctx = React.useContext(Ctx)
-    const tp = ctx.triggerPropsRef.current
-    return React.createElement(
-      'select',
-      {
-        value: ctx.value ?? '',
-        onChange: (e: React.ChangeEvent<HTMLSelectElement>) => ctx.onValueChange?.(e.target.value),
-        'aria-label': tp['aria-label'],
-        id: tp.id,
-      },
-      children,
-    )
-  }
-
-  function SelectItem({ value, children }: { value: string; children?: React.ReactNode }) {
-    return React.createElement('option', { value }, children)
-  }
-
-  return { Select, SelectTrigger, SelectValue, SelectContent, SelectItem }
-})
+// Radix Select is mocked globally via the shared mock in src/test-setup.ts
+// (see src/__tests__/mocks/ui-select.tsx).
 
 import { PropertyValuePicker } from '../PropertyValuePicker'
 

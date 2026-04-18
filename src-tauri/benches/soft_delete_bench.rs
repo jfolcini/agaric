@@ -113,6 +113,9 @@ fn bench_purge_block(c: &mut Criterion) {
                             &materializer,
                             ROOT_ID.to_string(),
                         ));
+                        // Shut down the per-iteration materializer so its
+                        // background task doesn't outlive this routine.
+                        materializer.shutdown();
                     },
                     criterion::BatchSize::SmallInput,
                 );

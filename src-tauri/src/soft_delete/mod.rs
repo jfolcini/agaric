@@ -23,6 +23,10 @@ pub async fn is_deleted(pool: &SqlitePool, block_id: &str) -> Result<Option<bool
 /// Recursive member filters `is_conflict = 0` — conflict copies share
 /// their original's parent_id but are logically separate (invariant #9).
 /// `depth < 100` bounds the walk.
+///
+/// Canonical CTE in `crate::block_descendants::DESCENDANTS_CTE_STANDARD`.
+/// This site inlines the SQL because `sqlx::query!` requires a string
+/// literal and cannot accept `concat!()` of a `macro_rules!` expansion.
 pub async fn get_descendants(pool: &SqlitePool, block_id: &str) -> Result<Vec<String>, AppError> {
     let rows = sqlx::query!(
         "WITH RECURSIVE descendants(id, depth) AS ( \

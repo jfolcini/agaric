@@ -31,6 +31,10 @@ pub async fn soft_delete_block(
 /// their original's parent_id but have independent lifecycles and must
 /// not be swept into the cascade (invariant #9). `depth < 100` bounds
 /// the walk against runaway recursion on corrupted parent_id chains.
+///
+/// Canonical CTE in `crate::block_descendants::DESCENDANTS_CTE_ACTIVE`.
+/// This site inlines the SQL because `sqlx::query!` requires a string
+/// literal and cannot accept `concat!()` of a `macro_rules!` expansion.
 pub async fn cascade_soft_delete(
     pool: &SqlitePool,
     block_id: &str,

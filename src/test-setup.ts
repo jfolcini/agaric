@@ -144,3 +144,11 @@ vi.mock('@tauri-apps/api/core', () => ({
 // still work for tests that need custom capture variables.
 // See src/__tests__/mocks/sonner.ts for the mock implementation.
 vi.mock('sonner', async () => await import('./__tests__/mocks/sonner'))
+
+// Shared mock for `@/components/ui/select` — Radix Select does not work in
+// jsdom (no layout engine), so component tests mock it with a native
+// `<select>` tree. Consolidates ~17 per-file duplicates of the same mock.
+// Per-file overrides still work for tests that need custom behavior (e.g.
+// GraphView.test.tsx hardcodes a data-testid).
+// See src/__tests__/mocks/ui-select.tsx for the mock implementation.
+vi.mock('@/components/ui/select', async () => await import('./__tests__/mocks/ui-select'))

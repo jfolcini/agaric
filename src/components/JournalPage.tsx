@@ -204,7 +204,8 @@ export function JournalPage({
           await pageBlockRegistry.get(pageId)?.getState().load()
           useBlockStore.setState({ focusedBlockId: block.id })
         }
-      } catch {
+      } catch (err) {
+        logger.warn('JournalPage', 'addBlock failed', undefined, err)
         toast.error(t('journal.addBlockFailed'))
       }
     },
@@ -304,7 +305,10 @@ export function GlobalDateControls(): React.ReactElement {
         }
         setPageMap(dates)
       })
-      .catch(() => toast.error(t('journal.loadCalendarFailed')))
+      .catch((err) => {
+        logger.warn('JournalPage', 'calendar page-dates fetch failed (daily)', undefined, err)
+        toast.error(t('journal.loadCalendarFailed'))
+      })
   }, [])
 
   const highlightedDays = useMemo(() => {
@@ -420,7 +424,10 @@ export function JournalControls(): React.ReactElement {
         }
         setPageMap(dates)
       })
-      .catch(() => toast.error(t('journal.loadCalendarFailed')))
+      .catch((err) => {
+        logger.warn('JournalPage', 'calendar page-dates fetch failed (daily)', undefined, err)
+        toast.error(t('journal.loadCalendarFailed'))
+      })
   }, [])
 
   const highlightedDays = useMemo(() => {

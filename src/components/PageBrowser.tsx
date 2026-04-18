@@ -29,6 +29,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
+import { logger } from '@/lib/logger'
 import { buildPageTree } from '@/lib/page-tree'
 import { getRecentPages } from '@/lib/recent-pages'
 import { getStarredPages, isStarred, toggleStarred } from '@/lib/starred-pages'
@@ -140,7 +141,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       .then((result) => {
         setAliasMatchId(result ? result[0] : null)
       })
-      .catch(() => setAliasMatchId(null))
+      .catch((err) => {
+        logger.warn('PageBrowser', 'alias resolution failed', { query: filterText.trim() }, err)
+        setAliasMatchId(null)
+      })
   }, [filterText])
 
   const handleCreatePage = useCallback(async () => {

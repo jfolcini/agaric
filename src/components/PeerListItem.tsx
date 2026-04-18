@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
 import { formatLastSynced, truncateId } from '@/lib/format'
+import { logger } from '@/lib/logger'
 import type { PeerRefRow } from '../lib/tauri'
 import { setPeerAddress } from '../lib/tauri'
 
@@ -54,7 +55,10 @@ export function PeerListItem({
         onAddressUpdated()
         setAddrOpen(false)
       })
-      .catch(() => toast.error(t('status.addressInvalid')))
+      .catch((err) => {
+        logger.warn('PeerListItem', 'set_peer_address failed', { peer_id: peer.peer_id }, err)
+        toast.error(t('status.addressInvalid'))
+      })
   }, [addrInput, peer.peer_id, t, onAddressUpdated])
 
   return (

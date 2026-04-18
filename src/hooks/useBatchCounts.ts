@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { DayEntry } from '../lib/date-utils'
+import { logger } from '../lib/logger'
 import { countAgendaBatchBySource, countBacklinksBatch } from '../lib/tauri'
 
 export function useBatchCounts(entries: DayEntry[]) {
@@ -35,7 +36,10 @@ export function useBatchCounts(entries: DayEntry[]) {
         setBacklinkCounts(backlinks)
       }
     }
-    fetchCounts().catch(() => toast.error(t('journal.loadCountsFailed')))
+    fetchCounts().catch((err) => {
+      logger.warn('useBatchCounts', 'batch counts fetch failed', undefined, err)
+      toast.error(t('journal.loadCountsFailed'))
+    })
     return () => {
       cancelled = true
     }

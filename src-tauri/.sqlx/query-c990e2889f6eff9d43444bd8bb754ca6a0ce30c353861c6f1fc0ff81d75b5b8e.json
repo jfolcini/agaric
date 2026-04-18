@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE blocks SET todo_state = NULL WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "c990e2889f6eff9d43444bd8bb754ca6a0ce30c353861c6f1fc0ff81d75b5b8e"
+}

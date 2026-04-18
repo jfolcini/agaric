@@ -379,7 +379,10 @@ export function useDuePanelData({
                   })
                 }
               })
-              .catch(() => toast.error(t('duePanel.loadAgendaFailed')))
+              .catch((err) => {
+                logger.warn('useDuePanelData', 'nested agenda fetch failed', undefined, err)
+                toast.error(t('duePanel.loadAgendaFailed'))
+              })
           }
         }
       })

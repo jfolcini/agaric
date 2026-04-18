@@ -34,7 +34,10 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
     setLoading(true)
     listAttachments(blockId)
       .then(setAttachments)
-      .catch(() => toast.error(i18n.t('attachments.loadFailed')))
+      .catch((err) => {
+        logger.warn('useBlockAttachments', 'list attachments failed', { blockId }, err)
+        toast.error(i18n.t('attachments.loadFailed'))
+      })
       .finally(() => setLoading(false))
   }, [blockId])
 

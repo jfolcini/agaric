@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM block_links WHERE source_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL) OR target_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "ecb41ab7fa91b2bbf606d0a2ff61b3d80b88bf09235665f2a53b7f370bc5394a"
+}

@@ -31,6 +31,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Button } from '@/components/ui/button'
+import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '../hooks/useListMultiSelect'
@@ -271,7 +272,13 @@ export function ConflictList(): React.ReactElement {
                     setBlocks((prev) => prev.filter((b) => b.id !== block.id))
                     toast.success(t('conflict.conflictCopyRemoved'))
                   })
-                  .catch(() => {
+                  .catch((err) => {
+                    logger.warn(
+                      'ConflictList',
+                      'retry remove conflict copy failed',
+                      { blockId: block.id },
+                      err,
+                    )
                     toast.error(t('conflict.retryFailed'))
                   })
               },
@@ -301,7 +308,8 @@ export function ConflictList(): React.ReactElement {
                   setBlocks((prev) => [block, ...prev])
                   toast.success(t('conflict.resolutionUndone'))
                 })
-                .catch(() => {
+                .catch((err) => {
+                  logger.warn('ConflictList', 'undo resolution failed', { blockId: block.id }, err)
                   toast.error(t('conflict.undoFailed'))
                 })
             },
@@ -333,7 +341,8 @@ export function ConflictList(): React.ReactElement {
                   setBlocks((prev) => [block, ...prev])
                   toast.success(t('conflict.discardUndone'))
                 })
-                .catch(() => {
+                .catch((err) => {
+                  logger.warn('ConflictList', 'undo discard failed', { blockId: block.id }, err)
                   toast.error(t('conflict.undoDiscardFailed'))
                 })
             },
