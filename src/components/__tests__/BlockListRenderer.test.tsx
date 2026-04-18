@@ -59,7 +59,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof BlockListRende
     overId: null,
     viewport: {
       isOffscreen: () => false,
-      observeRef: vi.fn(),
+      createObserveRef: () => vi.fn(),
       getHeight: () => 40,
     },
     rovingEditor: {

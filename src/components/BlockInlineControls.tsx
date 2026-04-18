@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import { Calendar, CalendarDays, Check, Paperclip, Repeat, X } from 'lucide-react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
+import { dispatchBlockEvent } from '../lib/block-events'
 import { priorityColor } from '../lib/priority-color'
 import { formatRepeatLabel } from '../lib/repeat-utils'
 import { cn } from '../lib/utils'
@@ -313,9 +314,27 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
             )
           })}
           {filteredProperties.length > 3 && (
-            <span className="text-xs text-muted-foreground select-none">
-              +{filteredProperties.length - 3}
-            </span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="property-overflow flex-shrink-0 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors select-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden active:scale-95 max-sm:px-2.5 max-sm:py-1"
+                  data-testid="property-overflow"
+                  aria-label={t('block.showAllProperties', {
+                    count: filteredProperties.length,
+                  })}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    dispatchBlockEvent('OPEN_BLOCK_PROPERTIES')
+                  }}
+                >
+                  +{filteredProperties.length - 3}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={4}>
+                {t('block.showAllProperties', { count: filteredProperties.length })}
+              </TooltipContent>
+            </Tooltip>
           )}
         </>
       )}

@@ -252,6 +252,7 @@ const resources = {
       'attachments.clickAgain': 'Click the delete button again to confirm.',
       'block.attachments': '{{count}} attachment(s)',
       'block.attachmentsTip': '{{count}} attachment(s) — click to toggle',
+      'block.showAllProperties': 'Show all {{count}} properties',
       'attachment.openFile': 'Open file {{filename}}',
 
       // Errors

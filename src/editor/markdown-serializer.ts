@@ -590,10 +590,231 @@ function flushText(buf: string, marks: readonly PMMark[], nodes: InlineNode[]): 
   return ''
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: markdown parser dispatch over block-level grammar productions; complexity is intrinsic to the grammar surface
+/**
+ * Result from a block-level production parser: the blocks produced (0 or more)
+ * and the number of source lines consumed. A `null` return means the production
+ * did not match at the current position.
+ */
+interface BlockParseResult {
+  readonly blocks: readonly BlockLevelNode[]
+  readonly consumed: number
+}
+
+/** Fenced code block: ```[lang]\n ... \n``` */
+export function parseCodeBlock(lines: readonly string[], i: number): BlockParseResult | null {
+  const line = lines[i] as string
+  if (!line.startsWith('```')) return null
+  const rawLang = line.slice(3).trim() || null
+  const language = rawLang && /^[a-zA-Z0-9_+\-#.]+$/.test(rawLang) ? rawLang : null
+  const codeLines: string[] = []
+  let j = i + 1 // skip opening fence
+  while (j < lines.length && !lines[j]?.startsWith('```')) {
+    codeLines.push(lines[j] as string)
+    j++
+  }
+  if (j < lines.length) j++ // skip closing fence
+  const code = codeLines.join('\n')
+  const attrs = language ? { language } : undefined
+  const block: CodeBlockNode = buildCodeBlock(code, attrs)
+  return { blocks: [block], consumed: j - i }
+}
+
+function buildCodeBlock(code: string, attrs: { language: string } | undefined): CodeBlockNode {
+  if (code.length === 0) {
+    return attrs ? { type: 'codeBlock', attrs } : { type: 'codeBlock' }
+  }
+  return attrs
+    ? { type: 'codeBlock', attrs, content: [{ type: 'text', text: code }] }
+    : { type: 'codeBlock', content: [{ type: 'text', text: code }] }
+}
+
+/** Blockquote: `> ` prefix (optionally with a `[!TYPE]` callout marker). */
+export function parseBlockquote(
+  lines: readonly string[],
+  i: number,
+  depth: number,
+): BlockParseResult | null {
+  const line = lines[i] as string
+  if (!line.startsWith('> ') && line !== '>') return null
+  const quoteLines: string[] = []
+  let j = i
+  while (j < lines.length && (lines[j]?.startsWith('> ') || lines[j] === '>')) {
+    quoteLines.push(lines[j] === '>' ? '' : (lines[j]?.slice(2) as string))
+    j++
+  }
+  const calloutType = extractCalloutType(quoteLines)
+  const innerDoc = parse(quoteLines.join('\n'), depth + 1)
+  const block = buildBlockquote(innerDoc.content, calloutType)
+  return { blocks: [block], consumed: j - i }
+}
+
+/**
+ * Detect a `[!TYPE]` callout prefix on the first line of a blockquote. When
+ * found, mutates `quoteLines[0]` to strip the prefix and returns the callout
+ * type (lowercased). Returns undefined when absent.
+ */
+function extractCalloutType(quoteLines: string[]): string | undefined {
+  const calloutMatch = quoteLines[0]?.match(CALLOUT_RE)
+  if (!calloutMatch) return undefined
+  quoteLines[0] = calloutMatch[2] as string
+  return (calloutMatch[1] as string).toLowerCase()
+}
+
+function buildBlockquote(
+  content: readonly BlockLevelNode[] | undefined,
+  calloutType: string | undefined,
+): BlockquoteNode {
+  if (!content || content.length === 0) {
+    return calloutType ? { type: 'blockquote', attrs: { calloutType } } : { type: 'blockquote' }
+  }
+  return calloutType
+    ? { type: 'blockquote', attrs: { calloutType }, content }
+    : { type: 'blockquote', content }
+}
+
+/** Heading: `#`…`######` followed by a space and inline content. */
+export function parseHeading(
+  lines: readonly string[],
+  i: number,
+  depth: number,
+): BlockParseResult | null {
+  const line = lines[i] as string
+  const headingMatch = line.match(/^(#{1,6}) (.*)$/)
+  if (!headingMatch) return null
+  const level = headingMatch[1]?.length as number
+  const content = headingMatch[2] as string
+  const inlineNodes = parseLine(content, depth)
+  const block: HeadingNode =
+    inlineNodes.length === 0
+      ? { type: 'heading', attrs: { level } }
+      : { type: 'heading', attrs: { level }, content: inlineNodes }
+  return { blocks: [block], consumed: 1 }
+}
+
+/** Table: consecutive lines starting with `|`. First non-separator row is the header. */
+export function parseTable(
+  lines: readonly string[],
+  i: number,
+  depth: number,
+): BlockParseResult | null {
+  const line = lines[i] as string
+  if (!line.startsWith('|')) return null
+  const tableLines: string[] = []
+  let j = i
+  while (j < lines.length && lines[j]?.startsWith('|')) {
+    tableLines.push(lines[j] as string)
+    j++
+  }
+  const rows = buildTableRows(tableLines, depth)
+  const consumed = j - i
+  if (rows.length === 0) return { blocks: [], consumed }
+  const block: TableNode = { type: 'table', content: rows }
+  return { blocks: [block], consumed }
+}
+
+function buildTableRows(tableLines: readonly string[], depth: number): TableRowNode[] {
+  const rows: TableRowNode[] = []
+  for (let r = 0; r < tableLines.length; r++) {
+    const tableLine = tableLines[r] as string
+    if (/^\|[\s\-:|]+\|$/.test(tableLine)) continue
+    const cellTexts = tableLine
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map((c) => c.trim().replace(/\\\|/g, '|'))
+    const isHeader = r === 0
+    const cells = cellTexts.map((cellText) => buildTableCell(cellText, isHeader, depth))
+    rows.push({ type: 'tableRow', content: cells })
+  }
+  return rows
+}
+
+function buildTableCell(
+  cellText: string,
+  isHeader: boolean,
+  depth: number,
+):
+  | { type: 'tableHeader'; content: ParagraphNode[] }
+  | { type: 'tableCell'; content: ParagraphNode[] } {
+  const content: ParagraphNode[] = cellText
+    ? [{ type: 'paragraph', content: parseLine(cellText, depth) }]
+    : []
+  return isHeader ? { type: 'tableHeader', content } : { type: 'tableCell', content }
+}
+
+/** Horizontal rule: 3+ hyphens on their own line. */
+export function parseHorizontalRule(lines: readonly string[], i: number): BlockParseResult | null {
+  const line = lines[i] as string
+  if (!/^-{3,}$/.test(line)) return null
+  const block: HorizontalRuleNode = { type: 'horizontalRule' }
+  return { blocks: [block], consumed: 1 }
+}
+
+/** Ordered list: consecutive `N. item` lines. */
+export function parseOrderedList(
+  lines: readonly string[],
+  i: number,
+  depth: number,
+): BlockParseResult | null {
+  if (!/^\d+\. /.test(lines[i] as string)) return null
+  const items: ListItemNode[] = []
+  let j = i
+  while (j < lines.length) {
+    const itemMatch = (lines[j] as string).match(/^(\d+)\. (.*)$/)
+    if (!itemMatch) break
+    items.push(buildListItem(itemMatch[2] as string, depth))
+    j++
+  }
+  const consumed = j - i
+  if (items.length === 0) return { blocks: [], consumed }
+  const block: OrderedListNode = { type: 'orderedList', content: items }
+  return { blocks: [block], consumed }
+}
+
+function buildListItem(itemText: string, depth: number): ListItemNode {
+  const inlineContent = parseLine(itemText, depth)
+  const paragraph: ParagraphNode =
+    inlineContent.length === 0
+      ? { type: 'paragraph' }
+      : { type: 'paragraph', content: inlineContent }
+  return { type: 'listItem', content: [paragraph] }
+}
+
+/** Fallback production: single-line paragraph. Always matches. */
+export function parseParagraph(
+  lines: readonly string[],
+  i: number,
+  depth: number,
+): BlockParseResult {
+  const line = lines[i] as string
+  const inlineNodes = parseLine(line, depth)
+  const block: ParagraphNode =
+    inlineNodes.length === 0 ? { type: 'paragraph' } : { type: 'paragraph', content: inlineNodes }
+  return { blocks: [block], consumed: 1 }
+}
+
+/**
+ * Dispatch to the first matching block-level production. Paragraph is the
+ * always-matching fallback.
+ */
+function dispatchBlockProduction(
+  lines: readonly string[],
+  i: number,
+  depth: number,
+): BlockParseResult {
+  return (
+    parseCodeBlock(lines, i) ??
+    parseBlockquote(lines, i, depth) ??
+    parseHeading(lines, i, depth) ??
+    parseTable(lines, i, depth) ??
+    parseHorizontalRule(lines, i) ??
+    parseOrderedList(lines, i, depth) ??
+    parseParagraph(lines, i, depth)
+  )
+}
+
 export function parse(markdown: string, depth = 0): DocNode {
   if (markdown.length === 0) return { type: 'doc', content: [{ type: 'paragraph' }] }
-
   // Depth guard: cap recursion to prevent stack overflow on pathological input
   // (deeply nested blockquotes, nested links in link display text, etc.).
   // Beyond the cap, fall back to returning the remaining input as plain text
@@ -601,176 +822,279 @@ export function parse(markdown: string, depth = 0): DocNode {
   if (depth > MAX_PARSE_DEPTH) {
     return {
       type: 'doc',
-      content: [
-        {
-          type: 'paragraph',
-          content: [{ type: 'text', text: markdown }],
-        },
-      ],
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: markdown }] }],
     }
   }
 
   const lines = markdown.split('\n')
   const blocks: BlockLevelNode[] = []
   let i = 0
-
   while (i < lines.length) {
-    const line = lines[i] as string
-
-    // Fenced code block: ```
-    if (line.startsWith('```')) {
-      const rawLang = line.slice(3).trim() || null
-      const language = rawLang && /^[a-zA-Z0-9_+\-#.]+$/.test(rawLang) ? rawLang : null
-      const codeLines: string[] = []
-      i++ // skip opening fence
-      while (i < lines.length && !lines[i]?.startsWith('```')) {
-        codeLines.push(lines[i] as string)
-        i++
-      }
-      if (i < lines.length) i++ // skip closing fence
-      const code = codeLines.join('\n')
-      const attrs = language ? { language } : undefined
-      if (code.length === 0) {
-        blocks.push(attrs ? { type: 'codeBlock', attrs } : { type: 'codeBlock' })
-      } else {
-        blocks.push(
-          attrs
-            ? { type: 'codeBlock', attrs, content: [{ type: 'text', text: code }] }
-            : { type: 'codeBlock', content: [{ type: 'text', text: code }] },
-        )
-      }
-      continue
-    }
-
-    // Blockquote: > prefix (collect consecutive > lines)
-    if (line.startsWith('> ') || line === '>') {
-      const quoteLines: string[] = []
-      while (i < lines.length && (lines[i]?.startsWith('> ') || lines[i] === '>')) {
-        // Strip the "> " prefix (or lone ">")
-        quoteLines.push(lines[i] === '>' ? '' : (lines[i]?.slice(2) as string))
-        i++
-      }
-      // Detect callout syntax: [!TYPE] at the start of the first line
-      let calloutType: string | undefined
-      const calloutMatch = quoteLines[0]?.match(CALLOUT_RE)
-      if (calloutMatch) {
-        calloutType = (calloutMatch[1] as string).toLowerCase()
-        // Strip the [!TYPE] prefix from the first line
-        quoteLines[0] = calloutMatch[2] as string
-        // If the first line is now empty and it's the only line, keep it (empty paragraph)
-      }
-      // Recursively parse the inner content
-      const innerMarkdown = quoteLines.join('\n')
-      const innerDoc = parse(innerMarkdown, depth + 1)
-      const content = innerDoc.content
-      if (!content || content.length === 0) {
-        blocks.push(
-          calloutType ? { type: 'blockquote', attrs: { calloutType } } : { type: 'blockquote' },
-        )
-      } else {
-        blocks.push(
-          calloutType
-            ? { type: 'blockquote', attrs: { calloutType }, content }
-            : { type: 'blockquote', content },
-        )
-      }
-      continue
-    }
-
-    // Heading: # to ######
-    const headingMatch = line.match(/^(#{1,6}) (.*)$/)
-    if (headingMatch) {
-      const level = headingMatch[1]?.length as number
-      const content = headingMatch[2] as string
-      const inlineNodes = parseLine(content, depth)
-      if (inlineNodes.length === 0) {
-        blocks.push({ type: 'heading', attrs: { level } })
-      } else {
-        blocks.push({ type: 'heading', attrs: { level }, content: inlineNodes })
-      }
-      i++
-      continue
-    }
-
-    // Table: lines starting with |
-    if (line.startsWith('|')) {
-      const tableLines: string[] = []
-      while (i < lines.length && lines[i]?.startsWith('|')) {
-        tableLines.push(lines[i] as string)
-        i++
-      }
-      const rows: TableRowNode[] = []
-      for (let r = 0; r < tableLines.length; r++) {
-        const tableLine = tableLines[r] as string
-        if (/^\|[\s\-:|]+\|$/.test(tableLine)) continue
-        const cellTexts = tableLine
-          .replace(/^\|/, '')
-          .replace(/\|$/, '')
-          .split('|')
-          .map((c) => c.trim().replace(/\\\|/g, '|'))
-        const isHeader = r === 0
-        const cells = cellTexts.map((cellText) => {
-          const content = cellText
-            ? [{ type: 'paragraph' as const, content: parseLine(cellText, depth) }]
-            : []
-          if (isHeader) {
-            return { type: 'tableHeader' as const, content }
-          }
-          return { type: 'tableCell' as const, content }
-        })
-        rows.push({ type: 'tableRow', content: cells })
-      }
-      if (rows.length > 0) {
-        blocks.push({ type: 'table', content: rows })
-      }
-      continue
-    }
-
-    // Horizontal rule: --- (three or more hyphens on its own line)
-    if (/^-{3,}$/.test(line)) {
-      blocks.push({ type: 'horizontalRule' })
-      i++
-      continue
-    }
-
-    // Ordered list: 1. item, 2. item, etc.
-    const olMatch = line.match(/^(\d+)\. (.*)$/)
-    if (olMatch) {
-      const items: {
-        type: 'listItem'
-        content: { type: 'paragraph'; content?: InlineNode[] }[]
-      }[] = []
-      while (i < lines.length) {
-        const olLine = lines[i] as string
-        const itemMatch = olLine.match(/^(\d+)\. (.*)$/)
-        if (!itemMatch) break
-        const itemText = itemMatch[2] as string
-        const inlineContent = parseLine(itemText, depth)
-        if (inlineContent.length === 0) {
-          items.push({ type: 'listItem', content: [{ type: 'paragraph' }] })
-        } else {
-          items.push({ type: 'listItem', content: [{ type: 'paragraph', content: inlineContent }] })
-        }
-        i++
-      }
-      if (items.length > 0) {
-        blocks.push({ type: 'orderedList', content: items })
-      }
-      continue
-    }
-
-    // Regular paragraph
-    const inlineNodes = parseLine(line, depth)
-    if (inlineNodes.length === 0) {
-      blocks.push({ type: 'paragraph' })
-    } else {
-      blocks.push({ type: 'paragraph', content: inlineNodes })
-    }
-    i++
+    const result = dispatchBlockProduction(lines, i, depth)
+    blocks.push(...result.blocks)
+    i += result.consumed
   }
 
   if (blocks.length === 0) return { type: 'doc' }
   return { type: 'doc', content: blocks }
+}
+
+/**
+ * Mutable state for the inline scanner/parser. One instance is created per
+ * `parseLine()` call and threaded through per-token scanner helpers.
+ *
+ * Exported for unit testing of the scanner helpers.
+ */
+export interface InlineState {
+  readonly scanner: Scanner
+  readonly depth: number
+  buf: string
+  readonly nodes: InlineNode[]
+  inBold: boolean
+  inItalic: boolean
+  inCode: boolean
+  inStrike: boolean
+  inHighlight: boolean
+  /** Position in source where the currently-open bold/italic delimiter started. */
+  boldOpenPos: number
+  italicOpenPos: number
+  /** Snapshots of `nodes.length` at the moment a mark opened (for revert). */
+  boldOpenNodeLen: number
+  italicOpenNodeLen: number
+  codeOpenNodeLen: number
+  strikeOpenNodeLen: number
+  highlightOpenNodeLen: number
+}
+
+export function createInlineState(line: string, depth: number): InlineState {
+  return {
+    scanner: { src: line, pos: 0 },
+    depth,
+    buf: '',
+    nodes: [],
+    inBold: false,
+    inItalic: false,
+    inCode: false,
+    inStrike: false,
+    inHighlight: false,
+    boldOpenPos: -1,
+    italicOpenPos: -1,
+    boldOpenNodeLen: 0,
+    italicOpenNodeLen: 0,
+    codeOpenNodeLen: 0,
+    strikeOpenNodeLen: 0,
+    highlightOpenNodeLen: 0,
+  }
+}
+
+/** Compute the currently active text marks from open toggle flags. */
+function currentMarks(st: InlineState): PMMark[] {
+  const m: PMMark[] = []
+  if (st.inBold) m.push({ type: 'bold' })
+  if (st.inItalic) m.push({ type: 'italic' })
+  if (st.inStrike) m.push({ type: 'strike' })
+  if (st.inHighlight) m.push({ type: 'highlight' })
+  return m
+}
+
+/** Flush the accumulated plain-text buffer as a (possibly-marked) text node. */
+function flushBuf(st: InlineState, marks: readonly PMMark[]): void {
+  st.buf = flushText(st.buf, marks, st.nodes)
+}
+
+/**
+ * Code span: a backtick toggles code mode. Returns `true` if consumed.
+ * This helper handles both the opening/closing delimiter AND literal content
+ * while inside a code span — the return value signals whether to `continue`
+ * the outer loop.
+ */
+export function scanCodeSpan(st: InlineState): boolean {
+  const ch = peek(st.scanner)
+  if (ch === '`') {
+    if (st.inCode) {
+      flushBuf(st, [{ type: 'code' }])
+      st.inCode = false
+    } else {
+      flushBuf(st, currentMarks(st))
+      st.codeOpenNodeLen = st.nodes.length
+      st.inCode = true
+    }
+    st.scanner.pos++
+    return true
+  }
+  if (st.inCode) {
+    st.buf += ch
+    st.scanner.pos++
+    return true
+  }
+  return false
+}
+
+/** Backslash escape for any parser-significant char. */
+export function scanEscape(st: InlineState): boolean {
+  if (peek(st.scanner) !== '\\' || st.scanner.pos + 1 >= st.scanner.src.length) return false
+  const next = peek(st.scanner, 1)
+  if (!isEscapableChar(next)) return false
+  st.buf += next
+  st.scanner.pos += 2
+  return true
+}
+
+function isEscapableChar(ch: string): boolean {
+  return (
+    ch === '*' ||
+    ch === '`' ||
+    ch === '\\' ||
+    ch === '#' ||
+    ch === '[' ||
+    ch === ']' ||
+    ch === '~' ||
+    ch === '='
+  )
+}
+
+/** Atomic ref tokens: `#[ULID]`, `[[ULID]]`, `((ULID))`. */
+export function scanTokenRef(st: InlineState): boolean {
+  const token = tryConsumeToken(st.scanner)
+  if (!token) return false
+  flushBuf(st, currentMarks(st))
+  st.nodes.push(token)
+  return true
+}
+
+/** External link: `[text](url)` when not followed by another `[`. */
+export function scanExternalLinkToken(st: InlineState): boolean {
+  if (peek(st.scanner) !== '[' || peek(st.scanner, 1) === '[') return false
+  const match = probeExternalLink(st.scanner)
+  if (!match) return false
+  flushBuf(st, currentMarks(st))
+  const linkNodes = consumeExternalLink(st.scanner, match, currentMarks(st), st.depth)
+  st.nodes.push(...linkNodes)
+  return true
+}
+
+/** Bold toggle: `**`. */
+export function scanBold(st: InlineState): boolean {
+  if (peek(st.scanner) !== '*' || peek(st.scanner, 1) !== '*') return false
+  flushBuf(st, currentMarks(st))
+  if (st.inBold) {
+    st.inBold = false
+  } else {
+    st.boldOpenPos = st.scanner.pos
+    st.boldOpenNodeLen = st.nodes.length
+    st.inBold = true
+  }
+  st.scanner.pos += 2
+  return true
+}
+
+/** Strikethrough toggle: `~~`. */
+export function scanStrike(st: InlineState): boolean {
+  if (peek(st.scanner) !== '~' || peek(st.scanner, 1) !== '~') return false
+  flushBuf(st, currentMarks(st))
+  if (st.inStrike) {
+    st.inStrike = false
+  } else {
+    st.strikeOpenNodeLen = st.nodes.length
+    st.inStrike = true
+  }
+  st.scanner.pos += 2
+  return true
+}
+
+/** Highlight toggle: `==`. */
+export function scanHighlight(st: InlineState): boolean {
+  if (peek(st.scanner) !== '=' || peek(st.scanner, 1) !== '=') return false
+  flushBuf(st, currentMarks(st))
+  if (st.inHighlight) {
+    st.inHighlight = false
+  } else {
+    st.highlightOpenNodeLen = st.nodes.length
+    st.inHighlight = true
+  }
+  st.scanner.pos += 2
+  return true
+}
+
+/** Italic toggle: `*` (single star, not already matched as bold `**`). */
+export function scanItalic(st: InlineState): boolean {
+  if (peek(st.scanner) !== '*') return false
+  flushBuf(st, currentMarks(st))
+  if (st.inItalic) {
+    st.inItalic = false
+  } else {
+    st.italicOpenPos = st.scanner.pos
+    st.italicOpenNodeLen = st.nodes.length
+    st.inItalic = true
+  }
+  st.scanner.pos++
+  return true
+}
+
+/** Accept any other character as literal text. */
+function scanPlain(st: InlineState): void {
+  st.buf += peek(st.scanner)
+  st.scanner.pos++
+}
+
+/**
+ * At end-of-line, revert any unclosed marks back into their literal
+ * delimiter + underlying plain text. Runs in reverse order of opening so that
+ * nested unclosed marks are handled correctly.
+ */
+function revertUnclosedMarks(st: InlineState): void {
+  if (st.inCode) {
+    const reverted = st.nodes.splice(st.codeOpenNodeLen)
+    st.buf = `\`${reverted.map(nodeToPlainText).join('')}${st.buf}`
+  }
+  if (st.inHighlight) {
+    const reverted = st.nodes.splice(st.highlightOpenNodeLen)
+    st.buf = `==${reverted.map(nodeToPlainText).join('')}${st.buf}`
+  }
+  if (st.inStrike) {
+    const reverted = st.nodes.splice(st.strikeOpenNodeLen)
+    st.buf = `~~${reverted.map(nodeToPlainText).join('')}${st.buf}`
+  }
+  revertUnclosedItalic(st)
+  if (st.inBold) {
+    const reverted = st.nodes.splice(st.boldOpenNodeLen)
+    st.buf = `**${reverted.map(nodeToPlainText).join('')}${st.buf}`
+  }
+}
+
+/**
+ * Italic revert is the only case that interacts with bold — if bold opened
+ * *inside* an unclosed italic, the bold `**` delimiter must be preserved
+ * verbatim in the reverted text (and `inBold` cleared so it isn't reverted
+ * a second time).
+ */
+function revertUnclosedItalic(st: InlineState): void {
+  if (!st.inItalic) return
+  const reverted = st.nodes.splice(st.italicOpenNodeLen)
+  if (st.inBold && st.boldOpenPos > st.italicOpenPos) {
+    const splitAt = st.boldOpenNodeLen - st.italicOpenNodeLen
+    const before = reverted.slice(0, splitAt)
+    const after = reverted.slice(splitAt)
+    st.buf = `*${before.map(nodeToPlainText).join('')}**${after.map(nodeToPlainText).join('')}${st.buf}`
+    st.inBold = false
+  } else {
+    st.buf = `*${reverted.map(nodeToPlainText).join('')}${st.buf}`
+  }
+}
+
+/**
+ * Flush the trailing plain-text buffer. When the last emitted node is also an
+ * unmarked text node, merge into it rather than appending a sibling — this
+ * keeps `nodes` in a canonical form without adjacent unmarked text.
+ */
+function flushRemainingBuf(st: InlineState): void {
+  if (st.buf.length === 0) return
+  const last = st.nodes.length > 0 ? st.nodes[st.nodes.length - 1] : null
+  if (last && last.type === 'text' && (!last.marks || last.marks.length === 0)) {
+    ;(st.nodes[st.nodes.length - 1] as { text: string }).text += st.buf
+  } else {
+    st.nodes.push({ type: 'text', text: st.buf })
+  }
 }
 
 /**
@@ -779,218 +1103,22 @@ export function parse(markdown: string, depth = 0): DocNode {
  * `depth` is threaded through so that recursive `parse()` calls inside
  * external-link display text (`consumeExternalLink`) increment the cap.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: inline scanner/parser branches over markdown inline grammar (bold/italic/code/link/etc.); intrinsic to the grammar surface
 function parseLine(line: string, depth = 0): InlineNode[] {
-  const nodes: InlineNode[] = []
-  const s: Scanner = { src: line, pos: 0 }
-  let buf = ''
-  let inBold = false
-  let inItalic = false
-  let inCode = false
-  let inStrike = false
-  let inHighlight = false
-
-  // Track positions where marks were opened so we can revert if unclosed
-  let boldOpenPos = -1
-  let italicOpenPos = -1
-  // Snapshots of nodes array length at mark open (for unclosed mark revert)
-  let boldOpenNodeLen = 0
-  let italicOpenNodeLen = 0
-  let codeOpenNodeLen = 0
-  let strikeOpenNodeLen = 0
-  let highlightOpenNodeLen = 0
-
-  function currentMarks(): PMMark[] {
-    const m: PMMark[] = []
-    if (inBold) m.push({ type: 'bold' })
-    if (inItalic) m.push({ type: 'italic' })
-    if (inStrike) m.push({ type: 'strike' })
-    if (inHighlight) m.push({ type: 'highlight' })
-    return m
+  const st = createInlineState(line, depth)
+  while (st.scanner.pos < st.scanner.src.length) {
+    if (scanCodeSpan(st)) continue
+    if (scanEscape(st)) continue
+    if (scanTokenRef(st)) continue
+    if (scanExternalLinkToken(st)) continue
+    if (scanBold(st)) continue
+    if (scanStrike(st)) continue
+    if (scanHighlight(st)) continue
+    if (scanItalic(st)) continue
+    scanPlain(st)
   }
-
-  while (s.pos < s.src.length) {
-    const ch = peek(s)
-
-    // Code span: backtick toggles, everything else inside is literal
-    if (ch === '`') {
-      if (inCode) {
-        buf = flushText(buf, [{ type: 'code' }], nodes)
-        inCode = false
-        s.pos++
-        continue
-      }
-      buf = flushText(buf, currentMarks(), nodes)
-      codeOpenNodeLen = nodes.length
-      inCode = true
-      s.pos++
-      continue
-    }
-    if (inCode) {
-      buf += ch
-      s.pos++
-      continue
-    }
-
-    // Escape sequences (only outside code spans)
-    if (ch === '\\' && s.pos + 1 < s.src.length) {
-      const next = peek(s, 1)
-      if (
-        next === '*' ||
-        next === '`' ||
-        next === '\\' ||
-        next === '#' ||
-        next === '[' ||
-        next === ']' ||
-        next === '~' ||
-        next === '='
-      ) {
-        buf += next
-        s.pos += 2
-        continue
-      }
-    }
-
-    // Tokens: #[ULID] and [[ULID]]
-    const token = tryConsumeToken(s)
-    if (token) {
-      buf = flushText(buf, currentMarks(), nodes)
-      nodes.push(token)
-      continue
-    }
-
-    // External link: [text](url) — single [ not followed by [
-    if (ch === '[' && peek(s, 1) !== '[') {
-      const linkMatch = probeExternalLink(s)
-      if (linkMatch) {
-        buf = flushText(buf, currentMarks(), nodes)
-        const linkNodes = consumeExternalLink(s, linkMatch, currentMarks(), depth)
-        nodes.push(...linkNodes)
-        continue
-      }
-    }
-
-    // Bold: **
-    if (ch === '*' && peek(s, 1) === '*') {
-      if (inBold) {
-        // Close bold
-        buf = flushText(buf, currentMarks(), nodes)
-        inBold = false
-        s.pos += 2
-        continue
-      }
-      // Open bold
-      buf = flushText(buf, currentMarks(), nodes)
-      boldOpenPos = s.pos
-      boldOpenNodeLen = nodes.length
-      inBold = true
-      s.pos += 2
-      continue
-    }
-
-    // Strikethrough: ~~
-    if (ch === '~' && peek(s, 1) === '~') {
-      if (inStrike) {
-        // Close strike
-        buf = flushText(buf, currentMarks(), nodes)
-        inStrike = false
-        s.pos += 2
-        continue
-      }
-      // Open strike
-      buf = flushText(buf, currentMarks(), nodes)
-      strikeOpenNodeLen = nodes.length
-      inStrike = true
-      s.pos += 2
-      continue
-    }
-
-    // Highlight: ==
-    if (ch === '=' && peek(s, 1) === '=') {
-      if (inHighlight) {
-        // Close highlight
-        buf = flushText(buf, currentMarks(), nodes)
-        inHighlight = false
-        s.pos += 2
-        continue
-      }
-      // Open highlight
-      buf = flushText(buf, currentMarks(), nodes)
-      highlightOpenNodeLen = nodes.length
-      inHighlight = true
-      s.pos += 2
-      continue
-    }
-
-    // Italic: single *
-    if (ch === '*') {
-      if (inItalic) {
-        // Close italic
-        buf = flushText(buf, currentMarks(), nodes)
-        inItalic = false
-        s.pos++
-        continue
-      }
-      // Open italic
-      buf = flushText(buf, currentMarks(), nodes)
-      italicOpenPos = s.pos
-      italicOpenNodeLen = nodes.length
-      inItalic = true
-      s.pos++
-      continue
-    }
-
-    buf += ch
-    s.pos++
-  }
-
-  // End of line: handle unclosed marks by reverting to plain text
-  // Process in reverse order of opening to properly revert nested unclosed marks
-  if (inCode) {
-    const revertedNodes = nodes.splice(codeOpenNodeLen)
-    buf = `\`${revertedNodes.map(nodeToPlainText).join('')}${buf}`
-  }
-
-  if (inHighlight) {
-    const revertedNodes = nodes.splice(highlightOpenNodeLen)
-    buf = `==${revertedNodes.map(nodeToPlainText).join('')}${buf}`
-  }
-
-  if (inStrike) {
-    const revertedNodes = nodes.splice(strikeOpenNodeLen)
-    buf = `~~${revertedNodes.map(nodeToPlainText).join('')}${buf}`
-  }
-
-  if (inItalic) {
-    const revertedNodes = nodes.splice(italicOpenNodeLen)
-    if (inBold && boldOpenPos > italicOpenPos) {
-      // Bold was opened inside this italic — reconstruct the ** delimiter
-      const splitAt = boldOpenNodeLen - italicOpenNodeLen
-      const before = revertedNodes.slice(0, splitAt)
-      const after = revertedNodes.slice(splitAt)
-      buf = `*${before.map(nodeToPlainText).join('')}**${after.map(nodeToPlainText).join('')}${buf}`
-      inBold = false
-    } else {
-      buf = `*${revertedNodes.map(nodeToPlainText).join('')}${buf}`
-    }
-  }
-
-  if (inBold) {
-    const revertedNodes = nodes.splice(boldOpenNodeLen)
-    buf = `**${revertedNodes.map(nodeToPlainText).join('')}${buf}`
-  }
-
-  // Flush remaining text — merge into last node if it's an unmarked text node
-  if (buf.length > 0) {
-    const last = nodes.length > 0 ? nodes[nodes.length - 1] : null
-    if (last && last.type === 'text' && (!last.marks || last.marks.length === 0)) {
-      ;(nodes[nodes.length - 1] as { text: string }).text += buf
-    } else {
-      nodes.push({ type: 'text', text: buf })
-    }
-  }
-
-  return nodes
+  revertUnclosedMarks(st)
+  flushRemainingBuf(st)
+  return st.nodes
 }
 
 // -- Helpers ------------------------------------------------------------------

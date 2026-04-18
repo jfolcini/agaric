@@ -105,12 +105,17 @@ export function SortableBlockWrapper({
   const projectedDepth =
     projected && activeId && overId === block.id ? projected.depth : block.depth
 
+  // Per-id memoized ref callback — same function identity across
+  // renders for a given block.id, and unobserves the exact element
+  // on unmount (BUG-29).
+  const observeRef = viewport.createObserveRef(block.id)
+
   // Focused block is never virtualized — always render fully
   if (!isFocused && viewport.isOffscreen(block.id)) {
     return (
       // biome-ignore lint/a11y/useAriaPropsSupportedByRole: aria-level is valid on listitem per WAI-ARIA spec
       <li
-        ref={viewport.observeRef}
+        ref={observeRef}
         data-block-id={block.id}
         aria-level={block.depth + 1}
         aria-setsize={siblingAria?.setsize}
@@ -125,7 +130,7 @@ export function SortableBlockWrapper({
   return (
     // biome-ignore lint/a11y/useAriaPropsSupportedByRole: aria-level is valid on listitem per WAI-ARIA spec
     <li
-      ref={viewport.observeRef}
+      ref={observeRef}
       data-block-id={block.id}
       aria-level={block.depth + 1}
       aria-setsize={siblingAria?.setsize}

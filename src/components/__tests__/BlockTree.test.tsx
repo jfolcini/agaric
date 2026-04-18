@@ -118,7 +118,7 @@ vi.mock('../../editor/use-block-keyboard', () => ({
 vi.mock('../../hooks/useViewportObserver', () => ({
   useViewportObserver: () => ({
     isOffscreen: () => false,
-    observeRef: vi.fn(),
+    createObserveRef: () => vi.fn(),
     getHeight: () => 40,
   }),
 }))

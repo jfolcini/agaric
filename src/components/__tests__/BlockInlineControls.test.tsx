@@ -408,6 +408,121 @@ describe('BlockInlineControls', () => {
     expect(screen.getByText('+1')).toBeInTheDocument()
   })
 
+  describe('property overflow button (UX-229)', () => {
+    const fourProps = [
+      { key: 'a', value: 'v1' },
+      { key: 'b', value: 'v2' },
+      { key: 'c', value: 'v3' },
+      { key: 'd', value: 'v4' },
+    ]
+
+    it('renders as a button when filteredProperties.length > 3', () => {
+      renderControls(makeProps({ filteredProperties: fourProps }))
+      const overflow = screen.getByTestId('property-overflow')
+      expect(overflow).toBeInTheDocument()
+      expect(overflow.tagName).toBe('BUTTON')
+      expect(overflow).toHaveTextContent('+1')
+    })
+
+    it('does not render when filteredProperties.length is exactly 3', () => {
+      renderControls(
+        makeProps({
+          filteredProperties: [
+            { key: 'a', value: 'v1' },
+            { key: 'b', value: 'v2' },
+            { key: 'c', value: 'v3' },
+          ],
+        }),
+      )
+      expect(screen.queryByTestId('property-overflow')).not.toBeInTheDocument()
+    })
+
+    it('does not render when filteredProperties is empty', () => {
+      renderControls(makeProps({ filteredProperties: [] }))
+      expect(screen.queryByTestId('property-overflow')).not.toBeInTheDocument()
+    })
+
+    it('has an accessible name via aria-label with total count', () => {
+      renderControls(makeProps({ filteredProperties: fourProps }))
+      const label = t('block.showAllProperties', { count: fourProps.length })
+      expect(screen.getByRole('button', { name: label })).toBeInTheDocument()
+    })
+
+    it('dispatches OPEN_BLOCK_PROPERTIES event on click', async () => {
+      const user = userEvent.setup()
+      const handler = vi.fn()
+      document.addEventListener('open-block-properties', handler)
+
+      renderControls(makeProps({ filteredProperties: fourProps }))
+      await user.click(screen.getByTestId('property-overflow'))
+
+      expect(handler).toHaveBeenCalledOnce()
+      document.removeEventListener('open-block-properties', handler)
+    })
+
+    it('dispatches OPEN_BLOCK_PROPERTIES when activated with Enter', async () => {
+      const user = userEvent.setup()
+      const handler = vi.fn()
+      document.addEventListener('open-block-properties', handler)
+
+      renderControls(makeProps({ filteredProperties: fourProps }))
+      const overflow = screen.getByTestId('property-overflow')
+      overflow.focus()
+      await user.keyboard('{Enter}')
+
+      expect(handler).toHaveBeenCalledOnce()
+      document.removeEventListener('open-block-properties', handler)
+    })
+
+    it('dispatches OPEN_BLOCK_PROPERTIES when activated with Space', async () => {
+      const user = userEvent.setup()
+      const handler = vi.fn()
+      document.addEventListener('open-block-properties', handler)
+
+      renderControls(makeProps({ filteredProperties: fourProps }))
+      const overflow = screen.getByTestId('property-overflow')
+      overflow.focus()
+      await user.keyboard(' ')
+
+      expect(handler).toHaveBeenCalledOnce()
+      document.removeEventListener('open-block-properties', handler)
+    })
+
+    it('wraps the button in a Tooltip trigger', () => {
+      renderControls(makeProps({ filteredProperties: fourProps }))
+      const overflow = screen.getByTestId('property-overflow')
+      expect(overflow.getAttribute('data-slot')).toBe('tooltip-trigger')
+    })
+
+    it('applies the shared focus-visible ring classes', () => {
+      renderControls(makeProps({ filteredProperties: fourProps }))
+      const overflow = screen.getByTestId('property-overflow')
+      expect(overflow.className).toContain('focus-visible:ring-[3px]')
+      expect(overflow.className).toContain('focus-visible:ring-ring/50')
+    })
+
+    it('applies max-sm: touch target padding', () => {
+      renderControls(makeProps({ filteredProperties: fourProps }))
+      const overflow = screen.getByTestId('property-overflow')
+      expect(overflow.className).toContain('max-sm:px-2.5')
+      expect(overflow.className).toContain('max-sm:py-1')
+    })
+
+    it('has no a11y violations when overflow button is rendered', async () => {
+      const { container } = renderControls(makeProps({ filteredProperties: fourProps }))
+      await waitFor(async () => {
+        // The test-file-level PropertyChip mock nests a <button> inside a <button>
+        // (to exercise both onClick + onKeyClick paths) which trips the
+        // `nested-interactive` rule. That is unrelated to the overflow button
+        // under test — disable just that rule so we still validate the rest.
+        const results = await axe(container, {
+          rules: { 'nested-interactive': { enabled: false } },
+        })
+        expect(results).toHaveNoViolations()
+      })
+    })
+  })
+
   it('calls onEditProp when property chip is clicked', async () => {
     const user = userEvent.setup()
     const onEditProp = vi.fn()

@@ -67,7 +67,6 @@
     "d3-zoom": "^3.0.0",
     "date-fns": "^4.1.0",
     "esbuild": "^0.27.7",
-    "hast-util-to-html": "^9.0.5",
     "html5-qrcode": "^2.3.8",
     "i18next": "^26.0.5",
     "jszip": "^3.10.1",

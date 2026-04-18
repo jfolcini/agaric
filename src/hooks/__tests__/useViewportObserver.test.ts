@@ -1,6 +1,7 @@
 /**
  * Tests for useViewportObserver — IntersectionObserver lifecycle,
- * offscreen tracking, and height caching.
+ * offscreen tracking, height caching, and per-id unobserve on null
+ * ref transitions (BUG-29 regression).
  */
 
 import { createElement } from 'react'
@@ -103,6 +104,13 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+/** Test helper — build a DOM element with a data-block-id matching `id`. */
+function makeEl(id: string): HTMLElement {
+  const el = document.createElement('div')
+  el.dataset['blockId'] = id
+  return el
+}
+
 // -- Tests --------------------------------------------------------------------
 
 describe('useViewportObserver', () => {
@@ -135,12 +143,11 @@ describe('useViewportObserver', () => {
     expect(spy).toHaveBeenCalledOnce()
   })
 
-  it('observes elements via the observeRef callback', () => {
+  it('observes an element via the createObserveRef(id) callback', () => {
     const { result, unmount } = renderHook(() => useViewportObserver())
 
-    const el = document.createElement('div')
-    el.dataset['blockId'] = 'BLOCK_A'
-    result.current.observeRef(el)
+    const el = makeEl('BLOCK_A')
+    result.current.createObserveRef('BLOCK_A')(el)
 
     const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
     expect(obs.observed.has(el)).toBe(true)
@@ -148,11 +155,11 @@ describe('useViewportObserver', () => {
     unmount()
   })
 
-  it('ignores null passed to observeRef', () => {
+  it('ignores null when no element has been observed for that id', () => {
     const { result, unmount } = renderHook(() => useViewportObserver())
 
     // Should not throw
-    result.current.observeRef(null)
+    result.current.createObserveRef('BLOCK_A')(null)
 
     const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
     expect(obs.observed.size).toBe(0)
@@ -160,12 +167,152 @@ describe('useViewportObserver', () => {
     unmount()
   })
 
+  it('returns the same ref callback for the same id across renders', () => {
+    const { result, unmount } = renderHook(() => useViewportObserver())
+
+    const first = result.current.createObserveRef('BLOCK_A')
+    const second = result.current.createObserveRef('BLOCK_A')
+
+    // Memoized — identity equality is what React relies on to avoid
+    // observe/unobserve churn on each render.
+    expect(second).toBe(first)
+
+    unmount()
+  })
+
+  it('returns a distinct ref callback for each id', () => {
+    const { result, unmount } = renderHook(() => useViewportObserver())
+
+    const refA = result.current.createObserveRef('BLOCK_A')
+    const refB = result.current.createObserveRef('BLOCK_B')
+
+    expect(refA).not.toBe(refB)
+
+    unmount()
+  })
+
+  // ── BUG-29 regression: per-id unobserve on null transition ────────────────
+
+  it('unobserves exactly the unmounted element when one of many blocks unmounts', () => {
+    const { result, unmount } = renderHook(() => useViewportObserver())
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
+    const observeSpy = vi.spyOn(obs, 'observe')
+    const unobserveSpy = vi.spyOn(obs, 'unobserve')
+
+    // Seed three distinct elements via distinct per-id ref callbacks
+    const elA = makeEl('A')
+    const elB = makeEl('B')
+    const elC = makeEl('C')
+    const refA = result.current.createObserveRef('A')
+    const refB = result.current.createObserveRef('B')
+    const refC = result.current.createObserveRef('C')
+    refA(elA)
+    refB(elB)
+    refC(elC)
+
+    expect(observeSpy).toHaveBeenCalledTimes(3)
+    expect(observeSpy).toHaveBeenNthCalledWith(1, elA)
+    expect(observeSpy).toHaveBeenNthCalledWith(2, elB)
+    expect(observeSpy).toHaveBeenNthCalledWith(3, elC)
+    expect(unobserveSpy).toHaveBeenCalledTimes(0)
+
+    // Unmount only B
+    refB(null)
+
+    expect(unobserveSpy).toHaveBeenCalledTimes(1)
+    expect(unobserveSpy).toHaveBeenCalledWith(elB)
+    // A and C are still observed
+    expect(obs.observed.has(elA)).toBe(true)
+    expect(obs.observed.has(elB)).toBe(false)
+    expect(obs.observed.has(elC)).toBe(true)
+
+    unmount()
+  })
+
+  it('re-observes a fresh element when the same id mounts again after null', () => {
+    const { result, unmount } = renderHook(() => useViewportObserver())
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
+    const observeSpy = vi.spyOn(obs, 'observe')
+    const unobserveSpy = vi.spyOn(obs, 'unobserve')
+
+    const ref = result.current.createObserveRef('BLOCK_A')
+    const first = makeEl('BLOCK_A')
+    const second = makeEl('BLOCK_A')
+
+    ref(first)
+    ref(null)
+    ref(second)
+
+    expect(observeSpy).toHaveBeenCalledTimes(2)
+    expect(observeSpy).toHaveBeenNthCalledWith(1, first)
+    expect(observeSpy).toHaveBeenNthCalledWith(2, second)
+    expect(unobserveSpy).toHaveBeenCalledTimes(1)
+    expect(unobserveSpy).toHaveBeenCalledWith(first)
+
+    unmount()
+  })
+
+  it('unobserves the stale element when a new element is installed without a null in between', () => {
+    const { result, unmount } = renderHook(() => useViewportObserver())
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
+    const unobserveSpy = vi.spyOn(obs, 'unobserve')
+
+    const ref = result.current.createObserveRef('BLOCK_A')
+    const first = makeEl('BLOCK_A')
+    const second = makeEl('BLOCK_A')
+
+    ref(first)
+    // React sometimes swaps DOM nodes without firing the ref with null
+    // first (e.g., keyed list reorder). The factory must defensively
+    // unobserve the previous element.
+    ref(second)
+
+    expect(unobserveSpy).toHaveBeenCalledTimes(1)
+    expect(unobserveSpy).toHaveBeenCalledWith(first)
+    expect(obs.observed.has(second)).toBe(true)
+
+    unmount()
+  })
+
+  it('clears stale offscreen and height state when a block unmounts', () => {
+    const { result, unmount } = renderHook(() => useViewportObserver())
+    const ref = result.current.createObserveRef('BLOCK_A')
+    const el = makeEl('BLOCK_A')
+    ref(el)
+
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
+
+    // Mark offscreen, cache height
+    act(() => {
+      obs.trigger([
+        {
+          target: el,
+          isIntersecting: false,
+          boundingClientRect: { height: 77 } as DOMRectReadOnly,
+        },
+      ])
+    })
+    expect(result.current.isOffscreen('BLOCK_A')).toBe(true)
+    expect(result.current.getHeight('BLOCK_A')).toBe(77)
+
+    // Unmount → stale per-id state must be cleared
+    act(() => {
+      ref(null)
+    })
+
+    expect(result.current.isOffscreen('BLOCK_A')).toBe(false)
+    expect(result.current.getHeight('BLOCK_A')).toBeUndefined()
+
+    unmount()
+  })
+
+  // ── Offscreen / height tracking ────────────────────────────────────────────
+
   it('marks a block as offscreen when not intersecting', () => {
     const { result, unmount } = renderHook(() => useViewportObserver())
 
-    const el = document.createElement('div')
-    el.dataset['blockId'] = 'BLOCK_A'
-    result.current.observeRef(el)
+    const el = makeEl('BLOCK_A')
+    result.current.createObserveRef('BLOCK_A')(el)
 
     const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
     act(() => {
@@ -186,9 +333,8 @@ describe('useViewportObserver', () => {
   it('caches height when a block goes offscreen', () => {
     const { result, unmount } = renderHook(() => useViewportObserver())
 
-    const el = document.createElement('div')
-    el.dataset['blockId'] = 'BLOCK_A'
-    result.current.observeRef(el)
+    const el = makeEl('BLOCK_A')
+    result.current.createObserveRef('BLOCK_A')(el)
 
     const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
     act(() => {
@@ -209,9 +355,8 @@ describe('useViewportObserver', () => {
   it('marks a block as visible when it becomes intersecting again', () => {
     const { result, unmount } = renderHook(() => useViewportObserver())
 
-    const el = document.createElement('div')
-    el.dataset['blockId'] = 'BLOCK_A'
-    result.current.observeRef(el)
+    const el = makeEl('BLOCK_A')
+    result.current.createObserveRef('BLOCK_A')(el)
 
     const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
 
@@ -254,7 +399,7 @@ describe('useViewportObserver', () => {
     const { result, unmount } = renderHook(() => useViewportObserver())
 
     const el = document.createElement('div') // no dataset.blockId
-    result.current.observeRef(el)
+    result.current.createObserveRef('BLOCK_A')(el)
 
     const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
     act(() => {
@@ -267,8 +412,9 @@ describe('useViewportObserver', () => {
       ])
     })
 
-    // Nothing should be offscreen
+    // Nothing should be offscreen — observer callback keys on data-block-id
     expect(result.current.isOffscreen('')).toBe(false)
+    expect(result.current.isOffscreen('BLOCK_A')).toBe(false)
 
     unmount()
   })
@@ -276,13 +422,11 @@ describe('useViewportObserver', () => {
   it('handles multiple blocks going offscreen independently', () => {
     const { result, unmount } = renderHook(() => useViewportObserver())
 
-    const elA = document.createElement('div')
-    elA.dataset['blockId'] = 'A'
-    const elB = document.createElement('div')
-    elB.dataset['blockId'] = 'B'
+    const elA = makeEl('A')
+    const elB = makeEl('B')
 
-    result.current.observeRef(elA)
-    result.current.observeRef(elB)
+    result.current.createObserveRef('A')(elA)
+    result.current.createObserveRef('B')(elB)
 
     const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
 
@@ -312,9 +456,8 @@ describe('useViewportObserver', () => {
   it('does not trigger unnecessary state updates when nothing changes', () => {
     const { result, unmount } = renderHook(() => useViewportObserver())
 
-    const el = document.createElement('div')
-    el.dataset['blockId'] = 'A'
-    result.current.observeRef(el)
+    const el = makeEl('A')
+    result.current.createObserveRef('A')(el)
 
     const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
 

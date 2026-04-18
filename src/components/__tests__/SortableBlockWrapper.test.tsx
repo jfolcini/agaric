@@ -58,7 +58,7 @@ function makeProps(
     overId: null,
     viewport: {
       isOffscreen: () => false,
-      observeRef: vi.fn(),
+      createObserveRef: () => vi.fn(),
       getHeight: () => 40,
     },
     rovingEditor: {
@@ -123,7 +123,7 @@ describe('SortableBlockWrapper', () => {
   it('renders virtualized placeholder when offscreen and not focused', () => {
     const viewport = {
       isOffscreen: (id: string) => id === 'BLK001',
-      observeRef: vi.fn(),
+      createObserveRef: () => vi.fn(),
       getHeight: () => 120,
     }
     const { container } = renderInList(makeProps({ viewport }))
@@ -138,7 +138,7 @@ describe('SortableBlockWrapper', () => {
   it('renders full SortableBlock when focused, even if reported offscreen', () => {
     const viewport = {
       isOffscreen: () => true,
-      observeRef: vi.fn(),
+      createObserveRef: () => vi.fn(),
       getHeight: () => 120,
     }
     const { container } = renderInList(makeProps({ viewport, focusedBlockId: 'BLK001' }))
@@ -196,7 +196,7 @@ describe('SortableBlockWrapper', () => {
   it('sets aria-expanded on placeholder as well when offscreen', () => {
     const viewport = {
       isOffscreen: () => true,
-      observeRef: vi.fn(),
+      createObserveRef: () => vi.fn(),
       getHeight: () => 40,
     }
     const { container } = renderInList(
@@ -368,7 +368,7 @@ describe('SortableBlockWrapper', () => {
   it('has no a11y violations in the virtualized placeholder path', async () => {
     const viewport = {
       isOffscreen: () => true,
-      observeRef: vi.fn(),
+      createObserveRef: () => vi.fn(),
       getHeight: () => 80,
     }
     const { container } = renderInList(
