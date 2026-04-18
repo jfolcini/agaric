@@ -7,6 +7,7 @@
  */
 
 import { create } from 'zustand'
+import { logger } from '../lib/logger'
 import { listBlocks, listTagsByPrefix } from '../lib/tauri'
 
 const MAX_CACHE_SIZE = 10_000
@@ -91,8 +92,8 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
             _preloaded: true,
           }
         })
-      } catch {
-        // Preload failed — resolve callbacks will use fallbacks
+      } catch (err) {
+        logger.warn('ResolveStore', 'preload failed, using fallback', {}, err)
         set({ _preloaded: true })
       }
     },

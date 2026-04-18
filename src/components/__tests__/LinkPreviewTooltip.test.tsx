@@ -11,10 +11,11 @@
  *  - axe accessibility audit
  */
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { LinkPreviewState } from '@/hooks/useLinkPreview'
+import { logger } from '@/lib/logger'
 import type { LinkMetadata } from '@/lib/tauri'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
@@ -32,6 +33,7 @@ vi.mock('@floating-ui/dom', () => ({
   shift: vi.fn(() => ({})),
 }))
 
+import { computePosition } from '@floating-ui/dom'
 import { LinkPreviewTooltip } from '../LinkPreviewTooltip'
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -214,6 +216,39 @@ describe('LinkPreviewTooltip', () => {
     render(<LinkPreviewTooltip container={makeContainer()} />)
     const tooltip = screen.getByTestId('link-preview-tooltip')
     expect(tooltip).toHaveAttribute('role', 'tooltip')
+  })
+
+  it('logs a warning and applies fallback position when computePosition rejects (BUG-32)', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const computePositionErr = new Error('computePosition boom')
+    vi.mocked(computePosition).mockRejectedValueOnce(computePositionErr)
+
+    mockUseLinkPreview.mockReturnValue({
+      url: 'https://example.com',
+      metadata: SAMPLE_METADATA,
+      anchorRect: SAMPLE_RECT,
+      isLoading: false,
+    })
+
+    render(<LinkPreviewTooltip container={makeContainer()} />)
+
+    await waitFor(() => {
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+    })
+    expect(warnSpy).toHaveBeenCalledWith(
+      'LinkPreviewTooltip',
+      'computePosition failed, using fallback',
+      { anchorRect: SAMPLE_RECT },
+      computePositionErr,
+    )
+
+    // Fallback position: directly below the link
+    const tooltip = screen.getByTestId('link-preview-tooltip')
+    await waitFor(() => {
+      expect(tooltip.style.left).toBe(`${SAMPLE_RECT.left}px`)
+      expect(tooltip.style.top).toBe(`${SAMPLE_RECT.bottom + 4}px`)
+    })
+    warnSpy.mockRestore()
   })
 
   describe('a11y', () => {

@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT conflict_type FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "conflict_type",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "74bfffb535627d12de91adc799c6a6f12e043db79e4c34f34426e16a7d0ab656"
+}

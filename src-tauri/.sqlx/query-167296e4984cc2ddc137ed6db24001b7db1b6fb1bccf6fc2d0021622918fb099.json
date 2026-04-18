@@ -1,32 +1,32 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT block_type, parent_id, position FROM blocks WHERE id = ?",
+  "query": "SELECT tag_id, name, usage_count FROM tags_cache ORDER BY name",
   "describe": {
     "columns": [
       {
-        "name": "block_type",
+        "name": "tag_id",
         "ordinal": 0,
         "type_info": "Text"
       },
       {
-        "name": "parent_id",
+        "name": "name",
         "ordinal": 1,
         "type_info": "Text"
       },
       {
-        "name": "position",
+        "name": "usage_count",
         "ordinal": 2,
         "type_info": "Integer"
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 0
     },
     "nullable": [
       false,
-      true,
-      true
+      false,
+      false
     ]
   },
-  "hash": "3d9d3510e66509cfe12c7589ac1b0c14ed08a3cebbbee3861176b5ecf349c89f"
+  "hash": "167296e4984cc2ddc137ed6db24001b7db1b6fb1bccf6fc2d0021622918fb099"
 }

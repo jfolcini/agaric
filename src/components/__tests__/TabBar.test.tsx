@@ -336,5 +336,33 @@ describe('TabBar', () => {
       const closeIcons = container.querySelectorAll('[data-tab-close]')
       expect(closeIcons).toHaveLength(2)
     })
+
+    // UX-226: horizontal ScrollArea replaces bare overflow-x-auto
+    it('renders inside a horizontal ScrollArea (UX-226)', () => {
+      useNavigationStore.setState({
+        currentView: 'page-editor',
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+        ],
+        activeTabIndex: 0,
+      })
+
+      const { container } = render(<TabBar />)
+
+      // Outer wrapper is a ScrollArea (Radix Root) with its viewport.
+      const scrollArea = container.querySelector('[data-slot="scroll-area"]')
+      expect(scrollArea).toBeInTheDocument()
+      const viewport = container.querySelector('[data-slot="scroll-area-viewport"]')
+      expect(viewport).toBeInTheDocument()
+
+      // The tablist is inside the viewport.
+      const tablist = screen.getByRole('tablist')
+      expect(viewport).toContainElement(tablist)
+
+      // No bare overflow-x-auto class anywhere.
+      const anyOverflowX = container.querySelector('.overflow-x-auto')
+      expect(anyOverflowX).toBeNull()
+    })
   })
 })

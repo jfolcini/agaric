@@ -19,6 +19,9 @@ import { createSuggestionRenderer } from '../suggestion-renderer'
 
 export const slashCommandPluginKey = new PluginKey('slashCommand')
 
+/** Auto-execute delay when exactly one suggestion matches a long-enough query. */
+const AUTO_EXEC_DELAY_MS = 200
+
 export interface SlashCommandOptions {
   /** Return slash commands matching the query. Called on every keystroke after /. */
   items: (query: string) => PickerItem[] | Promise<PickerItem[]>
@@ -61,25 +64,43 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
           let autoExecTimer: ReturnType<typeof setTimeout> | null = null
 
           return {
-            onStart: base.onStart,
+            onStart(props: SuggestionProps<PickerItem>) {
+              // Defensive: clear any lingering timer from a previous session
+              // (e.g. onExit not invoked before a re-entry) to avoid firing a
+              // command against a stale context.
+              if (autoExecTimer) {
+                clearTimeout(autoExecTimer)
+                autoExecTimer = null
+              }
+              base.onStart(props)
+            },
             onUpdate(props: SuggestionProps<PickerItem>) {
               base.onUpdate(props)
-              if (autoExecTimer) clearTimeout(autoExecTimer)
+              if (autoExecTimer) {
+                clearTimeout(autoExecTimer)
+                autoExecTimer = null
+              }
               const { items, query, command } = props
               // Auto-execute when exactly 1 match and query is long enough
               if (items.length === 1 && query.length >= 3) {
                 autoExecTimer = setTimeout(() => {
                   command(items[0] as PickerItem)
-                }, 200)
+                }, AUTO_EXEC_DELAY_MS)
               }
             },
             onKeyDown(props: SuggestionKeyDownProps) {
               // Cancel auto-execute on any keypress (user is still interacting)
-              if (autoExecTimer) clearTimeout(autoExecTimer)
+              if (autoExecTimer) {
+                clearTimeout(autoExecTimer)
+                autoExecTimer = null
+              }
               return base.onKeyDown(props)
             },
             onExit() {
-              if (autoExecTimer) clearTimeout(autoExecTimer)
+              if (autoExecTimer) {
+                clearTimeout(autoExecTimer)
+                autoExecTimer = null
+              }
               base.onExit()
             },
           }

@@ -1082,5 +1082,21 @@ describe('App', () => {
       const main = document.getElementById('main-content')
       expect(main).toBeInTheDocument()
     })
+
+    // UX-226: the main content scroller uses ScrollArea (no bare overflow).
+    // `id="main-content"` + `tabIndex=-1` land on the scroll viewport so the
+    // skip link focuses the real scrollable element and BlockTree's
+    // drag-to-auto-scroll (`document.getElementById('main-content')` +
+    // `.scrollTop +=`) still drives actual scrolling.
+    it('main content scroller is a ScrollArea viewport (UX-226)', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+      const main = document.getElementById('main-content')
+      expect(main).toBeInTheDocument()
+      expect(main?.getAttribute('data-slot')).toBe('scroll-area-viewport')
+      expect(main?.getAttribute('tabindex')).toBe('-1')
+    })
   })
 })

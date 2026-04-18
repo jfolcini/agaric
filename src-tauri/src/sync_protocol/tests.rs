@@ -1661,6 +1661,107 @@ async fn orchestrator_accepts_matching_peer_device_id() {
 }
 
 // ======================================================================
+// BUG-27 — orchestrator refuses to record sync with empty peer_id
+// ======================================================================
+
+/// If a HeadExchange only contains the local device_id (peer never
+/// originated ops of its own) or is empty, `remote_device_id` ends up
+/// empty. Previously the `SyncComplete` handler silently fell through
+/// with `peer_id = ""`, which created a bogus empty-string row in
+/// `peer_refs` and `peer_sync_state`, permanently corrupting the
+/// per-peer sync bookkeeping.
+///
+/// The orchestrator must now transition to `Failed` at `SyncComplete`
+/// when `remote_device_id` was never identified — both reset-required
+/// and streaming-ops earlier paths remain unchanged because they do not
+/// touch peer bookkeeping.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    // Seed one local op so the remote's claim `(local-dev, seq=1)` passes
+    // `check_reset_required` — we want to drive forward into `StreamingOps`,
+    // not divert into `ResetRequired`.
+    append_local_op_at(
+        &pool,
+        "local-dev",
+        test_create_payload("SEED_BLK"),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
+
+    let mut orch = SyncOrchestrator::new(pool.clone(), "local-dev".into(), materializer.clone());
+    let _start = orch.start().await.unwrap();
+
+    // Peer advertises ONLY our own device_id — no non-local head, so
+    // `remote_device_id` never gets populated with a real peer identity.
+    // Drive forward through the (non-reset) head-exchange path.
+    let after_head = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "local-dev".into(),
+                seq: 1,
+                hash: "abc".into(),
+            }],
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(after_head, Some(SyncMessage::OpBatch { .. })),
+        "HeadExchange with only local device_id still proceeds (it only becomes \
+         fatal once we'd record the sync), got: {after_head:?}"
+    );
+    assert_eq!(
+        orch.session().state,
+        SyncState::StreamingOps,
+        "must be in StreamingOps before SyncComplete arrives"
+    );
+    assert_eq!(
+        orch.session().remote_device_id,
+        "",
+        "remote_device_id stays empty because no non-local head was advertised"
+    );
+
+    // Now simulate the peer echoing SyncComplete back — at this point
+    // we'd call `peer_refs::upsert_peer_ref("")`, corrupting bookkeeping.
+    let result = orch
+        .handle_message(SyncMessage::SyncComplete {
+            last_hash: "some-hash".into(),
+        })
+        .await;
+
+    assert!(
+        result.is_err(),
+        "SyncComplete with empty remote_device_id must be rejected, got: {result:?}"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("empty peer_id") || err_msg.contains("device_id was never identified"),
+        "error should mention the empty peer_id, got: {err_msg}"
+    );
+    assert!(
+        matches!(orch.session().state, SyncState::Failed(ref m) if m.contains("empty peer_id")),
+        "state must transition to Failed with a descriptive message, got: {:?}",
+        orch.session().state
+    );
+
+    // Crucially: no peer_refs row was created with an empty key.
+    let empty_peer_rows: i64 =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM peer_refs WHERE peer_id = ''")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        empty_peer_rows, 0,
+        "BUG-27: no peer_refs row must be created with an empty peer_id"
+    );
+
+    materializer.shutdown();
+}
+
+// ======================================================================
 // #615 — Responder-mode: orchestrator handles HeadExchange in Idle state
 // ======================================================================
 
@@ -1728,7 +1829,11 @@ async fn orchestrator_responder_full_flow() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
 
-    let mut orch = SyncOrchestrator::new(pool, "responder-dev".into(), materializer.clone());
+    // BUG-27: Responder needs the initiator's device_id to record the sync
+    // without silently writing an empty peer_id. In production this comes
+    // from the mTLS/mDNS peer identity; here we supply it explicitly.
+    let mut orch = SyncOrchestrator::new(pool, "responder-dev".into(), materializer.clone())
+        .with_expected_remote_id("initiator-dev".into());
 
     // 1. Receive HeadExchange from initiator (empty) → respond with OpBatch
     let resp1 = orch

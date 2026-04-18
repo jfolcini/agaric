@@ -140,7 +140,9 @@ function bridgeToBackend(
   try {
     if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
       const serializedData = data ? safeStringify(data) : undefined
-      // Fire-and-forget: logging to backend should not block or crash the app
+      // Fire-and-forget: logging to backend should not block or crash the app.
+      // NOTE: Intentional sole exception to the "no silent catch" rule (AGENTS.md).
+      // Logging the error here would recurse through the same IPC bridge.
       logFrontend(level, module, message, stack, context, serializedData).catch(() => {})
     }
   } catch {

@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT device_id FROM op_log",
+  "describe": {
+    "columns": [
+      {
+        "name": "device_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0ce983fe492cb39cbd6ba65bf7068627fa76752d1db62c1b7d071c7b41bf6030"
+}

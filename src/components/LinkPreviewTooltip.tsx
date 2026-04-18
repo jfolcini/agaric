@@ -15,6 +15,7 @@ import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
 import { useLinkPreview } from '@/hooks/useLinkPreview'
+import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 import { Spinner } from './ui/spinner'
 
@@ -52,7 +53,13 @@ export function LinkPreviewTooltip({
       .then(({ x, y }) => {
         setPosition({ x, y })
       })
-      .catch(() => {
+      .catch((err) => {
+        logger.warn(
+          'LinkPreviewTooltip',
+          'computePosition failed, using fallback',
+          { anchorRect },
+          err,
+        )
         // Fallback: position directly below the link
         setPosition({ x: anchorRect.left, y: anchorRect.bottom + 4 })
       })

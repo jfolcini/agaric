@@ -103,4 +103,51 @@ describe('MermaidDiagram', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  // UX-226: horizontal ScrollArea replaces bare overflow-x-auto on both
+  //          the success diagram wrapper and the error-state `<pre>`.
+  it('wraps the rendered diagram in a horizontal ScrollArea (UX-226)', async () => {
+    const fakeSvg = '<svg><text>X</text></svg>'
+    mockedRender.mockResolvedValue({
+      svg: fakeSvg,
+      diagramType: 'flowchart',
+      bindFunctions: vi.fn(),
+    })
+
+    const { container } = render(<MermaidDiagram code="graph TD;" />)
+
+    await screen.findByTestId('mermaid-diagram')
+
+    // The scroll viewport is a direct ancestor of the diagram div.
+    const viewport = container.querySelector('[data-slot="scroll-area-viewport"]')
+    expect(viewport).toBeInTheDocument()
+    const diagram = screen.getByTestId('mermaid-diagram')
+    expect(viewport).toContainElement(diagram)
+
+    // No bare overflow-x-auto anywhere.
+    const anyOverflowX = container.querySelector('.overflow-x-auto')
+    expect(anyOverflowX).toBeNull()
+  })
+
+  it('wraps the error-state code block in a horizontal ScrollArea (UX-226)', async () => {
+    mockedRender.mockRejectedValue(new Error('bad syntax'))
+
+    const { container } = render(<MermaidDiagram code="garbage" />)
+
+    await screen.findByTestId('mermaid-error')
+
+    // The `<pre><code>garbage</code></pre>` lives inside a ScrollArea viewport.
+    const viewports = container.querySelectorAll('[data-slot="scroll-area-viewport"]')
+    expect(viewports.length).toBeGreaterThan(0)
+    const code = container.querySelector('code')
+    expect(code).toBeInTheDocument()
+    expect(code?.textContent).toBe('garbage')
+    // The `code` is inside at least one ScrollArea viewport.
+    const codeInsideAnyViewport = Array.from(viewports).some((vp) => vp.contains(code as Node))
+    expect(codeInsideAnyViewport).toBe(true)
+
+    // No bare overflow-x-auto anywhere.
+    const anyOverflowX = container.querySelector('.overflow-x-auto')
+    expect(anyOverflowX).toBeNull()
+  })
 })

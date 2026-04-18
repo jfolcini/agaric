@@ -1,0 +1,56 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at FROM attachments WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "block_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "mime_type",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "filename",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "size_bytes",
+        "ordinal": 4,
+        "type_info": "Integer"
+      },
+      {
+        "name": "fs_path",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 6,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "a105a1b33285e7a12bd31c2f942a0d4f3fcc6d74c02013c2bda24aafe3d8d62b"
+}

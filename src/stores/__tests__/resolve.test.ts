@@ -7,6 +7,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { logger } from '../../lib/logger'
 import { useResolveStore } from '../resolve'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -37,9 +38,10 @@ describe('preload', () => {
       { tag_id: 'TAG_2', name: 'tag-two', usage_count: 3, updated_at: '2025-01-01' },
     ]
 
-    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      const params = args as Record<string, unknown> | undefined
       if (cmd === 'list_blocks') {
-        if (!args?.cursor) {
+        if (!params?.['cursor']) {
           // First page
           return { items: [mockPages[0]], next_cursor: 'cursor_1', has_more: true }
         } else {
@@ -109,6 +111,50 @@ describe('preload', () => {
     const state = useResolveStore.getState()
     expect(state._preloaded).toBe(true)
     expect(state.cache.size).toBe(0)
+  })
+
+  it('logs a warning when listBlocks rejects (BUG-28)', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const fetchErr = new Error('list_blocks boom')
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') throw fetchErr
+      if (cmd === 'list_tags_by_prefix') return []
+      return null
+    })
+
+    await useResolveStore.getState().preload()
+
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    expect(warnSpy).toHaveBeenCalledWith(
+      'ResolveStore',
+      'preload failed, using fallback',
+      {},
+      fetchErr,
+    )
+    expect(useResolveStore.getState()._preloaded).toBe(true)
+    warnSpy.mockRestore()
+  })
+
+  it('logs a warning when listTagsByPrefix rejects (BUG-28)', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const fetchErr = new Error('list_tags boom')
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_tags_by_prefix') throw fetchErr
+      return null
+    })
+
+    await useResolveStore.getState().preload()
+
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    expect(warnSpy).toHaveBeenCalledWith(
+      'ResolveStore',
+      'preload failed, using fallback',
+      {},
+      fetchErr,
+    )
+    expect(useResolveStore.getState()._preloaded).toBe(true)
+    warnSpy.mockRestore()
   })
 
   it('bumps version', async () => {

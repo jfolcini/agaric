@@ -182,7 +182,12 @@ impl SyncOrchestrator {
         match msg {
             // ---- HeadExchange ------------------------------------------------
             SyncMessage::HeadExchange { heads } => {
-                // Identify the remote device from received heads
+                // Identify the remote device from received heads. A peer that
+                // has never originated its own ops will only advertise per-
+                // device heads for *other* devices (including ours), so an
+                // empty `remote_id` at this point is not automatically
+                // malformed — it simply means "we can't yet attribute this
+                // session to a specific peer from the heads list alone".
                 let remote_id = heads
                     .iter()
                     .find(|h| h.device_id != self.device_id)
@@ -338,12 +343,45 @@ impl SyncOrchestrator {
 
             // ---- SyncComplete -----------------------------------------------
             SyncMessage::SyncComplete { last_hash } => {
-                let peer_id = self.remote_device_id.clone().unwrap_or_else(|| {
-                    tracing::warn!(
-                        "remote_device_id not set at SyncComplete — using empty fallback"
-                    );
-                    String::new()
-                });
+                // BUG-27: `peer_refs::upsert_peer_ref` + `complete_sync` write
+                // rows keyed by `peer_id`. An empty string here silently
+                // creates / updates a bogus peer row, permanently corrupting
+                // the per-peer sync bookkeeping. If the remote device was
+                // never identified during the session (either because the
+                // HeadExchange only carried our own device_id or because we
+                // reached SyncComplete without a prior HeadExchange — a
+                // protocol violation), fall back to the `expected_remote_id`
+                // set by the sync daemon from the mTLS/mDNS peer identity.
+                // If neither is available, transition to Failed instead of
+                // silently proceeding with `peer_id = ""`.
+                let peer_id = match self.remote_device_id.as_deref() {
+                    Some(id) if !id.is_empty() => id.to_owned(),
+                    _ => match self.expected_remote_id.as_deref() {
+                        Some(id) if !id.is_empty() => {
+                            tracing::warn!(
+                                "remote_device_id was empty at SyncComplete; \
+                                 falling back to expected_remote_id from mTLS/mDNS"
+                            );
+                            // Backfill so the event sink sees a real peer id.
+                            self.remote_device_id = Some(id.to_owned());
+                            self.session.remote_device_id = id.to_owned();
+                            id.to_owned()
+                        }
+                        _ => {
+                            let msg = "SyncComplete received before remote device_id \
+                                       was identified; refusing to record sync with \
+                                       empty peer_id"
+                                .to_owned();
+                            self.state = SyncState::Failed(msg.clone());
+                            self.session.state = self.state.clone();
+                            self.emit(crate::sync_events::SyncEvent::Error {
+                                message: msg.clone(),
+                                remote_device_id: self.session.remote_device_id.clone(),
+                            });
+                            return Err(AppError::InvalidOperation(msg));
+                        }
+                    },
+                };
                 let last_sent_hash = self
                     .pending_ops_to_send
                     .last()

@@ -1493,5 +1493,27 @@ describe('PageBrowser', () => {
         expect(results).toHaveNoViolations()
       })
     })
+
+    // UX-226: ScrollArea replaces bare overflow-y-auto on the page list
+    it('page list is wrapped in a ScrollArea viewport (UX-226)', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'A page' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      const { container } = render(<PageBrowser />)
+
+      await screen.findByText('A page')
+
+      // The listbox lives on the ScrollArea viewport.
+      const viewport = container.querySelector('[data-slot="scroll-area-viewport"]')
+      expect(viewport).toBeInTheDocument()
+      expect(viewport?.getAttribute('role')).toBe('listbox')
+
+      // No bare overflow-y-auto anywhere.
+      const anyOverflowY = container.querySelector('.overflow-y-auto')
+      expect(anyOverflowY).toBeNull()
+    })
   })
 })

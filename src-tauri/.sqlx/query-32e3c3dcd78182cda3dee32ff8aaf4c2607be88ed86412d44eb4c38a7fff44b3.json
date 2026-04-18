@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT tag_id FROM block_tags WHERE block_id = ? ORDER BY tag_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "tag_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "32e3c3dcd78182cda3dee32ff8aaf4c2607be88ed86412d44eb4c38a7fff44b3"
+}

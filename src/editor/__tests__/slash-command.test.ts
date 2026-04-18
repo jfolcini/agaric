@@ -138,4 +138,22 @@ describe('slash-command auto-execute', () => {
     expect(command1).not.toHaveBeenCalled()
     expect(command2).toHaveBeenCalledWith(item2)
   })
+
+  it('defensively clears a pending timer on onStart (BUG-33)', () => {
+    const lifecycle = getLifecycle()
+    const command = vi.fn()
+    const item: PickerItem = { id: 'todo', label: 'TODO' }
+
+    // First session: onUpdate arms the auto-exec timer
+    lifecycle.onUpdate({ items: [item], query: 'tod', command })
+    vi.advanceTimersByTime(100) // timer not yet fired
+
+    // Re-entry without a prior onExit (defensive scenario): onStart should
+    // cancel the lingering timer so the stale command does not fire.
+    lifecycle.onStart({ items: [item], query: '', command })
+
+    // Advance past the original 200ms delay — nothing should fire.
+    vi.advanceTimersByTime(200)
+    expect(command).not.toHaveBeenCalled()
+  })
 })

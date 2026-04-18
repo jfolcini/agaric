@@ -123,12 +123,17 @@ pub async fn list_page_history(
         });
     }
 
+    // Recursive CTE must filter `is_conflict = 0` in the recursive member —
+    // conflict copies inherit `parent_id` from the original block and would
+    // otherwise leak into page-scoped results. `depth < 100` bounds the walk
+    // against runaway recursion on corrupted data (invariant #9).
     let rows = sqlx::query_as!(
         HistoryEntry,
-        "WITH RECURSIVE page_blocks(id) AS ( \
-             SELECT id FROM blocks WHERE id = ?1 \
+        "WITH RECURSIVE page_blocks(id, depth) AS ( \
+             SELECT id, 0 FROM blocks WHERE id = ?1 AND is_conflict = 0 \
              UNION ALL \
-             SELECT b.id FROM blocks b JOIN page_blocks pb ON b.parent_id = pb.id \
+             SELECT b.id, pb.depth + 1 FROM blocks b JOIN page_blocks pb ON b.parent_id = pb.id \
+             WHERE b.is_conflict = 0 AND pb.depth < 100 \
          ) \
          SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at \
          FROM op_log ol \

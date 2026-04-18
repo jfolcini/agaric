@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE\n               path(id, depth) AS (\n                 SELECT ?, 0\n                 UNION ALL\n                 SELECT b.parent_id, p.depth + 1\n                 FROM path p JOIN blocks b ON b.id = p.id\n                 WHERE b.parent_id IS NOT NULL AND b.is_conflict = 0 AND p.depth < 100\n               ),\n               descendants(id, depth) AS (\n                 SELECT ?, 0\n                 UNION ALL\n                 SELECT b.id, d.depth + 1\n                 FROM descendants d JOIN blocks b ON b.parent_id = d.id\n                 WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100\n               )\n             SELECT\n               (SELECT MAX(depth) FROM path) as \"parent_depth: i64\",\n               (SELECT MAX(depth) FROM descendants) as \"subtree_depth: i64\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "parent_depth: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "subtree_depth: i64",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "a6d9df871e8b41e34385b7d3e77ff79aa2960502594b6d5290b603763f97ac3b"
+}

@@ -19,6 +19,7 @@ import { PageTreeItem } from '@/components/PageTreeItem'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Select,
   SelectContent,
@@ -375,12 +376,14 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         />
       )}
 
-      <div
-        ref={listRef}
-        className="page-browser-list overflow-y-auto max-h-[calc(100vh-200px)]"
-        role="listbox"
-        tabIndex={0}
-        aria-label={t('pageBrowser.pageList')}
+      <ScrollArea
+        viewportRef={listRef}
+        className="page-browser-list max-h-[calc(100vh-200px)]"
+        viewportProps={{
+          role: 'listbox',
+          tabIndex: 0,
+          'aria-label': t('pageBrowser.pageList'),
+        }}
       >
         {isFiltering && filteredPages.length === 0 ? (
           <EmptyState
@@ -514,7 +517,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
             })}
           </div>
         )}
-      </div>
+      </ScrollArea>
 
       <LoadMoreButton
         hasMore={hasMore}

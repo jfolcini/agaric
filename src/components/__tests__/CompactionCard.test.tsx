@@ -4,7 +4,7 @@
  * Validates:
  *  - Shows loading skeleton while fetching
  *  - Shows stats when loaded (total ops, eligible ops, oldest date)
- *  - "Compact Now" disabled when no eligible ops
+ *  - "Compact Now" always enabled (backend handles no-op case)
  *  - Clicking "Compact Now" opens confirm dialog
  *  - Confirm dialog shows warning text with op count
  *  - Confirming calls compactOpLog
@@ -97,7 +97,7 @@ describe('CompactionCard', () => {
     })
   })
 
-  it('"Compact Now" is disabled when eligible_ops is 0', async () => {
+  it('"Compact Now" is enabled when eligible_ops is 0 (backend handles no-op case)', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockResolvedValueOnce(emptyStatus)
 
@@ -110,7 +110,7 @@ describe('CompactionCard', () => {
     })
 
     const compactBtn = screen.getByRole('button', { name: /Compact Now/i })
-    expect(compactBtn).toBeDisabled()
+    expect(compactBtn).not.toBeDisabled()
   })
 
   it('"Compact Now" is enabled when eligible_ops > 0', async () => {

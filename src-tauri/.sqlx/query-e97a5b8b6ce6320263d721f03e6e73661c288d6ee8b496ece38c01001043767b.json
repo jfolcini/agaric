@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT 1 as \"v: i32\" FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "v: i32",
+        "ordinal": 0,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "e97a5b8b6ce6320263d721f03e6e73661c288d6ee8b496ece38c01001043767b"
+}

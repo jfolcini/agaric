@@ -141,7 +141,22 @@ async fn find_prior_position(
                 Ok(Some((p.new_parent_id, p.new_position)))
             } else {
                 let p: CreateBlockPayload = serde_json::from_str(&r.payload)?;
-                Ok(Some((p.parent_id, p.position.unwrap_or(0))))
+                // BUG-26: block positions are 1-based and `move_block_inner`
+                // rejects position 0 (and negatives) with a Validation error.
+                // Ancient `create_block` payloads serialized before position
+                // became part of the wire format carry `position = None`; we
+                // cannot fabricate a valid reverse move for them. Surface this
+                // as a `NonReversible` error — matching the pattern used for
+                // `DeleteAttachment` when the paired `AddAttachment` is gone —
+                // instead of silently defaulting to 0 (which overflows into a
+                // downstream Validation error) or 1 (which pretends to know
+                // where the block started).
+                match p.position {
+                    Some(pos) => Ok(Some((p.parent_id, pos))),
+                    None => Err(AppError::NonReversible {
+                        op_type: "move_block".into(),
+                    }),
+                }
             }
         }
         None => Ok(None),

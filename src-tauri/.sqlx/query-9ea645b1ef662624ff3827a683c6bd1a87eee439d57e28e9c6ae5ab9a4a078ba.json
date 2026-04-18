@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq FROM op_log",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9ea645b1ef662624ff3827a683c6bd1a87eee439d57e28e9c6ae5ab9a4a078ba"
+}

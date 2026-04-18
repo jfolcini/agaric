@@ -15,6 +15,7 @@ import { X } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { getShortcutKeys } from '../lib/keyboard-config'
@@ -85,41 +86,43 @@ export function TabBar(): React.ReactElement | null {
   }
 
   return (
-    <div
-      className="flex items-center gap-1 border-b border-border px-2 py-1 bg-muted/30 overflow-x-auto"
-      role="tablist"
-      aria-label={t('tabs.tabList')}
-    >
-      {tabs.map((tab, i) => (
-        <button
-          key={tab.id}
-          ref={(el) => {
-            tabRefs.current[i] = el
-          }}
-          type="button"
-          role="tab"
-          tabIndex={i === activeTabIndex ? 0 : -1}
-          aria-selected={i === activeTabIndex}
-          className={cn(
-            'flex items-center gap-1 px-3 py-1 text-sm rounded-t-md truncate max-w-[200px] cursor-pointer select-none',
-            'focus-visible:ring-[3px] focus-visible:ring-ring/50 outline-hidden',
-            i === activeTabIndex
-              ? 'bg-background border border-b-0 border-border font-medium'
-              : 'text-muted-foreground hover:bg-accent/50',
-          )}
-          onClick={(e) => handleTabClick(i, e)}
-          onKeyDown={(e) => handleTabKeyDown(i, e)}
-        >
-          <span className="truncate">{tab.label || t('tabs.untitled')}</span>
-          <span
-            data-tab-close=""
-            className="ml-1 rounded-sm hover:bg-destructive/20 p-0.5 inline-flex"
-            aria-hidden="true"
+    <ScrollArea orientation="horizontal" className="border-b border-border bg-muted/30">
+      <div
+        role="tablist"
+        aria-label={t('tabs.tabList')}
+        className="flex items-center gap-1 px-2 py-1"
+      >
+        {tabs.map((tab, i) => (
+          <button
+            key={tab.id}
+            ref={(el) => {
+              tabRefs.current[i] = el
+            }}
+            type="button"
+            role="tab"
+            tabIndex={i === activeTabIndex ? 0 : -1}
+            aria-selected={i === activeTabIndex}
+            className={cn(
+              'flex items-center gap-1 px-3 py-1 text-sm rounded-t-md truncate max-w-[200px] cursor-pointer select-none',
+              'focus-visible:ring-[3px] focus-visible:ring-ring/50 outline-hidden',
+              i === activeTabIndex
+                ? 'bg-background border border-b-0 border-border font-medium'
+                : 'text-muted-foreground hover:bg-accent/50',
+            )}
+            onClick={(e) => handleTabClick(i, e)}
+            onKeyDown={(e) => handleTabKeyDown(i, e)}
           >
-            <X className="size-3" />
-          </span>
-        </button>
-      ))}
-    </div>
+            <span className="truncate">{tab.label || t('tabs.untitled')}</span>
+            <span
+              data-tab-close=""
+              className="ml-1 rounded-sm hover:bg-destructive/20 p-0.5 inline-flex"
+              aria-hidden="true"
+            >
+              <X className="size-3" />
+            </span>
+          </button>
+        ))}
+      </div>
+    </ScrollArea>
   )
 }

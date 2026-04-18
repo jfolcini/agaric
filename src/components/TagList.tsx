@@ -29,10 +29,10 @@ import { logger } from '../lib/logger'
 import type { TagCacheRow } from '../lib/tauri'
 import {
   createBlock,
-  deleteBlock,
   deleteProperty,
   editBlock,
   listTagsByPrefix,
+  purgeBlock,
   setProperty,
 } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
@@ -102,7 +102,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
   const handleDeleteTag = useCallback(
     async (tagId: string) => {
       try {
-        await deleteBlock(tagId)
+        await purgeBlock(tagId)
         setTags((prev) => prev.filter((t) => t.tag_id !== tagId))
         useResolveStore.getState().set(tagId, '(deleted)', true)
       } catch (error) {

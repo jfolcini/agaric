@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT value_date FROM block_properties WHERE block_id = 'blk-child'",
+  "describe": {
+    "columns": [
+      {
+        "name": "value_date",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "125157ba80ea93b09b5967f47ba57b003982cfd305a396ef1dee828da7c95328"
+}

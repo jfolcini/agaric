@@ -5,6 +5,7 @@ import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import {
   Sheet,
@@ -595,19 +596,30 @@ const SidebarSeparator = React.forwardRef<
 })
 SidebarSeparator.displayName = 'SidebarSeparator'
 
-const SidebarContent = React.forwardRef<HTMLDivElement, React.ComponentProps<'div'>>(
-  ({ className, ...props }, ref) => {
+// Agaric override (UX-208): use ScrollArea per AGENTS.md mandate.
+// The original shadcn primitive uses bare `overflow-auto`; AGENTS.md §
+// "Mandatory patterns" requires `ScrollArea` for every scrollable container.
+// Keep this comment in place so future shadcn pulls don't silently revert.
+//
+// We omit `dir` from the forwarded div props because Radix's ScrollArea.Root
+// requires `Direction` ('ltr' | 'rtl'), not the loose `string | undefined`
+// from HTMLAttributes. Callers that actually need dir can set it on children.
+const SidebarContent = React.forwardRef<HTMLDivElement, Omit<React.ComponentProps<'div'>, 'dir'>>(
+  ({ className, children, ...props }, ref) => {
     return (
-      <div
+      <ScrollArea
         ref={ref}
         data-slot="sidebar-content"
         data-sidebar="content"
         className={cn(
-          'flex min-h-0 flex-1 flex-col gap-2 overflow-auto group-data-[collapsible=icon]:overflow-hidden',
+          'flex min-h-0 flex-1 flex-col group-data-[collapsible=icon]:overflow-hidden',
           className,
         )}
+        viewportClassName="flex flex-col gap-2"
         {...props}
-      />
+      >
+        {children}
+      </ScrollArea>
     )
   },
 )

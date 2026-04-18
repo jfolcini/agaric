@@ -3619,3 +3619,278 @@ async fn apply_reverse_delete_attachment_on_nonexistent_returns_not_found() {
         "soft-deleting a nonexistent attachment should return NotFound, got: {result:?}"
     );
 }
+
+// ======================================================================
+// Regression: recursive CTEs over `blocks` must filter `is_conflict = 0`
+// in the recursive member (AGENTS.md invariant #9). Conflict copies inherit
+// `parent_id` from the original block and would otherwise leak into
+// page-scoped history queries as phantom descendants.
+// ======================================================================
+
+/// Insert a conflict-copy block directly with `is_conflict = 1`. Mirrors the
+/// shape produced by `merge::resolve::create_conflict_copy`: the copy inherits
+/// `parent_id` from the original block and lives alongside its siblings.
+async fn insert_conflict_copy(pool: &SqlitePool, id: &str, parent_id: &str, content: &str) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+         VALUES (?, 'content', ?, ?, 999, 1)",
+    )
+    .bind(id)
+    .bind(content)
+    .bind(parent_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_history_excludes_ops_on_conflict_copy_descendants() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Real page + one real content child.
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Root".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let real_child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "real".into(),
+        Some(page.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Seed a conflict copy under the same page (parent_id inherited from a
+    // sibling-shaped real block). Append an op that references the conflict
+    // copy — without the `is_conflict = 0` filter in the recursive CTE this
+    // op would leak into the page's history results.
+    insert_conflict_copy(&pool, "CF_ORPHAN_1", &page.id, "conflict").await;
+    let payload = OpPayload::EditBlock(EditBlockPayload {
+        block_id: BlockId::from_trusted("CF_ORPHAN_1"),
+        to_text: "conflict-edited".into(),
+        prev_edit: None,
+    });
+    op_log::append_local_op(&pool, DEV, payload).await.unwrap();
+
+    let result = list_page_history_inner(&pool, page.id.clone(), None, None, None)
+        .await
+        .unwrap();
+
+    // Expected: create_block(page) + create_block(real_child) = 2 ops.
+    assert_eq!(
+        result.items.len(),
+        2,
+        "conflict-copy descendant ops must not leak into list_page_history"
+    );
+    for entry in &result.items {
+        let p: serde_json::Value = serde_json::from_str(&entry.payload).unwrap();
+        let bid = p["block_id"].as_str().unwrap_or_default();
+        assert_ne!(
+            bid, "CF_ORPHAN_1",
+            "conflict-copy op must be excluded by is_conflict filter, got entry: {entry:?}"
+        );
+    }
+    // Belt-and-suspenders: the real child's id must still be present.
+    let ids_seen: Vec<&str> = result
+        .items
+        .iter()
+        .filter_map(|e| {
+            let p: serde_json::Value = serde_json::from_str(&e.payload).ok()?;
+            p["block_id"].as_str().map(|s| s.to_owned())
+        })
+        .map(|_| "")
+        .collect();
+    assert_eq!(ids_seen.len(), 2, "two entries expected after filtering");
+    let _ = real_child; // held for lifetime only
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_op_ignores_ops_on_conflict_copy_descendants() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Real page + one real edit that is the legitimate undo target.
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Root".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let real_child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "original".into(),
+        Some(page.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        real_child.id.clone(),
+        "real-edited".into(),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Seed a conflict copy and an edit op targeting it with a *later*
+    // timestamp. If the recursive CTE fails to filter `is_conflict = 0`,
+    // this op will be discovered as the most-recent page op and become the
+    // undo target — which would then fail (or worse, succeed against a
+    // stale block).
+    insert_conflict_copy(&pool, "CF_UNDO_1", &page.id, "conflict").await;
+    let cf_payload = OpPayload::EditBlock(EditBlockPayload {
+        block_id: BlockId::from_trusted("CF_UNDO_1"),
+        to_text: "conflict-edited".into(),
+        prev_edit: None,
+    });
+    op_log::append_local_op_at(
+        &pool,
+        DEV,
+        cf_payload,
+        "2099-01-01T00:00:00+00:00".to_string(),
+    )
+    .await
+    .unwrap();
+
+    // Undo depth = 0 should pick the real_child edit, *not* the conflict-copy
+    // op (even though the conflict-copy op has the later created_at).
+    let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
+        .await
+        .unwrap();
+    assert_eq!(
+        result.reversed_op.device_id, DEV,
+        "reversed op device_id should match DEV"
+    );
+    assert_eq!(
+        result.new_op_type, "edit_block",
+        "undo of a real edit must produce an edit_block op"
+    );
+
+    // The real block reverts to "original"; the conflict copy is untouched.
+    let after = get_block_inner(&pool, real_child.id.clone()).await.unwrap();
+    assert_eq!(
+        after.content,
+        Some("original".into()),
+        "real child must revert to original content"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_page_to_op_ignores_ops_on_conflict_copy_descendants() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Build: page + one real child. Edit it once to create the target op.
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Root".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let real_child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "original".into(),
+        Some(page.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Record target: point-in-time before any later edits.
+    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let target_seq = ops.last().unwrap().seq;
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+    // Later real edit (reversible).
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        real_child.id.clone(),
+        "real-edited".into(),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Later conflict-copy edit — must NOT be discovered as a page descendant.
+    insert_conflict_copy(&pool, "CF_RESTORE_1", &page.id, "conflict").await;
+    let cf_payload = OpPayload::EditBlock(EditBlockPayload {
+        block_id: BlockId::from_trusted("CF_RESTORE_1"),
+        to_text: "conflict-edited".into(),
+        prev_edit: None,
+    });
+    op_log::append_local_op_at(
+        &pool,
+        DEV,
+        cf_payload,
+        "2099-01-01T00:00:00+00:00".to_string(),
+    )
+    .await
+    .unwrap();
+
+    // Restore to the point after create ops. Only the single real edit is
+    // reversible; the conflict copy's edit must be ignored entirely.
+    let result = restore_page_to_op_inner(&pool, DEV, &mat, page.id, DEV.into(), target_seq)
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    assert_eq!(
+        result.ops_reverted, 1,
+        "exactly one reversible op (the real edit) should be reverted — conflict-copy op must be excluded"
+    );
+    assert_eq!(
+        result.non_reversible_skipped, 0,
+        "no non-reversible ops expected"
+    );
+
+    let after = get_block_inner(&pool, real_child.id).await.unwrap();
+    assert_eq!(
+        after.content,
+        Some("original".into()),
+        "real child must revert to original"
+    );
+}

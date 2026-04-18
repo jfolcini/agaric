@@ -40,6 +40,7 @@ import { TagFilterPanel } from './components/TagFilterPanel'
 import { TagList } from './components/TagList'
 import { TemplatesView } from './components/TemplatesView'
 import { TrashView } from './components/TrashView'
+import { ScrollArea } from './components/ui/scroll-area'
 import {
   Sidebar,
   SidebarContent,
@@ -170,7 +171,23 @@ function App() {
   const { syncing, syncAll } = useSyncTrigger()
   const isOnline = useOnlineStatus()
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
-  const mainContentRef = useRef<HTMLDivElement>(null)
+  const mainContentRef = useRef<HTMLDivElement | null>(null)
+
+  // The main content scroller is a `ScrollArea`; `mainContentRef` points at
+  // the scrollable viewport. We need `id="main-content"` and `tabIndex=-1`
+  // on that viewport so the skip link (`href="#main-content"`) and the
+  // drag-to-auto-scroll logic in `BlockTree` (which does
+  // `document.getElementById('main-content')`) operate on the real scroll
+  // container, not a non-scrolling ancestor. A callback ref runs every
+  // time the DOM node is attached, which is important because the viewport
+  // only mounts after the boot gate resolves.
+  const setMainContentViewport = useCallback((el: HTMLDivElement | null) => {
+    mainContentRef.current = el
+    if (el) {
+      el.id = 'main-content'
+      el.tabIndex = -1
+    }
+  }, [])
 
   // Preload the resolve cache (pages + tags) once on app boot
   useEffect(() => {
@@ -514,11 +531,11 @@ function App() {
               </>
             )}
           </header>
-          <div
-            ref={mainContentRef}
-            id="main-content"
-            tabIndex={-1}
-            className="flex-1 overflow-x-hidden overflow-y-auto p-4 md:p-6 outline-none"
+          <ScrollArea
+            viewportRef={setMainContentViewport}
+            className="flex-1"
+            viewportClassName="p-4 md:p-6 outline-none"
+            data-slot="main-content"
           >
             <div
               className={
@@ -610,7 +627,7 @@ function App() {
                 </>
               )}
             </div>
-          </div>
+          </ScrollArea>
         </SidebarInset>
       </SidebarProvider>
       <KeyboardShortcuts open={shortcutsOpen} onOpenChange={setShortcutsOpen} />

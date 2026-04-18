@@ -219,11 +219,14 @@ pub(super) async fn resolve_root_pages(
     }
 
     let placeholders = block_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    // Filter `p.is_conflict = 0` on the page row — conflict copies of pages
+    // must never be reported as a block's root page. Defensive consistency
+    // with the recursive-CTE oracle used in tests (invariant #9).
     let sql = format!(
         "SELECT b.id as block_id, b.page_id as root_id, p.content as root_title \
          FROM blocks b \
          JOIN blocks p ON p.id = b.page_id \
-         WHERE b.id IN ({placeholders})"
+         WHERE b.id IN ({placeholders}) AND p.is_conflict = 0"
     );
 
     #[derive(sqlx::FromRow)]

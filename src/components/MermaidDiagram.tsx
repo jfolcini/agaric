@@ -9,7 +9,7 @@
 import mermaid from 'mermaid'
 import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { cn } from '../lib/utils'
+import { ScrollArea } from './ui/scroll-area'
 import { Spinner } from './ui/spinner'
 
 // Initialize mermaid once globally
@@ -83,21 +83,25 @@ export function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElemen
         <p className="text-sm font-semibold text-alert-error-foreground mb-2">
           {t('mermaid.error')}: {error}
         </p>
-        <pre className={cn('text-xs font-mono bg-muted rounded p-2 overflow-x-auto')}>
-          <code>{code}</code>
-        </pre>
+        <ScrollArea orientation="horizontal" className="rounded bg-muted">
+          <pre className="text-xs font-mono p-2">
+            <code>{code}</code>
+          </pre>
+        </ScrollArea>
       </div>
     )
   }
 
   return (
-    <div
-      className="rounded-md bg-muted p-3 overflow-x-auto"
-      role="img"
-      aria-label={t('mermaid.label')}
-      data-testid="mermaid-diagram"
-      // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid.render() output is safe
-      dangerouslySetInnerHTML={{ __html: svg ?? '' }}
-    />
+    <ScrollArea orientation="horizontal" className="rounded-md bg-muted">
+      <div
+        role="img"
+        aria-label={t('mermaid.label')}
+        className="p-3"
+        data-testid="mermaid-diagram"
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid.render() output is safe
+        dangerouslySetInnerHTML={{ __html: svg ?? '' }}
+      />
+    </ScrollArea>
   )
 }

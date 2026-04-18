@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT todo_state, priority, due_date FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "todo_state",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "priority",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "due_date",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "4d766e825f4d3c4468c887c4e71df1548ed378a8d404ed2bd4fe73015200bbd8"
+}

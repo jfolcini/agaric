@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT block_id FROM block_tags WHERE block_id = ? AND tag_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "02838d0ef9c21e32f80b5455ae408f9adbaac4310dcc00bd99b90e572367e228"
+}

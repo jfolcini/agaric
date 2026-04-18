@@ -9,6 +9,7 @@
 import { Plus } from 'lucide-react'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { cn } from '@/lib/utils'
 
@@ -166,35 +167,39 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
     )
 
     return (
-      <div
-        ref={listRef}
-        className="suggestion-list flex flex-col gap-0.5 max-h-[min(300px,40vh)] overflow-y-auto rounded-lg border bg-popover p-1 shadow-md"
-        data-testid="suggestion-list"
-        role="listbox"
-        aria-label={label ?? 'Suggestions'}
-        aria-activedescendant={
-          items[selectedIndex] ? `suggestion-${items[selectedIndex].id}` : undefined
-        }
-        tabIndex={0}
-      >
-        {groups
-          ? groups.map((group, groupIdx) => (
-              <fieldset key={group.category || '__ungrouped__'} className="border-none p-0 m-0">
-                {group.category && (
-                  <>
-                    {groupIdx > 0 && <hr className="border-t border-border/50 my-1" />}
-                    <div
-                      className="px-2 pt-2 pb-1 text-xs font-medium text-muted-foreground uppercase tracking-wider"
-                      data-testid="suggestion-category"
-                    >
-                      {t(group.category)}
-                    </div>
-                  </>
-                )}
-                {group.items.map(({ item, flatIndex }) => renderItem(item, flatIndex))}
-              </fieldset>
-            ))
-          : items.map((item, index) => renderItem(item, index))}
+      <div className="suggestion-list rounded-lg border bg-popover p-1 shadow-md">
+        <ScrollArea className="max-h-[min(300px,40vh)]">
+          <div
+            ref={listRef}
+            className="flex flex-col gap-0.5"
+            data-testid="suggestion-list"
+            role="listbox"
+            aria-label={label ?? 'Suggestions'}
+            aria-activedescendant={
+              items[selectedIndex] ? `suggestion-${items[selectedIndex].id}` : undefined
+            }
+            tabIndex={0}
+          >
+            {groups
+              ? groups.map((group, groupIdx) => (
+                  <fieldset key={group.category || '__ungrouped__'} className="border-none p-0 m-0">
+                    {group.category && (
+                      <>
+                        {groupIdx > 0 && <hr className="border-t border-border/50 my-1" />}
+                        <div
+                          className="px-2 pt-2 pb-1 text-xs font-medium text-muted-foreground uppercase tracking-wider"
+                          data-testid="suggestion-category"
+                        >
+                          {t(group.category)}
+                        </div>
+                      </>
+                    )}
+                    {group.items.map(({ item, flatIndex }) => renderItem(item, flatIndex))}
+                  </fieldset>
+                ))
+              : items.map((item, index) => renderItem(item, index))}
+          </div>
+        </ScrollArea>
       </div>
     )
   },

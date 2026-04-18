@@ -2643,6 +2643,67 @@ async fn resolve_root_pages_oracle_cte_vs_page_id() {
     );
 }
 
+#[tokio::test]
+async fn resolve_root_pages_excludes_conflict_pages() {
+    // Defensive consistency: `resolve_root_pages` joins against a page row
+    // via `b.page_id`. If that page row is a conflict copy (is_conflict = 1),
+    // it must be filtered out so callers never report a conflict as the
+    // canonical root page. AGENTS.md invariant #9 / BUG-25.
+    let (pool, _dir) = test_pool().await;
+
+    // Real page + real child block.
+    insert_block_with_parent(&pool, "RR_PAGE", "page", "Real Page", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "RR_CHILD",
+        "content",
+        "real child",
+        Some("RR_PAGE"),
+        Some(1),
+    )
+    .await;
+
+    // A conflict-copy *page* row + a child whose page_id points at it.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
+         VALUES ('RR_CFPAGE', 'page', 'Conflict Page', NULL, 2, 'RR_CFPAGE', 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
+         VALUES ('RR_CFCHILD', 'content', 'cf child', 'RR_CFPAGE', 1, 'RR_CFPAGE', 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let mut ids = FxHashSet::default();
+    ids.insert("RR_CHILD".into());
+    ids.insert("RR_CFCHILD".into());
+
+    let result = resolve_root_pages(&pool, &ids).await.unwrap();
+
+    // Real child resolves to its real page.
+    let (real_root, _) = result
+        .get("RR_CHILD")
+        .expect("real child must resolve to its root page");
+    assert_eq!(real_root, "RR_PAGE", "real child should resolve to RR_PAGE");
+
+    // Child whose page_id points at a conflict page must be omitted entirely —
+    // the JOIN's `p.is_conflict = 0` filter drops it.
+    assert!(
+        !result.contains_key("RR_CFCHILD"),
+        "block rooted under a conflict-copy page must not be reported, got: {result:?}"
+    );
+    assert_eq!(
+        result.len(),
+        1,
+        "only the real-page child should appear in the result map"
+    );
+}
+
 // ======================================================================
 // #538 — eval_backlink_query_grouped tests
 // ======================================================================

@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT source FROM agenda_cache WHERE block_id = ? AND date = '2026-07-20'",
+  "describe": {
+    "columns": [
+      {
+        "name": "source",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f55ac997d614aa85386f22467814106ec10f62908e8d04e7a4b6becd2d86b326"
+}

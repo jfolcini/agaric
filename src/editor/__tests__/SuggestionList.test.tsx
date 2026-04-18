@@ -320,10 +320,56 @@ describe('SuggestionList', () => {
 
   it('popup container has "suggestion-list" class for CSS animation (UX-66)', () => {
     const command = vi.fn()
-    render(<SuggestionList items={sampleItems} command={command} />)
+    const { container } = render(<SuggestionList items={sampleItems} command={command} />)
 
+    // The animation/popover shell class is applied to the outer popup container
+    // (ancestor of the listbox). UX-207 moved the inner list inside a ScrollArea
+    // so the animation now lives on the outer shell rather than the listbox.
+    const popup = container.querySelector('.suggestion-list')
+    expect(popup).toBeInTheDocument()
+
+    // Sanity: the listbox is inside the popup shell.
     const listbox = screen.getByRole('listbox')
-    expect(listbox.className).toContain('suggestion-list')
+    expect(popup).toContainElement(listbox)
+  })
+
+  // -- UX-207: ScrollArea wrapper replaces bare overflow-y-auto -----------------
+
+  it('wraps the list in a ScrollArea (no bare overflow-y-auto) (UX-207)', () => {
+    const command = vi.fn()
+    const { container } = render(<SuggestionList items={sampleItems} command={command} />)
+
+    // The list is rendered inside a ScrollArea viewport (Radix primitive).
+    const viewport = container.querySelector('[data-slot="scroll-area-viewport"]')
+    expect(viewport).toBeInTheDocument()
+
+    // The listbox role lives on a child of the viewport.
+    const listbox = screen.getByRole('listbox')
+    expect(viewport).toContainElement(listbox)
+
+    // No element should carry a bare `overflow-y-auto` class anymore.
+    const anyOverflowY = container.querySelector('.overflow-y-auto')
+    expect(anyOverflowY).toBeNull()
+  })
+
+  it('keyboard navigation still scrolls the selected item into view under ScrollArea (UX-207)', () => {
+    const ref = createRef<SuggestionListRef>()
+    const command = vi.fn()
+    render(<SuggestionList ref={ref} items={sampleItems} command={command} />)
+
+    const options = screen.getAllByRole('option')
+    for (const option of options) {
+      option.scrollIntoView = vi.fn()
+    }
+
+    act(() => {
+      ref.current?.onKeyDown({ event: makeKeyEvent('ArrowDown') })
+    })
+
+    // scrollIntoView is called on the newly selected option. The browser
+    // resolves the nearest scroll container — the ScrollArea viewport — on its
+    // own; the component doesn't need to identify the scrolling ancestor.
+    expect(options[1]?.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
   })
 
   // -- UX-67: "Create new" prominence ------------------------------------------

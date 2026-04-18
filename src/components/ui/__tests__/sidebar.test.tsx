@@ -108,6 +108,27 @@ describe('Sidebar ref forwarding', () => {
     expect(ref.current?.getAttribute('data-slot')).toBe('sidebar-content')
   })
 
+  // UX-208: SidebarContent uses ScrollArea primitive (no bare overflow-auto).
+  it('SidebarContent renders through ScrollArea with a viewport (UX-208)', () => {
+    const { container } = render(
+      <SidebarProvider>
+        <SidebarContent>
+          <div data-testid="child-content">Hello</div>
+        </SidebarContent>
+      </SidebarProvider>,
+    )
+
+    // The content is rendered inside the ScrollArea viewport, not a bare div.
+    const viewport = container.querySelector('[data-slot="scroll-area-viewport"]')
+    expect(viewport).toBeInTheDocument()
+    expect(viewport?.textContent).toContain('Hello')
+
+    // Sanity: no bare overflow-auto class on the sidebar-content root.
+    const root = container.querySelector('[data-slot="sidebar-content"]')
+    expect(root).toBeInTheDocument()
+    expect(root?.className ?? '').not.toContain('overflow-auto')
+  })
+
   it('SidebarGroup forwards ref to div', () => {
     const ref = React.createRef<HTMLDivElement>()
     render(

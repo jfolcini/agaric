@@ -936,7 +936,12 @@ async fn orchestrator_full_flow_initiator_side() {
         .unwrap();
     }
 
-    let mut orchestrator_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone());
+    let mut orchestrator_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
+        // BUG-27: In production the peer identity is carried by mTLS/mDNS and
+        // supplied via `with_expected_remote_id`. Without it, a first-time
+        // sync with a peer that has no ops of its own would leave
+        // `remote_device_id` empty and silently corrupt peer bookkeeping.
+        .with_expected_remote_id(DEV_B.into());
 
     // Step 1: start() → produces HeadExchange
     let msg1 = orchestrator_a.start().await.unwrap();
@@ -967,11 +972,9 @@ async fn orchestrator_full_flow_initiator_side() {
         last_hash: "some-hash-from-b".to_string(),
     };
 
-    // Need to create peer entry for DEV_B so complete_sync works
-    // (The orchestrator identifies remote_device_id from the HeadExchange;
-    // since B sent empty heads, remote_device_id is empty string.
-    // We'll upsert a peer entry for the empty string to avoid NotFound.)
-    peer_refs::upsert_peer_ref(&pool_a, "").await.unwrap();
+    // BUG-27: The orchestrator now falls back to `expected_remote_id` when
+    // the HeadExchange didn't carry a non-local device_id, so the peer row
+    // is created under the real `DEV_B` key — no more workaround needed.
 
     let final_response = orchestrator_a.handle_message(b_complete).await.unwrap();
     assert!(
@@ -1532,7 +1535,11 @@ async fn orchestrator_emits_events_initiator_side() {
 
     let sink = Arc::new(RecordingEventSink::new());
     let mut orch = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_event_sink(Box::new(Arc::clone(&sink)));
+        .with_event_sink(Box::new(Arc::clone(&sink)))
+        // BUG-27: Production passes the peer identity here (mTLS/mDNS).
+        // Needed so SyncComplete can fall back to a real peer_id when the
+        // remote's heads don't mention its own device_id.
+        .with_expected_remote_id(DEV_B.into());
 
     // Step 1: start() → HeadExchange
     let _msg1 = orch.start().await.unwrap();
@@ -1544,7 +1551,6 @@ async fn orchestrator_emits_events_initiator_side() {
         .unwrap();
 
     // Step 3: SyncComplete from B
-    peer_refs::upsert_peer_ref(&pool_a, "").await.unwrap();
     let _final = orch
         .handle_message(SyncMessage::SyncComplete {
             last_hash: "hash-from-b".into(),

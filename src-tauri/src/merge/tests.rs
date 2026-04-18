@@ -482,6 +482,56 @@ async fn create_conflict_copy_avoids_position_collision() {
     );
 }
 
+/// BUG-24: If any sibling holds `NULL_POSITION_SENTINEL` (i64::MAX), the
+/// `MAX(position) + 1` calculation for a non-sentinel conflict copy must
+/// not overflow. The sentinel must be filtered out of the MAX() scan so the
+/// new position reflects the highest *real* sibling position instead.
+#[tokio::test]
+async fn create_conflict_copy_ignores_sentinel_siblings_in_max_scan() {
+    let (pool, _dir) = test_pool().await;
+
+    // Parent page with two siblings: one at a normal position, and one
+    // carrying the NULL sentinel (e.g. a tag / backlink entry stored under
+    // the same parent, or pre-migration data).
+    insert_block(&pool, "P", "page", "parent", None, Some(0)).await;
+    insert_block(&pool, "C_REAL", "content", "real child", Some("P"), Some(1)).await;
+    insert_block(
+        &pool,
+        "C_SENTINEL",
+        "content",
+        "sentinel sibling",
+        Some("P"),
+        Some(NULL_POSITION_SENTINEL),
+    )
+    .await;
+
+    // Create a conflict copy for the real-position child. Without the
+    // filter, MAX(position) would be i64::MAX and +1 would overflow.
+    let record = create_conflict_copy(&pool, DEV_A, "C_REAL", "conflict for C_REAL", "Text")
+        .await
+        .unwrap();
+
+    let payload: CreateBlockPayload = serde_json::from_str(&record.payload).unwrap();
+    assert_eq!(
+        payload.position,
+        Some(2),
+        "BUG-24: MAX() scan must exclude sentinel siblings so the new \
+         conflict-copy position is MAX(real siblings) + 1, not an overflow"
+    );
+    assert_ne!(
+        payload.position,
+        Some(NULL_POSITION_SENTINEL),
+        "BUG-24: new conflict-copy position must not equal the sentinel"
+    );
+    // Sanity check: the position stored in the blocks table matches too.
+    let stored_pos: Option<i64> = sqlx::query_scalar("SELECT position FROM blocks WHERE id = ?")
+        .bind(payload.block_id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored_pos, Some(2));
+}
+
 #[tokio::test]
 async fn conflict_copy_includes_tags() {
     let (pool, _dir) = test_pool().await;

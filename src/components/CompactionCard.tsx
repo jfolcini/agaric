@@ -98,12 +98,7 @@ export function CompactionCard(): React.ReactElement {
                 </div>
               </dl>
 
-              <Button
-                variant="destructive"
-                size="sm"
-                disabled={status.eligible_ops === 0}
-                onClick={() => setConfirmOpen(true)}
-              >
+              <Button variant="destructive" size="sm" onClick={() => setConfirmOpen(true)}>
                 {t('compaction.compactNow')}
               </Button>
 

@@ -105,6 +105,10 @@ pub async fn move_block_inner(
         // Depth check: count ancestors of the target parent (its depth from
         // root) and the max descendant depth of the block being moved. The
         // deepest descendant will end up at parent_depth + 1 + subtree_depth.
+        //
+        // Recursive members filter `is_conflict = 0` — conflict copies inherit
+        // `parent_id` from the original and would otherwise inflate depth counts
+        // (invariant #9). `depth < 100` bounds each walk.
         let depths = sqlx::query!(
             r#"WITH RECURSIVE
                path(id, depth) AS (
@@ -112,14 +116,14 @@ pub async fn move_block_inner(
                  UNION ALL
                  SELECT b.parent_id, p.depth + 1
                  FROM path p JOIN blocks b ON b.id = p.id
-                 WHERE b.parent_id IS NOT NULL
+                 WHERE b.parent_id IS NOT NULL AND b.is_conflict = 0 AND p.depth < 100
                ),
                descendants(id, depth) AS (
                  SELECT ?, 0
                  UNION ALL
                  SELECT b.id, d.depth + 1
                  FROM descendants d JOIN blocks b ON b.parent_id = d.id
-                 WHERE b.deleted_at IS NULL
+                 WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100
                )
              SELECT
                (SELECT MAX(depth) FROM path) as "parent_depth: i64",
@@ -184,18 +188,24 @@ pub async fn move_block_inner(
 
     // Update all non-page descendants to inherit the moved block's page_id.
     // Pages keep their own id as page_id regardless of parent.
+    //
+    // Recursive CTE filters `is_conflict = 0` in both members — conflict
+    // copies inherit `parent_id` from the original and would otherwise be
+    // reparented under the moved subtree. `depth < 100` bounds the walk
+    // (invariant #9).
     let effective_page_id = if is_page {
         Some(block_id.clone())
     } else {
         new_page_id
     };
     sqlx::query(
-        "WITH RECURSIVE descendants(id) AS ( \
-             SELECT b.id FROM blocks b WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
+        "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT b.id, 0 FROM blocks b \
+             WHERE b.parent_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
              UNION ALL \
-             SELECT b.id FROM blocks b \
+             SELECT b.id, d.depth + 1 FROM blocks b \
              JOIN descendants d ON b.parent_id = d.id \
-             WHERE b.deleted_at IS NULL \
+             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
          ) \
          UPDATE blocks SET page_id = ?2 \
          WHERE id IN (SELECT id FROM descendants) AND block_type != 'page'",

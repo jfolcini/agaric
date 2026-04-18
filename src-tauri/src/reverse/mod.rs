@@ -253,6 +253,47 @@ mod tests {
             _ => panic!("expected MoveBlock"),
         }
     }
+    /// BUG-26: An ancient `create_block` payload with `position = None`
+    /// (pre-migration data) cannot be reversed into a valid `move_block`
+    /// because positions are 1-based and `move_block_inner` rejects 0.
+    /// Instead of silently defaulting to 0 (overflow into Validation) or
+    /// fabricating 1 (pretending to know the original slot), the reverse
+    /// must surface `NonReversible` explicitly.
+    #[tokio::test]
+    async fn reverse_move_block_when_prior_create_lacks_position_is_non_reversible() {
+        let (pool, _dir) = test_pool().await;
+        append_op(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id("BLK6NP"),
+                block_type: "content".into(),
+                parent_id: Some(BlockId::test_id("ROOTNP")),
+                position: None,
+                content: "ancient".into(),
+            }),
+            "2025-01-15T12:00:00+00:00",
+        )
+        .await;
+        let rec = append_op(
+            &pool,
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: BlockId::test_id("BLK6NP"),
+                new_parent_id: Some(BlockId::test_id("OTHERNP")),
+                new_position: 7,
+            }),
+            "2025-01-15T12:01:00+00:00",
+        )
+        .await;
+        let result = compute_reverse(&pool, TEST_DEVICE, rec.seq).await;
+        assert!(
+            matches!(
+                result,
+                Err(AppError::NonReversible { ref op_type }) if op_type == "move_block"
+            ),
+            "BUG-26: reverse of move_block must be NonReversible when the \
+             prior create_block payload has position=None; got: {result:?}"
+        );
+    }
     #[tokio::test]
     async fn reverse_add_tag_produces_remove_tag() {
         let (pool, _dir) = test_pool().await;

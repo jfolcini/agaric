@@ -1,5 +1,75 @@
 # Session Log
 
+## Session 403 — CTE correctness, sync/reverse hygiene, ScrollArea sweep, silent-catch fixes (2026-04-18)
+
+**16 items resolved (BUG-17, BUG-19, BUG-21, BUG-24, BUG-25, BUG-26, BUG-27, BUG-28, BUG-32, BUG-33, BUG-43, UX-207, UX-208, UX-226, MAINT-8, MAINT-46). REVIEW-LATER 125→109. BUG-29 reclassified from S→M after a build subagent demonstrated that the proposed single-slot unobserve fix regresses multi-block observation; spec now documents three viable approaches.**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| BUG-17 | Tag purge now calls `purgeBlock` (hard delete) instead of `deleteBlock` (soft delete) | 1 file |
+| BUG-19 | `CompactionCard` "Compact Now" button is always enabled — backend handles no-op case | 2 files |
+| BUG-21 | Added `AND is_conflict = 0` + `depth < 100` to 4 recursive CTEs over `blocks` (history × 2, pagination/history, move_block page_id UPDATE) | 4 files + 3 tests |
+| BUG-24 | Conflict copy position scan filters out `NULL_POSITION_SENTINEL` siblings to prevent `i64::MAX + 1` overflow | 2 files |
+| BUG-25 | `resolve_root_pages` JOIN now filters `p.is_conflict = 0` defensively | 2 files |
+| BUG-26 | Reverse of `move_block` returns `AppError::NonReversible` when prior create lacks a position (matches `reverse_delete_attachment` pattern) | 2 files |
+| BUG-27 | Sync orchestrator validates non-empty peer_id at `SyncComplete`, falls back to `expected_remote_id`, rejects with `Failed` state if both missing | 4 files |
+| BUG-28 | Resolve store `preload` silent catch now logs at warn level with `logger.warn` | 2 files |
+| BUG-32 | `LinkPreviewTooltip.computePosition().catch()` now logs via `logger.warn` per Floating UI mandate | 2 files |
+| BUG-33 | Slash-command `onStart` defensively clears lingering `autoExecTimer`; magic `200` extracted to `AUTO_EXEC_DELAY_MS` | 2 files |
+| BUG-43 | Added `is_conflict = 0` + `depth < 100` to `move_block` depth-check recursive CTE (extends BUG-21 coverage) | (same move_ops.rs as BUG-21) |
+| UX-207 | `SuggestionList` wraps list in `<ScrollArea>`; popover shell keeps animation class | 2 files |
+| UX-208 | `SidebarContent` uses ScrollArea internally (fork approach with override comment) | 2 files |
+| UX-226 | 5 bare `overflow-*` sites → ScrollArea: App main scroller, PageBrowser, MermaidDiagram ×2, TabBar. ScrollArea extended with optional `orientation`/`viewportRef`/`viewportClassName`/`viewportProps` props (backward compatible; 9 new tests) | 7 files + 6 tests |
+| MAINT-8 | `logger.ts` silent catch comment now explicitly documents it as the sole AGENTS.md exception (recursion prevention) | 1 file |
+| MAINT-46 | Materializer dedup `.ok()` drops replaced with `.inspect_err(\|e\| tracing::warn!(...)).ok()` covering all op types via `BlockIdHint` | 2 files |
+
+### BUG-29 reclassification
+
+A build subagent implemented the proposed single-slot tracking for `useViewportObserver` but flagged that because `observeRef` is a shared closure applied to every block wrapper, each new mount unobserves the previous element — only the last-mounted block would stay observed. The orchestrator reverted the change and updated REVIEW-LATER.md to document three viable approaches (factory pattern, MutationObserver sweep, accept current behavior) and reclassified the cost from S → M. Needs design discussion before implementation.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src-tauri/src/commands/history.rs` | BUG-21: is_conflict=0 + depth<100 filters on 2 recursive CTEs (`restore_page_to_op_inner`, `undo_page_op_inner`) |
+| `src-tauri/src/commands/blocks/move_ops.rs` | BUG-21 + BUG-43: is_conflict=0 + depth<100 on move_block page_id UPDATE CTE + depth-check path/descendants CTEs |
+| `src-tauri/src/pagination/history.rs` | BUG-21: is_conflict=0 + depth<100 filter on `list_page_history` recursive CTE |
+| `src-tauri/src/backlink/query.rs` | BUG-25: `p.is_conflict = 0` on resolve_root_pages JOIN |
+| `src-tauri/src/merge/resolve.rs` | BUG-24: filter NULL_POSITION_SENTINEL siblings from MAX scan |
+| `src-tauri/src/reverse/block_ops.rs` | BUG-26: NonReversible when prior position is None |
+| `src-tauri/src/sync_protocol/orchestrator.rs` | BUG-27: validate non-empty peer_id at SyncComplete with expected_remote_id fallback |
+| `src-tauri/src/sync_integration_tests.rs` | BUG-27: tests use `with_expected_remote_id()`; removed `upsert_peer_ref(pool, "")` workarounds |
+| `src-tauri/src/materializer/dedup.rs` | MAINT-46: tracing::warn on JSON parse failure |
+| Backend tests (5 files) | 7 new regression tests covering all fixes |
+| `src-tauri/.sqlx/` | Regenerated cache: 4 stale entries removed, 91 missing test-query entries added |
+| `src/stores/resolve.ts` | BUG-28: logger.warn on preload failure |
+| `src/components/LinkPreviewTooltip.tsx` | BUG-32: logger.warn on computePosition failure |
+| `src/editor/extensions/slash-command.ts` | BUG-33: defensive timer clear in onStart; AUTO_EXEC_DELAY_MS constant |
+| `src/components/ui/scroll-area.tsx` | UX-226 enabler: optional `orientation` / `viewportRef` / `viewportClassName` / `viewportProps` props (backward compatible) |
+| `src/components/ui/sidebar.tsx` | UX-208: SidebarContent → ScrollArea (fork approach with override comment; omits `dir` from forwarded div props) |
+| `src/editor/SuggestionList.tsx` | UX-207: list wrapped in ScrollArea; `.suggestion-list` class on outer shell |
+| `src/App.tsx` | UX-226: main content scroller → ScrollArea with callback ref that imperatively sets `id="main-content"` + `tabIndex=-1` on viewport (load-bearing for skip link + drag-auto-scroll) |
+| `src/components/PageBrowser.tsx` | UX-226: `viewportRef={listRef}` for virtualizer; listbox semantics via `viewportProps` |
+| `src/components/MermaidDiagram.tsx` | UX-226: horizontal ScrollArea × 2 (source `<pre>` + rendered diagram) |
+| `src/components/TabBar.tsx` | UX-226: horizontal ScrollArea wrapping tablist |
+| `src/components/TagList.tsx` | BUG-17: import/call `purgeBlock` instead of `deleteBlock` |
+| `src/components/CompactionCard.tsx` | BUG-19: remove `disabled={eligible_ops === 0}` |
+| `src/lib/logger.ts` | MAINT-8: expanded comment documenting the sole AGENTS.md silent-catch exception |
+| Frontend tests (10 files) | 19+ new tests covering all fixes, updated CompactionCard + App + PageBrowser + MermaidDiagram + TabBar + SidebarContent + SuggestionList + ScrollArea + resolve store + slash-command + LinkPreviewTooltip |
+| `REVIEW-LATER.md` | Removed 16 resolved items; summary 125→109; BUG-29 reclassified to M with new fix spec |
+
+### Stats
+
+- 40 non-sqlx files changed + 95 .sqlx cache files updated (4 deleted / 91 new)
+- Backend: 2013 Rust tests pass (+7 new)
+- Frontend: 6595 tests pass (+19 new)
+- 4 parallel build subagents + 4 review subagents (technical only; UX review for C)
+- prek hooks: all relevant hooks pass (biome, tsc, vitest, cargo fmt/clippy/nextest, machete). Pre-existing env failures: npm audit (new dompurify CVE), cargo deny (sandbox CA-cert permissions).
+- sqlx cache regen as side effect: fixes pre-existing drift from commit `8f30361` where merge/resolve.rs query was modified without cache update + adds `--tests` mode coverage not previously prepared.
+
+
 ## Session 402 — Conflict copy tags/properties + GraphView tag filter (2026-04-16)
 
 **2 items resolved (MAINT-4, PERF-9c). REVIEW-LATER 2→0. All items cleared.**
