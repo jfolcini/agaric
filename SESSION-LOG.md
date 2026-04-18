@@ -1,5 +1,63 @@
 # Session Log
 
+## Session 411 — Cognitive-complexity refactors (frontend): 6 MAINT items (2026-04-18)
+
+**6 items resolved (MAINT-58, MAINT-60, MAINT-62, MAINT-63, MAINT-66, MAINT-73). REVIEW-LATER 48→44.**
+
+Preparation for lowering Biome's `maxAllowedComplexity` from 35 to 25 (umbrella item MAINT-51). Each target is a single hot-path function previously reported by Biome at complexity 26–30. All 6 now sit well below 25 via pure-helper extraction. No observable behaviour changes; all public APIs unchanged.
+
+### Resolved items
+
+**Frontend complexity refactors (6 parallel subagents, non-overlapping files):**
+- **MAINT-58** — `src/components/DonePanel.tsx` — extracted 4 pure helpers (`filterDoneBlocks`, `collectUniqueParentIds`, `mergeResolvedTitles`, `groupBlocksByPage`) into new `DonePanel.helpers.ts`. `fetchBlocks`/`doFetch`/grouped IIFE now delegate. `mergeResolvedTitles` used as functional `setPageTitles` updater, removed stale-closure risk from the `fetchBlocks` deps list. 20 new helper unit tests + all 21 pre-existing component tests still pass.
+- **MAINT-60** — `src/hooks/useDuePanelData.ts` — extracted module-scope `applySourceFilter`, `collectResolveIds`, `buildTitleMap`, `listBlocksForAgenda`. Shared between `fetchBlocks` (loadMore, page_id only) and `doFetch` (initial, page_id + inline ULID refs, per B-53) — the two paths keep their intentional ID-collection differences. 18 new helper tests; existing 20 hook tests unchanged.
+- **MAINT-62** — `src/hooks/useListKeyboardNavigation.ts` — rewritten in the `KEY_RULES` dispatcher style (same idiom as `src/editor/use-block-keyboard.ts`). Module-level `isPrevKey`/`isNextKey`/`stepPrev`/`stepNext` helpers, `ResolvedNavOptions` interface + `resolveNavOptions()`, and a `const KEY_RULES: readonly KeyRule[]` with 7 entries (prev/next/Home/End/PageUp/PageDown/Enter-Space). `preventDefault` is per-rule flag, only set on PageUp/PageDown (preserves caller contract). Horizontal mode still disables vim j/k keys (verified with an explicit test). 42 tests total (35 original + 7 new for resolveNavOptions and coverage gaps).
+- **MAINT-63** — `src/hooks/useSyncTrigger.ts` — extracted exported `isOffline`, `computeNextSyncDelay`, `runWithTimeout` plus internal `syncOnePeerWithToast`, `syncAllPeersSequentially`. `syncAll` is now a short orchestrator: offline short-circuit → concurrency guard → peer loop (delegated) → delay update via `computeNextSyncDelay(current, hadFailure)` → finally cleanup. Success toast gated on `!hadFailure` unchanged. 8 new helper tests (fake-timer-safe for `runWithTimeout`), existing 17 hook tests unchanged.
+- **MAINT-66** — `src/lib/agenda-filters.ts` — `queryDateDimension` split into 3 module-private helpers: `isOverdue(block, columnKey, todayStr)` predicate, `queryOverdueForColumn(...)`, `queryPresetRangeForColumn(value, columnKey, today)`. `today: Date` stays threaded through for determinism; helpers stay private (not exported). 4 new dispatch tests covering Overdue filtering (DONE/null/future excluded), Today → single-day `agendaDate`, Next-7-days → `agendaDateRange`, unknown value → no-op.
+- **MAINT-73** — `src/lib/tauri-mock/handlers.ts` + new `src/lib/tauri-mock/revert.ts` — extracted `applyRevertForOp(target, blocks)` as a pure switch over 5 op_types (`create_block`/`delete_block`/`edit_block`/`move_block`/`restore_block`) with a default no-op. The `edit_block` `?? null` semantic and `move_block` dual-field mutation preserved verbatim. Handler `revert_ops` now delegates inside the existing sort→find→skip→push loop. 10 new unit tests in `tauri-mock/__tests__/revert.test.ts`; 195 existing tauri-mock tests pass.
+
+### Post-review fixes applied by orchestrator
+
+- Biome format auto-fix in `src/lib/__tests__/agenda-filters.test.ts` (one double-quoted string converted to single quotes).
+- Reconciled `REVIEW-LATER.md` summary count: concurrent REVIEW-LATER.md edits from the 6 parallel subagents (3 of them edited the file, 3 left it to the orchestrator) produced a drifted `48 open items` line; orchestrator re-counted table rows (44) and updated the count in a single authoritative edit.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src/components/DonePanel.helpers.ts` (new) | MAINT-58 — 4 pure helpers + types |
+| `src/components/DonePanel.tsx` (−30 lines) | MAINT-58 — fetchBlocks/doFetch/grouped delegate to helpers |
+| `src/components/__tests__/DonePanel.helpers.test.ts` (new, 20 tests) | MAINT-58 |
+| `src/hooks/useDuePanelData.ts` | MAINT-60 — 4 module-scope helpers + delegating callbacks |
+| `src/hooks/__tests__/useDuePanelData.helpers.test.ts` (new, 18 tests) | MAINT-60 |
+| `src/hooks/useListKeyboardNavigation.ts` | MAINT-62 — KEY_RULES dispatcher pattern |
+| `src/hooks/__tests__/useListKeyboardNavigation.test.ts` (+7 tests) | MAINT-62 |
+| `src/hooks/useSyncTrigger.ts` | MAINT-63 — helpers + extracted per-peer loop |
+| `src/hooks/__tests__/useSyncTrigger.helpers.test.ts` (new, 8 tests) | MAINT-63 |
+| `src/lib/agenda-filters.ts` | MAINT-66 — 3 module-private helpers |
+| `src/lib/__tests__/agenda-filters.test.ts` (+4 tests) | MAINT-66 |
+| `src/lib/tauri-mock/revert.ts` (new, 49 LOC) | MAINT-73 — `applyRevertForOp` |
+| `src/lib/tauri-mock/handlers.ts` | MAINT-73 — `revert_ops` delegates |
+| `src/lib/tauri-mock/__tests__/revert.test.ts` (new, 10 tests) | MAINT-73 |
+| `REVIEW-LATER.md` | −6 entries (rows + detail sections), count 48→44 |
+| `SESSION-LOG.md` | This session |
+
+### Stats
+
+- 15 files changed. +1395 / −398 lines.
+- 6 parallel build subagents (all APPROVE) + 6 parallel review subagents (all APPROVE, 0 blockers, 2 nits — none actioned as they were non-blocking). Reviews and build pipelined (each review launched as its build completed, up to 6 total active agents).
+- Tests: 195 pass in the 9 affected test files (9 files — DonePanel × 2, DonePanel.helpers, useDuePanelData × 2, useListKeyboardNavigation, useSyncTrigger × 2, agenda-filters, tauri-mock/revert). All pre-existing tests still pass; 67 new helper tests added (20 + 18 + 7 + 8 + 4 + 10).
+- No worktrees. Non-overlapping file boundaries between subagents, so main-tree editing was safe.
+- `biome.json` unchanged (threshold stays at 35); each subagent verified its refactor by temporarily lowering to 25, running Biome, and restoring. MAINT-51 umbrella item remains open.
+- `prek run --all-files`: all 20 hooks pass (after one biome-format auto-fix described above).
+
+### Verification
+
+- `npx vitest run` across the 9 affected test files: **195 passed** (0 failed).
+- `prek run --all-files`: **20/20 hooks pass** (biome check, typescript, vitest, cargo fmt/clippy/nextest/deny/machete, depcheck, license, etc.).
+
+---
+
 ## Session 410 — Op log block_id column, graph filter dimensions, VSCode themes, Android lifecycle (2026-04-18)
 
 **6 items resolved (PERF-26, UX-205, UX-203, BUG-39, PERF-24, TEST-31). REVIEW-LATER 12→6.**
