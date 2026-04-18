@@ -98,6 +98,59 @@ async function queryPriority(values: string[]): Promise<Map<string, BlockRow>> {
   return result
 }
 
+// --- queryDateDimension helpers (module-private) ---------------------------
+
+/** True when the block's date column is before today and the block isn't DONE. */
+function isOverdue(
+  block: BlockRow,
+  columnKey: 'due_date' | 'scheduled_date',
+  todayStr: string,
+): boolean {
+  const dateVal = columnKey === 'due_date' ? block.due_date : block.scheduled_date
+  return dateVal != null && dateVal < todayStr && block.todo_state !== 'DONE'
+}
+
+/** Fetch and filter overdue blocks for a date column. */
+async function queryOverdueForColumn(
+  columnKey: 'due_date' | 'scheduled_date',
+  todayStr: string,
+): Promise<Map<string, BlockRow>> {
+  const result = new Map<string, BlockRow>()
+  const resp = await queryByProperty({ key: columnKey, limit: 500 })
+  for (const b of resp.items) {
+    if (isOverdue(b, columnKey, todayStr)) {
+      result.set(b.id, b)
+    }
+  }
+  return result
+}
+
+/**
+ * Resolve a preset label to a date range and fetch blocks via listBlocks.
+ * Dispatches to the single-day branch when start === end, otherwise the range branch.
+ * Returns an empty map when the value is not a known preset or the range resolves to null.
+ */
+async function queryPresetRangeForColumn(
+  value: string,
+  columnKey: 'due_date' | 'scheduled_date',
+  today: Date,
+): Promise<Map<string, BlockRow>> {
+  const result = new Map<string, BlockRow>()
+  const preset = toFutureDatePreset(value)
+  if (!preset) return result
+  const range = getDateRangeForFilter(preset, today)
+  if (!range) return result
+  const agendaSource = `column:${columnKey}`
+  const resp =
+    range.start === range.end
+      ? await listBlocks({ agendaDate: range.start, agendaSource, limit: 500 })
+      : await listBlocks({ agendaDateRange: range, agendaSource, limit: 500 })
+  for (const b of resp.items) {
+    result.set(b.id, b)
+  }
+  return result
+}
+
 /**
  * Query blocks by a date column (due_date or scheduled_date).
  * Handles 'Overdue' (client-side filter) and preset date ranges.
@@ -111,34 +164,12 @@ async function queryDateDimension(
   const todayStr = formatDate(today)
 
   for (const value of values) {
-    if (value === 'Overdue') {
-      const resp = await queryByProperty({ key: columnKey, limit: 500 })
-      for (const b of resp.items) {
-        const dateVal = columnKey === 'due_date' ? b.due_date : b.scheduled_date
-        if (dateVal && dateVal < todayStr && b.todo_state !== 'DONE') {
-          result.set(b.id, b)
-        }
-      }
-    } else {
-      const preset = toFutureDatePreset(value)
-      if (!preset) continue
-      const range = getDateRangeForFilter(preset, today)
-      if (!range) continue
-      const resp =
-        range.start === range.end
-          ? await listBlocks({
-              agendaDate: range.start,
-              agendaSource: `column:${columnKey}`,
-              limit: 500,
-            })
-          : await listBlocks({
-              agendaDateRange: range,
-              agendaSource: `column:${columnKey}`,
-              limit: 500,
-            })
-      for (const b of resp.items) {
-        result.set(b.id, b)
-      }
+    const partial =
+      value === 'Overdue'
+        ? await queryOverdueForColumn(columnKey, todayStr)
+        : await queryPresetRangeForColumn(value, columnKey, today)
+    for (const [id, block] of partial) {
+      result.set(id, block)
     }
   }
   return result

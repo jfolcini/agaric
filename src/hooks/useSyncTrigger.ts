@@ -9,6 +9,64 @@ const MAX_INTERVAL_MS = 600_000 // 10 minutes
 const SYNC_TIMEOUT_MS = 60_000
 
 /**
+ * Returns true when the browser reports the network as offline.
+ *
+ * Guarded for non-browser contexts (SSR, tests without a `navigator` global).
+ */
+export function isOffline(): boolean {
+  return typeof navigator !== 'undefined' && !navigator.onLine
+}
+
+/**
+ * Computes the next resync interval following an exponential-backoff policy.
+ *
+ * - On success (`hadFailure = false`): resets to `BASE_INTERVAL_MS`.
+ * - On failure (`hadFailure = true`): doubles `current`, capped at `MAX_INTERVAL_MS`.
+ */
+export function computeNextSyncDelay(current: number, hadFailure: boolean): number {
+  if (!hadFailure) return BASE_INTERVAL_MS
+  return Math.min(current * 2, MAX_INTERVAL_MS)
+}
+
+/**
+ * Races `p` against a timer; rejects with `err` if `ms` elapses first.
+ */
+export function runWithTimeout<T>(p: Promise<T>, ms: number, err: Error): Promise<T> {
+  return Promise.race<T>([p, new Promise<T>((_, reject) => setTimeout(() => reject(err), ms))])
+}
+
+/**
+ * Syncs a single peer with a timeout guard. Shows a toast on failure.
+ * Returns `true` on success, `false` on failure.
+ */
+async function syncOnePeerWithToast(peerId: string): Promise<boolean> {
+  try {
+    await runWithTimeout(startSync(peerId), SYNC_TIMEOUT_MS, new Error('Sync timeout'))
+    return true
+  } catch {
+    toast.error(i18n.t('sync.failedForDevice', { deviceId: peerId.slice(0, 12) }))
+    return false
+  }
+}
+
+/**
+ * Iterates over `peers` and attempts to sync each one, bailing out when `isMounted()`
+ * returns false. Returns `true` if any peer failed.
+ */
+async function syncAllPeersSequentially(
+  peers: ReadonlyArray<{ peer_id: string }>,
+  isMounted: () => boolean,
+): Promise<boolean> {
+  let hadFailure = false
+  for (const peer of peers) {
+    if (!isMounted()) break
+    const ok = await syncOnePeerWithToast(peer.peer_id)
+    if (!ok) hadFailure = true
+  }
+  return hadFailure
+}
+
+/**
  * Manages automatic and manual sync triggering.
  *
  * - Syncs all peers once on mount (sync-on-open, #377).
@@ -25,7 +83,7 @@ export function useSyncTrigger() {
 
   const syncAll = useCallback(async () => {
     // Skip sync when offline — set state so UI can reflect it (#429, #667)
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    if (isOffline()) {
       setState('offline')
       return
     }
@@ -42,37 +100,19 @@ export function useSyncTrigger() {
         setState('idle')
         return
       }
-      for (const peer of peers) {
-        if (!mountedRef.current) break
-        try {
-          await Promise.race([
-            startSync(peer.peer_id),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('Sync timeout')), SYNC_TIMEOUT_MS),
-            ),
-          ])
-        } catch {
-          hadFailure = true
-          toast.error(i18n.t('sync.failedForDevice', { deviceId: peer.peer_id.slice(0, 12) }))
-        }
-      }
-      if (mountedRef.current) {
-        if (hadFailure) {
-          // Some peers failed — increase backoff
-          intervalRef.current = Math.min(intervalRef.current * 2, MAX_INTERVAL_MS)
-        } else {
-          // All peers succeeded — reset to base
-          intervalRef.current = BASE_INTERVAL_MS
-          setState('idle')
-          toast.success(i18n.t('device.syncComplete'))
-        }
+      hadFailure = await syncAllPeersSequentially(peers, () => mountedRef.current)
+      if (!mountedRef.current) return
+      intervalRef.current = computeNextSyncDelay(intervalRef.current, hadFailure)
+      if (!hadFailure) {
+        setState('idle')
+        toast.success(i18n.t('device.syncComplete'))
       }
     } catch {
       hadFailure = true
       if (mountedRef.current) {
         setState('error', 'Sync failed')
         toast.error(i18n.t('device.syncFailed'))
-        intervalRef.current = Math.min(intervalRef.current * 2, MAX_INTERVAL_MS)
+        intervalRef.current = computeNextSyncDelay(intervalRef.current, true)
       }
     } finally {
       syncInProgressRef.current = false

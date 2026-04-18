@@ -21,6 +21,12 @@ import type { BlockRow } from '../lib/tauri'
 import { batchResolve, queryByProperty } from '../lib/tauri'
 import { BlockListItem } from './BlockListItem'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
+import {
+  collectUniqueParentIds,
+  filterDoneBlocks,
+  groupBlocksByPage,
+  mergeResolvedTitles,
+} from './DonePanel.helpers'
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { PageLink } from './PageLink'
@@ -58,9 +64,7 @@ export function DonePanel({
           limit: 50,
         })
         // Filter out blocks with empty content (UX-129) and blocks from the excluded page (B-74)
-        const nonEmptyItems = resp.items
-          .filter((b) => b.content?.trim())
-          .filter((b) => !excludePageId || b.parent_id !== excludePageId)
+        const nonEmptyItems = filterDoneBlocks(resp.items, excludePageId)
         const newBlocks = cursor ? [...blocks, ...nonEmptyItems] : nonEmptyItems
         setBlocks(newBlocks)
         setNextCursor(resp.next_cursor)
@@ -68,17 +72,10 @@ export function DonePanel({
         setTotalCount(cursor ? totalCount + nonEmptyItems.length : nonEmptyItems.length)
 
         // Resolve parent page titles
-        const allBlocks = cursor ? [...blocks, ...nonEmptyItems] : nonEmptyItems
-        const uniqueParentIds = [
-          ...new Set(allBlocks.map((b) => b.page_id).filter((id): id is string => id != null)),
-        ]
+        const uniqueParentIds = collectUniqueParentIds(newBlocks)
         if (uniqueParentIds.length > 0) {
           const resolved = await batchResolve(uniqueParentIds)
-          const titleMap = new Map(pageTitles)
-          for (const r of resolved) {
-            titleMap.set(r.id, r.title ?? t('donePanel.untitled'))
-          }
-          setPageTitles(titleMap)
+          setPageTitles((prev) => mergeResolvedTitles(prev, resolved, t('donePanel.untitled')))
         }
       } catch (err) {
         logger.error('DonePanel', 'Failed to load done items', undefined, err)
@@ -86,7 +83,7 @@ export function DonePanel({
         setLoading(false)
       }
     },
-    [date, blocks, totalCount, pageTitles, t, excludePageId],
+    [date, blocks, totalCount, t, excludePageId],
   )
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: invalidationKey triggers refetch on property changes (F-39)
@@ -109,26 +106,18 @@ export function DonePanel({
         })
         if (cancelled) return
         // Filter out blocks with empty content (UX-129) and blocks from the excluded page (B-74)
-        const nonEmptyItems = resp.items
-          .filter((b) => b.content?.trim())
-          .filter((b) => !excludePageId || b.parent_id !== excludePageId)
+        const nonEmptyItems = filterDoneBlocks(resp.items, excludePageId)
         setBlocks(nonEmptyItems)
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
         setTotalCount(nonEmptyItems.length)
 
         // Resolve parent page titles
-        const uniqueParentIds = [
-          ...new Set(nonEmptyItems.map((b) => b.page_id).filter((id): id is string => id != null)),
-        ]
+        const uniqueParentIds = collectUniqueParentIds(nonEmptyItems)
         if (uniqueParentIds.length > 0) {
           const resolved = await batchResolve(uniqueParentIds)
           if (cancelled) return
-          const titleMap = new Map<string, string>()
-          for (const r of resolved) {
-            titleMap.set(r.id, r.title ?? t('donePanel.untitled'))
-          }
-          setPageTitles(titleMap)
+          setPageTitles(mergeResolvedTitles(new Map(), resolved, t('donePanel.untitled')))
         }
       } catch (err) {
         if (!cancelled) {
@@ -163,26 +152,7 @@ export function DonePanel({
   // Group blocks by source page (parent_id → resolved page title)
   // Sort groups alphabetically by page title
   // Within each group, sort blocks by ID descending (ULID ≈ most recently created first)
-  const grouped = (() => {
-    const groupMap = new Map<string, { pageId: string; title: string; items: BlockRow[] }>()
-    for (const block of blocks) {
-      const pageId = block.page_id ?? '__none__'
-      const title = block.page_id
-        ? (pageTitles.get(block.page_id) ?? t('donePanel.untitled'))
-        : t('donePanel.untitled')
-      if (!groupMap.has(pageId)) {
-        groupMap.set(pageId, { pageId, title, items: [] })
-      }
-      groupMap.get(pageId)?.items.push(block)
-    }
-    // Sort groups alphabetically by title
-    const groups = [...groupMap.values()].sort((a, b) => a.title.localeCompare(b.title))
-    // Sort blocks within each group by ID descending
-    for (const group of groups) {
-      group.items.sort((a, b) => b.id.localeCompare(a.id))
-    }
-    return groups
-  })()
+  const grouped = groupBlocksByPage(blocks, pageTitles, t('donePanel.untitled'))
 
   // ── Keyboard navigation (UX-138) ────────────────────────────────────
   const listRef = useRef<HTMLDivElement>(null)

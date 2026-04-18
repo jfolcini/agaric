@@ -11,6 +11,7 @@
  * diffed against the real backend's command surface in `src/lib/bindings.ts`.
  */
 
+import { applyRevertForOp } from './revert'
 import {
   attachments,
   blocks,
@@ -324,27 +325,7 @@ export const HANDLERS: Record<string, Handler> = {
       const target = opLog.find((o) => o.device_id === opRef.device_id && o.seq === opRef.seq)
       if (!target) continue
 
-      const payload = JSON.parse(target.payload) as Record<string, unknown>
-
-      if (target.op_type === 'create_block') {
-        const b = blocks.get(payload['block_id'] as string)
-        if (b) b['deleted_at'] = new Date().toISOString()
-      } else if (target.op_type === 'delete_block') {
-        const b = blocks.get(payload['block_id'] as string)
-        if (b) b['deleted_at'] = null
-      } else if (target.op_type === 'edit_block') {
-        const b = blocks.get(payload['block_id'] as string)
-        if (b) b['content'] = (payload['from_text'] as string | null) ?? null
-      } else if (target.op_type === 'move_block') {
-        const b = blocks.get(payload['block_id'] as string)
-        if (b) {
-          b['parent_id'] = payload['old_parent_id'] as string | null
-          b['position'] = payload['old_position'] as number
-        }
-      } else if (target.op_type === 'restore_block') {
-        const b = blocks.get(payload['block_id'] as string)
-        if (b) b['deleted_at'] = new Date().toISOString()
-      }
+      applyRevertForOp(target, blocks)
 
       const newOp = pushOp(`revert_${target.op_type}`, { reverted: target })
       results.push(newOp)

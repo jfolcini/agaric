@@ -1,21 +1,23 @@
 /**
- * Tests for useListKeyboardNavigation hook.
+ * Tests for useListKeyboardNavigation hook and its pure helpers.
  *
  * Validates:
  *  - ArrowDown increments focusedIndex
  *  - ArrowUp decrements focusedIndex
  *  - Wrapping behavior (wrap: true wraps, wrap: false clamps)
- *  - Vim keys (j/k) when vim: true
+ *  - Vim keys (j/k) when vim: true (ignored in horizontal mode)
  *  - Home/End when homeEnd: true
  *  - PageUp/PageDown when pageUpDown: true
- *  - onSelect called on Enter
+ *  - onSelect called on Enter / Space (skipped when onSelect not provided)
  *  - focusedIndex resets when itemCount changes
+ *  - Every key returns false when itemCount === 0
  *  - Returns true for handled keys, false for unhandled
+ *  - resolveNavOptions applies defaults and preserves explicit values
  */
 
 import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { useListKeyboardNavigation } from '../useListKeyboardNavigation'
+import { resolveNavOptions, useListKeyboardNavigation } from '../useListKeyboardNavigation'
 
 function keyEvent(key: string): KeyboardEvent {
   return new KeyboardEvent('keydown', { key })
@@ -387,12 +389,22 @@ describe('useListKeyboardNavigation', () => {
       expect(onSelect).toHaveBeenCalledWith(1)
     })
 
-    it('does not call onSelect when not provided', () => {
+    it('does not call onSelect on Enter when not provided', () => {
       const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 5 }))
 
       let handled = false
       act(() => {
         handled = result.current.handleKeyDown(keyEvent('Enter'))
+      })
+      expect(handled).toBe(false)
+    })
+
+    it('does not call onSelect on Space when not provided', () => {
+      const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 5 }))
+
+      let handled = false
+      act(() => {
+        handled = result.current.handleKeyDown(keyEvent(' '))
       })
       expect(handled).toBe(false)
     })
@@ -600,21 +612,113 @@ describe('useListKeyboardNavigation', () => {
 
     it('returns false for all keys when itemCount is 0', () => {
       const onSelect = vi.fn()
-      const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 0, onSelect }))
+      const { result } = renderHook(() =>
+        useListKeyboardNavigation({
+          itemCount: 0,
+          vim: true,
+          homeEnd: true,
+          pageUpDown: true,
+          onSelect,
+        }),
+      )
 
-      let handled = false
+      const keys = [
+        'ArrowDown',
+        'ArrowUp',
+        'ArrowLeft',
+        'ArrowRight',
+        'j',
+        'k',
+        'Home',
+        'End',
+        'PageUp',
+        'PageDown',
+        'Enter',
+        ' ',
+      ]
 
-      act(() => {
-        handled = result.current.handleKeyDown(keyEvent('ArrowDown'))
-      })
-      expect(handled).toBe(false)
-
-      act(() => {
-        handled = result.current.handleKeyDown(keyEvent('Enter'))
-      })
-      expect(handled).toBe(false)
+      for (const key of keys) {
+        let handled = true
+        act(() => {
+          handled = result.current.handleKeyDown(keyEvent(key))
+        })
+        expect(handled, `expected false for key "${key}"`).toBe(false)
+      }
 
       expect(onSelect).not.toHaveBeenCalled()
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolveNavOptions — pure helper
+// ---------------------------------------------------------------------------
+
+describe('resolveNavOptions', () => {
+  it('applies all defaults when only itemCount is provided', () => {
+    const resolved = resolveNavOptions({ itemCount: 7 })
+    expect(resolved).toEqual({
+      itemCount: 7,
+      horizontal: false,
+      wrap: true,
+      vim: false,
+      homeEnd: false,
+      pageUpDown: false,
+      pageSize: 10,
+      onSelect: undefined,
+    })
+  })
+
+  it('preserves explicit false values (does not replace with defaults)', () => {
+    const resolved = resolveNavOptions({
+      itemCount: 3,
+      horizontal: false,
+      wrap: false,
+      vim: false,
+      homeEnd: false,
+      pageUpDown: false,
+    })
+    expect(resolved.horizontal).toBe(false)
+    expect(resolved.wrap).toBe(false)
+    expect(resolved.vim).toBe(false)
+    expect(resolved.homeEnd).toBe(false)
+    expect(resolved.pageUpDown).toBe(false)
+  })
+
+  it('preserves explicit true values', () => {
+    const resolved = resolveNavOptions({
+      itemCount: 3,
+      horizontal: true,
+      wrap: true,
+      vim: true,
+      homeEnd: true,
+      pageUpDown: true,
+    })
+    expect(resolved.horizontal).toBe(true)
+    expect(resolved.wrap).toBe(true)
+    expect(resolved.vim).toBe(true)
+    expect(resolved.homeEnd).toBe(true)
+    expect(resolved.pageUpDown).toBe(true)
+  })
+
+  it('preserves custom pageSize', () => {
+    const resolved = resolveNavOptions({ itemCount: 100, pageSize: 25 })
+    expect(resolved.pageSize).toBe(25)
+  })
+
+  it('allows pageSize: 0 to override the default', () => {
+    const resolved = resolveNavOptions({ itemCount: 100, pageSize: 0 })
+    expect(resolved.pageSize).toBe(0)
+  })
+
+  it('passes through onSelect reference unchanged', () => {
+    const onSelect = vi.fn()
+    const resolved = resolveNavOptions({ itemCount: 5, onSelect })
+    expect(resolved.onSelect).toBe(onSelect)
+  })
+
+  it('leaves onSelect undefined when not provided', () => {
+    const resolved = resolveNavOptions({ itemCount: 5 })
+    expect(resolved.onSelect).toBeUndefined()
   })
 })

@@ -405,6 +405,103 @@ describe('executeAgendaFilters', () => {
     })
   })
 
+  // -----------------------------------------------------------------------
+  // queryDateDimension branch coverage (via executeAgendaFilters with
+  // dimension: 'dueDate'). Uses a fixed `today` so preset resolution
+  // is deterministic regardless of the real system clock.
+  // -----------------------------------------------------------------------
+
+  describe('queryDateDimension branches', () => {
+    const fixedToday = new Date('2024-01-15T00:00:00')
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.setSystemTime(fixedToday)
+    })
+
+    it('Overdue: excludes DONE blocks, null-date blocks, and future-dated blocks', async () => {
+      const overdueBlock = makeBlock({
+        id: 'overdue-keep',
+        due_date: '2024-01-10',
+        todo_state: 'TODO',
+      })
+      const doneBlock = makeBlock({
+        id: 'done-drop',
+        due_date: '2024-01-10',
+        todo_state: 'DONE',
+      })
+      const nullDateBlock = makeBlock({
+        id: 'null-drop',
+        due_date: null,
+        todo_state: 'TODO',
+      })
+      const futureBlock = makeBlock({
+        id: 'future-drop',
+        due_date: '2024-01-20',
+        todo_state: 'TODO',
+      })
+      const todayBlock = makeBlock({
+        id: 'today-drop',
+        due_date: '2024-01-15',
+        todo_state: 'TODO',
+      })
+
+      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
+        const a = args as Record<string, unknown>
+        if (cmd === 'query_by_property' && a['key'] === 'due_date') {
+          return {
+            items: [overdueBlock, doneBlock, nullDateBlock, futureBlock, todayBlock],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        return emptyPage
+      })
+
+      const result = await executeAgendaFilters([{ dimension: 'dueDate', values: ['Overdue'] }])
+
+      expect(result.blocks).toHaveLength(1)
+      expect(result.blocks[0]?.id).toBe('overdue-keep')
+    })
+
+    it('Today preset dispatches to listBlocks with agendaDate (single-day branch)', async () => {
+      await executeAgendaFilters([{ dimension: 'dueDate', values: ['Today'] }])
+
+      const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
+      expect(listBlocksCalls).toHaveLength(1)
+      const [, args] = listBlocksCalls[0] as [string, Record<string, unknown>]
+      expect(args['agendaDate']).toBe('2024-01-15')
+      expect(args['agendaDateRange']).toBeNull()
+      expect(args['agendaSource']).toBe('column:due_date')
+    })
+
+    it('Next 7 days preset dispatches to listBlocks with agendaDateRange (range branch)', async () => {
+      await executeAgendaFilters([{ dimension: 'dueDate', values: ['Next 7 days'] }])
+
+      const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
+      expect(listBlocksCalls).toHaveLength(1)
+      const [, args] = listBlocksCalls[0] as [string, Record<string, unknown>]
+      expect(args['agendaDateRange']).toEqual({ start: '2024-01-15', end: '2024-01-21' })
+      expect(args['agendaDate']).toBeNull()
+      expect(args['agendaSource']).toBe('column:due_date')
+    })
+
+    it('unknown value (no Overdue match, no preset match) returns an empty result', async () => {
+      const result = await executeAgendaFilters([
+        { dimension: 'dueDate', values: ['Never heard of it'] },
+      ])
+
+      expect(result.blocks).toHaveLength(0)
+      const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
+      expect(listBlocksCalls).toHaveLength(0)
+      const overdueCalls = mockedInvoke.mock.calls.filter(
+        ([cmd, args]) =>
+          cmd === 'query_by_property' && (args as Record<string, unknown>)['key'] === 'due_date',
+      )
+      expect(overdueCalls).toHaveLength(0)
+    })
+  })
+
   describe('scheduledDate filter', () => {
     it('handles Today by querying with agendaDate for scheduled_date', async () => {
       vi.useFakeTimers()

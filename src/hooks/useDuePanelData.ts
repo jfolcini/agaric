@@ -13,7 +13,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { formatDate, getTodayString } from '@/lib/date-utils'
 import { logger } from '../lib/logger'
-import type { BlockRow, ProjectedAgendaEntry } from '../lib/tauri'
+import type { BlockRow, PageResponse, ProjectedAgendaEntry, ResolvedBlock } from '../lib/tauri'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../lib/tauri'
 import { useBlockPropertyEvents } from './useBlockPropertyEvents'
 
@@ -46,6 +46,70 @@ const projectedCache = new Map<string, ProjectedCacheEntry>()
 /** @internal — exported for test isolation only. */
 export function clearProjectedCache(): void {
   projectedCache.clear()
+}
+
+// ── Pure helpers (MAINT-60) ───────────────────────────────────────────
+// Factored out of doFetch/fetchBlocks to keep Biome cognitive-complexity
+// bounded. Each helper is side-effect-free and independently testable.
+
+/**
+ * Apply the `property:` source filter (excludes blocks whose due_date or
+ * scheduled_date matches the current agenda date) and drop blocks with
+ * empty or whitespace-only content (UX-129). Other sourceFilter values
+ * pass through unchanged except for the empty-content pass.
+ */
+export function applySourceFilter(
+  items: BlockRow[],
+  date: string,
+  sourceFilter: string | null,
+): BlockRow[] {
+  const afterSource =
+    sourceFilter === 'property:'
+      ? items.filter((b) => b.due_date !== date && b.scheduled_date !== date)
+      : items
+  return afterSource.filter((b) => b.content?.trim())
+}
+
+/**
+ * Build a deduped list of block IDs to feed `batchResolve`: every
+ * non-null `page_id` plus every inline ULID reference found in content.
+ */
+export function collectResolveIds(blocks: BlockRow[]): string[] {
+  const pageIds = blocks.map((b) => b.page_id).filter((id): id is string => id != null)
+  const contentRefs = blocks.flatMap((b) => (b.content ? extractUlidRefs(b.content) : []))
+  return [...new Set([...pageIds, ...contentRefs])]
+}
+
+/**
+ * Convert the resolver response into a title map, substituting the
+ * fallback string whenever the backend returns a null/undefined title.
+ */
+export function buildTitleMap(resolved: ResolvedBlock[], fallback: string): Map<string, string> {
+  const map = new Map<string, string>()
+  for (const r of resolved) {
+    map.set(r.id, r.title ?? fallback)
+  }
+  return map
+}
+
+/**
+ * Thin wrapper around `listBlocks` that encodes the agenda-specific
+ * calling convention: `property:` collapses to a null source, and the
+ * optional `cursor` arg is only included when defined.
+ */
+function listBlocksForAgenda(
+  date: string,
+  sourceFilter: string | null,
+  cursor: string | undefined,
+  limit: number,
+): Promise<PageResponse<BlockRow>> {
+  const effectiveSource = sourceFilter === 'property:' ? null : sourceFilter
+  return listBlocks({
+    agendaDate: date,
+    ...(effectiveSource != null && { agendaSource: effectiveSource }),
+    ...(cursor != null && { cursor }),
+    limit,
+  })
 }
 
 export interface UseDuePanelDataOptions {
@@ -220,19 +284,8 @@ export function useDuePanelData({
     async (cursor?: string) => {
       setLoading(true)
       try {
-        const effectiveSource = sourceFilter === 'property:' ? null : sourceFilter
-        const resp = await listBlocks({
-          agendaDate: date,
-          ...(effectiveSource != null && { agendaSource: effectiveSource }),
-          ...(cursor != null && { cursor }),
-          limit: 50,
-        })
-        const filteredItems =
-          sourceFilter === 'property:'
-            ? resp.items.filter((b) => b.due_date !== date && b.scheduled_date !== date)
-            : resp.items
-        // Filter out blocks with empty content (UX-129)
-        const nonEmptyItems = filteredItems.filter((b) => b.content?.trim())
+        const resp = await listBlocksForAgenda(date, sourceFilter, cursor, 50)
+        const nonEmptyItems = applySourceFilter(resp.items, date, sourceFilter)
         const newBlocks = cursor ? [...blocks, ...nonEmptyItems] : nonEmptyItems
         setBlocks(newBlocks)
         setNextCursor(resp.next_cursor)
@@ -240,9 +293,8 @@ export function useDuePanelData({
         setTotalCount(cursor ? totalCount + nonEmptyItems.length : nonEmptyItems.length)
 
         // Resolve parent page titles
-        const allBlocks = cursor ? [...blocks, ...nonEmptyItems] : nonEmptyItems
         const uniqueParentIds = [
-          ...new Set(allBlocks.map((b) => b.page_id).filter((id): id is string => id != null)),
+          ...new Set(newBlocks.map((b) => b.page_id).filter((id): id is string => id != null)),
         ]
         if (uniqueParentIds.length > 0) {
           const resolved = await batchResolve(uniqueParentIds)
@@ -274,42 +326,20 @@ export function useDuePanelData({
     let cancelled = false
     const doFetch = async () => {
       try {
-        const effectiveSource = sourceFilter === 'property:' ? null : sourceFilter
-        const resp = await listBlocks({
-          agendaDate: date,
-          ...(effectiveSource != null && { agendaSource: effectiveSource }),
-          limit: 50,
-        })
+        const resp = await listBlocksForAgenda(date, sourceFilter, undefined, 50)
         if (cancelled) return
-        const items =
-          sourceFilter === 'property:'
-            ? resp.items.filter((b) => b.due_date !== date && b.scheduled_date !== date)
-            : resp.items
-        // Filter out blocks with empty content (UX-129)
-        const nonEmptyItems = items.filter((b) => b.content?.trim())
+        const nonEmptyItems = applySourceFilter(resp.items, date, sourceFilter)
         setBlocks(nonEmptyItems)
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
         setTotalCount(nonEmptyItems.length)
 
         // Resolve parent page titles + inline ULID refs (B-53)
-        const contentRefs = nonEmptyItems.flatMap((b) =>
-          b.content ? extractUlidRefs(b.content) : [],
-        )
-        const idsToResolve = [
-          ...new Set([
-            ...nonEmptyItems.map((b) => b.page_id).filter((id): id is string => id != null),
-            ...contentRefs,
-          ]),
-        ]
+        const idsToResolve = collectResolveIds(nonEmptyItems)
         if (idsToResolve.length > 0) {
           const resolved = await batchResolve(idsToResolve)
           if (cancelled) return
-          const titleMap = new Map<string, string>()
-          for (const r of resolved) {
-            titleMap.set(r.id, r.title ?? 'Untitled')
-          }
-          setPageTitles(titleMap)
+          setPageTitles(buildTitleMap(resolved, 'Untitled'))
         }
       } catch (err) {
         logger.warn('useDuePanelData', 'block fetch failed', undefined, err)
