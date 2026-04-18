@@ -3,20 +3,29 @@ use sqlx::SqlitePool;
 use super::codec::decode_snapshot;
 use super::types::SnapshotData;
 use crate::error::AppError;
+use crate::materializer::{MaterializeTask, Materializer};
 
 /// Maximum number of SQL bind parameters per statement.
 /// SQLite default is 999 (conservative; 32766 since 3.32).
 const MAX_SQL_PARAMS: usize = 999;
 
-/// Apply a snapshot (RESET path). Wipes all core + cache tables and inserts
-/// snapshot data. Caller is responsible for triggering cache rebuilds and FTS
-/// optimize after this returns.
+/// Apply a snapshot (RESET path). Wipes all core + cache tables, inserts
+/// snapshot data, then enqueues the full cache-rebuild set on the
+/// materializer so the UI doesn't see empty agenda / tag list / page
+/// list / search until the next unrelated op (BUG-42).
 ///
 /// Uses `BEGIN IMMEDIATE` (F04) to acquire the write lock upfront and
 /// `PRAGMA defer_foreign_keys = ON` (F02) so that block inserts succeed
 /// regardless of parent/child ordering in the snapshot data.
+///
+/// Cache rebuild tasks are enqueued via `try_enqueue_background`; failures
+/// are logged at `warn!` but do not abort the restore (the snapshot itself
+/// is already durable at this point). Callers that need a synchronous
+/// guarantee can `flush_background()` on the materializer after this
+/// returns.
 pub async fn apply_snapshot(
     pool: &SqlitePool,
+    materializer: &Materializer,
     compressed_data: &[u8],
 ) -> Result<SnapshotData, AppError> {
     let data = decode_snapshot(compressed_data)?;
@@ -183,6 +192,11 @@ pub async fn apply_snapshot(
         );
         let mut query = sqlx::query(&sql);
         for a in chunk {
+            // Gate every attachment row at the trust boundary: a malformed snapshot
+            // must not be able to seed `..`/absolute paths into the attachments
+            // table even though later reads/writes would catch them (defense in
+            // depth — we want the invariant "no bad rows in attachments" to hold).
+            crate::sync_files::check_attachment_fs_path_shape(&a.fs_path)?;
             query = query
                 .bind(&a.id)
                 .bind(&a.block_id)
@@ -233,5 +247,37 @@ pub async fn apply_snapshot(
     }
 
     tx.commit().await?;
+
+    // BUG-42: Enqueue the full cache-rebuild set. Without this, the UI
+    // sees empty agenda / tag list / page list / search until the next
+    // unrelated op triggers rebuilds by side-effect. `try_enqueue_background`
+    // silently drops if the queue is saturated (`warn!` logged), which is
+    // acceptable — the worst case is a slightly delayed rebuild on an
+    // overloaded system, not data loss.
+    let rebuild_tasks = [
+        ("RebuildTagsCache", MaterializeTask::RebuildTagsCache),
+        ("RebuildPagesCache", MaterializeTask::RebuildPagesCache),
+        ("RebuildAgendaCache", MaterializeTask::RebuildAgendaCache),
+        (
+            "RebuildProjectedAgendaCache",
+            MaterializeTask::RebuildProjectedAgendaCache,
+        ),
+        (
+            "RebuildTagInheritanceCache",
+            MaterializeTask::RebuildTagInheritanceCache,
+        ),
+        ("RebuildPageIds", MaterializeTask::RebuildPageIds),
+        ("RebuildFtsIndex", MaterializeTask::RebuildFtsIndex),
+    ];
+    for (label, task) in rebuild_tasks {
+        if let Err(e) = materializer.try_enqueue_background(task) {
+            tracing::warn!(
+                task = label,
+                error = %e,
+                "failed to enqueue cache rebuild task after apply_snapshot"
+            );
+        }
+    }
+
     Ok(data)
 }

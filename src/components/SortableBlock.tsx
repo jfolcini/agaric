@@ -284,6 +284,11 @@ function SortableBlockInner({
         data-testid="sortable-block"
         className={cn(
           'sortable-block group relative flex items-center gap-1 max-sm:items-start',
+          // BUG-37: suppress the iOS/Android long-press text-selection
+          // magnifier / callout that otherwise competes with the 400ms
+          // long-press context menu. Only applied on coarse pointers so
+          // desktop text-selection within static blocks still works.
+          '[@media(pointer:coarse)]:[-webkit-touch-callout:none]',
           isFocused && 'block-active',
         )}
         onTouchStart={(e) => {

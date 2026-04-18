@@ -359,7 +359,10 @@ describe('AgendaView', () => {
     })
 
     expect(mockedExecuteAgendaFilters).toHaveBeenCalledTimes(1)
-    expect(mockedExecuteAgendaFilters).toHaveBeenCalledWith([])
+    // UX-196: agenda now opens with a TODO+DOING status filter by default.
+    expect(mockedExecuteAgendaFilters).toHaveBeenCalledWith([
+      { dimension: 'status', values: ['TODO', 'DOING'] },
+    ])
 
     // Simulate filter change from AgendaFilterBuilder
     mockedExecuteAgendaFilters.mockResolvedValueOnce({
@@ -388,19 +391,23 @@ describe('AgendaView', () => {
       expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-loading', 'false')
     })
 
-    expect(screen.getByTestId('agenda-filter-builder')).toHaveAttribute('data-filter-count', '0')
+    // UX-196: agenda now opens with 1 default filter (TODO+DOING status).
+    expect(screen.getByTestId('agenda-filter-builder')).toHaveAttribute('data-filter-count', '1')
 
-    // Add a filter
+    // Replace with a different filter via AgendaFilterBuilder
     mockedExecuteAgendaFilters.mockResolvedValueOnce({
       blocks: [],
       hasMore: false,
       cursor: null,
     })
 
-    filterChangeRef.current?.([{ dimension: 'priority', values: ['1'] }])
+    filterChangeRef.current?.([
+      { dimension: 'status', values: ['TODO', 'DOING'] },
+      { dimension: 'priority', values: ['1'] },
+    ])
 
     await waitFor(() => {
-      expect(screen.getByTestId('agenda-filter-builder')).toHaveAttribute('data-filter-count', '1')
+      expect(screen.getByTestId('agenda-filter-builder')).toHaveAttribute('data-filter-count', '2')
     })
   })
 
@@ -509,6 +516,27 @@ describe('AgendaView', () => {
     render(<AgendaView />)
 
     expect(screen.getByTestId('agenda-view')).toBeInTheDocument()
+  })
+
+  // UX-196: default filter hides DONE tasks by restricting status to TODO+DOING
+  it('UX-196: mounts with default status filter (TODO + DOING)', async () => {
+    render(<AgendaView />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-loading', 'false')
+    })
+
+    // One default filter pill should be present on first render.
+    expect(screen.getByTestId('agenda-filter-builder')).toHaveAttribute('data-filter-count', '1')
+    expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-has-active-filters', 'true')
+
+    // The backend query should be called with the active-states filter,
+    // not an empty array (which would include DONE).
+    expect(mockedExecuteAgendaFilters).toHaveBeenCalledWith([
+      { dimension: 'status', values: ['TODO', 'DOING'] },
+    ])
+    // Explicitly: the default must NOT be an empty filter array.
+    expect(mockedExecuteAgendaFilters).not.toHaveBeenCalledWith([])
   })
 
   // 13. hasMore passed to AgendaResults

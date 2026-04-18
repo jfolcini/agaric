@@ -67,15 +67,23 @@ export function MonthlyDayCell({
         {dayNumber}
       </span>
 
-      {/* Count dots */}
+      {/* Count dots — use the -foreground color tokens for WCAG contrast
+          against the cell background in both light and dark modes (UX-199). */}
       {totalCount > 0 && (
         <div className="flex flex-wrap gap-0.5 mt-1">
           {agendaCountsBySource &&
             Object.entries(agendaCountsBySource).map(([source, count]) => {
               if (count <= 0) return null
               const color = getSourceColor(source)
-              // Extract only the bg-* class from the light theme classes
-              const bgClass = color.light.split(' ').find((c) => c.startsWith('bg-')) ?? 'bg-muted'
+              // Derive a bg-* class from the high-contrast text-*-foreground
+              // class (e.g. "text-date-due-foreground" → "bg-date-due-foreground").
+              // The foreground tokens are designed for readable text on the pill
+              // background, which gives us L~0.39-0.48 in light mode and L~0.80-0.84
+              // in dark mode — both meet WCAG 3:1 contrast on cell bg.
+              const textClass = color.light.split(' ').find((c) => c.startsWith('text-'))
+              const bgClass = textClass
+                ? textClass.replace(/^text-/, 'bg-')
+                : (color.light.split(' ').find((c) => c.startsWith('bg-')) ?? 'bg-muted-foreground')
               return (
                 <span
                   key={source}
@@ -85,7 +93,8 @@ export function MonthlyDayCell({
               )
             })}
           {backlinkCount > 0 && (
-            <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40" aria-hidden="true" />
+            // Full opacity muted-foreground so backlink dots are visible in both modes.
+            <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground" aria-hidden="true" />
           )}
         </div>
       )}

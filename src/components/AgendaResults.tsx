@@ -93,7 +93,7 @@ function DueDateChip({
         <button
           type="button"
           className={cn(
-            'agenda-results-due inline-flex items-center rounded-full px-2 py-0.5 text-xs [@media(pointer:coarse)]:text-sm font-medium cursor-pointer hover:ring-1 hover:ring-ring',
+            'agenda-results-due inline-flex items-center rounded-full px-2 py-0.5 text-xs [@media(pointer:coarse)]:text-sm [@media(pointer:coarse)]:py-1 font-medium cursor-pointer hover:ring-1 hover:ring-ring',
             dueDateColor(block.due_date),
           )}
           onClick={(e) => e.stopPropagation()}

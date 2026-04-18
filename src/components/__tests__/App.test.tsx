@@ -1163,5 +1163,25 @@ describe('App', () => {
       expect(main?.getAttribute('data-slot')).toBe('scroll-area-viewport')
       expect(main?.getAttribute('tabindex')).toBe('-1')
     })
+
+    // UX-225: the main content scroller re-applies the bottom safe-area
+    // inset so the last block of a long scroll doesn't sit under the
+    // iPhone home indicator / Android gesture bar. Body-level padding is
+    // not enough because the `overflow-y-auto` scroller *contains* the
+    // scrollable content — the inset must live on the viewport itself.
+    it('main content viewport applies env(safe-area-inset-bottom) padding (UX-225)', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+      const main = document.getElementById('main-content')
+      expect(main).toBeInTheDocument()
+      // The class is rendered statically; check the className string so
+      // the test does not depend on runtime CSS resolution (jsdom does
+      // not compute `env()` values).
+      const cls = main?.getAttribute('class') ?? ''
+      expect(cls).toContain('env(safe-area-inset-bottom)')
+      expect(cls).toContain('pb-[calc(1rem+env(safe-area-inset-bottom))]')
+    })
   })
 })

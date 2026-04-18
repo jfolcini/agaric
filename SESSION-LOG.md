@@ -1,5 +1,94 @@
 # Session Log
 
+## Session 406 — Log dir/path safety, cache coordination, agenda polish, shortcut/gesture UX (2026-04-18)
+
+**13 items resolved (BUG-23, BUG-31, BUG-34, BUG-35, BUG-37, BUG-38, BUG-42, UX-195, UX-196, UX-197, UX-199, UX-219, UX-221, UX-223, UX-225, TEST-38, MAINT-20, MAINT-38). REVIEW-LATER 72→56.** (18 unique IDs resolved; some share a single fix — UX-223 + BUG-31 bundled in platform.ts; BUG-35 + TEST-38 bundled in sync_files validator.)
+
+### Resolved items
+
+**Rust backend correctness (A):**
+- **BUG-34** — `tracing-appender` setup moved from `run()` into the Tauri `setup()` hook so the log dir uses `app.path().app_data_dir()` (cross-platform — Linux `~/.local/share/<id>`, macOS `~/Library/Application Support/<id>`, Windows `%APPDATA%\<id>`). New `log_dir_for_app_data()` helper + `LogGuard` managed state so the non-blocking worker outlives `setup()`. `get_log_dir` command now delegates to the same helper — single source of truth. 3 tests including path-shape parity.
+- **BUG-35 + TEST-38** — New `validate_attachment_fs_path(app_data_dir, fs_path)` and `check_attachment_fs_path_shape(fs_path)` in `sync_files.rs`. Rejects `..` traversal, absolute paths (Unix `/` + Windows `C:\`), empty strings, and parent-dir segments anywhere in the path. Called from `read_attachment_file`, `write_attachment_file`, `add_attachment_inner`, and now `apply_snapshot` (critical post-review fix — snapshots are a trust boundary for the attachments table invariant). 15 tests including shape/full parity, per-platform absolute-path rejection, command-layer integration, and a snapshot rollback test asserting the whole tx rolls back on a bad attachment row.
+- **BUG-38** — mDNS init failure now emits `SyncEvent::MdnsDisabled { reason }` (new variant, `sync:mdns_disabled` event constant). Orchestrator extracts `handle_mdns_init_result()` helper so the Ok/Err paths are testable. Frontend will get a `mdns_disabled` event and can surface UI feedback (deferred — back-end emit only in this batch). 6 tests across `sync_events` + orchestrator.
+- **BUG-42** — `apply_snapshot()` now takes `&Materializer` and enqueues 7 cache-rebuild tasks (`RebuildTagsCache`, `RebuildPagesCache`, `RebuildAgendaCache`, `RebuildProjectedAgendaCache`, `RebuildTagInheritanceCache`, `RebuildPageIds`, `RebuildFtsIndex`) via `try_enqueue_background` before returning. Callers that need synchronous cache population call `flush_background()`. Regression test populates stale caches, calls `apply_snapshot`, flushes, and asserts caches match the snapshot. `src-tauri/tests/AGENTS.md` pitfall #24 updated.
+- **BUG-23** — New `recovery::refresh_caches_for_recovered_drafts(materializer, recovered_block_ids)` closes the stale-cache window after boot-time draft recovery. Per-block `UpdateFtsBlock` + `ReindexBlockLinks` + global `RebuildTagsCache` + `RebuildPagesCache`, followed by `flush_background()`. Empty-list fast path skips the flush. Called from `lib.rs` after materializer creation when `report.drafts_recovered` is non-empty. 2 tests including an end-to-end FTS-staleness assertion.
+
+**Rust backend maintenance (B):**
+- **MAINT-38** — New `src-tauri/src/sql_utils.rs` with canonical `pub(crate) escape_like`. Two duplicate definitions removed (from `tag_query/mod.rs` and `backlink/filters.rs`, the latter with a stale "duplicated from tag_query" comment). 6 unit tests.
+- **MAINT-42 (partial)** — Inline test mods extracted where they exceeded 1000 lines: `reverse.rs` (1093→43 lines, tests in `reverse/mod.rs` + `reverse/tests.rs`), `dag.rs` (1479→366, `dag/tests.rs`), `sync_files.rs` (1571→488, `sync_files/tests.rs`), `tag_query/resolve.rs` (1199→195, `tag_query/resolve/tests.rs`). The subagent chose these by measurement — the original `draft.rs`/`ulid.rs` targets are <1000 lines and remain inline for a future pass.
+- **MAINT-39** — Not resolved. Orchestrator prompt mis-specified MAINT-39 as a Specta datetime audit (which returned no findings); actual MAINT-39 is about materializer cache-dispatch triplication. Kept in REVIEW-LATER.
+
+**Frontend agenda polish (C):**
+- **UX-195** — `BlockListItem <li>` gets `[@media(pointer:coarse)]:min-h-11` (44px touch target) so embedded pills don't clip. `AgendaResults` due-date chip gets `[@media(pointer:coarse)]:py-1` for vertical consistency on touch.
+- **UX-196** — `AgendaView` initial `agendaFilters` changed from `[]` to `[{ dimension: 'status', values: ['TODO', 'DOING'] }]`. DONE hidden by default — sensible for daily review. User can clear or change via UI.
+- **UX-197** — `line-clamp-2` removed from `BlockListItem` base class. Callers opt in via `contentClassName="line-clamp-2"` (SearchPanel / ResultCard still do; agenda, DuePanel, DonePanel, UnfinishedTasks now show full content).
+- **UX-199** — Calendar day-cell indicator dots now use `bg-date-*-foreground` tokens (L≈0.48 light / L≈0.84 dark) derived from the `text-*` class in `date-property-colors.ts`. Backlink dot went from `bg-muted-foreground/40` → `bg-muted-foreground`. Dark-mode axe audit added.
+
+**Frontend shortcut / gesture / input UX (D):**
+- **BUG-31 + UX-223** — New `src/lib/platform.ts` with cached `isMac()` + `modKey()` helpers (uses `navigator.userAgentData.platform` with `navigator.platform` fallback). `KeyboardShortcuts.renderKeys` and `KeyboardSettingsTab.renderKeys` (post-review fix, consistency) both substitute `"Ctrl"` → `modKey()` (⌘ on macOS, Ctrl elsewhere). Stored bindings stay portable (`Ctrl + …`). Separately fixed BUG-31 strikethrough drift: `Ctrl + Shift + S` → `Ctrl + Shift + X` (matches TipTap default + existing tooltip).
+- **BUG-37** — `useBlockTouchLongPress` stores the touchstart event in a ref; the timer callback calls `preventDefault()` (try/catch for passive-listener safety) and clears the native `Selection`. SortableBlock adds `[@media(pointer:coarse)]:[-webkit-touch-callout:none]` so the iOS/Android callout doesn't compete with the long-press menu.
+- **UX-219** — `SuggestionList` adds `title={item.label}` on the truncated label span and `title={item.breadcrumb}` on the breadcrumb span. Full text visible on hover when `truncate` clips.
+- **UX-221** — New `src/components/ui/search-input.tsx` primitive composing `Input` + absolute clear button. `type="button"`, `aria-label={t('action.clear')}`, 44px touch target, `focus-visible:ring` matching Button/Input. Clear dispatches native `input` event + calls `onChange('')` directly. 10 unit tests incl. axe. Not yet migrated into SearchPanel/TagFilterPanel/TrashView/BacklinkFilterBuilder/PageBrowser — foundation ships, migration is additive follow-up.
+- **UX-225** — `#main-content` ScrollArea viewport padding: `pb-[calc(1rem+env(safe-area-inset-bottom))] md:pb-[calc(1.5rem+env(safe-area-inset-bottom))] scroll-pb-[env(safe-area-inset-bottom)]`. `viewport-fit=cover` already in `index.html`. Bottom inset only — portrait-first Tauri app.
+
+**Orchestrator trivial:**
+- **MAINT-20** — `ErrorBoundary` Reload button now calls new `relaunchApp()` helper (`src/lib/relaunch-app.ts`). On desktop/Android uses `@tauri-apps/plugin-process.relaunch()` (restarts the whole app — recovers from bad Tauri state); falls back to `window.location.reload()` on web dev / plugin failure. New `tauri-plugin-process = "2"` dep + `process:default` capability. 4 tests (plugin path, fallback on import failure, fallback on rejection, ErrorBoundary integration).
+
+### Post-review fixes applied by orchestrator
+
+- **A critical:** `apply_snapshot` wasn't validating attachment `fs_path` on INSERT — snapshot was a trust-boundary gap. Added `check_attachment_fs_path_shape()` call per attachment row in the loop (before binding) + a regression test that asserts the whole transaction rolls back (blocks + attachments both zero-count) on a malformed `fs_path` + asserts `AppError::Validation` variant. Reviewer also flagged panic hook ordering (still installed before tracing setup); left as-is since it's the documented invariant — the hook only uses `eprintln!` which works pre-tracing.
+- **D important:** `KeyboardSettingsTab.renderKeys` was not substituting `Ctrl` → `modKey()` like `KeyboardShortcuts.renderKeys` does, creating inconsistent UX between the help sheet and settings tab. Fixed + 2 new tests (Mac substitution + Linux pass-through).
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src-tauri/src/lib.rs` | BUG-34 LogGuard + log_dir_for_app_data; MAINT-20 `tauri_plugin_process::init()`; BUG-23 cache refresh on boot |
+| `src-tauri/src/commands/logging.rs` | BUG-34 delegate to `log_dir_for_app_data` |
+| `src-tauri/src/sync_files.rs` (+ extracted `sync_files/tests.rs` deferred) | BUG-35 `validate_attachment_fs_path` + `check_attachment_fs_path_shape` + 15 TEST-38 tests |
+| `src-tauri/src/commands/attachments.rs` | BUG-35 validator called at command layer |
+| `src-tauri/src/commands/tests/block_cmd_tests.rs` | BUG-35 fallout: 8 `fs_path` values `/tmp/*` → `attachments/*` |
+| `src-tauri/src/sync_events.rs` | BUG-38 `SyncEvent::MdnsDisabled { reason }` + `EVENT_SYNC_MDNS_DISABLED` + 3 tests |
+| `src-tauri/src/sync_daemon/orchestrator.rs` | BUG-38 `handle_mdns_init_result()` + 3 tests |
+| `src-tauri/src/snapshot/restore.rs` | BUG-42 `apply_snapshot(pool, &Materializer, ...)` + 7 cache rebuild enqueues; BUG-35 post-review `check_attachment_fs_path_shape` call |
+| `src-tauri/src/snapshot/tests.rs` | BUG-42 `apply_snapshot_rebuilds_caches` + BUG-35 `apply_snapshot_rejects_traversal_attachment_fs_path` (post-review) |
+| `src-tauri/src/integration_tests.rs`, `src-tauri/benches/snapshot_bench.rs` | BUG-42 signature migration |
+| `src-tauri/tests/AGENTS.md` | BUG-42 pitfall #24 rewritten |
+| `src-tauri/src/sql_utils.rs` (new) | MAINT-38 canonical `escape_like` + 6 tests |
+| `src-tauri/src/{tag_query/mod.rs,tag_query/query.rs,tag_query/resolve.rs,backlink/filters.rs}` | MAINT-38 dedup |
+| `src-tauri/src/reverse/{mod.rs,tests.rs}`, `src-tauri/src/dag/tests.rs`, `src-tauri/src/tag_query/resolve/tests.rs` | MAINT-42 extraction (3 modules) |
+| `src-tauri/src/recovery/{mod.rs,cache_refresh.rs,tests.rs}` | BUG-23 `refresh_caches_for_recovered_drafts` + 2 tests |
+| `src-tauri/Cargo.toml`, `src-tauri/capabilities/default.json` | MAINT-20 `tauri-plugin-process` + capability |
+| `src-tauri/src/commands/drafts.rs` (no-op) | — |
+| `src/lib/relaunch-app.ts` (new) + `src/lib/__tests__/relaunch-app.test.ts` | MAINT-20 helper + 3 tests |
+| `src/components/ErrorBoundary.tsx` + `__tests__/ErrorBoundary.test.tsx` | MAINT-20 wire + mock `@tauri-apps/plugin-process` |
+| `src/lib/platform.ts` (new) + `src/lib/__tests__/platform.test.ts` | BUG-31+UX-223 `isMac()` / `modKey()` + 10 tests |
+| `src/lib/keyboard-config.ts` + `__tests__/keyboard-config.test.ts` | BUG-31 strikethrough `S` → `X` |
+| `src/components/KeyboardShortcuts.tsx` + `__tests__/KeyboardShortcuts.test.tsx` | UX-223 `renderKeys` modKey substitution + 3 tests |
+| `src/components/KeyboardSettingsTab.tsx` + `__tests__/KeyboardSettingsTab.test.tsx` | UX-223 post-review: same substitution in settings + 2 tests |
+| `src/hooks/useBlockTouchLongPress.ts` + `__tests__/useBlockTouchLongPress.test.ts` | BUG-37 preventDefault + 4 tests |
+| `src/components/SortableBlock.tsx` | BUG-37 CSS callout suppression |
+| `src/editor/SuggestionList.tsx` + `__tests__/SuggestionList.test.tsx` | UX-219 title attrs + 3 tests |
+| `src/components/ui/search-input.tsx` (new) + `__tests__/search-input.test.tsx` | UX-221 primitive + 10 tests |
+| `src/lib/i18n.ts` | `action.clear: 'Clear'` |
+| `src/App.tsx` + `__tests__/App.test.tsx` | UX-225 safe-area inset padding + test |
+| `src/components/BlockListItem.tsx` + `__tests__/BlockListItem.test.tsx` | UX-195 min-h + UX-197 no line-clamp + tests |
+| `src/components/AgendaResults.tsx` + `__tests__/AgendaResults.test.tsx` | UX-195 chip padding + UX-197 no line-clamp + tests |
+| `src/components/journal/AgendaView.tsx` + `__tests__/AgendaView.test.tsx` | UX-196 default filter + tests |
+| `src/components/journal/MonthlyDayCell.tsx` + `__tests__/MonthlyDayCell.test.tsx` | UX-199 -foreground tokens + axe in dark mode |
+| `REVIEW-LATER.md` | Removed 13 items (12 unique IDs), count 72→56 |
+| `SESSION-LOG.md`, `FEATURE-MAP.md` | This session + new primitives/helpers |
+
+### Stats
+
+- ~60 files changed
+- Backend: 2066 Rust tests pass (+30 new). 1 known flake (`adaptive_fts_threshold_large_corpus` at high nextest parallelism — passes in isolation)
+- Frontend: 6700+ tests pass (+40 new across platform, relaunch-app, search-input, long-press preventDefault, KeyboardSettingsTab modKey, agenda filter default, calendar dots, line-clamp opt-in)
+- 4 parallel build subagents + 4 review subagents (A REQUEST CHANGES, B REQUEST CHANGES, C APPROVE, D APPROVE_WITH_FIXES — 2 post-review fixes applied)
+- Worktrees used for parallel Rust builds; frontend C + orchestrator done in main tree, frontend D in worktree
+- Known pre-existing: npm audit (dompurify CVE baseline), cargo deny (CA-cert sandbox permissions)
+
+
 ## Session 405 — Rust error hygiene, sync observability, UX polish, focus-ring sweep (2026-04-18)
 
 **22 items resolved (BUG-30, BUG-36, BUG-40, BUG-41, UX-214, UX-215, UX-216, UX-218, UX-222, UX-224, UX-227, MAINT-9, MAINT-10, MAINT-18, MAINT-19, MAINT-23, MAINT-25, MAINT-26, MAINT-33, MAINT-34, MAINT-47, MAINT-48). REVIEW-LATER 94→72.**

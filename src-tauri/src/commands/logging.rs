@@ -36,6 +36,10 @@ pub async fn log_frontend(
 }
 
 /// Return the path to the logs directory.
+///
+/// Uses [`crate::log_dir_for_app_data`] so the path returned to the
+/// frontend ("Open logs folder") is guaranteed to match the directory
+/// the tracing-appender writes to — on every platform (BUG-34).
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -45,6 +49,6 @@ pub async fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
         .path()
         .app_data_dir()
         .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
-    let log_dir = data_dir.join("logs");
+    let log_dir = crate::log_dir_for_app_data(&data_dir);
     Ok(log_dir.to_string_lossy().into_owned())
 }

@@ -270,4 +270,51 @@ describe('KeyboardSettingsTab', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  it('UX-223: renders the Ctrl token as ⌘ on macOS', async () => {
+    vi.resetModules()
+    const original = Object.getOwnPropertyDescriptor(navigator, 'platform')
+    Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true })
+    // biome-ignore lint/suspicious/noExplicitAny: test-only helper
+    ;(navigator as any).userAgentData = undefined
+
+    try {
+      const { __resetPlatformCacheForTests } = await import('../../lib/platform')
+      __resetPlatformCacheForTests()
+      const { KeyboardSettingsTab: MacTab } = await import('../KeyboardSettingsTab')
+
+      render(<MacTab />)
+
+      // The indentBlock row has keys "Ctrl + Shift + Arrow Right" — on macOS the
+      // Ctrl kbd must be rendered as ⌘, not the literal "Ctrl".
+      const cmdKeys = screen.getAllByText('⌘')
+      expect(cmdKeys.length).toBeGreaterThan(0)
+      expect(screen.queryByText('Ctrl')).toBeNull()
+    } finally {
+      if (original) Object.defineProperty(navigator, 'platform', original)
+    }
+  })
+
+  it('UX-223: renders the Ctrl token verbatim on non-macOS', async () => {
+    vi.resetModules()
+    const original = Object.getOwnPropertyDescriptor(navigator, 'platform')
+    Object.defineProperty(navigator, 'platform', { value: 'Linux x86_64', configurable: true })
+    // biome-ignore lint/suspicious/noExplicitAny: test-only helper
+    ;(navigator as any).userAgentData = undefined
+
+    try {
+      const { __resetPlatformCacheForTests } = await import('../../lib/platform')
+      __resetPlatformCacheForTests()
+      const { KeyboardSettingsTab: LinuxTab } = await import('../KeyboardSettingsTab')
+
+      render(<LinuxTab />)
+
+      // On Linux, Ctrl renders literally and no ⌘ appears.
+      const ctrlKeys = screen.getAllByText('Ctrl')
+      expect(ctrlKeys.length).toBeGreaterThan(0)
+      expect(screen.queryByText('⌘')).toBeNull()
+    } finally {
+      if (original) Object.defineProperty(navigator, 'platform', original)
+    }
+  })
 })

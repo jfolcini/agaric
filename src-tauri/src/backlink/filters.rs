@@ -8,27 +8,7 @@ use sqlx::SqlitePool;
 use super::types::{BacklinkFilter, CompareOp};
 use crate::error::AppError;
 use crate::fts::sanitize_fts_query;
-
-// ---------------------------------------------------------------------------
-// LIKE-pattern escaping (duplicated from tag_query to avoid coupling)
-// ---------------------------------------------------------------------------
-
-/// Escape special LIKE pattern characters (`%`, `_`, `\`) so user-supplied
-/// prefix strings match literally.
-#[must_use]
-pub(crate) fn escape_like(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    for ch in input.chars() {
-        match ch {
-            '\\' | '%' | '_' => {
-                out.push('\\');
-                out.push(ch);
-            }
-            _ => out.push(ch),
-        }
-    }
-    out
-}
+use crate::sql_utils::escape_like;
 
 // ---------------------------------------------------------------------------
 // Crockford Base32 ULID timestamp extraction

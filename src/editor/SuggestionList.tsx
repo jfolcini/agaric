@@ -124,10 +124,13 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
       const Icon = item.icon
       const labelNode = item.breadcrumb ? (
         <span className="flex min-w-0 flex-col">
-          <span className="truncate">{item.label}</span>
+          <span className="truncate" title={item.label}>
+            {item.label}
+          </span>
           <span
             className="text-xs text-muted-foreground truncate"
             data-testid="suggestion-breadcrumb"
+            title={item.breadcrumb}
           >
             {item.breadcrumb}
           </span>

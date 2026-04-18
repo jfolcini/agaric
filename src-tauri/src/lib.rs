@@ -22,6 +22,7 @@ pub mod recurrence;
 pub mod reverse;
 pub mod snapshot;
 pub mod soft_delete;
+pub mod sql_utils;
 pub mod sync_cert;
 pub mod sync_daemon;
 pub mod sync_events;
@@ -113,6 +114,24 @@ use std::sync::Arc;
 /// daemon hasn't started yet.
 pub struct SyncCancelFlag(pub Arc<AtomicBool>);
 
+/// Keeps the tracing-appender non-blocking worker alive for the
+/// application lifetime.
+///
+/// The inner [`tracing_appender::non_blocking::WorkerGuard`] flushes
+/// buffered log writes when it is dropped.  Storing it in Tauri's managed
+/// state ensures it lives until the app exits, not just until `setup()`
+/// returns.  See BUG-34.
+pub struct LogGuard(pub tracing_appender::non_blocking::WorkerGuard);
+
+/// Return the logs directory given the application's data directory.
+///
+/// Both [`crate::commands::get_log_dir`] and the tracing-appender setup
+/// in [`run`] must use this helper so the "Open logs folder" action and
+/// the on-disk log files cannot diverge across platforms. See BUG-34.
+pub fn log_dir_for_app_data(app_data_dir: &std::path::Path) -> std::path::PathBuf {
+    app_data_dir.join("logs")
+}
+
 #[cfg(not(tarpaulin_include))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -126,35 +145,11 @@ pub fn run() {
     use tracing_subscriber::util::SubscriberInitExt;
     use tracing_subscriber::EnvFilter;
 
-    // Determine log directory: ~/.local/share/com.agaric.app/logs on Linux,
-    // falling back to the OS temp dir when $HOME is not set (e.g. Android).
-    let log_dir = std::env::var("HOME")
-        .map(|h| std::path::PathBuf::from(h).join(".local/share/com.agaric.app/logs"))
-        .unwrap_or_else(|_| std::env::temp_dir().join("agaric-logs"));
-    let _ = std::fs::create_dir_all(&log_dir);
-
-    let file_appender = tracing_appender::rolling::daily(&log_dir, "agaric.log");
-    let (non_blocking, _log_guard) = tracing_appender::non_blocking(file_appender);
-
-    // Preserve any user-provided `RUST_LOG` directives for `agaric` / `frontend`
-    // (BUG-40). The previous `from_default_env().add_directive(..)` calls silently
-    // overrode target-specific user directives like `RUST_LOG=agaric=debug`.
-    let rust_log = std::env::var("RUST_LOG").unwrap_or_default();
-    let directives = build_log_directives(&rust_log, &[("agaric", "info"), ("frontend", "info")]);
-    let env_filter = EnvFilter::try_new(&directives)
-        .unwrap_or_else(|_| EnvFilter::new("agaric=info,frontend=info"));
-
-    tracing_subscriber::registry()
-        .with(env_filter)
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_writer(non_blocking)
-                .with_ansi(false),
-        )
-        .init();
-
-    tracing::info!(log_dir = %log_dir.display(), "log directory initialized");
+    // BUG-34: Tracing-appender setup moved into the Tauri `setup()` hook so
+    // it can use `app.path().app_data_dir()` (OS-correct location on every
+    // platform) instead of a hard-coded Linux XDG path. The panic hook is
+    // installed here early — it uses the global tracing subscriber and is
+    // a no-op until the subscriber is installed in `setup()`.
 
     // M-44: Install custom panic hook so panics are captured in the log file.
     std::panic::set_hook(Box::new(|info| {
@@ -171,9 +166,6 @@ pub fn run() {
             .unwrap_or_default();
         tracing::error!(target: "agaric", panic = %payload, location = %location, "PANIC");
     }));
-
-    // M-45: Clean up log files older than 30 days (best-effort, boot-time only).
-    cleanup_old_log_files(&log_dir, 30);
 
     let builder = Builder::<tauri::Wry>::new().commands(collect_commands![
         commands::create_block,
@@ -276,12 +268,51 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // Resolve the OS-standard app data directory from tauri.conf.json identifier
             let app_data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&app_data_dir)?;
             let db_path = app_data_dir.join("notes.db");
+
+            // BUG-34: Initialize tracing-appender using the OS-correct
+            // `app_data_dir` so the "Open logs folder" action (get_log_dir)
+            // and the on-disk log files resolve to the same path on every
+            // platform (Linux, macOS, Windows, Android).
+            let log_dir = log_dir_for_app_data(&app_data_dir);
+            let _ = std::fs::create_dir_all(&log_dir);
+
+            let file_appender = tracing_appender::rolling::daily(&log_dir, "agaric.log");
+            let (non_blocking, log_guard) = tracing_appender::non_blocking(file_appender);
+
+            // Preserve any user-provided `RUST_LOG` directives for
+            // `agaric` / `frontend` (BUG-40).
+            let rust_log = std::env::var("RUST_LOG").unwrap_or_default();
+            let directives =
+                build_log_directives(&rust_log, &[("agaric", "info"), ("frontend", "info")]);
+            let env_filter = EnvFilter::try_new(&directives)
+                .unwrap_or_else(|_| EnvFilter::new("agaric=info,frontend=info"));
+
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .with_writer(non_blocking)
+                        .with_ansi(false),
+                )
+                .init();
+
+            tracing::info!(log_dir = %log_dir.display(), "log directory initialized");
+
+            // M-45: Clean up log files older than 30 days (best-effort,
+            // boot-time only).
+            cleanup_old_log_files(&log_dir, 30);
+
+            // Keep the non-blocking appender's worker guard alive for the
+            // lifetime of the app so buffered writes are never lost.
+            app.manage(LogGuard(log_guard));
 
             // Initialize separated read/write pools
             let pools = tauri::async_runtime::block_on(db::init_pools(&db_path))?;
@@ -365,6 +396,26 @@ pub fn run() {
             // FEAT-1: Rebuild page_id column at boot to ensure consistency.
             if let Err(e) = materializer.try_enqueue_background(MaterializeTask::RebuildPageIds) {
                 tracing::warn!(error = %e, "failed to enqueue page_id rebuild at boot");
+            }
+
+            // BUG-23: When drafts were recovered before the materializer was
+            // created, the targeted FTS / block_links / tags / pages caches
+            // are stale for those block_ids. Refresh them now and block until
+            // the background queue drains so UI queries after setup never see
+            // pre-recovery state.
+            if !report.drafts_recovered.is_empty() {
+                if let Err(e) = tauri::async_runtime::block_on(
+                    recovery::refresh_caches_for_recovered_drafts(
+                        &materializer,
+                        &report.drafts_recovered,
+                    ),
+                ) {
+                    tracing::warn!(
+                        error = %e,
+                        drafts = report.drafts_recovered.len(),
+                        "failed to refresh caches after draft recovery",
+                    );
+                }
             }
 
             // Create scheduler wrapped in Arc for sharing with the SyncDaemon
@@ -861,5 +912,71 @@ mod log_directives_tests {
         assert!(!has_directive_for_target("debug", "agaric"));
         // Different target that happens to share a prefix substring.
         assert!(!has_directive_for_target("agaric_extras=trace", "agaric"));
+    }
+}
+
+// ===========================================================================
+// BUG-34: log_dir_for_app_data helper tests
+// ===========================================================================
+//
+// The same helper is used by the tracing-appender setup in `run()` and by
+// the `get_log_dir` Tauri command (via `src/commands/logging.rs`). These
+// tests pin down the invariant: both code paths MUST resolve to the same
+// path — "<app_data_dir>/logs" — regardless of platform.  Before BUG-34 was
+// fixed, `run()` hard-coded a Linux XDG path while `get_log_dir` used Tauri's
+// OS-correct resolver, so the two drifted on macOS / Windows.
+
+#[cfg(test)]
+mod log_dir_tests {
+    use super::log_dir_for_app_data;
+    use std::path::Path;
+
+    #[test]
+    fn log_dir_for_app_data_appends_logs_subdir() {
+        let app_data = Path::new("/tmp/agaric-test-data");
+        let log_dir = log_dir_for_app_data(app_data);
+        assert_eq!(
+            log_dir,
+            Path::new("/tmp/agaric-test-data/logs"),
+            "log directory must be <app_data_dir>/logs"
+        );
+    }
+
+    #[test]
+    fn log_dir_for_app_data_preserves_base_directory() {
+        // The helper must never mutate the app_data_dir (no `../` etc).
+        let app_data = Path::new("/var/mobile/Containers/Data/Application/XYZ/Data/com.agaric");
+        let log_dir = log_dir_for_app_data(app_data);
+        assert!(
+            log_dir.starts_with(app_data),
+            "log dir must start with app_data_dir, got {log_dir:?}"
+        );
+        assert!(
+            log_dir.ends_with("logs"),
+            "log dir must end with 'logs', got {log_dir:?}"
+        );
+    }
+
+    /// Integration-style regression test for BUG-34.
+    ///
+    /// Before the fix, `run()` computed the log directory from `HOME`
+    /// (Linux XDG layout) while `get_log_dir` used `app.path().app_data_dir()`,
+    /// so on macOS / Windows the two diverged. The fix routes both through
+    /// `log_dir_for_app_data()`; this test verifies the helper's output
+    /// matches the same `<app_data_dir>/logs` shape `get_log_dir` returns.
+    #[test]
+    fn log_dir_matches_get_log_dir_contract() {
+        // Simulate what `get_log_dir` does: take the Tauri-resolved
+        // `app_data_dir` and append "logs" via the helper.
+        let simulated_app_data = std::env::temp_dir().join("agaric-bug34-test");
+        let log_dir = log_dir_for_app_data(&simulated_app_data);
+
+        // `get_log_dir` does: `data_dir.join("logs").to_string_lossy()`.
+        // Our helper result must serialize to the same string.
+        let expected = simulated_app_data.join("logs");
+        assert_eq!(
+            log_dir, expected,
+            "tracing-appender log dir must equal <app_data_dir>/logs (what get_log_dir returns)"
+        );
     }
 }

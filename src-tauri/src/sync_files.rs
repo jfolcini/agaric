@@ -59,6 +59,84 @@ pub struct FileTransferStats {
 // Helper functions
 // ---------------------------------------------------------------------------
 
+/// Validate that an attachment's stored `fs_path` is a safe relative path
+/// under `app_data_dir` and return the resolved absolute path.
+///
+/// BUG-35: Prevents a malformed op record or corrupted row from
+/// redirecting attachment reads/writes to arbitrary filesystem locations
+/// via `..` traversal or absolute paths.  The threat model (`AGENTS.md`)
+/// is not adversarial — sync peers are the user's own devices — but this
+/// guard is a data-integrity defense against buggy frontends, bad imports
+/// and corrupted metadata.
+///
+/// Rejects:
+/// - Empty `fs_path`
+/// - Absolute `fs_path` (any platform)
+/// - Any `..` (`Component::ParentDir`) component anywhere in the path
+/// - Any root-dir component (`/`, drive prefix on Windows)
+///
+/// The check is lexical so it works for paths whose target file does not
+/// exist yet (required by [`write_attachment_file`]). Callers that want
+/// an additional canonicalization check should do so separately.
+///
+/// # Errors
+///
+/// Returns [`AppError::Validation`] when the path escapes or is otherwise
+/// malformed.
+pub fn validate_attachment_fs_path(
+    app_data_dir: &Path,
+    fs_path: &str,
+) -> Result<PathBuf, AppError> {
+    check_attachment_fs_path_shape(fs_path)?;
+    Ok(app_data_dir.join(fs_path))
+}
+
+/// Pure lexical check on an attachment `fs_path` — rejects absolute paths,
+/// `..` traversal, root / drive prefixes, and empty strings. Exists so
+/// command-layer inserts can validate without needing to know the current
+/// `app_data_dir` (BUG-35). See [`validate_attachment_fs_path`] for the
+/// full docs.
+///
+/// # Errors
+///
+/// Returns [`AppError::Validation`] when the path escapes or is otherwise
+/// malformed.
+pub fn check_attachment_fs_path_shape(fs_path: &str) -> Result<(), AppError> {
+    use std::path::Component;
+
+    if fs_path.is_empty() {
+        return Err(AppError::Validation(
+            "attachment path must not be empty".into(),
+        ));
+    }
+
+    let candidate = Path::new(fs_path);
+    if candidate.is_absolute() {
+        return Err(AppError::Validation(
+            "attachment path escapes app data dir".into(),
+        ));
+    }
+
+    // Lexical walk: reject anything that is not a plain named component.
+    // Note: PathBuf::components() normalizes interior `.` but NOT `..`,
+    // so a `..` anywhere in the path will surface as `Component::ParentDir`.
+    // On non-Windows, backslash-separated strings like "..\\foo" are a
+    // single opaque file-name component (harmless on Linux / macOS but
+    // documented in TEST-38).
+    for component in candidate.components() {
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(AppError::Validation(
+                    "attachment path escapes app data dir".into(),
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Query the `attachments` table and return entries whose `fs_path` file
 /// does not exist on disk under `app_data_dir`.
 pub async fn find_missing_attachments(
@@ -96,11 +174,16 @@ async fn get_attachment_fs_path(
 /// Read an attachment file from disk and compute its blake3 hash.
 ///
 /// Returns `(file_bytes, blake3_hex_hash)`.
+///
+/// The `fs_path` is validated via [`validate_attachment_fs_path`] before
+/// any I/O is performed (BUG-35). A malformed `fs_path` that attempts to
+/// escape `app_data_dir` (absolute path, `..` traversal, drive prefix on
+/// Windows) is rejected with [`AppError::Validation`].
 pub fn read_attachment_file(
     app_data_dir: &Path,
     fs_path: &str,
 ) -> Result<(Vec<u8>, String), AppError> {
-    let full_path = app_data_dir.join(fs_path);
+    let full_path = validate_attachment_fs_path(app_data_dir, fs_path)?;
     let data = std::fs::read(&full_path).map_err(|e| {
         AppError::Io(std::io::Error::new(
             e.kind(),
@@ -112,12 +195,15 @@ pub fn read_attachment_file(
 }
 
 /// Write an attachment file to disk, creating parent directories as needed.
+///
+/// The `fs_path` is validated via [`validate_attachment_fs_path`] before
+/// any I/O is performed (BUG-35).
 pub fn write_attachment_file(
     app_data_dir: &Path,
     fs_path: &str,
     data: &[u8],
 ) -> Result<(), AppError> {
-    let full_path = app_data_dir.join(fs_path);
+    let full_path = validate_attachment_fs_path(app_data_dir, fs_path)?;
     if let Some(parent) = full_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
             AppError::Io(std::io::Error::new(
@@ -1567,5 +1653,256 @@ mod tests {
         assert_eq!(stats.files_received, 0);
         assert_eq!(stats.bytes_sent, 0);
         assert_eq!(stats.bytes_received, 0);
+    }
+
+    // ── TEST-38 / BUG-35: attachment path traversal validation ────────────
+    //
+    // These tests pin down `validate_attachment_fs_path` and its sibling
+    // `check_attachment_fs_path_shape` against a malformed `fs_path` —
+    // regression coverage so the guard cannot silently regress if a future
+    // refactor of `read_attachment_file` / `write_attachment_file` / the
+    // attachment command layer removes the call.
+
+    #[test]
+    fn validate_rejects_parent_dir_traversal() {
+        let dir = TempDir::new().unwrap();
+        let result = validate_attachment_fs_path(dir.path(), "../../etc/passwd");
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "`../../etc/passwd` must be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_single_parent_dir_traversal() {
+        let dir = TempDir::new().unwrap();
+        let result = validate_attachment_fs_path(dir.path(), "../other_app/data");
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "`../other_app/data` must be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_parent_dir_in_middle() {
+        let dir = TempDir::new().unwrap();
+        // Even if the path starts with a normal component, a `..` anywhere
+        // can still escape.
+        let result = validate_attachment_fs_path(dir.path(), "attachments/../../escape");
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "`..` in the middle must be rejected, got {result:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_rejects_absolute_path_unix() {
+        let dir = TempDir::new().unwrap();
+        let result = validate_attachment_fs_path(dir.path(), "/etc/passwd");
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "absolute path `/etc/passwd` must be rejected, got {result:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn validate_rejects_absolute_path_windows() {
+        let dir = TempDir::new().unwrap();
+        let result = validate_attachment_fs_path(dir.path(), "C:\\Windows\\System32");
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "absolute Windows path must be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn validate_accepts_standard_attachments_path() {
+        let dir = TempDir::new().unwrap();
+        let result = validate_attachment_fs_path(dir.path(), "attachments/ABC123");
+        let resolved = result.expect("standard attachment path should validate");
+        assert!(
+            resolved.starts_with(dir.path()),
+            "resolved path must start with app_data_dir"
+        );
+        assert!(resolved.ends_with("attachments/ABC123"));
+    }
+
+    #[test]
+    fn validate_accepts_single_file_in_attachments() {
+        let dir = TempDir::new().unwrap();
+        let result = validate_attachment_fs_path(dir.path(), "attachments/photo.png");
+        assert!(result.is_ok(), "nested attachment path should validate");
+    }
+
+    #[test]
+    fn validate_rejects_empty_fs_path() {
+        let dir = TempDir::new().unwrap();
+        let result = validate_attachment_fs_path(dir.path(), "");
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "empty path must be rejected, got {result:?}"
+        );
+    }
+
+    /// On Linux, Windows-style backslashes in a relative path are treated
+    /// as a single opaque file-name component (PathBuf::components()
+    /// returns one `Normal` segment for `"..\\..\\secrets"`). That's safe
+    /// — no real `..` component is produced — but the behaviour differs
+    /// between platforms, so this test documents it explicitly. On
+    /// Windows, PathBuf::join parses backslashes as separators and the
+    /// `..` components DO surface, which the validator rejects.
+    #[test]
+    fn validate_windows_style_backslashes_on_current_platform() {
+        let dir = TempDir::new().unwrap();
+        let result = validate_attachment_fs_path(dir.path(), "..\\..\\secrets");
+        #[cfg(unix)]
+        {
+            assert!(
+                result.is_ok(),
+                "on Linux, `..\\\\..\\\\secrets` is a single opaque component; \
+                 validator accepts it because PathBuf does not parse backslashes \
+                 as separators. (Note: any OS later interpreting this path would \
+                 still only look in `app_data_dir/..\\..\\secrets` — no escape.)"
+            );
+        }
+        #[cfg(windows)]
+        {
+            assert!(
+                matches!(result, Err(AppError::Validation(_))),
+                "on Windows, backslashes ARE separators so `..\\..\\secrets` \
+                 must be rejected, got {result:?}"
+            );
+        }
+    }
+
+    // ── shape-only helper: same rules, no app_data_dir join ────────────────
+
+    #[test]
+    fn shape_check_matches_full_validator() {
+        // Every case the full validator rejects must also be rejected by
+        // the shape-only helper, and vice versa. The shape helper is used
+        // at the command layer (`add_attachment`) where `app_data_dir` is
+        // not directly available.
+        let cases = [
+            ("", true),
+            ("../../etc/passwd", true),
+            ("../other", true),
+            ("attachments/../escape", true),
+            ("attachments/ABC", false),
+            ("attachments/photo.png", false),
+        ];
+        #[cfg(unix)]
+        let abs = "/etc/passwd";
+        #[cfg(windows)]
+        let abs = "C:\\Windows";
+        let mut all: Vec<(&str, bool)> = cases.to_vec();
+        all.push((abs, true));
+
+        let dir = TempDir::new().unwrap();
+        for (input, should_fail) in all {
+            let shape = check_attachment_fs_path_shape(input);
+            let full = validate_attachment_fs_path(dir.path(), input);
+            assert_eq!(
+                shape.is_err(),
+                should_fail,
+                "shape check disagreed on {input:?}: {shape:?}"
+            );
+            assert_eq!(
+                full.is_err(),
+                should_fail,
+                "full validator disagreed on {input:?}: {full:?}"
+            );
+        }
+    }
+
+    // ── Integration: read_attachment_file enforces the validator ───────────
+
+    #[test]
+    fn read_attachment_file_rejects_traversal_without_touching_disk() {
+        let dir = TempDir::new().unwrap();
+        // Pre-create a file OUTSIDE the app data dir — if the validator is
+        // missing, `..` traversal would let us read it.
+        let parent = dir.path().parent().unwrap();
+        let decoy = parent.join("agaric-bug35-decoy.txt");
+        std::fs::write(&decoy, b"secret data").unwrap();
+
+        // Compute a path that, without validation, would resolve into `decoy`.
+        let file_name = decoy.file_name().unwrap().to_string_lossy();
+        let traversal = format!("../{file_name}");
+
+        let result = read_attachment_file(dir.path(), &traversal);
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "read_attachment_file must reject traversal path `{traversal}`, got {result:?}"
+        );
+
+        // Clean up decoy
+        let _ = std::fs::remove_file(&decoy);
+    }
+
+    #[test]
+    fn write_attachment_file_rejects_traversal() {
+        let dir = TempDir::new().unwrap();
+        let result = write_attachment_file(dir.path(), "../../evil.bin", b"payload");
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "write_attachment_file must reject traversal path, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn write_attachment_file_rejects_empty_path() {
+        let dir = TempDir::new().unwrap();
+        let result = write_attachment_file(dir.path(), "", b"payload");
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "write_attachment_file must reject empty path, got {result:?}"
+        );
+    }
+
+    // ── Integration: add_attachment_inner enforces the validator ───────────
+
+    #[tokio::test]
+    async fn add_attachment_rejects_traversal_at_command_layer() {
+        use crate::materializer::Materializer;
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        let mat = Materializer::new(pool.clone());
+
+        // Seed a valid block so the block-exists check passes *if the path
+        // validator did not exist*. This isolates the test to the path check.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content) VALUES ('BLK_OK', 'content', 'ok')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let result = crate::commands::add_attachment_inner(
+            &pool,
+            "test-device",
+            &mat,
+            "BLK_OK".to_string(),
+            "evil.bin".to_string(),
+            "application/octet-stream".to_string(),
+            10,
+            "../../outside/evil.bin".to_string(),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "add_attachment must reject traversal fs_path at the command layer, got {result:?}"
+        );
+
+        // No row inserted
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "bad fs_path must not leave an attachment row");
     }
 }

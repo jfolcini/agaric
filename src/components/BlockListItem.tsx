@@ -133,6 +133,9 @@ function BlockListItemInner({
     <li
       className={cn(
         'flex items-center gap-2 rounded-md px-3 py-2 cursor-pointer transition-colors',
+        // Touch: ensure 44px minimum height so embedded pills (priority, date chip)
+        // with touch-device padding don't get clipped at the bottom (UX-195).
+        '[@media(pointer:coarse)]:min-h-11',
         blockId && 'cursor-grab',
         isFocused && 'ring-2 ring-ring/50 bg-accent/30',
         className,
@@ -155,8 +158,10 @@ function BlockListItemInner({
       {/* Metadata slot: icons, badges, chips */}
       {metadata}
 
-      {/* Block content */}
-      <span className={cn('text-sm min-w-0 flex-1 line-clamp-2', contentClassName)}>
+      {/* Block content — full content by default; callers opt into line-clamp
+          via contentClassName="line-clamp-2" when a truncated preview is needed
+          (e.g. SearchPanel). Agenda shows full content (UX-197). */}
+      <span className={cn('text-sm min-w-0 flex-1', contentClassName)}>
         {richContent ?? emptyContentFallback}
       </span>
 

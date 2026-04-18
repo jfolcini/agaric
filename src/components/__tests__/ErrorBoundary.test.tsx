@@ -13,6 +13,11 @@ vi.mock('lucide-react', () => ({
   ),
 }))
 
+const relaunchMock = vi.fn()
+vi.mock('@tauri-apps/plugin-process', () => ({
+  relaunch: () => relaunchMock(),
+}))
+
 import { ErrorBoundary } from '../ErrorBoundary'
 
 function ThrowingChild(): React.ReactElement {
@@ -21,6 +26,7 @@ function ThrowingChild(): React.ReactElement {
 
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {})
+  relaunchMock.mockReset()
 })
 
 afterEach(() => {
@@ -51,8 +57,24 @@ describe('ErrorBoundary', () => {
     expect(screen.getByRole('button', { name: /Reload/i })).toBeInTheDocument()
   })
 
-  it('calls window.location.reload on Reload click', async () => {
+  it('calls Tauri relaunch on Reload click', async () => {
     const user = userEvent.setup()
+    relaunchMock.mockResolvedValueOnce(undefined)
+
+    render(
+      <ErrorBoundary>
+        <ThrowingChild />
+      </ErrorBoundary>,
+    )
+
+    await user.click(screen.getByRole('button', { name: /Reload/i }))
+
+    expect(relaunchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to window.location.reload when plugin rejects', async () => {
+    const user = userEvent.setup()
+    relaunchMock.mockRejectedValueOnce(new Error('plugin unavailable'))
     const reloadMock = vi.fn()
     Object.defineProperty(window, 'location', {
       value: { ...window.location, reload: reloadMock },
@@ -67,6 +89,10 @@ describe('ErrorBoundary', () => {
 
     await user.click(screen.getByRole('button', { name: /Reload/i }))
 
+    // Wait a microtask for the promise chain to flush
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(relaunchMock).toHaveBeenCalledTimes(1)
     expect(reloadMock).toHaveBeenCalledTimes(1)
   })
 

@@ -56,6 +56,12 @@ pub async fn add_attachment_inner(
         )));
     }
 
+    // BUG-35: Reject `fs_path` values that would escape the app data dir
+    // (absolute paths, `..` traversal, drive prefixes). The full path
+    // resolution happens later in read/write, but validating here stops
+    // bad rows from ever reaching the `attachments` table.
+    crate::sync_files::check_attachment_fs_path_shape(&fs_path)?;
+
     // Generate ULID for attachment_id
     let attachment_id = ulid::Ulid::new().to_string().to_uppercase();
     let now = now_rfc3339();

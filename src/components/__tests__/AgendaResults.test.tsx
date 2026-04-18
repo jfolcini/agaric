@@ -592,4 +592,28 @@ describe('AgendaResults', () => {
 
     expect(screen.queryByTestId('dependency-indicator')).not.toBeInTheDocument()
   })
+
+  // UX-195: the due date chip must get extra vertical padding on touch devices
+  //         so the pill meets the 44px hit-target when embedded in the list row.
+  it('UX-195: due date chip has touch padding override', () => {
+    const blocks = [makeBlock({ id: 'B1', content: 'Has deadline', due_date: '2025-04-15' })]
+
+    render(<AgendaResults {...defaultProps({ blocks })} />)
+
+    const chip = document.querySelector('.agenda-results-due')
+    expect(chip).not.toBeNull()
+    // Touch-only py-1 override complements px-2 → ~32px tall pill on coarse pointers.
+    expect(chip?.className).toContain('[@media(pointer:coarse)]:py-1')
+  })
+
+  // UX-197: agenda items no longer truncate content with line-clamp-2
+  it('UX-197: agenda content span has no line-clamp-2', () => {
+    const longContent = 'A long agenda item that would have been truncated before UX-197'.repeat(3)
+    const blocks = [makeBlock({ id: 'B1', content: longContent })]
+
+    render(<AgendaResults {...defaultProps({ blocks })} />)
+
+    const contentSpan = screen.getByText(longContent)
+    expect(contentSpan.className).not.toContain('line-clamp-2')
+  })
 })

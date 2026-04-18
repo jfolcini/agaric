@@ -17,13 +17,15 @@ import {
   type ShortcutBinding,
   setCustomShortcut,
 } from '@/lib/keyboard-config'
+import { modKey } from '@/lib/platform'
 import { ConfirmDialog } from './ConfirmDialog'
 
 /** Render a keys string as styled <kbd> elements. Handles `+` combos and `/` alternatives. */
 function renderKeys(keys: string): React.ReactNode {
   const alternatives = keys.split(' / ')
+  const mod = modKey()
   return alternatives.map((alt, i) => {
-    const parts = alt.split(' + ')
+    const parts = alt.split(' + ').map((part) => (part === 'Ctrl' ? mod : part))
     return (
       <React.Fragment key={alt}>
         {i > 0 && <span className="text-muted-foreground font-normal mx-1">/</span>}

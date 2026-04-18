@@ -1,5 +1,7 @@
 use super::*;
 use crate::db::init_pool;
+use crate::error::AppError;
+use crate::materializer::Materializer;
 use crate::op::{CreateBlockPayload, OpPayload};
 use crate::op_log::append_local_op_at;
 use crate::ulid::BlockId;
@@ -14,6 +16,14 @@ async fn test_pool() -> (SqlitePool, TempDir) {
     let db_path: PathBuf = dir.path().join("test.db");
     let pool = init_pool(&db_path).await.unwrap();
     (pool, dir)
+}
+
+/// Build a `Materializer` for tests that need to pass one to
+/// `apply_snapshot` (BUG-42). The tests that don't care about cache
+/// rebuild behaviour can still use this — the enqueued tasks are
+/// harmless and will just process against the restored DB.
+fn test_materializer(pool: &SqlitePool) -> Materializer {
+    Materializer::new(pool.clone())
 }
 
 /// Create a minimal SnapshotData for unit tests (no DB needed).
@@ -389,6 +399,7 @@ async fn create_snapshot_writes_pending_then_complete() {
 #[tokio::test]
 async fn apply_snapshot_wipes_and_restores() {
     let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
     let device_id = "dev-1";
 
     // Insert original data + op
@@ -420,7 +431,7 @@ async fn apply_snapshot_wipes_and_restores() {
     assert_eq!(count, 2, "should have 2 blocks before apply");
 
     // Apply snapshot (RESET)
-    let restored = apply_snapshot(&pool, &snap_data).await.unwrap();
+    let restored = apply_snapshot(&pool, &mat, &snap_data).await.unwrap();
 
     // Only original block should remain
     let count_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
@@ -464,6 +475,7 @@ async fn apply_snapshot_wipes_and_restores() {
 #[tokio::test]
 async fn apply_snapshot_empty_db() {
     let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
 
     // Create snapshot data with known content (encode without DB)
     let data = sample_snapshot_data();
@@ -501,7 +513,7 @@ async fn apply_snapshot_empty_db() {
     };
     let simple_encoded = encode_snapshot(&simple_data).unwrap();
 
-    let restored = apply_snapshot(&pool, &simple_encoded).await.unwrap();
+    let restored = apply_snapshot(&pool, &mat, &simple_encoded).await.unwrap();
 
     assert_eq!(
         restored.tables.blocks.len(),
@@ -944,6 +956,7 @@ async fn compact_multi_device_ops() {
 #[tokio::test]
 async fn apply_snapshot_rejects_fk_violation() {
     let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
 
     // Snapshot with block_tags that reference blocks NOT in the snapshot
     let bad_data = SnapshotData {
@@ -966,7 +979,7 @@ async fn apply_snapshot_rejects_fk_violation() {
     };
 
     let encoded = encode_snapshot(&bad_data).unwrap();
-    let result = apply_snapshot(&pool, &encoded).await;
+    let result = apply_snapshot(&pool, &mat, &encoded).await;
     assert!(
         result.is_err(),
         "FK violation should cause apply_snapshot to fail"
@@ -982,6 +995,7 @@ async fn apply_snapshot_rejects_fk_violation() {
 #[tokio::test]
 async fn apply_snapshot_full_all_5_tables() {
     let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
 
     // Build a snapshot with all 5 table types populated.
     // Note: block_tags.tag_id references blocks(id), so the "tag" must
@@ -1069,7 +1083,7 @@ async fn apply_snapshot_full_all_5_tables() {
     };
 
     let encoded = encode_snapshot(&data).unwrap();
-    let restored = apply_snapshot(&pool, &encoded).await.unwrap();
+    let restored = apply_snapshot(&pool, &mat, &encoded).await.unwrap();
 
     // Verify all tables populated
     assert_eq!(
@@ -2360,17 +2374,23 @@ fn snapshot_version_4_rejected() {
 }
 
 // =======================================================================
-// Snapshot restore cache verification (T-11 / B-57)
+// Snapshot restore cache verification (BUG-42 regression)
 // =======================================================================
 
-/// After `apply_snapshot()`, cache tables should be EMPTY because the
-/// restore wipes them and does NOT trigger a cache rebuild — the caller
-/// is expected to rebuild caches after restore. This test documents the
-/// current behavior; see B-57 for the follow-up to trigger automatic
-/// cache rebuilds after restore.
-#[tokio::test]
-async fn apply_snapshot_caches_are_empty_after_restore() {
+/// Regression test for BUG-42: after `apply_snapshot()`, cache-rebuild
+/// tasks must be enqueued on the materializer so the UI doesn't see an
+/// empty agenda / tag list / page list / search until the next unrelated
+/// op triggers rebuilds by side-effect.
+///
+/// Previously this test documented the pre-fix behaviour ("caches are
+/// EMPTY after restore — caller must rebuild them"). Now `apply_snapshot`
+/// does the enqueue itself; flushing the background queue lets the
+/// rebuild tasks run, and the caches are populated to match the restored
+/// core data.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_snapshot_rebuilds_caches() {
     let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
 
     // Build a snapshot that has blocks, block_tags, and block_properties
     // (which would normally seed tags_cache, pages_cache, agenda_cache).
@@ -2443,9 +2463,9 @@ async fn apply_snapshot_caches_are_empty_after_restore() {
         },
     };
 
-    // Pre-populate caches so we can verify they get wiped.
-    // (Simulate state before a restore where caches had data.)
-    // First, insert dummy blocks that the cache FKs reference.
+    // Pre-populate caches with STALE data that doesn't match the snapshot.
+    // A correct `apply_snapshot` must wipe these and rebuild to match the
+    // restored core tables.
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, is_conflict) \
          VALUES ('stale-tag', 'tag', 'stale', 0)",
@@ -2475,108 +2495,170 @@ async fn apply_snapshot_caches_are_empty_after_restore() {
     .await
     .unwrap();
 
-    // Verify pre-populate worked
-    let tags_before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM tags_cache")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(tags_before, 1, "pre-condition: tags_cache has stale data");
-
-    let pages_before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM pages_cache")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(pages_before, 1, "pre-condition: pages_cache has stale data");
-
-    // Apply snapshot
-    let encoded = encode_snapshot(&data).unwrap();
-    let restored = apply_snapshot(&pool, &encoded).await.unwrap();
-
-    // Verify core tables are restored correctly
     assert_eq!(
-        restored.tables.blocks.len(),
-        3,
-        "restored snapshot should have 3 blocks"
-    );
-    assert_eq!(
-        restored.tables.block_tags.len(),
+        sqlx::query_scalar!("SELECT COUNT(*) FROM tags_cache")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
         1,
-        "restored snapshot should have 1 block_tag"
+        "pre-condition: tags_cache has stale data"
+    );
+    assert_eq!(
+        sqlx::query_scalar!("SELECT COUNT(*) FROM pages_cache")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        1,
+        "pre-condition: pages_cache has stale data"
     );
 
-    // Verify blocks are in the DB
+    // Apply snapshot — this should both wipe the stale caches AND enqueue
+    // the cache rebuild tasks on the materializer.
+    let encoded = encode_snapshot(&data).unwrap();
+    let restored = apply_snapshot(&pool, &mat, &encoded).await.unwrap();
+
+    assert_eq!(restored.tables.blocks.len(), 3);
+    assert_eq!(restored.tables.block_tags.len(), 1);
+
+    // Core tables are restored immediately.
     let block_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(
-        block_count, 3,
-        "database should have 3 blocks after restore"
-    );
+    assert_eq!(block_count, 3, "core blocks must be restored synchronously");
 
-    // Verify block_tags are in the DB
     let tag_assoc_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_tags")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(
-        tag_assoc_count, 1,
-        "database should have 1 block_tag after restore"
+    assert_eq!(tag_assoc_count, 1);
+
+    // Stale caches have been WIPED by apply_snapshot (the transaction
+    // deletes them before inserting snapshot data). The rebuild tasks
+    // were enqueued — run them all by flushing the background queue.
+    mat.flush_background().await.unwrap();
+
+    // After rebuild, caches should reflect the snapshot (not the stale
+    // pre-populate). The exact row counts depend on each rebuild's
+    // semantics; the important invariant is that stale rows are gone
+    // and the fresh tag / page from the snapshot appears.
+    let tags_after: Vec<(String, String)> =
+        sqlx::query_as("SELECT tag_id, name FROM tags_cache ORDER BY tag_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(
+        tags_after.iter().all(|(tid, _)| tid != "stale-tag"),
+        "stale tags_cache row must be gone after rebuild; got {tags_after:?}"
+    );
+    assert!(
+        tags_after.iter().any(|(tid, _)| tid == "tag-work"),
+        "tags_cache must contain the rebuilt tag from the snapshot; got {tags_after:?}"
     );
 
-    // === Cache verification ===
-    // tags_cache should be EMPTY after restore (wiped, not rebuilt).
-    // Cache rebuild should be triggered by caller — see B-57.
-    let tags_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM tags_cache")
+    let pages_after: Vec<(String, String)> =
+        sqlx::query_as("SELECT page_id, title FROM pages_cache ORDER BY page_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(
+        pages_after.iter().all(|(pid, _)| pid != "stale-page"),
+        "stale pages_cache row must be gone after rebuild; got {pages_after:?}"
+    );
+    assert!(
+        pages_after.iter().any(|(pid, _)| pid == "page-1"),
+        "pages_cache must contain the rebuilt page from the snapshot; got {pages_after:?}"
+    );
+
+    mat.shutdown();
+}
+
+// =======================================================================
+// apply_snapshot_rejects_traversal_attachment_fs_path (BUG-35)
+// =======================================================================
+
+/// Belt-and-suspenders: ensure a snapshot that contains an attachment
+/// with a traversal `fs_path` (e.g. from a corrupted / hostile snapshot
+/// file) is rejected at the trust boundary. `read_attachment_file` and
+/// `write_attachment_file` already validate on access, but we want the
+/// table-level invariant "rows in `attachments` have well-formed fs_path"
+/// to hold.
+#[tokio::test]
+async fn apply_snapshot_rejects_traversal_attachment_fs_path() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let data = SnapshotData {
+        schema_version: SCHEMA_VERSION,
+        snapshot_device_id: "dev-traversal".to_string(),
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: "traversal-test".to_string(),
+        tables: SnapshotTables {
+            blocks: vec![BlockSnapshot {
+                id: "blk-1".to_string(),
+                block_type: "content".to_string(),
+                content: Some("hosts an attachment".to_string()),
+                parent_id: None,
+                position: Some(1),
+                deleted_at: None,
+                is_conflict: 0,
+                conflict_source: None,
+                todo_state: None,
+                priority: None,
+                due_date: None,
+                scheduled_date: None,
+            }],
+            block_tags: vec![],
+            block_properties: vec![],
+            block_links: vec![],
+            attachments: vec![AttachmentSnapshot {
+                id: "att-bad".to_string(),
+                block_id: "blk-1".to_string(),
+                mime_type: "text/plain".to_string(),
+                filename: "leak.txt".to_string(),
+                size_bytes: 10,
+                fs_path: "../../../etc/passwd".to_string(),
+                created_at: "2025-01-01T00:00:00Z".to_string(),
+                deleted_at: None,
+            }],
+            property_definitions: vec![],
+            page_aliases: vec![],
+        },
+    };
+
+    let encoded = encode_snapshot(&data).unwrap();
+    let err = apply_snapshot(&pool, &mat, &encoded)
+        .await
+        .expect_err("apply_snapshot must reject traversal fs_path");
+
+    // The rejection must happen before the data lands — `attachments` stays empty.
+    let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM attachments")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(
-        tags_after, 0,
-        "tags_cache must be empty after restore (cache rebuild not triggered — B-57)"
+        count, 0,
+        "attachment row must NOT be committed when fs_path fails validation"
     );
 
-    // pages_cache should be EMPTY after restore (wiped, not rebuilt).
-    // Cache rebuild should be triggered by caller — see B-57.
-    let pages_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM pages_cache")
+    // And blocks also stay empty — the entire transaction must have rolled back,
+    // not just the attachment insert. This asserts atomicity of restore.
+    let blk_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(
-        pages_after, 0,
-        "pages_cache must be empty after restore (cache rebuild not triggered — B-57)"
+        blk_count, 0,
+        "blocks must also roll back on attachment validation failure"
     );
 
-    // agenda_cache should be EMPTY after restore (wiped, not rebuilt).
-    // Cache rebuild should be triggered by caller — see B-57.
-    let agenda_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM agenda_cache")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        agenda_after, 0,
-        "agenda_cache must be empty after restore (cache rebuild not triggered — B-57)"
-    );
+    // Error is the Validation variant from sync_files.
+    match err {
+        AppError::Validation(_) => {}
+        other => panic!("expected Validation error, got {other:?}"),
+    }
 
-    // block_tag_inherited should be EMPTY (no materializer has run).
-    let inherited_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_tag_inherited")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        inherited_after, 0,
-        "block_tag_inherited must be empty after restore (no materializer run)"
-    );
-
-    // projected_agenda_cache should be EMPTY (no materializer has run).
-    let projected_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM projected_agenda_cache")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        projected_after, 0,
-        "projected_agenda_cache must be empty after restore (no materializer run)"
-    );
+    mat.shutdown();
 }
 
 // =======================================================================

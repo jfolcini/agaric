@@ -3,6 +3,7 @@ import React from 'react'
 import { Button } from '@/components/ui/button'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { relaunchApp } from '@/lib/relaunch-app'
 
 interface ErrorBoundaryProps {
   children: React.ReactNode
@@ -43,7 +44,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
             <p className="text-sm text-muted-foreground max-w-sm text-center">
               {this.state.error?.message ?? i18n.t('error.unexpected')}
             </p>
-            <Button variant="outline" onClick={() => window.location.reload()}>
+            <Button variant="outline" onClick={() => void relaunchApp()}>
               <RefreshCw className="h-3.5 w-3.5" />
               {i18n.t('action.reload')}
             </Button>

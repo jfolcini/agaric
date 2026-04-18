@@ -1312,12 +1312,12 @@ describe('JournalPage', () => {
       })
     })
 
-    it('default agenda loads dated tasks via queryByProperty with due_date and scheduled_date', async () => {
+    it('default agenda loads TODO+DOING tasks via queryByProperty with todo_state (UX-196)', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
         if (cmd === 'query_by_property') {
-          const params = args as { key?: string }
-          if (params?.key === 'due_date') {
+          const params = args as { key?: string; valueText?: string }
+          if (params?.key === 'todo_state' && params?.valueText === 'TODO') {
             return {
               items: [
                 {
@@ -1338,7 +1338,7 @@ describe('JournalPage', () => {
               has_more: false,
             }
           }
-          if (params?.key === 'scheduled_date') {
+          if (params?.key === 'todo_state' && params?.valueText === 'DOING') {
             return {
               items: [
                 {
@@ -1349,7 +1349,7 @@ describe('JournalPage', () => {
                   position: 1,
                   deleted_at: null,
                   is_conflict: false,
-                  todo_state: 'TODO',
+                  todo_state: 'DOING',
                   due_date: null,
                   priority: null,
                   scheduled_date: '2025-06-16',
@@ -1376,23 +1376,27 @@ describe('JournalPage', () => {
       const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
       await user.click(agendaTab)
 
-      // Wait for the filter execution effect to fire and verify both queries are made
+      // UX-196: default filter is now { status: ['TODO', 'DOING'] }, not empty.
+      // queryStatus calls query_by_property once per value with { key: 'todo_state',
+      // valueText: value } — so we expect two invocations.
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith(
           'query_by_property',
           expect.objectContaining({
-            key: 'due_date',
+            key: 'todo_state',
+            valueText: 'TODO',
           }),
         )
         expect(mockedInvoke).toHaveBeenCalledWith(
           'query_by_property',
           expect.objectContaining({
-            key: 'scheduled_date',
+            key: 'todo_state',
+            valueText: 'DOING',
           }),
         )
       })
 
-      // AgendaResults should have received merged blocks (2 unique tasks)
+      // AgendaResults should have received the 2 TODO/DOING tasks.
       await waitFor(() => {
         const results = screen.getByTestId('agenda-results')
         expect(results).toHaveAttribute('data-block-count', '2')

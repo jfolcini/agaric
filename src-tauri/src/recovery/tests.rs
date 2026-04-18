@@ -1132,3 +1132,104 @@ async fn find_prev_edit_prefers_local_device_head_when_multiple_heads_exist() {
     );
     assert_eq!(seq, b_edit.seq, "should return device B's edit seq");
 }
+
+// === BUG-23: cache refresh after draft recovery ===
+
+/// Regression test for BUG-23: after `recover_at_boot` rewrites a block's
+/// `content` via a synthetic edit_block op, the FTS index still holds the
+/// pre-recovery text (because the materializer isn't created yet when
+/// recovery runs). `refresh_caches_for_recovered_drafts` must update the
+/// FTS entries for every recovered block and block until the background
+/// queue drains, so callers never observe the stale text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() {
+    use super::refresh_caches_for_recovered_drafts;
+    use crate::materializer::Materializer;
+    use crate::pagination::PageRequest;
+
+    let (pool, _dir) = test_pool().await;
+    let device_id = "test-device";
+    let block_id = "BLOCK000000000000000000023";
+
+    // Seed: block exists with the original content already indexed by FTS
+    // (simulating a real device where recent ops were indexed before the
+    // crash).
+    insert_test_block(&pool, block_id, "original pre-crash text").await;
+    crate::fts::update_fts_for_block(&pool, block_id)
+        .await
+        .unwrap();
+
+    // User typed a draft that never flushed (distinctive marker word the
+    // post-recovery FTS must contain and the pre-recovery index must not).
+    save_draft(&pool, block_id, "draft pineapple content")
+        .await
+        .unwrap();
+
+    // Sanity: pre-recovery the new marker is not in the index.
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let stale_hits = crate::fts::search_fts(&pool, "pineapple", &page, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        stale_hits.items.len(),
+        0,
+        "pre-recovery FTS must not contain the draft marker yet",
+    );
+
+    // Run recovery — appends synthetic edit_block, updates blocks.content,
+    // but (by design, see F04 note in draft_recovery.rs) does NOT update
+    // FTS. So at this point the FTS index is stale.
+    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    assert_eq!(
+        report.drafts_recovered,
+        vec![block_id.to_owned()],
+        "draft should have been recovered",
+    );
+
+    // Confirm the stale window exists before the fix kicks in.
+    let stale_after_recovery = crate::fts::search_fts(&pool, "pineapple", &page, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        stale_after_recovery.items.len(),
+        0,
+        "without cache refresh, FTS still reflects pre-recovery content",
+    );
+
+    // The fix: create the materializer and refresh caches for the
+    // recovered blocks. When this returns, the FTS index must be current.
+    let materializer = Materializer::new(pool.clone());
+    refresh_caches_for_recovered_drafts(&materializer, &report.drafts_recovered)
+        .await
+        .unwrap();
+
+    let fresh_hits = crate::fts::search_fts(&pool, "pineapple", &page, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        fresh_hits.items.len(),
+        1,
+        "after refresh_caches_for_recovered_drafts, FTS must contain the recovered draft content \
+         (no stale-cache window)",
+    );
+    assert_eq!(
+        fresh_hits.items[0].id, block_id,
+        "FTS hit should point at the recovered block",
+    );
+}
+
+/// `refresh_caches_for_recovered_drafts` on an empty list must be a
+/// cheap no-op — it must not block waiting on a barrier the materializer
+/// never processes (which would deadlock boot when no drafts were
+/// recovered, the common case).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn refresh_caches_for_recovered_drafts_is_noop_when_list_empty() {
+    use super::refresh_caches_for_recovered_drafts;
+    use crate::materializer::Materializer;
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool);
+    refresh_caches_for_recovered_drafts(&materializer, &[])
+        .await
+        .expect("no-op must not error");
+}

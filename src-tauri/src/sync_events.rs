@@ -28,6 +28,12 @@ pub enum SyncEvent {
         message: String,
         remote_device_id: String,
     },
+    /// Emitted when mDNS peer discovery cannot be initialized (e.g. the
+    /// iOS sandbox blocks raw UDP multicast, or the Android app is missing
+    /// its multicast lock). Sync still works via manual IP entry, but the
+    /// frontend should surface this to the user instead of showing an
+    /// empty peer list. See BUG-38 / BUG-39.
+    MdnsDisabled { reason: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -37,6 +43,9 @@ pub enum SyncEvent {
 pub const EVENT_SYNC_PROGRESS: &str = "sync:progress";
 pub const EVENT_SYNC_COMPLETE: &str = "sync:complete";
 pub const EVENT_SYNC_ERROR: &str = "sync:error";
+/// Emitted when mDNS peer discovery is unavailable on this device
+/// (BUG-38). Payload is [`SyncEvent::MdnsDisabled`].
+pub const EVENT_SYNC_MDNS_DISABLED: &str = "sync:mdns_disabled";
 
 /// Event emitted when block properties change (for panel invalidation).
 pub const EVENT_PROPERTY_CHANGED: &str = "block:properties-changed";
@@ -81,6 +90,7 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
             SyncEvent::Progress { .. } => EVENT_SYNC_PROGRESS,
             SyncEvent::Complete { .. } => EVENT_SYNC_COMPLETE,
             SyncEvent::Error { .. } => EVENT_SYNC_ERROR,
+            SyncEvent::MdnsDisabled { .. } => EVENT_SYNC_MDNS_DISABLED,
         };
         if let Err(e) = self.0.emit(event_name, &event) {
             tracing::warn!(%event_name, error = %e, "Failed to emit sync event");
@@ -387,7 +397,50 @@ mod tests {
         assert_eq!(EVENT_SYNC_PROGRESS, "sync:progress");
         assert_eq!(EVENT_SYNC_COMPLETE, "sync:complete");
         assert_eq!(EVENT_SYNC_ERROR, "sync:error");
+        assert_eq!(EVENT_SYNC_MDNS_DISABLED, "sync:mdns_disabled");
         assert_eq!(EVENT_PROPERTY_CHANGED, "block:properties-changed");
+    }
+
+    // ── BUG-38: MdnsDisabled variant ──────────────────────────────────────
+
+    #[test]
+    fn sync_event_mdns_disabled_serializes_with_type_tag() {
+        let event = SyncEvent::MdnsDisabled {
+            reason: "multicast lock missing".into(),
+        };
+        let json = serde_json::to_value(&event).expect("serialize MdnsDisabled");
+        assert_eq!(
+            json["type"], "mdns_disabled",
+            "MdnsDisabled variant should serialize with snake_case type tag"
+        );
+        assert_eq!(
+            json["reason"], "multicast lock missing",
+            "reason field should round-trip"
+        );
+    }
+
+    #[test]
+    fn sync_event_mdns_disabled_empty_reason() {
+        let event = SyncEvent::MdnsDisabled { reason: "".into() };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["type"], "mdns_disabled");
+        assert_eq!(json["reason"], "");
+    }
+
+    #[test]
+    fn recording_sink_captures_mdns_disabled() {
+        let sink = RecordingEventSink::new();
+        sink.on_sync_event(SyncEvent::MdnsDisabled {
+            reason: "io error: raw socket blocked".into(),
+        });
+        let events = sink.events();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            SyncEvent::MdnsDisabled { reason } => {
+                assert_eq!(reason, "io error: raw socket blocked");
+            }
+            other => panic!("expected MdnsDisabled, got {other:?}"),
+        }
     }
 
     #[test]

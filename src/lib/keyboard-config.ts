@@ -388,7 +388,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
   },
   {
     id: 'strikethrough',
-    keys: 'Ctrl + Shift + S',
+    keys: 'Ctrl + Shift + X',
     category: 'keyboard.category.editorFormatting',
     description: 'keyboard.strikethrough',
   },

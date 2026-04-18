@@ -794,6 +794,10 @@ async logFrontend(level: string, module: string, message: string, stack: string 
 },
 /**
  * Return the path to the logs directory.
+ *
+ * Uses [`crate::log_dir_for_app_data`] so the path returned to the
+ * frontend ("Open logs folder") is guaranteed to match the directory
+ * the tracing-appender writes to — on every platform (BUG-34).
  */
 async getLogDir() : Promise<Result<string, { kind: string; message: string }>> {
     try {

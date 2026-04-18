@@ -4,9 +4,10 @@ use rustc_hash::FxHashSet;
 use sqlx::SqlitePool;
 
 use super::resolve::resolve_expr;
-use super::{escape_like, TagCacheRow, TagExpr};
+use super::{TagCacheRow, TagExpr};
 use crate::error::AppError;
 use crate::pagination::{BlockRow, Cursor, PageRequest, PageResponse};
+use crate::sql_utils::escape_like;
 
 /// Evaluate a boolean tag expression and return a paginated set of blocks.
 pub async fn eval_tag_query(
@@ -120,7 +121,6 @@ pub async fn list_tags_for_block(
 
 #[cfg(test)]
 mod tests {
-    use super::super::escape_like;
     use super::*;
     use crate::db::init_pool;
     use crate::pagination::Cursor;
@@ -316,26 +316,6 @@ mod tests {
         let result = list_tags_by_prefix(&pool, "100%", None).await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "100%_done");
-    }
-    #[test]
-    fn escape_like_leaves_plain_text_unchanged() {
-        assert_eq!(escape_like("work/meeting"), "work/meeting");
-    }
-    #[test]
-    fn escape_like_escapes_percent() {
-        assert_eq!(escape_like("100%"), "100\\%");
-    }
-    #[test]
-    fn escape_like_escapes_underscore() {
-        assert_eq!(escape_like("a_b"), "a\\_b");
-    }
-    #[test]
-    fn escape_like_escapes_backslash() {
-        assert_eq!(escape_like("a\\b"), "a\\\\b");
-    }
-    #[test]
-    fn escape_like_escapes_all_special_chars() {
-        assert_eq!(escape_like("%_\\"), "\\%\\_\\\\");
     }
     #[tokio::test]
     async fn list_tags_for_block_returns_tag_ids() {

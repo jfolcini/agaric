@@ -301,8 +301,10 @@ describe('BlockListItem', () => {
 
     const contentSpan = screen.getByText('Test block content')
     expect(contentSpan.className).toContain('my-content-class')
-    // Base classes still present
-    expect(contentSpan.className).toContain('line-clamp-2')
+    // Base classes still present (line-clamp-2 is NOT a base class — callers
+    // opt in via contentClassName; see UX-197).
+    expect(contentSpan.className).toContain('text-sm')
+    expect(contentSpan.className).not.toContain('line-clamp-2')
 
     const breadcrumbSpan = screen.getByText(/Page/).closest('span')
     // Go up to parent span that has the breadcrumb class (not the inner PageLink span)
@@ -321,8 +323,8 @@ describe('BlockListItem', () => {
     expect(screen.getByTestId('my-test-id')).toBeInTheDocument()
   })
 
-  // 11. Uses custom contentMaxLength and emptyContentFallback
-  it('renders full content with CSS line-clamp instead of string truncation', () => {
+  // 11. Full content rendering — NO built-in line-clamp (UX-197)
+  it('renders full content without line-clamp by default', () => {
     const longContent = 'A'.repeat(50)
 
     render(
@@ -333,7 +335,35 @@ describe('BlockListItem', () => {
 
     const contentSpan = screen.getByText(longContent)
     expect(contentSpan).toBeInTheDocument()
+    // UX-197: line-clamp is opt-in via contentClassName, not a base class.
+    expect(contentSpan.className).not.toContain('line-clamp-2')
+  })
+
+  // UX-197 follow-up: line-clamp is still available when callers opt in
+  it('applies line-clamp when caller passes contentClassName="line-clamp-2"', () => {
+    render(
+      <ul>
+        <BlockListItem
+          {...defaultProps({ content: 'pill content', contentClassName: 'line-clamp-2' })}
+        />
+      </ul>,
+    )
+
+    const contentSpan = screen.getByText('pill content')
     expect(contentSpan.className).toContain('line-clamp-2')
+  })
+
+  // UX-195: touch min-height on the list-item container
+  it('applies touch min-height utility on the li for 44px tap targets', () => {
+    render(
+      <ul>
+        <BlockListItem {...defaultProps()} />
+      </ul>,
+    )
+
+    const li = screen.getByRole('listitem')
+    // The touch-only minimum-height utility ensures embedded pills don't get clipped.
+    expect(li.className).toContain('[@media(pointer:coarse)]:min-h-11')
   })
 
   it('shows custom emptyContentFallback for null content', () => {

@@ -1881,7 +1881,7 @@ async fn add_attachment_creates_row() {
         "photo.png".into(),
         "image/png".into(),
         1024,
-        "/tmp/photo.png".into(),
+        "attachments/photo.png".into(),
     )
     .await
     .unwrap();
@@ -1897,7 +1897,7 @@ async fn add_attachment_creates_row() {
     );
     assert_eq!(att.size_bytes, 1024, "attachment size should match");
     assert_eq!(
-        att.fs_path, "/tmp/photo.png",
+        att.fs_path, "attachments/photo.png",
         "attachment fs_path should match"
     );
     assert!(!att.id.is_empty(), "attachment should have a generated ID");
@@ -1946,7 +1946,7 @@ async fn delete_attachment_removes_row() {
         "doc.pdf".into(),
         "application/pdf".into(),
         2048,
-        "/tmp/doc.pdf".into(),
+        "attachments/doc.pdf".into(),
     )
     .await
     .unwrap();
@@ -1997,7 +1997,7 @@ async fn add_attachment_validates_size_limit() {
         "big.bin".into(),
         "application/zip".into(),
         over_limit,
-        "/tmp/big.bin".into(),
+        "attachments/big.bin".into(),
     )
     .await;
 
@@ -2040,7 +2040,7 @@ async fn add_attachment_validates_mime_type() {
         "virus.exe".into(),
         "application/x-msdownload".into(),
         1024,
-        "/tmp/virus.exe".into(),
+        "attachments/virus.exe".into(),
     )
     .await;
 
@@ -2097,7 +2097,7 @@ async fn list_attachments_returns_for_block() {
         "a1.png".into(),
         "image/png".into(),
         100,
-        "/tmp/a1.png".into(),
+        "attachments/a1.png".into(),
     )
     .await
     .unwrap();
@@ -2110,7 +2110,7 @@ async fn list_attachments_returns_for_block() {
         "a2.pdf".into(),
         "application/pdf".into(),
         200,
-        "/tmp/a2.pdf".into(),
+        "attachments/a2.pdf".into(),
     )
     .await
     .unwrap();
@@ -2124,7 +2124,7 @@ async fn list_attachments_returns_for_block() {
         "b1.txt".into(),
         "text/plain".into(),
         50,
-        "/tmp/b1.txt".into(),
+        "attachments/b1.txt".into(),
     )
     .await
     .unwrap();

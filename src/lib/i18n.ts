@@ -57,6 +57,7 @@ const resources = {
       'action.reload': 'Reload',
       'action.loadMore': 'Load more',
       'action.loading': 'Loading\u2026',
+      'action.clear': 'Clear',
       'loadMore.progress': 'Loaded {{loaded}} of {{total}}',
 
       // Journal

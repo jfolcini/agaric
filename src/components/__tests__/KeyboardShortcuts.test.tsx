@@ -10,14 +10,44 @@
  */
 
 import { fireEvent, render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
+import { __resetPlatformCacheForTests } from '@/lib/platform'
 import { KeyboardShortcuts } from '../KeyboardShortcuts'
+
+const originalPlatform = Object.getOwnPropertyDescriptor(navigator, 'platform')
+
+function setPlatform(value: string): void {
+  Object.defineProperty(navigator, 'platform', {
+    value,
+    configurable: true,
+    writable: true,
+  })
+  Object.defineProperty(navigator, 'userAgentData', {
+    value: undefined,
+    configurable: true,
+    writable: true,
+  })
+  __resetPlatformCacheForTests()
+}
+
+function restorePlatform(): void {
+  if (originalPlatform) {
+    Object.defineProperty(navigator, 'platform', originalPlatform)
+  }
+  __resetPlatformCacheForTests()
+}
 
 describe('KeyboardShortcuts', () => {
   beforeEach(() => {
     localStorage.clear()
+    // Default tests to non-mac unless overridden.
+    setPlatform('Linux x86_64')
+  })
+
+  afterEach(() => {
+    restorePlatform()
   })
 
   it('renders sheet content when open', () => {
@@ -236,5 +266,45 @@ describe('KeyboardShortcuts', () => {
 
     // The original default key 'F' should NOT appear in that row
     expect(kbdTexts).not.toContain('F')
+  })
+
+  // UX-223 + BUG-31 bundled: macOS users see ⌘ (Cmd) instead of Ctrl in the help UI.
+  describe('macOS platform display (UX-223)', () => {
+    it('renders "⌘" instead of "Ctrl" on macOS', () => {
+      setPlatform('MacIntel')
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      const kbdTexts = Array.from(
+        screen.getByTestId('shortcuts-table').querySelectorAll('kbd'),
+      ).map((el) => el.textContent)
+
+      expect(kbdTexts).toContain('\u2318')
+      // "Ctrl" should not appear anywhere in the rendered kbd labels.
+      expect(kbdTexts).not.toContain('Ctrl')
+    })
+
+    it('still shows "Ctrl" on non-mac platforms', () => {
+      setPlatform('Linux x86_64')
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      const kbdTexts = Array.from(
+        screen.getByTestId('shortcuts-table').querySelectorAll('kbd'),
+      ).map((el) => el.textContent)
+
+      expect(kbdTexts).toContain('Ctrl')
+      expect(kbdTexts).not.toContain('\u2318')
+    })
+  })
+
+  // BUG-31: strikethrough binding had drifted between keyboard-config,
+  // tooltip, and docs. Lock the resolved binding in at the display path.
+  it('renders strikethrough as Ctrl + Shift + X (BUG-31)', () => {
+    setPlatform('Linux x86_64')
+    render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+    const strikethroughLabel = screen.getByText(t('keyboard.strikethrough'))
+    const row = strikethroughLabel.closest('tr') as HTMLElement
+    const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
+    expect(kbdTexts).toEqual(['Ctrl', 'Shift', 'X'])
   })
 })

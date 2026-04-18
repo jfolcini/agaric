@@ -543,6 +543,44 @@ describe('SuggestionList', () => {
     expect(screen.getByTestId('suggestion-breadcrumb')).toHaveTextContent('work / meetings')
   })
 
+  // -- UX-219: Truncated labels and breadcrumbs expose full text via title -----
+
+  it('adds title={item.label} to the label span when the item has a breadcrumb (UX-219)', () => {
+    const command = vi.fn()
+    const items: PickerItem[] = [
+      { id: '1', label: 'work/2024/q1/very-long-name', breadcrumb: 'workspace / personal' },
+    ]
+
+    render(<SuggestionList items={items} command={command} />)
+
+    const labelEl = screen.getByText('work/2024/q1/very-long-name')
+    expect(labelEl).toHaveAttribute('title', 'work/2024/q1/very-long-name')
+  })
+
+  it('adds title={item.breadcrumb} to the breadcrumb span (UX-219)', () => {
+    const command = vi.fn()
+    const items: PickerItem[] = [
+      { id: '1', label: 'standup', breadcrumb: 'workspace / team / very / deep / path' },
+    ]
+
+    render(<SuggestionList items={items} command={command} />)
+
+    const breadcrumb = screen.getByTestId('suggestion-breadcrumb')
+    expect(breadcrumb).toHaveAttribute('title', 'workspace / team / very / deep / path')
+  })
+
+  it('does not add title attribute to items without a breadcrumb (UX-219)', () => {
+    const command = vi.fn()
+    const items: PickerItem[] = [{ id: '1', label: 'simple label' }]
+
+    render(<SuggestionList items={items} command={command} />)
+
+    // The label is rendered inline (no breadcrumb structure). It must not
+    // carry a stray `title` — we only add it when the truncate class is present.
+    const labelEl = screen.getByText('simple label')
+    expect(labelEl).not.toHaveAttribute('title')
+  })
+
   // =========================================================================
   // Home/End and PageUp/PageDown keyboard navigation (UX-138)
   // =========================================================================

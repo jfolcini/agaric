@@ -7,23 +7,6 @@ pub use query::{eval_tag_query, list_tags_by_prefix, list_tags_for_block};
 
 use serde::Serialize;
 
-/// Escape special LIKE pattern characters so user-supplied prefix strings
-/// match literally.
-#[must_use]
-fn escape_like(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    for ch in input.chars() {
-        match ch {
-            '\\' | '%' | '_' => {
-                out.push('\\');
-                out.push(ch);
-            }
-            _ => out.push(ch),
-        }
-    }
-    out
-}
-
 /// Boolean expression tree for tag queries.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TagExpr {

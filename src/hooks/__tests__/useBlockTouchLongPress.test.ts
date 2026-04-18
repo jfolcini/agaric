@@ -419,4 +419,141 @@ describe('useBlockTouchLongPress', () => {
     document.body.removeChild(span)
     unmount()
   })
+
+  // BUG-37: the long-press timer must call preventDefault on the stored
+  // touchstart event so the native text-select / magnifier UI doesn't
+  // race with the custom context menu on Android / iOS.
+  it('calls preventDefault on the stored touchstart event when the long-press fires', () => {
+    const openContextMenu = vi.fn()
+    const isDraggingRef = { current: false }
+
+    const { result, unmount } = renderHook(() =>
+      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
+    )
+
+    const preventDefault = vi.fn()
+    const div = document.createElement('div')
+    document.body.appendChild(div)
+
+    const touchEvent = {
+      touches: [{ clientX: 100, clientY: 200 }],
+      target: div,
+      preventDefault,
+    } as unknown as React.TouchEvent
+
+    act(() => {
+      result.current.handleTouchStart(touchEvent)
+    })
+
+    // Before the threshold: preventDefault must NOT be called — the user
+    // might still scroll / lift their finger without triggering the menu.
+    expect(preventDefault).not.toHaveBeenCalled()
+
+    act(() => {
+      vi.advanceTimersByTime(LONG_PRESS_DELAY)
+    })
+
+    expect(preventDefault).toHaveBeenCalledOnce()
+    expect(openContextMenu).toHaveBeenCalledWith(100, 200, undefined)
+
+    document.body.removeChild(div)
+    unmount()
+  })
+
+  it('does NOT call preventDefault when the touch ends before the threshold', () => {
+    const openContextMenu = vi.fn()
+    const isDraggingRef = { current: false }
+
+    const { result, unmount } = renderHook(() =>
+      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
+    )
+
+    const preventDefault = vi.fn()
+    const touchEvent = {
+      touches: [{ clientX: 100, clientY: 200 }],
+      target: document.createElement('div'),
+      preventDefault,
+    } as unknown as React.TouchEvent
+
+    act(() => {
+      result.current.handleTouchStart(touchEvent)
+    })
+    act(() => {
+      vi.advanceTimersByTime(LONG_PRESS_DELAY / 2)
+    })
+    act(() => {
+      result.current.handleTouchEnd()
+    })
+    act(() => {
+      vi.advanceTimersByTime(LONG_PRESS_DELAY)
+    })
+
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(openContextMenu).not.toHaveBeenCalled()
+
+    unmount()
+  })
+
+  it('does NOT call preventDefault when the drag flag is set', () => {
+    const openContextMenu = vi.fn()
+    const isDraggingRef = { current: false }
+
+    const { result, unmount } = renderHook(() =>
+      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
+    )
+
+    const preventDefault = vi.fn()
+    act(() => {
+      result.current.handleTouchStart({
+        touches: [{ clientX: 100, clientY: 200 }],
+        preventDefault,
+      } as unknown as React.TouchEvent)
+    })
+
+    isDraggingRef.current = true
+
+    act(() => {
+      vi.advanceTimersByTime(LONG_PRESS_DELAY)
+    })
+
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(openContextMenu).not.toHaveBeenCalled()
+
+    unmount()
+  })
+
+  it('silently swallows preventDefault failures (passive listener safety)', () => {
+    const openContextMenu = vi.fn()
+    const isDraggingRef = { current: false }
+
+    const { result, unmount } = renderHook(() =>
+      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
+    )
+
+    const preventDefault = vi.fn(() => {
+      throw new Error('passive listener — preventDefault not allowed')
+    })
+    const div = document.createElement('div')
+    document.body.appendChild(div)
+
+    act(() => {
+      result.current.handleTouchStart({
+        touches: [{ clientX: 100, clientY: 200 }],
+        target: div,
+        preventDefault,
+      } as unknown as React.TouchEvent)
+    })
+
+    // Must not throw — the hook swallows preventDefault errors.
+    expect(() => {
+      act(() => {
+        vi.advanceTimersByTime(LONG_PRESS_DELAY)
+      })
+    }).not.toThrow()
+
+    expect(openContextMenu).toHaveBeenCalledOnce()
+
+    document.body.removeChild(div)
+    unmount()
+  })
 })

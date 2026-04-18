@@ -138,6 +138,82 @@ describe('MonthlyDayCell', () => {
     expect(dots).toHaveLength(2)
   })
 
+  // UX-199: count dots must use high-contrast -foreground color tokens so
+  // they meet WCAG contrast against the cell background in both themes.
+  it('UX-199: source dots use the -foreground color token for contrast', () => {
+    const { container } = render(
+      <MonthlyDayCell
+        {...defaultProps}
+        agendaCount={3}
+        agendaCountsBySource={{
+          'column:due_date': 2,
+          'column:scheduled_date': 1,
+        }}
+        backlinkCount={0}
+      />,
+    )
+
+    // Source dots should resolve to the high-contrast -foreground background
+    // classes (bg-date-due-foreground, bg-date-scheduled-foreground), NOT the
+    // low-lightness fill tokens (bg-date-due, bg-date-scheduled).
+    const dueDot = container.querySelector('.bg-date-due-foreground')
+    const schedDot = container.querySelector('.bg-date-scheduled-foreground')
+    expect(dueDot).not.toBeNull()
+    expect(schedDot).not.toBeNull()
+
+    // The faint pill-background tokens must NOT be used for dots.
+    expect(container.querySelector('.bg-date-due:not(.bg-date-due-foreground)')).toBeNull()
+    expect(
+      container.querySelector('.bg-date-scheduled:not(.bg-date-scheduled-foreground)'),
+    ).toBeNull()
+  })
+
+  // UX-199: backlink dot at full opacity (previously /40 → unreadable in dark).
+  it('UX-199: backlink dot uses full-opacity muted-foreground', () => {
+    const { container } = render(
+      <MonthlyDayCell {...defaultProps} agendaCount={0} backlinkCount={3} />,
+    )
+
+    // The backlink dot should use bg-muted-foreground without an /opacity suffix.
+    const dots = container.querySelectorAll('.rounded-full.w-1\\.5')
+    expect(dots).toHaveLength(1)
+    const backlinkDot = dots[0] as HTMLElement
+    expect(backlinkDot.className).toContain('bg-muted-foreground')
+    expect(backlinkDot.className).not.toContain('bg-muted-foreground/40')
+  })
+
+  // UX-199: axe pass in dark mode — with dark class applied to <html>
+  it('UX-199: no a11y violations in dark mode with count dots', async () => {
+    document.documentElement.classList.add('dark')
+    try {
+      const { container } = render(
+        // biome-ignore lint/a11y/useSemanticElements: test wrapper for ARIA grid context
+        <div role="grid">
+          {/* biome-ignore lint/a11y/useSemanticElements: test wrapper */}
+          {/* biome-ignore lint/a11y/useFocusableInteractive: test wrapper; row children provide focus targets */}
+          <div role="row">
+            <MonthlyDayCell
+              {...defaultProps}
+              agendaCount={2}
+              agendaCountsBySource={{ 'column:due_date': 2 }}
+              backlinkCount={1}
+            />
+          </div>
+        </div>,
+      )
+
+      await waitFor(
+        async () => {
+          const results = await axe(container)
+          expect(results).toHaveNoViolations()
+        },
+        { timeout: 5000 },
+      )
+    } finally {
+      document.documentElement.classList.remove('dark')
+    }
+  })
+
   it('shows total count badge when counts > 0', () => {
     render(<MonthlyDayCell {...defaultProps} agendaCount={3} backlinkCount={2} />)
 

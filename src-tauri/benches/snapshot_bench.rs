@@ -123,6 +123,7 @@ fn bench_apply_snapshot(c: &mut Criterion) {
 
         // Target pool for applying the snapshot
         let target_pool = rt.block_on(fresh_pool(&dir, &format!("snap_tgt_{n}")));
+        let target_mat = Materializer::new(target_pool.clone());
 
         group.throughput(Throughput::Elements(n));
         group.bench_with_input(
@@ -131,9 +132,10 @@ fn bench_apply_snapshot(c: &mut Criterion) {
             |b, _| {
                 b.to_async(&rt).iter(|| {
                     let pool = target_pool.clone();
+                    let mat = target_mat.clone();
                     let data = compressed.clone();
                     async move {
-                        apply_snapshot(&pool, &data).await.unwrap();
+                        apply_snapshot(&pool, &mat, &data).await.unwrap();
                     }
                 })
             },

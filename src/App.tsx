@@ -551,7 +551,12 @@ function App() {
           <ScrollArea
             viewportRef={setMainContentViewport}
             className="flex-1"
-            viewportClassName="p-4 md:p-6 outline-none"
+            // UX-225: re-apply the bottom safe-area inset to the scroll
+            // viewport so the last block of a long scroll doesn't sit
+            // under the iPhone home indicator / Android gesture bar.
+            // `scroll-pb-[env(…)]` extends the scroll end so keyboard
+            // scroll-into-view stops short of the inset as well.
+            viewportClassName="p-4 md:p-6 outline-none pb-[calc(1rem+env(safe-area-inset-bottom))] md:pb-[calc(1.5rem+env(safe-area-inset-bottom))] scroll-pb-[env(safe-area-inset-bottom)]"
             data-slot="main-content"
           >
             <div

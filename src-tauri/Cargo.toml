@@ -81,6 +81,7 @@ x509-parser = "0.18.1"
 tauri-plugin-updater = "2.10.0"
 tracing-appender = "0.2.4"
 reqwest = "0.13.2"
+tauri-plugin-process = "2.3.1"
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["async_tokio"] }
