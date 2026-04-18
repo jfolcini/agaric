@@ -152,3 +152,13 @@ vi.mock('sonner', async () => await import('./__tests__/mocks/sonner'))
 // GraphView.test.tsx hardcodes a data-testid).
 // See src/__tests__/mocks/ui-select.tsx for the mock implementation.
 vi.mock('@/components/ui/select', async () => await import('./__tests__/mocks/ui-select'))
+
+// Stub HTMLCanvasElement.getContext — jsdom does not implement canvas, and
+// installing the `canvas` npm package would pull in heavy native cairo
+// bindings (~30MB platform-specific binaries) just to silence warnings from
+// pdf.js and mermaid in tests that already mock those modules. The tests
+// validate component behavior, not pixel output, so a no-op stub is enough.
+if (typeof HTMLCanvasElement !== 'undefined') {
+  HTMLCanvasElement.prototype.getContext = (() =>
+    null) as typeof HTMLCanvasElement.prototype.getContext
+}

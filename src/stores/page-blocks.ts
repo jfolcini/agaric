@@ -111,6 +111,49 @@ function notifyUndoNewAction(rootParentId: string | null): void {
   if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
 }
 
+/**
+ * Compute a midpoint position between two sibling positions, nudging up by one
+ * when the floored midpoint would collide with `beforePos`. Callers rely on
+ * the returned value being strictly greater than `beforePos`.
+ */
+function midpointPosition(beforePos: number, afterPos: number): number {
+  const mid = Math.floor((beforePos + afterPos) / 2)
+  return mid <= beforePos ? beforePos + 1 : mid
+}
+
+/**
+ * Derive the target `position` value for a reorder operation in the flat tree.
+ *
+ * - Moving down (newIndex > oldIndex): position sits between `blocks[newIndex]`
+ *   and `blocks[newIndex + 1]`; if the target is at the tail, extend past the
+ *   last sibling.
+ * - Moving up (newIndex <= oldIndex): position sits between
+ *   `blocks[newIndex - 1]` and `blocks[newIndex]`; if the target is index 0,
+ *   step before the first sibling.
+ */
+function computeReorderPosition(
+  blocks: FlatBlock[],
+  oldIndex: number,
+  newIndex: number,
+  firstSiblingPos: number,
+  lastSiblingPos: number,
+): number {
+  if (newIndex > oldIndex) {
+    if (newIndex >= blocks.length - 1) {
+      return lastSiblingPos + 1
+    }
+    const beforePos = blocks[newIndex]?.position ?? 0
+    const afterPos = blocks[newIndex + 1]?.position ?? 0
+    return midpointPosition(beforePos, afterPos)
+  }
+  if (newIndex === 0) {
+    return firstSiblingPos - 1
+  }
+  const beforePos = blocks[newIndex - 1]?.position ?? 0
+  const afterPos = blocks[newIndex]?.position ?? 0
+  return midpointPosition(beforePos, afterPos)
+}
+
 // ── Store factory ────────────────────────────────────────────────────────
 
 export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
@@ -314,30 +357,13 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         siblings.length > 0 ? (siblings[siblings.length - 1]?.position ?? 0) : 0
       const firstSiblingPos = siblings.length > 0 ? (siblings[0]?.position ?? 0) : 0
 
-      let newPosition: number
-      if (newIndex > oldIndex) {
-        if (newIndex >= blocks.length - 1) {
-          newPosition = lastSiblingPos + 1
-        } else {
-          const beforePos = blocks[newIndex]?.position ?? 0
-          const afterPos = blocks[newIndex + 1]?.position ?? 0
-          newPosition = Math.floor((beforePos + afterPos) / 2)
-          if (newPosition <= beforePos) {
-            newPosition = beforePos + 1
-          }
-        }
-      } else {
-        if (newIndex === 0) {
-          newPosition = firstSiblingPos - 1
-        } else {
-          const beforePos = blocks[newIndex - 1]?.position ?? 0
-          const afterPos = blocks[newIndex]?.position ?? 0
-          newPosition = Math.floor((beforePos + afterPos) / 2)
-          if (newPosition <= beforePos) {
-            newPosition = beforePos + 1
-          }
-        }
-      }
+      const newPosition = computeReorderPosition(
+        blocks,
+        oldIndex,
+        newIndex,
+        firstSiblingPos,
+        lastSiblingPos,
+      )
 
       try {
         await moveBlock(blockId, parentId, newPosition)

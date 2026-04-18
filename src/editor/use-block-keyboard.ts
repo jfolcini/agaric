@@ -87,114 +87,164 @@ export function handleBlockKeyDown(
   editor: EditorLike,
   callbacks: BlockKeyboardCallbacks,
 ): void {
-  const { key, shiftKey, ctrlKey, metaKey } = event
   const { from, to, empty: selectionEmpty } = editor.state.selection
   const docSize = editor.state.doc.content.size
-  const atStart = from <= 1 && selectionEmpty
-  const atEnd = to >= docSize - 1 && selectionEmpty
-  const isEmpty = editor.isEmpty
-
-  // Ctrl/Cmd+Shift+ArrowUp: move block up among siblings
-  if ((ctrlKey || metaKey) && shiftKey && key === 'ArrowUp') {
-    event.preventDefault()
-    callbacks.onFlush()
-    callbacks.onMoveUp?.()
-    return
+  const ctx: KeyContext = {
+    atStart: from <= 1 && selectionEmpty,
+    atEnd: to >= docSize - 1 && selectionEmpty,
+    isEmpty: editor.isEmpty,
   }
-
-  // Ctrl/Cmd+Shift+ArrowDown: move block down among siblings
-  if ((ctrlKey || metaKey) && shiftKey && key === 'ArrowDown') {
-    event.preventDefault()
-    callbacks.onFlush()
-    callbacks.onMoveDown?.()
-    return
-  }
-
-  // Ctrl/Cmd+Shift+ArrowRight: indent block
-  if ((ctrlKey || metaKey) && shiftKey && key === 'ArrowRight') {
-    event.preventDefault()
-    callbacks.onFlush()
-    callbacks.onIndent()
-    return
-  }
-
-  // Ctrl/Cmd+Shift+ArrowLeft: dedent block
-  if ((ctrlKey || metaKey) && shiftKey && key === 'ArrowLeft') {
-    event.preventDefault()
-    callbacks.onFlush()
-    callbacks.onDedent()
-    return
-  }
-
-  // Ctrl/Cmd+Enter: toggle task state
-  if ((ctrlKey || metaKey) && key === 'Enter') {
-    event.preventDefault()
-    callbacks.onToggleTodo?.()
-    return
-  }
-
-  // Ctrl/Cmd+.: toggle collapse/expand children
-  if ((ctrlKey || metaKey) && key === '.') {
-    event.preventDefault()
-    callbacks.onToggleCollapse?.()
-    return
-  }
-
-  // Ctrl/Cmd+Shift+P: show block properties drawer (configurable)
-  if (matchesShortcutBinding(event, 'openPropertiesDrawer')) {
-    event.preventDefault()
-    callbacks.onShowProperties?.()
-    return
-  }
-
-  // Enter (without Shift): save current block and create a new sibling below.
-  // Shift+Enter falls through to TipTap's HardBreak (line within same block).
-  if (key === 'Enter' && !shiftKey) {
-    event.preventDefault()
-    callbacks.onEnterSave()
-    return
-  }
-
-  // Escape: cancel editing, discard changes, unfocus.
-  if (key === 'Escape') {
-    event.preventDefault()
-    callbacks.onEscapeCancel()
-    return
-  }
-
-  // ArrowUp / ArrowLeft at position 0 → previous block
-  // (suppressed when a suggestion popup is visible so Up/Down navigate the menu)
-  if ((key === 'ArrowUp' || key === 'ArrowLeft') && atStart && !isSuggestionPopupVisible()) {
-    event.preventDefault()
-    callbacks.onFlush()
-    callbacks.onFocusPrev()
-    return
-  }
-
-  // ArrowDown / ArrowRight at end → next block
-  // (suppressed when a suggestion popup is visible so Up/Down navigate the menu)
-  if ((key === 'ArrowDown' || key === 'ArrowRight') && atEnd && !isSuggestionPopupVisible()) {
-    event.preventDefault()
-    callbacks.onFlush()
-    callbacks.onFocusNext()
-    return
-  }
-
-  // Backspace on empty block → delete block (unless sole remaining block)
-  if (key === 'Backspace' && isEmpty) {
-    event.preventDefault()
-    if (callbacks.isLastBlock?.()) return
-    callbacks.onDeleteBlock({ cursorPlacement: 'end' })
-    return
-  }
-
-  // Backspace at start of non-empty block → merge with previous block (p2-t11)
-  if (key === 'Backspace' && atStart && !isEmpty) {
-    event.preventDefault()
-    callbacks.onMergeWithPrev()
-    return
+  for (const rule of KEY_RULES) {
+    if (rule.match(event, ctx)) {
+      rule.handle(event, callbacks, ctx)
+      return
+    }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Dispatch infrastructure
+// ---------------------------------------------------------------------------
+
+type KeyEvent = Pick<
+  KeyboardEvent,
+  'key' | 'shiftKey' | 'ctrlKey' | 'metaKey' | 'altKey' | 'preventDefault'
+>
+
+interface KeyContext {
+  atStart: boolean
+  atEnd: boolean
+  isEmpty: boolean
+}
+
+interface KeyRule {
+  match: (event: KeyEvent, ctx: KeyContext) => boolean
+  handle: (event: KeyEvent, callbacks: BlockKeyboardCallbacks, ctx: KeyContext) => void
+}
+
+const isMod = (e: KeyEvent): boolean => e.ctrlKey || e.metaKey
+
+/**
+ * Ordered rule table. First match wins. Ordering matters: mod-combinations
+ * must precede their plain-key equivalents (e.g. `Ctrl+Enter` before `Enter`).
+ * Extracted to module scope so `handleBlockKeyDown` stays well under the
+ * cognitive-complexity budget.
+ */
+const KEY_RULES: ReadonlyArray<KeyRule> = [
+  // Ctrl/Cmd+Shift+ArrowUp: move block up among siblings
+  {
+    match: (e) => isMod(e) && e.shiftKey && e.key === 'ArrowUp',
+    handle: (e, cb) => {
+      e.preventDefault()
+      cb.onFlush()
+      cb.onMoveUp?.()
+    },
+  },
+  // Ctrl/Cmd+Shift+ArrowDown: move block down among siblings
+  {
+    match: (e) => isMod(e) && e.shiftKey && e.key === 'ArrowDown',
+    handle: (e, cb) => {
+      e.preventDefault()
+      cb.onFlush()
+      cb.onMoveDown?.()
+    },
+  },
+  // Ctrl/Cmd+Shift+ArrowRight: indent block
+  {
+    match: (e) => isMod(e) && e.shiftKey && e.key === 'ArrowRight',
+    handle: (e, cb) => {
+      e.preventDefault()
+      cb.onFlush()
+      cb.onIndent()
+    },
+  },
+  // Ctrl/Cmd+Shift+ArrowLeft: dedent block
+  {
+    match: (e) => isMod(e) && e.shiftKey && e.key === 'ArrowLeft',
+    handle: (e, cb) => {
+      e.preventDefault()
+      cb.onFlush()
+      cb.onDedent()
+    },
+  },
+  // Ctrl/Cmd+Enter: toggle task state
+  {
+    match: (e) => isMod(e) && e.key === 'Enter',
+    handle: (e, cb) => {
+      e.preventDefault()
+      cb.onToggleTodo?.()
+    },
+  },
+  // Ctrl/Cmd+.: toggle collapse/expand children
+  {
+    match: (e) => isMod(e) && e.key === '.',
+    handle: (e, cb) => {
+      e.preventDefault()
+      cb.onToggleCollapse?.()
+    },
+  },
+  // Configurable shortcut (default Ctrl/Cmd+Shift+P): show properties drawer
+  {
+    match: (e) => matchesShortcutBinding(e, 'openPropertiesDrawer'),
+    handle: (e, cb) => {
+      e.preventDefault()
+      cb.onShowProperties?.()
+    },
+  },
+  // Enter (without Shift): save + create new sibling
+  {
+    match: (e) => e.key === 'Enter' && !e.shiftKey,
+    handle: (e, cb) => {
+      e.preventDefault()
+      cb.onEnterSave()
+    },
+  },
+  // Escape: cancel editing, discard changes
+  {
+    match: (e) => e.key === 'Escape',
+    handle: (e, cb) => {
+      e.preventDefault()
+      cb.onEscapeCancel()
+    },
+  },
+  // ArrowUp / ArrowLeft at position 0 → previous block (suppressed when popup open)
+  {
+    match: (e, ctx) =>
+      (e.key === 'ArrowUp' || e.key === 'ArrowLeft') && ctx.atStart && !isSuggestionPopupVisible(),
+    handle: (e, cb) => {
+      e.preventDefault()
+      cb.onFlush()
+      cb.onFocusPrev()
+    },
+  },
+  // ArrowDown / ArrowRight at end → next block (suppressed when popup open)
+  {
+    match: (e, ctx) =>
+      (e.key === 'ArrowDown' || e.key === 'ArrowRight') && ctx.atEnd && !isSuggestionPopupVisible(),
+    handle: (e, cb) => {
+      e.preventDefault()
+      cb.onFlush()
+      cb.onFocusNext()
+    },
+  },
+  // Backspace on empty block → delete block (unless sole remaining block)
+  {
+    match: (e, ctx) => e.key === 'Backspace' && ctx.isEmpty,
+    handle: (e, cb) => {
+      e.preventDefault()
+      if (cb.isLastBlock?.()) return
+      cb.onDeleteBlock({ cursorPlacement: 'end' })
+    },
+  },
+  // Backspace at start of non-empty block → merge with previous (p2-t11)
+  {
+    match: (e, ctx) => e.key === 'Backspace' && ctx.atStart && !ctx.isEmpty,
+    handle: (e, cb) => {
+      e.preventDefault()
+      cb.onMergeWithPrev()
+    },
+  },
+]
 
 export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboardCallbacks): void {
   const {

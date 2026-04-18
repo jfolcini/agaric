@@ -8,7 +8,7 @@
       "complexity": {
         "noExcessiveCognitiveComplexity": {
           "level": "warn",
-          "options": { "maxAllowedComplexity": 50 }
+          "options": { "maxAllowedComplexity": 35 }
         },
         "useLiteralKeys": "off"
       },

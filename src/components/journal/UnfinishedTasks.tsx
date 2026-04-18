@@ -114,6 +114,41 @@ function writeCollapsedState(collapsed: boolean): void {
   }
 }
 
+/** Merge two result pages and filter to unfinished tasks before today. */
+function mergeAndFilterUnfinished(items: BlockRow[], todayStr: string): BlockRow[] {
+  const seen = new Set<string>()
+  const merged: BlockRow[] = []
+  for (const b of items) {
+    if (seen.has(b.id)) continue
+    seen.add(b.id)
+
+    // Filter: only TODO or DOING states
+    if (b.todo_state !== 'TODO' && b.todo_state !== 'DOING') continue
+
+    // Filter: due_date or scheduled_date must be before today
+    const dateStr = b.due_date ?? b.scheduled_date
+    if (!dateStr || dateStr >= todayStr) continue
+
+    merged.push(b)
+  }
+  return merged
+}
+
+/** Resolve a set of page IDs to title map. Returns empty map on failure. */
+async function resolvePageTitles(parentIds: string[]): Promise<Map<string, string>> {
+  const titles = new Map<string, string>()
+  if (parentIds.length === 0) return titles
+  try {
+    const resolved = await batchResolve(parentIds)
+    for (const r of resolved) {
+      titles.set(r.id, r.title ?? 'Untitled')
+    }
+  } catch {
+    // Non-critical: breadcrumbs will show "Untitled"
+  }
+  return titles
+}
+
 // ── Component ──────────────────────────────────────────────────────────
 
 export function UnfinishedTasks({
@@ -149,39 +184,15 @@ export function UnfinishedTasks({
 
         if (stale) return
 
-        // Merge and deduplicate
-        const seen = new Set<string>()
-        const merged: BlockRow[] = []
-        for (const b of [...dueResp.items, ...schedResp.items]) {
-          if (seen.has(b.id)) continue
-          seen.add(b.id)
-
-          // Filter: only TODO or DOING states
-          if (b.todo_state !== 'TODO' && b.todo_state !== 'DOING') continue
-
-          // Filter: due_date or scheduled_date must be before today
-          const dateStr = b.due_date ?? b.scheduled_date
-          if (!dateStr || dateStr >= todayStr) continue
-
-          merged.push(b)
-        }
-
+        const merged = mergeAndFilterUnfinished([...dueResp.items, ...schedResp.items], todayStr)
         setBlocks(merged)
 
-        // Resolve page titles for breadcrumbs
+        // Resolve page titles for breadcrumbs (non-critical on failure)
         const parentIds = [...new Set(merged.map((b) => b.page_id).filter(Boolean))] as string[]
         if (parentIds.length > 0) {
-          try {
-            const resolved = await batchResolve(parentIds)
-            if (!stale) {
-              const titles = new Map<string, string>()
-              for (const r of resolved) {
-                titles.set(r.id, r.title ?? 'Untitled')
-              }
-              setPageTitles(titles)
-            }
-          } catch {
-            // Non-critical: breadcrumbs will show "Untitled"
+          const titles = await resolvePageTitles(parentIds)
+          if (!stale) {
+            setPageTitles(titles)
           }
         }
       } catch {

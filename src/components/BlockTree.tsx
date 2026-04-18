@@ -73,6 +73,48 @@ const DND_MEASURING = {
   droppable: { strategy: MeasuringStrategy.Always },
 } as const
 
+/** Matches the `[[ULID]]` block-link token. */
+const ULID_LINK_RE = /\[\[([0-9A-Z]{26})\]\]/g
+
+/**
+ * Scan the provided blocks for `[[ULID]]` tokens whose ids are not yet in
+ * the resolve cache. Pure module-scope helper so BlockTree's useEffect body
+ * stays trivial (keeps cognitive complexity <35).
+ */
+function collectUncachedLinkIds(blocks: ReadonlyArray<{ content: string | null }>): Set<string> {
+  const uncached = new Set<string>()
+  const currentCache = useResolveStore.getState().cache
+  for (const b of blocks) {
+    if (!b.content) continue
+    for (const m of b.content.matchAll(ULID_LINK_RE)) {
+      const id = m[1] as string
+      if (!currentCache.has(id)) uncached.add(id)
+    }
+  }
+  return uncached
+}
+
+/**
+ * Batch-resolve the given ids and write results back to the resolve store.
+ * Logs and swallows transport errors; honours a cancellation predicate so
+ * the caller can abort on unmount without an extra flag at the call site.
+ */
+async function fetchAndCacheLinks(
+  ids: ReadonlySet<string>,
+  isCancelled: () => boolean,
+): Promise<void> {
+  try {
+    const resolved = await batchResolve([...ids])
+    if (isCancelled()) return
+    const store = useResolveStore.getState()
+    for (const r of resolved) {
+      store.set(r.id, r.title?.slice(0, 60) || `[[${r.id.slice(0, 8)}...]]`, r.deleted)
+    }
+  } catch (err) {
+    logger.warn('BlockTree', 'Batch resolve failed for uncached block links', undefined, err)
+  }
+}
+
 interface BlockTreeProps {
   /** Optional parent block ID -- when set, loads children of this block. */
   parentId?: string | undefined
@@ -316,34 +358,9 @@ export function BlockTree({
     let cancelled = false
     async function resolveUncachedLinks() {
       try {
-        const ULID_LINK_RE = /\[\[([0-9A-Z]{26})\]\]/g
-        const uncached = new Set<string>()
-        const currentCache = useResolveStore.getState().cache
-        for (const b of blocks) {
-          if (!b.content) continue
-          for (const m of b.content.matchAll(ULID_LINK_RE)) {
-            if (!currentCache.has(m[1] as string)) uncached.add(m[1] as string)
-          }
-        }
-
-        if (uncached.size > 0) {
-          try {
-            const resolved = await batchResolve([...uncached])
-            if (!cancelled) {
-              const store = useResolveStore.getState()
-              for (const r of resolved) {
-                store.set(r.id, r.title?.slice(0, 60) || `[[${r.id.slice(0, 8)}...]]`, r.deleted)
-              }
-            }
-          } catch (err) {
-            logger.warn(
-              'BlockTree',
-              'Batch resolve failed for uncached block links',
-              undefined,
-              err,
-            )
-          }
-        }
+        const uncached = collectUncachedLinkIds(blocks)
+        if (uncached.size === 0) return
+        await fetchAndCacheLinks(uncached, () => cancelled)
       } catch (err) {
         logger.warn(
           'BlockTree',

@@ -1436,10 +1436,16 @@ async fn perf26_draft_recovery_at_10k_ops_is_fast() {
     }
 
     let start = std::time::Instant::now();
-    // Keep the bench body tight: one create per block + 999 edits per block.
+    // Wrap the 10K inserts in a single BEGIN IMMEDIATE transaction. The
+    // per-op `append_local_op_at` variant commits each insert separately,
+    // forcing 10K fsyncs and dominating the test wall-clock (~30s). Using
+    // the `_in_tx` variant inside one transaction reduces setup to ~1s
+    // while still exercising the same `append_local_op_in_tx` code path
+    // that production uses for atomic multi-op sequences.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
     for bid in &noise_bids {
-        append_local_op_at(
-            &pool,
+        crate::op_log::append_local_op_in_tx(
+            &mut tx,
             device_id,
             OpPayload::CreateBlock(CreateBlockPayload {
                 block_id: bid.clone(),
@@ -1453,8 +1459,8 @@ async fn perf26_draft_recovery_at_10k_ops_is_fast() {
         .await
         .unwrap();
         for _ in 0..999 {
-            append_local_op_at(
-                &pool,
+            crate::op_log::append_local_op_in_tx(
+                &mut tx,
                 device_id,
                 OpPayload::EditBlock(EditBlockPayload {
                     block_id: bid.clone(),
@@ -1467,6 +1473,7 @@ async fn perf26_draft_recovery_at_10k_ops_is_fast() {
             .unwrap();
         }
     }
+    tx.commit().await.unwrap();
     let insert_elapsed = start.elapsed();
 
     // Sanity: op_log has ~10K rows.

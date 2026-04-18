@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { logger } from '../lib/logger'
-import type { BacklinkGroup } from '../lib/tauri'
+import type { BacklinkGroup, ResolvedBlock } from '../lib/tauri'
 import { batchResolve } from '../lib/tauri'
 
 export interface ResolveCacheEntry {
@@ -26,32 +26,105 @@ export interface UseBacklinkResolutionResult {
   clearCache: () => void
 }
 
+type ResolveCache = Map<string, ResolveCacheEntry>
+
+// ---------------------------------------------------------------------------
+// Pure cache maintenance helpers (module-scope so the hook body stays simple).
+// ---------------------------------------------------------------------------
+
+/** Drop entries whose `cachedAt` is older than TTL_MS before `now`. */
+function evictExpiredEntries(cache: ResolveCache, now: number): void {
+  for (const [key, entry] of cache) {
+    if (now - entry.cachedAt > TTL_MS) cache.delete(key)
+  }
+}
+
+/**
+ * Evict oldest entries (insertion order) to keep `cache.size + pendingCount`
+ * under `MAX_CACHE_SIZE`. Map iteration order is insertion order in ES2015+.
+ */
+function evictOverflow(cache: ResolveCache, pendingCount: number): void {
+  const overflow = cache.size + pendingCount - MAX_CACHE_SIZE
+  if (overflow <= 0) return
+  const keys = cache.keys()
+  for (let i = 0; i < overflow; i++) {
+    const next = keys.next()
+    if (next.done) break
+    cache.delete(next.value)
+  }
+}
+
+/** Compute the display title for a resolved entry, with tag/page fallbacks. */
+function computeTitle(r: ResolvedBlock): string {
+  if (r.title) {
+    const trimmed = r.title.slice(0, 60)
+    if (trimmed.length > 0) return trimmed
+  }
+  return r.block_type === 'tag' ? `#${r.id.slice(0, 8)}...` : `[[${r.id.slice(0, 8)}...]]`
+}
+
+/** Write resolved entries into the cache with the current timestamp. */
+function storeResolvedEntries(cache: ResolveCache, resolved: ResolvedBlock[]): void {
+  const now = Date.now()
+  for (const r of resolved) {
+    cache.set(r.id, { title: computeTitle(r), deleted: r.deleted, cachedAt: now })
+  }
+}
+
+/** For every requested id the backend did not return, store a deleted-placeholder. */
+function fillUnresolvedPlaceholders(cache: ResolveCache, requestedIds: Iterable<string>): void {
+  const now = Date.now()
+  for (const id of requestedIds) {
+    if (cache.has(id)) continue
+    cache.set(id, { title: `[[${id.slice(0, 8)}...]]`, deleted: true, cachedAt: now })
+  }
+}
+
+/** Collect all [[ULID]] and #[ULID] token ids that aren't fresh in the cache. */
+function collectIdsToResolve(groups: BacklinkGroup[], cache: ResolveCache): Set<string> {
+  const ULID_RE = /\[\[([0-9A-Z]{26})\]\]/g
+  const TAG_RE = /#\[([0-9A-Z]{26})\]/g
+  const ids = new Set<string>()
+  const now = Date.now()
+  for (const g of groups) {
+    for (const block of g.blocks) {
+      if (!block.content) continue
+      for (const m of block.content.matchAll(ULID_RE)) ids.add(m[1] as string)
+      for (const m of block.content.matchAll(TAG_RE)) ids.add(m[1] as string)
+    }
+  }
+  for (const id of ids) {
+    const cached = cache.get(id)
+    if (cached && now - cached.cachedAt <= TTL_MS) ids.delete(id)
+  }
+  return ids
+}
+
+/**
+ * Merge a batch of resolved blocks into the cache, evicting stale + overflowed
+ * entries, and backfilling placeholders for any id the backend did not return.
+ */
+function mergeResolvedIntoCache(
+  cache: ResolveCache,
+  resolved: ResolvedBlock[],
+  requestedIds: Set<string>,
+): void {
+  evictExpiredEntries(cache, Date.now())
+  evictOverflow(cache, requestedIds.size)
+  storeResolvedEntries(cache, resolved)
+  fillUnresolvedPlaceholders(cache, requestedIds)
+}
+
 export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResolutionResult {
   const [resolveVersion, setResolveVersion] = useState(0)
-  const resolveCache = useRef<Map<string, ResolveCacheEntry>>(new Map())
+  const resolveCache = useRef<ResolveCache>(new Map())
 
   // Resolve [[ULID]] and #[ULID] tokens in block content
   useEffect(() => {
     const allBlocks = groups.flatMap((g) => g.blocks)
     if (allBlocks.length === 0) return
 
-    const ULID_RE = /\[\[([0-9A-Z]{26})\]\]/g
-    const TAG_RE = /#\[([0-9A-Z]{26})\]/g
-    const idsToResolve = new Set<string>()
-
-    for (const block of allBlocks) {
-      if (!block.content) continue
-      for (const m of block.content.matchAll(ULID_RE)) idsToResolve.add(m[1] as string)
-      for (const m of block.content.matchAll(TAG_RE)) idsToResolve.add(m[1] as string)
-    }
-
-    // Remove already-cached IDs (skip expired entries so they get re-fetched)
-    for (const id of idsToResolve) {
-      const cached = resolveCache.current.get(id)
-      if (cached && Date.now() - cached.cachedAt <= TTL_MS) {
-        idsToResolve.delete(id)
-      }
-    }
+    const idsToResolve = collectIdsToResolve(groups, resolveCache.current)
 
     if (idsToResolve.size === 0) {
       setResolveVersion((v) => v + 1)
@@ -63,40 +136,7 @@ export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResol
     batchResolve([...idsToResolve])
       .then((resolved) => {
         if (cancelled) return
-        const now = Date.now()
-        for (const [key, entry] of resolveCache.current) {
-          if (now - entry.cachedAt > TTL_MS) {
-            resolveCache.current.delete(key)
-          }
-        }
-        if (resolveCache.current.size + idsToResolve.size > MAX_CACHE_SIZE) {
-          const overflow = resolveCache.current.size + idsToResolve.size - MAX_CACHE_SIZE
-          const keys = resolveCache.current.keys()
-          for (let i = 0; i < overflow; i++) {
-            const next = keys.next()
-            if (next.done) break
-            resolveCache.current.delete(next.value)
-          }
-        }
-        for (const r of resolved) {
-          resolveCache.current.set(r.id, {
-            title:
-              r.title?.slice(0, 60) ||
-              (r.block_type === 'tag' ? `#${r.id.slice(0, 8)}...` : `[[${r.id.slice(0, 8)}...]]`),
-            deleted: r.deleted,
-            cachedAt: Date.now(),
-          })
-        }
-        for (const id of idsToResolve) {
-          if (!resolveCache.current.has(id)) {
-            resolveCache.current.set(id, {
-              title: `[[${id.slice(0, 8)}...]]`,
-              deleted: true,
-              cachedAt: Date.now(),
-            })
-          }
-        }
-        if (cancelled) return
+        mergeResolvedIntoCache(resolveCache.current, resolved, idsToResolve)
         setResolveVersion((v) => v + 1)
       })
       .catch((err) => {

@@ -17,14 +17,16 @@ import { useUndoStore } from '../stores/undo'
 
 export type DatePickerMode = 'date' | 'due' | 'schedule' | 'repeat-until'
 
+// biome-ignore lint/suspicious/noExplicitAny: TFunction overload set is too complex
+type TFn = (...args: any[]) => any
+
 export interface UseBlockDatePickerParams {
   focusedBlockId: string | null
   rootParentId: string | null
   pageStore: StoreApi<PageBlockState>
   rovingEditor: Pick<RovingEditorHandle, 'editor'>
   pagesListRef: MutableRefObject<Array<{ id: string; title: string }>>
-  // biome-ignore lint/suspicious/noExplicitAny: TFunction overload set is too complex
-  t: (...args: any[]) => any
+  t: TFn
 }
 
 export interface UseBlockDatePickerReturn {
@@ -35,6 +37,128 @@ export interface UseBlockDatePickerReturn {
   setDatePickerMode: (mode: DatePickerMode) => void
   handleDatePick: (d: Date) => Promise<void>
 }
+
+// ---------------------------------------------------------------------------
+// Dispatch infrastructure
+// ---------------------------------------------------------------------------
+
+/** Snapshot of mode-specific inputs, built fresh per pick. */
+interface DatePickContext {
+  blockId: string | null
+  rootParentId: string | null
+  pageStore: StoreApi<PageBlockState>
+  rovingEditor: Pick<RovingEditorHandle, 'editor'>
+  pagesListRef: MutableRefObject<Array<{ id: string; title: string }>>
+  t: TFn
+  /** ISO date string: YYYY-MM-DD. */
+  dateStr: string
+  /** Legacy DD/MM/YYYY string kept for backward-compat page lookup. */
+  legacyStr: string
+}
+
+type DatePickHandler = (ctx: DatePickContext) => Promise<void> | void
+
+function notifyUndo(rootParentId: string | null): void {
+  if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
+}
+
+function formatIsoDate(d: Date): string {
+  const dd = String(d.getDate()).padStart(2, '0')
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const yyyy = d.getFullYear()
+  return `${yyyy}-${mm}-${dd}`
+}
+
+function formatLegacyDate(d: Date): string {
+  const dd = String(d.getDate()).padStart(2, '0')
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const yyyy = d.getFullYear()
+  return `${dd}/${mm}/${yyyy}`
+}
+
+// ---------------------------------------------------------------------------
+// Mode handlers — each owns its own optimistic store update + error toast.
+// ---------------------------------------------------------------------------
+
+async function handleDueMode(ctx: DatePickContext): Promise<void> {
+  if (!ctx.blockId) return
+  const blockId = ctx.blockId
+  try {
+    await setDueDateCmd(blockId, ctx.dateStr)
+    notifyUndo(ctx.rootParentId)
+    ctx.pageStore.setState((s) => ({
+      blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, due_date: ctx.dateStr } : b)),
+    }))
+  } catch {
+    toast.error(ctx.t('blockTree.setDueDateFailed'))
+  }
+}
+
+async function handleRepeatUntilMode(ctx: DatePickContext): Promise<void> {
+  if (!ctx.blockId) return
+  try {
+    await setProperty({
+      blockId: ctx.blockId,
+      key: 'repeat-until',
+      valueDate: ctx.dateStr,
+    })
+    notifyUndo(ctx.rootParentId)
+    toast.success(ctx.t('blockTree.repeatUntilMessage', { date: ctx.dateStr }))
+  } catch {
+    toast.error(ctx.t('blockTree.setRepeatEndDateFailed'))
+  }
+}
+
+async function handleScheduleMode(ctx: DatePickContext): Promise<void> {
+  if (!ctx.blockId) return
+  const blockId = ctx.blockId
+  try {
+    await setScheduledDateCmd(blockId, ctx.dateStr)
+    notifyUndo(ctx.rootParentId)
+    ctx.pageStore.setState((s) => ({
+      blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, scheduled_date: ctx.dateStr } : b)),
+    }))
+    announce(ctx.t('announce.scheduledDateSet', { date: ctx.dateStr }))
+  } catch {
+    toast.error(ctx.t('blockTree.setScheduledDateFailed'))
+  }
+}
+
+/**
+ * Find or create a dedicated "date page" and insert a link to it at the
+ * current editor cursor position.
+ */
+async function handleDateMode(ctx: DatePickContext): Promise<void> {
+  const resp = await listBlocks({ blockType: 'page', limit: 500 })
+  const existing = resp.items.find((b) => b.content === ctx.dateStr || b.content === ctx.legacyStr)
+  let datePageId = existing?.id
+  if (!datePageId) {
+    const newPage = await createBlock({ blockType: 'page', content: ctx.dateStr })
+    datePageId = newPage.id
+    useResolveStore.getState().set(newPage.id, ctx.dateStr, false)
+    ctx.pagesListRef.current = [...ctx.pagesListRef.current, { id: newPage.id, title: ctx.dateStr }]
+  }
+
+  if (ctx.rovingEditor.editor && datePageId) {
+    const editor = ctx.rovingEditor.editor
+    const id = datePageId
+    editor.commands.focus()
+    requestAnimationFrame(() => {
+      editor.chain().focus().insertBlockLink(id).run()
+    })
+  }
+}
+
+const MODE_HANDLERS: Record<DatePickerMode, DatePickHandler> = {
+  date: handleDateMode,
+  due: handleDueMode,
+  schedule: handleScheduleMode,
+  'repeat-until': handleRepeatUntilMode,
+}
+
+// ---------------------------------------------------------------------------
+// Hook
+// ---------------------------------------------------------------------------
 
 export function useBlockDatePicker({
   focusedBlockId,
@@ -57,84 +181,18 @@ export function useBlockDatePicker({
   // biome-ignore lint/correctness/useExhaustiveDependencies: pagesListRef is a stable ref; pageStore is a stable StoreApi; t accessed via ref
   const handleDatePick = useCallback(
     async (d: Date) => {
-      const t = tRef.current
       setDatePickerOpen(false)
-      const dd = String(d.getDate()).padStart(2, '0')
-      const mm = String(d.getMonth() + 1).padStart(2, '0')
-      const yyyy = d.getFullYear()
-      const dateStr = `${yyyy}-${mm}-${dd}`
-
-      if (datePickerMode === 'due') {
-        if (!focusedBlockId) return
-        try {
-          await setDueDateCmd(focusedBlockId, dateStr)
-          if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-          pageStore.setState((s) => ({
-            blocks: s.blocks.map((b) =>
-              b.id === focusedBlockId ? { ...b, due_date: dateStr } : b,
-            ),
-          }))
-        } catch {
-          toast.error(t('blockTree.setDueDateFailed'))
-        }
-        return
+      const ctx: DatePickContext = {
+        blockId: focusedBlockId,
+        rootParentId,
+        pageStore,
+        rovingEditor: rovingEditorRef.current,
+        pagesListRef,
+        t: tRef.current,
+        dateStr: formatIsoDate(d),
+        legacyStr: formatLegacyDate(d),
       }
-
-      if (datePickerMode === 'repeat-until') {
-        if (!focusedBlockId) return
-        try {
-          await setProperty({
-            blockId: focusedBlockId,
-            key: 'repeat-until',
-            valueDate: dateStr,
-          })
-          if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-          toast.success(t('blockTree.repeatUntilMessage', { date: dateStr }))
-        } catch {
-          toast.error(t('blockTree.setRepeatEndDateFailed'))
-        }
-        return
-      }
-
-      if (datePickerMode === 'schedule') {
-        if (!focusedBlockId) return
-        try {
-          await setScheduledDateCmd(focusedBlockId, dateStr)
-          if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-          pageStore.setState((s) => ({
-            blocks: s.blocks.map((b) =>
-              b.id === focusedBlockId ? { ...b, scheduled_date: dateStr } : b,
-            ),
-          }))
-          announce(t('announce.scheduledDateSet', { date: dateStr }))
-        } catch {
-          toast.error(t('blockTree.setScheduledDateFailed'))
-        }
-        return
-      }
-
-      const legacyStr = `${dd}/${mm}/${yyyy}`
-
-      const resp = await listBlocks({ blockType: 'page', limit: 500 })
-      let datePageId = resp.items.find((b) => b.content === dateStr || b.content === legacyStr)?.id
-      if (!datePageId) {
-        const newPage = await createBlock({
-          blockType: 'page',
-          content: dateStr,
-        })
-        datePageId = newPage.id
-        useResolveStore.getState().set(newPage.id, dateStr, false)
-        pagesListRef.current = [...pagesListRef.current, { id: newPage.id, title: dateStr }]
-      }
-
-      if (rovingEditorRef.current.editor && datePageId) {
-        const editor = rovingEditorRef.current.editor
-        const id = datePageId
-        editor.commands.focus()
-        requestAnimationFrame(() => {
-          editor.chain().focus().insertBlockLink(id).run()
-        })
-      }
+      await MODE_HANDLERS[datePickerMode](ctx)
     },
     [datePickerMode, focusedBlockId, rootParentId],
   )

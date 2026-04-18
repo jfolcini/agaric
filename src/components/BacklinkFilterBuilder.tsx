@@ -90,6 +90,137 @@ function getFilterKey(filter: BacklinkFilter): string {
 }
 
 // ---------------------------------------------------------------------------
+// Per-category filter builders (extracted from handleApply to reduce complexity)
+// ---------------------------------------------------------------------------
+
+interface BuildState {
+  blockType: string
+  statusValue: string
+  priorityValue: string
+  containsQuery: string
+  propKey: string
+  propOp: CompareOp
+  propValue: string
+  propType: 'text' | 'num' | 'date'
+  dateAfter: string
+  dateBefore: string
+  propSetKey: string
+  propEmptyKey: string
+  tagValue: string
+  prefixValue: string
+  propertyKeys: string[]
+}
+
+type BuildResult = { filter: BacklinkFilter } | { error: string }
+// biome-ignore lint/suspicious/noExplicitAny: TFunction overload set is too complex
+type TFunc = (...args: any[]) => any
+
+function buildTypeFilter(s: BuildState): BuildResult {
+  return { filter: { type: 'BlockType', block_type: s.blockType } }
+}
+
+function buildStatusFilter(s: BuildState): BuildResult {
+  return { filter: { type: 'PropertyText', key: 'todo', op: 'Eq', value: s.statusValue } }
+}
+
+function buildPriorityFilter(s: BuildState): BuildResult {
+  return { filter: { type: 'PropertyText', key: 'priority', op: 'Eq', value: s.priorityValue } }
+}
+
+function buildContainsFilter(s: BuildState, t: TFunc): BuildResult {
+  const query = s.containsQuery.trim()
+  if (!query) return { error: t('backlink.searchTextRequired') }
+  return { filter: { type: 'Contains', query } }
+}
+
+function buildPropertyFilter(s: BuildState, t: TFunc): BuildResult {
+  const trimmedKey = s.propKey.trim()
+  if (!trimmedKey) return { error: t('backlink.propertyKeyRequired') }
+  if (s.propertyKeys.length > 0 && !s.propertyKeys.includes(trimmedKey)) {
+    return { error: `No blocks have property "${trimmedKey}"` }
+  }
+  if (s.propType === 'num') {
+    const numVal = Number.parseFloat(s.propValue)
+    if (!Number.isFinite(numVal)) return { error: t('backlink.invalidNumber') }
+    return { filter: { type: 'PropertyNum', key: s.propKey, op: s.propOp, value: numVal } }
+  }
+  if (s.propType === 'date') {
+    if (!s.propValue) return { error: t('backlink.dateValueRequired') }
+    return {
+      filter: { type: 'PropertyDate', key: s.propKey, op: s.propOp, value: s.propValue },
+    }
+  }
+  return { filter: { type: 'PropertyText', key: s.propKey, op: s.propOp, value: s.propValue } }
+}
+
+function buildDateFilter(s: BuildState, t: TFunc): BuildResult {
+  if (!s.dateAfter && !s.dateBefore) return { error: t('backlink.dateRangeRequired') }
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/
+  if (s.dateAfter && !dateRe.test(s.dateAfter)) return { error: t('backlink.invalidDateAfter') }
+  if (s.dateBefore && !dateRe.test(s.dateBefore)) {
+    return { error: t('backlink.invalidDateBefore') }
+  }
+  return {
+    filter: {
+      type: 'CreatedInRange',
+      after: s.dateAfter || null,
+      before: s.dateBefore || null,
+    },
+  }
+}
+
+function buildPropertySetFilter(s: BuildState, t: TFunc): BuildResult {
+  if (!s.propSetKey.trim()) return { error: t('backlink.propertyKeyRequired') }
+  return { filter: { type: 'PropertyIsSet', key: s.propSetKey } }
+}
+
+function buildPropertyEmptyFilter(s: BuildState, t: TFunc): BuildResult {
+  if (!s.propEmptyKey.trim()) return { error: t('backlink.propertyKeyRequired') }
+  return { filter: { type: 'PropertyIsEmpty', key: s.propEmptyKey } }
+}
+
+function buildHasTagFilter(s: BuildState, t: TFunc): BuildResult {
+  const id = s.tagValue.trim()
+  if (!id) return { error: t('backlink.tagRequired') }
+  return { filter: { type: 'HasTag', tag_id: id } }
+}
+
+function buildTagPrefixFilter(s: BuildState, t: TFunc): BuildResult {
+  const prefix = s.prefixValue.trim()
+  if (!prefix) return { error: t('backlink.tagPrefixRequired') }
+  return { filter: { type: 'HasTagPrefix', prefix } }
+}
+
+function buildFilterForCategory(
+  category: FilterCategory,
+  state: BuildState,
+  t: TFunc,
+): BuildResult {
+  switch (category) {
+    case 'type':
+      return buildTypeFilter(state)
+    case 'status':
+      return buildStatusFilter(state)
+    case 'priority':
+      return buildPriorityFilter(state)
+    case 'contains':
+      return buildContainsFilter(state, t)
+    case 'property':
+      return buildPropertyFilter(state, t)
+    case 'date':
+      return buildDateFilter(state, t)
+    case 'property-set':
+      return buildPropertySetFilter(state, t)
+    case 'property-empty':
+      return buildPropertyEmptyFilter(state, t)
+    case 'has-tag':
+      return buildHasTagFilter(state, t)
+    case 'tag-prefix':
+      return buildTagPrefixFilter(state, t)
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Add-filter row (inline form)
 // ---------------------------------------------------------------------------
 
@@ -154,100 +285,32 @@ function AddFilterRow({
   }, [tagSearchQuery, tagSearchOpen, debouncedTagSearch])
 
   const handleApply = useCallback(() => {
-    switch (category) {
-      case 'type':
-        onApply({ type: 'BlockType', block_type: blockType })
-        break
-      case 'status':
-        onApply({ type: 'PropertyText', key: 'todo', op: 'Eq', value: statusValue })
-        break
-      case 'priority':
-        onApply({ type: 'PropertyText', key: 'priority', op: 'Eq', value: priorityValue })
-        break
-      case 'contains':
-        if (!containsQuery.trim()) {
-          toast.error(t('backlink.searchTextRequired'))
-          return
-        }
-        onApply({ type: 'Contains', query: containsQuery.trim() })
-        break
-      case 'property':
-        if (!propKey.trim()) {
-          toast.error(t('backlink.propertyKeyRequired'))
-          return
-        }
-        // Warn if key doesn't exist in known property keys
-        if (propertyKeys.length > 0 && !propertyKeys.includes(propKey.trim())) {
-          toast.error(`No blocks have property "${propKey.trim()}"`)
-          return
-        }
-        if (propType === 'num') {
-          const numVal = Number.parseFloat(propValue)
-          if (!Number.isFinite(numVal)) {
-            toast.error(t('backlink.invalidNumber'))
-            return
-          }
-          onApply({ type: 'PropertyNum', key: propKey, op: propOp, value: numVal })
-        } else if (propType === 'date') {
-          if (!propValue) {
-            toast.error(t('backlink.dateValueRequired'))
-            return
-          }
-          onApply({ type: 'PropertyDate', key: propKey, op: propOp, value: propValue })
-        } else {
-          onApply({ type: 'PropertyText', key: propKey, op: propOp, value: propValue })
-        }
-        break
-      case 'date': {
-        if (!dateAfter && !dateBefore) {
-          toast.error(t('backlink.dateRangeRequired'))
-          return
-        }
-        // Validate date format (YYYY-MM-DD)
-        const dateRe = /^\d{4}-\d{2}-\d{2}$/
-        if (dateAfter && !dateRe.test(dateAfter)) {
-          toast.error(t('backlink.invalidDateAfter'))
-          return
-        }
-        if (dateBefore && !dateRe.test(dateBefore)) {
-          toast.error(t('backlink.invalidDateBefore'))
-          return
-        }
-        onApply({
-          type: 'CreatedInRange',
-          after: dateAfter || null,
-          before: dateBefore || null,
-        })
-        break
-      }
-      case 'property-set':
-        if (!propSetKey.trim()) {
-          toast.error(t('backlink.propertyKeyRequired'))
-          return
-        }
-        onApply({ type: 'PropertyIsSet', key: propSetKey })
-        break
-      case 'property-empty':
-        if (!propEmptyKey.trim()) {
-          toast.error(t('backlink.propertyKeyRequired'))
-          return
-        }
-        onApply({ type: 'PropertyIsEmpty', key: propEmptyKey })
-        break
-      case 'has-tag':
-        if (!tagValue.trim()) {
-          toast.error(t('backlink.tagRequired'))
-          return
-        }
-        onApply({ type: 'HasTag', tag_id: tagValue.trim() })
-        break
-      case 'tag-prefix':
-        if (!prefixValue.trim()) {
-          toast.error(t('backlink.tagPrefixRequired'))
-          return
-        }
-        onApply({ type: 'HasTagPrefix', prefix: prefixValue.trim() })
-        break
+    if (!category) return
+    const result = buildFilterForCategory(
+      category,
+      {
+        blockType,
+        statusValue,
+        priorityValue,
+        containsQuery,
+        propKey,
+        propOp,
+        propValue,
+        propType,
+        dateAfter,
+        dateBefore,
+        propSetKey,
+        propEmptyKey,
+        tagValue,
+        prefixValue,
+        propertyKeys,
+      },
+      t,
+    )
+    if ('filter' in result) {
+      onApply(result.filter)
+    } else {
+      toast.error(result.error)
     }
   }, [
     category,
