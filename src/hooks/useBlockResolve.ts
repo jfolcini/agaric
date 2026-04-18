@@ -45,6 +45,127 @@ export interface UseBlockResolveReturn {
   pagesListRef: React.MutableRefObject<Array<{ id: string; title: string }>>
 }
 
+// ── searchPages strategy helpers ────────────────────────────────────────
+//
+// Each function below represents a discrete resolution strategy used by
+// `searchPages`. They are defined at module scope because they do not close
+// over React state — the only mutable state they touch is the `pagesListRef`
+// passed in explicitly. Keeping them as free functions (rather than inline
+// closures) makes the dispatcher below a linear, low-complexity sequence.
+
+type PagesListRef = React.MutableRefObject<Array<{ id: string; title: string }>>
+
+/** Splits a `parent/child/leaf` title into `{ label: leaf, breadcrumb: 'parent / child' }`. */
+function formatNamespacedLabel(title: string): {
+  label: string
+  breadcrumb: string | undefined
+} {
+  if (!title.includes('/')) {
+    return { label: title, breadcrumb: undefined }
+  }
+  const parts = title.split('/')
+  const leaf = parts.pop() as string
+  return { label: leaf, breadcrumb: parts.join(' / ') }
+}
+
+function makePagePickerItem(id: string, title: string): PickerItem {
+  const { label, breadcrumb } = formatNamespacedLabel(title)
+  return { id, label, icon: FileText, breadcrumb }
+}
+
+/**
+ * Short-query strategy: fuzzy-match against the preloaded pages cache.
+ * Lazily falls back to `listBlocks` when the cache is empty, populating
+ * `pagesListRef` as a side effect for subsequent calls.
+ */
+async function searchPagesViaCache(q: string, pagesListRef: PagesListRef): Promise<PickerItem[]> {
+  let source = pagesListRef.current
+  if (source.length === 0) {
+    const resp = await listBlocks({ blockType: 'page', limit: 500 })
+    source = resp.items.map((p) => ({ id: p.id, title: p.content ?? 'Untitled' }))
+    pagesListRef.current = source
+  }
+  const filtered = q ? matchSorter(source, q, { keys: ['title'] }) : source
+  return filtered.slice(0, 20).map((p) => makePagePickerItem(p.id, p.title))
+}
+
+/**
+ * Long-query strategy: FTS5 search filtered to pages. When FTS returns fewer
+ * than 5 results and the preloaded cache is non-empty, supplements the result
+ * set from cache (deduped, capped at 20 total).
+ */
+async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise<PickerItem[]> {
+  const resp = await searchBlocks({ query: q, limit: 20 })
+  const matches = resp.items
+    .filter((b) => b.block_type === 'page')
+    .map((b) => makePagePickerItem(b.id, b.content ?? 'Untitled'))
+
+  if (matches.length >= 5 || pagesListRef.current.length === 0) {
+    return matches
+  }
+  const ftsIds = new Set(matches.map((m) => m.id))
+  const cacheMatches = pagesListRef.current
+    .filter((p) => p.title.toLowerCase().includes(q) && !ftsIds.has(p.id))
+    .slice(0, 10)
+    .map((p) => makePagePickerItem(p.id, p.title))
+  return [...matches, ...cacheMatches].slice(0, 20)
+}
+
+/** Populates the resolve cache so page links show titles instead of raw ULIDs. */
+function populatePageResolveCache(matches: PickerItem[]): void {
+  if (matches.length === 0) return
+  useResolveStore
+    .getState()
+    .batchSet(
+      matches.filter((m) => !m.isCreate).map((m) => ({ id: m.id, title: m.label, deleted: false })),
+    )
+}
+
+/**
+ * Alias-resolution strategy: looks up the query against the page-alias table
+ * and, if a match exists that isn't already in `matches`, prepends it so the
+ * alias becomes the top suggestion. Rejection is logged at warn level — an
+ * alias-service failure must never abort the picker (see H-10 / H-11).
+ */
+async function tryPrependAliasMatch(matches: PickerItem[], q: string): Promise<void> {
+  if (q.length === 0) return
+  try {
+    const aliasMatch = await resolvePageByAlias(q)
+    if (!aliasMatch) return
+    const [pageId, title] = aliasMatch
+    if (matches.some((m) => m.id === pageId)) return
+    matches.unshift({
+      id: pageId,
+      label: `${title ?? 'Untitled'} (alias: ${q})`,
+      isAlias: true,
+    })
+  } catch (err) {
+    logger.warn('useBlockResolve', 'alias lookup failed', { query: q }, err)
+  }
+}
+
+/**
+ * Appends (not prepends) a "Create new page" option when the query doesn't
+ * exactly match an existing page. Pages keep Create at the end — F-26 only
+ * moved Create to the top for tags.
+ */
+function appendCreatePageOptionIfNeeded(
+  matches: PickerItem[],
+  query: string,
+  q: string,
+  pagesListRef: PagesListRef,
+): void {
+  if (q.length === 0) return
+  const allSource = pagesListRef.current.length > 0 ? pagesListRef.current : matches
+  const exactMatch = allSource.some((p) => ('title' in p ? p.title : p.label).toLowerCase() === q)
+  if (exactMatch) return
+  matches.push({
+    id: '__create__',
+    label: query.replace(/\]+$/, '').trim(),
+    isCreate: true,
+  })
+}
+
 export function useBlockResolve(): UseBlockResolveReturn {
   // Subscribe to version so the component re-renders when the cache updates,
   // keeping cacheRef.current fresh for the stable callbacks below.
@@ -130,108 +251,34 @@ export function useBlockResolve(): UseBlockResolveReturn {
     }
   }, [])
 
+  /**
+   * Dispatcher: picks the right resolution strategy based on query length,
+   * then applies cache population, alias disambiguation, and the create-new
+   * affordance in priority order.
+   *
+   * Priority (low → high in the result list):
+   *   1. Alias match (prepended first — highest relevance)
+   *   2. FTS / cache matches (ordered by strategy)
+   *   3. "Create new page" (appended last)
+   */
   const searchPages = useCallback(async (query: string): Promise<PickerItem[]> => {
     const t0 = performance.now()
     try {
       // Strip trailing ]] so [[text]] resolves to "text", not "text]]"
       const q = query.replace(/\]+$/, '').toLowerCase().trim()
 
-      // For short/empty queries, use the preloaded pages cache for instant results.
-      // For longer queries, use FTS5 server-side search for relevance-ranked results.
-      let matches: PickerItem[]
+      // For short/empty queries, use the preloaded pages cache for instant
+      // results. For longer queries, use FTS5 server-side search for
+      // relevance-ranked results.
+      const matches =
+        q.length <= 2
+          ? await searchPagesViaCache(q, pagesListRef)
+          : await searchPagesViaFts(q, pagesListRef)
 
-      if (q.length <= 2) {
-        // Short query — use cache (fuzzy match)
-        let source = pagesListRef.current
-        if (source.length === 0) {
-          const resp = await listBlocks({ blockType: 'page', limit: 500 })
-          source = resp.items.map((p) => ({ id: p.id, title: p.content ?? 'Untitled' }))
-          pagesListRef.current = source
-        }
-        const filtered = q ? matchSorter(source, q, { keys: ['title'] }) : source
-        matches = filtered.slice(0, 20).map((p) => {
-          const breadcrumb = p.title.includes('/')
-            ? p.title.split('/').slice(0, -1).join(' / ')
-            : undefined
-          const label = p.title.includes('/') ? (p.title.split('/').pop() as string) : p.title
-          return { id: p.id, label, icon: FileText, breadcrumb }
-        })
-      } else {
-        // Longer query — use FTS5 search, filter to pages
-        const resp = await searchBlocks({ query: q, limit: 20 })
-        matches = resp.items
-          .filter((b) => b.block_type === 'page')
-          .map((b) => {
-            const title = b.content ?? 'Untitled'
-            const breadcrumb = title.includes('/')
-              ? title.split('/').slice(0, -1).join(' / ')
-              : undefined
-            const label = title.includes('/') ? (title.split('/').pop() as string) : title
-            return { id: b.id, label, icon: FileText, breadcrumb }
-          })
+      populatePageResolveCache(matches)
+      await tryPrependAliasMatch(matches, q)
+      appendCreatePageOptionIfNeeded(matches, query, q, pagesListRef)
 
-        // If FTS returns few results, supplement from cache
-        if (matches.length < 5 && pagesListRef.current.length > 0) {
-          const ftsIds = new Set(matches.map((m) => m.id))
-          const cacheMatches = pagesListRef.current
-            .filter((p) => p.title.toLowerCase().includes(q) && !ftsIds.has(p.id))
-            .slice(0, 10)
-            .map((p) => {
-              const breadcrumb = p.title.includes('/')
-                ? p.title.split('/').slice(0, -1).join(' / ')
-                : undefined
-              const label = p.title.includes('/') ? (p.title.split('/').pop() as string) : p.title
-              return { id: p.id, label, icon: FileText, breadcrumb }
-            })
-          matches = [...matches, ...cacheMatches].slice(0, 20)
-        }
-      }
-
-      // Populate resolve cache so page links show titles instead of raw ULIDs
-      if (matches.length > 0) {
-        useResolveStore
-          .getState()
-          .batchSet(
-            matches
-              .filter((m) => !m.isCreate)
-              .map((m) => ({ id: m.id, title: m.label, deleted: false })),
-          )
-      }
-
-      // Try to find a page by alias and prepend it if not already present
-      if (q.length > 0) {
-        try {
-          const aliasMatch = await resolvePageByAlias(q)
-          if (aliasMatch) {
-            const [pageId, title] = aliasMatch
-            if (!matches.some((m) => m.id === pageId)) {
-              matches.unshift({
-                id: pageId,
-                label: `${title ?? 'Untitled'} (alias: ${q})`,
-                isAlias: true,
-              })
-            }
-          }
-        } catch (err) {
-          logger.warn('useBlockResolve', 'alias lookup failed', { query: q }, err)
-        }
-      }
-
-      // Append (not prepend) "Create new" for pages — F-26 only targeted tags.
-      // Pages keep the existing UX where Create is at the end of the list.
-      if (q.length > 0) {
-        const allSource = pagesListRef.current.length > 0 ? pagesListRef.current : matches
-        const exactMatch = allSource.some(
-          (p) => ('title' in p ? p.title : p.label).toLowerCase() === q,
-        )
-        if (!exactMatch) {
-          matches.push({
-            id: '__create__',
-            label: query.replace(/\]+$/, '').trim(),
-            isCreate: true,
-          })
-        }
-      }
       logSlowQuery('searchPages', q, t0, matches.length)
       return matches
     } catch (err) {

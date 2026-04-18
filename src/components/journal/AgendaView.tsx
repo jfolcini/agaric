@@ -12,6 +12,7 @@ import { batchResolve, queryByProperty } from '../../lib/tauri'
 import type { AgendaFilter } from '../AgendaFilterBuilder'
 import { AgendaFilterBuilder, AgendaSortGroupControls } from '../AgendaFilterBuilder'
 import { AgendaResults } from '../AgendaResults'
+import { buildPageTitleMap, processFilterResult } from './AgendaView.helpers'
 
 interface AgendaViewProps {
   onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
@@ -50,28 +51,19 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
     async function runFilters() {
       try {
         const result = await executeAgendaFilters(agendaFilters)
+        if (cancelled) return
 
-        if (!cancelled) {
-          setFilteredBlocks(result.blocks.slice(0, 200))
-          setAgendaHasMore(result.hasMore)
-          setAgendaCursor(result.cursor)
-          setAgendaLoading(false)
+        const outcome = processFilterResult(result)
+        setFilteredBlocks(outcome.blocks)
+        setAgendaHasMore(outcome.hasMore)
+        setAgendaCursor(outcome.cursor)
+        setAgendaLoading(false)
 
-          // Resolve page titles for breadcrumbs
-          const idsToResolve = new Set<string>()
-          for (const b of result.blocks) {
-            if (b.page_id) idsToResolve.add(b.page_id)
-          }
-          const uniqueIds = [...idsToResolve]
-          if (uniqueIds.length > 0) {
-            const resolved = await batchResolve(uniqueIds)
-            const titleMap = new Map<string, string>()
-            for (const r of resolved) {
-              titleMap.set(r.id, r.title ?? 'Untitled')
-            }
-            if (!cancelled) setAgendaPageTitles(titleMap)
-          }
-        }
+        // Resolve page titles for breadcrumbs
+        if (outcome.pageIds.length === 0) return
+        const resolved = await batchResolve(outcome.pageIds)
+        if (cancelled) return
+        setAgendaPageTitles(buildPageTitleMap(resolved))
       } catch (err) {
         logger.warn(
           'AgendaView',
@@ -79,10 +71,9 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
           undefined,
           err,
         )
-        if (!cancelled) {
-          setFilteredBlocks([])
-          setAgendaLoading(false)
-        }
+        if (cancelled) return
+        setFilteredBlocks([])
+        setAgendaLoading(false)
       }
     }
 

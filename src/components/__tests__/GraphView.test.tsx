@@ -172,6 +172,11 @@ class MockWorker {
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: test mock
+  simulateError(type: 'error' | 'messageerror', event: any) {
+    this.emit(type, event)
+  }
+
+  // biome-ignore lint/suspicious/noExplicitAny: test mock
   private emit(type: string, event: any) {
     const list = this.listeners.get(type) ?? []
     for (const handler of list) {
@@ -1042,6 +1047,151 @@ describe('GraphView', () => {
           expect.objectContaining({ id: 'page-2', label: 'Page Two' }),
         ]),
       )
+    })
+  })
+
+  // BUG-45 regression — worker runtime failure must recover via main-thread fallback
+  describe('WebWorker runtime failure (BUG-45)', () => {
+    it('falls back to main-thread simulation when worker dispatches error event', async () => {
+      const pagesResponse = {
+        items: [
+          { id: 'page-1', content: 'Page One', block_type: 'page' },
+          { id: 'page-2', content: 'Page Two', block_type: 'page' },
+        ],
+        next_cursor: null,
+        has_more: false,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      // Worker was spawned initially
+      expect(MockWorker.instances).toHaveLength(1)
+      const worker = MockWorker.instances[0] as InstanceType<typeof MockWorker>
+      expect(worker.terminated).toBe(false)
+
+      // Main-thread simulation has NOT yet been used
+      expect(forceSimulation).not.toHaveBeenCalled()
+
+      // Simulate a runtime worker error (e.g. module-load failure inside worker).
+      const fakeError = new Error('boom')
+      worker.simulateError('error', {
+        type: 'error',
+        error: fakeError,
+        message: 'boom',
+      })
+
+      // Worker was terminated and a warn was logged
+      await waitFor(() => {
+        expect(worker.terminated).toBe(true)
+      })
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'GraphView',
+        'worker failed',
+        expect.objectContaining({ event: 'error' }),
+        fakeError,
+      )
+
+      // Main-thread fallback kicks in — forceSimulation gets invoked on rerun
+      await waitFor(() => {
+        expect(forceSimulation).toHaveBeenCalled()
+      })
+      expect(forceSimulation).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'page-1', label: 'Page One' }),
+          expect.objectContaining({ id: 'page-2', label: 'Page Two' }),
+        ]),
+      )
+    })
+
+    it('falls back when worker dispatches messageerror event', async () => {
+      const pagesResponse = {
+        items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+        next_cursor: null,
+        has_more: false,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      expect(MockWorker.instances).toHaveLength(1)
+      const worker = MockWorker.instances[0] as InstanceType<typeof MockWorker>
+
+      // A messageerror (e.g. non-cloneable response) should trigger fallback too.
+      worker.simulateError('messageerror', { type: 'messageerror' })
+
+      await waitFor(() => {
+        expect(worker.terminated).toBe(true)
+      })
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'GraphView',
+        'worker failed',
+        expect.objectContaining({ event: 'messageerror' }),
+        expect.anything(),
+      )
+      await waitFor(() => {
+        expect(forceSimulation).toHaveBeenCalled()
+      })
+    })
+
+    it('does not repeat the warn log or respawn the worker after failure', async () => {
+      const pagesResponse = {
+        items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+        next_cursor: null,
+        has_more: false,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+        if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+
+      const worker = MockWorker.instances[0] as InstanceType<typeof MockWorker>
+      worker.simulateError('error', { type: 'error', error: new Error('boom'), message: 'boom' })
+
+      // Second error on the same worker must not produce duplicate warns.
+      worker.simulateError('error', { type: 'error', error: new Error('boom'), message: 'boom' })
+
+      await waitFor(() => {
+        expect(forceSimulation).toHaveBeenCalled()
+      })
+
+      // Exactly one warn for worker failure (deduped).
+      const warnCalls = vi.mocked(logger.warn).mock.calls.filter((c) => c[1] === 'worker failed')
+      expect(warnCalls).toHaveLength(1)
+
+      // After the effect reruns with workerFailed=true, no new worker is spawned.
+      expect(MockWorker.instances).toHaveLength(1)
     })
   })
 

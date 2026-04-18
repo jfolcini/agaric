@@ -1758,3 +1758,176 @@ describe('parse recursion depth guard', () => {
     expect(result).toEqual(doc(paragraph(text('> quoted'))))
   })
 })
+
+// -- inline variant dispatch --------------------------------------------------
+
+// Exercises each per-variant branch of the inline dispatcher introduced when
+// serializeInlineNodes was decomposed into serializeInlineAtom /
+// serializeInlineText / serializeInlineChild. Each test pairs a happy-path
+// assertion with an edge case involving surrounding marks to verify the atom
+// helpers correctly close active mark state before emitting.
+describe('inline variant dispatch', () => {
+  const ULID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
+  const REF_ULID = '01HZ00000000000000000BLOCK'
+
+  describe('text variant (happy + code exclusivity)', () => {
+    it('plain text variant emits escaped text verbatim', () => {
+      expect(serialize(doc(paragraph(text('hello world'))))).toBe('hello world')
+    })
+
+    it('text with only code mark emits backtick form and suppresses other marks', () => {
+      const node: TextNode = {
+        type: 'text',
+        text: 'x',
+        marks: [{ type: 'code' }, { type: 'bold' }],
+      }
+      // Code is exclusive — bold mark is dropped, output is plain `x`.
+      expect(serialize(doc(paragraph(node)))).toBe('`x`')
+    })
+
+    it('text variant handles every escape character', () => {
+      expect(serialize(doc(paragraph(text('a*b`c~d=e\\f[g]h'))))).toBe(
+        'a\\*b\\`c\\~d\\=e\\\\f\\[g\\]h',
+      )
+    })
+  })
+
+  describe('tag_ref variant', () => {
+    it('emits #[ULID] token (happy path)', () => {
+      expect(serialize(doc(paragraph(tagRef(ULID))))).toBe(`#[${ULID}]`)
+    })
+
+    it('closes active bold mark before emitting tag_ref (edge: atom amid marks)', () => {
+      expect(serialize(doc(paragraph(bold('strong'), tagRef(ULID), text('tail'))))).toBe(
+        `**strong**#[${ULID}]tail`,
+      )
+    })
+  })
+
+  describe('block_link variant', () => {
+    it('emits [[ULID]] token (happy path)', () => {
+      expect(serialize(doc(paragraph(blockLink(ULID))))).toBe(`[[${ULID}]]`)
+    })
+
+    it('closes italic mark before emitting block_link (edge: atom amid marks)', () => {
+      expect(serialize(doc(paragraph(italic('emph'), blockLink(ULID))))).toBe(`*emph*[[${ULID}]]`)
+    })
+  })
+
+  describe('block_ref variant', () => {
+    it('emits ((ULID)) token (happy path)', () => {
+      const node: InlineNode = { type: 'block_ref', attrs: { id: REF_ULID } }
+      expect(serialize(doc(paragraph(node)))).toBe(`((${REF_ULID}))`)
+    })
+
+    it('closes strike + highlight before emitting block_ref (edge: compound marks)', () => {
+      const ref: InlineNode = { type: 'block_ref', attrs: { id: REF_ULID } }
+      const marked: TextNode = {
+        type: 'text',
+        text: 'both',
+        marks: [{ type: 'strike' }, { type: 'highlight' }],
+      }
+      // Emit open-strike, open-highlight, text, then close both (inner first:
+      // highlight then strike), then the block_ref atom token.
+      expect(serialize(doc(paragraph(marked, ref)))).toBe(`~~==both==~~((${REF_ULID}))`)
+    })
+  })
+
+  describe('hardBreak variant', () => {
+    it('emits a newline (happy path)', () => {
+      expect(serialize(doc(paragraph(text('a'), hardBreak(), text('b'))))).toBe('a\nb')
+    })
+
+    it('closes active bold before emitting hardBreak (edge: atom amid marks)', () => {
+      expect(serialize(doc(paragraph(bold('a'), hardBreak(), text('b'))))).toBe('**a**\nb')
+    })
+  })
+
+  describe('unknown variant', () => {
+    it('is stripped with a single warning (edge: plus surrounding marks close)', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const unknown = { type: 'unknown_node' } as unknown as InlineNode
+      expect(serialize(doc(paragraph(bold('x'), unknown, text('y'))))).toBe('**x**y')
+      expect(warn).toHaveBeenCalledTimes(1)
+      warn.mockRestore()
+    })
+  })
+
+  describe('all variants interleaved', () => {
+    it('dispatches each variant and preserves ordering', () => {
+      const ref: InlineNode = { type: 'block_ref', attrs: { id: REF_ULID } }
+      const out = serialize(
+        doc(
+          paragraph(
+            text('a '),
+            tagRef(ULID),
+            text(' b '),
+            blockLink(ULID),
+            text(' c '),
+            ref,
+            text(' d'),
+            hardBreak(),
+            text('e'),
+          ),
+        ),
+      )
+      expect(out).toBe(`a #[${ULID}] b [[${ULID}]] c ((${REF_ULID})) d\ne`)
+    })
+  })
+})
+
+// -- external link scan edge cases --------------------------------------------
+
+// Exercises the scanBalancedClose helper extracted from probeExternalLink.
+// These assertions target the two failure modes (unclosed bracket, unclosed
+// paren) and the nesting / escape behaviors.
+describe('external link scan edge cases', () => {
+  it('returns a plain-text paragraph when ] has no following ( (missing url)', () => {
+    const result = parse('[label] trailing')
+    // No link match — every char is literal text after escape handling.
+    expect(result).toEqual(doc(paragraph(text('[label] trailing'))))
+  })
+
+  it('returns plain text when url is unclosed (missing )', () => {
+    const result = parse('[label](https://example.com unterminated')
+    expect(result).toEqual(doc(paragraph(text('[label](https://example.com unterminated'))))
+  })
+
+  it('returns plain text when label has no closing ]', () => {
+    const result = parse('[label without close (url)')
+    // Unclosed `[` — scanBalancedClose returns -1 and probe rejects.
+    expect(result).toEqual(doc(paragraph(text('[label without close (url)'))))
+  })
+
+  it('scans balanced parens in url without terminating early', () => {
+    const result = parse('[wiki](https://en.wikipedia.org/wiki/Link_(disambiguation))')
+    expect(result).toEqual(
+      doc(paragraph(linked('wiki', 'https://en.wikipedia.org/wiki/Link_(disambiguation)'))),
+    )
+  })
+
+  it('honors backslash escape inside url scan', () => {
+    // `\)` inside url — the escape skips the `)` so paren depth does not
+    // close prematurely. The url ends at the real closing `)`.
+    const result = parse('[x](a\\)b)')
+    const para = result.content?.[0] as ParagraphNode | undefined
+    const first = para?.content?.[0] as TextNode | undefined
+    expect(first?.marks?.some((m) => m.type === 'link')).toBe(true)
+    // The href is the raw url slice (with the backslash preserved).
+    const linkMark = first?.marks?.find((m) => m.type === 'link')
+    expect(linkMark).toEqual({ type: 'link', attrs: { href: 'a\\)b' } })
+  })
+
+  it('rejects [[ULID]] as an external link (double-bracket prefix is block_link)', () => {
+    const result = parse(`[[${'01ARZ3NDEKTSV4RRFFQ69G5FAV'}]]`)
+    const para = result.content?.[0] as ParagraphNode | undefined
+    // Treated as block_link token, not an external link attempt.
+    expect(para?.content).toHaveLength(1)
+    expect(para?.content?.[0]).toEqual(blockLink('01ARZ3NDEKTSV4RRFFQ69G5FAV'))
+  })
+
+  it('matches label containing escaped ] (scanner skips the escaped char)', () => {
+    const result = parse('[a \\] b](https://example.com)')
+    expect(result).toEqual(doc(paragraph(linked('a ] b', 'https://example.com'))))
+  })
+})

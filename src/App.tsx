@@ -74,10 +74,115 @@ import { matchesShortcutBinding } from './lib/keyboard-config'
 import { logger } from './lib/logger'
 import { createBlock, flushDraft, getConflicts, listBlocks, listDrafts } from './lib/tauri'
 import { cn } from './lib/utils'
-import { useJournalStore } from './stores/journal'
-import { selectPageStack, useNavigationStore, type View } from './stores/navigation'
+import { type JournalMode, useJournalStore } from './stores/journal'
+import { type PageEntry, selectPageStack, useNavigationStore, type View } from './stores/navigation'
 import { useResolveStore } from './stores/resolve'
 import { useSyncStore } from './stores/sync'
+
+// ---------------------------------------------------------------------------
+// Keyboard shortcut dispatch tables
+// ---------------------------------------------------------------------------
+
+/** Returns true when the event target is an editable input/textarea/contentEditable. */
+function isTypingInField(target: HTMLElement | null): boolean {
+  return Boolean(
+    target?.isContentEditable || target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA',
+  )
+}
+
+/** Per-mode date shifters used by journal nav shortcuts. */
+const JOURNAL_SHIFT_PREV: Record<JournalMode, (d: Date) => Date> = {
+  daily: (d) => subDays(d, 1),
+  weekly: (d) => subWeeks(d, 1),
+  monthly: (d) => subMonths(d, 1),
+  agenda: (d) => subMonths(d, 1),
+}
+const JOURNAL_SHIFT_NEXT: Record<JournalMode, (d: Date) => Date> = {
+  daily: (d) => addDays(d, 1),
+  weekly: (d) => addWeeks(d, 1),
+  monthly: (d) => addMonths(d, 1),
+  agenda: (d) => addMonths(d, 1),
+}
+
+interface JournalShortcut {
+  /** Shortcut id routed through `matchesShortcutBinding`. */
+  readonly binding: string
+  /** Returns the next date for the current mode. */
+  readonly nextDate: (current: Date, mode: JournalMode) => Date
+  /** i18n key for the screen-reader announcement. */
+  readonly announceKey: string
+}
+
+/**
+ * Journal-view keyboard shortcuts. Same pattern as `KEY_RULES` in
+ * `editor/use-block-keyboard.ts`: first match wins, keeps the dispatch
+ * handler well under the cognitive-complexity budget.
+ */
+const JOURNAL_SHORTCUTS: ReadonlyArray<JournalShortcut> = [
+  {
+    binding: 'prevDayWeekMonth',
+    nextDate: (d, mode) => JOURNAL_SHIFT_PREV[mode](d),
+    announceKey: 'announce.navigatedToPrevious',
+  },
+  {
+    binding: 'nextDayWeekMonth',
+    nextDate: (d, mode) => JOURNAL_SHIFT_NEXT[mode](d),
+    announceKey: 'announce.navigatedToNext',
+  },
+  {
+    binding: 'goToToday',
+    nextDate: () => new Date(),
+    announceKey: 'announce.jumpedToToday',
+  },
+]
+
+interface TabShortcut {
+  /** Shortcut id routed through `matchesShortcutBinding`. */
+  readonly binding: string
+  /** Runs the action against the current navigation store snapshot. */
+  readonly run: (state: ReturnType<typeof useNavigationStore.getState>) => void
+}
+
+/**
+ * Tab-management keyboard shortcuts. `previousTab` (Ctrl+Shift+Tab) is listed
+ * before `nextTab` (Ctrl+Tab) because the Shift+Tab binding is strictly more
+ * specific — without the ordering the nextTab matcher would fire first and
+ * Shift+Tab would be misrouted once the user rebound one of them.
+ */
+const TAB_SHORTCUTS: ReadonlyArray<TabShortcut> = [
+  {
+    binding: 'openInNewTab',
+    run: (state) => {
+      const activeTab = state.tabs[state.activeTabIndex]
+      const top = activeTab?.pageStack[activeTab.pageStack.length - 1]
+      if (top) {
+        state.openInNewTab(top.pageId, top.title)
+      }
+    },
+  },
+  {
+    binding: 'closeActiveTab',
+    run: (state) => {
+      state.closeTab(state.activeTabIndex)
+    },
+  },
+  {
+    binding: 'previousTab',
+    run: (state) => {
+      if (state.tabs.length <= 1) return
+      const prev = state.activeTabIndex === 0 ? state.tabs.length - 1 : state.activeTabIndex - 1
+      state.switchTab(prev)
+    },
+  },
+  {
+    binding: 'nextTab',
+    run: (state) => {
+      if (state.tabs.length <= 1) return
+      const next = (state.activeTabIndex + 1) % state.tabs.length
+      state.switchTab(next)
+    },
+  },
+]
 
 /** Sidebar nav items — page-editor is not listed here (it's navigated to programmatically). */
 const NAV_ITEMS: { id: Exclude<View, 'page-editor'>; icon: React.ElementType; labelKey: string }[] =
@@ -154,6 +259,133 @@ function useTrashCount(): number {
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-poll when view changes (user may have restored items)
   const queryFn = useCallback(() => listBlocks({ showDeleted: true, limit: 100 }), [currentView])
   return useItemCount(queryFn, 30_000)
+}
+
+/** Signature used by views that want to open another page. */
+type PageSelectHandler = (pageId: string, title?: string, blockId?: string) => void
+
+interface ViewRouterProps {
+  currentView: View
+  activePage: PageEntry | null
+  onPageSelect: PageSelectHandler
+  onBack: () => void
+  navigateToPage: (pageId: string, title: string, blockId?: string) => void
+}
+
+/**
+ * Renders the main view body based on `currentView`. Extracted from `App`
+ * so the parent component stays well under the cognitive-complexity budget
+ * (MAINT-52). Each branch is a `FeatureErrorBoundary` so a crashed view
+ * never unmounts the shell.
+ */
+function ViewRouter({
+  currentView,
+  activePage,
+  onPageSelect,
+  onBack,
+  navigateToPage,
+}: ViewRouterProps): React.ReactElement | null {
+  switch (currentView) {
+    case 'journal':
+      return (
+        <FeatureErrorBoundary name="Journal">
+          <JournalPage onNavigateToPage={onPageSelect} />
+        </FeatureErrorBoundary>
+      )
+    case 'search':
+      return (
+        <FeatureErrorBoundary name="Search">
+          <SearchPanel />
+        </FeatureErrorBoundary>
+      )
+    case 'pages':
+      return (
+        <FeatureErrorBoundary name="Pages">
+          <PageBrowser onPageSelect={onPageSelect} />
+        </FeatureErrorBoundary>
+      )
+    case 'tags':
+      return (
+        <FeatureErrorBoundary name="Tags">
+          <div className="space-y-8">
+            <TagList onTagClick={(tagId, tagName) => navigateToPage(tagId, tagName)} />
+            <div className="flex items-center gap-4">
+              <div className="flex-1 border-t border-border" />
+              <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Filter
+              </span>
+              <div className="flex-1 border-t border-border" />
+            </div>
+            <TagFilterPanel />
+          </div>
+        </FeatureErrorBoundary>
+      )
+    case 'trash':
+      return (
+        <FeatureErrorBoundary name="Trash">
+          <TrashView />
+        </FeatureErrorBoundary>
+      )
+    case 'properties':
+      return (
+        <FeatureErrorBoundary name="Properties">
+          <PropertiesView />
+        </FeatureErrorBoundary>
+      )
+    case 'settings':
+      return (
+        <FeatureErrorBoundary name="Settings">
+          <SettingsView />
+        </FeatureErrorBoundary>
+      )
+    case 'status':
+      return (
+        <FeatureErrorBoundary name="Status">
+          <StatusPanel />
+        </FeatureErrorBoundary>
+      )
+    case 'conflicts':
+      return (
+        <FeatureErrorBoundary name="Conflicts">
+          <ConflictList />
+        </FeatureErrorBoundary>
+      )
+    case 'history':
+      return (
+        <FeatureErrorBoundary name="History">
+          <HistoryView />
+        </FeatureErrorBoundary>
+      )
+    case 'templates':
+      return (
+        <FeatureErrorBoundary name="Templates">
+          <TemplatesView />
+        </FeatureErrorBoundary>
+      )
+    case 'graph':
+      return (
+        <FeatureErrorBoundary name="Graph">
+          <GraphView />
+        </FeatureErrorBoundary>
+      )
+    case 'page-editor':
+      if (!activePage) return null
+      return (
+        <>
+          <TabBar />
+          <FeatureErrorBoundary name="PageEditor">
+            <PageEditor
+              pageId={activePage.pageId}
+              title={activePage.title}
+              onBack={onBack}
+              onNavigateToPage={onPageSelect}
+            />
+          </FeatureErrorBoundary>
+        </>
+      )
+    default:
+      return null
+  }
 }
 
 function App() {
@@ -248,46 +480,20 @@ function App() {
 
   // ── Journal navigation shortcuts (Alt+Arrow, Alt+T) ────────────────
   // Uses keyboard-config matchers so users can rebind these (BUG-18).
+  // Dispatches through JOURNAL_SHORTCUTS so the handler stays well under
+  // the cognitive-complexity budget (MAINT-53).
   useEffect(() => {
     function handleJournalNav(e: KeyboardEvent) {
-      const { currentView } = useNavigationStore.getState()
-      if (currentView !== 'journal') return
+      if (useNavigationStore.getState().currentView !== 'journal') return
+      if (isTypingInField(e.target as HTMLElement | null)) return
 
-      const target = e.target as HTMLElement | null
-      if (
-        target?.isContentEditable ||
-        target?.tagName === 'INPUT' ||
-        target?.tagName === 'TEXTAREA'
-      )
-        return
+      const shortcut = JOURNAL_SHORTCUTS.find((s) => matchesShortcutBinding(e, s.binding))
+      if (!shortcut) return
 
-      const isPrev = matchesShortcutBinding(e, 'prevDayWeekMonth')
-      const isNext = !isPrev && matchesShortcutBinding(e, 'nextDayWeekMonth')
-      const isToday = !isPrev && !isNext && matchesShortcutBinding(e, 'goToToday')
-      if (!isPrev && !isNext && !isToday) return
-
-      const { mode, currentDate, setCurrentDate } = useJournalStore.getState()
-
-      if (isPrev) {
-        e.preventDefault()
-        if (mode === 'daily') setCurrentDate(subDays(currentDate, 1))
-        else if (mode === 'weekly') setCurrentDate(subWeeks(currentDate, 1))
-        else setCurrentDate(subMonths(currentDate, 1))
-        announce(t('announce.navigatedToPrevious'))
-        return
-      }
-      if (isNext) {
-        e.preventDefault()
-        if (mode === 'daily') setCurrentDate(addDays(currentDate, 1))
-        else if (mode === 'weekly') setCurrentDate(addWeeks(currentDate, 1))
-        else setCurrentDate(addMonths(currentDate, 1))
-        announce(t('announce.navigatedToNext'))
-        return
-      }
-      // isToday
       e.preventDefault()
-      setCurrentDate(new Date())
-      announce(t('announce.jumpedToToday'))
+      const { mode, currentDate, setCurrentDate } = useJournalStore.getState()
+      setCurrentDate(shortcut.nextDate(currentDate, mode))
+      announce(t(shortcut.announceKey))
     }
     document.addEventListener('keydown', handleJournalNav)
     return () => document.removeEventListener('keydown', handleJournalNav)
@@ -337,42 +543,18 @@ function App() {
 
   // ── Tab shortcuts (openInNewTab, closeActiveTab, nextTab, previousTab) ──
   // Routed through matchesShortcutBinding so users can rebind (BUG-18).
+  // Dispatches through TAB_SHORTCUTS so the handler stays well under the
+  // cognitive-complexity budget (MAINT-54).
   useEffect(() => {
     function handleTabShortcuts(e: KeyboardEvent) {
       const state = useNavigationStore.getState()
       if (state.currentView !== 'page-editor') return
 
-      if (matchesShortcutBinding(e, 'openInNewTab')) {
-        e.preventDefault()
-        const activeTab = state.tabs[state.activeTabIndex]
-        const top = activeTab?.pageStack[activeTab.pageStack.length - 1]
-        if (top) {
-          state.openInNewTab(top.pageId, top.title)
-        }
-        return
-      }
-      if (matchesShortcutBinding(e, 'closeActiveTab')) {
-        e.preventDefault()
-        state.closeTab(state.activeTabIndex)
-        return
-      }
-      // previousTab (Ctrl+Shift+Tab) must be checked BEFORE nextTab
-      // (Ctrl+Tab) because the Shift+Tab binding is strictly more specific —
-      // without the ordering the nextTab matcher would fire first and
-      // Shift+Tab would be misrouted once the user rebound one of them.
-      if (matchesShortcutBinding(e, 'previousTab')) {
-        e.preventDefault()
-        if (state.tabs.length <= 1) return
-        const prev = state.activeTabIndex === 0 ? state.tabs.length - 1 : state.activeTabIndex - 1
-        state.switchTab(prev)
-        return
-      }
-      if (matchesShortcutBinding(e, 'nextTab')) {
-        e.preventDefault()
-        if (state.tabs.length <= 1) return
-        const next = (state.activeTabIndex + 1) % state.tabs.length
-        state.switchTab(next)
-      }
+      const shortcut = TAB_SHORTCUTS.find((s) => matchesShortcutBinding(e, s.binding))
+      if (!shortcut) return
+
+      e.preventDefault()
+      shortcut.run(state)
     }
     window.addEventListener('keydown', handleTabShortcuts)
     return () => window.removeEventListener('keydown', handleTabShortcuts)
@@ -589,89 +771,13 @@ function App() {
               }
               data-testid="view-transition-wrapper"
             >
-              {currentView === 'journal' && (
-                <FeatureErrorBoundary name="Journal">
-                  <JournalPage onNavigateToPage={handlePageSelect} />
-                </FeatureErrorBoundary>
-              )}
-              {currentView === 'search' && (
-                <FeatureErrorBoundary name="Search">
-                  <SearchPanel />
-                </FeatureErrorBoundary>
-              )}
-              {currentView === 'pages' && (
-                <FeatureErrorBoundary name="Pages">
-                  <PageBrowser onPageSelect={handlePageSelect} />
-                </FeatureErrorBoundary>
-              )}
-              {currentView === 'tags' && (
-                <FeatureErrorBoundary name="Tags">
-                  <div className="space-y-8">
-                    <TagList onTagClick={(tagId, tagName) => navigateToPage(tagId, tagName)} />
-                    <div className="flex items-center gap-4">
-                      <div className="flex-1 border-t border-border" />
-                      <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                        Filter
-                      </span>
-                      <div className="flex-1 border-t border-border" />
-                    </div>
-                    <TagFilterPanel />
-                  </div>
-                </FeatureErrorBoundary>
-              )}
-              {currentView === 'trash' && (
-                <FeatureErrorBoundary name="Trash">
-                  <TrashView />
-                </FeatureErrorBoundary>
-              )}
-              {currentView === 'properties' && (
-                <FeatureErrorBoundary name="Properties">
-                  <PropertiesView />
-                </FeatureErrorBoundary>
-              )}
-              {currentView === 'settings' && (
-                <FeatureErrorBoundary name="Settings">
-                  <SettingsView />
-                </FeatureErrorBoundary>
-              )}
-              {currentView === 'status' && (
-                <FeatureErrorBoundary name="Status">
-                  <StatusPanel />
-                </FeatureErrorBoundary>
-              )}
-              {currentView === 'conflicts' && (
-                <FeatureErrorBoundary name="Conflicts">
-                  <ConflictList />
-                </FeatureErrorBoundary>
-              )}
-              {currentView === 'history' && (
-                <FeatureErrorBoundary name="History">
-                  <HistoryView />
-                </FeatureErrorBoundary>
-              )}
-              {currentView === 'templates' && (
-                <FeatureErrorBoundary name="Templates">
-                  <TemplatesView />
-                </FeatureErrorBoundary>
-              )}
-              {currentView === 'graph' && (
-                <FeatureErrorBoundary name="Graph">
-                  <GraphView />
-                </FeatureErrorBoundary>
-              )}
-              {currentView === 'page-editor' && activePage && (
-                <>
-                  <TabBar />
-                  <FeatureErrorBoundary name="PageEditor">
-                    <PageEditor
-                      pageId={activePage.pageId}
-                      title={activePage.title}
-                      onBack={goBack}
-                      onNavigateToPage={handlePageSelect}
-                    />
-                  </FeatureErrorBoundary>
-                </>
-              )}
+              <ViewRouter
+                currentView={currentView}
+                activePage={activePage ?? null}
+                onPageSelect={handlePageSelect}
+                onBack={goBack}
+                navigateToPage={navigateToPage}
+              />
             </div>
           </ScrollArea>
         </SidebarInset>

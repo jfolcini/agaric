@@ -1547,6 +1547,249 @@ describe('searchPages — alias matching via resolvePageByAlias', () => {
   })
 })
 
+// ── Priority ordering (MAINT-61) ────────────────────────────────────────
+//
+// After the strategy extraction, the dispatcher runs resolvers in a fixed
+// priority order:
+//   1. Short/long match strategy (cache vs FTS)
+//   2. Resolve-cache population
+//   3. Alias match prepended
+//   4. "Create new page" appended
+// These tests lock the observable order so future refactors can't silently
+// reshuffle it.
+
+describe('searchPages — strategy priority ordering (MAINT-61)', () => {
+  it('orders results: alias first, then FTS matches, then create last', async () => {
+    mockedSearchBlocks.mockResolvedValue({
+      items: [
+        {
+          id: 'FTS_HIT_1',
+          block_type: 'page',
+          content: 'Meeting Notes',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+          page_id: null,
+        },
+        {
+          id: 'FTS_HIT_2',
+          block_type: 'page',
+          content: 'Team Meeting',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+          page_id: null,
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+    mockedResolvePageByAlias.mockResolvedValue(['ALIAS_ONLY', 'Aliased Page'])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('meeting')
+    })
+
+    // Exact order: alias → FTS matches → create
+    expect(items).toHaveLength(4)
+    expect(items[0]).toEqual({
+      id: 'ALIAS_ONLY',
+      label: 'Aliased Page (alias: meeting)',
+      isAlias: true,
+    })
+    expect(items[1]?.id).toBe('FTS_HIT_1')
+    expect(items[2]?.id).toBe('FTS_HIT_2')
+    expect(items[3]).toEqual({ id: '__create__', label: 'meeting', isCreate: true })
+  })
+
+  it('orders results: alias first, then cache matches, then create last (short query)', async () => {
+    mockedResolvePageByAlias.mockResolvedValue(['ALIAS_SHORT', 'Alias Target'])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    act(() => {
+      result.current.pagesListRef.current = [
+        { id: 'C1', title: 'abc page' },
+        { id: 'C2', title: 'abc other' },
+      ]
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('ab')
+    })
+
+    // Alias prepended, cache matches in order, create appended
+    expect(items).toHaveLength(4)
+    expect(items[0]?.id).toBe('ALIAS_SHORT')
+    expect(items[0]?.isAlias).toBe(true)
+    const middleIds = [items[1]?.id, items[2]?.id]
+    expect(middleIds).toContain('C1')
+    expect(middleIds).toContain('C2')
+    expect(items[3]?.id).toBe('__create__')
+  })
+
+  it('populates resolve cache for all non-create matches (excluding alias id when already present)', async () => {
+    mockedSearchBlocks.mockResolvedValue({
+      items: [
+        {
+          id: 'CACHE_POP_1',
+          block_type: 'page',
+          content: 'Sample Page',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+          page_id: null,
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+    mockedResolvePageByAlias.mockResolvedValue(null)
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchPages('sample')
+    })
+
+    // Cache population happens BEFORE alias lookup and BEFORE create option,
+    // so only FTS/cache-strategy matches should be in the resolve store,
+    // never the "__create__" synthetic id.
+    const cache = useResolveStore.getState().cache
+    expect(cache.get('CACHE_POP_1')).toEqual({ title: 'Sample Page', deleted: false })
+    expect(cache.get('__create__')).toBeUndefined()
+  })
+
+  it('short-query strategy handles namespaced titles via formatNamespacedLabel', async () => {
+    const { result } = renderHook(() => useBlockResolve())
+
+    act(() => {
+      result.current.pagesListRef.current = [
+        { id: 'NS_A', title: 'work/projects/alpha' },
+        { id: 'NS_B', title: 'beta' },
+      ]
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+
+    const nsItem = items.find((i) => i.id === 'NS_A')
+    expect(nsItem?.label).toBe('alpha')
+    expect(nsItem?.breadcrumb).toBe('work / projects')
+
+    const plainItem = items.find((i) => i.id === 'NS_B')
+    expect(plainItem?.label).toBe('beta')
+    expect(plainItem?.breadcrumb).toBeUndefined()
+  })
+
+  it('long-query strategy caps total (FTS + cache supplement) at 20', async () => {
+    // FTS returns 2 pages (< 5 so supplementation kicks in)
+    mockedSearchBlocks.mockResolvedValue({
+      items: Array.from({ length: 2 }, (_, i) => ({
+        id: `FTS_CAP_${i}`,
+        block_type: 'page' as const,
+        content: `ReportHit ${i}`,
+        parent_id: null,
+        position: null,
+        deleted_at: null,
+        is_conflict: false,
+        conflict_type: null,
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+        page_id: null,
+      })),
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Populate cache with 30 matches — supplementation should cap at 10,
+    // and the combined result set should cap at 20.
+    act(() => {
+      result.current.pagesListRef.current = Array.from({ length: 30 }, (_, i) => ({
+        id: `CACHE_CAP_${i}`,
+        title: `reportcache ${i}`,
+      }))
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('report')
+    })
+
+    const nonCreate = items.filter((i) => !i.isCreate && !i.isAlias)
+    // 2 FTS + 10 cache (per the internal .slice(0, 10)) = 12 ≤ 20 cap
+    expect(nonCreate).toHaveLength(12)
+    expect(nonCreate[0]?.id).toBe('FTS_CAP_0')
+    expect(nonCreate[1]?.id).toBe('FTS_CAP_1')
+  })
+
+  it('preserves alias priority even when FTS strategy runs', async () => {
+    // FTS returns a result; alias must still be prepended first
+    mockedSearchBlocks.mockResolvedValue({
+      items: [
+        {
+          id: 'FTS_BEHIND',
+          block_type: 'page',
+          content: 'Some Content',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+          page_id: null,
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+    mockedResolvePageByAlias.mockResolvedValue(['ALIAS_FIRST', 'Canonical Page'])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('content')
+    })
+
+    const nonCreate = items.filter((i) => !i.isCreate)
+    expect(nonCreate[0]?.id).toBe('ALIAS_FIRST')
+    expect(nonCreate[0]?.isAlias).toBe(true)
+    expect(nonCreate[1]?.id).toBe('FTS_BEHIND')
+  })
+})
+
 // ── UX-65: Icons in picker items ────────────────────────────────────────
 
 describe('searchTags — icons (UX-65)', () => {

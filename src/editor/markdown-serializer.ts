@@ -180,6 +180,77 @@ function escapeUrl(url: string): string {
 // -- Serialize inline nodes (with mark coalescing) ----------------------------
 
 /**
+ * Emit `token` after closing all active marks, then reset the mark state.
+ *
+ * Used by every inline variant that is not subject to bold/italic/strike/
+ * highlight marks (tag_ref, block_link, block_ref, hardBreak, and
+ * unknown-node fallback). The caller provides the atom token to emit.
+ */
+function serializeInlineAtom(token: string, activeMarks: Set<string>): string {
+  const out = emitCloseAll(activeMarks) + token
+  activeMarks.clear()
+  return out
+}
+
+/**
+ * Serialize a single TextNode, coalescing its marks with the currently
+ * active mark set. Mutates `activeMarks` to reflect the new active set
+ * after this node is emitted.
+ */
+function serializeInlineText(child: TextNode, activeMarks: Set<string>): string {
+  const marks = child.marks ?? []
+  const hasCode = marks.some((m) => m.type === 'code')
+
+  if (hasCode) {
+    // Code is exclusive — close all active marks, emit backtick-wrapped content
+    return serializeInlineAtom(`\`${child.text}\``, activeMarks)
+  }
+
+  // Compute desired bold/italic/strike/highlight mark set for this node
+  const desired = markSetFromMarks(marks)
+
+  // Emit delimiters for any mark changes, update state, then emit text
+  const transition = emitMarkTransition(activeMarks, desired)
+  activeMarks.clear()
+  for (const m of desired) activeMarks.add(m)
+  return transition + escapeText(child.text)
+}
+
+/** Pull the bold/italic/strike/highlight subset out of a mark list. */
+function markSetFromMarks(marks: readonly PMMark[]): Set<string> {
+  const desired = new Set<string>()
+  for (const m of marks) {
+    if (m.type === 'bold' || m.type === 'italic' || m.type === 'strike' || m.type === 'highlight') {
+      desired.add(m.type)
+    }
+  }
+  return desired
+}
+
+/**
+ * Dispatch a single inline node to its per-variant serializer.
+ *
+ * Each variant handler is responsible for updating `activeMarks` so the
+ * next node sees the correct mark state.
+ */
+function serializeInlineChild(child: InlineNode, activeMarks: Set<string>): string {
+  if (child.type === 'text') return serializeInlineText(child, activeMarks)
+  if (child.type === 'tag_ref') {
+    return serializeInlineAtom(`#[${child.attrs.id}]`, activeMarks)
+  }
+  if (child.type === 'block_link') {
+    return serializeInlineAtom(`[[${child.attrs.id}]]`, activeMarks)
+  }
+  if (child.type === 'block_ref') {
+    return serializeInlineAtom(`((${child.attrs.id}))`, activeMarks)
+  }
+  if (child.type === 'hardBreak') return serializeInlineAtom('\n', activeMarks)
+  const unknown = child as { type: string }
+  logger.warn('serializer', `unknown inline node type: "${unknown.type}" — stripped`)
+  return serializeInlineAtom('', activeMarks)
+}
+
+/**
  * Serialize a list of inline nodes with mark coalescing.
  *
  * Instead of wrapping each TextNode independently (which creates ambiguous
@@ -195,58 +266,7 @@ function serializeInlineNodes(nodes: readonly InlineNode[]): string {
   const activeMarks = new Set<string>()
 
   for (const child of nodes) {
-    if (child.type === 'text') {
-      const marks = child.marks ?? []
-      const hasCode = marks.some((m) => m.type === 'code')
-
-      if (hasCode) {
-        // Code is exclusive — close all active marks, emit backtick-wrapped content
-        result += emitCloseAll(activeMarks)
-        activeMarks.clear()
-        result += `\`${child.text}\``
-        continue
-      }
-
-      // Compute desired bold/italic/strike/highlight mark set for this node
-      const desired = new Set<string>()
-      for (const m of marks) {
-        if (
-          m.type === 'bold' ||
-          m.type === 'italic' ||
-          m.type === 'strike' ||
-          m.type === 'highlight'
-        )
-          desired.add(m.type)
-      }
-
-      // Emit delimiters for any mark changes
-      result += emitMarkTransition(activeMarks, desired)
-      activeMarks.clear()
-      for (const m of desired) activeMarks.add(m)
-
-      result += escapeText(child.text)
-    } else if (child.type === 'tag_ref') {
-      result += emitCloseAll(activeMarks)
-      activeMarks.clear()
-      result += `#[${child.attrs.id}]`
-    } else if (child.type === 'block_link') {
-      result += emitCloseAll(activeMarks)
-      activeMarks.clear()
-      result += `[[${child.attrs.id}]]`
-    } else if (child.type === 'block_ref') {
-      result += emitCloseAll(activeMarks)
-      activeMarks.clear()
-      result += `((${child.attrs.id}))`
-    } else if (child.type === 'hardBreak') {
-      result += emitCloseAll(activeMarks)
-      activeMarks.clear()
-      result += '\n'
-    } else {
-      result += emitCloseAll(activeMarks)
-      activeMarks.clear()
-      const unknown = child as { type: string }
-      logger.warn('serializer', `unknown inline node type: "${unknown.type}" — stripped`)
-    }
+    result += serializeInlineChild(child, activeMarks)
   }
 
   // Close any remaining open marks
@@ -451,30 +471,45 @@ interface LinkMatch {
   endPos: number
 }
 
+/**
+ * Scan `src` starting at `startPos` for the character `close` that balances a
+ * single open paren/bracket of type `open` (the `open` char at `startPos - 1`
+ * is assumed already consumed — i.e. depth starts at 1). Tracks nesting and
+ * honors backslash escapes (`\x` skips the next char). Returns the index of
+ * the matching `close`, or `-1` if not found within `maxPos`.
+ */
+function scanBalancedClose(
+  src: string,
+  startPos: number,
+  open: string,
+  close: string,
+  maxPos: number,
+): number {
+  let depth = 1
+  for (let i = startPos; i < maxPos; i++) {
+    const c = src[i]
+    if (c === '\\' && i + 1 < src.length) {
+      i++ // skip escaped char
+      continue
+    }
+    if (c === open) {
+      depth++
+    } else if (c === close) {
+      depth--
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
 function probeExternalLink(s: Scanner): LinkMatch | null {
   if (peek(s) !== '[' || peek(s, 1) === '[') return null
 
   const pos = s.pos + 1 // past [
 
   // Find matching ] (tracking bracket depth, capped to avoid O(n) on unclosed brackets)
-  const maxPos = Math.min(pos + MAX_LINK_SCAN, s.src.length)
-  let depth = 1
-  let textEnd = -1
-  for (let i = pos; i < maxPos; i++) {
-    if (s.src[i] === '\\' && i + 1 < s.src.length) {
-      i++ // skip escaped char
-      continue
-    }
-    if (s.src[i] === '[') depth++
-    if (s.src[i] === ']') {
-      depth--
-      if (depth === 0) {
-        textEnd = i
-        break
-      }
-    }
-  }
-
+  const maxBracketPos = Math.min(pos + MAX_LINK_SCAN, s.src.length)
+  const textEnd = scanBalancedClose(s.src, pos, '[', ']', maxBracketPos)
   if (textEnd === -1) return null
 
   // Must have ( immediately after ]
@@ -482,23 +517,7 @@ function probeExternalLink(s: Scanner): LinkMatch | null {
 
   // Find matching ) for URL (tracking paren depth)
   const urlStart = textEnd + 2
-  let parenDepth = 1
-  let urlEnd = -1
-  for (let i = urlStart; i < s.src.length; i++) {
-    if (s.src[i] === '\\' && i + 1 < s.src.length) {
-      i++
-      continue
-    }
-    if (s.src[i] === '(') parenDepth++
-    if (s.src[i] === ')') {
-      parenDepth--
-      if (parenDepth === 0) {
-        urlEnd = i
-        break
-      }
-    }
-  }
-
+  const urlEnd = scanBalancedClose(s.src, urlStart, '(', ')', s.src.length)
   if (urlEnd === -1) return null
 
   return {
