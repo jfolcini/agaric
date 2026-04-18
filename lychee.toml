@@ -1,0 +1,15 @@
+# Lychee config for broken-link checking in markdown docs.
+# Only true false positives / placeholder URLs belong here.
+
+# Do not fail on transient network errors (timeouts, DNS), only on actual 4xx/5xx.
+# Accept common rate-limit codes on well-known hosts.
+accept = ["200..=299", "301", "302", "307", "308", "403", "429"]
+
+# Skip the request if the URL matches any of these patterns.
+exclude = [
+    # Future publish target — agaric-app GitHub org doesn't exist yet (PUB-5).
+    "^https?://github\\.com/agaric-app/",
+    # Local dev server references in docs (PROMPT.md, playwright config examples).
+    "^http://localhost(:\\d+)?(/|$)",
+    "^http://127\\.0\\.0\\.1(:\\d+)?(/|$)",
+]

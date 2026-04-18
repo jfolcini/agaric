@@ -12,6 +12,15 @@ hooks = [
     { id = "check-merge-conflict" },
     { id = "check-added-large-files", args = ["--maxkb=500"] },
     { id = "no-commit-to-branch", args = ["--branch=main"], stages = ["pre-push"] },
+    { id = "detect-private-key", exclude = "^src-tauri/src/(sync_cert\\.rs|sync_net/tests\\.rs|sync_daemon/tests\\.rs)$" },
+]
+
+# Secret scanning (gitleaks)
+[[repos]]
+repo = "https://github.com/gitleaks/gitleaks"
+rev = "v8.30.1"
+hooks = [
+    { id = "gitleaks" },
 ]
 
 # Biome: lint + format for JS/TS
@@ -87,7 +96,7 @@ repo = "local"
 [[repos.hooks]]
 id = "depcheck"
 name = "depcheck"
-entry = "npx depcheck --ignores='tailwindcss,@vitest/coverage-v8,better-npm-audit,depcheck,knip,license-checker'"
+entry = "npx depcheck --ignores='tailwindcss,@vitest/coverage-v8,better-npm-audit,depcheck,knip,license-checker,markdownlint-cli2'"
 language = "system"
 pass_filenames = false
 files = "(^package\\.json$|^package-lock\\.json$)"
@@ -102,6 +111,26 @@ entry = "npx knip --no-exit-code"
 language = "system"
 pass_filenames = false
 types = ["ts", "tsx"]
+
+# Markdown lint (style + structure)
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "markdownlint"
+name = "markdownlint-cli2"
+entry = "npx --yes markdownlint-cli2"
+language = "system"
+pass_filenames = true
+types = ["markdown"]
+exclude = "^(SESSION-LOG\\.md|node_modules/|dist/)"
+
+# Broken link check
+[[repos]]
+repo = "https://github.com/lycheeverse/lychee"
+rev = "lychee-v0.23.0"
+hooks = [
+    { id = "lychee", args = ["--no-progress", "--max-concurrency=8"], types = ["markdown"] },
+]
 
 # Rust: cargo fmt
 [[repos]]

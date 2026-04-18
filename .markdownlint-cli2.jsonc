@@ -1,0 +1,25 @@
+{
+  "config": {
+    "default": true,
+    "MD013": false,
+    "MD033": { "allowed_elements": ["br", "sub", "sup", "kbd", "details", "summary"] },
+    "MD041": false,
+    "MD024": { "siblings_only": true }
+  },
+  "ignores": [
+    "SESSION-LOG.md",
+    "node_modules/**",
+    "dist/**",
+    "src-tauri/target/**",
+    "src-tauri/gen/**",
+    "AGENTS.md",
+    "**/AGENTS.md",
+    "PROMPT.md",
+    "REVIEW-LATER.md",
+    "FEATURE-MAP.md",
+    "UX.md",
+    "ARCHITECTURE.md",
+    "COMPARISON.md",
+    "docs/SYNC-PLATFORM-NOTES.md"
+  ]
+}

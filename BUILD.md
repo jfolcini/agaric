@@ -35,6 +35,15 @@ rustc --version
 cargo --version
 ```
 
+After cloning, copy the sqlx offline cache env file so `cargo sqlx prepare`
+and `cargo tauri dev` can resolve `DATABASE_URL`:
+
+```bash
+cp src-tauri/.env.example src-tauri/.env
+```
+
+`src-tauri/.env` is gitignored; keep any local overrides to that copy.
+
 ### Linux
 
 System packages (Ubuntu/Debian):
@@ -72,6 +81,7 @@ On top of the base prerequisites:
 - **Android NDK v27**
 - **JDK 17** (for Gradle)
 - **Rust Android targets**:
+
   ```bash
   rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
   ```
@@ -107,6 +117,7 @@ cargo tauri dev
 ```
 
 This launches:
+
 1. Vite dev server on `http://localhost:5173`
 2. Rust backend with the platform's native webview
 
@@ -220,7 +231,7 @@ cargo tauri build
 **Output** (`src-tauri/target/release/bundle/`):
 
 | Format | File | Typical Size |
-|--------|------|-------------|
+| ------ | ---- | ------------ |
 | `.deb` | `Agaric_0.1.0_amd64.deb` | ~9 MB |
 | `.rpm` | `Agaric-0.1.0-1.x86_64.rpm` | ~9 MB |
 | `.AppImage` | `Agaric_0.1.0_amd64.AppImage` | ~79 MB |
@@ -234,7 +245,7 @@ cargo tauri build
 **Output** (`src-tauri/target/release/bundle/`):
 
 | Format | File |
-|--------|------|
+| ------ | ---- |
 | `.msi` | `Agaric_0.1.0_x64_en-US.msi` |
 | `.exe` | `Agaric_0.1.0_x64-setup.exe` (NSIS installer) |
 
@@ -251,7 +262,7 @@ cargo tauri build --target universal-apple-darwin
 **Output** (`src-tauri/target/release/bundle/`):
 
 | Format | File |
-|--------|------|
+| ------ | ---- |
 | `.dmg` | `Agaric_0.1.0_x64.dmg` |
 | `.app` | `Agaric.app` bundle |
 
@@ -335,7 +346,7 @@ adb logcat -s RustStdoutStderr:V
 ### Android Build Details
 
 | Property | Value |
-|----------|-------|
+| -------- | ----- |
 | Package ID | `com.agaric.app` |
 | Min SDK | 24 (Android 7.0) |
 | Target SDK | 36 |
@@ -359,6 +370,7 @@ Tauri 2 supports iOS and the codebase is structurally ready (`#[cfg_attr(mobile,
 - **macOS host** with Xcode installed (iOS apps cannot be cross-compiled)
 - **Xcode Command Line Tools**: `xcode-select --install`
 - **Rust iOS targets**:
+
   ```bash
   rustup target add aarch64-apple-ios x86_64-apple-ios aarch64-apple-ios-sim
   ```

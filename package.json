@@ -106,6 +106,7 @@
     "jsdom": "^29.0.2",
     "knip": "^6.4.1",
     "license-checker": "^25.0.1",
+    "markdownlint-cli2": "^0.22.0",
     "typescript": "~5.9.3",
     "vite": "^8.0.8",
     "vitest": "^4.1.2",

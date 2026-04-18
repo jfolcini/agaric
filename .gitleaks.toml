@@ -1,0 +1,4 @@
+# Agaric gitleaks allowlist — only known false positives belong here.
+# Real secrets must be rotated, not allowlisted.
+[extend]
+useDefault = true
