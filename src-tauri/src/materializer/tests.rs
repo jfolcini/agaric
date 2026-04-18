@@ -85,6 +85,52 @@ async fn new_creates_materializer_with_functional_queues() {
         "new materializer should accept background tasks"
     );
 }
+
+/// PERF-24: the lifecycle-aware constructor must produce a fully
+/// functional materializer — it only changes the behaviour of the
+/// internal metrics-snapshot task, not of the main queues.
+#[tokio::test]
+async fn with_read_pool_and_lifecycle_accepts_tasks() {
+    let (pool, _dir) = test_pool().await;
+    let lifecycle = crate::lifecycle::LifecycleHooks::new();
+    let mat = Materializer::with_read_pool_and_lifecycle(pool.clone(), pool, lifecycle);
+    assert!(
+        mat.try_enqueue_background(MaterializeTask::RebuildTagsCache)
+            .is_ok(),
+        "lifecycle-aware materializer must still accept background tasks"
+    );
+    mat.enqueue_foreground(MaterializeTask::RebuildTagsCache)
+        .await
+        .expect("lifecycle-aware materializer must still accept foreground tasks");
+    mat.shutdown();
+}
+
+/// PERF-24: flipping the foreground flag must not corrupt the
+/// materializer's queues. We flip the flag while actively enqueueing
+/// and verify shutdown still completes cleanly.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn lifecycle_flag_flip_does_not_break_queues() {
+    let (pool, _dir) = test_pool().await;
+    let lifecycle = crate::lifecycle::LifecycleHooks::new();
+    let mat = Materializer::with_read_pool_and_lifecycle(pool.clone(), pool, lifecycle.clone());
+
+    // Flip backgrounded → foreground a few times while enqueueing.
+    for i in 0..5 {
+        if i % 2 == 0 {
+            lifecycle.mark_backgrounded();
+        } else {
+            lifecycle.mark_foreground();
+        }
+        mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await
+            .expect("enqueue must succeed regardless of foreground state");
+    }
+
+    mat.flush_background()
+        .await
+        .expect("flush_background must still drain queue after flag flips");
+    mat.shutdown();
+}
 #[tokio::test]
 async fn clone_shares_queues_both_can_enqueue() {
     let (pool, _dir) = test_pool().await;

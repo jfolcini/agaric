@@ -102,6 +102,11 @@ pub async fn append_local_op_in_tx(
     // the op_log.payload column contains only the operation-specific fields.
     let payload_json = serialize_inner_payload(&op_payload)?;
 
+    // PERF-26: extract block_id for the indexed column (added in migration
+    // 0030). Reads from the typed enum — O(1), no JSON re-parse. Returns
+    // None for `delete_attachment` which targets an attachment_id only.
+    let block_id: Option<&str> = op_payload.block_id();
+
     // NOTE: `COALESCE(MAX(seq), 0) + 1` is efficient here because the
     // PRIMARY KEY (device_id, seq) gives SQLite a B-tree index that makes
     // `MAX(seq) WHERE device_id = ?` an O(log n) seek, not a table scan.
@@ -134,8 +139,8 @@ pub async fn append_local_op_in_tx(
     );
 
     sqlx::query!(
-        "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         device_id,
         seq,
         parent_seqs,
@@ -143,6 +148,7 @@ pub async fn append_local_op_in_tx(
         op_type,
         payload_json,
         created_at,
+        block_id,
     )
     .execute(&mut **tx)
     .await?;
@@ -194,6 +200,20 @@ pub(crate) fn serialize_inner_payload(op_payload: &OpPayload) -> Result<String, 
         PurgeBlock, MoveBlock, AddTag, RemoveTag,
         SetProperty, DeleteProperty, AddAttachment, DeleteAttachment,
     )
+}
+
+/// Extract the `block_id` from a serialized payload JSON string.
+///
+/// Used by [`crate::dag::insert_remote_op`] to populate the indexed
+/// `op_log.block_id` column (added in migration 0030) when the caller
+/// only has the payload as a JSON string rather than a typed [`OpPayload`].
+///
+/// Returns `None` if the payload has no `block_id` field (the
+/// `delete_attachment` op targets an attachment_id only) or if the JSON
+/// cannot be parsed.
+pub(crate) fn extract_block_id_from_payload(payload_json: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(payload_json).ok()?;
+    value.get("block_id")?.as_str().map(str::to_owned)
 }
 
 // ---------------------------------------------------------------------------

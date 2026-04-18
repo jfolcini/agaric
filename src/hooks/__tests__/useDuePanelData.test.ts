@@ -75,10 +75,16 @@ beforeEach(() => {
   mockedBatchResolve.mockResolvedValue([])
   mockedListProjectedAgenda.mockResolvedValue([])
   mockedQueryByProperty.mockResolvedValue(emptyResponse)
+  // TEST-31: Freeze Date only (not setTimeout/setInterval — waitFor and
+  // renderHook rely on real timers). Prevents midnight-boundary flakes
+  // where the test's `new Date()` crosses a day boundary mid-assertion.
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-04-15T12:00:00Z'))
 })
 
 afterEach(() => {
   localStorage.clear()
+  vi.useRealTimers()
 })
 
 describe('useDuePanelData', () => {

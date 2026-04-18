@@ -13,7 +13,9 @@ use sqlx::SqlitePool;
 use crate::error::AppError;
 use crate::hash::{compute_op_hash, verify_op_hash};
 use crate::op::*;
-use crate::op_log::{get_op_by_seq, serialize_inner_payload, OpRecord};
+use crate::op_log::{
+    extract_block_id_from_payload, get_op_by_seq, serialize_inner_payload, OpRecord,
+};
 
 /// Extract the `prev_edit` pointer from an op record's payload.
 ///
@@ -60,10 +62,17 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
 
     // INSERT OR IGNORE — duplicate delivery is a no-op.
     // Returns true if a row was inserted, false if it was a duplicate.
+    //
+    // PERF-26: populate the indexed block_id column (migration 0030) from
+    // the JSON payload so sync'd remote ops participate in fast block-scoped
+    // lookups. Local ops use OpPayload::block_id() directly; here we only
+    // have the serialized payload string.
+    let block_id: Option<String> = extract_block_id_from_payload(&record.payload);
+
     let result = sqlx::query!(
         "INSERT OR IGNORE INTO op_log \
-         (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         record.device_id,
         record.seq,
         record.parent_seqs,
@@ -71,6 +80,7 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
         record.op_type,
         record.payload,
         record.created_at,
+        block_id,
     )
     .execute(pool)
     .await?;
@@ -122,10 +132,13 @@ pub async fn append_merge_op(
         &payload_json,
     );
 
+    // PERF-26: populate indexed block_id column from the typed payload.
+    let block_id: Option<&str> = op_payload.block_id();
+
     sqlx::query!(
         "INSERT INTO op_log \
-         (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         device_id,
         seq,
         parent_seqs_json,
@@ -133,6 +146,7 @@ pub async fn append_merge_op(
         op_type,
         payload_json,
         created_at,
+        block_id,
     )
     .execute(&mut *tx)
     .await?;

@@ -18,6 +18,9 @@ ignored = [
     "tokio-rustls",
     "futures-util",
     "x509-parser",
+    # Android-only, unused on desktop targets (BUG-39)
+    "jni",
+    "ndk-context",
 ]
 
 [lints.rust]
@@ -89,6 +92,13 @@ insta = { version = "1.47.0", features = ["yaml", "redactions"] }
 proptest = "1.11.0"
 tempfile = "3.27.0"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+
+# Android-only dependencies (BUG-39: WiFi multicast lock via JNI).
+# Gated on target_os = "android" so desktop builds do not pull in
+# these transitive dependencies.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"
 
 [profile.release]
 lto = "thin"

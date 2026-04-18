@@ -6,6 +6,7 @@ use sqlx::SqlitePool;
 use tokio::sync::Notify;
 
 use crate::error::AppError;
+use crate::lifecycle::LifecycleHooks;
 use crate::materializer::Materializer;
 use crate::peer_refs::{self, PeerRef};
 use crate::sync_events::{SyncEvent, SyncEventSink};
@@ -29,6 +30,12 @@ use super::SharedEventSink;
 /// Uses `tokio::select!` to react to mDNS peer-discovery events,
 /// debounced local-change notifications, periodic resync checks, and
 /// shutdown signals — without polling.
+///
+/// The `lifecycle` hooks gate the periodic 30 s resync tick body on the
+/// foreground flag, and the `wake` notify lets foreground transitions
+/// re-run the loop body immediately without waiting out the remaining
+/// tick interval. Event-driven branches (mDNS, debounced change) are
+/// NOT gated — they only fire when there is real work to do.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn daemon_loop(
     pool: SqlitePool,
@@ -39,7 +46,24 @@ pub(crate) async fn daemon_loop(
     event_sink: Arc<dyn SyncEventSink>,
     shutdown_notify: Arc<Notify>,
     cancel: Arc<AtomicBool>,
+    lifecycle: LifecycleHooks,
 ) -> Result<(), AppError> {
+    // BUG-39: Acquire WifiManager.MulticastLock on Android so the
+    // `mdns-sd` crate's UDP multicast sockets receive packets. Held in
+    // a local binding so `Drop` releases it on function exit (graceful
+    // shutdown or error return). On non-Android targets this is a no-op.
+    #[cfg(target_os = "android")]
+    let _multicast_lock = match super::android_multicast::MulticastLock::acquire() {
+        Ok(lock) => Some(lock),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "failed to acquire Android WiFi multicast lock; mDNS peer discovery may not work"
+            );
+            None
+        }
+    };
+
     // 1. Start mDNS service (graceful fallback — #522)
     //
     // mDNS may fail on platforms where raw UDP sockets are blocked (e.g. iOS)
@@ -193,7 +217,17 @@ pub(crate) async fn daemon_loop(
             }
 
             // Branch C: periodic resync check (30s interval)
+            //
+            // PERF-24: when the app is backgrounded (`lifecycle.is_foreground`
+            // == false), short-circuit the body so we don't spin up DB
+            // queries and network connections while the user isn't looking.
+            // We still drain the tick so the interval timer's internal
+            // cursor doesn't fall behind, but skip the expensive parts.
             _ = resync_interval.tick() => {
+                if lifecycle.is_backgrounded() {
+                    continue;
+                }
+
                 // Evict stale mDNS peers not seen in last 5 minutes
                 let stale_threshold = tokio::time::Instant::now() - std::time::Duration::from_secs(300);
                 discovered.retain(|_, (_, last_seen)| *last_seen > stale_threshold);
@@ -225,7 +259,19 @@ pub(crate) async fn daemon_loop(
                 }
             }
 
-            // Branch D: shutdown signal
+            // Branch D: foreground transition (PERF-24)
+            //
+            // When the app returns to foreground we may have missed one
+            // or more resync ticks. Reset the interval timer so the
+            // first tick after resume fires immediately and catches up
+            // on any peers that became due while backgrounded. The body
+            // itself runs on the next tick iteration — we don't inline
+            // the work here because Branch C already handles it.
+            _ = lifecycle.wake.notified() => {
+                resync_interval.reset_immediately();
+            }
+
+            // Branch E: shutdown signal
             _ = shutdown_notify.notified() => {
                 break;
             }

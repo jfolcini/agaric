@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT device_id, seq FROM op_log WHERE payload LIKE '%\"block_id\":\"' || ? || '\"%' AND json_extract(payload, '$.block_id') = ? AND op_type = 'create_block' LIMIT 1",
+  "query": "SELECT device_id, seq FROM op_log WHERE block_id = ? AND op_type = 'create_block' LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -15,12 +15,12 @@
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 1
     },
     "nullable": [
       false,
       false
     ]
   },
-  "hash": "dc4b60768e32ffcc6e4f6f999ae77a0fecd2ed2e7b29da293111ac1c5541c0f8"
+  "hash": "4ff6d558dbf4d855e9239737b2b146d8cd70ac05b8f8f55e9f1e0f1964269b30"
 }

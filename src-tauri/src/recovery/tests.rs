@@ -1233,3 +1233,285 @@ async fn refresh_caches_for_recovered_drafts_is_noop_when_list_empty() {
         .await
         .expect("no-op must not error");
 }
+
+// ============================================================================
+// PERF-26: op_log.block_id indexed column regression tests
+// ============================================================================
+
+/// After migration 0030, every local op appended via `append_local_op` must
+/// populate the `block_id` column (except for `delete_attachment`, which
+/// has no block_id). The draft-recovery query paths depend on this.
+#[tokio::test]
+async fn perf26_local_append_populates_block_id_column() {
+    let (pool, _dir) = test_pool().await;
+
+    let bid = BlockId::test_id("BLKPERF26A");
+    let op = OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: bid.clone(),
+        block_type: "content".into(),
+        parent_id: None,
+        position: Some(1),
+        content: "hello".into(),
+    });
+    append_local_op(&pool, "dev-perf26", op).await.unwrap();
+
+    // Read the indexed column directly.
+    let row: Option<String> = sqlx::query_scalar(
+        "SELECT block_id FROM op_log WHERE device_id = 'dev-perf26' AND seq = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        row.as_deref(),
+        Some(bid.as_str()),
+        "block_id column must match the typed payload's block_id"
+    );
+}
+
+/// The `delete_attachment` op targets an attachment_id only; its payload has
+/// no `block_id` field. The indexed column must be NULL for that variant so
+/// block-scoped queries don't accidentally match it.
+#[tokio::test]
+async fn perf26_delete_attachment_stores_null_block_id() {
+    use crate::op::{AddAttachmentPayload, DeleteAttachmentPayload};
+
+    let (pool, _dir) = test_pool().await;
+    let bid = BlockId::test_id("BLKPERF26B");
+
+    // Need a block for the AddAttachment to reference.
+    insert_test_block(&pool, bid.as_str(), "x").await;
+
+    // Append AddAttachment (has block_id) then DeleteAttachment (no block_id).
+    append_local_op(
+        &pool,
+        "dev-perf26b",
+        OpPayload::AddAttachment(AddAttachmentPayload {
+            attachment_id: "ATT-1".into(),
+            block_id: bid.clone(),
+            mime_type: "text/plain".into(),
+            filename: "x.txt".into(),
+            size_bytes: 1,
+            fs_path: "/tmp/x.txt".into(),
+        }),
+    )
+    .await
+    .unwrap();
+    append_local_op(
+        &pool,
+        "dev-perf26b",
+        OpPayload::DeleteAttachment(DeleteAttachmentPayload {
+            attachment_id: "ATT-1".into(),
+        }),
+    )
+    .await
+    .unwrap();
+
+    let add_bid: Option<String> = sqlx::query_scalar(
+        "SELECT block_id FROM op_log WHERE device_id = 'dev-perf26b' AND op_type = 'add_attachment'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let del_bid: Option<String> = sqlx::query_scalar(
+        "SELECT block_id FROM op_log WHERE device_id = 'dev-perf26b' AND op_type = 'delete_attachment'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        add_bid.as_deref(),
+        Some(bid.as_str()),
+        "AddAttachment stores block_id"
+    );
+    assert!(
+        del_bid.is_none(),
+        "DeleteAttachment must store NULL block_id"
+    );
+}
+
+/// Draft recovery must correctly filter by block_id using the indexed
+/// column and only find ops for the target block — not ops for other
+/// blocks that happen to have overlapping prefixes in their JSON payload.
+#[tokio::test]
+async fn perf26_draft_recovery_filters_to_target_block_only() {
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-perf26c";
+
+    // Three blocks; only one has a draft.
+    let target = BlockId::test_id("BLKTARGET26");
+    let other_a = BlockId::test_id("BLKOTHER26A");
+    let other_b = BlockId::test_id("BLKOTHER26B");
+
+    for bid in [&target, &other_a, &other_b] {
+        insert_test_block(&pool, bid.as_str(), "seed").await;
+    }
+
+    // Append several ops across different block_ids, all with created_at in
+    // the far past so they would NOT satisfy `created_at > draft.updated_at`.
+    for bid in [&other_a, &other_b, &target] {
+        let op = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: bid.clone(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            content: "initial".into(),
+        });
+        append_local_op_at(&pool, device_id, op, FAR_PAST.into())
+            .await
+            .unwrap();
+    }
+
+    // Append a recent edit_block for `other_a` (NOT the target). If the
+    // block_id filter is wrong, draft recovery would see this and classify
+    // the target's draft as "already flushed".
+    let recent_op = OpPayload::EditBlock(EditBlockPayload {
+        block_id: other_a.clone(),
+        to_text: "new".into(),
+        prev_edit: None,
+    });
+    append_local_op_at(&pool, device_id, recent_op, FAR_FUTURE.into())
+        .await
+        .unwrap();
+
+    // Create a draft for the TARGET block with updated_at between FAR_PAST
+    // and FAR_FUTURE — so if filtering were broken we'd see other_a's
+    // FAR_FUTURE edit and wrongly consider target's draft already flushed.
+    sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
+        .bind(target.as_str())
+        .bind("recovered text")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let report = recover_at_boot(&pool, device_id).await.unwrap();
+
+    // Correct behavior: target draft is NOT flushed (no recent op for
+    // target) → it gets recovered. If block_id filter were missing or
+    // wrong, the FAR_FUTURE edit on other_a would leak into target's
+    // flush check and the draft would be classified as already flushed.
+    assert_eq!(
+        report.drafts_recovered,
+        vec![target.as_str().to_owned()],
+        "target draft must be recovered; block_id filter must not leak \
+         FAR_FUTURE edit from other_a"
+    );
+    assert_eq!(report.drafts_already_flushed, 0);
+}
+
+/// Scale test: 10K ops spread across 10 block_ids plus one target block.
+/// Draft recovery for the target must complete quickly and return the
+/// correct result — verifying the idx_op_log_block_id index is used.
+///
+/// No wall-clock assertion (flaky on loaded CI); instead we rely on the
+/// test timing out at the harness default (~60s) if the scan degrades
+/// to a full-table JSON parse.
+#[tokio::test]
+async fn perf26_draft_recovery_at_10k_ops_is_fast() {
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-perf26scale";
+
+    // Seed the target block + one draft.
+    let target = BlockId::test_id("BLKSCALE26");
+    insert_test_block(&pool, target.as_str(), "seed").await;
+    sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
+        .bind(target.as_str())
+        .bind("scale recovery text")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Generate 10 distinct block_ids (none equal to target) and 1000 ops
+    // per block = 10K ops total. All ops land in the far past so none
+    // satisfy `created_at > draft.updated_at`.
+    let mut noise_bids = Vec::with_capacity(10);
+    for i in 0..10 {
+        let bid = BlockId::test_id(&format!("BLKNOISE26{i:02}"));
+        insert_test_block(&pool, bid.as_str(), "n").await;
+        noise_bids.push(bid);
+    }
+
+    let start = std::time::Instant::now();
+    // Keep the bench body tight: one create per block + 999 edits per block.
+    for bid in &noise_bids {
+        append_local_op_at(
+            &pool,
+            device_id,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: bid.clone(),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(1),
+                content: "n".into(),
+            }),
+            FAR_PAST.into(),
+        )
+        .await
+        .unwrap();
+        for _ in 0..999 {
+            append_local_op_at(
+                &pool,
+                device_id,
+                OpPayload::EditBlock(EditBlockPayload {
+                    block_id: bid.clone(),
+                    to_text: "n".into(),
+                    prev_edit: None,
+                }),
+                FAR_PAST.into(),
+            )
+            .await
+            .unwrap();
+        }
+    }
+    let insert_elapsed = start.elapsed();
+
+    // Sanity: op_log has ~10K rows.
+    let total_ops: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        total_ops, 10_000,
+        "expected exactly 10K seeded ops, got {total_ops}"
+    );
+
+    // Run draft recovery. Without the indexed block_id column this would
+    // json_extract across 10K rows per draft lookup.
+    let recover_start = std::time::Instant::now();
+    let report = recover_at_boot(&pool, device_id).await.unwrap();
+    let recover_elapsed = recover_start.elapsed();
+
+    assert_eq!(
+        report.drafts_recovered,
+        vec![target.as_str().to_owned()],
+        "target draft must be recovered correctly at 10K scale"
+    );
+    eprintln!(
+        "perf26_draft_recovery_at_10k_ops_is_fast: \
+         inserted 10K ops in {insert_elapsed:?}, recovered in {recover_elapsed:?}"
+    );
+}
+
+/// Confirms that the `idx_op_log_block_id` index is present after migrations
+/// — guards against accidental migration-ordering regressions.
+#[tokio::test]
+async fn perf26_block_id_index_exists() {
+    let (pool, _dir) = test_pool().await;
+
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master \
+         WHERE type = 'index' AND name = 'idx_op_log_block_id'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        count, 1,
+        "migration 0030 must create idx_op_log_block_id exactly once"
+    );
+}

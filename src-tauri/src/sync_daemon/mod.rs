@@ -17,6 +17,11 @@ mod discovery;
 mod orchestrator;
 mod server;
 
+// Android-only: acquire WifiManager.MulticastLock at daemon start so the
+// `mdns-sd` crate's UDP multicast sockets receive packets (BUG-39).
+#[cfg(target_os = "android")]
+pub(crate) mod android_multicast;
+
 #[cfg(test)]
 mod tests;
 
@@ -29,6 +34,7 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use crate::error::AppError;
+use crate::lifecycle::LifecycleHooks;
 use crate::materializer::Materializer;
 use crate::peer_refs;
 use crate::sync_events::{SyncEvent, SyncEventSink};
@@ -132,10 +138,39 @@ impl SyncDaemon {
         event_sink: Arc<dyn SyncEventSink>,
         cancel: Arc<AtomicBool>,
     ) -> Result<Self, AppError> {
+        Self::start_if_peers_exist_with_lifecycle(
+            pool,
+            device_id,
+            materializer,
+            scheduler,
+            cert,
+            event_sink,
+            cancel,
+            LifecycleHooks::default(),
+        )
+        .await
+    }
+
+    /// PERF-24: lifecycle-aware variant of [`Self::start_if_peers_exist`].
+    ///
+    /// The `lifecycle` hooks are propagated into the full daemon loop so
+    /// the periodic resync tick skips its body while the app is
+    /// backgrounded and wakes immediately on foreground transitions.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn start_if_peers_exist_with_lifecycle(
+        pool: SqlitePool,
+        device_id: String,
+        materializer: Materializer,
+        scheduler: Arc<SyncScheduler>,
+        cert: SyncCert,
+        event_sink: Arc<dyn SyncEventSink>,
+        cancel: Arc<AtomicBool>,
+        lifecycle: LifecycleHooks,
+    ) -> Result<Self, AppError> {
         match Self::should_start_active(&pool).await {
             Ok(true) => {
                 // Paired peers already exist — start the full daemon.
-                Self::start(
+                Self::start_with_lifecycle(
                     pool,
                     device_id,
                     materializer,
@@ -143,6 +178,7 @@ impl SyncDaemon {
                     cert,
                     event_sink,
                     cancel,
+                    lifecycle,
                 )
                 .await
             }
@@ -161,6 +197,7 @@ impl SyncDaemon {
                     cert,
                     event_sink,
                     cancel,
+                    lifecycle,
                 )
             }
             Err(e) => {
@@ -172,7 +209,7 @@ impl SyncDaemon {
                     error = %e,
                     "peer_refs query failed at daemon start; falling back to active startup"
                 );
-                Self::start(
+                Self::start_with_lifecycle(
                     pool,
                     device_id,
                     materializer,
@@ -180,6 +217,7 @@ impl SyncDaemon {
                     cert,
                     event_sink,
                     cancel,
+                    lifecycle,
                 )
                 .await
             }
@@ -197,6 +235,7 @@ impl SyncDaemon {
         cert: SyncCert,
         event_sink: Arc<dyn SyncEventSink>,
         cancel: Arc<AtomicBool>,
+        lifecycle: LifecycleHooks,
     ) -> Result<Self, AppError> {
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_notify = Arc::new(Notify::new());
@@ -242,6 +281,7 @@ impl SyncDaemon {
                 event_sink,
                 shutdown_notify_task,
                 cancel_flag,
+                lifecycle,
             )
             .await
             {
@@ -274,6 +314,35 @@ impl SyncDaemon {
         event_sink: Arc<dyn SyncEventSink>,
         cancel: Arc<AtomicBool>,
     ) -> Result<Self, AppError> {
+        Self::start_with_lifecycle(
+            pool,
+            device_id,
+            materializer,
+            scheduler,
+            cert,
+            event_sink,
+            cancel,
+            LifecycleHooks::default(),
+        )
+        .await
+    }
+
+    /// PERF-24: lifecycle-aware variant of [`Self::start`].
+    ///
+    /// The daemon's periodic resync tick short-circuits when
+    /// `lifecycle.is_foreground` is `false`, and wakes immediately when
+    /// `lifecycle.wake` is notified.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn start_with_lifecycle(
+        pool: SqlitePool,
+        device_id: String,
+        materializer: Materializer,
+        scheduler: Arc<SyncScheduler>,
+        cert: SyncCert,
+        event_sink: Arc<dyn SyncEventSink>,
+        cancel: Arc<AtomicBool>,
+        lifecycle: LifecycleHooks,
+    ) -> Result<Self, AppError> {
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_notify = Arc::new(Notify::new());
         let shutdown_notify_flag = shutdown_notify.clone();
@@ -289,6 +358,7 @@ impl SyncDaemon {
                 event_sink,
                 shutdown_notify_flag,
                 cancel_flag,
+                lifecycle,
             )
             .await
             {

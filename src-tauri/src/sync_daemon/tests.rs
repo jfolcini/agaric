@@ -3011,3 +3011,130 @@ async fn dormant_daemon_unaffected_when_last_peer_removed() {
     .await
     .expect("daemon must continue running and shut down cleanly after peers removed");
 }
+
+// ── PERF-24: app-lifecycle integration ───────────────────────────────
+//
+// The daemon's periodic 30 s resync tick checks `lifecycle.is_foreground`
+// before running its body. We exercise the gate at two levels:
+//
+// 1. `LifecycleHooks` in isolation — the atomic flag is shared between
+//    clones (covered in `crate::lifecycle::tests`; smoke-asserted here
+//    too to catch integration drift).
+// 2. Full daemon startup — `start_with_lifecycle` completes and the
+//    daemon shuts down cleanly regardless of initial foreground state.
+//    We cannot wait 30 s for the resync tick in a unit test, but the
+//    gate is also exercised by the isolated lifecycle test and by
+//    dedicated unit tests in `crate::lifecycle` / `coordinator.rs`.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn start_with_lifecycle_accepts_backgrounded_initial_state() {
+    install_crypto_provider();
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let cancel = Arc::new(AtomicBool::new(false));
+    let cert = crate::sync_net::generate_self_signed_cert("DEV_LIFECYCLE_A").unwrap();
+
+    let lifecycle = crate::lifecycle::LifecycleHooks::new();
+    lifecycle.mark_backgrounded();
+    assert!(
+        lifecycle.is_backgrounded(),
+        "test precondition: hooks must reflect backgrounded state"
+    );
+
+    let daemon = SyncDaemon::start_with_lifecycle(
+        pool.clone(),
+        "DEV_LIFECYCLE_A".into(),
+        mat.clone(),
+        scheduler,
+        cert,
+        sink,
+        cancel,
+        lifecycle.clone(),
+    )
+    .await
+    .expect("daemon should start even when the app is backgrounded");
+
+    // Let the daemon reach its select! loop.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    daemon.shutdown();
+
+    let handle = daemon.handle;
+    tokio::time::timeout(std::time::Duration::from_secs(10), async move {
+        if let Some(h) = handle {
+            let _ = h.await;
+        }
+    })
+    .await
+    .expect("daemon must shut down cleanly even when backgrounded at start");
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn start_with_lifecycle_wake_notify_does_not_crash_daemon() {
+    // Regression: the select! branch for `lifecycle.wake.notified()`
+    // must not panic or leak the daemon when the wake fires while
+    // foregrounded. We notify once and assert the daemon keeps running
+    // until the explicit shutdown.
+    install_crypto_provider();
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let cancel = Arc::new(AtomicBool::new(false));
+    let cert = crate::sync_net::generate_self_signed_cert("DEV_LIFECYCLE_B").unwrap();
+
+    let lifecycle = crate::lifecycle::LifecycleHooks::new();
+    let daemon = SyncDaemon::start_with_lifecycle(
+        pool.clone(),
+        "DEV_LIFECYCLE_B".into(),
+        mat.clone(),
+        scheduler,
+        cert,
+        sink,
+        cancel,
+        lifecycle.clone(),
+    )
+    .await
+    .expect("daemon should start");
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // Simulate a background→foreground transition while the daemon is
+    // running. The wake notify should cause the select! loop to
+    // re-enter and reset the resync interval; it should NOT terminate
+    // the daemon.
+    lifecycle.mark_backgrounded();
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    lifecycle.mark_foreground();
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // Daemon must still be alive. shutdown() terminates cleanly.
+    daemon.shutdown();
+    let handle = daemon.handle;
+    tokio::time::timeout(std::time::Duration::from_secs(10), async move {
+        if let Some(h) = handle {
+            let _ = h.await;
+        }
+    })
+    .await
+    .expect("daemon must survive a wake-notify cycle");
+
+    mat.shutdown();
+}
+
+#[tokio::test]
+async fn lifecycle_default_from_start_is_equivalent_to_always_foreground() {
+    // The non-lifecycle `start` variant constructs a
+    // `LifecycleHooks::default()` internally. Assert the default
+    // starts in foreground so legacy callers (tests, benches) observe
+    // the same behaviour as before PERF-24.
+    let hooks = crate::lifecycle::LifecycleHooks::default();
+    assert!(
+        !hooks.is_backgrounded(),
+        "default lifecycle hooks must report foreground so the legacy `start` path runs tick bodies normally"
+    );
+}

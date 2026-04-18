@@ -22,22 +22,35 @@ import {
 import { select } from 'd3-selection'
 import { type ZoomBehavior, zoom, zoomIdentity } from 'd3-zoom'
 import { Maximize2, Minus, Network, Plus } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { listBlocks, listPageLinks, listTagsByPrefix } from '@/lib/tauri'
+import { applyGraphFilters, type GraphFilter } from '@/lib/graph-filters'
+import {
+  listBlocks,
+  listPageLinks,
+  listTagsByPrefix,
+  queryByProperty,
+  queryByTags,
+} from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 import { logger } from '../lib/logger'
 import type { WorkerOutboundMessage } from '../workers/graph-worker-types'
 import { EmptyState } from './EmptyState'
+import { GraphFilterBar } from './GraphFilterBar'
 import { LoadingSkeleton } from './LoadingSkeleton'
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 
 interface GraphNode extends SimulationNodeDatum {
   id: string
   label: string
+  todo_state: string | null
+  priority: string | null
+  due_date: string | null
+  scheduled_date: string | null
+  is_template: boolean
+  backlink_count: number
 }
 
 interface GraphEdge extends SimulationLinkDatum<GraphNode> {
@@ -58,11 +71,17 @@ interface GraphCache {
 
 const graphCacheMap = new Map<string, GraphCache>()
 
-/** Sentinel value for "All pages" in the tag filter (Radix Select doesn't support value=""). */
-const TAG_ALL = '__none__'
+/** Sentinel value for "all pages" (no tag filter). */
+const TAG_ALL_KEY = '__all__'
 
-function getCacheKey(tagId: string | null): string {
-  return tagId ?? TAG_ALL
+/**
+ * Cache key is derived from the sorted set of tag IDs being used for the
+ * server-side fetch. Client-side filters (status, priority, has-*, etc.) do
+ * not invalidate the cache — they are applied after fetch.
+ */
+function getCacheKey(tagIds: readonly string[]): string {
+  if (tagIds.length === 0) return TAG_ALL_KEY
+  return [...tagIds].sort().join(',')
 }
 
 /** @internal — exported for test isolation only. */
@@ -81,7 +100,17 @@ export function GraphView(): React.ReactElement {
   const [edges, setEdges] = useState<GraphEdge[]>([])
   const [hasMore, setHasMore] = useState(false)
   const [tags, setTags] = useState<Array<{ tag_id: string; name: string }>>([])
-  const [selectedTagId, setSelectedTagId] = useState<string | null>(null)
+  const [filters, setFilters] = useState<GraphFilter[]>([])
+
+  // Extract the tag filter's tagIds — these drive server-side fetching.
+  // Every other filter is applied client-side via `applyGraphFilters`.
+  const tagFilterIds = useMemo((): string[] => {
+    const tagFilter = filters.find((f) => f.type === 'tag')
+    return tagFilter && tagFilter.type === 'tag' ? tagFilter.tagIds : []
+  }, [filters])
+
+  // Stable-ish key to trigger refetch when the tag set changes.
+  const tagCacheKey = useMemo(() => getCacheKey(tagFilterIds), [tagFilterIds])
 
   // Fetch available tags on mount
   useEffect(() => {
@@ -94,8 +123,7 @@ export function GraphView(): React.ReactElement {
   useEffect(() => {
     let cancelled = false
 
-    const cacheKey = getCacheKey(selectedTagId)
-    const graphCache = graphCacheMap.get(cacheKey) ?? null
+    const graphCache = graphCacheMap.get(tagCacheKey) ?? null
 
     // Serve cached data immediately if available
     if (graphCache) {
@@ -110,27 +138,68 @@ export function GraphView(): React.ReactElement {
 
     async function fetchData() {
       try {
-        const [pagesResp, links] = await Promise.all([
-          selectedTagId
-            ? listBlocks({ tagId: selectedTagId, limit: 5000 })
-            : listBlocks({ blockType: 'page', limit: 5000 }),
+        // Pages: server-side tag filter (single tag → listBlocks, multi → queryByTags).
+        let pagesPromise: Promise<{ items: Array<Record<string, unknown>>; has_more: boolean }>
+        if (tagFilterIds.length === 0) {
+          pagesPromise = listBlocks({ blockType: 'page', limit: 5000 }) as Promise<{
+            items: Array<Record<string, unknown>>
+            has_more: boolean
+          }>
+        } else if (tagFilterIds.length === 1) {
+          pagesPromise = listBlocks({ tagId: tagFilterIds[0], limit: 5000 }) as Promise<{
+            items: Array<Record<string, unknown>>
+            has_more: boolean
+          }>
+        } else {
+          pagesPromise = queryByTags({
+            tagIds: tagFilterIds,
+            prefixes: [],
+            mode: 'or',
+            limit: 5000,
+          }) as Promise<{ items: Array<Record<string, unknown>>; has_more: boolean }>
+        }
+
+        const [pagesResp, links, templatesResp] = await Promise.all([
+          pagesPromise,
           listPageLinks(),
+          queryByProperty({ key: 'template', valueText: 'true', limit: 1000 }),
         ])
 
         if (cancelled) return
 
         // When filtering by tag, the API may return non-page blocks — keep only pages
-        const items = selectedTagId
-          ? pagesResp.items.filter((p) => p.block_type === 'page')
-          : pagesResp.items
+        const items =
+          tagFilterIds.length > 0
+            ? pagesResp.items.filter((p) => (p['block_type'] as string | undefined) === 'page')
+            : pagesResp.items
 
-        const pageNodes: GraphNode[] = items.map((p) => ({
-          id: p.id,
-          label: p.content || 'Untitled',
-        }))
+        const templateIds = new Set(
+          templatesResp.items.map((p) => p.id).filter((id): id is string => typeof id === 'string'),
+        )
 
-        // Only include edges where both source and target exist in the nodes set
-        const nodeIds = new Set(pageNodes.map((n) => n.id))
+        // Compute backlink count per node from edges (target_id appearances).
+        const nodeIds = new Set(items.map((p) => p['id'] as string))
+        const backlinkCounts = new Map<string, number>()
+        for (const link of links) {
+          if (nodeIds.has(link.target_id) && nodeIds.has(link.source_id)) {
+            backlinkCounts.set(link.target_id, (backlinkCounts.get(link.target_id) ?? 0) + 1)
+          }
+        }
+
+        const pageNodes: GraphNode[] = items.map((p) => {
+          const id = p['id'] as string
+          return {
+            id,
+            label: (p['content'] as string | null | undefined) || 'Untitled',
+            todo_state: (p['todo_state'] as string | null | undefined) ?? null,
+            priority: (p['priority'] as string | null | undefined) ?? null,
+            due_date: (p['due_date'] as string | null | undefined) ?? null,
+            scheduled_date: (p['scheduled_date'] as string | null | undefined) ?? null,
+            is_template: templateIds.has(id),
+            backlink_count: backlinkCounts.get(id) ?? 0,
+          }
+        })
+
         const pageEdges: GraphEdge[] = links
           .filter((l) => nodeIds.has(l.source_id) && nodeIds.has(l.target_id))
           .map((l) => ({
@@ -140,7 +209,7 @@ export function GraphView(): React.ReactElement {
           }))
 
         // Update cache
-        graphCacheMap.set(cacheKey, {
+        graphCacheMap.set(tagCacheKey, {
           nodes: pageNodes,
           edges: pageEdges,
           hasMore: pagesResp.has_more,
@@ -166,11 +235,25 @@ export function GraphView(): React.ReactElement {
     return () => {
       cancelled = true
     }
-  }, [t, selectedTagId])
+  }, [t, tagCacheKey, tagFilterIds])
+
+  // Client-side filtering (status, priority, has-date, has-backlinks, exclude-templates).
+  // Tag filter is pass-through here because tag_ids is not populated on nodes
+  // — the tag dimension is enforced by the server-side fetch above.
+  const filteredNodes = useMemo(() => applyGraphFilters(nodes, filters), [nodes, filters])
+  const filteredEdges = useMemo(() => {
+    if (filteredNodes.length === nodes.length) return edges
+    const visibleIds = new Set(filteredNodes.map((n) => n.id))
+    return edges.filter((e) => {
+      const src = typeof e.source === 'string' ? e.source : (e.source as GraphNode).id
+      const tgt = typeof e.target === 'string' ? e.target : (e.target as GraphNode).id
+      return visibleIds.has(src) && visibleIds.has(tgt)
+    })
+  }, [edges, filteredNodes, nodes.length])
 
   // D3 simulation
   useEffect(() => {
-    if (nodes.length === 0 || !svgRef.current) return
+    if (filteredNodes.length === 0 || !svgRef.current) return
 
     const svg = svgRef.current
     const width = svg.clientWidth || 800
@@ -185,8 +268,8 @@ export function GraphView(): React.ReactElement {
     const g = svgSel.append('g')
 
     // Clone nodes/edges so d3 can mutate them without React state issues
-    const simNodes: GraphNode[] = nodes.map((n) => ({ ...n }))
-    const simEdges: GraphEdge[] = edges.map((e) => ({ ...e }))
+    const simNodes: GraphNode[] = filteredNodes.map((n) => ({ ...n }))
+    const simEdges: GraphEdge[] = filteredEdges.map((e) => ({ ...e }))
 
     // Build a lookup map for quick position updates from the worker
     const nodeById = new Map<string, GraphNode>()
@@ -531,7 +614,7 @@ export function GraphView(): React.ReactElement {
       sim.stop()
       svg.removeEventListener('keydown', handleZoomKey)
     }
-  }, [nodes, edges, navigateToPage])
+  }, [filteredNodes, filteredEdges, navigateToPage])
 
   // Zoom button handlers (UX-146)
   const handleZoomIn = useCallback(() => {
@@ -566,35 +649,26 @@ export function GraphView(): React.ReactElement {
       className="graph-view relative h-full w-full flex-1 min-h-0 overflow-hidden rounded-lg border border-border bg-background"
       data-testid="graph-view"
     >
-      {/* Tag filter dropdown */}
-      <div className="absolute top-2 left-2 z-10" data-testid="graph-tag-filter">
-        <Select
-          value={selectedTagId ?? TAG_ALL}
-          onValueChange={(value) => {
-            setSelectedTagId(value === TAG_ALL ? null : value)
-            setLoading(true)
-          }}
-        >
-          <SelectTrigger size="sm" className="w-[180px]" aria-label={t('graph.filterByTag')}>
-            <SelectValue placeholder={t('graph.allPages')} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={TAG_ALL}>{t('graph.allPages')}</SelectItem>
-            {tags.map((tag) => (
-              <SelectItem key={tag.tag_id} value={tag.tag_id}>
-                {tag.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      {/* Multi-dimension filter bar (UX-205) */}
+      <div
+        className="absolute top-2 left-2 right-2 z-10 max-w-[calc(100%-1rem)]"
+        data-testid="graph-tag-filter"
+      >
+        <GraphFilterBar
+          filters={filters}
+          onFiltersChange={setFilters}
+          allTags={tags}
+          totalCount={nodes.length}
+          filteredCount={filteredNodes.length}
+        />
       </div>
       {hasMore && (
         <Badge
           variant="secondary"
-          className="absolute top-2 right-2 z-10"
+          className="absolute bottom-2 left-2 z-10"
           data-testid="graph-truncated-badge"
         >
-          {selectedTagId
+          {tagFilterIds.length > 0
             ? t('graph.truncated', { count: nodes.length })
             : t('graph.truncatedFilterHint', { count: nodes.length })}
         </Badge>

@@ -3,6 +3,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
 
+    <!-- Required for sync mDNS multicast packets to reach the app on Android (BUG-39).
+         Without these, Wi-Fi peers cannot discover or sync with this device. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+
     <!-- Camera is optional — only used for QR code scanning during sync pairing -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 

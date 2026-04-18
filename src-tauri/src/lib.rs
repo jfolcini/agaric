@@ -10,6 +10,7 @@ pub mod error;
 pub mod fts;
 pub mod hash;
 pub mod import;
+pub mod lifecycle;
 pub mod link_metadata;
 pub mod materializer;
 pub mod merge;
@@ -145,6 +146,7 @@ pub fn log_dir_for_app_data(app_data_dir: &std::path::Path) -> std::path::PathBu
 pub fn run() {
     use db::{ReadPool, WritePool};
     use device::DeviceId;
+    use lifecycle::{AppLifecycle, LifecycleHooks};
     use materializer::{MaterializeTask, Materializer};
     use sync_cert::PersistedCert;
     use tauri::Manager;
@@ -382,7 +384,18 @@ pub fn run() {
             }
 
             // Create materializer — bg cache rebuilds read from read pool, write to write pool (P-8)
-            let materializer = Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
+            //
+            // PERF-24: wire up the app-lifecycle hooks so the metrics-
+            // snapshot task stops emitting debug-level log lines while
+            // the app is backgrounded on mobile. The same hooks are
+            // later passed into the sync daemon below so its periodic
+            // resync tick short-circuits when backgrounded.
+            let lifecycle = LifecycleHooks::new();
+            let materializer = Materializer::with_read_pool_and_lifecycle(
+                pools.write.clone(),
+                pools.read.clone(),
+                lifecycle.clone(),
+            );
 
             // M-3: Rebuild FTS index at boot if the table is empty (post-migration 0006).
             let fts_count: i64 = tauri::async_runtime::block_on(
@@ -463,6 +476,7 @@ pub fn run() {
             let daemon_sink: std::sync::Arc<dyn sync_events::SyncEventSink> =
                 std::sync::Arc::new(sync_events::TauriEventSink(app.handle().clone()));
             let daemon_app_handle = app.handle().clone();
+            let daemon_lifecycle = lifecycle.clone();
 
             // Store all in Tauri managed state
             app.manage(WritePool(pools.write));
@@ -480,6 +494,37 @@ pub fn run() {
             let cancel_flag = Arc::new(AtomicBool::new(false));
             app.manage(SyncCancelFlag(cancel_flag.clone()));
 
+            // PERF-24: register the lifecycle hooks in managed state so
+            // future commands (e.g. a "sync now" action) can share the
+            // same wake notifier, and install a window-event listener
+            // that flips `is_foreground` on focus changes. Tauri's
+            // `Focused(bool)` event fires on all supported platforms
+            // (desktop + mobile), so the same listener doubles as a
+            // laptop-lid-closed optimization on desktop.
+            app.manage(AppLifecycle(lifecycle.clone()));
+            if let Some(window) = app.get_webview_window("main") {
+                let lifecycle_for_listener = lifecycle.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Focused(focused) = event {
+                        if *focused {
+                            tracing::info!(
+                                "app foregrounded — resuming background work"
+                            );
+                            lifecycle_for_listener.mark_foreground();
+                        } else {
+                            tracing::info!(
+                                "app backgrounded — daemon + materializer will pause"
+                            );
+                            lifecycle_for_listener.mark_backgrounded();
+                        }
+                    }
+                });
+            } else {
+                tracing::warn!(
+                    "main webview window not available at setup; app-lifecycle hooks inactive"
+                );
+            }
+
             // Install rustls CryptoProvider before any TLS usage (#sync)
             let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -490,8 +535,12 @@ pub fn run() {
             // and the TLS listener are deferred until the user pairs a
             // device. The dormant waiter wakes on `scheduler.notify_change`
             // (called by `confirm_pairing`) and on a periodic poll.
+            //
+            // PERF-24: `_with_lifecycle` threads the foreground flag +
+            // wake notify into the daemon loop so its periodic resync
+            // tick short-circuits while the app is backgrounded.
             tauri::async_runtime::spawn(async move {
-                match sync_daemon::SyncDaemon::start_if_peers_exist(
+                match sync_daemon::SyncDaemon::start_if_peers_exist_with_lifecycle(
                     daemon_pool,
                     daemon_device_id,
                     daemon_materializer,
@@ -499,6 +548,7 @@ pub fn run() {
                     daemon_cert,
                     daemon_sink,
                     cancel_flag,
+                    daemon_lifecycle,
                 )
                 .await
                 {

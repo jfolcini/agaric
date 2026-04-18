@@ -49,11 +49,19 @@ vi.mock('../DataSettingsTab', () => ({
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
+const ALL_THEME_CLASSES = [
+  'dark',
+  'theme-solarized-light',
+  'theme-solarized-dark',
+  'theme-dracula',
+  'theme-one-dark-pro',
+]
+
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.removeItem('theme-preference')
   localStorage.removeItem('agaric-font-size')
-  document.documentElement.classList.remove('dark')
+  for (const cls of ALL_THEME_CLASSES) document.documentElement.classList.remove(cls)
   document.documentElement.style.removeProperty('--agaric-font-size')
 })
 
@@ -172,6 +180,129 @@ describe('SettingsView', () => {
       expect(localStorage.getItem('theme-preference')).toBe('light')
     })
     expect(document.documentElement.classList.contains('dark')).toBe(false)
+  })
+
+  // ── UX-203: VSCode-inspired themes ─────────────────────────────────
+
+  describe('VSCode-inspired theme options (UX-203)', () => {
+    async function openAppearance() {
+      const user = userEvent.setup()
+      render(<SettingsView />)
+      const appearanceTab = screen.getByRole('tab', { name: t('settings.tabAppearance') })
+      await user.click(appearanceTab)
+      return { user, themeSelect: screen.getByLabelText(t('settings.themeLabel')) }
+    }
+
+    it('renders all 7 theme options', async () => {
+      const { themeSelect } = await openAppearance()
+      const options = Array.from((themeSelect as HTMLSelectElement).options).map((o) => o.value)
+      expect(options).toEqual([
+        'light',
+        'dark',
+        'system',
+        'solarized-light',
+        'solarized-dark',
+        'dracula',
+        'one-dark-pro',
+      ])
+    })
+
+    it('shows translated labels for each new theme', async () => {
+      await openAppearance()
+      expect(
+        screen.getByRole('option', { name: t('settings.themeSolarizedLight') }),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('option', { name: t('settings.themeSolarizedDark') }),
+      ).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: t('settings.themeDracula') })).toBeInTheDocument()
+      expect(
+        screen.getByRole('option', { name: t('settings.themeOneDarkPro') }),
+      ).toBeInTheDocument()
+    })
+
+    it('selecting solarized-light persists and applies only the theme class', async () => {
+      const { user, themeSelect } = await openAppearance()
+      await user.selectOptions(themeSelect, 'solarized-light')
+
+      await waitFor(() => {
+        expect(localStorage.getItem('theme-preference')).toBe('solarized-light')
+      })
+      const cls = document.documentElement.classList
+      expect(cls.contains('theme-solarized-light')).toBe(true)
+      expect(cls.contains('dark')).toBe(false)
+      expect(themeSelect).toHaveValue('solarized-light')
+    })
+
+    it('selecting solarized-dark persists and applies .dark + theme-solarized-dark', async () => {
+      const { user, themeSelect } = await openAppearance()
+      await user.selectOptions(themeSelect, 'solarized-dark')
+
+      await waitFor(() => {
+        expect(localStorage.getItem('theme-preference')).toBe('solarized-dark')
+      })
+      const cls = document.documentElement.classList
+      expect(cls.contains('dark')).toBe(true)
+      expect(cls.contains('theme-solarized-dark')).toBe(true)
+      expect(cls.contains('theme-solarized-light')).toBe(false)
+      expect(themeSelect).toHaveValue('solarized-dark')
+    })
+
+    it('selecting dracula persists and applies .dark + theme-dracula', async () => {
+      const { user, themeSelect } = await openAppearance()
+      await user.selectOptions(themeSelect, 'dracula')
+
+      await waitFor(() => {
+        expect(localStorage.getItem('theme-preference')).toBe('dracula')
+      })
+      const cls = document.documentElement.classList
+      expect(cls.contains('dark')).toBe(true)
+      expect(cls.contains('theme-dracula')).toBe(true)
+      expect(themeSelect).toHaveValue('dracula')
+    })
+
+    it('selecting one-dark-pro persists and applies .dark + theme-one-dark-pro', async () => {
+      const { user, themeSelect } = await openAppearance()
+      await user.selectOptions(themeSelect, 'one-dark-pro')
+
+      await waitFor(() => {
+        expect(localStorage.getItem('theme-preference')).toBe('one-dark-pro')
+      })
+      const cls = document.documentElement.classList
+      expect(cls.contains('dark')).toBe(true)
+      expect(cls.contains('theme-one-dark-pro')).toBe(true)
+      expect(themeSelect).toHaveValue('one-dark-pro')
+    })
+
+    it('switching from one custom theme to another removes the previous theme class', async () => {
+      const { user, themeSelect } = await openAppearance()
+      await user.selectOptions(themeSelect, 'dracula')
+      await waitFor(() => {
+        expect(document.documentElement.classList.contains('theme-dracula')).toBe(true)
+      })
+
+      await user.selectOptions(themeSelect, 'solarized-light')
+      await waitFor(() => {
+        expect(localStorage.getItem('theme-preference')).toBe('solarized-light')
+      })
+      const cls = document.documentElement.classList
+      expect(cls.contains('theme-dracula')).toBe(false)
+      expect(cls.contains('dark')).toBe(false)
+      expect(cls.contains('theme-solarized-light')).toBe(true)
+    })
+
+    it('initialises the select value from a persisted custom theme', async () => {
+      localStorage.setItem('theme-preference', 'dracula')
+      const user = userEvent.setup()
+      render(<SettingsView />)
+      const appearanceTab = screen.getByRole('tab', { name: t('settings.tabAppearance') })
+      await user.click(appearanceTab)
+
+      const themeSelect = screen.getByLabelText(t('settings.themeLabel'))
+      expect(themeSelect).toHaveValue('dracula')
+      expect(document.documentElement.classList.contains('theme-dracula')).toBe(true)
+      expect(document.documentElement.classList.contains('dark')).toBe(true)
+    })
   })
 
   it('font size selector updates localStorage and CSS variable', async () => {

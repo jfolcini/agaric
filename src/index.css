@@ -346,6 +346,428 @@
   --sync-active: oklch(0.77 0.19 70);
 }
 
+/* ── Solarized Light theme (UX-203) ────────────────────────────────── */
+/* Palette reference: https://ethanschoonover.com/solarized/
+   Approximated in OKLch space. Applied via `.theme-solarized-light` on
+   `document.documentElement` (see useTheme hook). Source order: defined
+   AFTER `.dark` so that a future combined class still resolves correctly. */
+.theme-solarized-light {
+  --background: oklch(0.97 0.02 85); /* base3 */
+  --foreground: oklch(0.45 0.02 210); /* base01 */
+  --card: oklch(0.97 0.02 85);
+  --card-foreground: oklch(0.45 0.02 210);
+  --popover: oklch(0.97 0.02 85);
+  --popover-foreground: oklch(0.45 0.02 210);
+  --primary: oklch(0.61 0.13 235); /* solarized blue */
+  --primary-foreground: oklch(0.97 0.02 85);
+  --secondary: oklch(0.93 0.03 85); /* base2 */
+  --secondary-foreground: oklch(0.51 0.02 210); /* base00 */
+  --muted: oklch(0.93 0.03 85);
+  --muted-foreground: oklch(0.58 0.02 210);
+  --accent: oklch(0.93 0.04 235); /* base2 tinted blue */
+  --accent-foreground: oklch(0.45 0.13 235);
+  --destructive: oklch(0.59 0.22 30); /* red */
+  --destructive-foreground: oklch(0.97 0.02 85);
+  --border: oklch(0.9 0.03 85);
+  --input: oklch(0.93 0.03 85);
+  --ring: oklch(0.61 0.13 235);
+  --chart-1: oklch(0.6 0.14 80); /* yellow */
+  --chart-2: oklch(0.6 0.19 40); /* orange */
+  --chart-3: oklch(0.59 0.22 30); /* red */
+  --chart-4: oklch(0.54 0.14 285); /* violet */
+  --chart-5: oklch(0.62 0.1 190); /* cyan */
+  --sidebar: oklch(0.93 0.03 85);
+  --sidebar-foreground: oklch(0.45 0.02 210);
+  --sidebar-primary: oklch(0.61 0.13 235);
+  --sidebar-primary-foreground: oklch(0.97 0.02 85);
+  --sidebar-accent: oklch(0.9 0.04 235);
+  --sidebar-accent-foreground: oklch(0.45 0.13 235);
+  --sidebar-border: oklch(0.88 0.03 85);
+  --sidebar-ring: oklch(0.61 0.13 235);
+  /* Semantic badge colors */
+  --status-done: oklch(0.9 0.08 125);
+  --status-done-foreground: oklch(0.45 0.16 125);
+  --status-active: oklch(0.9 0.06 235);
+  --status-active-foreground: oklch(0.4 0.13 235);
+  --status-pending: oklch(0.92 0.1 85);
+  --status-pending-foreground: oklch(0.5 0.14 80);
+  --conflict-text: oklch(0.92 0.08 55);
+  --conflict-text-foreground: oklch(0.5 0.18 40);
+  --conflict-move: oklch(0.9 0.06 295);
+  --conflict-move-foreground: oklch(0.44 0.14 285);
+  --priority-urgent: oklch(0.59 0.22 30);
+  --priority-high: oklch(0.6 0.14 80);
+  --priority-normal: oklch(0.61 0.13 235);
+  --priority-foreground: oklch(0.97 0.02 85);
+  /* Operation type colors */
+  --op-create: oklch(0.93 0.05 155);
+  --op-create-foreground: oklch(0.45 0.14 135);
+  --op-edit: oklch(0.93 0.05 235);
+  --op-edit-foreground: oklch(0.45 0.13 235);
+  --op-move: oklch(0.92 0.05 295);
+  --op-move-foreground: oklch(0.44 0.14 285);
+  --op-tag: oklch(0.93 0.07 85);
+  --op-tag-foreground: oklch(0.5 0.14 80);
+  /* Date source colors */
+  --date-due: oklch(0.93 0.08 55);
+  --date-due-foreground: oklch(0.52 0.18 40);
+  --date-scheduled: oklch(0.92 0.07 155);
+  --date-scheduled-foreground: oklch(0.48 0.14 135);
+  --date-property: oklch(0.92 0.06 295);
+  --date-property-foreground: oklch(0.44 0.14 285);
+  /* Notification/alert colors */
+  --alert-info: oklch(0.93 0.05 235);
+  --alert-info-foreground: oklch(0.45 0.13 235);
+  --alert-info-border: oklch(0.78 0.1 235);
+  --alert-warning: oklch(0.95 0.08 85);
+  --alert-warning-foreground: oklch(0.52 0.14 80);
+  --alert-warning-border: oklch(0.82 0.12 85);
+  --alert-tip: oklch(0.93 0.07 155);
+  --alert-tip-foreground: oklch(0.48 0.14 135);
+  --alert-tip-border: oklch(0.78 0.12 145);
+  --alert-error: oklch(0.93 0.07 30);
+  --alert-error-foreground: oklch(0.55 0.2 30);
+  --alert-error-border: oklch(0.78 0.13 30);
+  --alert-note: oklch(0.93 0.02 85);
+  --alert-note-foreground: oklch(0.51 0.02 210);
+  --alert-note-border: oklch(0.82 0.02 210);
+  /* Task checkbox state colors */
+  --task-done: oklch(0.63 0.16 125);
+  --task-doing: oklch(0.61 0.13 235);
+  --task-cancelled: oklch(0.62 0.01 200);
+  --task-custom: oklch(0.6 0.19 40);
+  /* Highlight/search */
+  --highlight: oklch(0.9 0.14 85);
+  /* Block reference chip */
+  --block-ref: oklch(0.9 0.06 295);
+  --block-ref-foreground: oklch(0.44 0.14 285);
+  /* Scheduled/repeat indicator */
+  --indicator-scheduled: oklch(0.92 0.06 295);
+  --indicator-scheduled-foreground: oklch(0.44 0.14 285);
+  --indicator-repeat: oklch(0.92 0.06 275);
+  --indicator-repeat-foreground: oklch(0.46 0.15 275);
+  /* Star/favourite */
+  --star: oklch(0.6 0.14 80);
+  /* Sync status */
+  --sync-idle: oklch(0.63 0.16 125);
+  --sync-active: oklch(0.6 0.14 80);
+}
+
+/* ── Solarized Dark theme (UX-203) ─────────────────────────────────── */
+/* Uses the dark base tones from the Solarized palette. Applied via
+   `.dark .theme-solarized-dark` (both classes set together). */
+.theme-solarized-dark {
+  --background: oklch(0.22 0.04 210); /* base03 */
+  --foreground: oklch(0.68 0.01 195); /* base1 */
+  --card: oklch(0.22 0.04 210);
+  --card-foreground: oklch(0.68 0.01 195);
+  --popover: oklch(0.22 0.04 210);
+  --popover-foreground: oklch(0.68 0.01 195);
+  --primary: oklch(0.61 0.13 235); /* blue */
+  --primary-foreground: oklch(0.22 0.04 210);
+  --secondary: oklch(0.3 0.04 210); /* base02 */
+  --secondary-foreground: oklch(0.68 0.01 195);
+  --muted: oklch(0.3 0.04 210);
+  --muted-foreground: oklch(0.62 0.01 200); /* base0 */
+  --accent: oklch(0.32 0.05 235);
+  --accent-foreground: oklch(0.75 0.12 235);
+  --destructive: oklch(0.59 0.22 30);
+  --destructive-foreground: oklch(0.92 0.02 85);
+  --border: oklch(0.3 0.04 210);
+  --input: oklch(0.3 0.04 210);
+  --ring: oklch(0.61 0.13 235);
+  --chart-1: oklch(0.6 0.14 80);
+  --chart-2: oklch(0.6 0.19 40);
+  --chart-3: oklch(0.59 0.22 30);
+  --chart-4: oklch(0.54 0.14 285);
+  --chart-5: oklch(0.62 0.1 190);
+  --sidebar: oklch(0.2 0.04 210);
+  --sidebar-foreground: oklch(0.68 0.01 195);
+  --sidebar-primary: oklch(0.61 0.13 235);
+  --sidebar-primary-foreground: oklch(0.22 0.04 210);
+  --sidebar-accent: oklch(0.3 0.04 210);
+  --sidebar-accent-foreground: oklch(0.75 0.12 235);
+  --sidebar-border: oklch(0.28 0.04 210);
+  --sidebar-ring: oklch(0.61 0.13 235);
+  /* Semantic badge colors */
+  --status-done: oklch(0.28 0.06 135);
+  --status-done-foreground: oklch(0.78 0.14 125);
+  --status-active: oklch(0.28 0.05 235);
+  --status-active-foreground: oklch(0.78 0.12 235);
+  --status-pending: oklch(0.3 0.06 85);
+  --status-pending-foreground: oklch(0.82 0.14 85);
+  --conflict-text: oklch(0.3 0.07 55);
+  --conflict-text-foreground: oklch(0.78 0.14 55);
+  --conflict-move: oklch(0.3 0.06 295);
+  --conflict-move-foreground: oklch(0.76 0.14 285);
+  --priority-urgent: oklch(0.6 0.22 30);
+  --priority-high: oklch(0.65 0.14 80);
+  --priority-normal: oklch(0.65 0.13 235);
+  --priority-foreground: oklch(0.97 0.02 85);
+  /* Operation type colors */
+  --op-create: oklch(0.28 0.05 135);
+  --op-create-foreground: oklch(0.78 0.14 135);
+  --op-edit: oklch(0.28 0.05 235);
+  --op-edit-foreground: oklch(0.78 0.12 235);
+  --op-move: oklch(0.28 0.05 295);
+  --op-move-foreground: oklch(0.76 0.14 285);
+  --op-tag: oklch(0.3 0.06 85);
+  --op-tag-foreground: oklch(0.82 0.14 85);
+  /* Date source colors */
+  --date-due: oklch(0.3 0.07 55);
+  --date-due-foreground: oklch(0.78 0.14 55);
+  --date-scheduled: oklch(0.28 0.06 135);
+  --date-scheduled-foreground: oklch(0.78 0.14 135);
+  --date-property: oklch(0.28 0.06 295);
+  --date-property-foreground: oklch(0.76 0.14 285);
+  /* Notification/alert colors */
+  --alert-info: oklch(0.3 0.07 235);
+  --alert-info-foreground: oklch(0.82 0.13 235);
+  --alert-info-border: oklch(0.5 0.13 235);
+  --alert-warning: oklch(0.32 0.07 85);
+  --alert-warning-foreground: oklch(0.86 0.14 85);
+  --alert-warning-border: oklch(0.55 0.14 85);
+  --alert-tip: oklch(0.28 0.07 135);
+  --alert-tip-foreground: oklch(0.84 0.14 135);
+  --alert-tip-border: oklch(0.52 0.14 135);
+  --alert-error: oklch(0.3 0.08 30);
+  --alert-error-foreground: oklch(0.84 0.14 30);
+  --alert-error-border: oklch(0.55 0.2 30);
+  --alert-note: oklch(0.3 0.02 210);
+  --alert-note-foreground: oklch(0.82 0.02 195);
+  --alert-note-border: oklch(0.5 0.02 210);
+  /* Task checkbox state colors */
+  --task-done: oklch(0.63 0.16 125);
+  --task-doing: oklch(0.65 0.13 235);
+  --task-cancelled: oklch(0.55 0.02 200);
+  --task-custom: oklch(0.65 0.19 40);
+  /* Highlight/search */
+  --highlight: oklch(0.55 0.14 85);
+  /* Block reference chip */
+  --block-ref: oklch(0.32 0.06 295);
+  --block-ref-foreground: oklch(0.76 0.14 285);
+  /* Scheduled/repeat indicator */
+  --indicator-scheduled: oklch(0.28 0.06 295);
+  --indicator-scheduled-foreground: oklch(0.76 0.14 285);
+  --indicator-repeat: oklch(0.28 0.06 275);
+  --indicator-repeat-foreground: oklch(0.7 0.15 275);
+  /* Star/favourite */
+  --star: oklch(0.7 0.15 80);
+  /* Sync status */
+  --sync-idle: oklch(0.7 0.16 125);
+  --sync-active: oklch(0.75 0.16 80);
+}
+
+/* ── Dracula theme (UX-203) ────────────────────────────────────────── */
+/* Palette reference: https://draculatheme.com/contribute
+   Applied via `.dark .theme-dracula`. */
+.theme-dracula {
+  --background: oklch(0.28 0.03 275);
+  --foreground: oklch(0.96 0.01 90);
+  --card: oklch(0.28 0.03 275);
+  --card-foreground: oklch(0.96 0.01 90);
+  --popover: oklch(0.28 0.03 275);
+  --popover-foreground: oklch(0.96 0.01 90);
+  --primary: oklch(0.72 0.18 295); /* purple */
+  --primary-foreground: oklch(0.28 0.03 275);
+  --secondary: oklch(0.37 0.03 275); /* current-line */
+  --secondary-foreground: oklch(0.96 0.01 90);
+  --muted: oklch(0.37 0.03 275);
+  --muted-foreground: oklch(0.7 0.06 275);
+  --accent: oklch(0.37 0.07 335);
+  --accent-foreground: oklch(0.85 0.18 335); /* pink */
+  --destructive: oklch(0.68 0.22 25); /* red */
+  --destructive-foreground: oklch(0.96 0.01 90);
+  --border: oklch(0.37 0.03 275);
+  --input: oklch(0.37 0.03 275);
+  --ring: oklch(0.72 0.18 295);
+  --chart-1: oklch(0.72 0.18 295); /* purple */
+  --chart-2: oklch(0.74 0.22 335); /* pink */
+  --chart-3: oklch(0.87 0.13 200); /* cyan */
+  --chart-4: oklch(0.87 0.23 145); /* green */
+  --chart-5: oklch(0.82 0.12 70); /* orange */
+  --sidebar: oklch(0.25 0.03 275);
+  --sidebar-foreground: oklch(0.96 0.01 90);
+  --sidebar-primary: oklch(0.72 0.18 295);
+  --sidebar-primary-foreground: oklch(0.28 0.03 275);
+  --sidebar-accent: oklch(0.37 0.03 275);
+  --sidebar-accent-foreground: oklch(0.85 0.18 335);
+  --sidebar-border: oklch(0.33 0.03 275);
+  --sidebar-ring: oklch(0.72 0.18 295);
+  /* Semantic badge colors */
+  --status-done: oklch(0.35 0.08 145);
+  --status-done-foreground: oklch(0.87 0.23 145);
+  --status-active: oklch(0.35 0.08 200);
+  --status-active-foreground: oklch(0.87 0.13 200);
+  --status-pending: oklch(0.35 0.08 110);
+  --status-pending-foreground: oklch(0.94 0.16 110);
+  --conflict-text: oklch(0.35 0.08 70);
+  --conflict-text-foreground: oklch(0.82 0.12 70);
+  --conflict-move: oklch(0.35 0.08 335);
+  --conflict-move-foreground: oklch(0.82 0.18 335);
+  --priority-urgent: oklch(0.68 0.22 25);
+  --priority-high: oklch(0.82 0.12 70);
+  --priority-normal: oklch(0.72 0.18 295);
+  --priority-foreground: oklch(0.28 0.03 275);
+  /* Operation type colors */
+  --op-create: oklch(0.32 0.08 145);
+  --op-create-foreground: oklch(0.87 0.23 145);
+  --op-edit: oklch(0.32 0.08 275);
+  --op-edit-foreground: oklch(0.85 0.13 275);
+  --op-move: oklch(0.32 0.08 335);
+  --op-move-foreground: oklch(0.82 0.18 335);
+  --op-tag: oklch(0.32 0.08 110);
+  --op-tag-foreground: oklch(0.94 0.16 110);
+  /* Date source colors */
+  --date-due: oklch(0.33 0.08 70);
+  --date-due-foreground: oklch(0.86 0.13 70);
+  --date-scheduled: oklch(0.32 0.08 145);
+  --date-scheduled-foreground: oklch(0.87 0.23 145);
+  --date-property: oklch(0.32 0.08 335);
+  --date-property-foreground: oklch(0.82 0.18 335);
+  /* Notification/alert colors */
+  --alert-info: oklch(0.33 0.08 275);
+  --alert-info-foreground: oklch(0.87 0.13 200);
+  --alert-info-border: oklch(0.55 0.13 275);
+  --alert-warning: oklch(0.35 0.08 70);
+  --alert-warning-foreground: oklch(0.94 0.16 110);
+  --alert-warning-border: oklch(0.6 0.14 70);
+  --alert-tip: oklch(0.32 0.08 145);
+  --alert-tip-foreground: oklch(0.87 0.23 145);
+  --alert-tip-border: oklch(0.55 0.17 145);
+  --alert-error: oklch(0.33 0.09 25);
+  --alert-error-foreground: oklch(0.86 0.18 25);
+  --alert-error-border: oklch(0.55 0.2 25);
+  --alert-note: oklch(0.33 0.03 275);
+  --alert-note-foreground: oklch(0.85 0.02 275);
+  --alert-note-border: oklch(0.52 0.09 275);
+  /* Task checkbox state colors */
+  --task-done: oklch(0.87 0.23 145);
+  --task-doing: oklch(0.72 0.18 295);
+  --task-cancelled: oklch(0.52 0.09 275);
+  --task-custom: oklch(0.82 0.12 70);
+  /* Highlight/search */
+  --highlight: oklch(0.6 0.16 110);
+  /* Block reference chip */
+  --block-ref: oklch(0.37 0.08 335);
+  --block-ref-foreground: oklch(0.82 0.18 335);
+  /* Scheduled/repeat indicator */
+  --indicator-scheduled: oklch(0.35 0.08 335);
+  --indicator-scheduled-foreground: oklch(0.82 0.18 335);
+  --indicator-repeat: oklch(0.35 0.08 295);
+  --indicator-repeat-foreground: oklch(0.78 0.18 295);
+  /* Star/favourite */
+  --star: oklch(0.94 0.16 110);
+  /* Sync status */
+  --sync-idle: oklch(0.78 0.18 145);
+  --sync-active: oklch(0.82 0.12 70);
+}
+
+/* ── One Dark Pro theme (UX-203) ───────────────────────────────────── */
+/* Palette inspired by Atom One Dark / VSCode One Dark Pro.
+   Applied via `.dark .theme-one-dark-pro`. */
+.theme-one-dark-pro {
+  --background: oklch(0.29 0.02 260);
+  --foreground: oklch(0.75 0.02 255);
+  --card: oklch(0.29 0.02 260);
+  --card-foreground: oklch(0.75 0.02 255);
+  --popover: oklch(0.29 0.02 260);
+  --popover-foreground: oklch(0.75 0.02 255);
+  --primary: oklch(0.73 0.13 235); /* blue */
+  --primary-foreground: oklch(0.29 0.02 260);
+  --secondary: oklch(0.35 0.02 260); /* selection */
+  --secondary-foreground: oklch(0.75 0.02 255);
+  --muted: oklch(0.35 0.02 260);
+  --muted-foreground: oklch(0.65 0.02 260);
+  --accent: oklch(0.35 0.05 235);
+  --accent-foreground: oklch(0.78 0.12 235);
+  --destructive: oklch(0.7 0.16 25); /* red */
+  --destructive-foreground: oklch(0.9 0.02 255);
+  --border: oklch(0.35 0.02 260);
+  --input: oklch(0.35 0.02 260);
+  --ring: oklch(0.73 0.13 235);
+  --chart-1: oklch(0.73 0.13 235); /* blue */
+  --chart-2: oklch(0.77 0.13 135); /* green */
+  --chart-3: oklch(0.68 0.18 300); /* purple */
+  --chart-4: oklch(0.81 0.12 80); /* yellow */
+  --chart-5: oklch(0.71 0.09 195); /* cyan */
+  --sidebar: oklch(0.25 0.02 260);
+  --sidebar-foreground: oklch(0.75 0.02 255);
+  --sidebar-primary: oklch(0.73 0.13 235);
+  --sidebar-primary-foreground: oklch(0.29 0.02 260);
+  --sidebar-accent: oklch(0.35 0.02 260);
+  --sidebar-accent-foreground: oklch(0.78 0.12 235);
+  --sidebar-border: oklch(0.32 0.02 260);
+  --sidebar-ring: oklch(0.73 0.13 235);
+  /* Semantic badge colors */
+  --status-done: oklch(0.33 0.06 135);
+  --status-done-foreground: oklch(0.77 0.13 135);
+  --status-active: oklch(0.33 0.05 235);
+  --status-active-foreground: oklch(0.78 0.12 235);
+  --status-pending: oklch(0.33 0.06 80);
+  --status-pending-foreground: oklch(0.81 0.12 80);
+  --conflict-text: oklch(0.33 0.06 60);
+  --conflict-text-foreground: oklch(0.72 0.11 60);
+  --conflict-move: oklch(0.33 0.07 300);
+  --conflict-move-foreground: oklch(0.7 0.17 300);
+  --priority-urgent: oklch(0.7 0.16 25);
+  --priority-high: oklch(0.81 0.12 80);
+  --priority-normal: oklch(0.73 0.13 235);
+  --priority-foreground: oklch(0.29 0.02 260);
+  /* Operation type colors */
+  --op-create: oklch(0.32 0.05 135);
+  --op-create-foreground: oklch(0.77 0.13 135);
+  --op-edit: oklch(0.32 0.05 235);
+  --op-edit-foreground: oklch(0.78 0.12 235);
+  --op-move: oklch(0.32 0.07 300);
+  --op-move-foreground: oklch(0.7 0.17 300);
+  --op-tag: oklch(0.32 0.06 80);
+  --op-tag-foreground: oklch(0.81 0.12 80);
+  /* Date source colors */
+  --date-due: oklch(0.32 0.06 60);
+  --date-due-foreground: oklch(0.74 0.11 60);
+  --date-scheduled: oklch(0.32 0.06 135);
+  --date-scheduled-foreground: oklch(0.77 0.13 135);
+  --date-property: oklch(0.32 0.07 300);
+  --date-property-foreground: oklch(0.7 0.17 300);
+  /* Notification/alert colors */
+  --alert-info: oklch(0.33 0.07 235);
+  --alert-info-foreground: oklch(0.8 0.12 235);
+  --alert-info-border: oklch(0.55 0.13 235);
+  --alert-warning: oklch(0.33 0.07 80);
+  --alert-warning-foreground: oklch(0.83 0.12 80);
+  --alert-warning-border: oklch(0.58 0.12 80);
+  --alert-tip: oklch(0.32 0.07 135);
+  --alert-tip-foreground: oklch(0.8 0.13 135);
+  --alert-tip-border: oklch(0.55 0.14 135);
+  --alert-error: oklch(0.33 0.08 25);
+  --alert-error-foreground: oklch(0.8 0.16 25);
+  --alert-error-border: oklch(0.55 0.17 25);
+  --alert-note: oklch(0.33 0.02 260);
+  --alert-note-foreground: oklch(0.78 0.02 255);
+  --alert-note-border: oklch(0.5 0.02 260);
+  /* Task checkbox state colors */
+  --task-done: oklch(0.77 0.13 135);
+  --task-doing: oklch(0.73 0.13 235);
+  --task-cancelled: oklch(0.52 0.02 260);
+  --task-custom: oklch(0.72 0.11 60);
+  /* Highlight/search */
+  --highlight: oklch(0.58 0.13 80);
+  /* Block reference chip */
+  --block-ref: oklch(0.35 0.07 300);
+  --block-ref-foreground: oklch(0.7 0.17 300);
+  /* Scheduled/repeat indicator */
+  --indicator-scheduled: oklch(0.33 0.07 300);
+  --indicator-scheduled-foreground: oklch(0.7 0.17 300);
+  --indicator-repeat: oklch(0.33 0.06 260);
+  --indicator-repeat-foreground: oklch(0.72 0.12 265);
+  /* Star/favourite */
+  --star: oklch(0.81 0.13 80);
+  /* Sync status */
+  --sync-idle: oklch(0.75 0.13 135);
+  --sync-active: oklch(0.81 0.12 80);
+}
+
 /* ── Indent width (responsive) ─────────────────────────────────────── */
 :root {
   --indent-width: 24px;

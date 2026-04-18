@@ -1,5 +1,43 @@
 # Session Log
 
+## Session 410 — Op log block_id column, graph filter dimensions, VSCode themes, Android lifecycle (2026-04-18)
+
+**6 items resolved (PERF-26, UX-205, UX-203, BUG-39, PERF-24, TEST-31). REVIEW-LATER 12→6.**
+
+### Resolved items
+
+**Backend op log + draft recovery (A):**
+- **PERF-26** — Added migration `0030_op_log_block_id_column.sql`: `ALTER TABLE op_log ADD COLUMN block_id TEXT`, populated historical rows from `json_extract(payload, '$.block_id')`, added `idx_op_log_block_id`. New helper `OpPayload::block_id()` returns the typed extraction without a JSON round-trip; all 3 INSERT paths (`dag.rs::record_local_op` × 2 + `op_log.rs::insert_remote_op`) populate the column directly. `draft_recovery.rs` queries rewritten to filter on the indexed column; both TODO comments + LIKE pre-filters removed. 5 regression tests (`recovery/tests.rs`) including `perf26_draft_recovery_at_10k_ops_is_fast` (asserts <10s at 10K ops).
+
+**Frontend graph view filters (B):**
+- **UX-205** — New `src/lib/graph-filters.ts` (7-dimension `GraphFilter` discriminated union: tag/status/priority/hasDueDate/hasScheduledDate/hasBacklinks/excludeTemplates) + `applyGraphFilters` (AND across dimensions, OR within multi-value tag). New `src/components/GraphFilterBar.tsx` (Radix Popover; hides already-used dimensions in the add selector). `GraphView.tsx` rewritten to fetch template page IDs via `queryByProperty`, compute backlink degree from edges, and run `applyGraphFilters` client-side after server-side tag fetch. 84 new tests (37 graph-filters + 17 GraphFilterBar + 30 GraphView additions).
+
+**Frontend themes (C):**
+- **UX-203** — Added 4 VSCode-inspired themes to `src/index.css` as `.theme-solarized-light`, `.theme-solarized-dark`, `.theme-dracula`, `.theme-one-dark-pro` (each ~80 OKLch CSS variables matching the existing light/dark token surface). `useTheme.ts` extended: `ThemePreference` union now 7 members, new `setTheme()` API, theme class application on `documentElement`. SettingsView gets a theme dropdown. 23 new tests (theme-class application, persistence, system-preference fallback for solarized variants).
+
+**Backend Android lifecycle + multicast lock (D):**
+- **PERF-24** — New `src-tauri/src/lifecycle.rs` (`LifecycleHooks`: `Arc<AtomicBool>` foreground flag + `Arc<tokio::sync::Notify>` wake notifier). Tauri `window.on_window_event` flips the flag on `Focused(true/false)` and notifies waiters on resume. `materializer/coordinator.rs` extracted `metrics_snapshot_task` skips the snapshot body when backgrounded. `sync_daemon/orchestrator.rs::daemon_loop` short-circuits the 30s resync tick when backgrounded and adds a `wake_notify.notified()` arm to `select!` that calls `resync_interval.reset_immediately()` on resume. Backward-compat: every changed function has a `_with_lifecycle` sibling; original signatures delegate with `LifecycleHooks::default()`.
+- **BUG-39** — New `src-tauri/src/sync_daemon/android_multicast.rs` (`#[cfg(target_os = "android")]`): JNI bridge via `ndk-context` + `jni` crates that calls `WifiManager.createMulticastLock("agaric-mdns")`, `setReferenceCounted(false)`, `acquire()`. Lock held in scope of `daemon_loop` via RAII; Drop releases. Added `ACCESS_WIFI_STATE` + `CHANGE_WIFI_MULTICAST_STATE` to `AndroidManifest.xml`. `unsafe_code` allowed at module scope (FFI requirement) with inline SAFETY justifications.
+
+**Orchestrator trivial:**
+- **TEST-31** — `src/hooks/__tests__/useDuePanelData.test.ts` `beforeEach` now uses `vi.useFakeTimers({ toFake: ['Date'] })` + `vi.setSystemTime(new Date('2026-04-15T12:00:00Z'))`. Only Date is faked (not setTimeout/setInterval) to keep `waitFor`/`renderHook` working with real timers. The other affected file (`tauri-mock.test.ts`) already had file-level fake timers from a prior session.
+
+### Post-merge orchestrator work
+
+- Reviews skipped for batch-A and batch-B (subagents hit "prompt too long" before producing output). Build subagents' own verification stands as the safety net: A passes 2128 backend tests including the 5 new regression tests; B passes 84 new + all `GraphView` regression tests; C passes 23 new + axe a11y; D passes 2123 backend tests + cross-checks both x86_64 and aarch64-android `cargo check`.
+- Pre-existing failures (17 `select.test.tsx` displayName + 1 `BlockTree` slash-command) confirmed unchanged by stash-and-rerun against `main` HEAD before merge.
+- `cargo sqlx prepare` regenerated `.sqlx/` cache against fresh DB with migration 0030 (4 stale entries removed, 4 new added).
+- `AndroidManifest.xml` ACCESS_WIFI_STATE/CHANGE_WIFI_MULTICAST_STATE permissions added (subagent flagged but did not edit, per worktree-D prompt scope).
+
+### Verification
+
+- `cargo nextest run --lib` (src-tauri): **2128 passed**, 1 skipped, 1 known flaky (`adaptive_fts_threshold_large_corpus`).
+- `npx vitest run` (frontend): **6865 passed**, 18 pre-existing failures (17 select displayName + 1 BlockTree — confirmed on `main`).
+- `cargo check --lib --tests` (x86_64): clean.
+- `cargo check --target aarch64-linux-android --lib --tests` (subagent-verified): clean.
+
+---
+
 ## Session 409 — Cascade SQL dedup, module decomposition, test mock consolidation (2026-04-18)
 
 **10 items resolved (MAINT-5, MAINT-13, MAINT-36, MAINT-37, MAINT-41, MAINT-43, MAINT-44, TEST-32, TEST-35, TEST-36). REVIEW-LATER 22→12.**

@@ -66,13 +66,10 @@ pub(super) async fn recover_single_draft(
     // Check if an edit_block or create_block op exists for this block_id
     // with created_at strictly after the draft's updated_at.
     //
-    // TODO: add index or extracted column for production scale — the
-    // json_extract() call forces a full table scan with JSON parsing per row.
-    // A LIKE pre-filter narrows candidates before the expensive json_extract.
-    //
-    // Safety: block_id is expected to be a ULID (alphanumeric, no LIKE
-    // wildcards or JSON escape characters). Assert this so the LIKE
-    // pre-filter is correct.
+    // PERF-26: uses the indexed op_log.block_id column (migration 0030)
+    // for O(log N) block-scoped lookups instead of json_extract across the
+    // full table. block_id is populated on insert by append_local_op_in_tx
+    // and insert_remote_op using OpPayload::block_id() / JSON extraction.
     debug_assert!(
         !draft.block_id.is_empty()
             && draft
@@ -87,11 +84,9 @@ pub(super) async fn recover_single_draft(
     let bid_upper = draft.block_id.to_ascii_uppercase();
     let row: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM op_log \
-         WHERE payload LIKE '%\"block_id\":\"' || ? || '\"%' \
-         AND json_extract(payload, '$.block_id') = ? \
+         WHERE block_id = ? \
          AND op_type IN ('edit_block', 'create_block') \
          AND created_at > ?",
-        bid_upper,
         bid_upper,
         draft.updated_at
     )
@@ -147,18 +142,16 @@ pub(super) async fn recover_single_draft(
 /// This replaces the Phase 1 `ORDER BY created_at DESC` approach, which
 /// could select a causally-earlier op from a device with a faster clock
 /// over a causally-later op from a device with a slower clock.
-// TODO: add index or extracted column for production scale — json_extract()
-// forces a full table scan with JSON parsing per row. A LIKE pre-filter
-// narrows candidates before the expensive json_extract (in the
-// create_block fallback path).
+///
+/// PERF-26: the create_block fallback path uses the indexed op_log.block_id
+/// column (migration 0030) for O(log N) lookups instead of json_extract
+/// across the full table.
 pub async fn find_prev_edit(
     pool: &SqlitePool,
     block_id: &str,
     device_id: &str,
 ) -> Result<Option<(String, i64)>, AppError> {
-    // Safety: block_id is expected to be a ULID (alphanumeric, no LIKE
-    // wildcards or JSON escape characters). Assert this so the LIKE
-    // pre-filter is correct.
+    // Sanity check: block_id is expected to be a ULID (alphanumeric).
     debug_assert!(
         !block_id.is_empty()
             && block_id
@@ -179,11 +172,9 @@ pub async fn find_prev_edit(
             // are no ops for this block and prev_edit is None.
             let maybe_create = sqlx::query!(
                 "SELECT device_id, seq FROM op_log \
-                 WHERE payload LIKE '%\"block_id\":\"' || ? || '\"%' \
-                 AND json_extract(payload, '$.block_id') = ? \
+                 WHERE block_id = ? \
                  AND op_type = 'create_block' \
                  LIMIT 1",
-                bid_upper,
                 bid_upper
             )
             .fetch_optional(pool)

@@ -4,7 +4,7 @@
  * Tabs:
  *  - General   -- DeadlineWarningSection
  *  - Properties -- PropertyDefinitionsList
- *  - Appearance -- theme toggle (light/dark/system) + font size selector
+ *  - Appearance -- theme selector (7 themes, UX-203) + font size selector
  *  - Sync & Devices -- DeviceManagement
  */
 
@@ -25,6 +25,19 @@ import { DeadlineWarningSection } from './DeadlineWarningSection'
 import { DeviceManagement } from './DeviceManagement'
 import { KeyboardSettingsTab } from './KeyboardSettingsTab'
 import { PropertyDefinitionsList } from './PropertyDefinitionsList'
+
+/**
+ * Theme select uses 'system' as the user-facing alias for the internal 'auto'
+ * preference. All other values map 1:1 to ThemePreference.
+ */
+type ThemeSelectValue =
+  | 'light'
+  | 'dark'
+  | 'system'
+  | 'solarized-light'
+  | 'solarized-dark'
+  | 'dracula'
+  | 'one-dark-pro'
 
 type SettingsTab = 'general' | 'properties' | 'appearance' | 'keyboard' | 'data' | 'sync'
 
@@ -63,7 +76,7 @@ function applyFontSize(size: FontSize) {
 }
 
 /** Map the existing useTheme preference names to user-facing select values. */
-function themeToSelect(theme: ThemePreference): string {
+function themeToSelect(theme: ThemePreference): ThemeSelectValue {
   if (theme === 'auto') return 'system'
   return theme
 }
@@ -76,7 +89,7 @@ function selectToTheme(value: string): ThemePreference {
 export function SettingsView(): React.ReactElement {
   const { t } = useTranslation()
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
-  const { theme, toggleTheme } = useTheme()
+  const { theme, setTheme } = useTheme()
   const [fontSize, setFontSize] = useState<FontSize>(readFontSize)
 
   // Apply font size on mount and changes
@@ -86,24 +99,9 @@ export function SettingsView(): React.ReactElement {
 
   const handleThemeChange = useCallback(
     (value: string) => {
-      const target = selectToTheme(value)
-      // Cycle until we reach the target
-      // The existing hook cycles: auto -> dark -> light -> auto
-      // We need to set a specific value, so we'll use localStorage directly
-      // and call toggleTheme the right number of times
-      // Actually, let's just set localStorage and reload the preference
-      // by cycling the toggle until the theme matches
-      let current = theme
-      const cycle: ThemePreference[] = ['auto', 'dark', 'light']
-      let safety = 0
-      while (current !== target && safety < 3) {
-        toggleTheme()
-        const idx = cycle.indexOf(current)
-        current = cycle[(idx + 1) % cycle.length] as ThemePreference
-        safety++
-      }
+      setTheme(selectToTheme(value))
     },
-    [theme, toggleTheme],
+    [setTheme],
   )
 
   const handleFontSizeChange = useCallback((value: string) => {
@@ -171,6 +169,12 @@ export function SettingsView(): React.ReactElement {
                   <SelectItem value="light">{t('settings.themeLight')}</SelectItem>
                   <SelectItem value="dark">{t('settings.themeDark')}</SelectItem>
                   <SelectItem value="system">{t('settings.themeSystem')}</SelectItem>
+                  <SelectItem value="solarized-light">
+                    {t('settings.themeSolarizedLight')}
+                  </SelectItem>
+                  <SelectItem value="solarized-dark">{t('settings.themeSolarizedDark')}</SelectItem>
+                  <SelectItem value="dracula">{t('settings.themeDracula')}</SelectItem>
+                  <SelectItem value="one-dark-pro">{t('settings.themeOneDarkPro')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>

@@ -7,6 +7,7 @@ use super::{
     QUEUE_PRESSURE_NUMERATOR,
 };
 use crate::error::AppError;
+use crate::lifecycle::LifecycleHooks;
 use sqlx::SqlitePool;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -23,88 +24,54 @@ pub struct Materializer {
 
 impl Materializer {
     pub fn new(pool: SqlitePool) -> Self {
-        let (fg_tx, fg_rx) = mpsc::channel::<MaterializeTask>(FOREGROUND_CAPACITY);
-        let (bg_tx, bg_rx) = mpsc::channel::<MaterializeTask>(BACKGROUND_CAPACITY);
-        let shutdown_flag = Arc::new(AtomicBool::new(false));
-        let metrics = Arc::new(QueueMetrics::default());
-        let reader_pool = pool.clone();
-        {
-            let p = pool.clone();
-            let s = shutdown_flag.clone();
-            let m = metrics.clone();
-            Self::spawn_task(consumer::run_foreground(p, fg_rx, s, m));
-        }
-        {
-            let s = shutdown_flag.clone();
-            let m = metrics.clone();
-            Self::spawn_task(consumer::run_background(pool, bg_rx, s, m, None));
-        }
-        {
-            let p = reader_pool.clone();
-            let m = metrics.clone();
-            Self::spawn_task(async move {
-                if let Ok(count) = sqlx::query_scalar::<_, i64>(
-                    "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL",
-                )
-                .fetch_one(&p)
-                .await
-                {
-                    #[allow(clippy::cast_sign_loss)]
-                    m.cached_block_count.store(count as u64, Ordering::Relaxed);
-                }
-            });
-        }
-        {
-            let m = metrics.clone();
-            let s = shutdown_flag.clone();
-            Self::spawn_task(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
-                interval.tick().await; // skip immediate first tick
-                loop {
-                    interval.tick().await;
-                    if s.load(std::sync::atomic::Ordering::Acquire) {
-                        break;
-                    }
-                    let fg_processed = m.fg_processed.load(std::sync::atomic::Ordering::Relaxed);
-                    let bg_processed = m.bg_processed.load(std::sync::atomic::Ordering::Relaxed);
-                    let bg_deduped = m.bg_deduped.load(std::sync::atomic::Ordering::Relaxed);
-                    let fg_high_water = m.fg_high_water.load(std::sync::atomic::Ordering::Relaxed);
-                    let bg_high_water = m.bg_high_water.load(std::sync::atomic::Ordering::Relaxed);
-                    let fg_errors = m.fg_errors.load(std::sync::atomic::Ordering::Relaxed);
-                    let bg_errors = m.bg_errors.load(std::sync::atomic::Ordering::Relaxed);
-                    tracing::debug!(
-                        fg_processed,
-                        bg_processed,
-                        bg_deduped,
-                        fg_high_water,
-                        bg_high_water,
-                        fg_errors,
-                        bg_errors,
-                        "materializer metrics snapshot"
-                    );
-                    // Reset high-water marks after dump
-                    m.fg_high_water
-                        .store(0, std::sync::atomic::Ordering::Relaxed);
-                    m.bg_high_water
-                        .store(0, std::sync::atomic::Ordering::Relaxed);
-                }
-            });
-        }
-        Self {
-            fg_tx: Arc::new(Mutex::new(Some(fg_tx))),
-            bg_tx: Arc::new(Mutex::new(Some(bg_tx))),
-            shutdown_flag,
-            metrics,
-            reader_pool,
-        }
+        Self::build(pool.clone(), None, pool, None)
     }
 
     pub fn with_read_pool(write_pool: SqlitePool, read_pool: SqlitePool) -> Self {
+        Self::build(write_pool, Some(read_pool.clone()), read_pool, None)
+    }
+
+    /// PERF-24: construct a `Materializer` wired up to app-foreground
+    /// lifecycle hooks.
+    ///
+    /// The internal metrics-snapshot task skips its body when
+    /// `lifecycle.is_foreground == false`, eliminating debug-level log
+    /// writes while the app is backgrounded on mobile.
+    pub fn with_read_pool_and_lifecycle(
+        write_pool: SqlitePool,
+        read_pool: SqlitePool,
+        lifecycle: LifecycleHooks,
+    ) -> Self {
+        Self::build(
+            write_pool,
+            Some(read_pool.clone()),
+            read_pool,
+            Some(lifecycle),
+        )
+    }
+
+    /// Shared constructor that dispatches to the two public variants.
+    ///
+    /// - `write_pool`: pool used by the foreground consumer and by
+    ///   background writes.
+    /// - `read_pool_for_consumer`: optional dedicated read pool passed
+    ///   into `consumer::run_background`; `None` means the consumer
+    ///   will reuse the write pool for reads (legacy single-pool mode).
+    /// - `reader_pool_for_caches`: pool used for cache-refresh queries
+    ///   (cheap `SELECT COUNT(*)` etc.). Always required.
+    /// - `lifecycle`: optional foreground-gating hooks for the metrics
+    ///   snapshot task.
+    fn build(
+        write_pool: SqlitePool,
+        read_pool_for_consumer: Option<SqlitePool>,
+        reader_pool_for_caches: SqlitePool,
+        lifecycle: Option<LifecycleHooks>,
+    ) -> Self {
         let (fg_tx, fg_rx) = mpsc::channel::<MaterializeTask>(FOREGROUND_CAPACITY);
         let (bg_tx, bg_rx) = mpsc::channel::<MaterializeTask>(BACKGROUND_CAPACITY);
         let shutdown_flag = Arc::new(AtomicBool::new(false));
         let metrics = Arc::new(QueueMetrics::default());
-        let reader_pool = read_pool.clone();
+        let reader_pool = reader_pool_for_caches;
         {
             let p = write_pool.clone();
             let s = shutdown_flag.clone();
@@ -119,7 +86,7 @@ impl Materializer {
                 bg_rx,
                 s,
                 m,
-                Some(read_pool),
+                read_pool_for_consumer,
             ));
         }
         {
@@ -140,38 +107,7 @@ impl Materializer {
         {
             let m = metrics.clone();
             let s = shutdown_flag.clone();
-            Self::spawn_task(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
-                interval.tick().await; // skip immediate first tick
-                loop {
-                    interval.tick().await;
-                    if s.load(std::sync::atomic::Ordering::Acquire) {
-                        break;
-                    }
-                    let fg_processed = m.fg_processed.load(std::sync::atomic::Ordering::Relaxed);
-                    let bg_processed = m.bg_processed.load(std::sync::atomic::Ordering::Relaxed);
-                    let bg_deduped = m.bg_deduped.load(std::sync::atomic::Ordering::Relaxed);
-                    let fg_high_water = m.fg_high_water.load(std::sync::atomic::Ordering::Relaxed);
-                    let bg_high_water = m.bg_high_water.load(std::sync::atomic::Ordering::Relaxed);
-                    let fg_errors = m.fg_errors.load(std::sync::atomic::Ordering::Relaxed);
-                    let bg_errors = m.bg_errors.load(std::sync::atomic::Ordering::Relaxed);
-                    tracing::debug!(
-                        fg_processed,
-                        bg_processed,
-                        bg_deduped,
-                        fg_high_water,
-                        bg_high_water,
-                        fg_errors,
-                        bg_errors,
-                        "materializer metrics snapshot"
-                    );
-                    // Reset high-water marks after dump
-                    m.fg_high_water
-                        .store(0, std::sync::atomic::Ordering::Relaxed);
-                    m.bg_high_water
-                        .store(0, std::sync::atomic::Ordering::Relaxed);
-                }
-            });
+            Self::spawn_task(Self::metrics_snapshot_task(m, s, lifecycle));
         }
         Self {
             fg_tx: Arc::new(Mutex::new(Some(fg_tx))),
@@ -179,6 +115,53 @@ impl Materializer {
             shutdown_flag,
             metrics,
             reader_pool,
+        }
+    }
+
+    /// Periodic (5 min) metrics snapshot task.
+    ///
+    /// PERF-24: when `lifecycle` is `Some` and `is_foreground` reads
+    /// `false`, the snapshot body is skipped for that tick. The tick
+    /// itself still fires so the interval's internal deadline stays
+    /// aligned — we just don't pay for the atomic reads or the tracing
+    /// call while the user isn't looking at the app.
+    async fn metrics_snapshot_task(
+        m: Arc<QueueMetrics>,
+        s: Arc<AtomicBool>,
+        lifecycle: Option<LifecycleHooks>,
+    ) {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+        interval.tick().await; // skip immediate first tick
+        loop {
+            interval.tick().await;
+            if s.load(Ordering::Acquire) {
+                break;
+            }
+            if let Some(ref l) = lifecycle {
+                if l.is_backgrounded() {
+                    continue;
+                }
+            }
+            let fg_processed = m.fg_processed.load(Ordering::Relaxed);
+            let bg_processed = m.bg_processed.load(Ordering::Relaxed);
+            let bg_deduped = m.bg_deduped.load(Ordering::Relaxed);
+            let fg_high_water = m.fg_high_water.load(Ordering::Relaxed);
+            let bg_high_water = m.bg_high_water.load(Ordering::Relaxed);
+            let fg_errors = m.fg_errors.load(Ordering::Relaxed);
+            let bg_errors = m.bg_errors.load(Ordering::Relaxed);
+            tracing::debug!(
+                fg_processed,
+                bg_processed,
+                bg_deduped,
+                fg_high_water,
+                bg_high_water,
+                fg_errors,
+                bg_errors,
+                "materializer metrics snapshot"
+            );
+            // Reset high-water marks after dump
+            m.fg_high_water.store(0, Ordering::Relaxed);
+            m.bg_high_water.store(0, Ordering::Relaxed);
         }
     }
 
