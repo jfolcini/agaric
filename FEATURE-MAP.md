@@ -100,7 +100,7 @@ The default view — one page per day, created automatically.
 - Word-level diff display for edit operations
 - Multi-select for batch revert (Ctrl+Click, Shift+Click, Ctrl+A)
 - Vim-style navigation (j/k, Space to toggle, Enter to revert)
-- **Point-in-time restore** (F-26): "Restore to here" button on each history entry. Reverts all ops after the target op (page-scoped with recursive CTE for nested blocks, or global `__all__`). Non-reversible ops (purge_block, delete_attachment) are skipped with warning toast. Confirmation dialog with destructive variant. Backend: `restore_page_to_op` command delegates to existing `revert_ops_inner()`. 5 Rust tests + 9 frontend tests.
+- **Point-in-time restore** (F-26): "Restore to here" button on each history entry. Reverts all ops after the target op (page-scoped with recursive CTE for nested blocks, or global `__all__`). Non-reversible ops (purge_block, delete_attachment) are skipped with warning toast. Confirmation dialog with destructive variant. Backend: `restore_page_to_op` command delegates to existing `revert_ops_inner()`. 10 Rust tests + 5 frontend tests.
 
 ### Templates
 
@@ -192,7 +192,7 @@ Markdown-based WYSIWYG editing:
 
 ### Task Management
 
-- **Ctrl+Enter**: cycle task state (TODO → DOING → DONE → none)
+- **Ctrl+Enter**: cycle task state (TODO → DOING → CANCELLED → DONE → none)
 - **Task state animation**: smooth opacity + text-decoration-color transition (200ms) on DONE strikethrough (UX-51)
 - **Ctrl+Shift+1/2/3**: set priority level (color-coded badges)
 - Due date and scheduled date (via slash commands or property panel)
@@ -218,7 +218,7 @@ Results display as collapsible panels with todo badges and click-to-navigate.
 
 ## 3. Slash Commands
 
-Type `/` in the editor to access the command palette. Commands are grouped by category with lucide-react icons for quick scanning (UX-50). 55 commands across 8 categories:
+Type `/` in the editor to access the command palette. Commands are grouped by category with lucide-react icons for quick scanning (UX-50). 64 commands across 8 categories:
 
 | Category | Commands |
 |----------|----------|
@@ -274,7 +274,7 @@ Type `/` in the editor to access the command palette. Commands are grouped by ca
 | | Enter | Revert selected |
 | | j/k | Vim-style navigation |
 
-**Keyboard shortcut customization** (UX-86): All 66 shortcuts are configurable via Settings → Keyboard tab (`F-38 fully complete — all 5 phases`). `keyboard-config.ts` stores custom overrides in localStorage, merges with defaults. `KeyboardSettingsTab` component provides inline editing (pencil → input → save/cancel), conflict detection showing which shortcuts conflict, per-shortcut reset, and "Reset All to Defaults" with ConfirmDialog. `KeyboardShortcuts.tsx` help panel dynamically reads from `getCurrentShortcuts()` via `useMemo([open])` so it shows current (possibly customized) bindings when opened. 19 config + 13 settings tab + 1 dynamic panel tests.
+**Keyboard shortcut customization** (UX-86): All 68 shortcuts are configurable via Settings → Keyboard tab (`F-38 fully complete — all 5 phases`). `keyboard-config.ts` stores custom overrides in localStorage, merges with defaults. `KeyboardSettingsTab` component provides inline editing (pencil → input → save/cancel), conflict detection showing which shortcuts conflict, per-shortcut reset, and "Reset All to Defaults" with ConfirmDialog. `KeyboardShortcuts.tsx` help panel dynamically reads from `getCurrentShortcuts()` via `useMemo([open])` so it shows current (possibly customized) bindings when opened. 108 config + 15 settings tab + 1 dynamic panel tests.
 
 ---
 
@@ -321,7 +321,7 @@ Backend property commands (`set_property`, `set_todo_state`, `set_due_date`, `se
 
 ### Default View
 
-Shows all tasks (both dated and undated), grouped by page (FEAT-1). Default group: page (alphabetical, "No page" at end). Default sort: state (DOING > TODO > DONE), then priority, then date. Undated tasks (todo_state set but no due/scheduled date) are included via `listUndatedTasks` and merged with dated results.
+Shows all tasks (both dated and undated), grouped by page (FEAT-1). Default group: page (alphabetical, "No page" at end). Default sort: state (DOING > TODO > CANCELLED > DONE), then priority, then date. Undated tasks (todo_state set but no due/scheduled date) are included via `listUndatedTasks` and merged with dated results.
 
 ### Filtering
 
@@ -388,7 +388,7 @@ Shows tasks with due/scheduled dates for the current day. Filter bar with 4 butt
 | Created in range | Filter by creation date |
 | Block type | Filter by content/tag/page |
 | Todo state / Priority | Filter by task metadata |
-| Due date / Scheduled date | Filter by date fields |
+| Due date | Filter by due-date field (no ScheduledDate filter variant) |
 | Source page | Filter by linking page |
 | And / Or / Not | Boolean composition |
 
@@ -403,7 +403,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **Discovery**: automatic via mDNS on the local network
 - **Pairing**: scan a QR code or enter a 4-word passphrase
 - **Auto-sync**: background daemon with change-triggered (3s debounce) and periodic sync (60s), exponential backoff on failure
-- **Manual sync feedback**: sidebar sync button shows toast when no peers are paired ("No paired devices — use Device Management to pair.") and resets sync state to idle
+- **Manual sync feedback**: sidebar sync button resets sync state to idle when no peers are paired (no toast shown; the "No paired devices" empty-state message appears in Device Management / pairing UI only)
 - **Manual address**: set a peer's IP:port when mDNS is unavailable (e.g., across subnets)
 - **Peer address popover** (UX-77): Replaced prompt() with Radix Popover for manual address entry. `PeerListItem.tsx`.
 - **Conflict handling**: non-overlapping edits merge automatically; overlapping edits create conflict copies for manual resolution
@@ -423,10 +423,10 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 
 ### Shared UI Components
 - **EmptyState** (`src/components/EmptyState.tsx`): Consistent empty state display with icon, title, and optional description. Used by 16 components including DaySection, DuePanel, DonePanel, LinkedReferences, UnlinkedReferences, BlockTree, SearchPanel, and others.
-- **ConfirmDialog** (`src/components/ConfirmDialog.tsx`): Wraps AlertDialog primitives with title/description/cancel/action props, optional `children` slot, `actionVariant` (default/destructive), `loading` spinner, `autoFocus` on action button for keyboard confirmation (UX-19). Used by 8 components.
-- **LoadMoreButton** (`src/components/LoadMoreButton.tsx`): Cursor-paginated load-more button with `loading`/`hasMore`/`onLoadMore` props and Spinner. Used by 6 components.
-- **LoadingSkeleton** (`src/components/LoadingSkeleton.tsx`): Skeleton loading placeholder with `count`/`height` props. Used by 7 components.
-- **Spinner** (`src/components/ui/spinner.tsx`): Animated loading indicator wrapping Loader2 with CVA size variants (`sm`=h-3.5, `md`=h-4, `lg`=h-5, `xl`=h-6). Default `md`. Used by 14 components.
+- **ConfirmDialog** (`src/components/ConfirmDialog.tsx`): Wraps AlertDialog primitives with title/description/cancel/action props, optional `children` slot, `actionVariant` (default/destructive), `loading` spinner, `autoFocus` on action button for keyboard confirmation (UX-19). Used by 15 components.
+- **LoadMoreButton** (`src/components/LoadMoreButton.tsx`): Cursor-paginated load-more button with `loading`/`hasMore`/`onLoadMore` props and Spinner. Used by 10 components.
+- **LoadingSkeleton** (`src/components/LoadingSkeleton.tsx`): Skeleton loading placeholder with `count`/`height` props. Used by 21 components.
+- **Spinner** (`src/components/ui/spinner.tsx`): Animated loading indicator wrapping Loader2 with CVA size variants (`sm`=h-3.5, `md`=h-4, `lg`=h-5, `xl`=h-6). Default `md`. Used by 17 components.
 - **CloseButton** (`src/components/ui/close-button.tsx`): Shared `closeButtonClassName` constant + `CloseButtonIcon` component for overlay close buttons. Used by Dialog, Sheet.
 - **ChevronToggle** (`src/components/ui/chevron-toggle.tsx`): Reusable expand/collapse chevron with rotation transition. Props: `isExpanded`, `loading` (shows spinner), `size` (sm/md). Replaces duplicated ChevronRight rotation pattern across 8 consumers (UX-36). Used by CollapsiblePanelHeader, BlockInlineControls, PageTreeItem, QueryResult, CollapsibleGroupList, HistoryPanel, HistoryListItem, ConflictListItem.
 - **CardButton** (`src/components/ui/card-button.tsx`): Full-width card-style button with border, bg-card, hover:bg-accent/50, focus-visible ring. Used by ResultCard, SearchPanel.
@@ -435,7 +435,6 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **CollapsibleGroupList** (`src/components/CollapsibleGroupList.tsx`): Generic collapsible grouped list with expand/collapse state management. Accepts `expandedGroups` record, `defaultExpanded` prop, `onToggle` callback, and custom `renderBlock` slot. Supports split-header mode via `onPageTitleClick` prop (separate chevron toggle + PageLink title + passive count). Used by LinkedReferences, UnlinkedReferences.
 - **BacklinkGroupRenderer** (`src/components/BacklinkGroupRenderer.tsx`): Collapsible backlink group with block items. Renders a grouped backlink section with expand/collapse toggle, page title link, block count badge, and block list. Extracted from LinkedReferences (R-15). Used by LinkedReferences.
 - **PeerListItem** (`src/components/PeerListItem.tsx`): Peer card component with sync/rename/unpair actions. Shows device name, peer ID, connection status, last sync time, and ops sent/received. Extracted from DeviceManagement (R-16). Used by DeviceManagement.
-- **TaskStatesSection** (`src/components/TaskStatesSection.tsx`): Task state cycle editor. Manages custom task keywords with add/remove/reorder controls, persisted to localStorage. Extracted from PropertiesView (R-17). Used by PropertiesView.
 - **DeadlineWarningSection** (`src/components/DeadlineWarningSection.tsx`): Deadline warning days setting. Input for configuring days-before-due warning threshold, persisted to localStorage. Extracted from PropertiesView (R-17). Used by PropertiesView.
 - **DataSettingsTab** (`src/components/DataSettingsTab.tsx`): Data management tab in Settings with Import (multi-file Markdown import) and Export All (ZIP download of all pages). Consolidates import from StatusPanel and export from PageBrowser into Settings → Data tab. Used by SettingsView.
 - **PropertyDefinitionsList** (`src/components/PropertyDefinitionsList.tsx`): Property definitions CRUD with search, filter, inline editing, and delete confirmation. Search input has search icon with clear button. Tooltip on action buttons. Empty filter state when search matches nothing. Extracted from PropertiesView (R-17). Used by PropertiesView.
@@ -499,7 +498,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **useDuePanelData** (`src/hooks/useDuePanelData.ts`): Data fetching hook for DuePanel encapsulating block/overdue/upcoming/projected queries and page title resolution. All 4 useEffects (main, projected, overdue, upcoming) re-run on `invalidationKey` from `useBlockPropertyEvents` for reactive panel updates (F-39). Returns fetched data, loading states, pageTitles map, and loadMore. Extracted from DuePanel (R-6). Used by DuePanel.
 - **useAgendaPreferences** (`src/hooks/useAgendaPreferences.ts`): LocalStorage-persisted agenda sort/group preferences hook. Returns `{ groupBy, sortBy, setGroupBy, setSortBy }`. Extracted from AgendaView (R-13). Used by AgendaView.
 - **useBlockCollapse** (`src/hooks/useBlockCollapse.ts`): Manages collapsed block state with localStorage persistence. Returns `{ collapsedIds, toggleCollapse, visibleBlocks, hasChildrenSet }`. Extracted from BlockTree (M-1.3). Used by BlockTree.
-- **useEditorBlur** (`src/hooks/useEditorBlur.ts`): Editor blur guard chain hook (M-42). 5-step blur handling: stale check, early persist for new blocks, portal guard (8 CSS selectors), split detection, unmount+save. Returns `{ handleBlur }`. Extracted from EditableBlock. `EDITOR_PORTAL_SELECTORS` constant re-exported from EditableBlock for backward compat. 17 tests.
+- **useEditorBlur** (`src/hooks/useEditorBlur.ts`): Editor blur guard chain hook (M-42). 5-step blur handling: stale check, early persist for new blocks, portal guard (8 CSS selectors), split detection, unmount+save. Returns `{ handleBlur }`. Extracted from EditableBlock. `EDITOR_PORTAL_SELECTORS` constant re-exported from EditableBlock for backward compat. 21 tests.
 - **useBlockZoom** (`src/hooks/useBlockZoom.ts`): Manages zoom state, breadcrumb trail, and zoomed-view filtering with depth-adjusted visible blocks. Returns `{ zoomedBlockId, zoomIn, zoomOut, zoomToRoot, breadcrumbs, zoomedVisible }`. Extracted from BlockTree (M-1.4). Used by BlockTree, BlockZoomBar.
 - **useBlockSwipeActions** (`src/hooks/useBlockSwipeActions.ts`): Swipe-left-to-delete gesture for mobile (touch-only, coarse-pointer devices). 80px reveal threshold, 200px auto-delete. Returns `{ translateX, isRevealed, handlers, reset }`. Used by SortableBlock.
 - **useDraftAutosave** (`src/hooks/useDraftAutosave.ts`): Autosaves block draft content with 2s debounce. Calls `saveDraft()`/`deleteDraft()` via Tauri. Returns `{ discardDraft }`. Used by EditableBlock.
@@ -527,7 +526,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **logger** (`src/lib/logger.ts`): Structured frontend logging with dual-write (console + Tauri IPC bridge), stack capture at call site, cause chain extraction (3-level deep), rate limiting (5 per 60s per module:message), and `safeStringify` for circular reference protection. Methods: `debug`, `info`, `warn`, `error`. Data parameter (structured context dict) serialized to backend log file. Global error/unhandledrejection handlers in `main.tsx`. Custom panic hook captures Rust panics in log file. Boot-time log retention removes files older than 30 days. Used by 24+ production files.
 - **format-relative-time** (`src/lib/format-relative-time.ts`): `formatRelativeTime(isoString, t)` returns human-readable relative time ("just now", "Xm ago", "Xh ago", "Xd ago"). Uses i18n `t()` for all strings. Used by App sidebar sync status (UX-76).
 - **file-utils** (`src/lib/file-utils.ts`): `guessMimeType(filename)` maps 20+ file extensions to MIME types (images, documents, office, media, archives). `extractFileInfo(file)` extracts filename, mimeType, sizeBytes, and Tauri-specific `fsPath` from a `File` object. Used by EditableBlock (drag-drop/paste), useBlockSlashCommands (/attach command). Re-exported from BlockTree for backward compat. 13 tests.
-- **keyboard-config** (`src/lib/keyboard-config.ts`): Keyboard shortcut configuration with localStorage persistence. `DEFAULT_SHORTCUTS` (66 entries across 8 categories — F-38 fully complete, includes UX-214 zoomOut / UX-216 gotoConflicts), `getCustomOverrides()`, `setCustomShortcut()`, `resetShortcut()`, `resetAllShortcuts()`, `getCurrentShortcuts()` (merges defaults with overrides, marks `isCustom`), `findConflicts()` (same keys in same category), `matchesShortcutBinding()` (resolves shortcut name to current key binding and matches against keyboard events — replaces inline key parsing in block-tree consumers), `configKeyToTipTap()` (converts keyboard-config key format to TipTap `addKeyboardShortcuts()` key format — used by editor and suggestion popup consumers). Used by KeyboardSettingsTab, KeyboardShortcuts, useBlockTreeKeyboardShortcuts, use-block-keyboard, PageHeader, use-roving-editor, external-link, suggestion-renderer. 32 tests.
+- **keyboard-config** (`src/lib/keyboard-config.ts`): Keyboard shortcut configuration with localStorage persistence. `DEFAULT_SHORTCUTS` (68 entries across 8 categories — F-38 fully complete, includes UX-214 zoomOut / UX-216 gotoConflicts), `getCustomOverrides()`, `setCustomShortcut()`, `resetShortcut()`, `resetAllShortcuts()`, `getCurrentShortcuts()` (merges defaults with overrides, marks `isCustom`), `findConflicts()` (same keys in same category), `matchesShortcutBinding()` (resolves shortcut name to current key binding and matches against keyboard events — replaces inline key parsing in block-tree consumers), `configKeyToTipTap()` (converts keyboard-config key format to TipTap `addKeyboardShortcuts()` key format — used by editor and suggestion popup consumers). Used by KeyboardSettingsTab, KeyboardShortcuts, useBlockTreeKeyboardShortcuts, use-block-keyboard, PageHeader, use-roving-editor, external-link, suggestion-renderer. 108 tests.
 - **block-utils** (`src/lib/block-utils.ts`): `processCheckboxSyntax(content)` detects markdown checkbox syntax (`- [ ] ` → TODO, `- [x] ` → DONE). Returns cleaned content and detected todo state. Extracted from BlockTree (M-16). Used by BlockTree.
 - **attachment-utils** (`src/lib/attachment-utils.ts`): `getAssetUrl(fsPath)` converts filesystem path to Tauri asset protocol URL (returns null outside Tauri runtime). `formatSize(bytes)` formats bytes as human-readable string. Extracted from StaticBlock (M-17). Used by AttachmentRenderer, StaticBlock.
 
@@ -552,7 +551,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 ### Shared Components (session 277)
 - **PageOutline** (`src/components/PageOutline.tsx`): TOC/outline panel in Sheet slide-out. `extractHeadings()` scans block content for `# `/`## ` prefixes, returns `{ blockId, level, text }[]`. Click-to-scroll via `scrollIntoView`. Integrated in PageHeader via List icon button. 11 tests.
 - **ImageResizeToolbar** (`src/components/StaticBlock.tsx`): Floating toolbar on image hover with 4 width presets (Small 25%, Medium 50%, Large 75%, Full 100%). Width persisted via `setProperty('image_width')`. Keyboard/touch accessible (Enter/Space toggle). 5 tests.
-- **UnfinishedTasks** (`src/components/journal/UnfinishedTasks.tsx`): Collapsible section in DailyView showing overdue TODO/DOING tasks grouped by age (Yesterday, This Week, Older). Client-side query via `queryByProperty` + filter. localStorage collapse persistence. Only shown for today's date. 21 tests.
+- **UnfinishedTasks** (`src/components/journal/UnfinishedTasks.tsx`): Collapsible section in DailyView showing overdue TODO/DOING tasks grouped by age (Yesterday, This Week, Older). Client-side query via `queryByProperty` + filter. localStorage collapse persistence. Only shown for today's date. 23 tests.
 
 ### Lib Modules (session 277)
 - **tag-colors** (`src/lib/tag-colors.ts`): localStorage-backed tag color helpers — `TAG_COLOR_PRESETS` (8 colors), `getTagColors()`, `getTagColor()`, `setTagColor()`, `clearTagColor()`. Dual storage: localStorage for fast rendering + `setProperty`/`deleteProperty` for sync.
@@ -578,7 +577,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **Divider blocks** (F-28): TipTap `HorizontalRule` extension. Markdown serializer parse (`---`) / serialize. StaticBlock renders `<hr>`. `/divider` slash command. `HorizontalRuleNode` type with `content?: undefined` for union compatibility. 10 parse/serialize tests + 4 component tests.
 
 ### Views (session 279)
-- **SettingsView** (`src/components/SettingsView.tsx`): Tabbed settings replacing `properties` sidebar item. 6 tabs: General (TaskStatesSection, DeadlineWarningSection), Properties (PropertyDefinitionsList), Appearance (7-theme dropdown — auto/light/dark/solarized-light/solarized-dark/dracula/one-dark-pro per UX-203 + font size small/medium/large), Keyboard (KeyboardSettingsTab), Data (DataSettingsTab — Import + Export All), Sync (DeviceManagement). Custom ARIA tab implementation. `'settings'` added to navigation ViewName union. 9 tests.
+- **SettingsView** (`src/components/SettingsView.tsx`): Tabbed settings replacing `properties` sidebar item. 6 tabs: General (DeadlineWarningSection — TaskStatesSection was removed per UX-202 which locked the task cycle), Properties (PropertyDefinitionsList), Appearance (7-theme dropdown — auto/light/dark/solarized-light/solarized-dark/dracula/one-dark-pro per UX-203 + font size small/medium/large), Keyboard (KeyboardSettingsTab), Data (DataSettingsTab — Import + Export All), Sync (DeviceManagement). Custom ARIA tab implementation. `'settings'` added to navigation ViewName union. 19 tests.
 
 ### Query Improvements (session 279)
 - **Query pagination** (F-25): Cursor-based load-more in QueryResult replacing hardcoded `limit: 50`. `PAGE_SIZE` constant + `LoadMoreButton`. Accumulates results across pages, merges page titles.
@@ -604,7 +603,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **MermaidDiagram** (`src/components/MermaidDiagram.tsx`): Lazy-loaded via `React.lazy` + `Suspense`. Renders `mermaid.render()` SVG output from code block content. Dark/light theme detection. Error state with raw code fallback. Unique render IDs via `useId()`. Integrated in StaticBlock for `language: 'mermaid'` code blocks. 9 tests.
 
 ### Search Operators (session 283)
-- **Operator-aware sanitize_fts_query** (F-21 partial): `QueryToken` enum + `tokenize_query()` state machine in `fts.rs`. Preserves `"quoted phrases"` as FTS5 phrase tokens, `NOT`/`OR`/`AND` as bare keywords (case-insensitive). Non-operator tokens safely quoted. NEAR/*/()/:/ injection prevented. 11 Rust tests.
+- **Operator-aware sanitize_fts_query** (F-21 partial): `QueryToken` enum + `tokenize_query()` state machine in `fts.rs`. Preserves `"quoted phrases"` as FTS5 phrase tokens, `NOT`/`OR`/`AND` as bare keywords (case-insensitive). Non-operator tokens safely quoted. NEAR/*/()/:/ injection prevented. 15 Rust tests.
 
 ### Search Filter Chips (session 284)
 - **Backend filter params** (F-21): `search_blocks` command accepts `parent_id: Option<String>` and `tag_ids: Option<Vec<String>>`. `search_fts()` builds dynamic SQL with parent filter (`AND b.parent_id = ?`) and ALL-semantics tag filter (`COUNT(DISTINCT bt.tag_id) ... = ?`). Safe parameterized SQL. 3 Rust tests.
