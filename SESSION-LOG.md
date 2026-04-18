@@ -1,5 +1,86 @@
 # Session Log
 
+## Session 416 — PUB-4 .env.example + PUB-8 gitleaks + PUB-9 markdownlint-cli2/lychee + PUB-10 no-op (2026-04-18)
+
+**4 items resolved (PUB-4, PUB-8, PUB-9, PUB-10). REVIEW-LATER 19→15.**
+
+Infra-only batch: secret-scanning + markdown-linting + link-checking hooks added to `prek`, plus the long-overdue `.env` → `.env.example` rename. PUB-10 was a zero-code decision (keep orchestration files in repo root) — removed from REVIEW-LATER alongside the other three. 2 parallel build subagents + 2 parallel technical review subagents — no UX reviewers needed for a pure infra pass. Only nit across both reviews was a lychee `accept = [403, 429]` that could mask real 403s on private pages; left as-is for rate-limit tolerance.
+
+### Resolved items
+
+**PUB-4 — `.env` rename (1 subagent + 1 review):**
+- `src-tauri/.env` → `src-tauri/.env.example` via `git mv` (preserves history).
+- `.env.example` picks up a 2-line comment: "Committed example… copy to `src-tauri/.env` (gitignored)."
+- `.gitignore` gains one line: `src-tauri/.env` (exact path — does NOT ignore `.env.example` or `.env.local`).
+- `BUILD.md` gains a 3-line "after cloning, copy the sqlx offline cache env file" paragraph right after the base prerequisites block.
+- Smoke-test: `SQLX_OFFLINE=true cargo check --lib` succeeded with the renamed env + untouched `.sqlx/` cache. Fresh clone → `cp` → `cargo tauri dev` path validated.
+
+**PUB-8 — Secret scanning (bundled with PUB-9 in one subagent + 1 combined review):**
+- `prek.toml`: added `detect-private-key` to the existing builtin block, and a new external `gitleaks` hook pinned to `v8.30.1`. `detect-private-key` has a tight path-regex exclude for three Rust files (`sync_cert.rs`, `sync_net/tests.rs`, `sync_daemon/tests.rs`) that reference the `-----BEGIN PRIVATE KEY-----` marker string as test data.
+- `.gitleaks.toml`: minimal config (`[extend] useDefault = true`). Default ruleset found zero hits in the current repo — no allowlist entries were needed. The empty `[allowlist]` block was removed because gitleaks rejects empty allowlists.
+
+**PUB-9 — Markdown quality (same subagent as PUB-8):**
+- `prek.toml`: added `markdownlint` (local hook running `npx --yes markdownlint-cli2`) + external `lychee` hook pinned to `lychee-v0.23.0` with `types = ["markdown"]` so it only scans `.md` files. `--exclude-mail` dropped because lychee 0.23 renamed it to `--include-mail` (default is exclude).
+- `package.json` + `package-lock.json`: `markdownlint-cli2` 0.22.0 added to `devDependencies`.
+- `.markdownlint-cli2.jsonc`: rule tweaks (MD013 off, MD041 off, MD033 safelist of semantic HTML, MD024 siblings-only) + `ignores` for `SESSION-LOG.md`, `PROMPT.md`, `REVIEW-LATER.md`, `FEATURE-MAP.md`, `AGENTS.md` (+ `**/AGENTS.md`), `src-tauri/gen/**`, and four high-violation docs (UX.md, ARCHITECTURE.md, COMPARISON.md, docs/SYNC-PLATFORM-NOTES.md) deferred as follow-up doc-cleanup work.
+- `lychee.toml`: `accept = [..., "403", "429"]` to absorb transient rate-limits on well-known hosts; `exclude = [agaric-app/ placeholder, localhost/127.0.0.1]`.
+- `.nsprc`: advisory `1115393` added (`smol-toml` DoS via markdownlint-cli2 transitive — dev-only, no adversarial input).
+- `README.md` + `BUILD.md`: MD031/MD032/MD040/MD060 violations fixed up (semantics-preserving; only blank-line and table-separator adjustments).
+
+**PUB-10 — Keep orchestration files in root (zero file changes):**
+- Decision is "option 1 — keep everything in repo root, no moves, no history rewrites." No code or doc changes required. Item removed from REVIEW-LATER as resolved.
+
+### Post-review fixes applied by orchestrator
+
+- `depcheck` was failing on `markdownlint-cli2` because the dep is only invoked via `npx --yes` in `prek.toml` rather than imported from source. Extended the `depcheck --ignores` list in `prek.toml` with `markdownlint-cli2`.
+- Regenerated clean patches from each worktree because `git add -N .` in the subagents picked up the `src-tauri/target` symlink as an intent-to-add entry, which then collided with the main tree's real `target/` directory on apply. Final patches limited to the actually-changed tracked files.
+- Ran `npm install` once in main to install `markdownlint-cli2` and re-sync `node_modules` + `package-lock.json`.
+- Used `git apply --reject` for PUB-8+9 merge because both items touched `BUILD.md` (PUB-4 added onboarding text at the top; PUB-9 fixed tables lower down). Non-overlapping hunks merged cleanly.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `REVIEW-LATER.md` | −4 items (19→15) — PUB-4/8/9/10 removed. PUB section preamble unchanged. |
+| `src-tauri/.env` | PUB-4 — deleted (renamed to `.env.example`) |
+| `src-tauri/.env.example` | PUB-4 — NEW (comment + `DATABASE_URL=sqlite:dev.db`) |
+| `.gitignore` | PUB-4 — add `src-tauri/.env` line |
+| `BUILD.md` | PUB-4 onboarding step + PUB-9 markdown-lint fixes |
+| `README.md` | PUB-9 markdown-lint fixes |
+| `prek.toml` | PUB-8 detect-private-key + gitleaks hooks + PUB-9 markdownlint-cli2 + lychee hooks + depcheck ignores |
+| `.gitleaks.toml` | PUB-8 — NEW minimal config |
+| `.markdownlint-cli2.jsonc` | PUB-9 — NEW rule tweaks + ignores |
+| `lychee.toml` | PUB-9 — NEW accept/exclude |
+| `.nsprc` | PUB-9 — add advisory 1115393 (smol-toml DoS, dev-only) |
+| `package.json` / `package-lock.json` | PUB-9 — markdownlint-cli2 0.22.0 devDep |
+| `SESSION-LOG.md` | This session |
+
+### Stats
+
+- **2 commits** this session: `58ea5bc` (code) + this one (docs).
+- **12 files changed** in the code commit. +1121 / −14 lines (most of the bulk is `package-lock.json` regeneration).
+- **2 parallel build subagents** (both APPROVE on their own verification) + **2 parallel technical review subagents** (both APPROVE — only nit was the lychee `accept 403/429`, kept as-is for rate-limit tolerance).
+- **PUB-10** carried zero code cost — pure REVIEW-LATER removal.
+
+### Verification
+
+- `prek run --all-files` → 23/23 hooks pass (all 5 new hooks clean: detect-private-key, gitleaks, markdownlint-cli2, lychee; plus the 18 pre-existing).
+- `SQLX_OFFLINE=true cargo check --lib` → clean (sqlx `.sqlx/` cache still resolves after `.env` rename).
+- `cargo nextest run` → all pre-existing Rust tests pass.
+- `npx vitest run` → all pre-existing frontend tests pass.
+- `git ls-files | grep '^src-tauri/\.env$'` → no match (confirmed the file is no longer tracked).
+
+### Follow-ups filed
+
+Markdownlint-ignored docs that need a proper cleanup pass (not a REVIEW-LATER item yet — just noting for future consideration): `UX.md` (253 MD violations), `ARCHITECTURE.md` (192), `COMPARISON.md` (170), `docs/SYNC-PLATFORM-NOTES.md` (42). Most violations are MD060 table-separator-style noise that is semantics-preserving to fix.
+
+### Remaining REVIEW-LATER backlog (15 items)
+
+- **DECIDED awaiting scheduled session:** FEAT-4, FEAT-5, MAINT-48, MAINT-49, UX-201a, UX-201b, PUB-1, PUB-6, PUB-7 (9 items).
+- **DEFERRED "until trigger":** PERF-19, PERF-20, PERF-23, PUB-2, PUB-3, PUB-5 (6 items).
+
+---
+
 ## Session 415 — UX-228 + UX-198 + FEAT-2 + BUG-44 + all remaining REVIEW-LATER decisions recorded (2026-04-18)
 
 **4 items resolved (UX-228, UX-198, FEAT-2, BUG-44). REVIEW-LATER 22→19. Decisions recorded inline for the other 18 items, with UX-201 split into UX-201a + UX-201b.**
