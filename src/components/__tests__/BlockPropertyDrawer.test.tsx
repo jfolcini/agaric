@@ -27,8 +27,6 @@ import {
 
 const mockedInvoke = vi.mocked(invoke)
 
-vi.mock('sonner', () => ({ toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }) }))
-
 vi.mock('@/components/ui/select', () => {
   const React = require('react')
   const Ctx = React.createContext({})

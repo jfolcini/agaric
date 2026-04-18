@@ -4,10 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DiffSpan, HistoryEntry } from '../../lib/tauri'
 import { useHistoryDiffToggle } from '../useHistoryDiffToggle'
 
-vi.mock('sonner', () => ({
-  toast: { error: vi.fn(), success: vi.fn() },
-}))
-
 vi.mock('../../lib/tauri', () => ({
   computeEditDiff: vi.fn(),
 }))

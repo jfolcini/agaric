@@ -10,7 +10,7 @@
 
 import { Search, X } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
+import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
 import { logger } from '../lib/logger'
 import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
 import type { BlockRow, TagCacheRow } from '../lib/tauri'
@@ -204,9 +205,10 @@ export function SearchPanel(): React.ReactElement {
   }
 
   // Auto-focus search input on mount
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  useRegisterPrimaryFocus(searchInputRef)
   useEffect(() => {
-    const input = document.querySelector<HTMLInputElement>('[aria-label="Search blocks"]')
-    input?.focus()
+    searchInputRef.current?.focus()
   }, [])
 
   function handleSubmit(e: React.FormEvent) {
@@ -341,6 +343,7 @@ export function SearchPanel(): React.ReactElement {
         className="sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-4 border-b border-border/40 flex flex-col sm:flex-row sm:items-center gap-2"
       >
         <Input
+          ref={searchInputRef}
           value={query}
           onChange={handleInputChange}
           placeholder={t('search.searchPlaceholder')}

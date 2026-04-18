@@ -77,6 +77,12 @@ export const SLASH_COMMANDS: PickerItem[] = [
     icon: CircleDot,
   },
   {
+    id: 'cancelled',
+    label: 'CANCELLED — Mark as cancelled',
+    category: 'slashCommand.categories.tasks',
+    icon: XCircle,
+  },
+  {
     id: 'done',
     label: 'DONE — Mark as complete',
     category: 'slashCommand.categories.tasks',
@@ -567,7 +573,12 @@ export function useBlockSlashCommands({
       const t = tRef.current
       if (!focusedBlockId) return
 
-      if (item.id === 'todo' || item.id === 'doing' || item.id === 'done') {
+      if (
+        item.id === 'todo' ||
+        item.id === 'doing' ||
+        item.id === 'cancelled' ||
+        item.id === 'done'
+      ) {
         const state = item.id.toUpperCase()
         try {
           await setTodoStateCmd(focusedBlockId, state)

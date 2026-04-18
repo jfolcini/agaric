@@ -17,13 +17,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { DataSettingsTab } from '../DataSettingsTab'
 
-vi.mock('sonner', () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-  },
-}))
-
 const mockExportGraphAsZip = vi.fn()
 const mockDownloadBlob = vi.fn()
 

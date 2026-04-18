@@ -11,12 +11,13 @@ function effectiveDate(block: BlockRow): string {
   return block.due_date ?? block.scheduled_date ?? '9999-12-31'
 }
 
-/** State sort rank: DOING=0, TODO=1, DONE=2, null/other=3 */
+/** State sort rank: DOING=0, TODO=1, CANCELLED=2, DONE=3, null/other=4. */
 function stateRank(state: string | null): number {
   if (state === 'DOING') return 0
   if (state === 'TODO') return 1
-  if (state === 'DONE') return 2
-  return 3
+  if (state === 'CANCELLED') return 2
+  if (state === 'DONE') return 3
+  return 4
 }
 
 /** Priority sort rank: 1=0, 2=1, 3=2, null/other=3 */
@@ -176,13 +177,14 @@ export function groupByPriority(blocks: BlockRow[]): AgendaGroup[] {
 }
 
 /**
- * Group blocks by todo state. Returns groups in order: DOING, TODO, DONE, No state.
+ * Group blocks by todo state. Returns groups in order: DOING, TODO, CANCELLED, DONE, No state.
  * Within each group, blocks are sorted by date ASC then priority.
  */
 export function groupByState(blocks: BlockRow[]): AgendaGroup[] {
   const buckets = new Map<string, BlockRow[]>([
     ['DOING', []],
     ['TODO', []],
+    ['CANCELLED', []],
     ['DONE', []],
     ['No state', []],
   ])
@@ -193,9 +195,11 @@ export function groupByState(blocks: BlockRow[]): AgendaGroup[] {
         ? 'DOING'
         : block.todo_state === 'TODO'
           ? 'TODO'
-          : block.todo_state === 'DONE'
-            ? 'DONE'
-            : 'No state'
+          : block.todo_state === 'CANCELLED'
+            ? 'CANCELLED'
+            : block.todo_state === 'DONE'
+              ? 'DONE'
+              : 'No state'
     buckets.get(key)?.push(block)
   }
 

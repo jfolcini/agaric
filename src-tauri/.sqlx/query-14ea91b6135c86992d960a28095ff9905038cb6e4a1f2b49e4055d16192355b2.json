@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM materializer_retry_queue WHERE block_id = ? AND task_type = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "14ea91b6135c86992d960a28095ff9905038cb6e4a1f2b49e4055d16192355b2"
+}

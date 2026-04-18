@@ -18,13 +18,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useResolveStore } from '../../stores/resolve'
 import { usePageDelete } from '../usePageDelete'
 
-vi.mock('sonner', () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-  },
-}))
-
 const mockedInvoke = vi.mocked(invoke)
 
 beforeEach(() => {

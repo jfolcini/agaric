@@ -1,5 +1,4 @@
 import { i18n } from './i18n'
-import { logger } from './logger'
 
 export type AgendaFilterDimension =
   | 'status'
@@ -11,20 +10,19 @@ export type AgendaFilterDimension =
   | 'tag'
   | 'property'
 
-/** Read custom task states from localStorage, filtering out nulls. */
+/**
+ * Fixed TODO states (UX-202). The cycle is locked to
+ * `none -> TODO -> DOING -> CANCELLED -> DONE -> none`; this array exposes
+ * the non-null members for filter dimension `choices`.
+ */
+export const TASK_STATES: readonly string[] = ['TODO', 'DOING', 'CANCELLED', 'DONE']
+
+/**
+ * Backwards-compatible accessor. Historically this read from localStorage;
+ * the states are now fixed (UX-202).
+ */
 export function getTaskStates(): string[] {
-  try {
-    const stored = localStorage.getItem('task_cycle')
-    if (stored) {
-      const parsed = JSON.parse(stored)
-      if (Array.isArray(parsed)) {
-        return parsed.filter((s): s is string => typeof s === 'string' && s.length > 0)
-      }
-    }
-  } catch (err) {
-    logger.warn('filter-dimension-metadata', 'failed to read task_cycle from localStorage', {}, err)
-  }
-  return ['TODO', 'DOING', 'DONE']
+  return [...TASK_STATES]
 }
 
 export const DIMENSION_OPTIONS: Record<

@@ -3,7 +3,7 @@
  *
  * Validates:
  * - getTodoState reads from block store
- * - handleToggleTodo cycles none → TODO → DOING → DONE → none
+ * - handleToggleTodo cycles none → TODO → DOING → CANCELLED → DONE → none (UX-202)
  * - handleToggleTodo calls set_todo_state IPC command
  * - handleToggleTodo does optimistic update + revert on failure
  * - handleTogglePriority cycles none → 1 → 2 → 3 → none
@@ -26,7 +26,6 @@ import {
 import { useUndoStore } from '../../stores/undo'
 import { useBlockProperties } from '../useBlockProperties'
 
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 vi.mock('../../lib/announcer', () => ({ announce: vi.fn() }))
 
 const mockedInvoke = vi.mocked(invoke)
@@ -122,8 +121,26 @@ describe('useBlockProperties handleToggleTodo', () => {
     expect(block?.todo_state).toBe('DOING')
   })
 
-  it('cycles from DOING to DONE', async () => {
+  it('cycles from DOING to CANCELLED (UX-202)', async () => {
     pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'DOING')] })
+
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
+
+    await act(async () => {
+      await result.current.handleToggleTodo('BLOCK_1')
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state', {
+      blockId: 'BLOCK_1',
+      state: 'CANCELLED',
+    })
+
+    const block = pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
+    expect(block?.todo_state).toBe('CANCELLED')
+  })
+
+  it('cycles from CANCELLED to DONE (UX-202)', async () => {
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1', 'CANCELLED')] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -171,6 +188,21 @@ describe('useBlockProperties handleToggleTodo', () => {
     // Should revert to original TODO state
     const block = pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
     expect(block?.todo_state).toBe('TODO')
+  })
+
+  it('completes a full cycle: null → TODO → DOING → CANCELLED → DONE → null (UX-202)', async () => {
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1')] })
+
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
+
+    const expected = ['TODO', 'DOING', 'CANCELLED', 'DONE', null]
+    for (const state of expected) {
+      await act(async () => {
+        await result.current.handleToggleTodo('BLOCK_1')
+      })
+      const block = pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
+      expect(block?.todo_state).toBe(state)
+    }
   })
 })
 

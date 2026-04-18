@@ -2,8 +2,6 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DayEntry } from '../../lib/date-utils'
 
-vi.mock('sonner', () => ({ toast: { error: vi.fn() } }))
-
 vi.mock('../../lib/tauri', () => ({
   countAgendaBatchBySource: vi.fn(),
   countBacklinksBatch: vi.fn(),

@@ -5,11 +5,6 @@ import type { StoreApi } from 'zustand'
 import { makeBlock } from '../../__tests__/fixtures'
 import { createPageBlockStore, type PageBlockState } from '../page-blocks'
 
-vi.mock('sonner', () => {
-  const toast = Object.assign(vi.fn(), { error: vi.fn() })
-  return { toast }
-})
-
 const mockedInvoke = vi.mocked(invoke)
 
 // --- Mock for undo store (used by notifyUndoNewAction in page-blocks.ts) ---

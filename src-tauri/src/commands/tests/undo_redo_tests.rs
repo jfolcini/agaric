@@ -324,6 +324,10 @@ async fn revert_ops_reverses_single_edit() {
         "reversed op seq should match edit op"
     );
     assert_eq!(
+        results[0].reversed_op_type, "edit_block",
+        "reversed_op_type should record the op_type of the original op"
+    );
+    assert_eq!(
         results[0].new_op_type, "edit_block",
         "new op type should be edit_block"
     );
@@ -1746,6 +1750,10 @@ async fn revert_create_block_soft_deletes() {
     assert_eq!(
         results[0].new_op_type, "delete_block",
         "reverting create should produce delete_block"
+    );
+    assert_eq!(
+        results[0].reversed_op_type, "create_block",
+        "reversed_op_type must echo the create_block op_type being reverted"
     );
 
     // Verify the block is now soft-deleted

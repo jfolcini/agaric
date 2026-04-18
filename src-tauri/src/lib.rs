@@ -114,6 +114,13 @@ use std::sync::Arc;
 /// daemon hasn't started yet.
 pub struct SyncCancelFlag(pub Arc<AtomicBool>);
 
+/// Shutdown flag for the `materializer::retry_queue` sweeper (BUG-22).
+///
+/// The sweeper runs every 60s and polls this flag on each tick. Stored in
+/// Tauri managed state for the rare case a shutdown handler wants to stop
+/// it cleanly; the flag is a no-op in most graceful-exit paths.
+pub struct RetryQueueSweeperShutdown(pub Arc<AtomicBool>);
+
 /// Keeps the tracing-appender non-blocking worker alive for the
 /// application lifetime.
 ///
@@ -266,10 +273,22 @@ pub fn run() {
         commands::clear_link_metadata_auth,
     ]);
 
-    tauri::Builder::default()
+    let mut tauri_builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init());
+
+    // MAINT-16: tauri-plugin-updater is desktop-only and currently not wired up
+    // (empty pubkey in `tauri.conf.json`, no frontend code calls the update
+    // API). Gate registration behind `not(mobile)` so we don't register an
+    // unusable plugin on Android, and keep it out of the desktop build until
+    // pubkey signing + a frontend action + `updater:default` capability are
+    // added. Tracked TODO in `.github/workflows/release.yml`.
+    #[cfg(not(mobile))]
+    {
+        tauri_builder = tauri_builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+
+    tauri_builder
         .setup(|app| {
             // Resolve the OS-standard app data directory from tauri.conf.json identifier
             let app_data_dir = app.path().app_data_dir()?;
@@ -417,6 +436,19 @@ pub fn run() {
                     );
                 }
             }
+
+            // BUG-22: Spawn the retry-queue sweeper so any per-block tasks
+            // persisted by a previous session (or accumulated during this
+            // one) get drained on a 60-second cadence. The sweeper uses
+            // its own shutdown flag; it dies when this flag is set and
+            // re-enqueues rows that have reached their `next_attempt_at`.
+            let retry_shutdown = Arc::new(AtomicBool::new(false));
+            materializer::retry_queue::spawn_sweeper(
+                pools.write.clone(),
+                materializer.clone(),
+                retry_shutdown.clone(),
+            );
+            app.manage(RetryQueueSweeperShutdown(retry_shutdown));
 
             // Create scheduler wrapped in Arc for sharing with the SyncDaemon
             let scheduler = std::sync::Arc::new(sync_scheduler::SyncScheduler::new());

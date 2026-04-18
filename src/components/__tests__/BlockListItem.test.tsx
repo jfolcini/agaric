@@ -26,11 +26,6 @@ import { axe } from 'vitest-axe'
 
 const mockNavigateToPage = vi.fn()
 
-// Mock sonner toast
-vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
-}))
-
 // Mock tauri IPC functions used by handleDateSelect
 const mockGetBlock = vi.fn()
 const mockSetDueDate = vi.fn()

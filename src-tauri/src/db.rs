@@ -1,6 +1,70 @@
+use sqlx::pool::PoolConnection;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
-use sqlx::SqlitePool;
+use sqlx::{Sqlite, SqlitePool};
 use std::path::Path;
+
+/// Threshold (ms) above which [`acquire_logged`] emits a `warn` log.
+///
+/// MAINT-30: a `busy_timeout` of 5000ms on the SqlitePool can make callers
+/// wait silently on write contention. 100ms is a generous floor that ignores
+/// normal cold-start acquires but surfaces anything pathological.
+pub const SLOW_ACQUIRE_WARN_MS: u128 = 100;
+
+/// Acquire a connection from the pool, logging at `warn` if the acquire
+/// itself took longer than [`SLOW_ACQUIRE_WARN_MS`].
+///
+/// Migrate call sites gradually — wrap this around `pool.acquire()` only on
+/// hot paths where lock contention is operationally interesting
+/// (materializer foreground/background batches, large command handlers).
+/// A spammy warn log on every acquire is exactly what this helper avoids.
+///
+/// The `label` argument is a stable, human-readable tag (`"mat_fg"`,
+/// `"mat_bg"`, `"sync_merge"`, …) so the operator can filter per-subsystem.
+pub async fn acquire_logged(
+    pool: &SqlitePool,
+    label: &'static str,
+) -> Result<PoolConnection<Sqlite>, sqlx::Error> {
+    let start = std::time::Instant::now();
+    let conn = pool.acquire().await?;
+    let elapsed = start.elapsed();
+    if elapsed.as_millis() > SLOW_ACQUIRE_WARN_MS {
+        tracing::warn!(
+            elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+            label,
+            "slow pool acquire"
+        );
+    }
+    Ok(conn)
+}
+
+/// Start a `BEGIN IMMEDIATE` transaction, logging at `warn` if the
+/// underlying connection acquire + begin took longer than
+/// [`SLOW_ACQUIRE_WARN_MS`].
+///
+/// Command handlers that write through a `BEGIN IMMEDIATE` transaction use
+/// this helper instead of `pool.begin_with("BEGIN IMMEDIATE")` on hot
+/// paths. The timing measures the combined wait for the pool slot *and*
+/// the SQLite write lock, which is what actually matters operationally
+/// when the app appears to freeze.
+///
+/// The `label` argument mirrors [`acquire_logged`] — use a stable tag
+/// like `"cmd_delete_block"` so per-command slow writes can be filtered.
+pub async fn begin_immediate_logged(
+    pool: &SqlitePool,
+    label: &'static str,
+) -> Result<sqlx::Transaction<'static, Sqlite>, sqlx::Error> {
+    let start = std::time::Instant::now();
+    let tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let elapsed = start.elapsed();
+    if elapsed.as_millis() > SLOW_ACQUIRE_WARN_MS {
+        tracing::warn!(
+            elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+            label,
+            "slow BEGIN IMMEDIATE"
+        );
+    }
+    Ok(tx)
+}
 
 /// Separated read/write connection pools for SQLite.
 ///
@@ -503,5 +567,134 @@ mod tests {
         assert!(conn1.is_ok(), "first write connection should succeed");
         let conn2 = pools.write.acquire().await;
         assert!(conn2.is_ok(), "second write connection should succeed");
+    }
+
+    // ======================================================================
+    // MAINT-30: Slow pool acquire logging
+    // ======================================================================
+
+    /// Thread-safe buffered writer usable as a `tracing_subscriber::fmt`
+    /// writer so we can capture emitted log lines in-process.
+    #[derive(Clone, Default)]
+    struct BufWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for BufWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for BufWriter {
+        type Writer = BufWriter;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    impl BufWriter {
+        fn contents(&self) -> String {
+            let bytes = self.0.lock().unwrap();
+            String::from_utf8_lossy(&bytes).into_owned()
+        }
+    }
+
+    #[tokio::test]
+    async fn acquire_logged_fast_path_emits_no_warn() {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let (pool, _dir) = test_pool().await;
+
+        let writer = BufWriter::default();
+        // Install a scoped subscriber that only captures `warn` and above
+        // via a BufWriter so we can inspect emitted events without racing
+        // with the global subscriber.
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new("warn"))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(writer.clone())
+                    .with_ansi(false),
+            );
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let result = acquire_logged(&pool, "test_fast").await;
+        assert!(result.is_ok(), "fast acquire should succeed");
+        drop(result);
+
+        let contents = writer.contents();
+        assert!(
+            !contents.contains("slow pool acquire"),
+            "fast pool acquire must not emit the slow-acquire warn, got log output: {contents:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn begin_immediate_logged_emits_warn_on_slow_acquire() {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        // Build a dedicated pool with max_connections = 1 so that two
+        // concurrent BEGIN IMMEDIATE callers force the second caller to
+        // wait behind the first. The first caller sleeps for > SLOW_ACQUIRE
+        // threshold while holding the connection, guaranteeing the second
+        // caller's timed acquire crosses the threshold.
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("slow_acquire.db");
+        let opts = base_connect_options(&db_path);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        let writer = BufWriter::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new("warn"))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(writer.clone())
+                    .with_ansi(false)
+                    .with_target(true),
+            );
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        // Hold the single pool slot for longer than SLOW_ACQUIRE_WARN_MS.
+        let holder_pool = pool.clone();
+        let holder = tokio::spawn(async move {
+            let _conn = holder_pool.acquire().await.unwrap();
+            #[allow(clippy::cast_possible_truncation)]
+            let sleep_ms = (SLOW_ACQUIRE_WARN_MS as u64) + 150;
+            tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
+            // Drop releases the slot.
+        });
+
+        // Let the holder task actually start acquiring before we race.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        // This call must wait for the holder to release the slot, so the
+        // acquire crosses the threshold and should emit a warn log.
+        let tx = begin_immediate_logged(&pool, "test_slow").await;
+        assert!(
+            tx.is_ok(),
+            "begin_immediate_logged should eventually succeed"
+        );
+        drop(tx);
+
+        holder.await.unwrap();
+
+        let contents = writer.contents();
+        assert!(
+            contents.contains("slow BEGIN IMMEDIATE"),
+            "slow BEGIN IMMEDIATE must emit a warn log when acquire exceeds \
+             SLOW_ACQUIRE_WARN_MS, got log output: {contents:?}"
+        );
+        assert!(
+            contents.contains("test_slow"),
+            "slow-acquire warn must include the caller-supplied label, got: {contents:?}"
+        );
     }
 }

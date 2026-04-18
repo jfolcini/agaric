@@ -39,13 +39,6 @@ vi.mock('lucide-react', () => ({
   ),
 }))
 
-vi.mock('sonner', () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-  },
-}))
-
 vi.mock('../BacklinkFilterBuilder', () => ({
   BacklinkFilterBuilder: () => <div data-testid="backlink-filter-builder">Advanced Filters</div>,
 }))

@@ -9,7 +9,6 @@ import { selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { buildFilters, detectColumns, parseQueryExpression, QueryResult } from '../QueryResult'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 vi.mock('../QueryBuilderModal', () => ({
   QueryBuilderModal: ({
     open,

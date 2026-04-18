@@ -11,8 +11,6 @@ import { dispatchBlockEvent } from '../../lib/block-events'
 import type { UseBlockTreeEventListenersOptions } from '../useBlockTreeEventListeners'
 import { useBlockTreeEventListeners } from '../useBlockTreeEventListeners'
 
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
-
 function makeOptions(
   overrides: Partial<UseBlockTreeEventListenersOptions> = {},
 ): UseBlockTreeEventListenersOptions {

@@ -12,12 +12,9 @@
  */
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-
-// ── Mock sonner ────────────────────────────────────────────────────────
-const mockToast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
-vi.mock('sonner', () => ({ toast: mockToast }))
 
 // ── Mock logger ────────────────────────────────────────────────────────
 vi.mock('@/lib/logger', () => ({
@@ -162,7 +159,7 @@ describe('RescheduleDropZone', () => {
     fireEvent.drop(zone, { dataTransfer: makeDataTransfer('block-1') })
 
     await waitFor(() => {
-      expect(mockToast.success).toHaveBeenCalledWith(expect.stringContaining('2025-01-15'))
+      expect(vi.mocked(toast.success)).toHaveBeenCalledWith(expect.stringContaining('2025-01-15'))
     })
   })
 
@@ -180,7 +177,7 @@ describe('RescheduleDropZone', () => {
     fireEvent.drop(zone, { dataTransfer: makeDataTransfer('block-fail') })
 
     await waitFor(() => {
-      expect(mockToast.error).toHaveBeenCalledWith('Failed to reschedule task')
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to reschedule task')
     })
   })
 

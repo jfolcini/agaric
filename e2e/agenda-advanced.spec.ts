@@ -100,8 +100,9 @@ test.describe('Scheduled date filtering', () => {
     await expect(scheduledFilter).toHaveAttribute('aria-pressed', 'true')
 
     // Scheduled-only block for today: BLOCK_PROJ_1 ("Ship v2.0 release")
-    // Wait for content to reload after filter change
-    await page.waitForTimeout(500)
+    // Wait for the expected scheduled content to appear (deterministic wait
+    // for the filter change to take effect).
+    await expect(duePanel.getByText('Ship v2.0 release')).toBeVisible({ timeout: 5000 })
     const items = duePanel.locator('[data-testid="due-panel-item"]')
     await expect(items.first()).toBeVisible({ timeout: 5000 })
   })
@@ -117,8 +118,10 @@ test.describe('Scheduled date filtering', () => {
 
     // Switch to "Scheduled" filter (fewer items)
     const filterBar = duePanel.locator('[data-testid="due-panel-filters"]')
-    await filterBar.getByText('Scheduled', { exact: true }).click()
-    await page.waitForTimeout(500)
+    const scheduledFilter = filterBar.getByText('Scheduled', { exact: true })
+    await scheduledFilter.click()
+    // Deterministic wait: filter is active (aria-pressed flips to true)
+    await expect(scheduledFilter).toHaveAttribute('aria-pressed', 'true')
 
     // Switch back to "All"
     await filterBar.getByText('All', { exact: true }).click()
@@ -309,11 +312,18 @@ test.describe('Date navigation', () => {
     })
     const _todayCount = await duePanel.locator('[data-testid="due-panel-item"]').count()
 
+    // Capture today's date text so we can deterministically detect the transition
+    // to yesterday (rather than polling with an arbitrary timeout).
+    const dateDisplay = page.locator('[data-testid="date-display"]')
+    const todayText = await dateDisplay.textContent()
+
     // Navigate to previous day — the DuePanel should reload with different content
     await page.getByRole('button', { name: 'Previous day' }).click()
 
-    // Wait for new content to load
-    await page.waitForTimeout(1000)
+    // Deterministic wait: date display text changes, and yesterday's overdue
+    // item ("Submit report") becomes visible in the refreshed DuePanel.
+    await expect(dateDisplay).not.toHaveText(todayText ?? '')
+    await expect(duePanel.getByText('Submit report')).toBeVisible({ timeout: 5000 })
 
     // The DuePanel should still be visible (with different items for yesterday)
     await expect(duePanel).toBeVisible({ timeout: 5000 })

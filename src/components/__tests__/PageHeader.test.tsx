@@ -72,9 +72,6 @@ vi.mock('lucide-react', () => ({
   XIcon: (props: Record<string, unknown>) => <svg data-testid="x-icon" {...props} />,
 }))
 
-// Mock sonner
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
-
 // Mock starred-pages
 vi.mock('../../lib/starred-pages', () => ({
   isStarred: vi.fn(() => false),

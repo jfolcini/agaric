@@ -28,14 +28,6 @@ import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { HistoryView } from '../HistoryView'
 
-vi.mock('sonner', () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-    warning: vi.fn(),
-  },
-}))
-
 // Mock CompactionCard so it doesn't make extra invoke calls in HistoryView tests
 vi.mock('../CompactionCard', () => ({
   CompactionCard: () => null,

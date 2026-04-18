@@ -2,15 +2,16 @@
  * StatusIcon -- shared icon component for todo states.
  *
  * Maps todo_state to the corresponding Lucide icon:
- *   DOING  -> Clock   (text-task-doing)
- *   DONE   -> CheckCircle2 (text-task-done)
- *   TODO   -> Circle  (text-muted-foreground)
+ *   DOING      -> Clock       (text-task-doing)
+ *   DONE       -> CheckCircle2 (text-task-done)
+ *   CANCELLED  -> XCircle     (text-task-cancelled / muted)
+ *   TODO       -> Circle      (text-muted-foreground)
  *
  * When `showDone` is false, returns null for DONE state
  * (used by UnfinishedTasks which only shows TODO/DOING).
  */
 
-import { CheckCircle2, Circle, Clock } from 'lucide-react'
+import { CheckCircle2, Circle, Clock, XCircle } from 'lucide-react'
 import type React from 'react'
 
 export interface StatusIconProps {
@@ -38,6 +39,14 @@ export function StatusIcon({ state, showDone = true }: StatusIconProps): React.R
         className="h-4 w-4 shrink-0 text-task-done"
         aria-hidden="true"
         data-testid="icon-done"
+      />
+    )
+  if (state === 'CANCELLED')
+    return (
+      <XCircle
+        className="h-4 w-4 shrink-0 text-task-cancelled"
+        aria-hidden="true"
+        data-testid="icon-cancelled"
       />
     )
   // Default: TODO or unknown

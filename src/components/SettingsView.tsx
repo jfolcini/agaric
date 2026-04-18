@@ -2,7 +2,7 @@
  * SettingsView -- tabbed settings panel (F-30).
  *
  * Tabs:
- *  - General   -- TaskStatesSection + DeadlineWarningSection
+ *  - General   -- DeadlineWarningSection
  *  - Properties -- PropertyDefinitionsList
  *  - Appearance -- theme toggle (light/dark/system) + font size selector
  *  - Sync & Devices -- DeviceManagement
@@ -18,7 +18,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
 import { type ThemePreference, useTheme } from '@/hooks/useTheme'
 import { cn } from '@/lib/utils'
 import { DataSettingsTab } from './DataSettingsTab'
@@ -26,7 +25,6 @@ import { DeadlineWarningSection } from './DeadlineWarningSection'
 import { DeviceManagement } from './DeviceManagement'
 import { KeyboardSettingsTab } from './KeyboardSettingsTab'
 import { PropertyDefinitionsList } from './PropertyDefinitionsList'
-import { TaskStatesSection } from './TaskStatesSection'
 
 type SettingsTab = 'general' | 'properties' | 'appearance' | 'keyboard' | 'data' | 'sync'
 
@@ -152,8 +150,6 @@ export function SettingsView(): React.ReactElement {
       >
         {activeTab === 'general' && (
           <div className="space-y-4">
-            <TaskStatesSection />
-            <Separator />
             <DeadlineWarningSection />
           </div>
         )}

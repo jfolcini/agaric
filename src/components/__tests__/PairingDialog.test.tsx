@@ -33,13 +33,6 @@ vi.mock('react-qr-code', () => ({
   ),
 }))
 
-vi.mock('sonner', () => ({
-  toast: {
-    success: vi.fn(),
-    error: vi.fn(),
-  },
-}))
-
 vi.mock('../../stores/sync', () => ({
   useSyncStore: (selector: (s: Record<string, unknown>) => unknown) =>
     selector({

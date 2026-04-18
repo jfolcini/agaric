@@ -213,6 +213,13 @@ impl Materializer {
 
     pub async fn enqueue_foreground(&self, task: MaterializeTask) -> Result<(), AppError> {
         let tx = self.fg_sender()?;
+        // MAINT-24: Detect backpressure — if the channel is currently full
+        // the `send().await` below will wait. Count that wait so `StatusInfo`
+        // can surface "foreground backpressure" without rummaging through
+        // tokio internals.
+        if tx.capacity() == 0 {
+            self.metrics.fg_full_waits.fetch_add(1, Ordering::Relaxed);
+        }
         tx.send(task)
             .await
             .map_err(|e| AppError::Channel(format!("foreground queue send failed: {e}")))?;
@@ -322,7 +329,20 @@ impl Materializer {
         &self.metrics
     }
 
-    pub fn status(&self) -> StatusInfo {
+    pub async fn status(&self) -> StatusInfo {
+        self.status_with_scheduler::<crate::sync_scheduler::SyncScheduler>(None)
+            .await
+    }
+
+    /// Collect status with optional sync-scheduler failure counts.
+    ///
+    /// Decoupling the scheduler from the materializer keeps the command
+    /// handler in charge of wiring them together; legacy callers that
+    /// don't care about sync peer health still receive an empty vector.
+    pub async fn status_with_scheduler<S: SchedulerLike>(
+        &self,
+        scheduler: Option<&S>,
+    ) -> StatusInfo {
         let fg_depth = self
             .fg_sender()
             .map(|tx| FOREGROUND_CAPACITY - tx.capacity())
@@ -331,6 +351,48 @@ impl Materializer {
             .bg_sender()
             .map(|tx| BACKGROUND_CAPACITY - tx.capacity())
             .unwrap_or(0);
+
+        // MAINT-24: convert the raw epoch-ms atomic to RFC 3339 and derive
+        // "seconds since last batch". last_materialize_ms==0 means "no
+        // batch recorded yet" (initial state).
+        let last_ms = self.metrics.last_materialize_ms.load(Ordering::Relaxed);
+        let (last_materialize_at, time_since_last_materialize_secs) = if last_ms == 0 {
+            (None, None)
+        } else {
+            #[allow(clippy::cast_possible_wrap)]
+            let secs = (last_ms / 1000) as i64;
+            #[allow(clippy::cast_possible_truncation)]
+            let nsecs = ((last_ms % 1000) * 1_000_000) as u32;
+            let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(secs, nsecs);
+            let rfc = dt.map(|d| d.to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
+            #[allow(clippy::cast_possible_truncation)]
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            let elapsed = now_ms.saturating_sub(last_ms) / 1000;
+            (rfc, Some(elapsed))
+        };
+
+        // total_ops_in_log: cheap COUNT(*) against reader pool. Any error
+        // becomes `None` — this is observability, not a correctness path,
+        // so the status call never fails because of it.
+        let total_ops_in_log: Option<i64> =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log")
+                .fetch_one(&self.reader_pool)
+                .await
+                .ok();
+
+        let retry_queue_pending: Option<i64> =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM materializer_retry_queue")
+                .fetch_one(&self.reader_pool)
+                .await
+                .ok();
+
+        let sync_peer_failure_counts = scheduler
+            .map(SchedulerLike::failure_counts_snapshot)
+            .unwrap_or_default();
+
         StatusInfo {
             foreground_queue_depth: fg_depth,
             background_queue_depth: bg_depth,
@@ -342,6 +404,28 @@ impl Materializer {
             bg_errors: self.metrics.bg_errors.load(Ordering::Relaxed),
             fg_panics: self.metrics.fg_panics.load(Ordering::Relaxed),
             bg_panics: self.metrics.bg_panics.load(Ordering::Relaxed),
+            bg_dropped: self.metrics.bg_dropped.load(Ordering::Relaxed),
+            bg_deduped: self.metrics.bg_deduped.load(Ordering::Relaxed),
+            fg_full_waits: self.metrics.fg_full_waits.load(Ordering::Relaxed),
+            last_materialize_at,
+            time_since_last_materialize_secs,
+            total_ops_in_log,
+            sync_peer_failure_counts,
+            retry_queue_pending,
         }
+    }
+}
+
+/// Abstraction over [`crate::sync_scheduler::SyncScheduler`] so
+/// [`Materializer::status_with_scheduler`] can be called from tests without
+/// pulling in the real scheduler or from command handlers that have a
+/// `State<Arc<SyncScheduler>>` on hand.
+pub trait SchedulerLike {
+    fn failure_counts_snapshot(&self) -> Vec<(String, u32)>;
+}
+
+impl SchedulerLike for crate::sync_scheduler::SyncScheduler {
+    fn failure_counts_snapshot(&self) -> Vec<(String, u32)> {
+        self.failure_counts()
     }
 }

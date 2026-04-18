@@ -26,6 +26,11 @@ pub async fn soft_delete_block(
 
 /// Cascade soft-delete: sets `deleted_at` on the block and all non-deleted
 /// descendants via recursive CTE.
+///
+/// Recursive member filters `is_conflict = 0` — conflict copies share
+/// their original's parent_id but have independent lifecycles and must
+/// not be swept into the cascade (invariant #9). `depth < 100` bounds
+/// the walk against runaway recursion on corrupted parent_id chains.
 pub async fn cascade_soft_delete(
     pool: &SqlitePool,
     block_id: &str,
@@ -34,12 +39,12 @@ pub async fn cascade_soft_delete(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     let result = sqlx::query!(
-        "WITH RECURSIVE descendants(id) AS ( \
-             SELECT id FROM blocks WHERE id = ? \
+        "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT id, 0 FROM blocks WHERE id = ? \
              UNION ALL \
-             SELECT b.id FROM blocks b \
+             SELECT b.id, d.depth + 1 FROM blocks b \
              INNER JOIN descendants d ON b.parent_id = d.id \
-             WHERE b.deleted_at IS NULL \
+             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
          ) \
          UPDATE blocks SET deleted_at = ? \
          WHERE id IN (SELECT id FROM descendants) \

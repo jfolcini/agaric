@@ -13,7 +13,6 @@ import {
 import { useUndoStore } from '../../stores/undo'
 import { useBlockDatePicker } from '../useBlockDatePicker'
 
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 vi.mock('../../lib/announcer', () => ({ announce: vi.fn() }))
 
 const mockedInvoke = vi.mocked(invoke)

@@ -27,13 +27,6 @@ import { listTagsByPrefix } from '../../lib/tauri'
 import type { BacklinkFilterBuilderProps } from '../BacklinkFilterBuilder'
 import { BacklinkFilterBuilder } from '../BacklinkFilterBuilder'
 
-vi.mock('sonner', () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-  },
-}))
-
 // Mock the Radix-based Select to render as native <select>/<option> for jsdom compatibility.
 // SelectTrigger stores its props (aria-label, size, className) in a ref via context,
 // then SelectContent reads them and renders a native <select>.

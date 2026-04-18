@@ -1163,7 +1163,7 @@ async fn status_info() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     tokio::time::sleep(Duration::from_millis(10)).await;
-    let s = mat.status();
+    let s = mat.status().await;
     assert_eq!(
         s.fg_high_water, 0,
         "initial fg high water in status should be zero"
@@ -1185,7 +1185,7 @@ async fn status_info() {
     .await;
     mat.dispatch_op(&r).await.unwrap();
     assert!(
-        mat.status().fg_high_water >= 1,
+        mat.status().await.fg_high_water >= 1,
         "fg high water should rise after dispatching an op"
     );
 }
@@ -1230,7 +1230,7 @@ async fn error_counters_zero() {
 async fn status_error_counters() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool);
-    let s = mat.status();
+    let s = mat.status().await;
     assert_eq!(s.fg_errors, 0, "status fg_errors should start at zero");
     assert_eq!(s.bg_errors, 0, "status bg_errors should start at zero");
     assert_eq!(s.fg_panics, 0, "status fg_panics should start at zero");

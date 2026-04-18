@@ -53,6 +53,10 @@ async fn undo_page_op_reverses_edit() {
         result.new_op_type, "edit_block",
         "undo of an edit must produce an edit_block op"
     );
+    assert_eq!(
+        result.reversed_op_type, "edit_block",
+        "reversed_op_type must echo the op_type of the op being undone"
+    );
     assert!(!result.is_redo, "undo must not be flagged as redo");
 
     // Content should be back to "original"
@@ -130,6 +134,10 @@ async fn undo_then_redo_restores_edit() {
     settle(&mat).await;
 
     assert!(redo_result.is_redo, "redo must be flagged as is_redo");
+    assert_eq!(
+        redo_result.reversed_op_type, "edit_block",
+        "reversed_op_type on redo should reflect the undo op being reversed (an edit_block undo)"
+    );
 
     // Content should be back to "modified"
     let fetched = get_block_inner(&pool, child.id).await.unwrap();

@@ -115,11 +115,6 @@ vi.mock('../../editor/use-block-keyboard', () => ({
   },
 }))
 
-vi.mock('sonner', () => {
-  const toast = Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() })
-  return { toast }
-})
-
 vi.mock('../../hooks/useViewportObserver', () => ({
   useViewportObserver: () => ({
     isOffscreen: () => false,

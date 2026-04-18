@@ -156,6 +156,23 @@ impl SyncScheduler {
         backoff.get(peer_id).map_or(0, |s| s.consecutive_failures)
     }
 
+    /// Return `(peer_id, consecutive_failures)` pairs for every peer the
+    /// scheduler has seen fail at least once. Returns an empty vector when
+    /// no peers are in backoff. Used by the materializer status snapshot
+    /// (MAINT-24) to surface sync health without coupling the scheduler
+    /// struct into `Materializer`.
+    pub fn failure_counts(&self) -> Vec<(String, u32)> {
+        let backoff = self
+            .backoff
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        backoff
+            .iter()
+            .filter(|(_, s)| s.consecutive_failures > 0)
+            .map(|(id, s)| (id.clone(), s.consecutive_failures))
+            .collect()
+    }
+
     // -- Change-triggered debounce (#384) ------------------------------------
 
     /// Signal that a local change occurred.  Callers (e.g. the materializer

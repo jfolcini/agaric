@@ -22,13 +22,6 @@ import { axe } from 'vitest-axe'
 
 // ── Mocks ──────────────────────────────────────────────────────────────
 
-vi.mock('sonner', () => ({
-  toast: {
-    success: vi.fn(),
-    error: vi.fn(),
-  },
-}))
-
 vi.mock('@/lib/tauri', () => ({
   setDueDate: vi.fn().mockResolvedValue({}),
   setScheduledDate: vi.fn().mockResolvedValue({}),

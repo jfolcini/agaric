@@ -138,3 +138,9 @@ if (typeof window.matchMedia !== 'function') {
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }))
+
+// Shared mock for `sonner` — consolidates the `toast` + `Toaster` stubs used
+// by ~55 component/hook tests. Per-file `vi.mock('sonner', ...)` overrides
+// still work for tests that need custom capture variables.
+// See src/__tests__/mocks/sonner.ts for the mock implementation.
+vi.mock('sonner', async () => await import('./__tests__/mocks/sonner'))

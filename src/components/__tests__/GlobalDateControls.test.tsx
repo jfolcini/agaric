@@ -18,8 +18,6 @@ import { useJournalStore } from '../../stores/journal'
 import { useNavigationStore } from '../../stores/navigation'
 import { GlobalDateControls } from '../JournalPage'
 
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() } }))
-
 // Mock the Calendar component used by JournalCalendarDropdown
 vi.mock('../ui/calendar', () => ({
   Calendar: (props: Record<string, unknown>) => (

@@ -3,10 +3,6 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { type PaginatedResponse, usePaginatedQuery } from '../usePaginatedQuery'
 
-vi.mock('sonner', () => ({
-  toast: { error: vi.fn(), success: vi.fn() },
-}))
-
 const mockedToastError = vi.mocked(toast.error)
 
 function makePage<T>(

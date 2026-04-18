@@ -321,7 +321,11 @@ pub async fn delete_block_inner(
     // BEGIN IMMEDIATE eagerly acquires the write lock, preventing
     // SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
     // and the actual mutation.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    //
+    // MAINT-30: use `begin_immediate_logged` so lock-storm stalls on the
+    // cascade path surface in the log instead of being silently absorbed
+    // by the pool's 5s busy_timeout.
+    let mut tx = crate::db::begin_immediate_logged(pool, "cmd_delete_block").await?;
 
     // Validate inside transaction (TOCTOU-safe)
     let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", block_id)
@@ -341,14 +345,20 @@ pub async fn delete_block_inner(
     // Append to op_log within transaction
     let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
 
-    // Cascade soft-delete within same transaction
+    // Cascade soft-delete within same transaction.
+    //
+    // Recursive member filters `is_conflict = 0` — conflict copies share
+    // the original's parent_id but have their own deleted_at lifecycle,
+    // so sweeping them into the cascade would soft-delete unrelated data
+    // (invariant #9). `depth < 100` bounds runaway recursion on corrupted
+    // parent_id chains.
     let result = sqlx::query(
-        "WITH RECURSIVE descendants(id) AS ( \
-             SELECT id FROM blocks WHERE id = ? \
+        "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT id, 0 FROM blocks WHERE id = ? \
              UNION ALL \
-             SELECT b.id FROM blocks b \
+             SELECT b.id, d.depth + 1 FROM blocks b \
              INNER JOIN descendants d ON b.parent_id = d.id \
-             WHERE b.deleted_at IS NULL \
+             WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
          ) \
          UPDATE blocks SET deleted_at = ? \
          WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
@@ -396,7 +406,9 @@ pub async fn restore_block_inner(
     // BEGIN IMMEDIATE eagerly acquires the write lock, preventing
     // SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
     // and the actual mutation.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    //
+    // MAINT-30: slow-acquire timed via `begin_immediate_logged`.
+    let mut tx = crate::db::begin_immediate_logged(pool, "cmd_restore_block").await?;
 
     // Validate inside transaction (TOCTOU-safe)
     let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", block_id)
@@ -433,13 +445,18 @@ pub async fn restore_block_inner(
     let op_record =
         op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
 
-    // Restore within same transaction
+    // Restore within same transaction.
+    //
+    // Recursive member filters `is_conflict = 0` — conflict copies have
+    // independent lifecycles and must not be bulk-restored with the
+    // original (invariant #9). `depth < 100` bounds the walk.
     let result = sqlx::query(
-        "WITH RECURSIVE descendants(id) AS ( \
-             SELECT id FROM blocks WHERE id = ? \
+        "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT id, 0 FROM blocks WHERE id = ? \
              UNION ALL \
-             SELECT b.id FROM blocks b \
+             SELECT b.id, d.depth + 1 FROM blocks b \
              INNER JOIN descendants d ON b.parent_id = d.id \
+             WHERE b.is_conflict = 0 AND d.depth < 100 \
          ) \
          UPDATE blocks SET deleted_at = NULL \
          WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
@@ -485,7 +502,11 @@ pub async fn purge_block_inner(
     // Previously the op_log write and the physical purge were split across two
     // transactions, meaning a crash between them left the op_log recording a
     // purge that never happened.  Now everything is in one atomic tx.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    //
+    // MAINT-30: slow-acquire timed via `begin_immediate_logged`. Purge is
+    // the most cascade-heavy write path and the most likely to show
+    // contention under load.
+    let mut tx = crate::db::begin_immediate_logged(pool, "cmd_purge_block").await?;
 
     // Validate inside transaction (TOCTOU-safe)
     let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", block_id)
@@ -520,11 +541,18 @@ pub async fn purge_block_inner(
         .await?;
 
     // Recursive CTE reused in every batch operation below.
-    const DESC_CTE: &str = "WITH RECURSIVE descendants(id) AS ( \
-        SELECT id FROM blocks WHERE id = ? \
+    //
+    // PURGE intentionally does NOT filter `is_conflict = 0` — the goal is
+    // to erase every row descended from the purged block, INCLUDING
+    // conflict copies. This is the one documented exception to invariant
+    // #9 (see handlers.rs `OpType::PurgeBlock` for the mirror). `depth < 100`
+    // bounds runaway recursion on corrupted parent_id chains.
+    const DESC_CTE: &str = "WITH RECURSIVE descendants(id, depth) AS ( \
+        SELECT id, 0 FROM blocks WHERE id = ? \
         UNION ALL \
-        SELECT b.id FROM blocks b \
+        SELECT b.id, d.depth + 1 FROM blocks b \
         INNER JOIN descendants d ON b.parent_id = d.id \
+        WHERE d.depth < 100 \
     )";
 
     // block_tags: either column may reference a descendant

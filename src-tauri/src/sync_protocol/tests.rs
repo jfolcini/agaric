@@ -3076,3 +3076,88 @@ async fn orchestrator_errors_on_op_batch_after_is_last() {
 
     materializer.shutdown();
 }
+
+// ── MAINT-21: tracing span emission ─────────────────────────────────
+
+/// Thread-safe buffered writer for in-process log capture.
+///
+/// Mirrors the helper in `db.rs` tests. Kept module-local so each test
+/// module stays self-contained (see AGENTS.md § "Test helper duplication
+/// is intentional").
+#[derive(Clone, Default)]
+struct SpanBufWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for SpanBufWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for SpanBufWriter {
+    type Writer = SpanBufWriter;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+impl SpanBufWriter {
+    fn contents(&self) -> String {
+        let bytes = self.0.lock().unwrap();
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+}
+
+/// MAINT-21: `SyncOrchestrator::handle_message` must execute inside a
+/// `sync_msg` span so every log line emitted during message dispatch
+/// (error events, state transitions, protocol warnings) carries the
+/// span prefix — enabling operators to correlate log lines back to the
+/// message that triggered them.
+///
+/// We verify this by installing a scoped fmt subscriber configured to
+/// render span-enter events, dispatching a call to `handle_message`, and
+/// asserting the captured buffer shows the `sync_msg` span marker.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handle_message_emits_within_sync_msg_span() {
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    let writer = SpanBufWriter::default();
+    // Install a subscriber that renders span-enter events so the captured
+    // output contains a marker even if the dispatched message doesn't
+    // itself emit a tracing event.
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new("agaric=trace"))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(writer.clone())
+                .with_ansi(false)
+                .with_span_events(tracing_subscriber::fmt::format::FmtSpan::ENTER),
+        );
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    // Freshly-constructed orchestrator is in SyncState::Idle. A HeadExchange
+    // message is valid in Idle, and handle_message will dispatch normally.
+    // The instrumented span entry is what we assert on: with
+    // `FmtSpan::ENTER` the subscriber emits a `new` event carrying the
+    // span name the moment the function body begins executing.
+    let mut orch = SyncOrchestrator::new(pool.clone(), "dev-local".into(), materializer.clone());
+
+    let _ = orch
+        .handle_message(SyncMessage::HeadExchange { heads: vec![] })
+        .await;
+
+    let contents = writer.contents();
+    assert!(
+        contents.contains("sync_msg"),
+        "handle_message must execute inside a `sync_msg` span so log lines \
+         carry the span prefix for correlation, got log output: {contents:?}"
+    );
+
+    materializer.shutdown();
+}

@@ -117,7 +117,11 @@ pub async fn compact_op_log_cmd_inner(
 
     // Wrap in BEGIN IMMEDIATE for atomicity (the existing compact_op_log
     // lacks explicit transaction wrapping — see REVIEW-LATER).
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    //
+    // MAINT-30: slow-acquire timed via `begin_immediate_logged` so a
+    // compaction that blocks on the write lock surfaces as a `warn` log
+    // instead of disappearing into the 5s busy_timeout.
+    let mut tx = crate::db::begin_immediate_logged(pool, "cmd_compact_op_log").await?;
 
     // Recount inside the transaction to avoid TOCTOU
     let eligible_in_tx: i64 = sqlx::query_scalar!(

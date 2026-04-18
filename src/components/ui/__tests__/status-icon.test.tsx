@@ -17,6 +17,7 @@ vi.mock('lucide-react', () => ({
   Circle: (props: Record<string, unknown>) => <svg data-testid="icon-todo" {...props} />,
   Clock: (props: Record<string, unknown>) => <svg data-testid="icon-doing" {...props} />,
   CheckCircle2: (props: Record<string, unknown>) => <svg data-testid="icon-done" {...props} />,
+  XCircle: (props: Record<string, unknown>) => <svg data-testid="icon-cancelled" {...props} />,
 }))
 
 import { StatusIcon } from '../status-icon'
@@ -42,6 +43,14 @@ describe('StatusIcon', () => {
     expect(screen.getByTestId('icon-done')).toBeInTheDocument()
     expect(screen.queryByTestId('icon-todo')).not.toBeInTheDocument()
     expect(screen.queryByTestId('icon-doing')).not.toBeInTheDocument()
+  })
+
+  it('renders XCircle icon for CANCELLED state (UX-202)', () => {
+    render(<StatusIcon state="CANCELLED" />)
+    expect(screen.getByTestId('icon-cancelled')).toBeInTheDocument()
+    expect(screen.queryByTestId('icon-todo')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('icon-doing')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('icon-done')).not.toBeInTheDocument()
   })
 
   // 2. Fallback for null / unknown state
@@ -94,6 +103,12 @@ describe('StatusIcon', () => {
 
   it('a11y: no violations for DONE state', async () => {
     const { container } = render(<StatusIcon state="DONE" />)
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
+  it('a11y: no violations for CANCELLED state (UX-202)', async () => {
+    const { container } = render(<StatusIcon state="CANCELLED" />)
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })

@@ -4,6 +4,7 @@ import './lib/i18n'
 import './index.css'
 import { App } from './App.tsx'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { PrimaryFocusProvider } from './hooks/usePrimaryFocus'
 import { logger } from './lib/logger'
 
 // Global catch-all: capture uncaught errors and unhandled rejections
@@ -37,7 +38,9 @@ async function main() {
   createRoot(rootEl).render(
     <StrictMode>
       <ErrorBoundary>
-        <App />
+        <PrimaryFocusProvider>
+          <App />
+        </PrimaryFocusProvider>
       </ErrorBoundary>
     </StrictMode>,
   )

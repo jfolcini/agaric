@@ -4,10 +4,70 @@
 //! `block_tags`, all its non-deleted descendants inherit that tag. This module
 //! provides helpers for incremental updates (called from command handlers and
 //! `apply_op`) and a full rebuild (background safety net).
+//!
+//! ## Recursive CTE policy (invariant #9)
+//!
+//! Every CTE that walks descendants via `parent_id` in this module filters
+//! `is_conflict = 0` in the recursive member. Exception: `remove_subtree_inherited`
+//! deliberately does NOT filter `deleted_at` or `is_conflict` — it is called
+//! AFTER the blocks have been soft-deleted, so filtering `deleted_at IS NULL`
+//! would miss the very rows we need to clean up. The `is_conflict` omission
+//! is intentional for the same reason: conflict-copy descendants' inherited
+//! entries must also be swept when the owning subtree is deleted. See the
+//! per-function doc comments for the specific rationale.
+//!
+//! Use [`apply_op_tag_inheritance`] as the single entry point for materializer
+//! handlers — MAINT-45. Adding a new op type that affects inheritance only
+//! requires extending the match in that one place.
 
 use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::error::AppError;
+use crate::op::OpPayload;
+
+/// Dispatch inheritance updates for a single op payload.
+///
+/// This is the **single entry point** that the materializer and command
+/// handlers use to keep `block_tag_inherited` in sync after an op lands.
+/// Having one place for the fan-out prevents the class of drift MAINT-45
+/// calls out: adding a new op type now requires exactly one match arm
+/// here, and the compiler will point at it if the enum changes.
+///
+/// Ops that have no inheritance side-effect (EditBlock, SetProperty,
+/// AddAttachment, PurgeBlock — purge handles inheritance inline via its
+/// cascade DELETE) return Ok(()) as no-ops.
+pub async fn apply_op_tag_inheritance(
+    conn: &mut SqliteConnection,
+    payload: &OpPayload,
+) -> Result<(), AppError> {
+    match payload {
+        OpPayload::CreateBlock(p) => {
+            let parent = p.parent_id.as_ref().map(crate::ulid::BlockId::as_str);
+            inherit_parent_tags(conn, p.block_id.as_str(), parent).await
+        }
+        OpPayload::DeleteBlock(p) => remove_subtree_inherited(conn, p.block_id.as_str()).await,
+        OpPayload::RestoreBlock(p) => {
+            recompute_subtree_inheritance(conn, p.block_id.as_str()).await
+        }
+        OpPayload::MoveBlock(p) => recompute_subtree_inheritance(conn, p.block_id.as_str()).await,
+        OpPayload::AddTag(p) => {
+            propagate_tag_to_descendants(conn, p.block_id.as_str(), p.tag_id.as_str()).await
+        }
+        OpPayload::RemoveTag(p) => {
+            remove_inherited_tag(conn, p.block_id.as_str(), p.tag_id.as_str()).await
+        }
+        // No inheritance side effect:
+        //  - EditBlock / SetProperty / DeleteProperty: tag membership unchanged
+        //  - AddAttachment / DeleteAttachment: attachments don't inherit tags
+        //  - PurgeBlock: cascade DELETE in materializer handles block_tag_inherited rows
+        OpPayload::EditBlock(_)
+        | OpPayload::SetProperty(_)
+        | OpPayload::DeleteProperty(_)
+        | OpPayload::AddAttachment(_)
+        | OpPayload::DeleteAttachment(_)
+        | OpPayload::PurgeBlock(_) => Ok(()),
+    }
+}
 
 /// After adding a tag to a block, propagate it to all descendants.
 ///
@@ -305,6 +365,23 @@ pub async fn inherit_parent_tags(
 ///
 /// Also removes entries where other blocks inherited tags FROM blocks in this
 /// subtree (since those blocks are now deleted, their tags shouldn't propagate).
+///
+/// **CTE policy exception (invariant #9):** the two CTEs below deliberately
+/// do NOT filter `deleted_at IS NULL` or `is_conflict = 0`:
+///
+/// - `deleted_at IS NULL` is omitted because this helper is called AFTER the
+///   subtree has been soft-deleted (`remove_subtree_inherited` runs in the
+///   same transaction as the cascade UPDATE). Filtering `deleted_at IS NULL`
+///   here would miss every descendant we just marked deleted, leaving
+///   orphaned inheritance rows.
+/// - `is_conflict = 0` is omitted because we want to sweep inheritance for
+///   conflict-copy descendants too — they share `parent_id` with the
+///   original, and their inherited rows would otherwise dangle pointing at
+///   the deleted block. This is a narrow, documented exception to the
+///   global rule that descendant walks filter conflicts.
+///
+/// `s.depth < 100` still bounds the walk against runaway recursion on
+/// corrupted parent_id chains.
 pub async fn remove_subtree_inherited(
     conn: &mut SqliteConnection,
     root_id: &str,
@@ -489,6 +566,103 @@ mod tests {
             .execute(pool)
             .await
             .unwrap();
+    }
+
+    // ======================================================================
+    // apply_op_tag_inheritance — MAINT-45 consolidated dispatcher
+    // ======================================================================
+
+    #[tokio::test]
+    async fn apply_op_tag_inheritance_dispatches_add_tag() {
+        use crate::op::{AddTagPayload, OpPayload};
+        use crate::ulid::BlockId;
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG_APP", "tag", "tag", None).await;
+        insert_block(&pool, "PAGE_APP", "page", "page", None).await;
+        insert_block(&pool, "C_APP", "content", "child", Some("PAGE_APP")).await;
+        insert_tag_assoc(&pool, "PAGE_APP", "TAG_APP").await;
+
+        let payload = OpPayload::AddTag(AddTagPayload {
+            block_id: BlockId::from_trusted("PAGE_APP"),
+            tag_id: BlockId::from_trusted("TAG_APP"),
+        });
+
+        let mut conn = pool.acquire().await.unwrap();
+        apply_op_tag_inheritance(&mut conn, &payload).await.unwrap();
+        drop(conn);
+
+        let rows = get_inherited(&pool).await;
+        assert!(
+            rows.iter().any(|r| r.0 == "C_APP" && r.1 == "TAG_APP"),
+            "AddTag dispatch must propagate to descendants"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_op_tag_inheritance_dispatches_create_block() {
+        use crate::op::{CreateBlockPayload, OpPayload};
+        use crate::ulid::BlockId;
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG_CB", "tag", "tag", None).await;
+        insert_block(&pool, "PAR_CB", "page", "parent", None).await;
+        insert_tag_assoc(&pool, "PAR_CB", "TAG_CB").await;
+
+        // Simulate the materializer having inserted a row for the new block
+        // already (materializer order: INSERT blocks row → inherit_parent_tags).
+        insert_block(&pool, "CHILD_CB", "content", "child", Some("PAR_CB")).await;
+
+        let payload = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted("CHILD_CB"),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted("PAR_CB")),
+            position: Some(1),
+            content: "hi".into(),
+        });
+        let mut conn = pool.acquire().await.unwrap();
+        apply_op_tag_inheritance(&mut conn, &payload).await.unwrap();
+        drop(conn);
+
+        let rows = get_inherited(&pool).await;
+        assert!(
+            rows.iter().any(|r| r.0 == "CHILD_CB" && r.1 == "TAG_CB"),
+            "CreateBlock dispatch must inherit parent tags"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_op_tag_inheritance_noop_for_edit_and_set_property() {
+        use crate::op::{EditBlockPayload, OpPayload, SetPropertyPayload};
+        use crate::ulid::BlockId;
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "B_NOOP", "content", "hi", None).await;
+
+        let edit = OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::from_trusted("B_NOOP"),
+            to_text: "bye".into(),
+            prev_edit: None,
+        });
+        let sp = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::from_trusted("B_NOOP"),
+            key: "x".into(),
+            value_text: Some("y".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        });
+
+        let mut conn = pool.acquire().await.unwrap();
+        apply_op_tag_inheritance(&mut conn, &edit).await.unwrap();
+        apply_op_tag_inheritance(&mut conn, &sp).await.unwrap();
+        drop(conn);
+
+        // No inheritance changes should occur.
+        let rows = get_inherited(&pool).await;
+        assert!(
+            rows.is_empty(),
+            "EditBlock / SetProperty dispatch must be no-op for inheritance"
+        );
     }
 
     // ======================================================================

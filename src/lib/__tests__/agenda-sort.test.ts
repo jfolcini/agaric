@@ -59,15 +59,16 @@ describe('sortAgendaBlocks', () => {
     expect(sorted[1]?.id).toBe('B1')
   })
 
-  it('within same date, sorts DOING > TODO > DONE > null', () => {
+  it('within same date, sorts DOING > TODO > CANCELLED > DONE > null (UX-202)', () => {
     const blocks = [
       makeBlock({ id: 'done', due_date: '2025-06-15', todo_state: 'DONE' }),
       makeBlock({ id: 'todo', due_date: '2025-06-15', todo_state: 'TODO' }),
       makeBlock({ id: 'doing', due_date: '2025-06-15', todo_state: 'DOING' }),
+      makeBlock({ id: 'cancelled', due_date: '2025-06-15', todo_state: 'CANCELLED' }),
       makeBlock({ id: 'none', due_date: '2025-06-15', todo_state: null }),
     ]
     const sorted = sortAgendaBlocks(blocks)
-    expect(sorted.map((b) => b.id)).toEqual(['doing', 'todo', 'done', 'none'])
+    expect(sorted.map((b) => b.id)).toEqual(['doing', 'todo', 'cancelled', 'done', 'none'])
   })
 
   it('within same date and state, sorts by priority 1 > 2 > 3 > null', () => {
@@ -195,19 +196,21 @@ describe('groupByPriority', () => {
 })
 
 describe('groupByState', () => {
-  it('groups blocks by todo state', () => {
+  it('groups blocks by todo state (UX-202: includes CANCELLED)', () => {
     const blocks = [
       makeBlock({ id: 'doing', todo_state: 'DOING' }),
       makeBlock({ id: 'todo', todo_state: 'TODO' }),
+      makeBlock({ id: 'cancelled', todo_state: 'CANCELLED' }),
       makeBlock({ id: 'done', todo_state: 'DONE' }),
       makeBlock({ id: 'none', todo_state: null }),
     ]
     const groups = groupByState(blocks)
-    expect(groups.map((g) => g.label)).toEqual(['DOING', 'TODO', 'DONE', 'No state'])
+    expect(groups.map((g) => g.label)).toEqual(['DOING', 'TODO', 'CANCELLED', 'DONE', 'No state'])
     expect(groups[0]?.blocks[0]?.id).toBe('doing')
     expect(groups[1]?.blocks[0]?.id).toBe('todo')
-    expect(groups[2]?.blocks[0]?.id).toBe('done')
-    expect(groups[3]?.blocks[0]?.id).toBe('none')
+    expect(groups[2]?.blocks[0]?.id).toBe('cancelled')
+    expect(groups[3]?.blocks[0]?.id).toBe('done')
+    expect(groups[4]?.blocks[0]?.id).toBe('none')
   })
 
   it('sorts within groups by date then priority', () => {

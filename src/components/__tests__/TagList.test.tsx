@@ -23,13 +23,6 @@ import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { TagList } from '../TagList'
 
-vi.mock('sonner', () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-  },
-}))
-
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
 const mockedToastSuccess = vi.mocked(toast.success)
@@ -189,7 +182,7 @@ describe('TagList', () => {
       // Click the trash icon (ghost variant button, not the tag name button)
       const tagRow = screen.getByText('to-delete').closest('li') as HTMLElement
       const deleteBtn = findTrashButton(tagRow)
-      expect(deleteBtn).toBeTruthy()
+      expect(deleteBtn).toBeInTheDocument()
       await user.click(deleteBtn)
 
       // AlertDialog should appear with tag name in the description

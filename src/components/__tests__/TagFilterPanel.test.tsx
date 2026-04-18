@@ -24,13 +24,6 @@ import { makeBlock } from '../../__tests__/fixtures'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { TagFilterPanel } from '../TagFilterPanel'
 
-vi.mock('sonner', () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-  },
-}))
-
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
 

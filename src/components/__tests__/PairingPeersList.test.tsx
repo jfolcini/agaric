@@ -142,7 +142,7 @@ describe('PairingPeersList', () => {
     const { container } = render(<PairingPeersList peers={[]} onUnpair={vi.fn()} />)
 
     const separator = container.querySelector('[data-slot="separator"]')
-    expect(separator).toBeTruthy()
+    expect(separator).toBeInTheDocument()
   })
 
   it('has no a11y violations with empty peers', async () => {

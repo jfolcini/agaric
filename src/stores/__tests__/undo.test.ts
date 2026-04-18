@@ -40,6 +40,7 @@ function makeUndoResult(
     reversed_op: { device_id: deviceId, seq },
     new_op_ref: { device_id: deviceId, seq: newSeq },
     new_op_type: 'edit_block',
+    reversed_op_type: 'edit_block',
     is_redo: overrides.isRedo ?? false,
   }
 }

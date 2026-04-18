@@ -12,8 +12,6 @@ import {
 import { useUndoStore } from '../../stores/undo'
 import { useBlockMultiSelect } from '../useBlockMultiSelect'
 
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
-
 const mockedInvoke = vi.mocked(invoke)
 
 let pageStore: StoreApi<PageBlockState>

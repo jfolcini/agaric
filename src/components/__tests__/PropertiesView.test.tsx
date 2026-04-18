@@ -21,13 +21,6 @@ import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { PropertiesView } from '../PropertiesView'
 
-vi.mock('sonner', () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-  },
-}))
-
 vi.mock('@/components/ui/select', () => {
   const React = require('react')
   const Ctx = React.createContext({})
@@ -94,7 +87,6 @@ function makePropDef(key: string, valueType = 'text', options: string | null = n
 
 beforeEach(() => {
   vi.clearAllMocks()
-  localStorage.removeItem('task_cycle')
 })
 
 describe('PropertiesView', () => {
@@ -284,23 +276,25 @@ describe('PropertiesView', () => {
     })
   })
 
-  it('renders Task States section', async () => {
+  it('does NOT render Task States section (UX-202: locked cycle, section removed)', async () => {
     mockedInvoke.mockResolvedValueOnce([])
 
     render(<PropertiesView />)
 
-    expect(screen.getByText(t('propertiesView.taskStates'))).toBeInTheDocument()
+    expect(screen.queryByText(t('propertiesView.taskStates'))).not.toBeInTheDocument()
   })
 
-  it('shows default task states', async () => {
+  it('does NOT render default task state badges (UX-202: locked cycle, section removed)', async () => {
     mockedInvoke.mockResolvedValueOnce([])
 
     render(<PropertiesView />)
 
-    expect(screen.getByText('TODO')).toBeInTheDocument()
-    expect(screen.getByText('DOING')).toBeInTheDocument()
-    expect(screen.getByText('DONE')).toBeInTheDocument()
-    expect(screen.getByText(t('task.noneState'))).toBeInTheDocument()
+    // PropertiesView no longer surfaces the standalone TODO/DOING/DONE badges —
+    // those states are now managed as locked options of the `todo_state`
+    // property definition (see migration 0028). The string "TODO" only
+    // appears inside property-row data (not this standalone badge), and the
+    // previous "none" sentinel badge is gone.
+    expect(screen.queryByText(t('task.noneState'))).not.toBeInTheDocument()
   })
 
   it('disables create button when key matches existing definition', async () => {

@@ -22,13 +22,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { CompactionCard } from '../CompactionCard'
 
-vi.mock('sonner', () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-  },
-}))
-
 const mockedInvoke = vi.mocked(invoke)
 
 const defaultStatus = {

@@ -24,8 +24,6 @@ import {
 import { useUndoStore } from '../../stores/undo'
 import { useBlockAttachments } from '../useBlockAttachments'
 
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
-
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
 

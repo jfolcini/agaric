@@ -41,15 +41,19 @@ pub async fn apply_reverse_in_tx(
         // modify data the user expects to see on a live block; silently
         // succeeding on a soft-deleted block would mask a real problem.
         OpPayload::DeleteBlock(p) => {
-            // Cascade soft-delete (same as delete_block_inner)
+            // Cascade soft-delete (same as delete_block_inner).
+            //
+            // Recursive member filters `is_conflict = 0` so conflict
+            // copies aren't swept into the reverse cascade (invariant #9).
+            // `depth < 100` bounds the walk.
             let now = now_rfc3339();
             sqlx::query(
-                "WITH RECURSIVE descendants(id) AS ( \
-                     SELECT id FROM blocks WHERE id = ? \
+                "WITH RECURSIVE descendants(id, depth) AS ( \
+                     SELECT id, 0 FROM blocks WHERE id = ? \
                      UNION ALL \
-                     SELECT b.id FROM blocks b \
+                     SELECT b.id, d.depth + 1 FROM blocks b \
                      INNER JOIN descendants d ON b.parent_id = d.id \
-                     WHERE b.deleted_at IS NULL \
+                     WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
                  ) \
                  UPDATE blocks SET deleted_at = ? \
                  WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
@@ -60,13 +64,18 @@ pub async fn apply_reverse_in_tx(
             .await?;
         }
         OpPayload::RestoreBlock(p) => {
-            // Cascade restore (same as restore_block_inner)
+            // Cascade restore (same as restore_block_inner).
+            //
+            // Recursive member filters `is_conflict = 0` — conflict copies
+            // have independent lifecycles (invariant #9). `depth < 100`
+            // bounds the walk.
             sqlx::query(
-                "WITH RECURSIVE descendants(id) AS ( \
-                     SELECT id FROM blocks WHERE id = ? \
+                "WITH RECURSIVE descendants(id, depth) AS ( \
+                     SELECT id, 0 FROM blocks WHERE id = ? \
                      UNION ALL \
-                     SELECT b.id FROM blocks b \
+                     SELECT b.id, d.depth + 1 FROM blocks b \
                      INNER JOIN descendants d ON b.parent_id = d.id \
+                     WHERE b.is_conflict = 0 AND d.depth < 100 \
                  ) \
                  UPDATE blocks SET deleted_at = NULL \
                  WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
@@ -237,9 +246,14 @@ pub async fn revert_ops_inner(
     let mut reverses = Vec::with_capacity(ops.len());
     for op_ref in &ops {
         let reverse_payload = reverse::compute_reverse(pool, &op_ref.device_id, op_ref.seq).await?;
-        // Fetch created_at for sorting
+        // Fetch created_at for sorting AND op_type for the UndoResult response
         let record = op_log::get_op_by_seq(pool, &op_ref.device_id, op_ref.seq).await?;
-        reverses.push((op_ref.clone(), reverse_payload, record.created_at));
+        reverses.push((
+            op_ref.clone(),
+            reverse_payload,
+            record.created_at,
+            record.op_type,
+        ));
     }
 
     // Sort newest-first (by created_at DESC, seq DESC, device_id DESC)
@@ -254,7 +268,7 @@ pub async fn revert_ops_inner(
     let mut results = Vec::with_capacity(reverses.len());
     let mut op_records = Vec::with_capacity(reverses.len());
 
-    for (op_ref, reverse_payload, _created_at) in reverses {
+    for (op_ref, reverse_payload, _created_at, reversed_op_type) in reverses {
         let new_op_type = reverse_payload.op_type_str().to_owned();
 
         // Append reverse op to log first, then apply — same order as
@@ -272,6 +286,7 @@ pub async fn revert_ops_inner(
 
         results.push(UndoResult {
             reversed_op: op_ref,
+            reversed_op_type,
             new_op_ref: OpRef {
                 device_id: op_record.device_id.clone(),
                 seq: op_record.seq,
@@ -478,6 +493,7 @@ pub async fn undo_page_op_inner(
             device_id: target.device_id,
             seq: target.seq,
         },
+        reversed_op_type: target.op_type,
         new_op_ref: OpRef {
             device_id: op_record.device_id,
             seq: op_record.seq,
@@ -500,6 +516,10 @@ pub async fn redo_page_op_inner(
     undo_seq: i64,
 ) -> Result<UndoResult, AppError> {
     use crate::reverse;
+
+    // Fetch the undo op's op_type (the one we're reversing).
+    // Surfaces to the frontend as `reversed_op_type` for descriptive toasts.
+    let undo_record = op_log::get_op_by_seq(pool, &undo_device_id, undo_seq).await?;
 
     // Compute reverse of the undo op
     let reverse_payload = reverse::compute_reverse(pool, &undo_device_id, undo_seq).await?;
@@ -524,6 +544,7 @@ pub async fn redo_page_op_inner(
             device_id: undo_device_id,
             seq: undo_seq,
         },
+        reversed_op_type: undo_record.op_type,
         new_op_ref: OpRef {
             device_id: op_record.device_id,
             seq: op_record.seq,

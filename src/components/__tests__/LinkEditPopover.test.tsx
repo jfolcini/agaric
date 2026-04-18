@@ -216,7 +216,7 @@ describe('LinkEditPopover', () => {
           onClose={onClose}
         />,
       )
-      expect(screen.getByRole('button', { name: 'Apply' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('linkEdit.apply') })).toBeInTheDocument()
     })
 
     it('renders Update button when editing existing link', () => {
@@ -229,8 +229,8 @@ describe('LinkEditPopover', () => {
           onClose={onClose}
         />,
       )
-      expect(screen.getByRole('button', { name: 'Update' })).toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: 'Apply' })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('linkEdit.update') })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: t('linkEdit.apply') })).not.toBeInTheDocument()
     })
 
     it('does NOT render Remove button when not editing', () => {
@@ -243,7 +243,7 @@ describe('LinkEditPopover', () => {
           onClose={onClose}
         />,
       )
-      expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: t('linkEdit.remove') })).not.toBeInTheDocument()
     })
 
     it('renders Remove button when editing an existing link', () => {
@@ -256,7 +256,7 @@ describe('LinkEditPopover', () => {
           onClose={onClose}
         />,
       )
-      expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('linkEdit.remove') })).toBeInTheDocument()
     })
 
     it('pre-fills input with initialUrl when editing', () => {
@@ -289,7 +289,7 @@ describe('LinkEditPopover', () => {
 
       const input = screen.getByTestId('link-url-input')
       fireEvent.change(input, { target: { value: 'example.com' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+      fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
       expect(mockChain).toHaveBeenCalled()
       expect(mockFocus).toHaveBeenCalled()
@@ -336,7 +336,7 @@ describe('LinkEditPopover', () => {
         />,
       )
 
-      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+      fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
       expect(mockSetLink).not.toHaveBeenCalled()
       expect(mockCommandsFocus).toHaveBeenCalled()
@@ -356,7 +356,7 @@ describe('LinkEditPopover', () => {
 
       const input = screen.getByTestId('link-url-input')
       fireEvent.change(input, { target: { value: '   ' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+      fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
       expect(mockSetLink).not.toHaveBeenCalled()
       expect(mockCommandsFocus).toHaveBeenCalled()
@@ -374,7 +374,7 @@ describe('LinkEditPopover', () => {
         />,
       )
 
-      const applyBtn = screen.getByRole('button', { name: 'Apply' })
+      const applyBtn = screen.getByRole('button', { name: t('linkEdit.apply') })
       const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
       const preventSpy = vi.spyOn(event, 'preventDefault')
       fireEvent(applyBtn, event)
@@ -395,7 +395,7 @@ describe('LinkEditPopover', () => {
 
       const input = screen.getByTestId('link-url-input')
       fireEvent.change(input, { target: { value: 'example.com' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+      fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
       expect(mockFetchLinkMetadata).toHaveBeenCalledWith('https://example.com')
     })
@@ -413,7 +413,7 @@ describe('LinkEditPopover', () => {
 
       const input = screen.getByTestId('link-url-input')
       fireEvent.change(input, { target: { value: 'https://example.com' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+      fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
       expect(mockRemoveStoredMark).toHaveBeenCalledWith(mockLinkMarkType)
       expect(mockDispatch).toHaveBeenCalledWith(mockTr)
@@ -434,7 +434,7 @@ describe('LinkEditPopover', () => {
         />,
       )
 
-      fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+      fireEvent.click(screen.getByRole('button', { name: t('linkEdit.remove') }))
 
       expect(mockChain).toHaveBeenCalled()
       expect(mockFocus).toHaveBeenCalled()
@@ -454,7 +454,7 @@ describe('LinkEditPopover', () => {
         />,
       )
 
-      const removeBtn = screen.getByRole('button', { name: 'Remove' })
+      const removeBtn = screen.getByRole('button', { name: t('linkEdit.remove') })
       const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
       const preventSpy = vi.spyOn(event, 'preventDefault')
       fireEvent(removeBtn, event)
@@ -540,7 +540,7 @@ describe('LinkEditPopover', () => {
       expect(input).toHaveValue('https://old.com')
 
       fireEvent.change(input, { target: { value: 'https://new.com' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Update' }))
+      fireEvent.click(screen.getByRole('button', { name: t('linkEdit.update') }))
 
       expect(mockInsertContent).toHaveBeenCalledWith({
         type: 'text',
@@ -596,7 +596,7 @@ describe('LinkEditPopover', () => {
 
       const input = screen.getByTestId('link-url-input')
       fireEvent.change(input, { target: { value: 'javascript:alert(1)' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+      fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
       // Error should be visible
       expect(screen.getByRole('alert')).toHaveTextContent(
@@ -623,7 +623,7 @@ describe('LinkEditPopover', () => {
 
       const input = screen.getByTestId('link-url-input')
       fireEvent.change(input, { target: { value: 'data:text/html,test' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+      fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
       expect(screen.getByRole('alert')).toHaveTextContent(
         'javascript: and data: URLs are not allowed',
@@ -646,7 +646,7 @@ describe('LinkEditPopover', () => {
 
       // Trigger the error
       fireEvent.change(input, { target: { value: 'javascript:void(0)' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+      fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
       expect(screen.getByRole('alert')).toBeInTheDocument()
 
       // Type a new value — error should clear
@@ -692,7 +692,7 @@ describe('LinkEditPopover', () => {
 
       const input = screen.getByTestId('link-url-input')
       fireEvent.change(input, { target: { value: 'https://example.com' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+      fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
       expect(mockChainWithSelection).toHaveBeenCalled()
       expect(mockFocusWithSelection).toHaveBeenCalled()
@@ -721,7 +721,7 @@ describe('LinkEditPopover', () => {
 
       const input = screen.getByTestId('link-url-input')
       fireEvent.change(input, { target: { value: 'https://example.com' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+      fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
       // Should use the regular chain().focus().insertContent() path
       expect(mockChain).toHaveBeenCalled()
@@ -747,7 +747,7 @@ describe('LinkEditPopover', () => {
 
       const input = screen.getByTestId('link-url-input')
       fireEvent.change(input, { target: { value: 'https://example.com' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+      fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
       expect(mockChain).toHaveBeenCalled()
       expect(mockFocus).toHaveBeenCalled()
@@ -807,7 +807,7 @@ describe('LinkEditPopover', () => {
       const urlInput = screen.getByTestId('link-url-input')
       fireEvent.change(labelInput, { target: { value: 'Click here' } })
       fireEvent.change(urlInput, { target: { value: 'https://example.com' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+      fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
       expect(mockInsertContent).toHaveBeenCalledWith({
         type: 'text',
@@ -829,7 +829,7 @@ describe('LinkEditPopover', () => {
 
       const urlInput = screen.getByTestId('link-url-input')
       fireEvent.change(urlInput, { target: { value: 'https://example.com' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+      fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
       expect(mockInsertContent).toHaveBeenCalledWith({
         type: 'text',
@@ -852,7 +852,7 @@ describe('LinkEditPopover', () => {
 
       const urlInput = screen.getByTestId('link-url-input')
       fireEvent.change(urlInput, { target: { value: 'https://example.com' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Update' }))
+      fireEvent.click(screen.getByRole('button', { name: t('linkEdit.update') }))
 
       expect(mockSetTextSelection).toHaveBeenCalledWith({ from: 5, to: 17 })
       expect(mockSetLink).toHaveBeenCalledWith({ href: 'https://example.com' })
@@ -875,7 +875,7 @@ describe('LinkEditPopover', () => {
       const urlInput = screen.getByTestId('link-url-input')
       fireEvent.change(labelInput, { target: { value: 'new label' } })
       fireEvent.change(urlInput, { target: { value: 'https://example.com' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+      fireEvent.click(screen.getByRole('button', { name: t('linkEdit.apply') }))
 
       expect(mockSetTextSelection).toHaveBeenCalledWith({ from: 5, to: 13 })
       expect(mockInsertContent).toHaveBeenCalledWith({

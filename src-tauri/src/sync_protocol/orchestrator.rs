@@ -100,6 +100,15 @@ impl SyncOrchestrator {
     /// Validates that the incoming message is appropriate for the current
     /// state before dispatching.  Out-of-order messages transition to
     /// [`SyncState::Failed`] and return an error.
+    ///
+    /// MAINT-21: instrumented with a `sync_msg` span tagged by current state
+    /// and incoming message discriminant so protocol-level log lines can be
+    /// correlated within an outer `sync{peer=ULID}` session span.
+    #[tracing::instrument(
+        skip_all,
+        name = "sync_msg",
+        fields(state = ?self.state, msg = ?std::mem::discriminant(&msg)),
+    )]
     pub async fn handle_message(
         &mut self,
         msg: SyncMessage,

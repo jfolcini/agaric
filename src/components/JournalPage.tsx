@@ -25,13 +25,14 @@ import {
 } from 'date-fns'
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
 import { logger } from '@/lib/logger'
 import { useJournalAutoCreate } from '../hooks/useJournalAutoCreate'
+import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { DayEntry } from '../lib/date-utils'
 import {
@@ -223,14 +224,20 @@ export function JournalPage({
 
   // ── Link preview tooltip — covers all blocks in the journal view ────
   const [journalContainerEl, setJournalContainerEl] = useState<HTMLDivElement | null>(null)
+  // Stable DOM ref for usePrimaryFocus. Keeping this separate from the
+  // callback-ref above (which powers LinkPreviewTooltip) avoids a rerender
+  // loop from the registry re-running register() on every parent render.
+  const journalDomRef = useRef<HTMLDivElement | null>(null)
+  useRegisterPrimaryFocus(journalDomRef)
   const journalRef = useCallback((node: HTMLDivElement | null) => {
     setJournalContainerEl(node)
+    journalDomRef.current = node
   }, [])
 
   // ── Main render ─────────────────────────────────────────────────────
 
   return (
-    <div ref={journalRef} className="space-y-4">
+    <div ref={journalRef} tabIndex={-1} className="space-y-4 focus:outline-none">
       {/* Loading indicator on initial fetch */}
       {loading && (
         <div aria-busy="true">

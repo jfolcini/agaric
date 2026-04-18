@@ -65,8 +65,6 @@ vi.mock('@/components/ui/button', () => ({
   ),
 }))
 
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
-
 import { toast } from 'sonner'
 import { makeBlock } from '../../__tests__/fixtures'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../../lib/tauri'

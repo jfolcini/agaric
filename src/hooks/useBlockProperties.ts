@@ -19,27 +19,22 @@ import { setPriority as setPriorityCmd, setTodoState as setTodoStateCmd } from '
 import { usePageBlockStoreApi } from '../stores/page-blocks'
 import { useUndoStore } from '../stores/undo'
 
-/** Default task state cycle: none -> TODO -> DOING -> DONE -> none. */
-const TASK_CYCLE_DEFAULT: readonly (string | null)[] = [null, 'TODO', 'DOING', 'DONE']
-
-/** Read custom task cycle from localStorage, falling back to default. */
-function getTaskCycle(): readonly (string | null)[] {
-  try {
-    const stored = localStorage.getItem('task_cycle')
-    if (stored) {
-      const parsed = JSON.parse(stored) as (string | null)[]
-      if (Array.isArray(parsed) && parsed.length >= 2) return parsed
-    }
-  } catch {
-    // localStorage unavailable
-  }
-  return TASK_CYCLE_DEFAULT
-}
-
-const TASK_CYCLE = getTaskCycle()
+/**
+ * Locked task state cycle (UX-202): none -> TODO -> DOING -> CANCELLED -> DONE -> none.
+ *
+ * This cycle is intentionally fixed — users cannot add or remove states.
+ * CANCELLED sits between DOING and DONE so Ctrl+Enter on an in-progress
+ * task can mark it cancelled without first passing through "done".
+ */
+const TASK_CYCLE: readonly (string | null)[] = [null, 'TODO', 'DOING', 'CANCELLED', 'DONE']
 
 /** Display labels for screen reader announcements. */
-const STATE_LABELS: Record<string, string> = { TODO: 'To do', DOING: 'In progress', DONE: 'Done' }
+const STATE_LABELS: Record<string, string> = {
+  TODO: 'To do',
+  DOING: 'In progress',
+  CANCELLED: 'Cancelled',
+  DONE: 'Done',
+}
 
 /** Priority cycle: none -> 1 -> 2 -> 3 -> none. */
 const PRIORITY_CYCLE: readonly (string | null)[] = [null, '1', '2', '3']

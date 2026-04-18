@@ -1,51 +1,35 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import type { AgendaFilterDimension } from '../filter-dimension-metadata'
 import {
   ALL_DIMENSIONS,
   DIMENSION_OPTIONS,
   dimensionLabel,
   getTaskStates,
+  TASK_STATES,
 } from '../filter-dimension-metadata'
 
 describe('filter-dimension-metadata', () => {
   // -----------------------------------------------------------------------
-  // getTaskStates
+  // TASK_STATES / getTaskStates (UX-202: fixed cycle, localStorage removed)
   // -----------------------------------------------------------------------
   describe('getTaskStates', () => {
-    afterEach(() => {
-      localStorage.removeItem('task_cycle')
+    it('returns the locked fixed cycle TODO/DOING/CANCELLED/DONE', () => {
+      expect(getTaskStates()).toEqual(['TODO', 'DOING', 'CANCELLED', 'DONE'])
     })
 
-    it('returns default states when localStorage is empty', () => {
-      expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE'])
+    it('ignores legacy localStorage values', () => {
+      localStorage.setItem('task_cycle', JSON.stringify([null, 'TODO', 'WAITING', 'DONE']))
+      try {
+        expect(getTaskStates()).toEqual(['TODO', 'DOING', 'CANCELLED', 'DONE'])
+      } finally {
+        localStorage.removeItem('task_cycle')
+      }
     })
 
-    it('reads custom states from localStorage, filtering out nulls', () => {
-      localStorage.setItem(
-        'task_cycle',
-        JSON.stringify([null, 'TODO', 'DOING', 'DONE', 'WAITING', 'CANCELLED']),
-      )
-      expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE', 'WAITING', 'CANCELLED'])
-    })
-
-    it('falls back to defaults on invalid JSON', () => {
-      localStorage.setItem('task_cycle', 'not-json')
-      expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE'])
-    })
-
-    it('falls back to defaults when stored value is not an array', () => {
-      localStorage.setItem('task_cycle', JSON.stringify('TODO'))
-      expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE'])
-    })
-
-    it('filters out empty strings', () => {
-      localStorage.setItem('task_cycle', JSON.stringify(['TODO', '', 'DONE']))
-      expect(getTaskStates()).toEqual(['TODO', 'DONE'])
-    })
-
-    it('filters out non-string values', () => {
-      localStorage.setItem('task_cycle', JSON.stringify([42, 'TODO', true, 'DONE']))
-      expect(getTaskStates()).toEqual(['TODO', 'DONE'])
+    it('TASK_STATES constant is frozen-like (returned array is a copy)', () => {
+      const first = getTaskStates()
+      first[0] = 'MUTATED'
+      expect(TASK_STATES[0]).toBe('TODO')
     })
   })
 
@@ -66,11 +50,11 @@ describe('filter-dimension-metadata', () => {
       expect(keys).toContain('property')
     })
 
-    it('status choices is a function returning task states', () => {
+    it('status choices is a function returning fixed task states including CANCELLED', () => {
       const meta = DIMENSION_OPTIONS.status
       expect(typeof meta.choices).toBe('function')
       const choices = (meta.choices as () => string[])()
-      expect(choices).toEqual(['TODO', 'DOING', 'DONE'])
+      expect(choices).toEqual(['TODO', 'DOING', 'CANCELLED', 'DONE'])
     })
 
     it('priority choices are fixed strings', () => {

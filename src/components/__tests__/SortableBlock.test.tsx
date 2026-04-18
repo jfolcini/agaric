@@ -121,6 +121,9 @@ vi.mock('lucide-react', () => ({
   Trash2: (props: { size: number }) => (
     <svg data-testid="trash-icon" width={props.size} height={props.size} />
   ),
+  X: (props: { size: number; className?: string }) => (
+    <svg data-testid="x-icon" width={props.size} height={props.size} className={props.className} />
+  ),
 }))
 
 // Mock AttachmentList to avoid its own hook/tauri dependencies
@@ -1010,6 +1013,56 @@ describe('SortableBlock task marker', () => {
     const checkbox = container.querySelector('.task-checkbox-done')
     expect(checkbox?.getAttribute('class')).toContain('border-task-done')
     expect(checkbox?.getAttribute('class')).toContain('bg-task-done')
+  })
+
+  it('applies border-task-cancelled class to CANCELLED checkbox (UX-202)', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        todoState="CANCELLED"
+      />,
+    )
+
+    const checkbox = container.querySelector('.task-checkbox-cancelled')
+    expect(checkbox).toBeInTheDocument()
+    expect(checkbox?.getAttribute('class')).toContain('border-task-cancelled')
+    expect(checkbox?.getAttribute('data-testid')).toBe('task-checkbox-cancelled')
+  })
+
+  it('applies line-through and opacity-50 to content when CANCELLED (UX-202)', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        todoState="CANCELLED"
+      />,
+    )
+
+    const contentWrapper = container.querySelector('.line-through')
+    expect(contentWrapper).toBeInTheDocument()
+    expect(contentWrapper?.getAttribute('class')).toContain('opacity-50')
+  })
+
+  it('does not apply CANCELLED strikethrough when block is focused (UX-202)', () => {
+    render(
+      <SortableBlock
+        blockId="B1"
+        content="cancelled task"
+        isFocused={true}
+        depth={0}
+        rovingEditor={makeRovingEditor()}
+        todoState="CANCELLED"
+      />,
+    )
+    const editableBlock = screen.getByTestId('editable-block-B1')
+    const contentWrapper = editableBlock.parentElement
+    expect(contentWrapper?.className).not.toContain('line-through')
+    expect(contentWrapper?.className).not.toContain('opacity-50')
   })
 
   it('applies line-through and opacity-50 to content when DONE', () => {

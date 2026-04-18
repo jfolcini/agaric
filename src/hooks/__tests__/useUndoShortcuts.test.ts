@@ -465,6 +465,76 @@ describe('toast feedback', () => {
 
     unmount()
   })
+
+  it.each([
+    ['create_block', 'Undid create block'],
+    ['edit_block', 'Undid edit'],
+    ['delete_block', 'Undid delete'],
+    ['move_block', 'Undid move'],
+    ['set_property', 'Undid property change'],
+    ['add_tag', 'Undid tag'],
+    ['remove_tag', 'Undid tag'],
+  ])('shows op-type-aware toast for undo of %s', async (reversedOpType, expected) => {
+    mockUndo.mockResolvedValueOnce({ reversed_op_type: reversedOpType })
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+    await vi.waitFor(() => {
+      expect(mockedToast).toHaveBeenCalledWith(expected, { duration: 1500 })
+    })
+
+    unmount()
+  })
+
+  it.each([
+    ['create_block', 'Redid create block'],
+    ['edit_block', 'Redid edit'],
+    ['delete_block', 'Redid delete'],
+    ['move_block', 'Redid move'],
+    ['set_property', 'Redid property change'],
+  ])('shows op-type-aware toast for redo of %s', async (reversedOpType, expected) => {
+    mockRedo.mockResolvedValueOnce({ reversed_op_type: reversedOpType })
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'y', ctrlKey: true })
+
+    await vi.waitFor(() => {
+      expect(mockedToast).toHaveBeenCalledWith(expected, { duration: 1500 })
+    })
+
+    unmount()
+  })
+
+  it('falls back to "Undone" for unknown reversed_op_type', async () => {
+    mockUndo.mockResolvedValueOnce({ reversed_op_type: 'unknown_op_xyz' })
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+    await vi.waitFor(() => {
+      expect(mockedToast).toHaveBeenCalledWith('Undone', { duration: 1500 })
+    })
+
+    unmount()
+  })
+
+  it('falls back to "Redone" for unknown reversed_op_type', async () => {
+    mockRedo.mockResolvedValueOnce({ reversed_op_type: 'unknown_op_xyz' })
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'y', ctrlKey: true })
+
+    await vi.waitFor(() => {
+      expect(mockedToast).toHaveBeenCalledWith('Redone', { duration: 1500 })
+    })
+
+    unmount()
+  })
 })
 
 describe('refresh after undo/redo', () => {

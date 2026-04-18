@@ -404,7 +404,8 @@ function SortableBlockInner({
           <div
             className={cn(
               'flex-1 min-w-0 transition-[text-decoration-color,opacity] duration-200',
-              todoState === 'DONE' && !isFocused
+              // Strikethrough + fade for DONE and CANCELLED (both are "closed" states).
+              (todoState === 'DONE' || todoState === 'CANCELLED') && !isFocused
                 ? 'line-through opacity-50'
                 : 'no-underline opacity-100',
             )}

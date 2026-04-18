@@ -449,6 +449,7 @@ export interface OpRef {
 
 export interface UndoResult {
   reversed_op: OpRef
+  reversed_op_type: string
   new_op_ref: OpRef
   new_op_type: string
   is_redo: boolean

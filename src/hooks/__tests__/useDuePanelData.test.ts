@@ -31,8 +31,6 @@ vi.mock('../useBlockPropertyEvents', () => ({
   useBlockPropertyEvents: vi.fn(() => ({ invalidationKey: mockInvalidationKey })),
 }))
 
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
-
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../../lib/tauri'
 import { useBlockPropertyEvents } from '../useBlockPropertyEvents'
 import { clearProjectedCache, extractUlidRefs, useDuePanelData } from '../useDuePanelData'

@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { Calendar, CalendarDays, Check, Paperclip, Repeat } from 'lucide-react'
+import { Calendar, CalendarDays, Check, Paperclip, Repeat, X } from 'lucide-react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { priorityColor } from '../lib/priority-color'
@@ -105,6 +105,13 @@ const TASK_CHECKBOX_STYLES: Record<string, CheckboxStyle> = {
       'task-checkbox-doing border-task-doing bg-task-doing/20 flex items-center justify-center',
     testId: 'task-checkbox-doing',
     icon: <div className="h-1.5 w-1.5 rounded-sm bg-task-doing" />,
+  },
+  CANCELLED: {
+    // CANCELLED is visually "closed but not completed" — muted grey with an X glyph.
+    className:
+      'task-checkbox-cancelled border-task-cancelled bg-task-cancelled/20 flex items-center justify-center',
+    testId: 'task-checkbox-cancelled',
+    icon: <X className="h-3 w-3 text-task-cancelled" />,
   },
   TODO: {
     className: 'task-checkbox-todo border-muted-foreground',

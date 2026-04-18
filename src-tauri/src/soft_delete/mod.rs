@@ -19,13 +19,18 @@ pub async fn is_deleted(pool: &SqlitePool, block_id: &str) -> Result<Option<bool
 }
 
 /// Return the IDs of a block and all its descendants via recursive CTE.
+///
+/// Recursive member filters `is_conflict = 0` — conflict copies share
+/// their original's parent_id but are logically separate (invariant #9).
+/// `depth < 100` bounds the walk.
 pub async fn get_descendants(pool: &SqlitePool, block_id: &str) -> Result<Vec<String>, AppError> {
     let rows = sqlx::query!(
-        "WITH RECURSIVE descendants(id) AS ( \
-             SELECT id FROM blocks WHERE id = ? \
+        "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT id, 0 FROM blocks WHERE id = ? \
              UNION ALL \
-             SELECT b.id FROM blocks b \
+             SELECT b.id, d.depth + 1 FROM blocks b \
              INNER JOIN descendants d ON b.parent_id = d.id \
+             WHERE b.is_conflict = 0 AND d.depth < 100 \
          ) \
          SELECT id FROM descendants",
         block_id,

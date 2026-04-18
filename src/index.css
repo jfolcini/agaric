@@ -86,6 +86,7 @@
   /* Task checkbox state colors */
   --color-task-done: var(--task-done);
   --color-task-doing: var(--task-doing);
+  --color-task-cancelled: var(--task-cancelled);
   --color-task-custom: var(--task-custom);
   /* Highlight/search */
   --color-highlight: var(--highlight);
@@ -198,6 +199,7 @@
   /* Task checkbox state colors */
   --task-done: oklch(0.55 0.18 149);
   --task-doing: oklch(0.62 0.21 260);
+  --task-cancelled: oklch(0.6 0.02 260);
   --task-custom: oklch(0.7 0.18 53);
   /* Highlight/search */
   --highlight: oklch(0.95 0.13 102);
@@ -325,6 +327,7 @@
   /* Task checkbox state colors */
   --task-done: oklch(0.55 0.18 149);
   --task-doing: oklch(0.62 0.21 260);
+  --task-cancelled: oklch(0.55 0.02 260);
   --task-custom: oklch(0.7 0.18 53);
   /* Highlight/search */
   --highlight: oklch(0.55 0.14 66);

@@ -1035,14 +1035,26 @@ async fn purge_block_removes_tags_properties_attachments_links() {
     .await;
     insert_block(&pool, "PURGE_TAG", "tag", "my-tag", None, None).await;
     insert_block(&pool, "PURGE_TGT", "content", "link target", None, Some(2)).await;
+    // Ancestor holding a direct tag so that block_tag_inherited is populated
+    // for PURGE_REL (inherited_from = PURGE_REL itself is fine too).
+    insert_block(&pool, "PURGE_ANC", "page", "ancestor page", None, Some(3)).await;
 
-    // Add related rows
+    // Add related rows covering every table purge_block_inner cleans.
     sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
         .bind("PURGE_REL")
         .bind("PURGE_TAG")
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(
+        "INSERT INTO block_tag_inherited (block_id, tag_id, inherited_from) VALUES (?, ?, ?)",
+    )
+    .bind("PURGE_REL")
+    .bind("PURGE_TAG")
+    .bind("PURGE_ANC")
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
         .bind("PURGE_REL")
         .bind("priority")
@@ -1070,6 +1082,64 @@ async fn purge_block_removes_tags_properties_attachments_links() {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+        .bind("2024-12-25")
+        .bind("PURGE_REL")
+        .bind("property:due_date")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // tags_cache is keyed by tag_id — insert a row keyed on PURGE_REL so it
+    // is in the subtree being purged. (The cleanup DELETEs rows whose tag_id
+    // appears in the descendant set.)
+    sqlx::query(
+        "INSERT INTO tags_cache (tag_id, name, usage_count, updated_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind("PURGE_REL")
+    .bind("purge-rel-tag")
+    .bind(1_i64)
+    .bind("2024-01-01T00:00:00Z")
+    .execute(&pool)
+    .await
+    .unwrap();
+    // pages_cache is keyed by page_id — insert row referencing the purged block
+    // (pages_cache normally only holds pages but the purge cleanup keys off the
+    // subtree's block_id, so insert directly to verify cleanup).
+    sqlx::query("INSERT INTO pages_cache (page_id, title, updated_at) VALUES (?, ?, ?)")
+        .bind("PURGE_REL")
+        .bind("has relations")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
+        .bind("PURGE_REL")
+        .bind("draft content")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+        .bind("PURGE_REL")
+        .bind("has relations")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES (?, ?)")
+        .bind("PURGE_REL")
+        .bind("Has Relations")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO projected_agenda_cache (block_id, projected_date, source) VALUES (?, ?, ?)",
+    )
+    .bind("PURGE_REL")
+    .bind("2024-12-26")
+    .bind("due_date")
+    .execute(&pool)
+    .await
+    .unwrap();
 
     // Soft-delete then purge
     soft_delete::cascade_soft_delete(&pool, "PURGE_REL")
@@ -1079,42 +1149,108 @@ async fn purge_block_removes_tags_properties_attachments_links() {
         .await
         .unwrap();
 
-    // Verify all gone
-    let tags: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM block_tags WHERE block_id = ?",
-        "PURGE_REL"
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    // Verify all 13 tables that purge_block_inner DELETEs from are cleaned.
+    // Order matches the DELETE order in commands/blocks/crud.rs::purge_block_inner.
+    // Use the non-macro `query_scalar` form so we don't have to add every new
+    // variation to the sqlx offline cache.
+    let tags: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM block_tags WHERE block_id = ? OR tag_id = ?")
+            .bind("PURGE_REL")
+            .bind("PURGE_REL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(tags, 0, "block_tags must be purged");
 
-    let props: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM block_properties WHERE block_id = ?",
-        "PURGE_REL"
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let inherited: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM block_tag_inherited WHERE block_id = ?")
+            .bind("PURGE_REL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(inherited, 0, "block_tag_inherited must be purged");
+
+    let props: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_properties WHERE block_id = ?")
+        .bind("PURGE_REL")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(props, 0, "block_properties must be purged");
 
-    let atts: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM attachments WHERE block_id = ?",
-        "PURGE_REL"
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let links: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM block_links WHERE source_id = ? OR target_id = ?")
+            .bind("PURGE_REL")
+            .bind("PURGE_REL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(links, 0, "block_links must be purged");
+
+    let agenda: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agenda_cache WHERE block_id = ?")
+        .bind("PURGE_REL")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(agenda, 0, "agenda_cache must be purged");
+
+    // tags_cache was keyed by PURGE_REL (in the subtree). Verify the row is gone.
+    let tcache: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tags_cache WHERE tag_id = ?")
+        .bind("PURGE_REL")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(tcache, 0, "tags_cache must be purged");
+
+    let pcache: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pages_cache WHERE page_id = ?")
+        .bind("PURGE_REL")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(pcache, 0, "pages_cache must be purged");
+
+    let atts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE block_id = ?")
+        .bind("PURGE_REL")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(atts, 0, "attachments must be purged");
 
-    let links: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM block_links WHERE source_id = ?",
-        "PURGE_REL"
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(links, 0, "block_links must be purged");
+    let drafts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_drafts WHERE block_id = ?")
+        .bind("PURGE_REL")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(drafts, 0, "block_drafts must be purged");
+
+    let fts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks WHERE block_id = ?")
+        .bind("PURGE_REL")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(fts, 0, "fts_blocks must be purged");
+
+    let aliases: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM page_aliases WHERE page_id = ?")
+        .bind("PURGE_REL")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(aliases, 0, "page_aliases must be purged");
+
+    let projected: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM projected_agenda_cache WHERE block_id = ?")
+            .bind("PURGE_REL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(projected, 0, "projected_agenda_cache must be purged");
+
+    // blocks (the root of the subtree) must be physically removed.
+    let exists: Option<String> = sqlx::query_scalar("SELECT id FROM blocks WHERE id = ?")
+        .bind("PURGE_REL")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(exists.is_none(), "blocks row must be purged");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -19,7 +19,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 
@@ -470,41 +470,27 @@ describe('AgendaFilterBuilder', () => {
   })
 
   // -----------------------------------------------------------------------
-  // 19. getTaskStates reads custom task states from localStorage
+  // 19. getTaskStates returns the fixed locked cycle (UX-202)
   // -----------------------------------------------------------------------
   describe('getTaskStates', () => {
-    afterEach(() => {
-      localStorage.removeItem('task_cycle')
+    it('returns the locked fixed cycle TODO/DOING/CANCELLED/DONE', () => {
+      expect(getTaskStates()).toEqual(['TODO', 'DOING', 'CANCELLED', 'DONE'])
     })
 
-    it('returns default states when localStorage is empty', () => {
-      expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE'])
-    })
-
-    it('reads custom states from localStorage, filtering out nulls', () => {
-      localStorage.setItem(
-        'task_cycle',
-        JSON.stringify([null, 'TODO', 'DOING', 'DONE', 'WAITING', 'CANCELLED']),
-      )
-      expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE', 'WAITING', 'CANCELLED'])
-    })
-
-    it('falls back to defaults on invalid JSON', () => {
-      localStorage.setItem('task_cycle', 'not-json')
-      expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE'])
-    })
-
-    it('falls back to defaults when stored value is not an array', () => {
-      localStorage.setItem('task_cycle', JSON.stringify('TODO'))
-      expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE'])
+    it('ignores legacy localStorage values (UX-202)', () => {
+      localStorage.setItem('task_cycle', JSON.stringify([null, 'TODO', 'DOING', 'DONE', 'WAITING']))
+      try {
+        expect(getTaskStates()).toEqual(['TODO', 'DOING', 'CANCELLED', 'DONE'])
+      } finally {
+        localStorage.removeItem('task_cycle')
+      }
     })
   })
 
   // -----------------------------------------------------------------------
-  // 20. Status filter shows custom states from localStorage
+  // 20. Status filter shows the fixed cycle (UX-202: includes CANCELLED)
   // -----------------------------------------------------------------------
-  it('status filter shows custom states from localStorage', async () => {
-    localStorage.setItem('task_cycle', JSON.stringify([null, 'TODO', 'DOING', 'DONE', 'WAITING']))
+  it('status filter shows the fixed cycle including CANCELLED (UX-202)', async () => {
     const user = userEvent.setup()
     renderBuilder()
 
@@ -514,10 +500,10 @@ describe('AgendaFilterBuilder', () => {
     const group = screen.getByRole('group', { name: /Status options/i })
     expect(within(group).getByLabelText('TODO')).toBeInTheDocument()
     expect(within(group).getByLabelText('DOING')).toBeInTheDocument()
+    expect(within(group).getByLabelText('CANCELLED')).toBeInTheDocument()
     expect(within(group).getByLabelText('DONE')).toBeInTheDocument()
-    expect(within(group).getByLabelText('WAITING')).toBeInTheDocument()
-
-    localStorage.removeItem('task_cycle')
+    // Legacy custom state should NOT appear — the cycle is now locked.
+    expect(within(group).queryByLabelText('WAITING')).not.toBeInTheDocument()
   })
 
   // -----------------------------------------------------------------------

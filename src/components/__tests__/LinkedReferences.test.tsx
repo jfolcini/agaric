@@ -32,13 +32,6 @@ import type { LinkedReferencesProps } from '../LinkedReferences'
 import { LinkedReferences } from '../LinkedReferences'
 import { TooltipProvider } from '../ui/tooltip'
 
-vi.mock('sonner', () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-  },
-}))
-
 vi.mock('../../hooks/useBlockPropertyEvents', () => ({
   useBlockPropertyEvents: vi.fn(() => ({ invalidationKey: 0 })),
 }))

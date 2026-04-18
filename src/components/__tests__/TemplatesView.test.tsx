@@ -21,13 +21,6 @@ import { axe } from 'vitest-axe'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { TemplatesView } from '../TemplatesView'
 
-vi.mock('sonner', () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-  },
-}))
-
 const mockedInvoke = vi.mocked(invoke)
 
 const emptyPage = { items: [], next_cursor: null, has_more: false }

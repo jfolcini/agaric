@@ -17,7 +17,6 @@ import {
   useBlockSlashCommands,
 } from '../useBlockSlashCommands'
 
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 vi.mock('../../lib/announcer', () => ({ announce: vi.fn() }))
 vi.mock('../../editor/markdown-serializer', () => ({
   serialize: vi.fn(() => 'content'),

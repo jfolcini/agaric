@@ -5,9 +5,6 @@ import { announce } from '../../lib/announcer'
 import type { FlatBlock } from '../../lib/tree-utils'
 import { useBlockKeyboardHandlers } from '../useBlockKeyboardHandlers'
 
-vi.mock('sonner', () => ({
-  toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }),
-}))
 vi.mock('../../lib/announcer', () => ({ announce: vi.fn() }))
 vi.mock('../../editor/markdown-serializer', () => ({
   parse: vi.fn((s: string) => ({

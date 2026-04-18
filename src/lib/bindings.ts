@@ -1080,7 +1080,52 @@ results: UndoResult[] }
  * Sort direction.
  */
 export type SortDir = "Asc" | "Desc"
-export type StatusInfo = { foreground_queue_depth: number; background_queue_depth: number; total_ops_dispatched: number; total_background_dispatched: number; fg_high_water: number; bg_high_water: number; fg_errors: number; bg_errors: number; fg_panics: number; bg_panics: number }
+/**
+ * Snapshot of materializer + sync observability fields exposed to the
+ * frontend via `get_status`. Fields are added additively so existing
+ * specta-derived TS bindings keep compiling.
+ */
+export type StatusInfo = { foreground_queue_depth: number; background_queue_depth: number; total_ops_dispatched: number; total_background_dispatched: number; fg_high_water: number; bg_high_water: number; fg_errors: number; bg_errors: number; fg_panics: number; bg_panics: number;
+/**
+ * Number of background tasks that were either persisted to the retry
+ * queue or silently dropped after exhausting retries.
+ */
+bg_dropped: number;
+/**
+ * Running count of background tasks deduped in the batch drain (was
+ * already tracked atomically; now surfaced).
+ */
+bg_deduped: number;
+/**
+ * Number of times the foreground `enqueue_foreground` path awaited on
+ * a full channel. Non-zero indicates backpressure.
+ */
+fg_full_waits: number;
+/**
+ * RFC 3339 timestamp of the most recent successful batch, if any.
+ */
+last_materialize_at: string | null;
+/**
+ * Seconds elapsed since `last_materialize_at`. None when no batch has
+ * completed yet.
+ */
+time_since_last_materialize_secs: number | null;
+/**
+ * Row count of `op_log` at status-request time. `None` if the query
+ * failed for any reason (the status call never fails because of it).
+ */
+total_ops_in_log: number | null;
+/**
+ * `(peer_id, consecutive_failure_count)` pairs for every peer the
+ * `SyncScheduler` has seen fail at least once. Empty when the
+ * scheduler is not injected (tests, legacy callers).
+ */
+sync_peer_failure_counts: ([string, number])[];
+/**
+ * Number of rows currently queued in `materializer_retry_queue` —
+ * per-block tasks waiting for their next retry window.
+ */
+retry_queue_pending: number | null }
 /**
  * Response payload returned by [`start_sync`].
  */
@@ -1098,6 +1143,11 @@ export type UndoResult = {
  * The op that was reversed (the original op for undo, the undo-op for redo).
  */
 reversed_op: OpRef;
+/**
+ * The op_type of the reversed op (e.g. `create_block`, `edit_block`, `set_property`).
+ * Used by the frontend to show a descriptive toast ("Undid create", "Undid edit", etc.).
+ */
+reversed_op_type: string;
 /**
  * The newly appended reverse op.
  */

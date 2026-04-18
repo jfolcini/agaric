@@ -6,7 +6,7 @@
  * and args. This tests the mock layer in isolation from Tauri internals.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // ---------------------------------------------------------------------------
 // Capture the IPC handler registered by setupMock
@@ -30,8 +30,18 @@ function invoke(cmd: string, args: Record<string, unknown> = {}): unknown {
   return ipcHandler(cmd, args)
 }
 
+// TEST-31: Pin the clock to a fixed non-midnight-boundary moment so that
+// any `new Date()` calls in the mock's seed code and this file's assertions
+// always see the same YYYY-MM-DD / week boundaries. Prevents cross-midnight
+// flakes on long CI shards or when tests run across a date rollover.
 beforeEach(() => {
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date('2026-04-15T12:00:00Z'))
   setupMock()
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 // ---------------------------------------------------------------------------

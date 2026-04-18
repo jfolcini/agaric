@@ -17,13 +17,6 @@ import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { PropertyDefinitionsList } from '../PropertyDefinitionsList'
 
-vi.mock('sonner', () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-  },
-}))
-
 vi.mock('@/components/ui/select', () => {
   const React = require('react')
   const Ctx = React.createContext({})

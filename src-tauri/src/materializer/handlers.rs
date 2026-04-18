@@ -114,13 +114,19 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
             // Cascade soft-delete: mark the target and every not-yet-deleted
             // descendant. Mirror of the cascade in `commands/blocks/crud.rs`
             // delete_block_inner, applied by the materializer on remote ops.
+            //
+            // Recursive member filters `is_conflict = 0` so conflict copies
+            // (which share parent_id with the original) don't get swept into
+            // the cascade — they have their own independent lifecycle
+            // (invariant #9). `depth < 100` bounds runaway recursion on
+            // corrupted data.
             sqlx::query(
-                "WITH RECURSIVE descendants(id) AS ( \
-                     SELECT id FROM blocks WHERE id = ? \
+                "WITH RECURSIVE descendants(id, depth) AS ( \
+                     SELECT id, 0 FROM blocks WHERE id = ? \
                      UNION ALL \
-                     SELECT b.id FROM blocks b \
+                     SELECT b.id, d.depth + 1 FROM blocks b \
                      INNER JOIN descendants d ON b.parent_id = d.id \
-                     WHERE b.deleted_at IS NULL \
+                     WHERE b.deleted_at IS NULL AND b.is_conflict = 0 AND d.depth < 100 \
                  ) \
                  UPDATE blocks SET deleted_at = ? \
                  WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
@@ -136,12 +142,18 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
             // Restore every descendant that was soft-deleted at the same
             // `deleted_at_ref` timestamp — i.e., the exact cohort that
             // `delete_block` soft-deleted together.
+            //
+            // Recursive member filters `is_conflict = 0` — conflict copies
+            // have independent deleted_at timestamps and must not be
+            // bulk-restored with the original (invariant #9). `depth < 100`
+            // bounds the walk.
             sqlx::query(
-                "WITH RECURSIVE descendants(id) AS ( \
-                     SELECT id FROM blocks WHERE id = ? \
+                "WITH RECURSIVE descendants(id, depth) AS ( \
+                     SELECT id, 0 FROM blocks WHERE id = ? \
                      UNION ALL \
-                     SELECT b.id FROM blocks b \
+                     SELECT b.id, d.depth + 1 FROM blocks b \
                      INNER JOIN descendants d ON b.parent_id = d.id \
+                     WHERE b.is_conflict = 0 AND d.depth < 100 \
                  ) \
                  UPDATE blocks SET deleted_at = NULL \
                  WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
@@ -161,11 +173,19 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
             // Shared CTE body reused across every cleanup statement below.
             // Tracks the target block + all descendants (regardless of
             // soft-delete status) so purge wipes every trace.
-            const DESC_CTE: &str = "WITH RECURSIVE descendants(id) AS ( \
-                 SELECT id FROM blocks WHERE id = ? \
+            //
+            // PURGE intentionally does NOT filter `is_conflict = 0` — the
+            // goal is to erase every row that descends from the purged
+            // block, INCLUDING conflict copies. This is the only subtree
+            // CTE in the codebase that walks conflicts on purpose
+            // (invariant #9 allows this documented exception). `depth < 100`
+            // still bounds runaway recursion on corrupted data.
+            const DESC_CTE: &str = "WITH RECURSIVE descendants(id, depth) AS ( \
+                 SELECT id, 0 FROM blocks WHERE id = ? \
                  UNION ALL \
-                 SELECT b.id FROM blocks b \
+                 SELECT b.id, d.depth + 1 FROM blocks b \
                  INNER JOIN descendants d ON b.parent_id = d.id \
+                 WHERE d.depth < 100 \
              )";
             sqlx::query(&format!(
                 "{DESC_CTE} DELETE FROM block_tags \

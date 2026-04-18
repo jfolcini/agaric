@@ -26,13 +26,6 @@ import { addRecentPage } from '../../lib/recent-pages'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { SearchPanel } from '../SearchPanel'
 
-vi.mock('sonner', () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-  },
-}))
-
 // UX-153: Mock resolvePageByAlias separately so alias-resolution calls
 // don't consume values from the FIFO invoke mock queue.
 vi.mock('../../lib/tauri', async (importOriginal) => {

@@ -1,5 +1,121 @@
 # Session Log
 
+## Session 408 — Persistent retry queue, tracing spans, CTE audit, test cleanup, locked TODO states (2026-04-18)
+
+**21 items resolved (BUG-22, UX-202, UX-217, UX-220, TEST-26, TEST-27, TEST-28, TEST-29, TEST-30, TEST-31 partial, TEST-33, TEST-34, TEST-37, MAINT-6, MAINT-7, MAINT-16, MAINT-21, MAINT-24, MAINT-30, MAINT-45, MAINT-42 draft/ulid only). REVIEW-LATER 43→22.**
+
+### Resolved items
+
+**Rust backend observability (A):**
+- **MAINT-21** — Tracing spans on 5 long-running async entry points. `#[tracing::instrument]` on `try_sync_with_peer` (sync orchestrator), `SyncOrchestrator::handle_message` (`skip_all` + state discriminant), `handle_incoming_sync` (sync server), `compact_op_log`. Per-batch `info_span!("mat_batch", kind, size, deduped)` via `.instrument().await` in materializer consumer for both foreground and background. State enum Debug leak-free (variant names only).
+- **MAINT-30** — New `acquire_logged(pool, label)` + `begin_immediate_logged(pool, label)` in `src-tauri/src/db.rs`. Threshold `SLOW_ACQUIRE_WARN_MS = 100`. Migrated 4 hot cascade paths (`cmd_delete_block`, `cmd_restore_block`, `cmd_purge_block`, `cmd_compact_op_log`). 2 new tests (fast-path no-warn + slow-acquire warns).
+- **MAINT-7** — `src-tauri/tests/AGENTS.md` updated: snapshot-testing section lists 4 snapshot directories (was 1), `command_integration_tests` documented as module directory with 11 files (was "8300-line file"). Pitfalls #23/#25 verified already-fixed and left alone.
+
+**Rust backend materializer (B):**
+- **BUG-22** — Persistent retry queue for exhausted-retry background tasks. Migration 0028 (`materializer_retry_queue`) with composite PK `(block_id, task_type)`. Backoff 1min/5min/30min/1h cap. Sweeper spawned at boot + every 60s, fetches up to 64 due rows per pass, re-enqueues via `try_enqueue_background`, deletes on success. Only `UpdateFtsBlock` and `ReindexBlockLinks` persisted (idempotent per-block tasks); global rebuild tasks counted via `bg_dropped` but not persisted. 11 new unit tests.
+- **MAINT-24** — `StatusInfo` extended with 8 operational fields: `bg_dropped`, `bg_deduped`, `fg_full_waits`, `last_materialize_at` (RFC 3339), `time_since_last_materialize_secs`, `total_ops_in_log`, `sync_peer_failure_counts` (`Vec<(String, u32)>`), `retry_queue_pending`. `get_status` now async; new `SchedulerLike` trait for test injection. Specta bindings regenerated. 3 new tests + snapshot regeneration.
+- **MAINT-45** — Recursive descendant CTE audit. 9 CTEs across `commands/blocks/crud.rs`, `materializer/handlers.rs`, `commands/history.rs`, `soft_delete/*` got `AND is_conflict = 0` + `AND depth < 100` added to the recursive member. 3 intentional exceptions documented in-place (`PurgeBlock` in handlers + crud walk conflict copies; `remove_subtree_inherited` runs after soft-delete). New `apply_op_tag_inheritance` dispatcher in `tag_inheritance.rs` consolidates scattered side-effects. Module-level CTE policy doc added.
+
+**Frontend UX (C):**
+- **UX-217** — Undo/redo toasts now show operation context. Backend `UndoResult` extended with `reversed_op_type: String`. `snakeToCamel()` helper converts to i18n key suffix. 22 new i18n keys (`undo.op.createBlock` through `redo.op.deleteAttachment`). Fallback to generic message for unknown types. 14 new tests (hook + backend integration).
+- **UX-220** — New `PrimaryFocusProvider` + `useRegisterPrimaryFocus` API. View-change `useEffect` in App.tsx tries registry first, falls back to `mainContentRef`. Wired into SearchPanel (input), PageBrowser (new-page input), HistoryView (list container), JournalPage (outer container with `tabIndex={-1}`). 10 new registry tests.
+- **UX-202** — TODO states locked to `null → TODO → DOING → CANCELLED → DONE → null` cycle. Settings TaskStatesSection removed entirely. Migration 0028 (`seed_todo_state_cancelled`) updates property_definition options. CANCELLED visual: XCircle icon, `text-task-cancelled` token, strikethrough. New cancelled slash command. Downstream: `useBlockProperties.ts` (TASK_CYCLE constant), `filter-dimension-metadata.ts`, `agenda-sort.ts`, `BlockInlineControls.tsx`, `SortableBlock.tsx`, `StatusIcon.tsx`.
+
+**Test quality (D):**
+- **TEST-26** — 4 `waitForTimeout(N)` replaced with deterministic Playwright assertions (`aria-pressed="true"`, `.not.toBeVisible()`, text visibility) in `agenda-advanced.spec.ts` ×3 and `templates.spec.ts` ×1. `dragBlock` dnd-kit waits preserved.
+- **TEST-27** — 24 hardcoded English labels (`'Apply'`, `'Update'`, `'Remove'`) in `LinkEditPopover.test.tsx` → `t('linkEdit.apply')` etc.
+- **TEST-28** — 3 Save/Cancel labels in `KeyboardSettingsTab.test.tsx` → `t('keyboard.settings.saveButton')` / `cancelButton`.
+- **TEST-29** — `e2e/helpers.ts` CSS class selectors → `[data-testid=…]` (reusing existing testids on StaticBlock and EditableBlock).
+- **TEST-30** — 3 `.toBeTruthy()` assertions tightened to `.toBeInTheDocument()` in TagList, PairingEntryForm, PairingPeersList.
+- **TEST-34** — `purge_block` integration test expanded from 4 tables to 13 (all DELETE targets in `purge_block_inner`). UPDATE side-effects (`value_ref=NULL`, `conflict_source=NULL`) deferred with explicit comment.
+- **TEST-37** — 3 stale pre-refactor `.snap` files deleted from `src-tauri/src/snapshots/` (live copies remain in `src/pagination/snapshots/`).
+
+**Frontend maintenance (E):**
+- **MAINT-6** — Shared Sonner mock at `src/__tests__/mocks/sonner.ts` (toast with all 9 methods + `Toaster` forwardRef stub). Global `vi.mock('sonner')` in `test-setup.ts`. 49 of 55 test files migrated (222 deletions, 9 insertions). Remaining 6 files retain inline mocks using `vi.hoisted()` closure-capture pattern (valid deferral for tests needing per-test custom behavior).
+- **MAINT-16** — `tauri_plugin_updater` registration gated behind `#[cfg(not(mobile))]` in `lib.rs`. Converted builder chain to mutable variable. Prevents registering an unusable plugin on Android (empty pubkey, no frontend caller). Comment references the `release.yml` TODO for future signing key setup.
+
+**Orchestrator trivial:**
+- **TEST-33** — `e2e/graph-view.spec.ts`: removed all 5 per-assertion `{ timeout: 10_000 }` overrides. Added `test.slow()` at suite level (triples test timeout to 90s). Cleaner than sprinkled overrides; legitimate need for d3 worker startup path (PERF-9b) acknowledged.
+- **TEST-31 (partial)** — `src/lib/__tests__/tauri-mock.test.ts`: added `vi.useFakeTimers()` + `vi.setSystemTime(new Date('2026-04-15T12:00:00Z'))` in `beforeEach` with `vi.useRealTimers()` in `afterEach`. Prevents midnight-boundary flakes. `useDuePanelData.test.ts` left alone — its `renderHook` + async `waitFor` patterns are incompatible with fake timers. Remaining sites are low-risk (single-test `new Date()` computations that stay coherent within one test body).
+
+### Post-merge integration
+
+Worktrees A and B both modified `src-tauri/src/commands/blocks/crud.rs` (A: 3 lines for `begin_immediate_logged`; B: 2 recursive CTE filter additions) and `src-tauri/src/materializer/consumer.rs` (A: per-batch tracing span wrapping; B: retry-queue persistence + last-materialize timestamp). Merged manually: applied B first (larger patch), then A's surgical changes on top. Re-ran `cargo test specta_tests::regenerate_ts_bindings --ignored` to regenerate `src/lib/bindings.ts` reflecting both A's changes and C's `reversed_op_type`.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src-tauri/src/db.rs` | MAINT-30: `acquire_logged` + `begin_immediate_logged` helpers + 2 tests |
+| `src-tauri/src/commands/blocks/crud.rs` | MAINT-30: 3 migrated call sites; MAINT-45: CTE filter additions (delete/restore) |
+| `src-tauri/src/commands/compaction.rs` | MAINT-30: 1 migrated call site |
+| `src-tauri/src/commands/history.rs` | MAINT-45: CTE filter additions (reverse delete/restore) |
+| `src-tauri/src/commands/queries.rs` | MAINT-24: async `get_status_inner` + Option<&SyncScheduler> |
+| `src-tauri/src/commands/sync_cmds.rs` | PERF-25 follow-up (was in session 407; re-touched here for alignment) |
+| `src-tauri/src/commands/tests/snapshot_tests.rs` + `status_cmd_tests.rs` + snapshot file | MAINT-24: updated tests + regenerated snapshot |
+| `src-tauri/src/sync_daemon/orchestrator.rs` | MAINT-21: `#[instrument]` on `try_sync_with_peer` |
+| `src-tauri/src/sync_daemon/server.rs` | MAINT-21: `#[instrument]` on `handle_incoming_sync` |
+| `src-tauri/src/sync_protocol/orchestrator.rs` | MAINT-21: `#[instrument]` on `handle_message` |
+| `src-tauri/src/sync_protocol/tests.rs` | MAINT-21: new span-assertion test |
+| `src-tauri/src/snapshot/create.rs` | MAINT-21: `#[instrument(skip(pool), err)]` on `compact_op_log` |
+| `src-tauri/src/materializer/consumer.rs` | MAINT-21: `.instrument(batch_span)` per-batch; BUG-22: persist exhausted failures |
+| `src-tauri/src/materializer/coordinator.rs` | MAINT-24: async status + SchedulerLike + fg_full_waits increment |
+| `src-tauri/src/materializer/handlers.rs` | MAINT-45: CTE filter additions (Delete/Restore); PurgeBlock exception documented |
+| `src-tauri/src/materializer/metrics.rs` | MAINT-24: extended QueueMetrics + StatusInfo |
+| `src-tauri/src/materializer/mod.rs` | BUG-22: expose retry_queue module |
+| `src-tauri/src/materializer/retry_queue.rs` (new, 580 LOC) | BUG-22: persistent queue + sweeper + 11 tests |
+| `src-tauri/migrations/0028_materializer_retry_queue.sql` (new) | BUG-22: table + index |
+| `src-tauri/migrations/0029_seed_todo_state_cancelled.sql` (new) | UX-202: seed CANCELLED option (renamed from 0028 at orchestrator merge to avoid collision with BUG-22's migration) |
+| `src-tauri/src/soft_delete/{trash,restore,mod}.rs` | MAINT-45: CTE filter additions + depth bound |
+| `src-tauri/src/sync_scheduler.rs` | MAINT-24: `failure_counts()` method |
+| `src-tauri/src/tag_inheritance.rs` | MAINT-45: module-level CTE policy doc + `apply_op_tag_inheritance` dispatcher + 3 tests |
+| `src-tauri/src/lib.rs` | BUG-22: spawn sweeper; MAINT-16: `#[cfg(not(mobile))]` gate on updater plugin |
+| `src-tauri/src/op.rs` | UX-217: `reversed_op_type: String` in UndoResult |
+| `src-tauri/src/commands/history.rs` | UX-217: populate `reversed_op_type` in 3 paths |
+| `src-tauri/src/command_integration_tests/{block,undo}_integration.rs` | TEST-34, UX-217 assertions |
+| `src-tauri/src/commands/tests/{undo_redo,page_cmd,status_cmd}_tests.rs` | UX-217, BUG-20 fallout |
+| `src-tauri/tests/AGENTS.md` | MAINT-7: snapshot dirs + `command_integration_tests/` |
+| `src-tauri/src/snapshots/*.snap` (3 deleted) | TEST-37: stale pagination snapshots |
+| `src-tauri/.sqlx/` | ~13 new query cache entries |
+| `src/lib/bindings.ts` | Regenerated: UndoResult `reversed_op_type`, extended StatusInfo |
+| `src/App.tsx` | UX-220: focusRegistry.focus() fallback to mainContentRef |
+| `src/main.tsx` | UX-220: wrap in PrimaryFocusProvider |
+| `src/hooks/usePrimaryFocus.tsx` (new) | UX-220: registry hook + 10 tests |
+| `src/hooks/useUndoShortcuts.ts` + tests | UX-217: op-context toasts + 14 tests |
+| `src/hooks/useBlockProperties.ts` + tests | UX-202: locked TASK_CYCLE with CANCELLED |
+| `src/hooks/useBlockSlashCommands.ts` | UX-202: cancelled slash command |
+| `src/components/{SearchPanel,PageBrowser,HistoryView,JournalPage}.tsx` | UX-220: register primary focus refs |
+| `src/components/{TaskStatesSection,__tests__/TaskStatesSection}.tsx` (deleted) | UX-202: remove custom task-state UI |
+| `src/components/{SettingsView,PropertiesView}.tsx` + tests | UX-202: remove TaskStatesSection consumers |
+| `src/components/{BlockInlineControls,SortableBlock}.tsx` + tests | UX-202: CANCELLED visuals + strikethrough |
+| `src/components/ui/status-icon.tsx` + tests | UX-202: XCircle icon for CANCELLED |
+| `src/components/__tests__/AgendaFilterBuilder.test.tsx` | UX-202: locked-cycle tests |
+| `src/index.css` | UX-202: `--task-cancelled` token |
+| `src/lib/i18n.ts` | UX-217 (22 keys) + UX-202 |
+| `src/lib/agenda-sort.ts` + `filter-dimension-metadata.ts` + tests | UX-202 |
+| `src/lib/tauri.ts` | UX-217: UndoResult field |
+| `src/__tests__/mocks/sonner.ts` (new) | MAINT-6: shared mock |
+| `src/test-setup.ts` | MAINT-6: global vi.mock('sonner') |
+| 49 test files across `src/components/__tests__/`, `src/hooks/__tests__/`, `src/stores/__tests__/` | MAINT-6: remove inline sonner mocks |
+| `src/components/__tests__/{TagList,PairingEntryForm,PairingPeersList}.test.tsx` | TEST-30: tightened DOM assertions |
+| `src/components/__tests__/{LinkEditPopover,KeyboardSettingsTab}.test.tsx` | TEST-27/28: i18n key migration |
+| `e2e/agenda-advanced.spec.ts` + `e2e/templates.spec.ts` + `e2e/helpers.ts` | TEST-26/29 |
+| `e2e/graph-view.spec.ts` | TEST-33: test.slow() at suite level, remove 5 per-assertion timeouts |
+| `src/lib/__tests__/tauri-mock.test.ts` | TEST-31: fake timers in beforeEach |
+| `REVIEW-LATER.md` | Removed 21 items, count 43→22 |
+| `SESSION-LOG.md` | This session |
+
+### Stats
+
+- ~90 files changed (largest session so far by scope)
+- Backend: 2108 Rust tests pass (+28 new: 11 retry_queue + 3 status + 3 tag_inheritance + 2 slow-acquire + 3 tracing spans + 6 UX-217 integration)
+- Frontend: ~3400 tests pass across touched directories (+40 new)
+- 5 parallel build subagents + 5 review subagents. All APPROVE (with ≤4 optional nitpicks — none blocking)
+- 5 worktrees used. A+B overlapping files in `crud.rs` + `consumer.rs` merged manually.
+- Specta bindings regenerated after merge. Cargo check clean.
+- Known pre-existing flaky: `adaptive_fts_threshold_large_corpus` at high nextest parallelism (unchanged); `Sidebar.test.tsx` + `BacklinkFilterBuilder.test.tsx` under full-suite load (confirmed pre-existing by git stash experiment).
+
+
 ## Session 407 — Backend validation, sync daemon dormancy, keyboard rebinding, UX polish (2026-04-18)
 
 **13 items resolved (BUG-18, BUG-20, UX-200, UX-204, UX-206, UX-213, PERF-21, PERF-22, PERF-25, MAINT-17, MAINT-39, MAINT-40, MAINT-42). REVIEW-LATER 56→43.**

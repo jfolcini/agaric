@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO materializer_retry_queue (block_id, task_type, attempts, next_attempt_at) VALUES (?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "717ae21489838febb1f05b68b5ad2fc76bf657aa6ef0ca626f1b136da335f53a"
+}

@@ -181,6 +181,12 @@ pub const DEFAULT_RETENTION_DAYS: u64 = 90;
 /// DELETE in phase 3 is bounded by *both* `created_at < cutoff` *and*
 /// `seq <= up_to_seqs[device_id]`, so ops that were not yet visible during
 /// the read phase can never be deleted.
+///
+/// MAINT-21: instrumented with a `compact_op_log` span that mirrors the
+/// `#[instrument]` wrapper on the Tauri command in `commands/compaction.rs`,
+/// so the `retention_days`, `eligible_ops`, `ops_deleted`, and timing log
+/// lines emitted from this function all share a common span prefix.
+#[tracing::instrument(skip(pool), err)]
 pub async fn compact_op_log(
     pool: &SqlitePool,
     device_id: &str,

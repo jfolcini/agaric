@@ -16,6 +16,7 @@ use crate::fts;
 use crate::materializer::Materializer;
 use crate::materializer::StatusInfo;
 use crate::pagination::{self, BlockRow, PageResponse};
+use crate::sync_scheduler::SyncScheduler;
 
 use super::*;
 
@@ -43,9 +44,12 @@ pub async fn get_conflicts_inner(
 }
 
 /// Return current materializer queue metrics and system status.
-#[instrument(skip(materializer))]
-pub fn get_status_inner(materializer: &Materializer) -> StatusInfo {
-    materializer.status()
+#[instrument(skip(materializer, scheduler))]
+pub async fn get_status_inner(
+    materializer: &Materializer,
+    scheduler: Option<&SyncScheduler>,
+) -> StatusInfo {
+    materializer.status_with_scheduler(scheduler).await
 }
 
 /// Full-text search across block content using FTS5.
@@ -246,8 +250,11 @@ pub async fn get_conflicts(
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
-pub async fn get_status(materializer: State<'_, Materializer>) -> Result<StatusInfo, AppError> {
-    Ok(get_status_inner(&materializer))
+pub async fn get_status(
+    materializer: State<'_, Materializer>,
+    scheduler: State<'_, std::sync::Arc<SyncScheduler>>,
+) -> Result<StatusInfo, AppError> {
+    Ok(get_status_inner(&materializer, Some(scheduler.as_ref())).await)
 }
 
 /// Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`].

@@ -21,7 +21,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PropertyRow } from '../../lib/tauri'
 import { usePropertySave } from '../usePropertySave'
 
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 vi.mock('../../lib/announcer', () => ({ announce: vi.fn() }))
 
 const mockedInvoke = vi.mocked(invoke)

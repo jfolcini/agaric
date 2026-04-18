@@ -92,9 +92,12 @@ async fn snapshot_status_info_response() {
     // loops before taking a snapshot of the status fields.
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-    let status = get_status_inner(&mat);
+    let status = get_status_inner(&mat, None).await;
 
-    insta::assert_yaml_snapshot!(status);
+    insta::assert_yaml_snapshot!(status, {
+        ".last_materialize_at" => "[TIMESTAMP]",
+        ".time_since_last_materialize_secs" => "[SECS]",
+    });
 }
 
 /// Snapshot a PageResponse<HistoryEntry> from get_block_history_inner.

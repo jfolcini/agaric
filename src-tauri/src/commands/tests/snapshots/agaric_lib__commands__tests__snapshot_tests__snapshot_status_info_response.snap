@@ -1,6 +1,6 @@
 ---
-source: src/commands.rs
-assertion_line: 4106
+source: src/commands/tests/snapshot_tests.rs
+assertion_line: 97
 expression: status
 ---
 foreground_queue_depth: 0
@@ -13,3 +13,11 @@ fg_errors: 0
 bg_errors: 0
 fg_panics: 0
 bg_panics: 0
+bg_dropped: 0
+bg_deduped: 0
+fg_full_waits: 0
+last_materialize_at: "[TIMESTAMP]"
+time_since_last_materialize_secs: "[SECS]"
+total_ops_in_log: 0
+sync_peer_failure_counts: []
+retry_queue_pending: 0

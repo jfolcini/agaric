@@ -218,6 +218,9 @@ pub struct OpRef {
 pub struct UndoResult {
     /// The op that was reversed (the original op for undo, the undo-op for redo).
     pub reversed_op: OpRef,
+    /// The op_type of the reversed op (e.g. `create_block`, `edit_block`, `set_property`).
+    /// Used by the frontend to show a descriptive toast ("Undid create", "Undid edit", etc.).
+    pub reversed_op_type: String,
     /// The newly appended reverse op.
     pub new_op_ref: OpRef,
     /// The op_type of the newly appended op.

@@ -305,7 +305,17 @@ async fn list_peer_refs_or_empty(pool: &SqlitePool, cycle: &'static str) -> Vec<
 /// Respects the scheduler's per-peer backoff (#278) and mutual-exclusion
 /// lock.  On success the backoff is reset; on failure a failure is recorded
 /// which doubles the next retry delay.
+///
+/// MAINT-21: wrapped in a `sync` span so every log line emitted during the
+/// session (including those from nested `run_sync_session`,
+/// `SyncOrchestrator::handle_message`, and file-transfer helpers) shares a
+/// `sync{peer=ULID}` prefix when the tracing subscriber includes span info.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(
+    skip_all,
+    fields(peer = %peer.device_id),
+    name = "sync",
+)]
 pub(crate) async fn try_sync_with_peer(
     pool: &SqlitePool,
     device_id: &str,

@@ -192,7 +192,7 @@ describe('PairingEntryForm', () => {
     render(<PairingEntryForm {...defaultProps} />)
 
     const grid = document.querySelector('.pairing-word-inputs')
-    expect(grid).toBeTruthy()
+    expect(grid).toBeInTheDocument()
     expect(grid?.classList.contains('grid-cols-2')).toBe(true)
     expect(grid?.classList.contains('sm:grid-cols-4')).toBe(true)
   })

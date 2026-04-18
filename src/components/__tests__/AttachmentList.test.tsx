@@ -24,13 +24,6 @@ import {
 } from '../../stores/page-blocks'
 import { AttachmentList, formatSize } from '../AttachmentList'
 
-vi.mock('sonner', () => ({
-  toast: Object.assign(vi.fn(), {
-    error: vi.fn(),
-    success: vi.fn(),
-  }),
-}))
-
 const mockedInvoke = vi.mocked(invoke)
 const mockedToast = vi.mocked(toast)
 const mockedToastSuccess = vi.mocked(toast.success)

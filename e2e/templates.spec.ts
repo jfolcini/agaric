@@ -315,8 +315,10 @@ test.describe('Journal template toggle', () => {
     await openKebabMenu(page)
     await page.getByText('Set as journal template').click()
 
-    // Wait for toast (indication of success)
-    await page.waitForTimeout(500)
+    // Deterministic wait: the click closes the menu, indicating the
+    // command dispatched. The in-memory mock backend applies the state
+    // change synchronously after dispatch.
+    await expect(page.locator('[role="menu"]')).not.toBeVisible()
 
     // Re-open kebab
     await openKebabMenu(page)

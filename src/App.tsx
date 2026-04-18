@@ -62,6 +62,7 @@ import { Toaster } from './components/ui/sonner'
 import { WelcomeModal } from './components/WelcomeModal'
 import { useItemCount } from './hooks/useItemCount'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
+import { usePrimaryFocusRegistry } from './hooks/usePrimaryFocus'
 import { useScrollRestore } from './hooks/useScrollRestore'
 import { useSyncEvents } from './hooks/useSyncEvents'
 import { useSyncTrigger } from './hooks/useSyncTrigger'
@@ -221,11 +222,20 @@ function App() {
   }, [])
 
   // ── Focus main content when view changes ──────────────────────────
+  // Each view can register its preferred primary-focus element (search
+  // input, first list item, first block, etc.) via `useRegisterPrimaryFocus`.
+  // We defer one rAF so the new view has mounted and registered its ref
+  // before we attempt `focus()`; if nothing registered, fall back to the
+  // generic main-content container.
+  const focusRegistry = usePrimaryFocusRegistry()
   // biome-ignore lint/correctness/useExhaustiveDependencies: currentView IS the trigger — we focus when the view changes
   useEffect(() => {
     // Small delay to let the new view render before moving focus
     const id = requestAnimationFrame(() => {
-      mainContentRef.current?.focus({ preventScroll: true })
+      const focusedPrimary = focusRegistry?.focus() ?? false
+      if (!focusedPrimary) {
+        mainContentRef.current?.focus({ preventScroll: true })
+      }
     })
     return () => cancelAnimationFrame(id)
   }, [currentView])

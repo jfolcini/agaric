@@ -2,8 +2,8 @@
  * Tests for SettingsView component (F-30).
  *
  * Validates:
- *  - Renders with 4 tabs
- *  - General tab shows task states section
+ *  - Renders with 6 tabs
+ *  - General tab shows deadline warning section (UX-202: TaskStatesSection removed)
  *  - Properties tab shows property definitions
  *  - Appearance tab shows theme toggle
  *  - Sync tab shows device management
@@ -21,9 +21,6 @@ import { t } from '../../lib/i18n'
 import { SettingsView } from '../SettingsView'
 
 // Mock child components to isolate SettingsView logic
-vi.mock('../TaskStatesSection', () => ({
-  TaskStatesSection: () => <div data-testid="task-states-section">Task States</div>,
-}))
 
 vi.mock('../DeadlineWarningSection', () => ({
   DeadlineWarningSection: () => <div data-testid="deadline-warning-section">Deadline Warning</div>,
@@ -47,13 +44,6 @@ vi.mock('../KeyboardSettingsTab', () => ({
 
 vi.mock('../DataSettingsTab', () => ({
   DataSettingsTab: () => <div data-testid="data-settings-tab">Data Settings Content</div>,
-}))
-
-vi.mock('sonner', () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-  },
 }))
 
 // Mock the Select component (same pattern as PropertiesView tests)
@@ -129,10 +119,10 @@ describe('SettingsView', () => {
     expect(tabs[5]).toHaveTextContent(t('settings.tabSync'))
   })
 
-  it('General tab shows task states section by default', () => {
+  it('General tab shows deadline warning section by default (UX-202: no TaskStatesSection)', () => {
     render(<SettingsView />)
 
-    expect(screen.getByTestId('task-states-section')).toBeInTheDocument()
+    expect(screen.queryByTestId('task-states-section')).not.toBeInTheDocument()
     expect(screen.getByTestId('deadline-warning-section')).toBeInTheDocument()
   })
 
@@ -179,7 +169,7 @@ describe('SettingsView', () => {
     // Default: General tab is active
     const generalTab = screen.getByRole('tab', { name: t('settings.tabGeneral') })
     expect(generalTab).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByTestId('task-states-section')).toBeInTheDocument()
+    expect(screen.getByTestId('deadline-warning-section')).toBeInTheDocument()
 
     // Switch to Properties
     const propertiesTab = screen.getByRole('tab', { name: t('settings.tabProperties') })
@@ -187,7 +177,7 @@ describe('SettingsView', () => {
     expect(propertiesTab).toHaveAttribute('aria-selected', 'true')
     expect(generalTab).toHaveAttribute('aria-selected', 'false')
     expect(screen.getByTestId('property-definitions-list')).toBeInTheDocument()
-    expect(screen.queryByTestId('task-states-section')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('deadline-warning-section')).not.toBeInTheDocument()
 
     // Switch to Appearance
     const appearanceTab = screen.getByRole('tab', { name: t('settings.tabAppearance') })

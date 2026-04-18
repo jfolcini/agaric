@@ -125,7 +125,7 @@ describe('KeyboardSettingsTab', () => {
     await user.clear(input)
     await user.type(input, 'Ctrl + P')
 
-    const saveButton = screen.getByRole('button', { name: 'Save' })
+    const saveButton = screen.getByRole('button', { name: t('keyboard.settings.saveButton') })
     await user.click(saveButton)
 
     expect(mockSetCustomShortcut).toHaveBeenCalledWith('prevBlock', 'Ctrl + P')
@@ -142,7 +142,7 @@ describe('KeyboardSettingsTab', () => {
     await user.clear(input)
     await user.type(input, 'Ctrl + P')
 
-    const cancelButton = screen.getByRole('button', { name: 'Cancel' })
+    const cancelButton = screen.getByRole('button', { name: t('keyboard.settings.cancelButton') })
     await user.click(cancelButton)
 
     // Should not have called setCustomShortcut
@@ -235,7 +235,7 @@ describe('KeyboardSettingsTab', () => {
     await user.clear(input)
 
     // The save button should be disabled
-    const saveButton = screen.getByRole('button', { name: 'Save' })
+    const saveButton = screen.getByRole('button', { name: t('keyboard.settings.saveButton') })
     expect(saveButton).toBeDisabled()
 
     // Empty binding message should be visible

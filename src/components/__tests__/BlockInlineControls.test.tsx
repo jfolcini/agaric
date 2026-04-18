@@ -45,6 +45,9 @@ vi.mock('lucide-react', () => ({
       className={props.className}
     />
   ),
+  X: (props: { size: number; className?: string }) => (
+    <svg data-testid="x-icon" width={props.size} height={props.size} className={props.className} />
+  ),
 }))
 
 vi.mock('@/components/ui/chevron-toggle', () => ({
@@ -194,6 +197,16 @@ describe('TaskCheckbox', () => {
     const { container } = render(<TaskCheckbox state="DONE" />)
     expect(container.querySelector('.task-checkbox-done')).toBeInTheDocument()
     expect(screen.getByTestId('check-icon')).toBeInTheDocument()
+  })
+
+  it('renders CANCELLED style with X icon (UX-202)', () => {
+    const { container } = render(<TaskCheckbox state="CANCELLED" />)
+    const checkbox = container.querySelector('.task-checkbox-cancelled')
+    expect(checkbox).toBeInTheDocument()
+    expect(checkbox?.getAttribute('class')).toContain('border-task-cancelled')
+    expect(checkbox?.getAttribute('data-testid')).toBe('task-checkbox-cancelled')
+    // X icon glyph should be present
+    expect(screen.getByTestId('x-icon')).toBeInTheDocument()
   })
 
   it('renders custom style for unknown state', () => {

@@ -100,9 +100,6 @@ vi.mock('lucide-react', () => ({
   Plus: () => <svg data-testid="plus-icon" />,
 }))
 
-// ── Mock sonner ─────────────────────────────────────────────────────
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
-
 import { toast } from 'sonner'
 
 import { useBlockStore } from '../../stores/blocks'

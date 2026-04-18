@@ -62,6 +62,11 @@ pub(crate) fn verify_peer_cert(
 /// the remote device identity: if the scheduler already holds a lock for
 /// that peer (e.g. an outbound initiator-mode session is in progress) the
 /// connection is rejected with an `Error` message.
+///
+/// MAINT-21: wrapped in a `sync_resp` span so every log line emitted during
+/// an inbound responder session (including nested orchestrator
+/// `sync_msg{...}` child spans) is tagged with the responder session prefix.
+#[tracing::instrument(skip_all, name = "sync_resp")]
 pub(crate) async fn handle_incoming_sync(
     mut conn: SyncConnection,
     pool: sqlx::SqlitePool,

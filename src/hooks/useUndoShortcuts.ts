@@ -29,6 +29,17 @@ async function refreshAfterUndoRedo(pageId: string): Promise<void> {
   }
 }
 
+/**
+ * Convert a backend op_type string (snake_case, e.g. `create_block`) into the
+ * camelCase form used in i18n keys (e.g. `createBlock`). Required because the
+ * i18n key schema allows only `namespace.name` alphanumerics. Returns empty
+ * string for nullish input so the caller falls back to the generic message.
+ */
+function snakeToCamel(s: string | null | undefined): string {
+  if (typeof s !== 'string') return ''
+  return s.replace(/_([a-z0-9])/g, (_, ch: string) => ch.toUpperCase())
+}
+
 export function useUndoShortcuts(): void {
   const { t } = useTranslation()
   useEffect(() => {
@@ -54,7 +65,10 @@ export function useUndoShortcuts(): void {
           .undo(pageId)
           .then(async (result) => {
             if (result) {
-              toast(t('undo.undoneMessage'), { duration: 1500 })
+              // Use per-op-type translation; fall back to generic "Undone" if unknown.
+              const opKey = `undo.op.${snakeToCamel(result.reversed_op_type)}`
+              const message = t(opKey, { defaultValue: t('undo.undoneMessage') })
+              toast(message, { duration: 1500 })
               await refreshAfterUndoRedo(pageId)
             }
           })
@@ -73,7 +87,10 @@ export function useUndoShortcuts(): void {
           .redo(pageId)
           .then(async (result) => {
             if (result) {
-              toast(t('undo.redoneMessage'), { duration: 1500 })
+              // Use per-op-type translation; fall back to generic "Redone" if unknown.
+              const opKey = `redo.op.${snakeToCamel(result.reversed_op_type)}`
+              const message = t(opKey, { defaultValue: t('undo.redoneMessage') })
+              toast(message, { duration: 1500 })
               await refreshAfterUndoRedo(pageId)
             }
           })

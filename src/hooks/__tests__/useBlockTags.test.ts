@@ -26,8 +26,6 @@ import { useResolveStore } from '../../stores/resolve'
 import { useUndoStore } from '../../stores/undo'
 import { useBlockTags } from '../useBlockTags'
 
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
-
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
 

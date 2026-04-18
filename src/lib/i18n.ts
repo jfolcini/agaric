@@ -734,7 +734,7 @@ const resources = {
       'keyboard.mergeWithPrevious': 'Merge with previous',
       'keyboard.indentBlock': 'Indent block',
       'keyboard.dedentBlock': 'Dedent block',
-      'keyboard.cycleTaskState': 'Cycle task state (TODO → DOING → DONE → none)',
+      'keyboard.cycleTaskState': 'Cycle task state (TODO → DOING → CANCELLED → DONE → none)',
       'keyboard.collapseExpandChildren': 'Collapse / expand children',
       'keyboard.insertOrEditLink': 'Insert or edit external link',
       'keyboard.toggleCodeBlock': 'Toggle code block',
@@ -1272,6 +1272,32 @@ const resources = {
       'undo.undoFailedMessage': 'Undo failed',
       'undo.redoneMessage': 'Redone',
       'undo.redoFailedMessage': 'Redo failed',
+      // Per-op-type toast messages for undo. Keys are camelCase of the
+      // backend op_type string (e.g. `create_block` → `createBlock`). The
+      // frontend applies `snakeToCamel` before lookup.
+      'undo.op.createBlock': 'Undid create block',
+      'undo.op.editBlock': 'Undid edit',
+      'undo.op.deleteBlock': 'Undid delete',
+      'undo.op.restoreBlock': 'Undid restore',
+      'undo.op.moveBlock': 'Undid move',
+      'undo.op.setProperty': 'Undid property change',
+      'undo.op.deleteProperty': 'Undid property change',
+      'undo.op.addTag': 'Undid tag',
+      'undo.op.removeTag': 'Undid tag',
+      'undo.op.addAttachment': 'Undid attachment',
+      'undo.op.deleteAttachment': 'Undid attachment',
+      // Per-op-type toast messages for redo.
+      'redo.op.createBlock': 'Redid create block',
+      'redo.op.editBlock': 'Redid edit',
+      'redo.op.deleteBlock': 'Redid delete',
+      'redo.op.restoreBlock': 'Redid restore',
+      'redo.op.moveBlock': 'Redid move',
+      'redo.op.setProperty': 'Redid property change',
+      'redo.op.deleteProperty': 'Redid property change',
+      'redo.op.addTag': 'Redid tag',
+      'redo.op.removeTag': 'Redid tag',
+      'redo.op.addAttachment': 'Redid attachment',
+      'redo.op.deleteAttachment': 'Redid attachment',
 
       // Block tree
       'blockTree.updateFailedMessage': '{{failCount}} of {{totalCount}} failed to update',

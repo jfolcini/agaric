@@ -18,10 +18,6 @@ import { axe } from 'vitest-axe'
 import type { PeerRefRow } from '../../lib/tauri'
 import { PeerListItem } from '../PeerListItem'
 
-vi.mock('sonner', () => ({
-  toast: { error: vi.fn(), success: vi.fn() },
-}))
-
 const mockedInvoke = vi.mocked(invoke)
 
 function makePeer(overrides: Partial<PeerRefRow> = {}): PeerRefRow {

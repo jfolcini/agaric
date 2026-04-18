@@ -27,13 +27,6 @@ import { axe } from 'vitest-axe'
 import { useResolveStore } from '../../stores/resolve'
 import { TrashView } from '../TrashView'
 
-vi.mock('sonner', () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-  },
-}))
-
 vi.mock('../StaticBlock', () => ({
   renderRichContent: vi.fn((markdown: string) => markdown),
 }))

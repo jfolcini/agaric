@@ -191,9 +191,14 @@ Tests complete flows across multiple modules. Seven groups:
 
 Uses `create_content()` shorthand and `settle_bg_tasks()` between materializer-triggering operations.
 
-### `command_integration_tests.rs` — API contract tests
+### `command_integration_tests/` — API contract tests
 
-Tests every `*_inner` function's contract: inputs, outputs, error variants. Organized by command (create_block, edit_block, delete_block, restore_block, purge_block, move_block, list_blocks, get_block, add_tag, remove_tag, search_blocks, query_by_tags, properties, etc.).
+Tests every `*_inner` function's contract: inputs, outputs, error variants.
+Organized by command across the 11 files in the
+`src/command_integration_tests/` module directory (create_block, edit_block,
+delete_block, restore_block, purge_block, move_block, list_blocks,
+get_block, add_tag, remove_tag, search_blocks, query_by_tags, properties,
+etc.).
 
 **When to add here:** When adding a new Tauri command or changing an existing command's behavior. Every command gets:
 - Happy path (correct fields returned, DB persistence verified)
@@ -209,7 +214,7 @@ Tests sync message serialization, peer communication flows, and conflict resolut
 
 ### Key difference
 
-| Aspect | `integration_tests.rs` | `command_integration_tests.rs` | `sync_integration_tests.rs` |
+| Aspect | `integration_tests.rs` | `command_integration_tests/` | `sync_integration_tests.rs` |
 |--------|----------------------|-------------------------------|---------------------------|
 | Focus | Cross-module pipelines | Single command API contracts | Sync protocol flows |
 | Scope | End-to-end state flows | Command boundary behavior | Peer-to-peer data exchange |
@@ -229,10 +234,25 @@ Tests sync message serialization, peer communication flows, and conflict resolut
 
 ### Where snapshots live
 
-`src/snapshots/` — `.snap` files. Naming: `agaric_lib__<module>__tests__<test_name>.snap`.
+Insta `.snap` files live alongside the code they test. Four directories
+currently hold snapshots:
+
+- **`src/snapshots/`** — snapshots for modules whose tests are inline in
+  `src/<module>.rs` (`op`, `op_log`, plus a small set of `pagination`
+  historical snapshots — see TEST-37 for the three duplicated files
+  staged for deletion).
+- **`src/backlink/snapshots/`** — `backlink` module tests.
+- **`src/commands/tests/snapshots/`** — `commands` submodule tests
+  (BlockResponse, DeleteResponse, PageResponse, StatusInfo, HistoryEntry).
+- **`src/pagination/snapshots/`** — current `pagination::tests` snapshots.
+
+Naming: `agaric_lib__<module>__tests__<test_name>.snap`. If you add a new
+snapshot-testing module, create a sibling `snapshots/` directory next to
+the module file rather than piling into `src/snapshots/`.
 
 ### Modules using snapshots
 
+- **`backlink`** — snapshot tests for backlink query results
 - **`commands`** — BlockResponse, DeleteResponse, PageResponse, StatusInfo, HistoryEntry
 - **`op`** — JSON serialization of all 12 OpPayload variants
 - **`op_log`** — OpRecord after append, get_ops_since results
@@ -395,7 +415,7 @@ criterion_main!(benches);
 
 6. **Specta bindings drift** — If you change Rust types used in Tauri commands, the `ts_bindings_up_to_date` test will fail. Regenerate: `cargo test -p agaric-lib -- specta_tests --ignored`.
 
-7. **Integration test files are `mod` includes, not separate binaries** — `integration_tests.rs`, `command_integration_tests.rs`, and `sync_integration_tests.rs` are `#[cfg(test)] mod` in `lib.rs`. They share the same test binary as unit tests.
+7. **Integration test files are `mod` includes, not separate binaries** — `integration_tests.rs`, the `command_integration_tests/` module directory (11 files), and `sync_integration_tests.rs` are `#[cfg(test)] mod` in `lib.rs`. They share the same test binary as unit tests.
 
 8. **Test helper duplication is intentional** — Each module defines its own `test_pool()`, `insert_block()`, etc. This is by design: tests are self-contained, no shared test utility crate.
 

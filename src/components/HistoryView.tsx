@@ -18,6 +18,7 @@ import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '../hooks/useListMultiSelect'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
+import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
 import { formatTimestamp } from '../lib/format'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 import type { HistoryEntry } from '../lib/tauri'
@@ -59,6 +60,10 @@ export function HistoryView(): React.ReactElement {
   )
 
   const listRef = useRef<HTMLDivElement>(null)
+  // Register the list container as the primary focus target so switching to
+  // History via sidebar lands focus on the entries list (not #main-content),
+  // letting the user immediately arrow-navigate (UX-220).
+  useRegisterPrimaryFocus(listRef)
 
   // ── Data loading ─────────────────────────────────────────────────
   const queryFn = useCallback(
@@ -317,7 +322,8 @@ export function HistoryView(): React.ReactElement {
       {entries.length > 0 && (
         <div
           ref={listRef}
-          className="history-list space-y-2 p-0 m-0"
+          tabIndex={-1}
+          className="history-list space-y-2 p-0 m-0 focus:outline-none"
           role="listbox"
           aria-label={t('history.entriesLabel')}
           aria-multiselectable="true"

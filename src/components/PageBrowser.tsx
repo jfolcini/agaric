@@ -36,6 +36,7 @@ import { cn } from '@/lib/utils'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePageDelete } from '../hooks/usePageDelete'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
+import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
 import type { BlockRow } from '../lib/tauri'
 import { createBlock, listBlocks, resolvePageByAlias } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
@@ -96,6 +97,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const [aliasMatchId, setAliasMatchId] = useState<string | null>(null)
   const formRef = useRef<HTMLFormElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const newPageInputRef = useRef<HTMLInputElement>(null)
+  // Register the "new page" input as the primary-focus target for this view
+  // so switching to Pages via sidebar lands the cursor in the create form
+  // instead of the generic #main-content container (UX-220).
+  useRegisterPrimaryFocus(newPageInputRef)
   // Tracks the handleCreateUnder focus setTimeout so we can cancel it on
   // unmount and avoid focusing a stale DOM node (#MAINT-14).
   const pendingFocusRef = useRef<number | null>(null)
@@ -310,6 +316,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
             {t('pageBrowser.createPageInputLabel')}
           </Label>
           <Input
+            ref={newPageInputRef}
             id="new-page-name"
             value={newPageName}
             onChange={(e) => setNewPageName(e.target.value)}
