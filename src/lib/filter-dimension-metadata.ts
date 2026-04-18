@@ -1,4 +1,5 @@
 import { i18n } from './i18n'
+import { logger } from './logger'
 
 export type AgendaFilterDimension =
   | 'status'
@@ -20,7 +21,9 @@ export function getTaskStates(): string[] {
         return parsed.filter((s): s is string => typeof s === 'string' && s.length > 0)
       }
     }
-  } catch {}
+  } catch (err) {
+    logger.warn('filter-dimension-metadata', 'failed to read task_cycle from localStorage', {}, err)
+  }
   return ['TODO', 'DOING', 'DONE']
 }
 

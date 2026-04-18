@@ -88,6 +88,10 @@ function extractCauseChain(cause: unknown, maxDepth = 3): CauseInfo[] {
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
 const RATE_LIMIT = 5
 const RATE_WINDOW_MS = 60_000
+// Opportunistic eviction threshold: when the map grows beyond this, sweep
+// expired entries in one pass. Amortized cost is bounded; under realistic
+// workloads the map stabilizes well below this ceiling.
+const RATE_LIMIT_MAP_SWEEP_THRESHOLD = 1000
 
 /**
  * Check whether a log entry with the given module+message key is rate-limited.
@@ -99,6 +103,13 @@ function isRateLimited(module: string, message: string): boolean {
   const entry = rateLimitMap.get(key)
 
   if (!entry || now >= entry.resetAt) {
+    // Opportunistic sweep of expired entries — avoids unbounded growth for
+    // long-running sessions that churn `module:message` keys (MAINT-31).
+    if (rateLimitMap.size > RATE_LIMIT_MAP_SWEEP_THRESHOLD) {
+      for (const [k, v] of rateLimitMap) {
+        if (now >= v.resetAt) rateLimitMap.delete(k)
+      }
+    }
     rateLimitMap.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS })
     return false
   }

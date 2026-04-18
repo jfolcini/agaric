@@ -981,3 +981,76 @@ async fn count_backlinks_batch_excludes_conflict_source_blocks() {
         "only the non-conflict source block should be counted"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_backlinks_batch_single_id_returns_expected_count() {
+    // Regression test for PERF-17: json_each conversion preserves single-ID semantics.
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "SNG_TGT", "page", "target", None, None).await;
+    insert_block(&pool, "SNG_SRC1", "content", "src1", None, None).await;
+    insert_block(&pool, "SNG_SRC2", "content", "src2", None, None).await;
+    insert_block(&pool, "SNG_SRC3", "content", "src3", None, None).await;
+
+    for src in ["SNG_SRC1", "SNG_SRC2", "SNG_SRC3"] {
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(src)
+            .bind("SNG_TGT")
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let result = count_backlinks_batch_inner(&pool, vec!["SNG_TGT".into()])
+        .await
+        .unwrap();
+
+    assert_eq!(result.len(), 1, "result must contain exactly one entry");
+    assert_eq!(
+        result.get("SNG_TGT"),
+        Some(&3),
+        "single ID must return correct count"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_backlinks_batch_large_input_beyond_sqlite_param_limit() {
+    // Regression test for PERF-17: json_each avoids the SQLite ~999 bind-parameter
+    // limit that the old `IN (?, ?, …)` format-string approach hit at scale.
+    let (pool, _dir) = test_pool().await;
+
+    // Seed 3 real target pages with backlinks, then request counts for 1200 IDs.
+    insert_block(&pool, "BIG_TGT1", "page", "target 1", None, None).await;
+    insert_block(&pool, "BIG_TGT2", "page", "target 2", None, None).await;
+    insert_block(&pool, "BIG_SRC1", "content", "src 1", None, None).await;
+    insert_block(&pool, "BIG_SRC2", "content", "src 2", None, None).await;
+
+    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind("BIG_SRC1")
+        .bind("BIG_TGT1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind("BIG_SRC2")
+        .bind("BIG_TGT1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind("BIG_SRC1")
+        .bind("BIG_TGT2")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut ids: Vec<String> = (0..1200).map(|i| format!("MISSING_{i:04}")).collect();
+    ids.push("BIG_TGT1".into());
+    ids.push("BIG_TGT2".into());
+
+    let result = count_backlinks_batch_inner(&pool, ids).await.unwrap();
+
+    assert_eq!(result.len(), 2, "only two IDs have backlinks");
+    assert_eq!(result.get("BIG_TGT1"), Some(&2), "BIG_TGT1 has 2 backlinks");
+    assert_eq!(result.get("BIG_TGT2"), Some(&1), "BIG_TGT2 has 1 backlink");
+}

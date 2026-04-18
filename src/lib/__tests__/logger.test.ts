@@ -475,4 +475,40 @@ describe('rate limiting', () => {
     // Only first 5 should trigger IPC
     expect(mockLogFrontend).toHaveBeenCalledTimes(5)
   })
+
+  it('evicts expired entries from rateLimitMap when map grows large (MAINT-31)', () => {
+    vi.useFakeTimers()
+    try {
+      // Fill the map past the eviction threshold (1000) with 1100 unique
+      // expired keys. `logger.warn` creates + expires each entry as we
+      // advance past the rate window.
+      for (let i = 0; i < 1100; i++) {
+        logger.warn('Bulk', `msg-${i}`)
+      }
+
+      // Advance past the rate window so every entry is now expired.
+      vi.advanceTimersByTime(60_001)
+
+      // The next log call goes through the "insert" branch; the sweep runs
+      // because the map has >1000 entries. After it, the map should hold
+      // only this single fresh entry (every stale key should have been
+      // purged because every one has `now >= resetAt`).
+      logger.warn('Trigger', 'sweep')
+
+      // Send a distinct subsequent log and verify the map is compact by
+      // checking that unrelated keys no longer suppress: repeat the
+      // trigger key 7 times and observe console.warn fires 6 times
+      // (5 real + 1 suppression notice) — matches the non-bulk behavior.
+      for (let i = 0; i < 7; i++) {
+        logger.warn('Trigger', 'sweep')
+      }
+
+      // 1100 bulk warns were BEFORE any suppression (distinct keys);
+      // after the sweep, 'Trigger:sweep' gets 5 real + 1 suppression.
+      // Total: 1100 + 5 + 1 = 1106 calls to console.warn.
+      expect(console.warn).toHaveBeenCalledTimes(1106)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

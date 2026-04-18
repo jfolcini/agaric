@@ -49,7 +49,7 @@ pub(crate) async fn daemon_loop(
     let mdns = match MdnsService::new() {
         Ok(m) => Some(m),
         Err(e) => {
-            tracing::warn!("mDNS initialization failed (peer discovery disabled): {e}");
+            tracing::warn!(error = %e, "mDNS initialization failed (peer discovery disabled)");
             tracing::info!("Sync will work via manual IP entry only");
             None
         }
@@ -70,7 +70,7 @@ pub(crate) async fn daemon_loop(
 
         tokio::spawn(async move {
             if let Err(e) = handle_incoming_sync(conn, pool, device_id, mat, sched, sink).await {
-                tracing::warn!("responder sync session failed: {e}");
+                tracing::warn!(error = %e, "responder sync session failed");
             }
         });
     })
@@ -80,7 +80,7 @@ pub(crate) async fn daemon_loop(
     if let Some(ref mdns) = mdns {
         match mdns.announce(&device_id, port) {
             Ok(_) => tracing::info!(port, "SyncDaemon started, mDNS announced"),
-            Err(e) => tracing::warn!("mDNS announce failed (peer discovery disabled): {e}"),
+            Err(e) => tracing::warn!(error = %e, "mDNS announce failed (peer discovery disabled)"),
         }
     } else {
         tracing::info!(
@@ -94,7 +94,7 @@ pub(crate) async fn daemon_loop(
         Some(ref mdns) => match mdns.browse() {
             Ok(rx) => Some(rx),
             Err(e) => {
-                tracing::warn!("mDNS browse failed (peer discovery disabled): {e}");
+                tracing::warn!(error = %e, "mDNS browse failed (peer discovery disabled)");
                 None
             }
         },
@@ -130,7 +130,7 @@ pub(crate) async fn daemon_loop(
             // Branch A: mDNS peer-discovery event (event-driven, no polling)
             Some(event) = mdns_rx.recv() => {
                 let refs = peer_refs::list_peer_refs(&pool).await.unwrap_or_else(|e| {
-                    tracing::warn!("list_peer_refs failed: {e}");
+                    tracing::warn!(error = %e, "list_peer_refs failed");
                     vec![]
                 });
                 if let Some(peer) = process_discovery_event(
@@ -155,7 +155,7 @@ pub(crate) async fn daemon_loop(
             // Branch B: debounced local-change notification
             _ = scheduler.wait_for_debounced_change() => {
                 let refs = peer_refs::list_peer_refs(&pool).await.unwrap_or_else(|e| {
-                    tracing::warn!("list_peer_refs failed: {e}");
+                    tracing::warn!(error = %e, "list_peer_refs failed");
                     vec![]
                 });
                 for peer_ref in &refs {
@@ -187,7 +187,7 @@ pub(crate) async fn daemon_loop(
                 discovered.retain(|_, (_, last_seen)| *last_seen > stale_threshold);
 
                 let refs = peer_refs::list_peer_refs(&pool).await.unwrap_or_else(|e| {
-                    tracing::warn!("list_peer_refs failed: {e}");
+                    tracing::warn!(error = %e, "list_peer_refs failed");
                     vec![]
                 });
                 let peer_tuples: Vec<(String, Option<String>)> = refs
@@ -227,7 +227,7 @@ pub(crate) async fn daemon_loop(
     server.shutdown().await;
     if let Some(mdns) = mdns {
         if let Err(e) = mdns.shutdown() {
-            tracing::warn!("mDNS shutdown error: {e}");
+            tracing::warn!(error = %e, "mDNS shutdown error");
         }
     }
     tracing::info!("SyncDaemon shut down cleanly");
@@ -321,7 +321,7 @@ pub(crate) async fn try_sync_with_peer(
             scheduler.record_success(peer_id);
             // Save the peer's address for future direct connections
             if let Err(e) = peer_refs::update_last_address(pool, peer_id, &addr).await {
-                tracing::warn!("failed to save peer address: {e}");
+                tracing::warn!(peer_id, error = %e, "failed to save peer address");
             }
             // TOFU: Store observed cert hash if none was stored (initiator side)
             if should_store_cert_hash(cert_hash.as_deref(), conn.peer_cert_hash().as_deref()) {
@@ -363,7 +363,7 @@ pub(crate) async fn try_sync_with_peer(
     // Cancel flag is cleared by `_cancel_guard` (Drop) on all exit paths.
 
     let _ = conn.close().await.map_err(|e| {
-        tracing::debug!("failed to close sync connection: {e}");
+        tracing::debug!(error = %e, "failed to close sync connection");
     });
 }
 

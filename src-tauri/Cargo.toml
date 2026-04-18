@@ -90,6 +90,8 @@ tempfile = "3.27.0"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
 
 [profile.release]
+lto = "thin"
+codegen-units = 1
 strip = "symbols"
 debug = false
 

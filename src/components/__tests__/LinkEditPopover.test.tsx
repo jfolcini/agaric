@@ -15,6 +15,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 import { LinkEditPopover, normalizeUrl } from '../LinkEditPopover'
 
 // ── Mock UI components ───────────────────────────────────────────────────
@@ -200,7 +201,7 @@ describe('LinkEditPopover', () => {
       const input = screen.getByTestId('link-url-input')
       expect(input).toBeInTheDocument()
       expect(input).toHaveAttribute('type', 'url')
-      expect(input).toHaveAttribute('placeholder', 'https://...')
+      expect(input).toHaveAttribute('placeholder', t('linkEdit.urlPlaceholder'))
       // autoFocus is set in the JSX
       expect(input).toHaveFocus()
     })

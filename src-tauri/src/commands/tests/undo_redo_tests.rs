@@ -3711,7 +3711,7 @@ async fn list_page_history_excludes_ops_on_conflict_copy_descendants() {
         .iter()
         .filter_map(|e| {
             let p: serde_json::Value = serde_json::from_str(&e.payload).ok()?;
-            p["block_id"].as_str().map(|s| s.to_owned())
+            p["block_id"].as_str().map(str::to_owned)
         })
         .map(|_| "")
         .collect();

@@ -188,7 +188,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         <Input
           value={newTagName}
           onChange={(e) => setNewTagName(e.target.value)}
-          placeholder="New tag name..."
+          placeholder={t('tagList.newTagPlaceholder')}
           aria-label={t('tagList.newTagLabel')}
           className="flex-1"
         />

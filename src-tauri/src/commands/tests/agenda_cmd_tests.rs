@@ -643,6 +643,139 @@ async fn count_agenda_batch_by_source_excludes_deleted() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_agenda_batch_by_source_single_date_returns_expected_counts() {
+    // Regression test for PERF-17: json_each conversion preserves single-date semantics.
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "SGL_BLK1", "content", "t1", None, None).await;
+    insert_block(&pool, "SGL_BLK2", "content", "t2", None, None).await;
+
+    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+        .bind("2025-10-01")
+        .bind("SGL_BLK1")
+        .bind("column:due_date")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+        .bind("2025-10-01")
+        .bind("SGL_BLK2")
+        .bind("column:due_date")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let result = count_agenda_batch_by_source_inner(&pool, vec!["2025-10-01".into()])
+        .await
+        .unwrap();
+
+    assert_eq!(result.len(), 1, "result contains exactly one date");
+    let day = result.get("2025-10-01").expect("date should be present");
+    assert_eq!(day.len(), 1, "day contains exactly one source bucket");
+    assert_eq!(
+        day.get("column:due_date"),
+        Some(&2),
+        "single-date query returns correct aggregated count"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_agenda_batch_by_source_missing_dates_not_in_result() {
+    // Regression test for PERF-17: dates with no agenda entries are omitted.
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "MIS_BLK", "content", "t", None, None).await;
+    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+        .bind("2025-11-01")
+        .bind("MIS_BLK")
+        .bind("column:due_date")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let result = count_agenda_batch_by_source_inner(
+        &pool,
+        vec![
+            "2025-11-01".into(),
+            "2025-11-02".into(),
+            "2025-11-03".into(),
+        ],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.len(), 1, "only the one populated date is returned");
+    assert!(
+        result.contains_key("2025-11-01"),
+        "populated date must be present"
+    );
+    assert!(
+        !result.contains_key("2025-11-02"),
+        "missing dates must not appear in result"
+    );
+    assert!(
+        !result.contains_key("2025-11-03"),
+        "missing dates must not appear in result"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_agenda_batch_by_source_large_input_beyond_sqlite_param_limit() {
+    // Regression test for PERF-17: json_each avoids the SQLite ~999 bind-parameter
+    // limit that the old `IN (?, ?, …)` format-string approach hit at scale.
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "BIGAG_BLK1", "content", "t1", None, None).await;
+    insert_block(&pool, "BIGAG_BLK2", "content", "t2", None, None).await;
+
+    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+        .bind("2025-12-25")
+        .bind("BIGAG_BLK1")
+        .bind("column:due_date")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+        .bind("2025-12-26")
+        .bind("BIGAG_BLK2")
+        .bind("column:scheduled_date")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Build a list of 1100 distinct dates in 2030 (all valid YYYY-MM-DD),
+    // plus our two real dates. None of the 1100 will match.
+    let mut dates: Vec<String> = Vec::with_capacity(1102);
+    let mut day = chrono::NaiveDate::from_ymd_opt(2030, 1, 1).unwrap();
+    for _ in 0..1100 {
+        dates.push(day.format("%Y-%m-%d").to_string());
+        day = day.succ_opt().unwrap();
+    }
+    dates.push("2025-12-25".into());
+    dates.push("2025-12-26".into());
+
+    let result = count_agenda_batch_by_source_inner(&pool, dates)
+        .await
+        .unwrap();
+
+    assert_eq!(result.len(), 2, "only two dates have agenda entries");
+    assert_eq!(
+        result
+            .get("2025-12-25")
+            .and_then(|d| d.get("column:due_date")),
+        Some(&1),
+        "2025-12-25 has one due_date entry"
+    );
+    assert_eq!(
+        result
+            .get("2025-12-26")
+            .and_then(|d| d.get("column:scheduled_date")),
+        Some(&1),
+        "2025-12-26 has one scheduled_date entry"
+    );
+}
+
 // ======================================================================
 // list_projected_agenda — projected future occurrences (#644 task 8)
 // ======================================================================

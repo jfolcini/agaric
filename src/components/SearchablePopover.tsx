@@ -89,7 +89,7 @@ export function SearchablePopover<T>({
               <li key={keyExtractor(item)}>
                 <button
                   type="button"
-                  className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent truncate"
+                  className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent truncate focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
                   onClick={() => onSelect(item)}
                   disabled={isItemDisabled?.(item)}
                 >

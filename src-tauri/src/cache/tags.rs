@@ -12,6 +12,26 @@ use crate::error::AppError;
 /// left-joined with `block_tags` usage counts. Tags with zero usage are
 /// included.
 pub async fn rebuild_tags_cache(pool: &SqlitePool) -> Result<(), AppError> {
+    tracing::info!("rebuilding tags cache");
+    let start = std::time::Instant::now();
+    let result = rebuild_tags_cache_impl(pool).await;
+    match result {
+        Ok(rows_affected) => {
+            tracing::info!(
+                rows_affected,
+                duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
+                "rebuilt tags cache"
+            );
+            Ok(())
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "rebuild failed for tags cache");
+            Err(e)
+        }
+    }
+}
+
+async fn rebuild_tags_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     let now = crate::now_rfc3339();
     let mut tx = pool.begin().await?;
 
@@ -19,7 +39,7 @@ pub async fn rebuild_tags_cache(pool: &SqlitePool) -> Result<(), AppError> {
         .execute(&mut *tx)
         .await?;
 
-    sqlx::query!(
+    let res = sqlx::query!(
         "INSERT OR IGNORE INTO tags_cache (tag_id, name, usage_count, updated_at)
          SELECT b.id, b.content, COALESCE(t.cnt, 0), ?
          FROM blocks b
@@ -39,7 +59,7 @@ pub async fn rebuild_tags_cache(pool: &SqlitePool) -> Result<(), AppError> {
     .await?;
 
     tx.commit().await?;
-    Ok(())
+    Ok(res.rows_affected())
 }
 
 // ---------------------------------------------------------------------------

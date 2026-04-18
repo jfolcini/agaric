@@ -8,6 +8,7 @@ import type React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Input } from '@/components/ui/input'
+import { logger } from '@/lib/logger'
 
 export function DeadlineWarningSection(): React.ReactElement {
   const { t } = useTranslation()
@@ -15,7 +16,13 @@ export function DeadlineWarningSection(): React.ReactElement {
     try {
       const stored = localStorage.getItem('agaric:deadlineWarningDays')
       return stored ? Number.parseInt(stored, 10) : 0
-    } catch {
+    } catch (err) {
+      logger.warn(
+        'DeadlineWarningSection',
+        'failed to read deadlineWarningDays from localStorage',
+        {},
+        err,
+      )
       return 0
     }
   })
@@ -25,7 +32,14 @@ export function DeadlineWarningSection(): React.ReactElement {
     setDays(clamped)
     try {
       localStorage.setItem('agaric:deadlineWarningDays', String(clamped))
-    } catch {}
+    } catch (err) {
+      logger.warn(
+        'DeadlineWarningSection',
+        'failed to persist deadlineWarningDays to localStorage',
+        { clamped },
+        err,
+      )
+    }
   }, [])
 
   return (

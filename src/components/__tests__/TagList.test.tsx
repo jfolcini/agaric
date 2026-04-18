@@ -20,6 +20,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 import { TagList } from '../TagList'
 
 vi.mock('sonner', () => ({
@@ -765,5 +766,14 @@ describe('TagList', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+  })
+
+  // UX-211: placeholder resolves via t()
+  it('new tag input placeholder resolves via t() (UX-211)', async () => {
+    mockedInvoke.mockResolvedValueOnce([])
+
+    render(<TagList />)
+
+    expect(await screen.findByPlaceholderText(t('tagList.newTagPlaceholder'))).toBeInTheDocument()
   })
 })

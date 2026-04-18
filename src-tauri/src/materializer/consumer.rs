@@ -92,7 +92,7 @@ async fn process_foreground_segment(
     }
     while let Some(result) = join_set.join_next().await {
         if let Err(e) = result {
-            tracing::error!("foreground group task panicked: {e}");
+            tracing::error!(error = %e, "foreground group task panicked");
         }
     }
 }

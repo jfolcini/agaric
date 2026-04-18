@@ -794,6 +794,24 @@ describe('SearchPanel', () => {
     })
   })
 
+  it('results listbox aria-label resolves via t() (UX-210)', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      items: [makeSearchResult()],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<SearchPanel />)
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    typeAndSubmit(input, 'test')
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('listbox', { name: t('search.resultsListLabel') }),
+      ).toBeInTheDocument()
+    })
+  })
+
   // =========================================================================
   // Recent pages tests (F-6)
   // =========================================================================

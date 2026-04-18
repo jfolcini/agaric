@@ -20,6 +20,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 
 vi.mock('../../lib/tauri', () => ({
   listUnlinkedReferences: vi.fn(),
@@ -980,5 +981,30 @@ describe('UnlinkedReferences', () => {
     await screen.findByText('mention text')
 
     expect(screen.queryByText('Results truncated — refine search')).not.toBeInTheDocument()
+  })
+
+  // UX-210: keyboard nav container has correct aria-label resolved via t()
+  it('keyboard nav container aria-label resolves via t() (UX-210)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+
+    // Expand
+    await user.click(await screen.findByRole('button', { name: /unlinked reference/i }))
+
+    await screen.findByText('mention text')
+
+    const container = screen.getByRole('group', { name: t('unlinkedRefs.listLabel') })
+    expect(container).toBeInTheDocument()
+    expect(container.className).toContain('unlinked-references-list')
   })
 })

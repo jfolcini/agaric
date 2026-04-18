@@ -5,7 +5,26 @@ use sqlx::SqlitePool;
 
 /// Full rebuild of `page_id` for all blocks using a recursive CTE.
 pub async fn rebuild_page_ids(pool: &SqlitePool) -> Result<(), AppError> {
-    sqlx::query(
+    tracing::info!("rebuilding page_id cache");
+    let start = std::time::Instant::now();
+    match rebuild_page_ids_impl(pool).await {
+        Ok(rows_affected) => {
+            tracing::info!(
+                rows_affected,
+                duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
+                "rebuilt page_id cache"
+            );
+            Ok(())
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "rebuild failed for page_id cache");
+            Err(e)
+        }
+    }
+}
+
+async fn rebuild_page_ids_impl(pool: &SqlitePool) -> Result<u64, AppError> {
+    let result = sqlx::query(
         "WITH RECURSIVE ancestors(block_id, cur_id, cur_type) AS ( \
              SELECT b.id, b.id, b.block_type FROM blocks b \
              UNION ALL \
@@ -26,7 +45,7 @@ pub async fn rebuild_page_ids(pool: &SqlitePool) -> Result<(), AppError> {
     )
     .execute(pool)
     .await?;
-    Ok(())
+    Ok(result.rows_affected())
 }
 
 /// Split variant for read/write pool separation.

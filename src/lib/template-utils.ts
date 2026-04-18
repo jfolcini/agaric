@@ -46,8 +46,10 @@ export async function loadTemplatePagesWithPreview(): Promise<
         const text = children.items[0]?.content ?? ''
         preview = text.length > 60 ? `${text.slice(0, 60)}…` : text
       }
-    } catch {
-      // Preview is best-effort — skip on failure
+    } catch (err) {
+      // Preview is best-effort — skip on failure but log so we can
+      // correlate with backend errors during support.
+      logger.warn('template-utils', 'template preview fetch failed', { pageId: page.id }, err)
     }
     result.push({ id: page.id, content: page.content ?? '', preview })
   }
@@ -105,10 +107,15 @@ export async function insertTemplateBlocks(
         ids.push(newBlock.id)
         // Recursively copy grandchildren
         await copyChildren(child.id, newBlock.id)
-      } catch {
+      } catch (err) {
         // Log warning but continue with remaining siblings.
         // Partial template is better than no template.
-        logger.warn('template-utils', `Template block copy failed for source ${child.id}, skipping`)
+        logger.warn(
+          'template-utils',
+          'template block copy failed; skipping',
+          { sourceBlockId: child.id },
+          err,
+        )
       }
     }
   }

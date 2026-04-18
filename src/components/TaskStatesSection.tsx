@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { logger } from '@/lib/logger'
 
 export function TaskStatesSection(): React.ReactElement {
   const { t } = useTranslation()
@@ -18,7 +19,9 @@ export function TaskStatesSection(): React.ReactElement {
     try {
       const stored = localStorage.getItem('task_cycle')
       if (stored) return JSON.parse(stored)
-    } catch {}
+    } catch (err) {
+      logger.warn('TaskStatesSection', 'failed to read task_cycle from localStorage', {}, err)
+    }
     return [null, 'TODO', 'DOING', 'DONE']
   })
   const [newState, setNewState] = useState('')
@@ -27,7 +30,9 @@ export function TaskStatesSection(): React.ReactElement {
     setStates(updated)
     try {
       localStorage.setItem('task_cycle', JSON.stringify(updated))
-    } catch {}
+    } catch (err) {
+      logger.warn('TaskStatesSection', 'failed to persist task_cycle to localStorage', {}, err)
+    }
   }, [])
 
   const handleAdd = useCallback(() => {

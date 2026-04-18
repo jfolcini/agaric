@@ -22,6 +22,26 @@ use crate::error::AppError;
 /// 3. `blocks.due_date` column -> source = `column:due_date`
 /// 4. `blocks.scheduled_date` column -> source = `column:scheduled_date`
 pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
+    tracing::info!("rebuilding agenda cache");
+    let start = std::time::Instant::now();
+    let result = rebuild_agenda_cache_impl(pool).await;
+    match result {
+        Ok(rows_affected) => {
+            tracing::info!(
+                rows_affected,
+                duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
+                "rebuilt agenda cache"
+            );
+            Ok(())
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "rebuild failed for agenda cache");
+            Err(e)
+        }
+    }
+}
+
+async fn rebuild_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     let mut tx = pool.begin().await?;
 
     // Step 1: Compute desired state from the same 4 UNION ALL sources.
@@ -107,8 +127,10 @@ pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
 
     if to_delete.is_empty() && to_insert.is_empty() && to_update.is_empty() {
         // No changes — transaction is rolled back on drop.
-        return Ok(());
+        return Ok(0);
     }
+
+    let changed = (to_delete.len() + to_insert.len() + to_update.len()) as u64;
 
     // Step 4: Apply diff.
     for (date, block_id) in &to_delete {
@@ -140,7 +162,7 @@ pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
     }
 
     tx.commit().await?;
-    Ok(())
+    Ok(changed)
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +178,29 @@ pub async fn rebuild_agenda_cache_split(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
 ) -> Result<(), AppError> {
+    tracing::info!("rebuilding agenda cache");
+    let start = std::time::Instant::now();
+    let result = rebuild_agenda_cache_split_impl(write_pool, read_pool).await;
+    match result {
+        Ok(rows_affected) => {
+            tracing::info!(
+                rows_affected,
+                duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
+                "rebuilt agenda cache"
+            );
+            Ok(())
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "rebuild failed for agenda cache");
+            Err(e)
+        }
+    }
+}
+
+async fn rebuild_agenda_cache_split_impl(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+) -> Result<u64, AppError> {
     // Read phase: snapshot-isolated transaction on the read pool so both
     // queries (desired state + current cache) see a consistent view.
     let mut read_tx = read_pool.begin().await?;
@@ -244,8 +289,10 @@ pub async fn rebuild_agenda_cache_split(
 
     if to_delete.is_empty() && to_insert.is_empty() && to_update.is_empty() {
         // No changes — nothing to write.
-        return Ok(());
+        return Ok(0);
     }
+
+    let changed = (to_delete.len() + to_insert.len() + to_update.len()) as u64;
 
     // Step 4: Apply diff on write pool.
     let mut tx = write_pool.begin().await?;
@@ -279,5 +326,5 @@ pub async fn rebuild_agenda_cache_split(
     }
 
     tx.commit().await?;
-    Ok(())
+    Ok(changed)
 }

@@ -35,6 +35,13 @@ import type {
 const ULID_RE = /^[0-9A-Z]{26}$/
 const MAX_LINK_SCAN = 10_000
 const CALLOUT_RE = /^\[!(\w+)\]\s?(.*)/i
+/**
+ * Maximum recursion depth for `parse()` to guard against pathological or
+ * adversarial inputs (deeply nested blockquotes, link-display-text with
+ * nested links, etc.). When exceeded, the input is returned as plain text
+ * so the parser never blows the stack.
+ */
+const MAX_PARSE_DEPTH = 10
 
 // -- Serialize (PM doc → Markdown) --------------------------------------------
 
@@ -511,8 +518,17 @@ function unescapeUrl(url: string): string {
 /**
  * Consume a matched external link and return InlineNode[] with link marks applied.
  * Parses inner display text recursively for bold/italic/code/tokens.
+ *
+ * `depth` tracks the current recursion depth in `parse()` — it is incremented
+ * when delegating to `parse(match.displayText, depth + 1)` so pathological
+ * nested-link inputs cannot blow the stack.
  */
-function consumeExternalLink(s: Scanner, match: LinkMatch, outerMarks: PMMark[]): InlineNode[] {
+function consumeExternalLink(
+  s: Scanner,
+  match: LinkMatch,
+  outerMarks: PMMark[],
+  depth: number,
+): InlineNode[] {
   s.pos = match.endPos
   const href = unescapeUrl(match.url)
   const linkMark: PMMark = { type: 'link' as const, attrs: { href } }
@@ -524,7 +540,7 @@ function consumeExternalLink(s: Scanner, match: LinkMatch, outerMarks: PMMark[])
   }
 
   // Parse inner display text (handles bold/italic/code/tokens)
-  const innerDoc = parse(match.displayText)
+  const innerDoc = parse(match.displayText, depth + 1)
   const innerContent = innerDoc.content?.[0]?.content as readonly InlineNode[] | undefined
 
   if (!innerContent || innerContent.length === 0) {
@@ -555,8 +571,24 @@ function flushText(buf: string, marks: readonly PMMark[], nodes: InlineNode[]): 
   return ''
 }
 
-export function parse(markdown: string): DocNode {
+export function parse(markdown: string, depth = 0): DocNode {
   if (markdown.length === 0) return { type: 'doc', content: [{ type: 'paragraph' }] }
+
+  // Depth guard: cap recursion to prevent stack overflow on pathological input
+  // (deeply nested blockquotes, nested links in link display text, etc.).
+  // Beyond the cap, fall back to returning the remaining input as plain text
+  // so the caller always gets a valid DocNode.
+  if (depth > MAX_PARSE_DEPTH) {
+    return {
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: markdown }],
+        },
+      ],
+    }
+  }
 
   const lines = markdown.split('\n')
   const blocks: BlockLevelNode[] = []
@@ -609,7 +641,7 @@ export function parse(markdown: string): DocNode {
       }
       // Recursively parse the inner content
       const innerMarkdown = quoteLines.join('\n')
-      const innerDoc = parse(innerMarkdown)
+      const innerDoc = parse(innerMarkdown, depth + 1)
       const content = innerDoc.content
       if (!content || content.length === 0) {
         blocks.push(
@@ -630,7 +662,7 @@ export function parse(markdown: string): DocNode {
     if (headingMatch) {
       const level = headingMatch[1]?.length as number
       const content = headingMatch[2] as string
-      const inlineNodes = parseLine(content)
+      const inlineNodes = parseLine(content, depth)
       if (inlineNodes.length === 0) {
         blocks.push({ type: 'heading', attrs: { level } })
       } else {
@@ -659,7 +691,7 @@ export function parse(markdown: string): DocNode {
         const isHeader = r === 0
         const cells = cellTexts.map((cellText) => {
           const content = cellText
-            ? [{ type: 'paragraph' as const, content: parseLine(cellText) }]
+            ? [{ type: 'paragraph' as const, content: parseLine(cellText, depth) }]
             : []
           if (isHeader) {
             return { type: 'tableHeader' as const, content }
@@ -693,7 +725,7 @@ export function parse(markdown: string): DocNode {
         const itemMatch = olLine.match(/^(\d+)\. (.*)$/)
         if (!itemMatch) break
         const itemText = itemMatch[2] as string
-        const inlineContent = parseLine(itemText)
+        const inlineContent = parseLine(itemText, depth)
         if (inlineContent.length === 0) {
           items.push({ type: 'listItem', content: [{ type: 'paragraph' }] })
         } else {
@@ -708,7 +740,7 @@ export function parse(markdown: string): DocNode {
     }
 
     // Regular paragraph
-    const inlineNodes = parseLine(line)
+    const inlineNodes = parseLine(line, depth)
     if (inlineNodes.length === 0) {
       blocks.push({ type: 'paragraph' })
     } else {
@@ -721,8 +753,13 @@ export function parse(markdown: string): DocNode {
   return { type: 'doc', content: blocks }
 }
 
-/** Parse a single line of inline content into InlineNode[]. */
-function parseLine(line: string): InlineNode[] {
+/**
+ * Parse a single line of inline content into InlineNode[].
+ *
+ * `depth` is threaded through so that recursive `parse()` calls inside
+ * external-link display text (`consumeExternalLink`) increment the cap.
+ */
+function parseLine(line: string, depth = 0): InlineNode[] {
   const nodes: InlineNode[] = []
   const s: Scanner = { src: line, pos: 0 }
   let buf = ''
@@ -806,7 +843,7 @@ function parseLine(line: string): InlineNode[] {
       const linkMatch = probeExternalLink(s)
       if (linkMatch) {
         buf = flushText(buf, currentMarks(), nodes)
-        const linkNodes = consumeExternalLink(s, linkMatch, currentMarks())
+        const linkNodes = consumeExternalLink(s, linkMatch, currentMarks(), depth)
         nodes.push(...linkNodes)
         continue
       }

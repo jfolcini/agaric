@@ -96,6 +96,8 @@ pub fn run() {
         )
         .init();
 
+    tracing::info!(log_dir = %log_dir.display(), "log directory initialized");
+
     // M-44: Install custom panic hook so panics are captured in the log file.
     std::panic::set_hook(Box::new(|info| {
         let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
@@ -356,7 +358,7 @@ pub fn run() {
                         tracing::info!("SyncDaemon started successfully");
                         daemon_app_handle.manage(daemon);
                     }
-                    Err(e) => tracing::error!("Failed to start SyncDaemon: {e}"),
+                    Err(e) => tracing::error!(error = %e, "Failed to start SyncDaemon"),
                 }
             });
 

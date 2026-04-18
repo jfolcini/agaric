@@ -11,6 +11,26 @@ use crate::error::AppError;
 /// Deletes all existing rows and re-populates from `blocks` where
 /// `block_type = 'page'` and not soft-deleted.
 pub async fn rebuild_pages_cache(pool: &SqlitePool) -> Result<(), AppError> {
+    tracing::info!("rebuilding pages cache");
+    let start = std::time::Instant::now();
+    let result = rebuild_pages_cache_impl(pool).await;
+    match result {
+        Ok(rows_affected) => {
+            tracing::info!(
+                rows_affected,
+                duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
+                "rebuilt pages cache"
+            );
+            Ok(())
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "rebuild failed for pages cache");
+            Err(e)
+        }
+    }
+}
+
+async fn rebuild_pages_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     let now = crate::now_rfc3339();
     let mut tx = pool.begin().await?;
 
@@ -18,7 +38,7 @@ pub async fn rebuild_pages_cache(pool: &SqlitePool) -> Result<(), AppError> {
         .execute(&mut *tx)
         .await?;
 
-    sqlx::query!(
+    let res = sqlx::query!(
         "INSERT INTO pages_cache (page_id, title, updated_at)
          SELECT id, content, ?
          FROM blocks
@@ -30,7 +50,7 @@ pub async fn rebuild_pages_cache(pool: &SqlitePool) -> Result<(), AppError> {
     .await?;
 
     tx.commit().await?;
-    Ok(())
+    Ok(res.rows_affected())
 }
 
 // ---------------------------------------------------------------------------

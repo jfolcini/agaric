@@ -858,4 +858,41 @@ describe('PairingDialog', () => {
     const retryBtn = screen.getByRole('button', { name: /Retry/i })
     expect(document.activeElement).toBe(retryBtn)
   })
+
+  // ------------------------------------------------------------------------
+  // MAINT-12: paste-focus setTimeout must be cleared on unmount so the
+  // scheduled callback never runs against a detached DOM.
+  // ------------------------------------------------------------------------
+  it('does not throw if unmounted between paste-focus setTimeout and fire (#MAINT-12)', async () => {
+    mockInvokeByCommand({
+      start_pairing: mockPairingInfo,
+      list_peer_refs: [],
+    })
+
+    const { unmount } = render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    await screen.findByText('alpha bravo charlie delta')
+
+    const inputs = screen.getAllByRole('textbox') as HTMLInputElement[]
+
+    // Switch to fake timers only AFTER async init has completed. This
+    // prevents waitFor/findBy deadlocks under fake timers.
+    vi.useFakeTimers()
+    try {
+      // Trigger the paste code path — simulate multi-word change on the
+      // first input. This schedules the focus setTimeout.
+      fireEvent.change(inputs[0] as HTMLElement, {
+        target: { value: 'echo foxtrot golf hotel' },
+      })
+
+      // Unmount before the 0ms timer fires.
+      unmount()
+
+      // Advancing timers after unmount must not throw — the cleanup effect
+      // cleared the pending handle, so the focus callback is never invoked
+      // on a detached DOM node.
+      expect(() => vi.advanceTimersByTime(10)).not.toThrow()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

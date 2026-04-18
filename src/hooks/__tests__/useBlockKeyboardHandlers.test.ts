@@ -433,6 +433,83 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
     expect(params.edit).toHaveBeenCalledTimes(1)
     expect(params.remove).not.toHaveBeenCalled()
   })
+
+  // ------------------------------------------------------------------------
+  // MAINT-15: post-merge setTimeout(setTextSelection) must be cancelled on
+  // unmount to avoid moving the cursor on a stale (next-mounted) editor.
+  // ------------------------------------------------------------------------
+  describe('post-merge setTimeout cleanup (#MAINT-15)', () => {
+    it('does not call setTextSelection after hook unmount', async () => {
+      vi.useFakeTimers()
+      try {
+        const setTextSelection = vi.fn()
+        const fakeEditor = {
+          state: { doc: { content: { size: 20 } } },
+          commands: { setTextSelection },
+        } as unknown as NonNullable<
+          Parameters<typeof useBlockKeyboardHandlers>[0]['rovingEditor']['editor']
+        >
+
+        const params = makeDefaultParams()
+        params.rovingEditor.unmount = vi.fn(() => 'Beta')
+        // Expose a live editor so the post-merge callback *would* have
+        // something to act on — but we unmount before it fires.
+        ;(params.rovingEditor as { editor: unknown }).editor = fakeEditor
+
+        const { result, unmount } = renderHook(() => useBlockKeyboardHandlers(params))
+
+        await act(async () => {
+          await result.current.handleMergeWithPrev()
+        })
+
+        // Merge has run; setTextSelection is still queued on the 0ms timer.
+        expect(setTextSelection).not.toHaveBeenCalled()
+
+        // Unmount the hook — cleanup must clear the pending timer.
+        unmount()
+
+        // Advance past the timer; must not throw and must not call
+        // setTextSelection on the (now-stale) editor.
+        expect(() => vi.advanceTimersByTime(10)).not.toThrow()
+        expect(setTextSelection).not.toHaveBeenCalled()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('calls setTextSelection when the timer fires before unmount', async () => {
+      vi.useFakeTimers()
+      try {
+        const setTextSelection = vi.fn()
+        const fakeEditor = {
+          state: { doc: { content: { size: 20 } } },
+          commands: { setTextSelection },
+        } as unknown as NonNullable<
+          Parameters<typeof useBlockKeyboardHandlers>[0]['rovingEditor']['editor']
+        >
+
+        const params = makeDefaultParams()
+        params.rovingEditor.unmount = vi.fn(() => 'Beta')
+        ;(params.rovingEditor as { editor: unknown }).editor = fakeEditor
+
+        const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+        await act(async () => {
+          await result.current.handleMergeWithPrev()
+        })
+
+        // Flush the timer while the hook is still mounted — setTextSelection
+        // should run exactly once with the computed PM position.
+        act(() => {
+          vi.advanceTimersByTime(10)
+        })
+
+        expect(setTextSelection).toHaveBeenCalledTimes(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  })
 })
 
 describe('useBlockKeyboardHandlers handleMergeById', () => {

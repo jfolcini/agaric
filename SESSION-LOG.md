@@ -1,5 +1,86 @@
 # Session Log
 
+## Session 404 — Rust perf, observability, frontend setTimeout cleanup, a11y/i18n (2026-04-18)
+
+**17 items resolved (PERF-17, PERF-18, MAINT-22, MAINT-27, MAINT-28, MAINT-29, MAINT-11, MAINT-12, MAINT-14, MAINT-15, UX-209, UX-210, UX-211, UX-212, MAINT-31, MAINT-32, MAINT-35). REVIEW-LATER 109→94. 2 new items filed (UX-227 focus-ring drift in 18 more sites, MAINT-48 AttachmentList setTimeout leak).**
+
+### Resolved items
+
+| Item | Description | Files changed |
+|------|-------------|---------------|
+| PERF-17 | Batch-count queries (`count_backlinks_batch_inner`, `count_agenda_batch_by_source_inner`) converted to `json_each(?1)` — single bind, immune to SQLite 999-param limit | 2 files + 5 tests |
+| PERF-18 | Rust release profile gets `lto = "thin"` + `codegen-units = 1` for faster release binaries (~15% size, ~10% runtime) | 1 file |
+| MAINT-22 | `compact_op_log` now emits start/count/success/no-op tracing with retention_days, eligible_ops, ops_deleted, snapshot_bytes, duration_ms | 1 file |
+| MAINT-27 | Log directory path announced via `tracing::info!` at startup (helps Android + sandboxed environments) | 1 file |
+| MAINT-28 | 16 `tracing::warn/error!("…: {e}")` sites converted to structured `error = %e` field (lib.rs, websocket.rs, sync_daemon ×3, orchestrator × 10, consumer.rs) | 6 files |
+| MAINT-29 | Boundary tracing on 9 cache/fts rebuild functions (entry/success with rows_affected + duration_ms/error); `_impl` helper pattern preserves .sqlx cache stability | 6 files |
+| MAINT-11 | `markdown-serializer.parse()` + `parseLine()` get `depth` param with `MAX_PARSE_DEPTH = 10` fallback to plain text; hardens against pathological nesting | 1 file |
+| MAINT-12 | `PairingDialog` paste-focus `setTimeout` captured in ref + cleared on unmount | 1 file |
+| MAINT-14 | `PageBrowser.handleCreateUnder` `setTimeout` captured/cleared on unmount | 1 file |
+| MAINT-15 | `useBlockKeyboardHandlers` post-merge `setTextSelection` setTimeout captured/cleared; prevents stale cursor jump on next mount | 1 file |
+| UX-209 | 5 focus-visible sites normalized to `ring-[3px] ring-ring/50 outline-hidden` + shared CSS block for chip classes | 5 files |
+| UX-210 | 5 list-container `aria-label`s moved to i18n keys | 6 files |
+| UX-211 | 3 placeholders moved to i18n keys | 4 files |
+| UX-212 | `PageBrowser` new-page-name Input gets an associated `<Label htmlFor>` (was missing accessible name) | 2 files |
+| MAINT-31 | Frontend logger `rateLimitMap` gets opportunistic eviction (sweep expired entries when map size > 1000) | 1 file + 1 test |
+| MAINT-32 | 3 silent localStorage catches (TaskStatesSection, DeadlineWarningSection, filter-dimension-metadata) now log via `logger.warn` | 3 files |
+| MAINT-35 | `template-utils.ts` silent catch in preview fetch now logs; block-copy warn now includes the error and sourceBlockId | 2 files |
+
+### New items filed
+
+- **UX-227** (S): 18 additional focus-ring sites still using the old `ring-2 ring-ring ring-offset-1` pattern (PageBrowser, PageTreeItem, PageHeaderMenu ×8, BlockInlineControls ×3, PageTagSection, PageAliasSection, StaticBlock, AttachmentList). Outside UX-209 scope — mechanical sweep.
+- **MAINT-48** (S): `AttachmentList.handleDelete` 3-second setTimeout not captured/cleared on unmount (same class as MAINT-12/14/15).
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src-tauri/src/commands/queries.rs` | PERF-17: json_each batch-count for backlinks |
+| `src-tauri/src/commands/agenda.rs` | PERF-17: json_each batch-count for agenda-by-date |
+| `src-tauri/Cargo.toml` | PERF-18: lto + codegen-units in release profile |
+| `src-tauri/src/snapshot/create.rs` | MAINT-22: compaction tracing + per-device row-count summation |
+| `src-tauri/src/lib.rs` | MAINT-27: log_dir info at startup; MAINT-28: 1 site converted |
+| `src-tauri/src/sync_net/websocket.rs` | MAINT-28: 2 sites converted |
+| `src-tauri/src/sync_daemon/mod.rs`, `sync_daemon/server.rs` | MAINT-28: 1 site each |
+| `src-tauri/src/sync_daemon/orchestrator.rs` | MAINT-28: 10 sites converted |
+| `src-tauri/src/materializer/consumer.rs` | MAINT-28: 1 site converted |
+| `src-tauri/src/fts/index.rs` | MAINT-29: boundary tracing on 2 rebuild fns (impl pattern) |
+| `src-tauri/src/cache/agenda.rs` | MAINT-29: boundary tracing on 2 rebuild fns |
+| `src-tauri/src/cache/pages.rs`, `cache/tags.rs`, `cache/projected_agenda.rs`, `cache/page_id.rs` | MAINT-29: boundary tracing |
+| `src-tauri/src/backlink/tests.rs` | fix clippy redundant-closure (post-batch1 drift) |
+| `src-tauri/src/commands/tests/undo_redo_tests.rs` | fix clippy redundant-closure (post-batch1 drift) |
+| `src-tauri/src/commands/tests/query_cmd_tests.rs` | +2 regression tests incl. >999-param scale test |
+| `src-tauri/src/commands/tests/agenda_cmd_tests.rs` | +3 regression tests incl. >999-param scale test |
+| `src/editor/markdown-serializer.ts` | MAINT-11: depth-guarded parse() + parseLine() |
+| `src/editor/__tests__/markdown-serializer.test.ts` | +6 depth-guard tests |
+| `src/editor/__tests__/markdown-serializer.property.test.ts` | +2 fast-check property tests (200 runs) |
+| `src/components/PairingDialog.tsx` | MAINT-12: pendingFocusRef + cleanup |
+| `src/components/PageBrowser.tsx` | MAINT-14: pendingFocusRef + cleanup; UX-212: sr-only Label + Input id |
+| `src/hooks/useBlockKeyboardHandlers.ts` | MAINT-15: pendingMergeSelectionRef + cleanup |
+| `src/components/__tests__/PairingDialog.test.tsx`, `PageBrowser.test.tsx` | unmount-before-timer regression tests |
+| `src/hooks/__tests__/useBlockKeyboardHandlers.test.ts` | +2 tests incl. positive control |
+| `src/components/CollapsiblePanelHeader.tsx`, `ui/filter-pill.tsx`, `SearchablePopover.tsx`, `PropertyChip.tsx` | UX-209: focus-ring normalize |
+| `src/index.css` | UX-209: shared `:focus-visible` block for chip classes |
+| `src/components/UnlinkedReferences.tsx`, `SearchPanel.tsx`, `LinkedReferences.tsx`, `ConflictList.tsx`, `QueryResultList.tsx` | UX-210: aria-labels to i18n |
+| `src/components/TagList.tsx`, `PropertyDefinitionsList.tsx`, `LinkEditPopover.tsx` | UX-211: placeholders to i18n |
+| `src/lib/i18n.ts` | +9 i18n keys (5 aria-labels, 3 placeholders, 1 PageBrowser input label) |
+| `src/lib/logger.ts` | MAINT-31: rateLimitMap opportunistic eviction (threshold 1000) |
+| `src/lib/__tests__/logger.test.ts` | +1 eviction test |
+| `src/components/TaskStatesSection.tsx`, `DeadlineWarningSection.tsx`, `src/lib/filter-dimension-metadata.ts` | MAINT-32: logger.warn on localStorage catches |
+| `src/lib/template-utils.ts` | MAINT-35: structured logging in preview fetch + block copy |
+| `src/lib/__tests__/template-utils.test.ts` | update assertion to match new structured log format |
+| `REVIEW-LATER.md` | removed 17 resolved, added UX-227 + MAINT-48, count 109→94 |
+
+### Stats
+
+- 40+ source files changed, 11 test files updated/added
+- Backend: 2018 Rust tests pass (+5 new)
+- Frontend: 6620 tests pass (+15 new)
+- 4 parallel build subagents + 4 review subagents
+- prek: all relevant hooks pass (biome, tsc, vitest, cargo fmt/clippy/nextest/machete). Pre-existing env failures: npm audit (dompurify CVE baseline), cargo deny (sandbox CA-cert permissions)
+- `.sqlx/` cache stable (subagent B used `_impl` helper pattern to preserve SQL whitespace → unchanged query hashes)
+
+
 ## Session 403 — CTE correctness, sync/reverse hygiene, ScrollArea sweep, silent-catch fixes (2026-04-18)
 
 **16 items resolved (BUG-17, BUG-19, BUG-21, BUG-24, BUG-25, BUG-26, BUG-27, BUG-28, BUG-32, BUG-33, BUG-43, UX-207, UX-208, UX-226, MAINT-8, MAINT-46). REVIEW-LATER 125→109. BUG-29 reclassified from S→M after a build subagent demonstrated that the proposed single-slot unobserve fix regresses multi-block observation; spec now documents three viable approaches.**

@@ -12,11 +12,12 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 import { emptyPage, makePage } from '../../__tests__/fixtures'
 import { PageBrowser } from '../PageBrowser'
 
@@ -384,6 +385,19 @@ describe('PageBrowser', () => {
         expect(screen.getByPlaceholderText('New page name...')).toBeInTheDocument()
       })
       expect(screen.getByRole('button', { name: /New Page/i })).toBeInTheDocument()
+    })
+
+    // UX-212: input has accessible name via Label htmlFor
+    it('new page input has accessible name via sr-only label (UX-212)', async () => {
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+      render(<PageBrowser />)
+
+      const input = await screen.findByRole('textbox', {
+        name: t('pageBrowser.createPageInputLabel'),
+      })
+      expect(input).toBeInTheDocument()
+      expect(input).toHaveAttribute('id', 'new-page-name')
     })
 
     it('creates page with the typed name on form submit', async () => {
@@ -1514,6 +1528,53 @@ describe('PageBrowser', () => {
       // No bare overflow-y-auto anywhere.
       const anyOverflowY = container.querySelector('.overflow-y-auto')
       expect(anyOverflowY).toBeNull()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // MAINT-14: handleCreateUnder setTimeout must be cleared on unmount so the
+  // scheduled focus callback never runs against a detached DOM.
+  // ---------------------------------------------------------------------------
+  describe('handleCreateUnder setTimeout cleanup (#MAINT-14)', () => {
+    it('does not throw if unmounted between handleCreateUnder setTimeout and fire', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'work/project-a' }),
+          makePage({ id: 'P2', content: 'work' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      const { unmount } = render(<PageBrowser />)
+
+      // Wait for tree to render
+      await screen.findByText('project-a')
+
+      // Find the "Create page under work" button (tree-view adds one per namespace)
+      const createUnderBtn = screen.getAllByRole('button', {
+        name: /create page under/i,
+      })[0]
+      expect(createUnderBtn).toBeTruthy()
+
+      // Switch to fake timers after DOM is ready. This avoids deadlocks in
+      // async waitFor helpers under fake timers.
+      vi.useFakeTimers()
+      try {
+        // Click schedules the focus setTimeout via handleCreateUnder. Use
+        // fireEvent.click rather than userEvent since userEvent's async
+        // delays hang under fake timers.
+        fireEvent.click(createUnderBtn as HTMLElement)
+
+        // Unmount before the 0ms timer fires.
+        unmount()
+
+        // Advancing timers after unmount must not throw — the cleanup effect
+        // cleared the pending handle, so the focus callback is never invoked.
+        expect(() => vi.advanceTimersByTime(10)).not.toThrow()
+      } finally {
+        vi.useRealTimers()
+      }
     })
   })
 })

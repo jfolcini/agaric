@@ -19,6 +19,7 @@ import { PageTreeItem } from '@/components/PageTreeItem'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Select,
@@ -95,6 +96,20 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const [aliasMatchId, setAliasMatchId] = useState<string | null>(null)
   const formRef = useRef<HTMLFormElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  // Tracks the handleCreateUnder focus setTimeout so we can cancel it on
+  // unmount and avoid focusing a stale DOM node (#MAINT-14).
+  const pendingFocusRef = useRef<number | null>(null)
+
+  // Clear any pending focus timer on unmount.
+  useEffect(
+    () => () => {
+      if (pendingFocusRef.current !== null) {
+        window.clearTimeout(pendingFocusRef.current)
+        pendingFocusRef.current = null
+      }
+    },
+    [],
+  )
 
   // Track load-more announcements for screen readers
   const prevLengthRef = useRef(0)
@@ -155,7 +170,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
   const handleCreateUnder = useCallback((namespacePath: string) => {
     setNewPageName(`${namespacePath}/`)
-    setTimeout(() => {
+    if (pendingFocusRef.current !== null) {
+      window.clearTimeout(pendingFocusRef.current)
+    }
+    pendingFocusRef.current = window.setTimeout(() => {
+      pendingFocusRef.current = null
       formRef.current?.querySelector<HTMLInputElement>('input')?.focus()
     }, 0)
   }, [])
@@ -287,7 +306,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           }}
           className="flex flex-col sm:flex-row sm:items-center gap-2"
         >
+          <Label htmlFor="new-page-name" className="sr-only">
+            {t('pageBrowser.createPageInputLabel')}
+          </Label>
           <Input
+            id="new-page-name"
             value={newPageName}
             onChange={(e) => setNewPageName(e.target.value)}
             placeholder={t('pageBrowser.newPagePlaceholder')}

@@ -189,4 +189,22 @@ describe('PropertyChip', () => {
     const chip = container.querySelector('.property-chip')
     expect(chip).not.toHaveAttribute('aria-label')
   })
+
+  it('outer button has normalized focus-visible ring classes (UX-209)', () => {
+    const { container } = render(<PropertyChip propKey="effort" value="2h" />)
+
+    const chip = container.querySelector('.property-chip')
+    expect(chip?.className).toContain('focus-visible:ring-[3px]')
+    expect(chip?.className).toContain('focus-visible:ring-ring/50')
+    expect(chip?.className).toContain('focus-visible:outline-hidden')
+  })
+
+  it('key label button has normalized focus-visible ring classes (UX-209)', () => {
+    render(<PropertyChip propKey="effort" value="2h" onKeyClick={() => {}} />)
+
+    const keyLabel = screen.getByText('Effort:')
+    expect(keyLabel.className).toContain('focus-visible:ring-[3px]')
+    expect(keyLabel.className).toContain('focus-visible:ring-ring/50')
+    expect(keyLabel.className).toContain('focus-visible:outline-hidden')
+  })
 })

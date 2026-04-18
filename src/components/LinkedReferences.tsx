@@ -376,7 +376,7 @@ export function LinkedReferences({
                 // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard nav requires focusable container
                 tabIndex={0}
                 onKeyDown={handleContainerKeyDown}
-                aria-label="Reference blocks"
+                aria-label={t('linkedRefs.listLabel')}
                 className="linked-references-list outline-none"
               >
                 <BacklinkGroupRenderer

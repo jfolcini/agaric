@@ -246,7 +246,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
                           <Input
                             value={editOptionsValue}
                             onChange={(e) => setEditOptionsValue(e.target.value)}
-                            placeholder="Options JSON"
+                            placeholder={t('propertiesView.optionsJsonPlaceholder')}
                             aria-label={t('propertiesView.optionsJsonLabel')}
                           />
                           <Button size="sm" onClick={() => handleSaveOptions(def.key)}>

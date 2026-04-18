@@ -27,6 +27,7 @@ export function PropertyChip({
       type="button"
       className={cn(
         'property-key-label opacity-60 hover:underline cursor-pointer',
+        'focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden',
         Icon && 'inline-flex items-center gap-0.5',
       )}
       onClick={(e) => {
@@ -53,6 +54,7 @@ export function PropertyChip({
       className={cn(
         'property-chip inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none touch-target [@media(pointer:coarse)]:px-2 [@media(pointer:coarse)]:py-0.5',
         'bg-muted text-muted-foreground',
+        'focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden',
         onClick && 'cursor-pointer hover:bg-accent/50 active:bg-accent/70 transition-colors',
         className,
       )}

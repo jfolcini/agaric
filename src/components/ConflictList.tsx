@@ -434,7 +434,7 @@ export function ConflictList(): React.ReactElement {
         className="conflict-items space-y-2 list-none p-0"
         tabIndex={0}
         role="listbox"
-        aria-label="Conflict list"
+        aria-label={t('conflicts.listLabel')}
         aria-activedescendant={
           blocks[focusedIndex] ? `conflict-${blocks[focusedIndex].id}` : undefined
         }

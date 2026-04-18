@@ -3919,7 +3919,7 @@ async fn property_is_empty_scoped_to_candidate_set() {
     // BLK_C is NOT in the candidate set even though it has the property.
     let candidates: FxHashSet<String> = ["BLK_A", "BLK_B", "BLK_D"]
         .iter()
-        .map(|s| s.to_string())
+        .map(|&s| s.to_string())
         .collect();
 
     let filter = BacklinkFilter::PropertyIsEmpty {

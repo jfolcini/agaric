@@ -190,7 +190,7 @@ impl SyncServer {
                                     let tls_stream = match acceptor.accept(tcp_stream).await {
                                         Ok(s) => s,
                                         Err(e) => {
-                                            tracing::debug!("TLS handshake failed: {e}");
+                                            tracing::debug!(error = %e, "TLS handshake failed");
                                             return;
                                         }
                                     };
@@ -237,7 +237,7 @@ impl SyncServer {
                                         match tokio_tungstenite::accept_async(tls_stream).await {
                                             Ok(s) => s,
                                             Err(e) => {
-                                                tracing::debug!("WebSocket upgrade failed: {e}");
+                                                tracing::debug!(error = %e, "WebSocket upgrade failed");
                                                 return;
                                             }
                                         };

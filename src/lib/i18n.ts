@@ -1756,6 +1756,21 @@ const resources = {
       'data.exporting': 'Exporting...',
       'data.exportSuccess': 'Export complete',
       'data.exportFailed': 'Export failed',
+
+      // UX-210: List container aria-labels
+      'unlinkedRefs.listLabel': 'Unlinked reference blocks',
+      'search.resultsListLabel': 'Search results',
+      'linkedRefs.listLabel': 'Reference blocks',
+      'conflicts.listLabel': 'Conflict list',
+      'query.resultsListLabel': 'Query results',
+
+      // UX-211: Placeholders
+      'tagList.newTagPlaceholder': 'New tag name...',
+      'propertiesView.optionsJsonPlaceholder': 'Options JSON',
+      'linkEdit.urlPlaceholder': 'https://...',
+
+      // UX-212: PageBrowser new page input label
+      'pageBrowser.createPageInputLabel': 'New page name',
     },
   },
 }

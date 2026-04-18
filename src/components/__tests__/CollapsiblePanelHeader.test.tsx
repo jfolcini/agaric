@@ -95,16 +95,16 @@ describe('CollapsiblePanelHeader', () => {
     expect(results).toHaveNoViolations()
   })
 
-  it('includes focus-visible ring classes on the button (UX-1)', () => {
+  it('includes focus-visible ring classes on the button (UX-1, UX-209)', () => {
     render(
       <CollapsiblePanelHeader isCollapsed={false} onToggle={() => {}}>
         Header
       </CollapsiblePanelHeader>,
     )
     const button = screen.getByRole('button')
-    expect(button.className).toContain('focus-visible:ring-2')
-    expect(button.className).toContain('focus-visible:ring-ring')
-    expect(button.className).toContain('focus-visible:ring-offset-1')
+    expect(button.className).toContain('focus-visible:ring-[3px]')
+    expect(button.className).toContain('focus-visible:ring-ring/50')
+    expect(button.className).toContain('focus-visible:outline-hidden')
   })
 
   it('sets aria-label to "Expand …" when collapsed (UX-2)', () => {

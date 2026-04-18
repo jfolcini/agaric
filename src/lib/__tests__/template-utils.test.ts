@@ -228,8 +228,10 @@ describe('insertTemplateBlocks', () => {
 
     // Warning was logged for the failed block (via structured logger)
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Template block copy failed for source B, skipping'),
+      expect.stringContaining('template block copy failed; skipping'),
     )
+    // Source block id is included as structured context
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"sourceBlockId":"B"'))
 
     warnSpy.mockRestore()
   })

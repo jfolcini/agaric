@@ -344,7 +344,7 @@ export function UnlinkedReferences({
                   // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard nav requires focusable container
                   tabIndex={0}
                   onKeyDown={handleContainerKeyDown}
-                  aria-label="Unlinked reference blocks"
+                  aria-label={t('unlinkedRefs.listLabel')}
                   className="unlinked-references-list outline-none"
                 >
                   <CollapsibleGroupList

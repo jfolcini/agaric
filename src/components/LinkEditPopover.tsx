@@ -165,7 +165,7 @@ export function LinkEditPopover({
         <Input
           id="link-url-input"
           type="url"
-          placeholder="https://..."
+          placeholder={t('linkEdit.urlPlaceholder')}
           value={url}
           onChange={(e) => {
             setUrl(e.target.value)

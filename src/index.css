@@ -518,6 +518,13 @@
   @apply bg-block-ref/70;
 }
 
+/* Shared focus-visible affordance for all chip types (UX-209) */
+.block-link-chip:focus-visible,
+.tag-ref-chip:focus-visible,
+.block-ref-chip:focus-visible {
+  @apply outline-hidden ring-[3px] ring-ring/50;
+}
+
 @media (pointer: coarse) {
   .block-link-chip,
   .block-ref-chip,

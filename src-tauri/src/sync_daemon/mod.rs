@@ -114,7 +114,7 @@ impl SyncDaemon {
             )
             .await
             {
-                tracing::error!("SyncDaemon exited with error: {e}");
+                tracing::error!(error = %e, "SyncDaemon exited with error");
             }
         });
 

@@ -26,6 +26,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 import { useNavigationStore } from '../../stores/navigation'
 import type { LinkedReferencesProps } from '../LinkedReferences'
 import { LinkedReferences } from '../LinkedReferences'
@@ -727,6 +728,27 @@ describe('LinkedReferences', () => {
 
     expect(screen.getByLabelText('Backlinks from Page One')).toBeInTheDocument()
     expect(screen.getByLabelText('Backlinks from Page Two')).toBeInTheDocument()
+  })
+
+  // 21b. UX-210: keyboard nav container has correct aria-label resolved via t()
+  it('keyboard nav container aria-label resolves via t() (UX-210)', async () => {
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockInvokeWith(resp)
+
+    renderLinkedReferences({ pageId: 'PAGE1' })
+
+    await screen.findByText('block')
+
+    const container = screen.getByRole('group', { name: t('linkedRefs.listLabel') })
+    expect(container).toBeInTheDocument()
+    expect(container.className).toContain('linked-references-list')
   })
 
   // 22. calls list_backlinks_grouped with correct params on mount

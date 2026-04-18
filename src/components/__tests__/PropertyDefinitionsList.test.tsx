@@ -14,6 +14,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 import { PropertyDefinitionsList } from '../PropertyDefinitionsList'
 
 vi.mock('sonner', () => ({
@@ -445,5 +446,22 @@ describe('PropertyDefinitionsList', () => {
     const deleteBtn = screen.getByRole('button', { name: /Delete property my-prop/i })
     expect(deleteBtn).toBeInTheDocument()
     expect(deleteBtn).toHaveAttribute('aria-label', 'Delete property my-prop')
+  })
+
+  // UX-211: Options JSON placeholder resolves via t()
+  it('options JSON input placeholder resolves via t() (UX-211)', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce([makePropDef('status', 'select', '["open","closed"]')])
+
+    render(<PropertyDefinitionsList />)
+
+    expect(await screen.findByText('Status')).toBeInTheDocument()
+
+    const editBtn = screen.getByRole('button', { name: /Edit options/i })
+    await user.click(editBtn)
+
+    expect(
+      await screen.findByPlaceholderText(t('propertiesView.optionsJsonPlaceholder')),
+    ).toBeInTheDocument()
   })
 })

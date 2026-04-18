@@ -1,5 +1,5 @@
 import type { MutableRefObject } from 'react'
-import { useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 import { logger } from '@/lib/logger'
 import { parse } from '../editor/markdown-serializer'
@@ -63,6 +63,22 @@ export function useBlockKeyboardHandlers({
 }: UseBlockKeyboardHandlersParams): UseBlockKeyboardHandlersReturn {
   const rovingEditorRef = useRef(rovingEditor)
   rovingEditorRef.current = rovingEditor
+
+  // Tracks the post-merge setTextSelection setTimeout so we can cancel it on
+  // unmount. Without this, a late-firing callback could call
+  // `setTextSelection` on a stale editor instance and move the user's cursor
+  // on the NEXT mounted block (#MAINT-15).
+  const pendingMergeSelectionRef = useRef<number | null>(null)
+
+  useEffect(
+    () => () => {
+      if (pendingMergeSelectionRef.current !== null) {
+        window.clearTimeout(pendingMergeSelectionRef.current)
+        pendingMergeSelectionRef.current = null
+      }
+    },
+    [],
+  )
 
   const handleFocusPrev = useCallback(() => {
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
@@ -232,10 +248,15 @@ export function useBlockKeyboardHandlers({
     setFocused(prevBlock.id)
     rovingEditorRef.current.mount(prevBlock.id, mergedContent)
 
-    setTimeout(() => {
-      if (rovingEditorRef.current.editor) {
-        const pmPos = Math.min(joinPoint, rovingEditorRef.current.editor.state.doc.content.size - 1)
-        rovingEditorRef.current.editor.commands.setTextSelection(pmPos)
+    if (pendingMergeSelectionRef.current !== null) {
+      window.clearTimeout(pendingMergeSelectionRef.current)
+    }
+    pendingMergeSelectionRef.current = window.setTimeout(() => {
+      pendingMergeSelectionRef.current = null
+      const editor = rovingEditorRef.current.editor
+      if (editor) {
+        const pmPos = Math.min(joinPoint, editor.state.doc.content.size - 1)
+        editor.commands.setTextSelection(pmPos)
       }
     }, 0)
   }, [focusedBlockId, collapsedVisible, edit, remove, setFocused, t])

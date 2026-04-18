@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { t } from '@/lib/i18n'
 import { makeBlock } from '../../__tests__/fixtures'
 import { useNavigationStore } from '../../stores/navigation'
 import { QueryResultList } from '../QueryResultList'
@@ -289,5 +290,12 @@ describe('QueryResultList', () => {
     // PageUp should jump back by 10
     await user.keyboard('{PageUp}')
     expect(options[0]).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('listbox aria-label resolves via t() (UX-210)', () => {
+    const results = [makeBlock({ id: 'B1', content: 'i18n test' })]
+    render(<QueryResultList results={results} pageTitles={new Map()} />)
+    const listbox = screen.getByRole('listbox', { name: t('query.resultsListLabel') })
+    expect(listbox).toBeInTheDocument()
   })
 })

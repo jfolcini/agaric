@@ -278,7 +278,7 @@ pub(crate) async fn handle_incoming_sync(
     );
 
     if let Err(e) = conn.close().await {
-        tracing::debug!("failed to close responder connection: {e}");
+        tracing::debug!(error = %e, "failed to close responder connection");
     }
 
     Ok(())

@@ -1,4 +1,5 @@
 import type React from 'react'
+import { useTranslation } from 'react-i18next'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { handleBlockNavigation, resolveBlockDisplay } from '../lib/query-result-utils'
 import type { BlockRow } from '../lib/tauri'
@@ -26,6 +27,7 @@ export function QueryResultList({
   resolveBlockTitle,
   onItemSelect,
 }: QueryResultListProps): React.ReactElement {
+  const { t } = useTranslation()
   const { focusedIndex, handleKeyDown } = useListKeyboardNavigation({
     itemCount: results.length,
     homeEnd: true,
@@ -42,7 +44,7 @@ export function QueryResultList({
       className="divide-y divide-muted-foreground/10"
       tabIndex={0}
       role="listbox"
-      aria-label="Query results"
+      aria-label={t('query.resultsListLabel')}
       aria-activedescendant={
         results[focusedIndex] ? `query-result-${results[focusedIndex].id}` : undefined
       }

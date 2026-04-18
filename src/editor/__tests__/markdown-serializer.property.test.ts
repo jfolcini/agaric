@@ -433,3 +433,62 @@ describe('property: structural invariants', () => {
     )
   })
 })
+
+// -- parse recursion depth guard (MAINT-11) -----------------------------------
+
+describe('property: parse recursion depth guard', () => {
+  /**
+   * Build a deeply nested blockquote markdown string with N leading `> `
+   * repetitions. This is the canonical input that used to risk unbounded
+   * recursion before the MAX_PARSE_DEPTH cap.
+   */
+  function buildNestedBlockquote(depth: number, leaf: string): string {
+    return `${'> '.repeat(depth)}${leaf}`
+  }
+
+  /**
+   * Build a link-in-link-in-link chain (each new wrapper puts the previous
+   * text inside another `[text](url)` external link). Exercises the
+   * consumeExternalLink recursion path which is the second site the depth
+   * guard protects.
+   */
+  function buildNestedLinks(depth: number, leaf: string): string {
+    let out = leaf
+    for (let i = 0; i < depth; i++) {
+      out = `[${out}](https://example.com/${i})`
+    }
+    return out
+  }
+
+  it('never throws for arbitrarily deep nested blockquotes', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 0, max: 50 }),
+        fc.string({ minLength: 1, maxLength: 8 }),
+        (depth, leaf) => {
+          // The leaf must avoid characters that would themselves trigger
+          // parsing branches (e.g. leading `>` would compound the depth).
+          const safeLeaf = leaf.replace(/[>`*[\]#|\\]/g, 'x')
+          const input = buildNestedBlockquote(depth, safeLeaf || 'x')
+          expect(() => parse(input)).not.toThrow()
+        },
+      ),
+      { numRuns: 200 },
+    )
+  })
+
+  it('never throws for arbitrarily deep nested external-link display text', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 0, max: 30 }),
+        fc.string({ minLength: 1, maxLength: 6 }),
+        (depth, leaf) => {
+          const safeLeaf = leaf.replace(/[>`*[\]#|\\()]/g, 'x')
+          const input = buildNestedLinks(depth, safeLeaf || 'x')
+          expect(() => parse(input)).not.toThrow()
+        },
+      ),
+      { numRuns: 200 },
+    )
+  })
+})

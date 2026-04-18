@@ -1672,3 +1672,89 @@ describe('horizontal rule', () => {
     })
   })
 })
+
+// -- parse recursion depth guard (MAINT-11) -----------------------------------
+
+describe('parse recursion depth guard', () => {
+  /** Extract the flattened plain-text concatenation of a parsed doc. */
+  function flatText(node: DocNode | ParagraphNode | BlockquoteNode): string {
+    let out = ''
+    const content = node.content
+    if (!content) return out
+    for (const child of content) {
+      if ('text' in child && typeof child.text === 'string') {
+        out += child.text
+      } else if ('content' in child && child.content) {
+        out += flatText(child as BlockquoteNode | ParagraphNode)
+      }
+    }
+    return out
+  }
+
+  /** Measure the actual nested blockquote depth in a parsed doc. */
+  function blockquoteDepth(node: BlockquoteNode | DocNode | ParagraphNode): number {
+    if (!node.content) return 0
+    let max = 0
+    for (const child of node.content) {
+      if (child.type === 'blockquote') {
+        const d = 1 + blockquoteDepth(child as BlockquoteNode)
+        if (d > max) max = d
+      }
+    }
+    return max
+  }
+
+  it('parses 10-level nested blockquote correctly (at the MAX_PARSE_DEPTH limit)', () => {
+    // 10 '> ' prefixes — within the MAX_PARSE_DEPTH = 10 cap
+    const input = `${'> '.repeat(10)}deep`
+    const result = parse(input)
+    // The deepest leaf text should still be reachable
+    expect(flatText(result)).toBe('deep')
+    // Structural: 10 nested blockquotes
+    expect(blockquoteDepth(result)).toBe(10)
+  })
+
+  it('12-level nested blockquote does not throw and falls back to plain text at the cap', () => {
+    // 12 '> ' prefixes — exceeds MAX_PARSE_DEPTH; the deepest recursion must
+    // degrade to plain text rather than blowing the stack.
+    const input = `${'> '.repeat(12)}very deep`
+    expect(() => parse(input)).not.toThrow()
+    const result = parse(input)
+    // The leaf text "very deep" must still be preserved somewhere in the doc
+    expect(flatText(result)).toContain('very deep')
+  })
+
+  it('pathological deeply nested blockquotes (30 levels) do not throw', () => {
+    const input = `${'> '.repeat(30)}extreme`
+    expect(() => parse(input)).not.toThrow()
+    // Content is preserved as plain text at the cap; no stack overflow
+    const result = parse(input)
+    expect(flatText(result)).toContain('extreme')
+  })
+
+  it('pathological nested links in link-display-text do not throw', () => {
+    // Craft a display-text string that itself opens another external link.
+    // Depth-threading through consumeExternalLink bounds the recursion.
+    let input = 'leaf'
+    for (let i = 0; i < 20; i++) {
+      input = `[${input}](https://example.com/${i})`
+    }
+    expect(() => parse(input)).not.toThrow()
+    const result = parse(input)
+    // All non-empty parse results include at least one block
+    expect(result.content).toBeDefined()
+    expect((result.content ?? []).length).toBeGreaterThan(0)
+  })
+
+  it('depth parameter ≤ MAX_PARSE_DEPTH still parses normally (explicit call)', () => {
+    const result = parse('hello', 5)
+    expect(result).toEqual(doc(paragraph(text('hello'))))
+  })
+
+  it('depth parameter > MAX_PARSE_DEPTH returns plain-text fallback (explicit call)', () => {
+    // Pass depth=11 directly → exceeds MAX_PARSE_DEPTH (10) → plain-text
+    // fallback returns the input verbatim as a single text node.
+    const result = parse('> quoted', 11)
+    expect(result).toEqual(doc(paragraph(text('> quoted'))))
+  })
+})

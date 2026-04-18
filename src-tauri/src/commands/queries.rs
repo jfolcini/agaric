@@ -194,26 +194,18 @@ pub async fn count_backlinks_batch_inner(
     if page_ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let placeholders: String = page_ids
-        .iter()
-        .enumerate()
-        .map(|(i, _)| format!("?{}", i + 1))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!(
-        "SELECT bl.target_id, COUNT(*) as cnt \
+    let ids_json = serde_json::to_string(&page_ids)?;
+    let sql = "SELECT bl.target_id, COUNT(*) as cnt \
          FROM block_links bl \
          JOIN blocks b ON b.id = bl.source_id \
-         WHERE bl.target_id IN ({placeholders}) \
+         WHERE bl.target_id IN (SELECT value FROM json_each(?1)) \
            AND b.deleted_at IS NULL \
            AND b.is_conflict = 0 \
-         GROUP BY bl.target_id"
-    );
-    let mut query = sqlx::query_as::<_, (String, i64)>(&sql);
-    for id in &page_ids {
-        query = query.bind(id);
-    }
-    let rows = query.fetch_all(pool).await?;
+         GROUP BY bl.target_id";
+    let rows = sqlx::query_as::<_, (String, i64)>(sql)
+        .bind(ids_json)
+        .fetch_all(pool)
+        .await?;
     Ok(rows
         .into_iter()
         // cnt is a non-negative count from SQL; safe to convert

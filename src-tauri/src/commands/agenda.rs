@@ -79,25 +79,17 @@ pub async fn count_agenda_batch_by_source_inner(
     for d in &dates {
         validate_date_format(d)?;
     }
-    let placeholders: String = dates
-        .iter()
-        .enumerate()
-        .map(|(i, _)| format!("?{}", i + 1))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!(
-        "SELECT ac.date, ac.source, COUNT(*) as cnt \
+    let dates_json = serde_json::to_string(&dates)?;
+    let sql = "SELECT ac.date, ac.source, COUNT(*) as cnt \
          FROM agenda_cache ac \
          JOIN blocks b ON b.id = ac.block_id \
-         WHERE ac.date IN ({placeholders}) \
+         WHERE ac.date IN (SELECT value FROM json_each(?1)) \
            AND b.deleted_at IS NULL \
-         GROUP BY ac.date, ac.source"
-    );
-    let mut query = sqlx::query_as::<_, (String, String, i64)>(&sql);
-    for d in &dates {
-        query = query.bind(d);
-    }
-    let rows = query.fetch_all(pool).await?;
+         GROUP BY ac.date, ac.source";
+    let rows = sqlx::query_as::<_, (String, String, i64)>(sql)
+        .bind(dates_json)
+        .fetch_all(pool)
+        .await?;
     let mut result: HashMap<String, HashMap<String, usize>> = HashMap::new();
     for (date, source, cnt) in rows {
         // cnt is a non-negative count from SQL; safe to convert

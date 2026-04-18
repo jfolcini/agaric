@@ -497,7 +497,7 @@ export function SearchPanel(): React.ReactElement {
             data-testid="search-results"
             role="listbox"
             tabIndex={0}
-            aria-label="Search results"
+            aria-label={t('search.resultsListLabel')}
             onKeyDown={(e) => {
               if (handleListKeyDown(e)) e.preventDefault()
             }}

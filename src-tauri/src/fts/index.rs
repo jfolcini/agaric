@@ -242,6 +242,26 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
 /// search index"), never incrementally.  Single-block updates go through
 /// [`update_fts_for_block`] instead.
 pub async fn rebuild_fts_index(pool: &SqlitePool) -> Result<(), AppError> {
+    tracing::info!("rebuilding fts_blocks cache");
+    let start = std::time::Instant::now();
+    let result = rebuild_fts_index_impl(pool).await;
+    match result {
+        Ok(rows_affected) => {
+            tracing::info!(
+                rows_affected,
+                duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
+                "rebuilt fts_blocks cache"
+            );
+            Ok(())
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "rebuild failed for fts_blocks cache");
+            Err(e)
+        }
+    }
+}
+
+async fn rebuild_fts_index_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     // Pre-load tag/page name maps (shared helper)
     let (tag_names, page_titles) = load_ref_maps(pool).await?;
 
@@ -273,7 +293,7 @@ pub async fn rebuild_fts_index(pool: &SqlitePool) -> Result<(), AppError> {
     }
 
     tx.commit().await?;
-    Ok(())
+    Ok(blocks.len() as u64)
 }
 
 /// Read/write split variant of [`rebuild_fts_index`].
@@ -285,6 +305,29 @@ pub async fn rebuild_fts_index_split(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
 ) -> Result<(), AppError> {
+    tracing::info!("rebuilding fts_blocks cache");
+    let start = std::time::Instant::now();
+    let result = rebuild_fts_index_split_impl(write_pool, read_pool).await;
+    match result {
+        Ok(rows_affected) => {
+            tracing::info!(
+                rows_affected,
+                duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
+                "rebuilt fts_blocks cache"
+            );
+            Ok(())
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "rebuild failed for fts_blocks cache");
+            Err(e)
+        }
+    }
+}
+
+async fn rebuild_fts_index_split_impl(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+) -> Result<u64, AppError> {
     // Read phase: load ref maps and block content from read_pool
     let (tag_names, page_titles) = load_ref_maps(read_pool).await?;
     let blocks = sqlx::query!(
@@ -309,7 +352,7 @@ pub async fn rebuild_fts_index_split(
             .await?;
     }
     tx.commit().await?;
-    Ok(())
+    Ok(blocks.len() as u64)
 }
 
 // ---------------------------------------------------------------------------

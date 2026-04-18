@@ -186,6 +186,9 @@ pub async fn compact_op_log(
     device_id: &str,
     retention_days: u64,
 ) -> Result<Option<String>, AppError> {
+    tracing::info!(retention_days, "compaction starting");
+    let start = std::time::Instant::now();
+
     let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days.cast_signed());
     // Use to_rfc3339_opts with millis + Z-suffix for consistent comparison
     // with op_log.created_at timestamps (F03).
@@ -204,8 +207,11 @@ pub async fn compact_op_log(
     .fetch_one(&mut *read_tx)
     .await?;
 
+    tracing::debug!(eligible_ops = count, "compaction eligible ops identified");
+
     if count == 0 {
         read_tx.commit().await?;
+        tracing::info!(retention_days, "compaction: no eligible ops, nothing to do");
         return Ok(None);
     }
 
@@ -255,13 +261,17 @@ pub async fn compact_op_log(
     // frontier.  The seq guard ensures that ops written after the Phase 1
     // read (which would have seq > up_to_seqs[device]) are never deleted,
     // even if their created_at happens to be before the cutoff.
+    let mut deleted_count: u64 = 0;
     for (dev_id, max_seq) in &data.up_to_seqs {
-        sqlx::query("DELETE FROM op_log WHERE created_at < ?1 AND device_id = ?2 AND seq <= ?3")
-            .bind(&cutoff_str)
-            .bind(dev_id)
-            .bind(max_seq)
-            .execute(&mut *tx)
-            .await?;
+        let res = sqlx::query(
+            "DELETE FROM op_log WHERE created_at < ?1 AND device_id = ?2 AND seq <= ?3",
+        )
+        .bind(&cutoff_str)
+        .bind(dev_id)
+        .bind(max_seq)
+        .execute(&mut *tx)
+        .await?;
+        deleted_count += res.rows_affected();
     }
 
     // Cleanup old snapshots (inlined to stay within this transaction)
@@ -277,6 +287,14 @@ pub async fn compact_op_log(
     .await?;
 
     tx.commit().await?;
+
+    tracing::info!(
+        snapshot_id = %snapshot_id,
+        ops_deleted = deleted_count,
+        snapshot_bytes = encoded.len(),
+        duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
+        "compaction completed"
+    );
 
     Ok(Some(snapshot_id))
 }

@@ -137,6 +137,15 @@ describe('FilterPill', () => {
     expect(removeBtn.className).toContain('touch-target')
   })
 
+  it('remove button uses normalized focus-visible ring classes (UX-209)', () => {
+    render(<FilterPill {...defaultProps} />)
+
+    const removeBtn = screen.getByLabelText('Remove filter status = TODO')
+    expect(removeBtn.className).toContain('focus-visible:ring-[3px]')
+    expect(removeBtn.className).toContain('focus-visible:ring-ring/50')
+    expect(removeBtn.className).toContain('focus-visible:outline-hidden')
+  })
+
   describe('a11y', () => {
     it('has no a11y violations', async () => {
       const { container } = render(<FilterPill {...defaultProps} />)

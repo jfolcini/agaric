@@ -2552,4 +2552,20 @@ describe('ConflictList', () => {
       expect(announce).toHaveBeenCalledWith(t('conflict.batchDiscardedCount', { count: 2 }))
     })
   })
+
+  // --- UX-210: i18n aria-label ---
+  it('listbox aria-label resolves via t() (UX-210)', async () => {
+    const page = {
+      items: [makeConflict({ id: 'C1', content: 'i18n test' })],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    render(<ConflictList />)
+    await screen.findByText('i18n test')
+
+    const listbox = screen.getByRole('listbox', { name: t('conflicts.listLabel') })
+    expect(listbox).toBeInTheDocument()
+  })
 })

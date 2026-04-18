@@ -62,6 +62,21 @@ export function PairingDialog({
   const { t } = useTranslation()
   const dialogRef = useRef<HTMLDivElement>(null)
   const retryBtnRef = useRef<HTMLButtonElement>(null)
+  // Tracks the paste-focus setTimeout so we can cancel it on unmount and
+  // avoid focusing a stale DOM node (#MAINT-12).
+  const pendingFocusRef = useRef<number | null>(null)
+
+  // Clear any pending paste-focus timer on unmount so we never touch a
+  // detached DOM node after the dialog closes.
+  useEffect(
+    () => () => {
+      if (pendingFocusRef.current !== null) {
+        window.clearTimeout(pendingFocusRef.current)
+        pendingFocusRef.current = null
+      }
+    },
+    [],
+  )
 
   // Helper: query word inputs from the DOM (Input component doesn't forward refs)
   const getWordInputs = useCallback(
@@ -159,7 +174,11 @@ export function PairingDialog({
         })
         // Focus the next empty input after the distributed words
         const nextEmpty = Math.min(index + parts.length, 3)
-        setTimeout(() => {
+        if (pendingFocusRef.current !== null) {
+          window.clearTimeout(pendingFocusRef.current)
+        }
+        pendingFocusRef.current = window.setTimeout(() => {
+          pendingFocusRef.current = null
           const inputs = getWordInputs()
           inputs[nextEmpty]?.focus()
         }, 0)
