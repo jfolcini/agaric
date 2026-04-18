@@ -33,14 +33,78 @@ pub fn should_attempt_sync_with_discovered_peer(
 /// cached network address from a previous successful sync or manual entry.
 /// Returns `None` if the address cannot be parsed as a `SocketAddr`.
 ///
+/// Handles IPv6 link-local scope IDs (e.g. `[fe80::1%eth0]:8080`) that
+/// `SocketAddr::from_str` rejects in stable Rust. The scope ID is
+/// discarded — `DiscoveredPeer.addresses: Vec<IpAddr>` has no slot to
+/// carry it. This is sufficient for peer address resolution today; if a
+/// future caller must reconnect over a link-local address, preserve the
+/// scope ID in a follow-up change.
+///
 /// Extracted from `daemon_loop` Branches B/C for independent testing.
 pub fn build_fallback_peer(peer_id: &str, last_address: &str) -> Option<DiscoveredPeer> {
-    let socket_addr: std::net::SocketAddr = last_address.parse().ok()?;
-    Some(DiscoveredPeer {
-        device_id: peer_id.to_string(),
-        addresses: vec![socket_addr.ip()],
-        port: socket_addr.port(),
-    })
+    // Fast path: addresses without IPv6 scope IDs parse directly.
+    if let Ok(socket_addr) = last_address.parse::<std::net::SocketAddr>() {
+        return Some(DiscoveredPeer {
+            device_id: peer_id.to_string(),
+            addresses: vec![socket_addr.ip()],
+            port: socket_addr.port(),
+        });
+    }
+
+    // Slow path: strip any IPv6 scope ID and retry. Logged at debug because
+    // the standard parser also rejects plainly malformed input; we want the
+    // failure visible but not noisy.
+    let scrubbed = strip_ipv6_scope_id(last_address)?;
+    match scrubbed.parse::<std::net::SocketAddr>() {
+        Ok(socket_addr) => Some(DiscoveredPeer {
+            device_id: peer_id.to_string(),
+            addresses: vec![socket_addr.ip()],
+            port: socket_addr.port(),
+        }),
+        Err(e) => {
+            tracing::debug!(
+                peer_id,
+                error = %e,
+                "build_fallback_peer: scope-stripped address still unparseable"
+            );
+            None
+        }
+    }
+}
+
+/// Strip an IPv6 zone/scope identifier from a `host:port` or `[host]:port`
+/// string. Returns `None` if there is no `%` in the address (in which case
+/// the caller has already tried and failed to parse via the fast path, so
+/// the input is not a scope-ID issue).
+///
+/// Handles two shapes:
+///   1. Bracketed: `[fe80::1%eth0]:8080` → `[fe80::1]:8080`
+///   2. Un-bracketed: `fe80::1%eth0:8080` → `[fe80::1]:8080` (brackets
+///      added so `SocketAddr::from_str` accepts the result).
+fn strip_ipv6_scope_id(addr: &str) -> Option<String> {
+    if !addr.contains('%') {
+        return None;
+    }
+
+    if let Some(rest) = addr.strip_prefix('[') {
+        // Bracketed form: split on closing bracket.
+        let close = rest.find(']')?;
+        let inside = &rest[..close];
+        let suffix = &rest[close..]; // starts with "]"
+        let ip = match inside.split_once('%') {
+            Some((ip, _scope)) => ip,
+            None => inside,
+        };
+        return Some(format!("[{ip}{suffix}"));
+    }
+
+    // Un-bracketed form: split off the scope, then split scope-tail on the
+    // port separator (`:`). Everything before `%` is the IPv6 literal;
+    // everything from the final `:` in the scope-tail onward is `:port`.
+    let (ip, scope_and_port) = addr.split_once('%')?;
+    let port_colon = scope_and_port.rfind(':')?;
+    let port = &scope_and_port[port_colon..];
+    Some(format!("[{ip}]{port}"))
 }
 
 /// Resolve a peer's network address: prefer mDNS-discovered address,

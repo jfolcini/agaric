@@ -401,6 +401,8 @@ export function LinkedReferences({
                 loadingLabel={t('references.loading')}
                 ariaLabel={t('references.loadMoreLabel')}
                 ariaLoadingLabel={t('references.loadingMore')}
+                loadedCount={groups.reduce((sum, g) => sum + g.blocks.length, 0)}
+                totalCount={totalCount}
               />
             </div>
           )}

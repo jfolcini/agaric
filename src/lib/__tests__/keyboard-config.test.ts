@@ -53,8 +53,69 @@ describe('keyboard-config', () => {
     const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'exportPageMarkdown')
     expect(shortcut).toBeDefined()
     expect(shortcut?.keys).toBe('Ctrl + Shift + E')
-    expect(shortcut?.category).toBe('keyboard.category.global')
+    // BUG-30: handler is page-editor-scoped, not global
+    expect(shortcut?.category).toBe('keyboard.category.pageEditor')
     expect(shortcut?.description).toBe('keyboard.exportPageMarkdown')
+    expect(shortcut?.condition).toBe('keyboard.condition.inPageEditor')
+  })
+
+  it('DEFAULT_SHORTCUTS includes zoomOut (UX-214) under blockTree', () => {
+    const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'zoomOut')
+    expect(shortcut).toBeDefined()
+    expect(shortcut?.keys).toBe('Escape')
+    expect(shortcut?.category).toBe('keyboard.category.blockTree')
+    expect(shortcut?.description).toBe('keyboard.zoomOut')
+    expect(shortcut?.condition).toBe('keyboard.condition.whenZoomed')
+  })
+
+  it('DEFAULT_SHORTCUTS includes gotoConflicts (UX-216) under global', () => {
+    const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'gotoConflicts')
+    expect(shortcut).toBeDefined()
+    expect(shortcut?.keys).toBe('Alt + C')
+    expect(shortcut?.category).toBe('keyboard.category.global')
+    expect(shortcut?.description).toBe('keyboard.gotoConflicts')
+  })
+
+  it('gotoConflicts does not collide with any existing (keys, category) pair', () => {
+    const gotoConflictsKeys = 'Alt + C'
+    const dupes = DEFAULT_SHORTCUTS.filter(
+      (s) => s.keys === gotoConflictsKeys && s.category === 'keyboard.category.global',
+    )
+    // Only gotoConflicts itself should match
+    expect(dupes).toHaveLength(1)
+    expect(dupes[0]?.id).toBe('gotoConflicts')
+  })
+
+  it('matchesShortcutBinding resolves Alt+C to gotoConflicts', () => {
+    expect(
+      matchesShortcutBinding(
+        { altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, key: 'c' },
+        'gotoConflicts',
+      ),
+    ).toBe(true)
+    // Plain "c" must NOT match
+    expect(
+      matchesShortcutBinding(
+        { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, key: 'c' },
+        'gotoConflicts',
+      ),
+    ).toBe(false)
+  })
+
+  it('matchesShortcutBinding resolves Escape to zoomOut', () => {
+    expect(
+      matchesShortcutBinding(
+        { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, key: 'Escape' },
+        'zoomOut',
+      ),
+    ).toBe(true)
+    // Escape with modifiers must NOT match
+    expect(
+      matchesShortcutBinding(
+        { altKey: false, ctrlKey: true, metaKey: false, shiftKey: false, key: 'Escape' },
+        'zoomOut',
+      ),
+    ).toBe(false)
   })
 
   it('getCustomOverrides returns empty when nothing stored', () => {

@@ -684,6 +684,8 @@ export function BlockTree({
     datePickerCursorPos,
     setDatePickerMode,
     setDatePickerOpen,
+    zoomedBlockId,
+    zoomToRoot,
   })
 
   // ── Click on whitespace within block tree closes editor (UX-M9) ──

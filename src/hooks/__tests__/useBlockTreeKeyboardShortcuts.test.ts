@@ -30,6 +30,8 @@ function makeOptions(
     datePickerCursorPos: { current: undefined },
     setDatePickerMode: vi.fn(),
     setDatePickerOpen: vi.fn(),
+    zoomedBlockId: null,
+    zoomToRoot: vi.fn(),
     ...overrides,
   }
 }
@@ -212,6 +214,79 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       fireEvent.keyDown(document, { key: '1', ctrlKey: true })
 
       expect(opts.handleSlashCommand).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('Zoom out (Escape) — UX-214', () => {
+    it('calls zoomToRoot when Escape is pressed while zoomed and no editor/selection', () => {
+      const opts = makeOptions({
+        focusedBlockId: null,
+        selectedBlockIds: [],
+        zoomedBlockId: 'BLOCK_1',
+      })
+      useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: [] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      expect(opts.zoomToRoot).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not call zoomToRoot when not zoomed in', () => {
+      const opts = makeOptions({
+        focusedBlockId: null,
+        selectedBlockIds: [],
+        zoomedBlockId: null,
+      })
+      useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: [] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      expect(opts.zoomToRoot).not.toHaveBeenCalled()
+    })
+
+    it('does not call zoomToRoot when a block is being edited', () => {
+      const opts = makeOptions({
+        focusedBlockId: 'BLOCK_1',
+        selectedBlockIds: [],
+        zoomedBlockId: 'BLOCK_1',
+      })
+      useBlockStore.setState({ focusedBlockId: 'BLOCK_1', selectedBlockIds: [] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      expect(opts.zoomToRoot).not.toHaveBeenCalled()
+    })
+
+    it('does not call zoomToRoot when a multi-selection is active', () => {
+      const opts = makeOptions({
+        focusedBlockId: null,
+        selectedBlockIds: ['BLOCK_1'],
+        zoomedBlockId: 'BLOCK_1',
+      })
+      useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: ['BLOCK_1'] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      expect(opts.zoomToRoot).not.toHaveBeenCalled()
+    })
+
+    it('does not call zoomToRoot when a different key is pressed', () => {
+      const opts = makeOptions({
+        focusedBlockId: null,
+        selectedBlockIds: [],
+        zoomedBlockId: 'BLOCK_1',
+      })
+      useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: [] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'Enter' })
+      fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+      expect(opts.zoomToRoot).not.toHaveBeenCalled()
     })
   })
 

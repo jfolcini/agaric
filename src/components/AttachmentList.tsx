@@ -8,7 +8,7 @@
 
 import { File, FileText, Image, Paperclip, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
@@ -60,11 +60,29 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
   const { t } = useTranslation()
   const { attachments, loading, handleDeleteAttachment } = useBlockAttachments(blockId)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
+  // Tracks the pendingDeleteId reset setTimeout so we can cancel it on unmount
+  // and avoid calling setState on an unmounted component (#MAINT-48).
+  const pendingDeleteClearRef = useRef<number | null>(null)
+
+  // Clear any pending reset timer on unmount.
+  useEffect(
+    () => () => {
+      if (pendingDeleteClearRef.current !== null) {
+        window.clearTimeout(pendingDeleteClearRef.current)
+        pendingDeleteClearRef.current = null
+      }
+    },
+    [],
+  )
 
   const onDelete = useCallback(
     (attachment: AttachmentRow) => {
       if (pendingDeleteId === attachment.id) {
         // Second click — confirmed
+        if (pendingDeleteClearRef.current !== null) {
+          window.clearTimeout(pendingDeleteClearRef.current)
+          pendingDeleteClearRef.current = null
+        }
         handleDeleteAttachment(attachment.id)
         setPendingDeleteId(null)
         toast.success(t('attachments.deleted', { name: attachment.filename }))
@@ -75,8 +93,13 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
           description: t('attachments.clickAgain'),
           duration: 3000,
         })
+        // Cancel any previous reset timer before scheduling a new one.
+        if (pendingDeleteClearRef.current !== null) {
+          window.clearTimeout(pendingDeleteClearRef.current)
+        }
         // Auto-reset after toast disappears
-        setTimeout(() => {
+        pendingDeleteClearRef.current = window.setTimeout(() => {
+          pendingDeleteClearRef.current = null
           setPendingDeleteId((current) => (current === attachment.id ? null : current))
         }, 3000)
       }
@@ -119,7 +142,7 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
                 type="button"
                 aria-label={t('attachments.delete', { name: attachment.filename })}
                 className={cn(
-                  'shrink-0 rounded-sm p-1 transition-opacity focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center',
+                  'shrink-0 rounded-sm p-1 transition-opacity focus-visible:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center',
                   pendingDeleteId === attachment.id
                     ? 'text-destructive opacity-100 bg-destructive/10'
                     : 'text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100',

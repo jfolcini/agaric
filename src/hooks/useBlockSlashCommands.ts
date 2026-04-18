@@ -552,7 +552,14 @@ export function useBlockSlashCommands({
   const tRef = useRef(t)
   tRef.current = t
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: datePickerCursorPos is a stable ref; pageStore is a stable StoreApi; setDatePickerMode/setDatePickerOpen are stable setters; rootParentId/rovingEditor/t accessed via refs
+  // Omitted deps explanation:
+  //   - rootParentId, rovingEditor, t: latest values read via *Ref.current (see refs above)
+  //   - datePickerCursorPos: a MutableRefObject, stable for the lifetime of the owner
+  //   - pageStore: a Zustand StoreApi, stable for the lifetime of the owner
+  //   - setDatePickerMode, setDatePickerOpen: setter props, treated as stable by callers
+  //   - setTemplatePickerOpen, setTemplatePages: local useState setters, guaranteed stable by React
+  // Only focusedBlockId is a real dependency — it gates the whole body via `if (!focusedBlockId) return`.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally omitted — see above
   const handleSlashCommand = useCallback(
     async (item: PickerItem) => {
       const rootParentId = rootParentIdRef.current

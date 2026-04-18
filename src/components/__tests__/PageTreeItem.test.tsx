@@ -218,9 +218,9 @@ describe('PageTreeItem', () => {
 
   describe('touch-target classes on Plus buttons', () => {
     const touchClasses = [
-      'focus-visible:ring-2',
-      'focus-visible:ring-ring',
-      'focus-visible:ring-offset-1',
+      'focus-visible:ring-[3px]',
+      'focus-visible:ring-ring/50',
+      'focus-visible:outline-hidden',
       '[@media(pointer:coarse)]:opacity-100',
       '[@media(pointer:coarse)]:h-[44px]',
       '[@media(pointer:coarse)]:w-[44px]',

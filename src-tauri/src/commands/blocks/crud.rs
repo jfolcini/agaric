@@ -185,9 +185,7 @@ pub async fn create_block_inner(
     let (block, op_record) =
         create_block_in_tx(&mut tx, device_id, block_type, content, parent_id, position).await?;
     tx.commit().await?;
-    if let Err(e) = materializer.dispatch_background(&op_record) {
-        tracing::warn!(error = %e, "failed to dispatch background cache task");
-    }
+    materializer.dispatch_background_or_warn(&op_record);
     Ok(block)
 }
 
@@ -366,9 +364,7 @@ pub async fn delete_block_inner(
     tx.commit().await?;
 
     // Fire-and-forget background cache dispatch
-    if let Err(e) = materializer.dispatch_background(&op_record) {
-        tracing::warn!(error = %e, "failed to dispatch background cache task");
-    }
+    materializer.dispatch_background_or_warn(&op_record);
 
     Ok(DeleteResponse {
         block_id,
@@ -459,9 +455,7 @@ pub async fn restore_block_inner(
     tx.commit().await?;
 
     // Fire-and-forget background cache dispatch
-    if let Err(e) = materializer.dispatch_background(&op_record) {
-        tracing::warn!(error = %e, "failed to dispatch background cache task");
-    }
+    materializer.dispatch_background_or_warn(&op_record);
 
     Ok(RestoreResponse {
         block_id,
@@ -676,9 +670,7 @@ pub async fn purge_block_inner(
     tx.commit().await?;
 
     // Fire-and-forget background cache dispatch
-    if let Err(e) = materializer.dispatch_background(&op_record) {
-        tracing::warn!(error = %e, "failed to dispatch background cache task");
-    }
+    materializer.dispatch_background_or_warn(&op_record);
 
     Ok(PurgeResponse {
         block_id,
@@ -754,9 +746,7 @@ pub async fn restore_all_deleted_inner(
 
     // Dispatch background cache tasks for each root
     for op_record in &op_records {
-        if let Err(e) = materializer.dispatch_background(op_record) {
-            tracing::warn!(error = %e, "failed to dispatch background cache task");
-        }
+        materializer.dispatch_background_or_warn(op_record);
     }
 
     Ok(BulkTrashResponse {
@@ -938,19 +928,28 @@ pub async fn purge_all_deleted_inner(
             || p.components()
                 .any(|c| matches!(c, std::path::Component::ParentDir))
         {
-            tracing::warn!(path, "skipping attachment deletion: unsafe path");
+            let (path_hash, ext) = anonymize_attachment_path(path);
+            tracing::warn!(
+                path_hash = %path_hash,
+                extension = %ext,
+                "skipping attachment deletion: unsafe path"
+            );
             continue;
         }
         if let Err(e) = std::fs::remove_file(path) {
-            tracing::warn!(path, error = %e, "failed to remove attachment file after purge");
+            let (path_hash, ext) = anonymize_attachment_path(path);
+            tracing::warn!(
+                path_hash = %path_hash,
+                extension = %ext,
+                error = %e,
+                "failed to remove attachment file after purge"
+            );
         }
     }
 
     // Dispatch background cache tasks
     for op_record in &op_records {
-        if let Err(e) = materializer.dispatch_background(op_record) {
-            tracing::warn!(error = %e, "failed to dispatch background cache task");
-        }
+        materializer.dispatch_background_or_warn(op_record);
     }
 
     Ok(BulkTrashResponse {
@@ -1271,4 +1270,36 @@ pub async fn purge_all_deleted(
     purge_all_deleted_inner(&pool.0, device_id.as_str(), &materializer)
         .await
         .map_err(sanitize_internal_error)
+}
+
+/// Render an attachment path for structured logs without leaking the raw
+/// filename.
+///
+/// Returns `(path_hash, extension)` where:
+/// * `path_hash` is a 16-hex-char truncation of `blake3(path.as_bytes())`,
+///   stable across runs so repeated failures for the same path correlate.
+/// * `extension` is the lowercase file extension (or `""` when there is
+///   none). The extension is retained because it's low-entropy and helps
+///   diagnose "is this a PDF vs an image" problems without exposing the
+///   user's chosen filename.
+///
+/// Used by the trash/purge paths (`purge_block_inner`,
+/// `purge_all_deleted_inner`) where the full path would otherwise be
+/// written to the log.
+pub(crate) fn anonymize_attachment_path(path: &str) -> (String, String) {
+    let hash = blake3::hash(path.as_bytes());
+    // First 8 bytes == 16 hex chars is enough for correlation without
+    // approaching brute-force reversibility concerns.
+    let short_hash: String = hash
+        .as_bytes()
+        .iter()
+        .take(8)
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let extension = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    (short_hash, extension)
 }

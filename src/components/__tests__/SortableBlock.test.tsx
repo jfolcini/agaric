@@ -1873,7 +1873,7 @@ describe('SortableBlock a11y enhancements', () => {
     expect(deleteBtn.className).toContain('focus-ring')
   })
 
-  it('chevron has focus-visible:ring-2 class', () => {
+  it('chevron has focus-visible ring classes', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1885,10 +1885,12 @@ describe('SortableBlock a11y enhancements', () => {
     )
 
     const collapseBtn = screen.getByRole('button', { name: /collapse children/i })
-    expect(collapseBtn.className).toContain('focus-visible:ring-2')
+    expect(collapseBtn.className).toContain('focus-visible:ring-[3px]')
+    expect(collapseBtn.className).toContain('focus-visible:ring-ring/50')
+    expect(collapseBtn.className).toContain('focus-visible:outline-hidden')
   })
 
-  it('checkbox has focus-visible:ring-2 class', () => {
+  it('checkbox has focus-visible ring classes', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1899,7 +1901,9 @@ describe('SortableBlock a11y enhancements', () => {
     )
 
     const marker = screen.getByRole('button', { name: /set as todo/i })
-    expect(marker.className).toContain('focus-visible:ring-2')
+    expect(marker.className).toContain('focus-visible:ring-[3px]')
+    expect(marker.className).toContain('focus-visible:ring-ring/50')
+    expect(marker.className).toContain('focus-visible:outline-hidden')
   })
 
   it('all buttons have active:scale-95 class', () => {

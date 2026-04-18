@@ -1,5 +1,91 @@
 # Session Log
 
+## Session 405 — Rust error hygiene, sync observability, UX polish, focus-ring sweep (2026-04-18)
+
+**22 items resolved (BUG-30, BUG-36, BUG-40, BUG-41, UX-214, UX-215, UX-216, UX-218, UX-222, UX-224, UX-227, MAINT-9, MAINT-10, MAINT-18, MAINT-19, MAINT-23, MAINT-25, MAINT-26, MAINT-33, MAINT-34, MAINT-47, MAINT-48). REVIEW-LATER 94→72.**
+
+### Resolved items
+
+**Rust error hygiene + consolidation (A):**
+- **BUG-40** — RUST_LOG directives from user now take precedence over hardcoded `agaric`/`frontend` defaults. New `build_log_directives()` + `has_directive_for_target()` helpers parse-and-merge: user directives preserved verbatim, defaults only added for uncovered targets. Submodule directives (`agaric::db=trace`) count as covering the parent. 11 unit tests.
+- **BUG-41** — `update_property_def_options` / `delete_property_def` / `create_property_def` / `list_property_defs` now apply `sanitize_internal_error` consistently. Previously 2 commands silently bypassed sanitization. 4 tests.
+- **MAINT-26** — `sanitize_internal_error` doc comment rewritten to accurately describe "read + write" coverage (was previously mis-claiming "write-only"). Visibility bumped to `pub(crate)` for testability.
+- **MAINT-47** — New `Materializer::dispatch_background_or_warn()` helper replaces the 3-line `if let Err(e) = … { tracing::warn!(...) }` pattern across 17 call sites (commands/blocks/crud.rs, move_ops.rs, tags.rs, pages.rs, history.rs, attachments.rs, properties.rs, mod.rs). Tests added for success + error paths + unknown op_type.
+
+**Rust sync observability (B):**
+- **MAINT-18** — TLS cert SAN expanded to 4 entries (`localhost`, `*.local`, `127.0.0.1`, `::1`) for consistency (pinning ignores SAN but drift is still drift). Test parses DER and asserts the SAN list.
+- **MAINT-19** — `build_fallback_peer` now handles IPv6 scope IDs (`fe80::1%eth0`, `[fe80::1%eth0]:8080`, numeric `%2`) via new `strip_ipv6_scope_id` helper. Scope ID is discarded (model has no slot for it). 3 regression tests.
+- **MAINT-23** — 3 `list_peer_refs` fallback sites consolidated into `list_peer_refs_or_empty(pool, cycle)` helper. Log level elevated `warn!` → `error!` since this disables core daemon functionality. Cycle label (mdns_discovery / debounced_change / periodic_resync) added as structured field.
+- **MAINT-25** — 18 materializer / sync-protocol / recurrence error logs enriched with `block_id`, `device_id`, `seq`, `op_type` etc. where they're in scope. No function signature changes.
+- **MAINT-33** — Sync responder `tokio::spawn` now captures the JoinHandle; a watcher awaits it and logs panic (`error!`) vs connection failure (`warn!`) vs clean exit (no log).
+- **MAINT-34** — Attachment filenames in `purge_all_deleted_inner` tracing are now anonymized: logged as `path_hash` (blake3 first 16 hex) + `extension` (lowercase) instead of raw path. New `anonymize_attachment_path` helper.
+
+**Frontend sweep (C):**
+- **UX-227** — 18 remaining focus-visible ring sites normalized to `ring-[3px] ring-ring/50 outline-hidden` (PageBrowser line 501, PageTreeItem × 2, PageHeaderMenu × 8, BlockInlineControls × 3, PageTagSection, PageAliasSection, StaticBlock, AttachmentList). `rg 'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1' src/` → 0 matches.
+- **MAINT-9** — `useBlockMultiSelect` reentrancy guard migrated to ref (`batchInProgressRef`). State `batchInProgress` kept for UI surfacing (disabled-button indicator); ref is authoritative for guard logic so callbacks now have stable identity.
+- **MAINT-10** — `useBlockSlashCommands` biome-ignore explanation now accurately lists all omitted deps (rootParentId/rovingEditor/t via refs, datePickerCursorPos stable ref, pageStore stable StoreApi, setters guaranteed-stable). Deps array `[focusedBlockId]` unchanged but better documented.
+- **MAINT-48** — `AttachmentList.handleDelete` 3-second timeout captured in `pendingDeleteClearRef` + cleared on unmount, matching MAINT-12/14/15 pattern.
+
+**Frontend UX polish (D):**
+- **BUG-30** — `exportPageMarkdown` shortcut moved from `keyboard.category.global` to `keyboard.category.pageEditor` with condition `keyboard.condition.inPageEditor` (handler only lives in PageEditor; declaration now matches).
+- **UX-214** — New `zoomOut` shortcut (Escape when zoomed) — fires `zoomToRoot()` from `useBlockTreeKeyboardShortcuts` when not inside editor/selection/overlay. 5 tests.
+- **UX-215** — BlockZoomBar breadcrumbs now keyboard-navigable: `role="toolbar"`, ArrowLeft/Right/Home/End focus movement, `aria-current="location"` on current crumb. 8 tests.
+- **UX-216** — New `gotoConflicts` shortcut (Alt+C) — jumps to Conflicts view from anywhere. Handler guards inputs/contentEditable, announces via screen-reader region. 4 tests.
+- **UX-218** — `LoadMoreButton` now renders an optional "Loaded X of Y" progress line below the button when both counts are provided. LinkedReferences/UnlinkedReferences updated to pass counts. 7 tests.
+
+**Orchestrator trivial fixes:**
+- **BUG-36** — Extended CSP `img-src` to `asset: http://asset.localhost` so attachment `<img>` URLs render under strict-CSP WebViews (Android WebView, WebView2).
+- **UX-222** — `formatDateDisplay` and `PageMetadataBar` now use `undefined` locale (runtime) instead of hardcoded `'en-US'` — non-English users get localized weekday/month names + date ordering.
+- **UX-224** — `PageBrowser` list changed `100vh` → `100dvh` so the container shrinks when the on-screen keyboard opens (consistent with PairingDialog pattern).
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src-tauri/src/lib.rs` | BUG-40: `build_log_directives()` + 11 tests |
+| `src-tauri/src/commands/properties.rs` | BUG-41: sanitize 4 commands (update_options, delete_def, create_def, list_defs) |
+| `src-tauri/src/commands/mod.rs` | MAINT-26: doc rewrite + `pub(crate)` |
+| `src-tauri/src/materializer/dispatch.rs` | MAINT-47: `dispatch_background_or_warn()` + MAINT-25 log enrichment |
+| `src-tauri/src/commands/{blocks/crud,blocks/move_ops,tags,pages,history,attachments,properties,mod}.rs` | MAINT-47: 17 call sites migrated |
+| `src-tauri/src/commands/tests/property_cmd_tests.rs` | BUG-41: 4 sanitization tests |
+| `src-tauri/src/materializer/tests.rs` | MAINT-47: 3 helper tests |
+| `src-tauri/src/sync_net/tls.rs` + `tests.rs` | MAINT-18: SAN expansion + SAN assertion test |
+| `src-tauri/src/sync_daemon/discovery.rs` + `tests.rs` | MAINT-19: IPv6 scope-id parsing + 3 tests |
+| `src-tauri/src/sync_daemon/orchestrator.rs` | MAINT-23: `list_peer_refs_or_empty` helper + MAINT-33 watcher spawn |
+| `src-tauri/src/materializer/handlers.rs` | MAINT-25: 4 log sites get context |
+| `src-tauri/src/sync_protocol/orchestrator.rs` | MAINT-25: 4 log sites get `device_id` / `expected_remote_id` |
+| `src-tauri/src/recurrence.rs` | MAINT-25: 9 log sites get `block_id` / `new_block_id` / `device_id` |
+| `src-tauri/src/commands/blocks/crud.rs` | MAINT-34: `anonymize_attachment_path` + 2 sites converted |
+| `src-tauri/tauri.conf.json` | BUG-36: CSP `img-src` now includes `asset: http://asset.localhost` |
+| `src/lib/date-utils.ts`, `src/components/PageMetadataBar.tsx` | UX-222: `undefined` locale instead of `'en-US'` |
+| `src/components/__tests__/JournalPage.test.tsx` | UX-222: test helper matches runtime-locale pattern |
+| `src/components/PageBrowser.tsx` | UX-224: `100vh` → `100dvh`; UX-227: focus-ring normalize; UX-212 sr-only Label |
+| `src/components/{PageTreeItem,PageHeaderMenu,BlockInlineControls,PageTagSection,PageAliasSection,StaticBlock,AttachmentList}.tsx` | UX-227: focus-ring normalize (17 sites) |
+| `src/components/AttachmentList.tsx` | MAINT-48: pendingDeleteClearRef + cleanup |
+| `src/hooks/useBlockMultiSelect.ts` | MAINT-9: batchInProgressRef reentrancy guard |
+| `src/hooks/useBlockSlashCommands.ts` | MAINT-10: comprehensive biome-ignore docs |
+| `src/lib/keyboard-config.ts` | BUG-30 pageEditor category + UX-214 zoomOut + UX-216 gotoConflicts |
+| `src/hooks/useBlockTreeKeyboardShortcuts.ts` | UX-214: zoomOut handler with overlay/selection guards |
+| `src/components/BlockTree.tsx` | UX-214: passes zoomedBlockId + zoomToRoot |
+| `src/components/BlockZoomBar.tsx` | UX-215: toolbar + arrow-key navigation + aria-current |
+| `src/components/LoadMoreButton.tsx` | UX-218: loadedCount/totalCount + "Loaded X of Y" line |
+| `src/components/{LinkedReferences,UnlinkedReferences}.tsx` | UX-218: pass counts to LoadMoreButton |
+| `src/App.tsx` | UX-216: Alt+C Conflicts handler with input guards |
+| `src/lib/i18n.ts` | +9 keys (zoomOut, gotoConflicts, category.pageEditor, condition.inPageEditor, condition.whenZoomed, blockZoom.breadcrumbs, loadMore.progress, announce.conflictsOpened) |
+| `FEATURE-MAP.md` | Shortcut count sync (69→66) + UX-214/216 references + BUG-30 scope move |
+| `REVIEW-LATER.md` | Removed 22 resolved items, count 94→72 |
+| 11+ test files | +55 new tests across Rust + frontend |
+
+### Stats
+
+- 58 source files changed
+- Backend: 2040 Rust tests pass (+23 new)
+- Frontend: 6660 tests pass (+40 new)
+- 4 parallel build subagents + 4 review subagents
+- prek: all relevant hooks pass (biome, tsc, vitest, cargo fmt/clippy, machete). Known pre-existing failures: npm audit (dompurify CVE baseline), cargo deny (sandbox CA-cert permissions), `adaptive_fts_threshold_large_corpus` (flaky at high nextest parallelism — passes in isolation and at `-j 4`)
+- Post-review fix applied by orchestrator: added `sanitize_internal_error` to `create_property_def` and `list_property_defs` (reviewer A flagged contract gap after subagent A only fixed the 2 requested).
+
+
 ## Session 404 — Rust perf, observability, frontend setTimeout cleanup, a11y/i18n (2026-04-18)
 
 **17 items resolved (PERF-17, PERF-18, MAINT-22, MAINT-27, MAINT-28, MAINT-29, MAINT-11, MAINT-12, MAINT-14, MAINT-15, UX-209, UX-210, UX-211, UX-212, MAINT-31, MAINT-32, MAINT-35). REVIEW-LATER 109→94. 2 new items filed (UX-227 focus-ring drift in 18 more sites, MAINT-48 AttachmentList setTimeout leak).**

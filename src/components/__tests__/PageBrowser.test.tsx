@@ -626,9 +626,9 @@ describe('PageBrowser', () => {
 
     const pageRow = screen.getByText('Focus Page').closest('.group') as HTMLElement
     const pageBtn = within(pageRow).getByRole('button', { name: /Focus Page/i })
-    expect(pageBtn.className).toContain('focus-visible:ring-2')
-    expect(pageBtn.className).toContain('focus-visible:ring-ring')
-    expect(pageBtn.className).toContain('focus-visible:ring-offset-1')
+    expect(pageBtn.className).toContain('focus-visible:ring-[3px]')
+    expect(pageBtn.className).toContain('focus-visible:ring-ring/50')
+    expect(pageBtn.className).toContain('focus-visible:outline-hidden')
   })
 
   it('delete button is disabled while deletion is in progress', async () => {

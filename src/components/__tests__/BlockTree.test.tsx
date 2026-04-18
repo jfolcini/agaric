@@ -4881,14 +4881,14 @@ describe('BlockTree zoom-in', () => {
     })
 
     // No breadcrumb initially
-    expect(screen.queryByRole('navigation', { name: 'Block breadcrumb' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('toolbar', { name: 'Zoom breadcrumbs' })).not.toBeInTheDocument()
 
     // Zoom into B (which has children)
     await user.click(screen.getByTestId('zoom-in-B'))
 
     // Breadcrumb should appear
     await waitFor(() => {
-      expect(screen.getByRole('navigation', { name: 'Block breadcrumb' })).toBeInTheDocument()
+      expect(screen.getByRole('toolbar', { name: 'Zoom breadcrumbs' })).toBeInTheDocument()
     })
 
     // Breadcrumb should contain the ancestor trail: A → B
@@ -4922,7 +4922,7 @@ describe('BlockTree zoom-in', () => {
     })
 
     // Breadcrumb should be visible
-    const nav = screen.getByRole('navigation', { name: 'Block breadcrumb' })
+    const nav = screen.getByRole('toolbar', { name: 'Zoom breadcrumbs' })
     expect(nav).toBeInTheDocument()
 
     // Click the home button (first button inside the nav)
@@ -4938,7 +4938,7 @@ describe('BlockTree zoom-in', () => {
     })
 
     // Breadcrumb should be gone
-    expect(screen.queryByRole('navigation', { name: 'Block breadcrumb' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('toolbar', { name: 'Zoom breadcrumbs' })).not.toBeInTheDocument()
   })
 })
 

@@ -38,7 +38,7 @@ export function PageAliasSection({
           {editingAliases && (
             <button
               type="button"
-              className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+              className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
               onClick={() => onRemoveAlias(alias)}
               aria-label={t('pageHeader.removeAlias', { alias })}
             >

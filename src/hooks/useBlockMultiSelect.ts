@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import type { StoreApi } from 'zustand'
 import { deleteBlock, setTodoState as setTodoStateCmd } from '../lib/tauri'
@@ -30,11 +30,17 @@ export function useBlockMultiSelect({
   t,
 }: UseBlockMultiSelectParams): UseBlockMultiSelectReturn {
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false)
+  // `batchInProgress` (state) is surfaced to the UI (disables buttons in
+  // BlockContextMenu). `batchInProgressRef` is the reentrancy guard — using a
+  // ref here prevents cascade re-renders caused by rebuilding the useCallback
+  // identity on every flag flip (#MAINT-9).
   const [batchInProgress, setBatchInProgress] = useState(false)
+  const batchInProgressRef = useRef(false)
 
   const handleBatchSetTodo = useCallback(
     async (state: string | null) => {
-      if (batchInProgress) return
+      if (batchInProgressRef.current) return
+      batchInProgressRef.current = true
       setBatchInProgress(true)
       try {
         const ids = [...selectedBlockIds]
@@ -72,14 +78,16 @@ export function useBlockMultiSelect({
           )
         }
       } finally {
+        batchInProgressRef.current = false
         setBatchInProgress(false)
       }
     },
-    [selectedBlockIds, clearSelected, batchInProgress, rootParentId, t, pageStore],
+    [selectedBlockIds, clearSelected, rootParentId, t, pageStore],
   )
 
   const handleBatchDelete = useCallback(async () => {
-    if (batchInProgress) return
+    if (batchInProgressRef.current) return
+    batchInProgressRef.current = true
     setBatchInProgress(true)
     try {
       const ids = [...selectedBlockIds]
@@ -115,9 +123,10 @@ export function useBlockMultiSelect({
         toast.success(t('blockTree.deletedMessage', { count: successCount }))
       }
     } finally {
+      batchInProgressRef.current = false
       setBatchInProgress(false)
     }
-  }, [selectedBlockIds, clearSelected, batchInProgress, t, pageStore])
+  }, [selectedBlockIds, clearSelected, t, pageStore])
 
   return {
     batchDeleteConfirm,

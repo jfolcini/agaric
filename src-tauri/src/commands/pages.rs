@@ -328,9 +328,7 @@ pub async fn import_markdown_inner(
 
     // Dispatch materializer tasks after commit
     for op_record in &op_records {
-        if let Err(e) = materializer.dispatch_background(op_record) {
-            tracing::warn!(error = %e, "import_markdown: failed to dispatch background task");
-        }
+        materializer.dispatch_background_or_warn(op_record);
     }
 
     Ok(ImportResult {

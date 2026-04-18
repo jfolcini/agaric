@@ -69,6 +69,7 @@ import { useTheme } from './hooks/useTheme'
 import { useUndoShortcuts } from './hooks/useUndoShortcuts'
 import { announce } from './lib/announcer'
 import { formatRelativeTime } from './lib/format-relative-time'
+import { matchesShortcutBinding } from './lib/keyboard-config'
 import { logger } from './lib/logger'
 import { createBlock, flushDraft, getConflicts, listBlocks, listDrafts } from './lib/tauri'
 import { cn } from './lib/utils'
@@ -275,6 +276,22 @@ function App() {
   // ── Global shortcuts (Ctrl+F → search, Ctrl+N → new page) ──────────
   useEffect(() => {
     function handleGlobalShortcuts(e: KeyboardEvent) {
+      // Alt+C → jump to Conflicts view (UX-216)
+      if (matchesShortcutBinding(e, 'gotoConflicts')) {
+        const target = e.target as HTMLElement | null
+        if (
+          target?.isContentEditable ||
+          target?.tagName === 'INPUT' ||
+          target?.tagName === 'TEXTAREA'
+        ) {
+          return
+        }
+        e.preventDefault()
+        useNavigationStore.getState().setView('conflicts')
+        announce(t('announce.conflictsOpened'))
+        return
+      }
+
       const mod = e.ctrlKey || e.metaKey
       if (!mod) return
       if (e.key === 'f') {

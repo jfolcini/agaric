@@ -21,9 +21,14 @@ export function formatDate(d: Date): string {
   return format(d, 'yyyy-MM-dd')
 }
 
-/** Format a Date as a readable string (e.g., "Mon, Jan 15 2025"). */
+/** Format a Date as a readable string (e.g., "Mon, Jan 15 2025").
+ *
+ * Uses the runtime locale (`undefined` locale argument) so non-English users
+ * get localized weekday/month names and ordering. Pass a concrete locale
+ * string only when deterministic output is required (e.g. test fixtures).
+ */
 export function formatDateDisplay(d: Date): string {
-  return d.toLocaleDateString('en-US', {
+  return d.toLocaleDateString(undefined, {
     weekday: 'short',
     year: 'numeric',
     month: 'short',

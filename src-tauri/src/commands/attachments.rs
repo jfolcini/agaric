@@ -107,9 +107,7 @@ pub async fn add_attachment_inner(
     tx.commit().await?;
 
     // Fire-and-forget background cache dispatch
-    if let Err(e) = materializer.dispatch_background(&op_record) {
-        tracing::warn!(error = %e, "failed to dispatch background cache task");
-    }
+    materializer.dispatch_background_or_warn(&op_record);
 
     Ok(AttachmentRow {
         id: attachment_id,
@@ -169,9 +167,7 @@ pub async fn delete_attachment_inner(
     tx.commit().await?;
 
     // Fire-and-forget background cache dispatch
-    if let Err(e) = materializer.dispatch_background(&op_record) {
-        tracing::warn!(error = %e, "failed to dispatch background cache task");
-    }
+    materializer.dispatch_background_or_warn(&op_record);
 
     Ok(())
 }

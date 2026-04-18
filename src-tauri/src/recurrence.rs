@@ -312,7 +312,12 @@ pub(crate) async fn handle_recurrence(
     // Shift due_date if present
     if let Some(shifted) = shifted_due {
         if !is_valid_iso_date(&shifted) {
-            tracing::warn!("shifted due_date '{shifted}' is not valid YYYY-MM-DD, skipping");
+            tracing::warn!(
+                block_id,
+                new_block_id = %new_block.id,
+                shifted = %shifted,
+                "shifted due_date is not valid YYYY-MM-DD, skipping"
+            );
         } else {
             match set_property_in_tx(
                 &mut tx,
@@ -328,7 +333,13 @@ pub(crate) async fn handle_recurrence(
             {
                 Ok((_, op)) => op_records.push(op),
                 Err(e) => {
-                    tracing::warn!(error = %e, "failed to shift due_date for recurring block")
+                    tracing::warn!(
+                        block_id,
+                        new_block_id = %new_block.id,
+                        device_id,
+                        error = %e,
+                        "failed to shift due_date for recurring block"
+                    );
                 }
             }
         }
@@ -337,7 +348,12 @@ pub(crate) async fn handle_recurrence(
     // Shift scheduled_date if present
     if let Some(shifted) = shifted_sched {
         if !is_valid_iso_date(&shifted) {
-            tracing::warn!("shifted scheduled_date '{shifted}' is not valid YYYY-MM-DD, skipping");
+            tracing::warn!(
+                block_id,
+                new_block_id = %new_block.id,
+                shifted = %shifted,
+                "shifted scheduled_date is not valid YYYY-MM-DD, skipping"
+            );
         } else {
             match set_property_in_tx(
                 &mut tx,
@@ -353,7 +369,13 @@ pub(crate) async fn handle_recurrence(
             {
                 Ok((_, op)) => op_records.push(op),
                 Err(e) => {
-                    tracing::warn!(error = %e, "failed to shift scheduled_date for recurring block")
+                    tracing::warn!(
+                        block_id,
+                        new_block_id = %new_block.id,
+                        device_id,
+                        error = %e,
+                        "failed to shift scheduled_date for recurring block"
+                    );
                 }
             }
         }
@@ -375,7 +397,13 @@ pub(crate) async fn handle_recurrence(
         {
             Ok((_, op)) => op_records.push(op),
             Err(e) => {
-                tracing::warn!(error = %e, "failed to copy repeat-until to recurring block")
+                tracing::warn!(
+                    block_id,
+                    new_block_id = %new_block.id,
+                    device_id,
+                    error = %e,
+                    "failed to copy repeat-until to recurring block"
+                );
             }
         }
     }
@@ -402,7 +430,13 @@ pub(crate) async fn handle_recurrence(
         {
             Ok((_, op)) => op_records.push(op),
             Err(e) => {
-                tracing::warn!(error = %e, "failed to copy repeat-count to recurring block")
+                tracing::warn!(
+                    block_id,
+                    new_block_id = %new_block.id,
+                    device_id,
+                    error = %e,
+                    "failed to copy repeat-count to recurring block"
+                );
             }
         }
 
@@ -421,7 +455,13 @@ pub(crate) async fn handle_recurrence(
         {
             Ok((_, op)) => op_records.push(op),
             Err(e) => {
-                tracing::warn!(error = %e, "failed to set repeat-seq on recurring block")
+                tracing::warn!(
+                    block_id,
+                    new_block_id = %new_block.id,
+                    device_id,
+                    error = %e,
+                    "failed to set repeat-seq on recurring block"
+                );
             }
         }
     }
@@ -441,7 +481,13 @@ pub(crate) async fn handle_recurrence(
     {
         Ok((_, op)) => op_records.push(op),
         Err(e) => {
-            tracing::warn!(error = %e, "failed to set repeat-origin on recurring block")
+            tracing::warn!(
+                block_id,
+                new_block_id = %new_block.id,
+                device_id,
+                error = %e,
+                "failed to set repeat-origin on recurring block"
+            );
         }
     }
 
@@ -450,7 +496,15 @@ pub(crate) async fn handle_recurrence(
     // Dispatch all ops after commit
     for op in &op_records {
         if let Err(e) = materializer.dispatch_background(op) {
-            tracing::warn!(error = %e, "failed to dispatch background cache task");
+            tracing::warn!(
+                block_id,
+                new_block_id = %new_block.id,
+                device_id = %op.device_id,
+                seq = op.seq,
+                op_type = %op.op_type,
+                error = %e,
+                "failed to dispatch background cache task"
+            );
         }
     }
 

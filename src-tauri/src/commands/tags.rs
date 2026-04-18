@@ -114,9 +114,7 @@ pub async fn add_tag_inner(
     tx.commit().await?;
 
     // 5. Dispatch background cache tasks (fire-and-forget)
-    if let Err(e) = materializer.dispatch_background(&op_record) {
-        tracing::warn!(error = %e, "failed to dispatch background cache task");
-    }
+    materializer.dispatch_background_or_warn(&op_record);
 
     // 6. Return response
     Ok(TagResponse { block_id, tag_id })
@@ -193,9 +191,7 @@ pub async fn remove_tag_inner(
     tx.commit().await?;
 
     // 5. Dispatch background cache tasks (fire-and-forget)
-    if let Err(e) = materializer.dispatch_background(&op_record) {
-        tracing::warn!(error = %e, "failed to dispatch background cache task");
-    }
+    materializer.dispatch_background_or_warn(&op_record);
 
     // 6. Return response
     Ok(TagResponse { block_id, tag_id })

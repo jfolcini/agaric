@@ -545,9 +545,7 @@ async fn delete_property_core(
     tx.commit().await?;
 
     // 5. Dispatch background cache tasks (fire-and-forget)
-    if let Err(e) = materializer.dispatch_background(&op_record) {
-        tracing::warn!(error = %e, "failed to dispatch background cache task");
-    }
+    materializer.dispatch_background_or_warn(&op_record);
 
     Ok(())
 }
@@ -624,11 +622,24 @@ impl RepeatingBlockRow {
 
 /// Sanitize internal error details before returning to the frontend.
 ///
-/// Applied to write commands only. Read commands intentionally return
-/// unsanitized errors — these are useful for frontend debugging in a
-/// local-first app where information disclosure is not a security risk.
+/// Applied to every Tauri command wrapper — read and write alike — whose
+/// inner function can surface a SQL, I/O, JSON, channel, or snapshot error.
+/// The `AppError::Database` / `Migration` / `Io` / `Json` / `Channel` /
+/// `Snapshot` variants are collapsed to a generic
+/// `AppError::InvalidOperation("an internal error occurred")`, and the
+/// original error is logged backend-side via `tracing::warn!` so it remains
+/// available for debugging without being serialized to the UI.
+///
+/// User-facing variants (`NotFound`, `Validation`, `InvalidOperation`,
+/// `NonReversible`, `Ulid`) pass through unchanged — they already carry
+/// messages suitable for rendering in the frontend.
+///
+/// Agaric's threat model is benign (single-user, local-first, no remote
+/// peers), so this sanitization exists purely for UX consistency and to
+/// keep raw SQL fragments or filesystem paths out of toast notifications
+/// — not as a security boundary.
 #[cfg(not(tarpaulin_include))]
-fn sanitize_internal_error(err: AppError) -> AppError {
+pub(crate) fn sanitize_internal_error(err: AppError) -> AppError {
     match &err {
         AppError::Database(_)
         | AppError::Migration(_)

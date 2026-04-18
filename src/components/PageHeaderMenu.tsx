@@ -119,7 +119,7 @@ export function PageHeaderMenu({
             <>
               <button
                 type="button"
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
                 onClick={onOpenInNewTab}
               >
                 <ExternalLink className="h-3.5 w-3.5" />
@@ -130,7 +130,7 @@ export function PageHeaderMenu({
           )}
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
             onClick={onAddAlias}
           >
             <Link className="h-3.5 w-3.5" />
@@ -138,7 +138,7 @@ export function PageHeaderMenu({
           </button>
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
             onClick={onAddTag}
           >
             <Tag className="h-3.5 w-3.5" />
@@ -146,7 +146,7 @@ export function PageHeaderMenu({
           </button>
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
             onClick={onAddProperty}
           >
             <Settings2 className="h-3.5 w-3.5" />
@@ -155,7 +155,7 @@ export function PageHeaderMenu({
           <hr className="my-1 h-px bg-border border-none" />
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
             onClick={onToggleTemplate}
           >
             <LayoutTemplate className="h-3.5 w-3.5" />
@@ -163,7 +163,7 @@ export function PageHeaderMenu({
           </button>
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
             onClick={onToggleJournalTemplate}
           >
             <BookTemplate className="h-3.5 w-3.5" />
@@ -174,7 +174,7 @@ export function PageHeaderMenu({
           <hr className="my-1 h-px bg-border border-none" />
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
             onClick={onExport}
           >
             <Download className="h-3.5 w-3.5" />
@@ -186,7 +186,7 @@ export function PageHeaderMenu({
           <hr className="my-1 h-px bg-border border-none" />
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-accent touch-target focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
             onClick={onDeleteRequest}
           >
             <Trash2 className="h-3.5 w-3.5" />

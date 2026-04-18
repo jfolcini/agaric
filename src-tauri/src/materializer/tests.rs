@@ -2727,3 +2727,76 @@ async fn adaptive_fts_threshold_large_corpus() {
 
     mat.flush_background().await.unwrap();
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// dispatch_background_or_warn (MAINT-47)
+// ──────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn dispatch_background_or_warn_succeeds_when_queue_open() {
+    // Happy path: on a running materializer the helper must dispatch the
+    // record's background cache tasks without surfacing any error. It
+    // returns `()` so the assertion is that the parallel `dispatch_background`
+    // call on an equivalent record returns `Ok` — if that path is exercised
+    // cleanly, the helper's `Ok` arm is covered.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let record = make_op_record(
+        &pool,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id("BLK_OR_WARN"),
+            to_text: "new content".into(),
+            prev_edit: None,
+        }),
+    )
+    .await;
+
+    // Sanity: plain dispatch must succeed on an open materializer.
+    assert!(
+        mat.dispatch_background(&record).is_ok(),
+        "plain dispatch_background must succeed so the helper's Ok arm is exercised"
+    );
+
+    // The helper must also run to completion without panic.
+    mat.dispatch_background_or_warn(&record);
+
+    mat.shutdown();
+}
+
+#[tokio::test]
+async fn dispatch_background_or_warn_swallows_error_after_shutdown() {
+    // Error path: once the materializer is shut down the background queue
+    // is closed, so `dispatch_background` returns `Err(Channel(..))`. The
+    // `_or_warn` helper must log that error at warn level and return
+    // normally — it is explicitly fire-and-forget and must never unwind
+    // the caller.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+    mat.shutdown();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Use a fake record so we do not need the op log. The helper only
+    // reads `record.op_type` and `record.payload` for dispatch routing.
+    let record = fake_op_record("edit_block", r#"{"block_id":"SHUTDOWN_TARGET"}"#);
+
+    // Confirm the underlying dispatch does error so we're exercising
+    // the branch that invokes `tracing::warn!`…
+    assert!(
+        mat.dispatch_background(&record).is_err(),
+        "dispatch_background is expected to fail after shutdown so the helper's warn branch is exercised"
+    );
+    // …and confirm the helper itself does not panic or propagate.
+    mat.dispatch_background_or_warn(&record);
+}
+
+#[tokio::test]
+async fn dispatch_background_or_warn_handles_unknown_op_type_gracefully() {
+    // The inner dispatch emits its own warn for an unknown op_type and
+    // returns `Ok(())`. The helper should still be callable and must not
+    // log a second warn or panic. Exercises the `Ok` arm directly.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+    let record = fake_op_record("not_a_real_op", "{}");
+    mat.dispatch_background_or_warn(&record);
+    mat.shutdown();
+}

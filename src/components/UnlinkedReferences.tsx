@@ -402,6 +402,8 @@ export function UnlinkedReferences({
                   loadingLabel={t('unlinkedRefs.loadingDots')}
                   ariaLabel={t('unlinkedRefs.loadMoreLabel')}
                   ariaLoadingLabel={t('unlinkedRefs.loadingMore')}
+                  loadedCount={groups.reduce((sum, g) => sum + g.blocks.length, 0)}
+                  totalCount={totalCount}
                 />
                 {truncated && (
                   <p className="px-3 py-1.5 text-xs text-muted-foreground italic">

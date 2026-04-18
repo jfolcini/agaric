@@ -188,7 +188,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
           <TooltipTrigger asChild>
             <button
               type="button"
-              className="collapse-toggle flex-shrink-0 w-5 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
+              className="collapse-toggle flex-shrink-0 w-5 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
               data-testid="collapse-toggle"
               onClick={() => onToggleCollapse?.(blockId)}
               aria-label={isCollapsed ? t('block.expandChildren') : t('block.collapseChildren')}
@@ -211,7 +211,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
         <TooltipTrigger asChild>
           <button
             type="button"
-            className="task-marker flex-shrink-0 p-0.5 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
+            className="task-marker flex-shrink-0 p-0.5 transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
             data-testid="task-marker"
             onClick={(e) => {
               e.stopPropagation()
@@ -232,7 +232,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
           <TooltipTrigger asChild>
             <button
               type="button"
-              className="priority-badge flex-shrink-0 p-0.5 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
+              className="priority-badge flex-shrink-0 p-0.5 transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
               data-testid="priority-badge"
               aria-label={t('block.priorityCycle', { level: PRIORITY_DISPLAY[priority] })}
               onClick={(e) => {

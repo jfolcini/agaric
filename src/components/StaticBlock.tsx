@@ -173,7 +173,7 @@ function StaticBlockInner({
       <button
         type="button"
         className={cn(
-          'block-static w-full min-h-[1.75rem] cursor-text rounded-md px-3 py-1 text-left text-sm transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 [@media(pointer:coarse)]:min-h-[2.75rem]',
+          'block-static w-full min-h-[1.75rem] cursor-text rounded-md px-3 py-1 text-left text-sm transition-colors hover:bg-accent/50 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden [@media(pointer:coarse)]:min-h-[2.75rem]',
           isSelected && 'ring-2 ring-primary/50 bg-primary/5',
         )}
         data-testid="block-static"

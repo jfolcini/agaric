@@ -98,6 +98,13 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
 
   // Block Tree
   {
+    id: 'zoomOut',
+    keys: 'Escape',
+    category: 'keyboard.category.blockTree',
+    description: 'keyboard.zoomOut',
+    condition: 'keyboard.condition.whenZoomed',
+  },
+  {
     id: 'openDatePicker',
     keys: 'Ctrl + Shift + D',
     category: 'keyboard.category.blockTree',
@@ -314,16 +321,25 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     description: 'keyboard.showKeyboardShortcuts',
   },
   {
-    id: 'exportPageMarkdown',
-    keys: 'Ctrl + Shift + E',
+    id: 'gotoConflicts',
+    keys: 'Alt + C',
     category: 'keyboard.category.global',
-    description: 'keyboard.exportPageMarkdown',
+    description: 'keyboard.gotoConflicts',
   },
   {
     id: 'closeOverlays',
     keys: 'Escape',
     category: 'keyboard.category.global',
     description: 'keyboard.closeOverlays',
+  },
+
+  // Page Editor
+  {
+    id: 'exportPageMarkdown',
+    keys: 'Ctrl + Shift + E',
+    category: 'keyboard.category.pageEditor',
+    description: 'keyboard.exportPageMarkdown',
+    condition: 'keyboard.condition.inPageEditor',
   },
 
   // Tabs

@@ -142,7 +142,7 @@ function formatDate(d: Date): string {
 
 /** Format a Date as display string (mirrors the component's formatDateDisplay). */
 function formatDateDisplay(d: Date): string {
-  return d.toLocaleDateString('en-US', {
+  return d.toLocaleDateString(undefined, {
     weekday: 'short',
     year: 'numeric',
     month: 'short',

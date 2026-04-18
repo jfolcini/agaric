@@ -26,6 +26,7 @@ vi.mock('react-i18next', () => ({
         'block.breadcrumb': 'Breadcrumb',
         'block.untitled': 'Untitled',
         'block.zoomToRoot': 'Go to root',
+        'blockZoom.breadcrumbs': 'Zoom breadcrumbs',
       }
       return map[key] ?? key
     },
@@ -84,10 +85,11 @@ describe('BlockZoomBar', () => {
     expect(container.innerHTML).toBe('')
   })
 
-  it('renders the breadcrumb nav with aria-label', () => {
+  it('renders the breadcrumb toolbar with aria-label', () => {
     render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
-    const nav = screen.getByRole('navigation', { name: 'Breadcrumb' })
-    expect(nav).toBeInTheDocument()
+    const toolbar = screen.getByRole('toolbar', { name: 'Zoom breadcrumbs' })
+    expect(toolbar).toBeInTheDocument()
+    expect(toolbar).toHaveAttribute('aria-orientation', 'horizontal')
   })
 
   it('renders all breadcrumb items', () => {
@@ -167,5 +169,110 @@ describe('BlockZoomBar', () => {
     )
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  describe('UX-215 arrow-key navigation', () => {
+    it('marks the last breadcrumb with aria-current="location"', () => {
+      render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
+      const last = screen.getByText('Detail').closest('button') as HTMLButtonElement
+      expect(last).toHaveAttribute('aria-current', 'location')
+    })
+
+    it('does not mark non-last breadcrumbs with aria-current', () => {
+      render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
+      const first = screen.getByText('Page').closest('button') as HTMLButtonElement
+      const middle = screen.getByText('Section').closest('button') as HTMLButtonElement
+      expect(first).not.toHaveAttribute('aria-current')
+      expect(middle).not.toHaveAttribute('aria-current')
+    })
+
+    it('ArrowRight moves focus to the next breadcrumb', async () => {
+      const user = userEvent.setup()
+      render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
+      const buttons = screen.getAllByRole('button')
+      // Focus the home button first (index 0)
+      ;(buttons[0] as HTMLButtonElement).focus()
+      expect(document.activeElement).toBe(buttons[0])
+
+      await user.keyboard('{ArrowRight}')
+      expect(document.activeElement).toBe(buttons[1])
+
+      await user.keyboard('{ArrowRight}')
+      expect(document.activeElement).toBe(buttons[2])
+    })
+
+    it('ArrowLeft moves focus to the previous breadcrumb', async () => {
+      const user = userEvent.setup()
+      render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
+      const buttons = screen.getAllByRole('button')
+      ;(buttons[2] as HTMLButtonElement).focus()
+      expect(document.activeElement).toBe(buttons[2])
+
+      await user.keyboard('{ArrowLeft}')
+      expect(document.activeElement).toBe(buttons[1])
+
+      await user.keyboard('{ArrowLeft}')
+      expect(document.activeElement).toBe(buttons[0])
+    })
+
+    it('ArrowLeft clamps at the first breadcrumb', async () => {
+      const user = userEvent.setup()
+      render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
+      const buttons = screen.getAllByRole('button')
+      ;(buttons[0] as HTMLButtonElement).focus()
+
+      await user.keyboard('{ArrowLeft}')
+      expect(document.activeElement).toBe(buttons[0])
+    })
+
+    it('ArrowRight clamps at the last breadcrumb', async () => {
+      const user = userEvent.setup()
+      render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
+      const buttons = screen.getAllByRole('button')
+      const lastIdx = buttons.length - 1
+      ;(buttons[lastIdx] as HTMLButtonElement).focus()
+
+      await user.keyboard('{ArrowRight}')
+      expect(document.activeElement).toBe(buttons[lastIdx])
+    })
+
+    it('Home jumps focus to the first breadcrumb (Home button)', async () => {
+      const user = userEvent.setup()
+      render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
+      const buttons = screen.getAllByRole('button')
+      ;(buttons[2] as HTMLButtonElement).focus()
+
+      await user.keyboard('{Home}')
+      expect(document.activeElement).toBe(buttons[0])
+    })
+
+    it('End jumps focus to the last breadcrumb', async () => {
+      const user = userEvent.setup()
+      render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
+      const buttons = screen.getAllByRole('button')
+      const lastIdx = buttons.length - 1
+      ;(buttons[0] as HTMLButtonElement).focus()
+
+      await user.keyboard('{End}')
+      expect(document.activeElement).toBe(buttons[lastIdx])
+    })
+
+    it('does not capture unrelated keys (e.g., Tab, Enter)', async () => {
+      const onNavigate = vi.fn()
+      const user = userEvent.setup()
+      render(
+        <BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={onNavigate} onZoomToRoot={vi.fn()} />,
+      )
+      const buttons = screen.getAllByRole('button')
+      ;(buttons[0] as HTMLButtonElement).focus()
+
+      // Enter on the home button should NOT move arrow focus; it should
+      // fire the button's click (onZoomToRoot). We just assert focus didn't shift.
+      await user.keyboard('{ArrowRight}')
+      const afterArrow = document.activeElement
+      // Type a random letter and verify focus doesn't move
+      await user.keyboard('x')
+      expect(document.activeElement).toBe(afterArrow)
+    })
   })
 })

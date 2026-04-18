@@ -44,6 +44,60 @@ pub fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
+/// Build the tracing `EnvFilter` directive string for Agaric.
+///
+/// Preserves every directive the operator provided in `rust_log` (typically
+/// the value of the `RUST_LOG` environment variable) and appends each default
+/// in `defaults` only when the user has not already configured a directive
+/// targeting that crate. A submodule directive (`agaric::db=trace`) also
+/// counts as a user directive for its parent crate.
+///
+/// Returning the directive string (rather than an `EnvFilter`) keeps this
+/// helper pure and unit-testable without touching process environment.
+pub fn build_log_directives(rust_log: &str, defaults: &[(&str, &str)]) -> String {
+    let trimmed = rust_log.trim();
+    let mut out = String::from(trimmed);
+    for (target, level) in defaults {
+        if has_directive_for_target(trimmed, target) {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push(',');
+        }
+        out.push_str(target);
+        out.push('=');
+        out.push_str(level);
+    }
+    out
+}
+
+/// Return `true` when `filter` contains a directive that targets `target`
+/// (as a crate or one of its submodules). Bare level directives like
+/// `info` do not count — they apply globally and do not pin any specific
+/// target, so Agaric defaults should still be added alongside them.
+fn has_directive_for_target(filter: &str, target: &str) -> bool {
+    if filter.is_empty() {
+        return false;
+    }
+    filter
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .any(|piece| {
+            // Strip span-field filter (after `[`) and level (after `=`).
+            let no_span = piece.split('[').next().unwrap_or(piece);
+            let directive_target = match no_span.split_once('=') {
+                Some((t, _)) => t.trim(),
+                None => no_span.trim(),
+            };
+            if directive_target == target {
+                return true;
+            }
+            let prefix = format!("{target}::");
+            directive_target.starts_with(&prefix)
+        })
+}
+
 #[cfg(test)]
 mod command_integration_tests;
 #[cfg(test)]
@@ -82,9 +136,13 @@ pub fn run() {
     let file_appender = tracing_appender::rolling::daily(&log_dir, "agaric.log");
     let (non_blocking, _log_guard) = tracing_appender::non_blocking(file_appender);
 
-    let env_filter = EnvFilter::from_default_env()
-        .add_directive("agaric=info".parse().unwrap())
-        .add_directive("frontend=info".parse().unwrap());
+    // Preserve any user-provided `RUST_LOG` directives for `agaric` / `frontend`
+    // (BUG-40). The previous `from_default_env().add_directive(..)` calls silently
+    // overrode target-specific user directives like `RUST_LOG=agaric=debug`.
+    let rust_log = std::env::var("RUST_LOG").unwrap_or_default();
+    let directives = build_log_directives(&rust_log, &[("agaric", "info"), ("frontend", "info")]);
+    let env_filter = EnvFilter::try_new(&directives)
+        .unwrap_or_else(|_| EnvFilter::new("agaric=info,frontend=info"));
 
     tracing_subscriber::registry()
         .with(env_filter)
@@ -671,5 +729,137 @@ mod log_retention_tests {
         let path = std::path::Path::new("/tmp/agaric-nonexistent-test-dir-42");
         // Should not panic — silently returns
         cleanup_old_log_files(path, 30);
+    }
+}
+
+#[cfg(test)]
+mod log_directives_tests {
+    use super::{build_log_directives, has_directive_for_target};
+
+    const DEFAULTS: &[(&str, &str)] = &[("agaric", "info"), ("frontend", "info")];
+
+    #[test]
+    fn empty_input_yields_only_defaults() {
+        let out = build_log_directives("", DEFAULTS);
+        assert_eq!(out, "agaric=info,frontend=info");
+    }
+
+    #[test]
+    fn whitespace_only_input_is_treated_as_empty() {
+        let out = build_log_directives("   \t\n", DEFAULTS);
+        assert_eq!(out, "agaric=info,frontend=info");
+    }
+
+    #[test]
+    fn user_agaric_directive_overrides_default() {
+        // RUST_LOG=agaric=error — user wants agaric at error.
+        let out = build_log_directives("agaric=error", DEFAULTS);
+        assert!(
+            out.contains("agaric=error"),
+            "user directive must be preserved, got: {out}"
+        );
+        assert!(
+            !out.contains("agaric=info"),
+            "default agaric=info must NOT be appended when user specified a directive for agaric, got: {out}"
+        );
+        // frontend default still applies.
+        assert!(
+            out.contains("frontend=info"),
+            "frontend default should still be appended, got: {out}"
+        );
+    }
+
+    #[test]
+    fn user_frontend_directive_overrides_default() {
+        let out = build_log_directives("frontend=trace", DEFAULTS);
+        assert!(out.contains("frontend=trace"), "got: {out}");
+        assert!(!out.contains("frontend=info"), "got: {out}");
+        assert!(out.contains("agaric=info"), "got: {out}");
+    }
+
+    #[test]
+    fn unrelated_user_directive_preserves_all_defaults() {
+        let out = build_log_directives("sqlx=trace", DEFAULTS);
+        assert!(out.contains("sqlx=trace"), "got: {out}");
+        assert!(out.contains("agaric=info"), "got: {out}");
+        assert!(out.contains("frontend=info"), "got: {out}");
+    }
+
+    #[test]
+    fn submodule_directive_counts_as_target_override() {
+        // User pins agaric::db=trace — they care about the agaric crate,
+        // so we must not clobber it with the default agaric=info.
+        let out = build_log_directives("agaric::db=trace", DEFAULTS);
+        assert!(out.contains("agaric::db=trace"), "got: {out}");
+        assert!(!out.contains("agaric=info"), "got: {out}");
+        // frontend default should still apply since user didn't mention it.
+        assert!(out.contains("frontend=info"), "got: {out}");
+    }
+
+    #[test]
+    fn bare_level_does_not_suppress_defaults() {
+        // RUST_LOG=warn is a global level directive, not target-specific.
+        // Defaults should still be appended (they're more specific and win
+        // for agaric/frontend as intended).
+        let out = build_log_directives("warn", DEFAULTS);
+        assert!(out.contains("warn"), "got: {out}");
+        assert!(out.contains("agaric=info"), "got: {out}");
+        assert!(out.contains("frontend=info"), "got: {out}");
+    }
+
+    #[test]
+    fn multiple_user_directives_preserved() {
+        let out = build_log_directives("agaric=error,frontend=debug,sqlx=warn", DEFAULTS);
+        assert!(out.contains("agaric=error"), "got: {out}");
+        assert!(out.contains("frontend=debug"), "got: {out}");
+        assert!(out.contains("sqlx=warn"), "got: {out}");
+        assert!(!out.contains("agaric=info"), "got: {out}");
+        assert!(!out.contains("frontend=info"), "got: {out}");
+    }
+
+    #[test]
+    fn output_parses_as_valid_env_filter() {
+        // A smoke test: whatever build_log_directives returns must parse as
+        // a tracing_subscriber EnvFilter, otherwise the fallback path is
+        // the only protection against panics in `run()`.
+        let cases = [
+            "",
+            "agaric=error",
+            "frontend=trace",
+            "agaric::db=trace,sqlx=warn",
+            "info",
+            "   ",
+        ];
+        for input in cases {
+            let out = build_log_directives(input, DEFAULTS);
+            let result = tracing_subscriber::EnvFilter::try_new(&out);
+            assert!(
+                result.is_ok(),
+                "build_log_directives({input:?}) produced invalid EnvFilter string: {out}"
+            );
+        }
+    }
+
+    #[test]
+    fn has_directive_for_target_positive_cases() {
+        assert!(has_directive_for_target("agaric=info", "agaric"));
+        assert!(has_directive_for_target("agaric", "agaric"));
+        assert!(has_directive_for_target("agaric::db=trace", "agaric"));
+        assert!(has_directive_for_target("sqlx=warn,agaric=debug", "agaric"));
+        assert!(has_directive_for_target(
+            "agaric[span_field]=debug",
+            "agaric"
+        ));
+    }
+
+    #[test]
+    fn has_directive_for_target_negative_cases() {
+        assert!(!has_directive_for_target("", "agaric"));
+        assert!(!has_directive_for_target("info", "agaric"));
+        assert!(!has_directive_for_target("sqlx=warn", "agaric"));
+        // Bare level — not a target directive.
+        assert!(!has_directive_for_target("debug", "agaric"));
+        // Different target that happens to share a prefix substring.
+        assert!(!has_directive_for_target("agaric_extras=trace", "agaric"));
     }
 }

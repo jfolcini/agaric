@@ -401,7 +401,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
       <ScrollArea
         viewportRef={listRef}
-        className="page-browser-list max-h-[calc(100vh-200px)]"
+        className="page-browser-list max-h-[calc(100dvh-200px)]"
         viewportProps={{
           role: 'listbox',
           tabIndex: 0,
@@ -498,7 +498,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                   </Button>
                   <button
                     type="button"
-                    className="page-browser-item flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+                    className="page-browser-item flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
                     onClick={() =>
                       onPageSelect?.(page.id, page.content ?? t('pageBrowser.untitled'))
                     }

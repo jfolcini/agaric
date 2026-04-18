@@ -588,6 +588,56 @@ fn build_fallback_peer_returns_none_for_invalid_address() {
     );
 }
 
+#[test]
+fn build_fallback_peer_parses_ipv6_link_local_with_scope_id() {
+    // Bracketed form — the canonical IPv6+port syntax with a scope ID.
+    let peer = build_fallback_peer("DEV_LINK_LOCAL", "[fe80::1%eth0]:8080");
+    assert!(
+        peer.is_some(),
+        "bracketed IPv6 with scope ID (%eth0) must parse; got None"
+    );
+    let peer = peer.unwrap();
+    assert_eq!(
+        peer.device_id, "DEV_LINK_LOCAL",
+        "device_id must match input"
+    );
+    assert_eq!(peer.port, 8080, "port must be extracted after the bracket");
+    assert_eq!(peer.addresses.len(), 1, "must contain exactly one address");
+    assert_eq!(
+        peer.addresses[0].to_string(),
+        "fe80::1",
+        "scope ID must be stripped from the stored IpAddr"
+    );
+}
+
+#[test]
+fn build_fallback_peer_parses_unbracketed_ipv6_with_scope_id() {
+    // Some sources (legacy configs, user entry) omit the brackets even
+    // though the result is ambiguous without them. Best-effort parse:
+    // everything before '%' is the IPv6 literal, ':' after the scope is
+    // the port boundary.
+    let peer = build_fallback_peer("DEV_LINK_LOCAL_2", "fe80::1%eth0:8080");
+    assert!(
+        peer.is_some(),
+        "un-bracketed IPv6 with scope ID must still parse; got None"
+    );
+    let peer = peer.unwrap();
+    assert_eq!(peer.port, 8080, "port must be extracted from tail");
+    assert_eq!(
+        peer.addresses[0].to_string(),
+        "fe80::1",
+        "scope ID must be stripped"
+    );
+}
+
+#[test]
+fn build_fallback_peer_handles_numeric_scope_id() {
+    // Numeric scope IDs are valid on some platforms (e.g. Windows).
+    let peer = build_fallback_peer("DEV_NUM_SCOPE", "[fe80::1%2]:8080");
+    assert!(peer.is_some(), "numeric scope ID must also parse");
+    assert_eq!(peer.unwrap().addresses[0].to_string(), "fe80::1");
+}
+
 // ======================================================================
 // T-41 — Stale mDNS eviction edge cases
 // ======================================================================

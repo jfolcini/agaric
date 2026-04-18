@@ -221,9 +221,7 @@ pub async fn move_block_inner(
     tx.commit().await?;
 
     // 6. Dispatch background cache tasks (fire-and-forget)
-    if let Err(e) = materializer.dispatch_background(&op_record) {
-        tracing::warn!(error = %e, "failed to dispatch background cache task");
-    }
+    materializer.dispatch_background_or_warn(&op_record);
 
     // 7. Return response
     Ok(MoveResponse {

@@ -45,6 +45,59 @@ fn generate_cert_different_device_ids_produce_different_certs() {
     );
 }
 
+#[test]
+fn generate_cert_subject_alt_names_include_loopback_and_mdns() {
+    use x509_parser::extensions::{GeneralName, ParsedExtension};
+    use x509_parser::prelude::*;
+
+    let cert = generate_self_signed_cert("test-device-san").unwrap();
+    let der = crate::sync_net::pem_to_der(&cert.cert_pem).unwrap();
+    let (_, parsed) = X509Certificate::from_der(&der).unwrap();
+
+    let mut dns_names: Vec<String> = Vec::new();
+    let mut ip_addresses: Vec<String> = Vec::new();
+    for ext in parsed.extensions() {
+        if let ParsedExtension::SubjectAlternativeName(san) = ext.parsed_extension() {
+            for name in &san.general_names {
+                match name {
+                    GeneralName::DNSName(s) => dns_names.push((*s).to_string()),
+                    GeneralName::IPAddress(bytes) => {
+                        let rendered = match bytes.len() {
+                            4 => std::net::IpAddr::from([bytes[0], bytes[1], bytes[2], bytes[3]])
+                                .to_string(),
+                            16 => {
+                                let mut octets = [0u8; 16];
+                                octets.copy_from_slice(bytes);
+                                std::net::IpAddr::from(octets).to_string()
+                            }
+                            _ => continue,
+                        };
+                        ip_addresses.push(rendered);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    assert!(
+        dns_names.iter().any(|s| s == "localhost"),
+        "SAN should include localhost, got DNS names: {dns_names:?}"
+    );
+    assert!(
+        dns_names.iter().any(|s| s == "*.local"),
+        "SAN should include *.local for mDNS, got DNS names: {dns_names:?}"
+    );
+    assert!(
+        ip_addresses.iter().any(|s| s == "127.0.0.1"),
+        "SAN should include 127.0.0.1, got IPs: {ip_addresses:?}"
+    );
+    assert!(
+        ip_addresses.iter().any(|s| s == "::1"),
+        "SAN should include ::1 (IPv6 loopback), got IPs: {ip_addresses:?}"
+    );
+}
+
 // -- 2. SyncMessage round-trips ---------------------------------------
 
 #[test]

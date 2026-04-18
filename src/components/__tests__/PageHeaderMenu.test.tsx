@@ -245,9 +245,9 @@ describe('PageHeaderMenu accessibility', () => {
 
     const addAliasButton = screen.getByText('Add alias').closest('button')
     expect(addAliasButton).toBeTruthy()
-    expect(addAliasButton?.className).toContain('focus-visible:ring-2')
-    expect(addAliasButton?.className).toContain('focus-visible:ring-ring')
-    expect(addAliasButton?.className).toContain('focus-visible:ring-offset-1')
+    expect(addAliasButton?.className).toContain('focus-visible:ring-[3px]')
+    expect(addAliasButton?.className).toContain('focus-visible:ring-ring/50')
+    expect(addAliasButton?.className).toContain('focus-visible:outline-hidden')
   })
 })
 

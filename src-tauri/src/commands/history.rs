@@ -287,9 +287,7 @@ pub async fn revert_ops_inner(
 
     // Dispatch background cache tasks (fire-and-forget)
     for record in &op_records {
-        if let Err(e) = materializer.dispatch_background(record) {
-            tracing::warn!(error = %e, "failed to dispatch background cache task");
-        }
+        materializer.dispatch_background_or_warn(record);
     }
 
     Ok(results)
@@ -473,9 +471,7 @@ pub async fn undo_page_op_inner(
     tx.commit().await?;
 
     // Dispatch background cache tasks
-    if let Err(e) = materializer.dispatch_background(&op_record) {
-        tracing::warn!(error = %e, "failed to dispatch background cache task");
-    }
+    materializer.dispatch_background_or_warn(&op_record);
 
     Ok(UndoResult {
         reversed_op: OpRef {
@@ -521,9 +517,7 @@ pub async fn redo_page_op_inner(
     tx.commit().await?;
 
     // Dispatch background cache tasks
-    if let Err(e) = materializer.dispatch_background(&op_record) {
-        tracing::warn!(error = %e, "failed to dispatch background cache task");
-    }
+    materializer.dispatch_background_or_warn(&op_record);
 
     Ok(UndoResult {
         reversed_op: OpRef {

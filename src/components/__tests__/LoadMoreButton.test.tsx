@@ -161,10 +161,10 @@ describe('LoadMoreButton', () => {
     expect(screen.getByRole('button')).toHaveAttribute('aria-busy', 'false')
   })
 
-  // 8. Custom className is applied
-  it('applies custom className', () => {
+  // 8. Custom className is applied to the wrapper
+  it('applies custom className to the wrapper', () => {
     const onLoadMore = vi.fn()
-    render(
+    const { container } = render(
       <LoadMoreButton
         hasMore={true}
         loading={false}
@@ -173,9 +173,10 @@ describe('LoadMoreButton', () => {
       />,
     )
 
-    // The cn mock joins classes with space
-    const btn = screen.getByRole('button')
-    expect(btn.className).toContain('my-custom-class')
+    // The className is applied to the outer wrapper (so layout styles apply to
+    // both the button and the optional progress line).
+    const wrapper = container.firstElementChild as HTMLElement
+    expect(wrapper.className).toContain('my-custom-class')
   })
 
   // 9. A11y audit passes (axe)
@@ -236,5 +237,83 @@ describe('LoadMoreButton', () => {
     )
 
     expect(screen.getByRole('button')).toHaveTextContent('Fetch more')
+  })
+
+  // UX-218 progress indicator
+  describe('UX-218 progress indicator', () => {
+    it('does not render progress when counts are omitted', () => {
+      render(<LoadMoreButton hasMore={true} loading={false} onLoadMore={vi.fn()} />)
+      expect(screen.queryByTestId('load-more-progress')).not.toBeInTheDocument()
+    })
+
+    it('renders "Loaded X of Y" progress line when both counts are provided', () => {
+      render(
+        <LoadMoreButton
+          hasMore={true}
+          loading={false}
+          onLoadMore={vi.fn()}
+          loadedCount={20}
+          totalCount={245}
+        />,
+      )
+      const progress = screen.getByTestId('load-more-progress')
+      expect(progress).toBeInTheDocument()
+      expect(progress.textContent).toBe('Loaded 20 of 245')
+    })
+
+    it('does not render progress when totalCount is 0', () => {
+      render(
+        <LoadMoreButton
+          hasMore={true}
+          loading={false}
+          onLoadMore={vi.fn()}
+          loadedCount={0}
+          totalCount={0}
+        />,
+      )
+      expect(screen.queryByTestId('load-more-progress')).not.toBeInTheDocument()
+    })
+
+    it('does not render progress when only loadedCount is provided', () => {
+      render(<LoadMoreButton hasMore={true} loading={false} onLoadMore={vi.fn()} loadedCount={5} />)
+      expect(screen.queryByTestId('load-more-progress')).not.toBeInTheDocument()
+    })
+
+    it('does not render progress when only totalCount is provided', () => {
+      render(
+        <LoadMoreButton hasMore={true} loading={false} onLoadMore={vi.fn()} totalCount={100} />,
+      )
+      expect(screen.queryByTestId('load-more-progress')).not.toBeInTheDocument()
+    })
+
+    it('renders progress alongside the spinner while loading', () => {
+      render(
+        <LoadMoreButton
+          hasMore={true}
+          loading={true}
+          onLoadMore={vi.fn()}
+          loadedCount={10}
+          totalCount={50}
+        />,
+      )
+      expect(screen.getByTestId('load-more-progress')).toHaveTextContent('Loaded 10 of 50')
+      expect(screen.getByRole('button')).toBeDisabled()
+    })
+
+    it('has no a11y violations when rendering progress', async () => {
+      const { container } = render(
+        <LoadMoreButton
+          hasMore={true}
+          loading={false}
+          onLoadMore={vi.fn()}
+          loadedCount={20}
+          totalCount={245}
+        />,
+      )
+      await waitFor(async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      })
+    })
   })
 })

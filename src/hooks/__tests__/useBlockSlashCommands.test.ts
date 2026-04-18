@@ -488,3 +488,78 @@ describe('useBlockSlashCommands undo notifications', () => {
     expect(onNewActionSpy).not.toHaveBeenCalled()
   })
 })
+
+describe('useBlockSlashCommands handleSlashCommand stability (#MAINT-10)', () => {
+  it('keeps handleSlashCommand identity stable when rootParentId/t/rovingEditor change', () => {
+    // rootParentId, t, rovingEditor are all accessed via refs inside the callback
+    // (not listed in deps). Changing these props must NOT rebuild the callback.
+    const params1 = makeDefaultParams({ rootParentId: 'PAGE_1' })
+    const { result, rerender } = renderHook(
+      ({ params }: { params: ReturnType<typeof makeDefaultParams> }) =>
+        useBlockSlashCommands(params),
+      { wrapper, initialProps: { params: params1 } },
+    )
+    const firstRef = result.current.handleSlashCommand
+
+    // Change rootParentId (via ref)
+    const params2 = makeDefaultParams({ rootParentId: 'PAGE_2' })
+    rerender({ params: params2 })
+    expect(result.current.handleSlashCommand).toBe(firstRef)
+
+    // Change t (via ref)
+    const params3 = makeDefaultParams({ rootParentId: 'PAGE_2', t: vi.fn((k: string) => k) })
+    rerender({ params: params3 })
+    expect(result.current.handleSlashCommand).toBe(firstRef)
+
+    // Change rovingEditor (via ref)
+    const params4 = makeDefaultParams({
+      rootParentId: 'PAGE_2',
+      rovingEditor: {
+        editor: null,
+        mount: vi.fn() as unknown as (blockId: string, markdown: string) => void,
+      },
+    })
+    rerender({ params: params4 })
+    expect(result.current.handleSlashCommand).toBe(firstRef)
+  })
+
+  it('rebuilds handleSlashCommand only when focusedBlockId changes (the real dep)', () => {
+    const params1 = makeDefaultParams({ focusedBlockId: 'BLOCK_A' })
+    const { result, rerender } = renderHook(
+      ({ params }: { params: ReturnType<typeof makeDefaultParams> }) =>
+        useBlockSlashCommands(params),
+      { wrapper, initialProps: { params: params1 } },
+    )
+    const firstRef = result.current.handleSlashCommand
+
+    const params2 = makeDefaultParams({ focusedBlockId: 'BLOCK_B' })
+    rerender({ params: params2 })
+    expect(result.current.handleSlashCommand).not.toBe(firstRef)
+  })
+
+  it('reads the latest rootParentId via ref even though it is not in deps', async () => {
+    // onNewAction is called with the latest rootParentId, proving the ref
+    // captures the current value without rebuilding the callback.
+    const onNewActionSpy = vi.fn()
+    useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
+
+    const params1 = makeDefaultParams({ rootParentId: 'PAGE_INITIAL' })
+    const { result, rerender } = renderHook(
+      ({ params }: { params: ReturnType<typeof makeDefaultParams> }) =>
+        useBlockSlashCommands(params),
+      { wrapper, initialProps: { params: params1 } },
+    )
+    const callbackRef = result.current.handleSlashCommand
+
+    // Update rootParentId — callback identity should be stable.
+    const params2 = makeDefaultParams({ rootParentId: 'PAGE_UPDATED' })
+    rerender({ params: params2 })
+    expect(result.current.handleSlashCommand).toBe(callbackRef)
+
+    // Invoking the callback should use the LATEST rootParentId (via ref).
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'todo', label: 'TODO' })
+    })
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_UPDATED')
+  })
+})

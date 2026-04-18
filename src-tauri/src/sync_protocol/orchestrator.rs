@@ -302,6 +302,8 @@ impl SyncOrchestrator {
                 });
                 let remote_id = self.remote_device_id.clone().unwrap_or_else(|| {
                     tracing::warn!(
+                        device_id = %self.device_id,
+                        expected_remote_id = ?self.expected_remote_id,
                         "remote_device_id not set at merge phase — using empty fallback"
                     );
                     String::new()
@@ -359,6 +361,8 @@ impl SyncOrchestrator {
                     _ => match self.expected_remote_id.as_deref() {
                         Some(id) if !id.is_empty() => {
                             tracing::warn!(
+                                device_id = %self.device_id,
+                                expected_remote_id = id,
                                 "remote_device_id was empty at SyncComplete; \
                                  falling back to expected_remote_id from mTLS/mDNS"
                             );

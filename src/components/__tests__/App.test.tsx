@@ -409,6 +409,71 @@ describe('App', () => {
     })
   })
 
+  it('Alt+C switches to conflicts view (UX-216)', async () => {
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Agaric')).toBeInTheDocument()
+    })
+
+    fireEvent.keyDown(window, { key: 'c', altKey: true })
+
+    await waitFor(() => {
+      expect(useNavigationStore.getState().currentView).toBe('conflicts')
+    })
+  })
+
+  it('Alt+C announces "Conflicts view opened" (UX-216)', async () => {
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Agaric')).toBeInTheDocument()
+    })
+
+    fireEvent.keyDown(window, { key: 'c', altKey: true })
+
+    await waitFor(() => {
+      expect(announce).toHaveBeenCalledWith(t('announce.conflictsOpened'))
+    })
+  })
+
+  it('Alt+C does not fire when focus is in an input field (UX-216)', async () => {
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Agaric')).toBeInTheDocument()
+    })
+
+    useNavigationStore.setState({ currentView: 'journal' })
+
+    // Create an input and simulate Alt+C from it
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    try {
+      fireEvent.keyDown(input, { key: 'c', altKey: true })
+      // Allow any event loop to settle
+      await Promise.resolve()
+      expect(useNavigationStore.getState().currentView).toBe('journal')
+    } finally {
+      document.body.removeChild(input)
+    }
+  })
+
+  it('plain "c" does NOT switch to conflicts view (UX-216)', async () => {
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Agaric')).toBeInTheDocument()
+    })
+
+    useNavigationStore.setState({ currentView: 'journal' })
+
+    fireEvent.keyDown(window, { key: 'c' })
+
+    // Must stay on journal
+    expect(useNavigationStore.getState().currentView).toBe('journal')
+  })
+
   it('Ctrl+N announces "New page created"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'create_block') {

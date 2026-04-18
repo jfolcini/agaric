@@ -22,7 +22,12 @@ pub struct SyncCert {
 /// Generate a self-signed ECDSA P-256 certificate for the given device.
 ///
 /// * Subject: `CN=agaric-{device_id}`
-/// * SAN: `localhost`, `127.0.0.1`
+/// * SAN: loopback addresses (`localhost`, `127.0.0.1`, `::1`) plus the
+///   mDNS wildcard `*.local` so peers discovered via mDNS hostnames
+///   parse consistently. Note: [`PinningCertVerifier`] ignores SAN entries
+///   and pins only the SHA-256 hash, so these values are cosmetic — but
+///   keeping them aligned with how peers are actually addressed prevents
+///   drift if a stricter verifier is ever added.
 /// * Validity: rcgen defaults (long-lived); override to 365 days when
 ///   `time` is added as a direct dependency.
 pub fn generate_self_signed_cert(device_id: &str) -> Result<SyncCert, AppError> {
@@ -33,8 +38,15 @@ pub fn generate_self_signed_cert(device_id: &str) -> Result<SyncCert, AppError> 
         KeyPair::generate().map_err(|e| sync_err(format!("key generation failed: {e}")))?;
 
     // Build certificate parameters.
-    let mut params = CertificateParams::new(vec!["localhost".to_string(), "127.0.0.1".to_string()])
-        .map_err(|e| sync_err(format!("cert params: {e}")))?;
+    // rcgen parses each SAN entry — IP literals become `iPAddress` SANs,
+    // everything else becomes a `dNSName` SAN (including wildcards).
+    let mut params = CertificateParams::new(vec![
+        "localhost".to_string(),
+        "*.local".to_string(),
+        "127.0.0.1".to_string(),
+        "::1".to_string(),
+    ])
+    .map_err(|e| sync_err(format!("cert params: {e}")))?;
 
     // Override the default CN.
     params

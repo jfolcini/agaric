@@ -23,7 +23,13 @@ pub(super) async fn handle_foreground_task(
     match task {
         MaterializeTask::ApplyOp(record) => {
             if let Err(e) = apply_op(pool, record).await {
-                tracing::warn!(op_type = %record.op_type, seq = record.seq, error = %e, "failed to apply remote op — will retry");
+                tracing::warn!(
+                    op_type = %record.op_type,
+                    device_id = %record.device_id,
+                    seq = record.seq,
+                    error = %e,
+                    "failed to apply remote op — will retry"
+                );
                 return Err(e);
             }
             Ok(())
@@ -32,7 +38,13 @@ pub(super) async fn handle_foreground_task(
             let mut tx = pool.begin().await?;
             for record in records {
                 if let Err(e) = apply_op_tx(&mut tx, record).await {
-                    tracing::warn!(op_type = %record.op_type, seq = record.seq, error = %e, "failed to apply remote op in batch — rolling back");
+                    tracing::warn!(
+                        op_type = %record.op_type,
+                        device_id = %record.device_id,
+                        seq = record.seq,
+                        error = %e,
+                        "failed to apply remote op in batch — rolling back"
+                    );
                     // tx is dropped here, which rolls back automatically
                     return Err(e);
                 }
@@ -316,11 +328,25 @@ pub(super) async fn handle_background_task(
             None => cache::rebuild_page_ids(pool).await,
         },
         MaterializeTask::ApplyOp(ref record) => {
-            tracing::warn!(seq = record.seq, "unexpected ApplyOp in background queue");
+            tracing::warn!(
+                op_type = %record.op_type,
+                device_id = %record.device_id,
+                seq = record.seq,
+                "unexpected ApplyOp in background queue"
+            );
             Ok(())
         }
-        MaterializeTask::BatchApplyOps(_) => {
-            tracing::warn!("unexpected BatchApplyOps in background queue");
+        MaterializeTask::BatchApplyOps(records) => {
+            if let Some(first) = records.first() {
+                tracing::warn!(
+                    device_id = %first.device_id,
+                    seq = first.seq,
+                    batch_size = records.len(),
+                    "unexpected BatchApplyOps in background queue"
+                );
+            } else {
+                tracing::warn!("unexpected empty BatchApplyOps in background queue");
+            }
             Ok(())
         }
         MaterializeTask::Barrier(ref notify) => {

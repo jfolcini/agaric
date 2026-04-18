@@ -242,6 +242,7 @@ Type `/` in the editor to access the command palette. Commands are grouped by ca
 | | Ctrl+K | Insert/edit external link |
 | **Block nav** | Arrow Up/Left at start | Focus previous block |
 | | Arrow Down/Right at end | Focus next block |
+| | Escape (when zoomed) | Zoom out to page root (UX-214) |
 | **Block editing** | Enter | Save + create sibling |
 | | Shift+Enter | Hard break within block |
 | | Escape | Cancel, discard changes |
@@ -264,15 +265,16 @@ Type `/` in the editor to access the command palette. Commands are grouped by ca
 | **Global** | Ctrl+Z / Ctrl+Y | Undo / redo (page-level) |
 | | Ctrl+F | Focus search |
 | | Ctrl+N | Create new page |
-| | Ctrl+Shift+E | Export page as Markdown |
+| | Alt+C | Jump to Conflicts view (UX-216) |
 | | ? | Show keyboard shortcuts help |
+| **Page editor** | Ctrl+Shift+E | Export current page as Markdown (BUG-30 — page editor only) |
 | **History view** | Space | Toggle selection |
 | | Shift+Click | Range select |
 | | Ctrl+A | Select all |
 | | Enter | Revert selected |
 | | j/k | Vim-style navigation |
 
-**Keyboard shortcut customization** (UX-86): All 69 shortcuts are configurable via Settings → Keyboard tab (`F-38 fully complete — all 5 phases`). `keyboard-config.ts` stores custom overrides in localStorage, merges with defaults. `KeyboardSettingsTab` component provides inline editing (pencil → input → save/cancel), conflict detection showing which shortcuts conflict, per-shortcut reset, and "Reset All to Defaults" with ConfirmDialog. `KeyboardShortcuts.tsx` help panel dynamically reads from `getCurrentShortcuts()` via `useMemo([open])` so it shows current (possibly customized) bindings when opened. 19 config + 13 settings tab + 1 dynamic panel tests.
+**Keyboard shortcut customization** (UX-86): All 66 shortcuts are configurable via Settings → Keyboard tab (`F-38 fully complete — all 5 phases`). `keyboard-config.ts` stores custom overrides in localStorage, merges with defaults. `KeyboardSettingsTab` component provides inline editing (pencil → input → save/cancel), conflict detection showing which shortcuts conflict, per-shortcut reset, and "Reset All to Defaults" with ConfirmDialog. `KeyboardShortcuts.tsx` help panel dynamically reads from `getCurrentShortcuts()` via `useMemo([open])` so it shows current (possibly customized) bindings when opened. 19 config + 13 settings tab + 1 dynamic panel tests.
 
 ---
 
@@ -523,7 +525,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **logger** (`src/lib/logger.ts`): Structured frontend logging with dual-write (console + Tauri IPC bridge), stack capture at call site, cause chain extraction (3-level deep), rate limiting (5 per 60s per module:message), and `safeStringify` for circular reference protection. Methods: `debug`, `info`, `warn`, `error`. Data parameter (structured context dict) serialized to backend log file. Global error/unhandledrejection handlers in `main.tsx`. Custom panic hook captures Rust panics in log file. Boot-time log retention removes files older than 30 days. Used by 24+ production files.
 - **format-relative-time** (`src/lib/format-relative-time.ts`): `formatRelativeTime(isoString, t)` returns human-readable relative time ("just now", "Xm ago", "Xh ago", "Xd ago"). Uses i18n `t()` for all strings. Used by App sidebar sync status (UX-76).
 - **file-utils** (`src/lib/file-utils.ts`): `guessMimeType(filename)` maps 20+ file extensions to MIME types (images, documents, office, media, archives). `extractFileInfo(file)` extracts filename, mimeType, sizeBytes, and Tauri-specific `fsPath` from a `File` object. Used by EditableBlock (drag-drop/paste), useBlockSlashCommands (/attach command). Re-exported from BlockTree for backward compat. 13 tests.
-- **keyboard-config** (`src/lib/keyboard-config.ts`): Keyboard shortcut configuration with localStorage persistence. `DEFAULT_SHORTCUTS` (69 entries across 8 categories — F-38 fully complete), `getCustomOverrides()`, `setCustomShortcut()`, `resetShortcut()`, `resetAllShortcuts()`, `getCurrentShortcuts()` (merges defaults with overrides, marks `isCustom`), `findConflicts()` (same keys in same category), `matchesShortcutBinding()` (resolves shortcut name to current key binding and matches against keyboard events — replaces inline key parsing in block-tree consumers), `configKeyToTipTap()` (converts keyboard-config key format to TipTap `addKeyboardShortcuts()` key format — used by editor and suggestion popup consumers). Used by KeyboardSettingsTab, KeyboardShortcuts, useBlockTreeKeyboardShortcuts, use-block-keyboard, PageHeader, use-roving-editor, external-link, suggestion-renderer. 32 tests.
+- **keyboard-config** (`src/lib/keyboard-config.ts`): Keyboard shortcut configuration with localStorage persistence. `DEFAULT_SHORTCUTS` (66 entries across 8 categories — F-38 fully complete, includes UX-214 zoomOut / UX-216 gotoConflicts), `getCustomOverrides()`, `setCustomShortcut()`, `resetShortcut()`, `resetAllShortcuts()`, `getCurrentShortcuts()` (merges defaults with overrides, marks `isCustom`), `findConflicts()` (same keys in same category), `matchesShortcutBinding()` (resolves shortcut name to current key binding and matches against keyboard events — replaces inline key parsing in block-tree consumers), `configKeyToTipTap()` (converts keyboard-config key format to TipTap `addKeyboardShortcuts()` key format — used by editor and suggestion popup consumers). Used by KeyboardSettingsTab, KeyboardShortcuts, useBlockTreeKeyboardShortcuts, use-block-keyboard, PageHeader, use-roving-editor, external-link, suggestion-renderer. 32 tests.
 - **block-utils** (`src/lib/block-utils.ts`): `processCheckboxSyntax(content)` detects markdown checkbox syntax (`- [ ] ` → TODO, `- [x] ` → DONE). Returns cleaned content and detected todo state. Extracted from BlockTree (M-16). Used by BlockTree.
 - **attachment-utils** (`src/lib/attachment-utils.ts`): `getAssetUrl(fsPath)` converts filesystem path to Tauri asset protocol URL (returns null outside Tauri runtime). `formatSize(bytes)` formats bytes as human-readable string. Extracted from StaticBlock (M-17). Used by AttachmentRenderer, StaticBlock.
 

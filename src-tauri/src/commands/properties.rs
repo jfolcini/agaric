@@ -43,9 +43,7 @@ pub async fn set_property_inner(
     )
     .await?;
     tx.commit().await?;
-    if let Err(e) = materializer.dispatch_background(&op_record) {
-        tracing::warn!(error = %e, "failed to dispatch background cache task");
-    }
+    materializer.dispatch_background_or_warn(&op_record);
     Ok(block)
 }
 
@@ -774,7 +772,9 @@ pub async fn create_property_def(
     value_type: String,
     options: Option<String>,
 ) -> Result<PropertyDefinition, AppError> {
-    create_property_def_inner(&write_pool.0, key, value_type, options).await
+    create_property_def_inner(&write_pool.0, key, value_type, options)
+        .await
+        .map_err(super::sanitize_internal_error)
 }
 
 /// Tauri command: list all property definitions. Delegates to [`list_property_defs_inner`].
@@ -784,7 +784,9 @@ pub async fn create_property_def(
 pub async fn list_property_defs(
     read_pool: State<'_, ReadPool>,
 ) -> Result<Vec<PropertyDefinition>, AppError> {
-    list_property_defs_inner(&read_pool.0).await
+    list_property_defs_inner(&read_pool.0)
+        .await
+        .map_err(super::sanitize_internal_error)
 }
 
 /// Tauri command: update options for a select-type definition. Delegates to [`update_property_def_options_inner`].
@@ -796,7 +798,9 @@ pub async fn update_property_def_options(
     key: String,
     options: String,
 ) -> Result<PropertyDefinition, AppError> {
-    update_property_def_options_inner(&write_pool.0, key, options).await
+    update_property_def_options_inner(&write_pool.0, key, options)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: delete a property definition. Delegates to [`delete_property_def_inner`].
@@ -807,5 +811,7 @@ pub async fn delete_property_def(
     write_pool: State<'_, WritePool>,
     key: String,
 ) -> Result<(), AppError> {
-    delete_property_def_inner(&write_pool.0, key).await
+    delete_property_def_inner(&write_pool.0, key)
+        .await
+        .map_err(sanitize_internal_error)
 }

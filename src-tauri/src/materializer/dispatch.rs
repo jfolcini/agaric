@@ -28,6 +28,26 @@ impl Materializer {
         self.enqueue_background_tasks(record, None)
     }
 
+    /// Dispatch background cache rebuild tasks for `record`, logging a `warn`
+    /// on failure instead of propagating the error.
+    ///
+    /// Centralises the 17+ identical call sites across `commands/**` that all
+    /// fire-and-forget background work after a successful op-log append. The
+    /// convention is deliberate: background task enqueue failures (queue
+    /// closed, serialization failure) should not unwind the command handler
+    /// because the op itself has already been durably written to the op log.
+    /// Callers that need propagation should use [`dispatch_background`]
+    /// directly.
+    pub fn dispatch_background_or_warn(&self, record: &OpRecord) {
+        if let Err(e) = self.dispatch_background(record) {
+            tracing::warn!(
+                op_type = %record.op_type,
+                error = %e,
+                "failed to dispatch background cache task"
+            );
+        }
+    }
+
     pub fn dispatch_edit_background(
         &self,
         record: &OpRecord,
@@ -195,7 +215,12 @@ impl Materializer {
             }
             "add_attachment" | "delete_attachment" => {}
             other => {
-                tracing::warn!(op_type = other, "unknown op_type in dispatch_op");
+                tracing::warn!(
+                    op_type = other,
+                    device_id = %record.device_id,
+                    seq = record.seq,
+                    "unknown op_type in dispatch_op"
+                );
             }
         }
         Ok(())

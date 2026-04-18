@@ -6,6 +6,7 @@
  * - Collapse toggle (Mod+.)
  * - Multi-selection Ctrl+A / Escape
  * - Unfocused Escape closes editor
+ * - Zoom-out Escape (when zoomed in, nothing else claims Escape)
  * - Task cycling Ctrl+Enter
  * - Date picker Ctrl+Shift+D
  * - Heading shortcut Ctrl+1-6
@@ -35,6 +36,10 @@ export interface UseBlockTreeKeyboardShortcutsOptions {
   datePickerCursorPos: MutableRefObject<number | undefined>
   setDatePickerMode: (mode: DatePickerMode) => void
   setDatePickerOpen: (open: boolean) => void
+  /** Current zoomed-in block id, or null when viewing the page root. */
+  zoomedBlockId: string | null
+  /** Exit zoom and return to the page root. */
+  zoomToRoot: () => void
 }
 
 export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShortcutsOptions): void {
@@ -54,6 +59,8 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     datePickerCursorPos,
     setDatePickerMode,
     setDatePickerOpen,
+    zoomedBlockId,
+    zoomToRoot,
   } = options
 
   // ── Keyboard shortcut for collapse toggle (Mod+.) ──────────────────
@@ -116,6 +123,32 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     document.addEventListener('keydown', handleUnfocusedEscape)
     return () => document.removeEventListener('keydown', handleUnfocusedEscape)
   }, [handleFlush, setFocused])
+
+  // ── Keyboard shortcut: Escape zooms out when zoomed in (UX-214) ──
+  // Fires only when:
+  //   - the user is actually zoomed into a block (zoomedBlockId !== null)
+  //   - no block is focused in the editor (Escape would blur the editor)
+  //   - no multi-selection is active (Escape clears selection)
+  //   - no popup/overlay is open (suggestion popups handle their own Escape)
+  useEffect(() => {
+    const handleZoomOutEscape = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return
+      if (!matchesShortcutBinding(e, 'zoomOut')) return
+      if (zoomedBlockId === null) return
+      const { focusedBlockId: fid, selectedBlockIds: sel } = useBlockStore.getState()
+      if (fid) return
+      if (sel.length > 0) return
+      // Respect open suggestion popups / overlays
+      const popupOpen = document.querySelector(
+        '.suggestion-renderer, [role="dialog"][data-state="open"], [data-radix-popper-content-wrapper]',
+      )
+      if (popupOpen) return
+      e.preventDefault()
+      zoomToRoot()
+    }
+    document.addEventListener('keydown', handleZoomOutEscape)
+    return () => document.removeEventListener('keydown', handleZoomOutEscape)
+  }, [zoomedBlockId, zoomToRoot])
 
   // ── Keyboard shortcut for task cycling (Ctrl+Enter / Cmd+Enter) ────
   useEffect(() => {

@@ -3427,3 +3427,119 @@ async fn delete_property_def_rejects_builtin_key() {
         "deleting a builtin property key must return Validation error, got: {result:?}"
     );
 }
+
+// ─── BUG-41: command wrappers must sanitize internal errors ──────────
+//
+// The two Tauri wrappers `update_property_def_options` / `delete_property_def`
+// previously returned raw `AppError::Database(sqlx::Error)` straight to the
+// frontend. Every other write-command wrapper in the codebase applies
+// `sanitize_internal_error` to collapse internal-detail variants
+// (Database/Migration/Io/Json/Channel/Snapshot) into a generic
+// `InvalidOperation("an internal error occurred")`. These tests pin the
+// sanitization contract: user-facing variants (Validation, NotFound) pass
+// through unchanged, but a Database error becomes InvalidOperation.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_property_def_options_sanitizes_database_errors() {
+    // Trigger a Database error by closing the pool before calling.
+    let (pool, _dir) = test_pool().await;
+    // Seed a valid select-type def so the query reaches the UPDATE stage,
+    // not the early NotFound branch.
+    create_property_def_inner(
+        &pool,
+        "moods".into(),
+        "select".into(),
+        Some(r#"["happy","sad"]"#.into()),
+    )
+    .await
+    .unwrap();
+
+    pool.close().await;
+
+    let raw = update_property_def_options_inner(&pool, "moods".into(), r#"["a","b"]"#.into()).await;
+    let sanitized = raw.map_err(sanitize_internal_error);
+
+    match sanitized {
+        Err(AppError::InvalidOperation(msg)) => {
+            assert_eq!(
+                msg, "an internal error occurred",
+                "sanitized DB errors must surface the generic copy, got: {msg:?}"
+            );
+        }
+        other => panic!("expected sanitized DB error to become InvalidOperation, got: {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_def_sanitizes_database_errors() {
+    let (pool, _dir) = test_pool().await;
+    create_property_def_inner(&pool, "temp".into(), "text".into(), None)
+        .await
+        .unwrap();
+
+    pool.close().await;
+
+    let raw = delete_property_def_inner(&pool, "temp".into()).await;
+    let sanitized = raw.map_err(sanitize_internal_error);
+
+    match sanitized {
+        Err(AppError::InvalidOperation(msg)) => {
+            assert_eq!(
+                msg, "an internal error occurred",
+                "sanitized DB errors must surface the generic copy, got: {msg:?}"
+            );
+        }
+        other => panic!("expected sanitized DB error to become InvalidOperation, got: {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_property_def_options_preserves_user_facing_errors_through_sanitize() {
+    // Validation errors are user-facing and must pass through sanitization
+    // unchanged — otherwise the frontend loses the actionable message
+    // ("options must be a JSON array of strings" / "must not be empty").
+    let (pool, _dir) = test_pool().await;
+    create_property_def_inner(
+        &pool,
+        "flavour".into(),
+        "select".into(),
+        Some(r#"["sweet"]"#.into()),
+    )
+    .await
+    .unwrap();
+
+    let raw = update_property_def_options_inner(&pool, "flavour".into(), "not-json".into()).await;
+    let sanitized = raw.map_err(sanitize_internal_error);
+
+    match sanitized {
+        Err(AppError::Validation(msg)) => {
+            assert!(
+                msg.contains("JSON array"),
+                "Validation message must pass through sanitization unchanged, got: {msg:?}"
+            );
+        }
+        other => panic!(
+            "expected Validation error to pass through sanitize_internal_error, got: {other:?}"
+        ),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_def_preserves_user_facing_errors_through_sanitize() {
+    // NotFound / Validation are user-facing — sanitize must not rewrite them.
+    let (pool, _dir) = test_pool().await;
+
+    let raw = delete_property_def_inner(&pool, "nonexistent-key".into()).await;
+    let sanitized = raw.map_err(sanitize_internal_error);
+    assert!(
+        matches!(sanitized, Err(AppError::NotFound(_))),
+        "NotFound must pass through sanitization unchanged, got: {sanitized:?}"
+    );
+
+    let raw = delete_property_def_inner(&pool, "todo_state".into()).await;
+    let sanitized = raw.map_err(sanitize_internal_error);
+    assert!(
+        matches!(sanitized, Err(AppError::Validation(_))),
+        "Validation must pass through sanitization unchanged, got: {sanitized:?}"
+    );
+}

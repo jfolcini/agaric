@@ -57,6 +57,7 @@ const resources = {
       'action.reload': 'Reload',
       'action.loadMore': 'Load more',
       'action.loading': 'Loading\u2026',
+      'loadMore.progress': 'Loaded {{loaded}} of {{total}}',
 
       // Journal
       'journal.today': 'Today',
@@ -104,6 +105,7 @@ const resources = {
       'announce.jumpedToToday': 'Jumped to today',
       'announce.searchOpened': 'Search opened',
       'announce.newPageCreated': 'New page created',
+      'announce.conflictsOpened': 'Conflicts view opened',
       'announce.editingBlock': 'Editing block: {{preview}}',
       'announce.emptyBlock': 'empty block',
       'announce.blockDeleted': 'Block deleted',
@@ -227,6 +229,7 @@ const resources = {
       'block.breadcrumb': 'Block breadcrumb',
       'block.zoomToRoot': 'Go to root',
       'block.untitled': 'Untitled',
+      'blockZoom.breadcrumbs': 'Zoom breadcrumbs',
       'block.searchPages': 'Search pages...',
       'block.noPagesFound': 'No pages found',
       'block.refPickerLabel': 'Select a page',
@@ -786,7 +789,14 @@ const resources = {
       'keyboard.createNewPage': 'Create new page',
       'keyboard.showKeyboardShortcuts': 'Show keyboard shortcuts',
       'keyboard.exportPageMarkdown': 'Export page as Markdown',
+      'keyboard.gotoConflicts': 'Open Conflicts view',
       'keyboard.closeOverlays': 'Close overlays, cancel editing, clear selection',
+
+      // Keyboard shortcuts — page editor
+      'keyboard.category.pageEditor': 'Page Editor',
+      'keyboard.condition.inPageEditor': 'When viewing a page',
+      'keyboard.zoomOut': 'Zoom out to page root',
+      'keyboard.condition.whenZoomed': 'When zoomed into a block',
 
       // Keyboard shortcuts — syntax descriptions
       'keyboard.syntax.bold': 'Bold',

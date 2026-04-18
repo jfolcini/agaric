@@ -174,6 +174,42 @@ describe('AttachmentList', () => {
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_attachment', expect.anything())
   })
 
+  it('cancels the pending-delete timer on unmount (#MAINT-48)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+
+    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'unmount-test.txt')])
+
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const { unmount } = renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    expect(await screen.findByText('unmount-test.txt')).toBeInTheDocument()
+
+    const deleteBtn = screen.getByRole('button', { name: /delete attachment unmount-test\.txt/i })
+
+    // First click — schedules a 3s reset timer
+    await user.click(deleteBtn)
+    expect(mockedToast).toHaveBeenCalled()
+
+    // Unmount before the timer fires — the ref cleanup must cancel the timeout
+    unmount()
+
+    // Advance past the 3s timeout; if cleanup failed, setState on unmounted
+    // component would fire a React warning via console.error.
+    vi.advanceTimersByTime(3100)
+
+    // No React warning about setState on unmounted component
+    const warningCalls = consoleErrorSpy.mock.calls.filter(
+      (args) =>
+        typeof args[0] === 'string' &&
+        (args[0].includes('unmounted') || args[0].includes("Can't perform a React state update")),
+    )
+    expect(warningCalls).toHaveLength(0)
+
+    consoleErrorSpy.mockRestore()
+  })
+
   it('calls list_attachments with the correct blockId', async () => {
     mockedInvoke.mockResolvedValueOnce([])
 

@@ -68,9 +68,32 @@ pub(crate) async fn daemon_loop(
         let sched = resp_scheduler.clone();
         let sink = resp_event_sink.clone();
 
+        // Spawn the responder session, then spawn a lightweight watcher
+        // that awaits the handle. The watcher surfaces both graceful
+        // `AppError` failures and fatal `JoinError` (panic / cancel)
+        // outcomes — without it, a responder task could vanish silently.
+        let handle: tokio::task::JoinHandle<Result<(), AppError>> = tokio::spawn(
+            handle_incoming_sync(conn, pool, device_id, mat, sched, sink),
+        );
         tokio::spawn(async move {
-            if let Err(e) = handle_incoming_sync(conn, pool, device_id, mat, sched, sink).await {
-                tracing::warn!(error = %e, "responder sync session failed");
+            match handle.await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    tracing::warn!(error = %e, "responder sync session failed");
+                }
+                Err(join_err) => {
+                    if join_err.is_panic() {
+                        tracing::error!(
+                            error = %join_err,
+                            "responder sync session panicked"
+                        );
+                    } else {
+                        tracing::error!(
+                            error = %join_err,
+                            "responder sync session was cancelled unexpectedly"
+                        );
+                    }
+                }
             }
         });
     })
@@ -129,10 +152,7 @@ pub(crate) async fn daemon_loop(
         tokio::select! {
             // Branch A: mDNS peer-discovery event (event-driven, no polling)
             Some(event) = mdns_rx.recv() => {
-                let refs = peer_refs::list_peer_refs(&pool).await.unwrap_or_else(|e| {
-                    tracing::warn!(error = %e, "list_peer_refs failed");
-                    vec![]
-                });
+                let refs = list_peer_refs_or_empty(&pool, "mdns_discovery").await;
                 if let Some(peer) = process_discovery_event(
                     event, &device_id, &mut discovered, &refs,
                 ) {
@@ -154,10 +174,7 @@ pub(crate) async fn daemon_loop(
 
             // Branch B: debounced local-change notification
             _ = scheduler.wait_for_debounced_change() => {
-                let refs = peer_refs::list_peer_refs(&pool).await.unwrap_or_else(|e| {
-                    tracing::warn!(error = %e, "list_peer_refs failed");
-                    vec![]
-                });
+                let refs = list_peer_refs_or_empty(&pool, "debounced_change").await;
                 for peer_ref in &refs {
                     if let Some(peer) = resolve_peer_address(
                         &peer_ref.peer_id,
@@ -186,10 +203,7 @@ pub(crate) async fn daemon_loop(
                 let stale_threshold = tokio::time::Instant::now() - std::time::Duration::from_secs(300);
                 discovered.retain(|_, (_, last_seen)| *last_seen > stale_threshold);
 
-                let refs = peer_refs::list_peer_refs(&pool).await.unwrap_or_else(|e| {
-                    tracing::warn!(error = %e, "list_peer_refs failed");
-                    vec![]
-                });
+                let refs = list_peer_refs_or_empty(&pool, "periodic_resync").await;
                 let peer_tuples: Vec<(String, Option<String>)> = refs
                     .iter()
                     .map(|p| (p.peer_id.clone(), p.synced_at.clone()))
@@ -232,6 +246,31 @@ pub(crate) async fn daemon_loop(
     }
     tracing::info!("SyncDaemon shut down cleanly");
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// list_peer_refs_or_empty — shared error-handling wrapper
+// ---------------------------------------------------------------------------
+
+/// Load all known peer refs for the current daemon cycle.
+///
+/// On failure, log at `error!` (not `warn!`) with the cycle label so
+/// on-call/devs can see *which* cycle degraded to "no peers". Each of the
+/// three daemon-loop branches (mDNS discovery, debounced change, periodic
+/// resync) passes its own `cycle` tag so logs are distinguishable.
+///
+/// Returning `vec![]` preserves the prior liveness behaviour: one bad
+/// query cannot crash the daemon, but the now-structured error log makes
+/// the degradation observable.
+async fn list_peer_refs_or_empty(pool: &SqlitePool, cycle: &'static str) -> Vec<PeerRef> {
+    peer_refs::list_peer_refs(pool).await.unwrap_or_else(|e| {
+        tracing::error!(
+            error = %e,
+            cycle,
+            "list_peer_refs failed; sync degraded for this cycle"
+        );
+        vec![]
+    })
 }
 
 // ---------------------------------------------------------------------------

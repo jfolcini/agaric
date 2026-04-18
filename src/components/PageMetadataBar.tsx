@@ -39,7 +39,8 @@ export function PageMetadataBar({ blocks, pageId }: PageMetadataBarProps) {
   const createdDate = useMemo(() => {
     const date = ulidToDate(pageId)
     if (!date) return null
-    return date.toLocaleDateString('en-US', {
+    // Use runtime locale so non-English users get localized date formatting.
+    return date.toLocaleDateString(undefined, {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
