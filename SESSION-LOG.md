@@ -1,5 +1,69 @@
 # Session Log
 
+## Session 414 — MAINT-51 umbrella complete + @types/node 25 (2026-04-18)
+
+**3 items resolved (MAINT-50, MAINT-51, MAINT-74). REVIEW-LATER 25→22.**
+
+Closing chapter for the MAINT-51 umbrella that ran across sessions 411–414: the whole repo now passes Biome's `noExcessiveCognitiveComplexity` at threshold **25** (was 35) with zero warnings. Also landed the `@types/node` 24 → 25 devDep bump. Small 2-subagent batch — most other open items need user decisions before work can start.
+
+### Resolved items
+
+**MAINT-74 + MAINT-51 — final umbrella step (1 subagent):**
+- `src/components/__tests__/JournalPage.test.tsx` — the 34-complexity `mockImplementation` arrow at line 2212 was split into 4 named helpers:
+  * `templateListBlocksResponse(args)` — `list_blocks` for `TMPL-PAGE`, fallthrough to `emptyPage`.
+  * `templateQueryByPropertyResponse(args)` — `query_by_property` for `journal-template`, fallthrough to `emptyPage`.
+  * `templateCreateBlockResponse(args, todayStr)` — `create_block` dispatch on `page` vs `content` blockType, preserving the unknown-blockType → `emptyPage` fallback verbatim.
+  * `makeJournalTemplateMockImpl(todayStr)` — dispatcher factory that returns the async `(cmd, args?) => …` arrow.
+- `src/editor/__tests__/markdown-serializer.property.test.ts` — the 27-complexity `hasStructuralAmbiguity` filter split into `textNodeHasAmbiguity`, `paragraphStartsWithAmbiguousSyntax`, `paragraphHasAmbiguousTextNode`; `hasStructuralAmbiguity` now composes them. All 14 property-based tests continue to pass with the same filter semantics.
+- 12 new smoke tests total (8 for JournalPage helpers, 4 for ambiguity helpers) — exact-count assertions, no behaviour changes to any existing test.
+- `biome.json`: `maxAllowedComplexity` 35 → **25**. Full repo lint at threshold 25 → zero warnings. MAINT-51 umbrella closed.
+
+**MAINT-50 — @types/node 24 → 25 (1 subagent):**
+- `package.json`: `@types/node` bumped from `^24.12.2` to `^25.6.0`.
+- `package-lock.json` updated via `npm install --save-dev @types/node@25`.
+- `npx tsc --noEmit` clean — zero type errors surfaced. No source files patched.
+- Reviewed usage of `ReturnType<typeof setTimeout>` across 8 hook files + `Buffer.from()` in 3 E2E tests + `node:path` imports in vite/vitest/playwright configs. All compatible with the v25 typings.
+- Transitive `undici-types` resolved to 7.19.2.
+
+### Post-review fixes applied by orchestrator
+
+- Biome format auto-fix on `JournalPage.test.tsx` and `markdown-serializer.property.test.ts` after the helper extractions (long-line wrap + import-sort). Ran `npx biome check --write` on both files.
+- Updated REVIEW-LATER.md: removed 3 table rows + 3 detail sections, count recomputed to 22.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `biome.json` | MAINT-51 — maxAllowedComplexity 35 → 25 |
+| `src/components/__tests__/JournalPage.test.tsx` | MAINT-74 — 4 helpers + 8 smoke tests |
+| `src/editor/__tests__/markdown-serializer.property.test.ts` | MAINT-74 — 4 helpers + 4 smoke tests |
+| `package.json` / `package-lock.json` | MAINT-50 — @types/node 24 → 25 |
+| `REVIEW-LATER.md` | −3 entries, count 25→22 |
+| `SESSION-LOG.md` | This session |
+
+### Stats
+
+- 6 files changed. +305 / −125 lines.
+- 2 parallel build subagents (both APPROVE) + 2 parallel review subagents (both APPROVE, 0 blockers, minor test-count nit).
+- Tests: 118 pass for JournalPage + markdown-serializer.property tests (100 + 18). Not shown but implied: 1108 lib tests + smoke suites also pass under the new @types/node 25.
+- `prek run --all-files`: 20/20 hooks pass (after one biome-check auto-fix pass for wrap/import-sort on the two modified test files).
+
+### Verification
+
+- `grep maxAllowedComplexity biome.json` → `"maxAllowedComplexity": 25`.
+- `npx biome lint --only=complexity/noExcessiveCognitiveComplexity` (whole repo) → **0 warnings**.
+- `npx vitest run JournalPage markdown-serializer.property` → 118 passed.
+- `npx tsc --noEmit` → clean.
+- `prek run --all-files` → 20/20 hooks pass.
+
+### Remaining REVIEW-LATER backlog (22 items)
+
+- **Blocked on user decisions:** BUG-44, UX-198, UX-201, UX-228, FEAT-2, FEAT-4, FEAT-5, MAINT-48, MAINT-49, PUB-1..10 (19 items total).
+- **Explicitly deferred "if ever needed":** PERF-19, PERF-20, PERF-23 (3 items).
+- No clearly-actionable items left that don't require a design decision or are explicitly deferred.
+
+---
+
 ## Session 413 — 8 frontend items: BUG-29 viewport fix, UX-229 property button, 6 complexity refactors (2026-04-18)
 
 **8 items resolved (BUG-29, UX-229, MAINT-64, MAINT-65, MAINT-69, MAINT-70, MAINT-71, MAINT-72). REVIEW-LATER 33→25.**
