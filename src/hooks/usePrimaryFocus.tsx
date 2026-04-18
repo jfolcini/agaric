@@ -63,7 +63,7 @@ export function PrimaryFocusProvider({ children }: ProviderProps): ReactElement 
       focus: () => {
         const ref = currentRef.current
         const el = ref?.current ?? null
-        if (el && el.isConnected) {
+        if (el?.isConnected) {
           el.focus({ preventScroll: true })
           return true
         }

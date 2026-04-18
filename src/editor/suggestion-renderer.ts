@@ -117,7 +117,6 @@ export function createSuggestionRenderer(label?: string, pluginKey?: PluginKey) 
 
       popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
-      // biome-ignore lint/complexity/useLiteralKeys: DOMStringMap index signature requires bracket notation (TS4111)
       popup.dataset['testid'] = 'suggestion-popup'
       popup.setAttribute('role', 'region')
       popup.setAttribute('aria-label', label ?? 'Suggestions')

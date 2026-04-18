@@ -51,7 +51,6 @@ interface FormattingToolbarProps {
 function getLinkMarkRange(editor: Editor): { from: number; to: number } | undefined {
   try {
     const $from = editor.state.doc.resolve(editor.state.selection.from)
-    // biome-ignore lint/complexity/useLiteralKeys: index signature requires bracket notation
     const linkMark = editor.schema.marks['link']
     if (linkMark) return getMarkRange($from, linkMark) ?? undefined
   } catch {
@@ -136,8 +135,7 @@ export function FormattingToolbar({
       link: ctx.editor.isActive('link'),
       codeBlock: ctx.editor.isActive('codeBlock'),
       codeBlockLanguage: ctx.editor.isActive('codeBlock')
-        ? // biome-ignore lint/complexity/useLiteralKeys: index signature requires bracket notation
-          ((ctx.editor.getAttributes('codeBlock')['language'] as string) ?? '')
+        ? ((ctx.editor.getAttributes('codeBlock')['language'] as string) ?? '')
         : '',
       blockquote: ctx.editor.isActive('blockquote'),
       headingLevel: getHeadingLevel(ctx.editor),
@@ -174,7 +172,6 @@ export function FormattingToolbar({
     return () => dom.removeEventListener('open-link-popover', handler)
   }, [editor])
 
-  // biome-ignore lint/complexity/useLiteralKeys: index signature requires bracket notation
   const currentUrl = state.link ? ((editor.getAttributes('link')['href'] as string) ?? '') : ''
 
   let currentLabel = ''

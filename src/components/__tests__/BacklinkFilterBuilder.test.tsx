@@ -40,7 +40,6 @@ vi.mock('@/lib/logger', () => ({
 
 // Mock SearchablePopover with simple interactive DOM (Radix popovers don't work in jsdom).
 vi.mock('../SearchablePopover', () => {
-  // biome-ignore lint/suspicious/noExplicitAny: lightweight mock
   const React = require('react')
   // biome-ignore lint/suspicious/noExplicitAny: lightweight mock
   function SearchablePopover(props: any) {

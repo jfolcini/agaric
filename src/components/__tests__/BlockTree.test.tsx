@@ -1308,10 +1308,11 @@ describe('BlockTree slash command wiring', () => {
 
     const results = await capturedSearchSlashCommands?.('')
 
-    expect(results).toHaveLength(21)
+    expect(results).toHaveLength(22)
     expect(results?.map((r) => r.id)).toEqual([
       'todo',
       'doing',
+      'cancelled',
       'done',
       'date',
       'due',

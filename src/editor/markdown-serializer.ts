@@ -571,6 +571,7 @@ function flushText(buf: string, marks: readonly PMMark[], nodes: InlineNode[]): 
   return ''
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: markdown parser dispatch over block-level grammar productions; complexity is intrinsic to the grammar surface
 export function parse(markdown: string, depth = 0): DocNode {
   if (markdown.length === 0) return { type: 'doc', content: [{ type: 'paragraph' }] }
 
@@ -759,6 +760,7 @@ export function parse(markdown: string, depth = 0): DocNode {
  * `depth` is threaded through so that recursive `parse()` calls inside
  * external-link display text (`consumeExternalLink`) increment the cap.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: inline scanner/parser branches over markdown inline grammar (bold/italic/code/link/etc.); intrinsic to the grammar surface
 function parseLine(line: string, depth = 0): InlineNode[] {
   const nodes: InlineNode[] = []
   const s: Scanner = { src: line, pos: 0 }

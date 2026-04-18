@@ -206,7 +206,6 @@ afterEach(() => {
   if (OriginalWorker) {
     vi.stubGlobal('Worker', OriginalWorker)
   } else {
-    // biome-ignore lint/performance/noDelete: test cleanup requires deleting global
     delete (globalThis as Record<string, unknown>)['Worker']
   }
 })
@@ -1007,7 +1006,6 @@ describe('GraphView', () => {
 
     it('falls back to main-thread simulation when Worker is unavailable', async () => {
       // Remove Worker global to simulate SSR / old environment
-      // biome-ignore lint/performance/noDelete: test requires deleting global
       delete (globalThis as Record<string, unknown>)['Worker']
 
       const pagesResponse = {

@@ -26,5 +26,9 @@
   "1116236": {
     "active": true,
     "notes": "vite dev server WebSocket file read (dev-only, not exposed in production Tauri app)"
+  },
+  "1116663": {
+    "active": true,
+    "notes": "dompurify ADD_TAGS+FORBID_TAGS bypass via transitive dep mermaid; mermaid does not expose ADD_TAGS/FORBID_TAGS to users and per AGENTS.md threat model the app is single-user local-first with no adversarial input"
   }
 }

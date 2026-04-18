@@ -110,7 +110,6 @@ export function LinkEditPopover({
     }
 
     // Exit the link mark so subsequent typing is plain text (UX-177)
-    // biome-ignore lint/complexity/useLiteralKeys: index signature requires bracket notation
     const linkMarkType = editor.schema.marks['link']
     if (linkMarkType) {
       editor.view.dispatch(editor.state.tr.removeStoredMark(linkMarkType))

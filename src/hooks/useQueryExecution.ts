@@ -34,6 +34,7 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
 
   const fetchResults = useCallback(
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: query-type dispatch over tag/property/filtered/backlinks paths with shared pagination + error + loading state; refactoring would scatter coupled state transitions
     async (pageCursor?: string) => {
       const isLoadMore = !!pageCursor
       if (isLoadMore) {

@@ -69,8 +69,8 @@ fn bench_parse_logseq_markdown(c: &mut Criterion) {
             &markdown,
             |b, md| {
                 b.iter(|| {
-                    let blocks = parse_logseq_markdown(md);
-                    assert_eq!(blocks.len(), n as usize);
+                    let parsed = parse_logseq_markdown(md);
+                    assert_eq!(parsed.blocks.len(), n as usize);
                 });
             },
         );

@@ -71,6 +71,7 @@ export const CALLOUT_CONFIG: Record<
  * Render markdown content as rich React nodes for the static view.
  * Inline tokens (block_link, tag_ref) become styled/clickable spans.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: dispatch over markdown AST node types is intrinsically branchy; refactoring into per-node renderers would scatter related logic
 export function renderRichContent(
   markdown: string,
   options: {
@@ -90,6 +91,7 @@ export function renderRichContent(
   let keyIdx = 0
 
   /** Render inline content nodes into React elements. */
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: dispatch over inline mark types (text/em/strong/link/code/etc.) is intrinsically branchy
   function renderInline(content: readonly InlineNode[]) {
     for (const node of content) {
       switch (node.type) {

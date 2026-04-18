@@ -201,7 +201,6 @@ export function BlockListRenderer({
           aria-label={t('blockTree.treeLabel')}
           onPointerDown={onContainerPointerDown}
         >
-          {/* biome-ignore lint/complexity/noExcessiveCognitiveComplexity: block rendering has many conditional props (dnd, collapse, viewport, focus) */}
           {visibleItems.map((block) => {
             const isFocused = focusedBlockId === block.id
             // Show projected depth during drag for the active item's over target

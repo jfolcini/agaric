@@ -15,6 +15,12 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
+// Override the global `@/components/ui/select` mock from `src/test-setup.ts`
+// so this file tests the real Radix-based component. The global mock is for
+// downstream component tests where the Radix portal/positioning chokes in jsdom.
+vi.unmock('@/components/ui/select')
+
 import {
   Select,
   SelectContent,

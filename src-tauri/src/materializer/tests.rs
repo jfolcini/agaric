@@ -2645,13 +2645,29 @@ async fn adaptive_fts_threshold_small_db() {
     let mat = Materializer::new(pool.clone());
     insert_block_direct(&pool, "ADAPT_SM", "content", "small db block").await;
 
-    // cached_block_count starts at 0 → threshold = max(500, 0/10_000) = 500
-    assert_eq!(
-        mat.metrics()
+    // The Materializer constructor spawns a background task that reads the
+    // actual block count from the DB and writes it to `cached_block_count`.
+    // Wait for that to complete so the test sees a deterministic count, then
+    // verify the threshold = max(500, count/10_000) = 500 still holds for a
+    // small DB.
+    for _ in 0..100 {
+        if mat
+            .metrics()
             .cached_block_count
-            .load(AtomicOrdering::Relaxed),
-        0,
-        "cached block count should start at 0 before async refresh"
+            .load(AtomicOrdering::Relaxed)
+            > 0
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let cached = mat
+        .metrics()
+        .cached_block_count
+        .load(AtomicOrdering::Relaxed);
+    assert!(
+        cached < 5_000_000,
+        "cached block count should reflect a small DB (< 5M blocks); got {cached}"
     );
 
     // Simulate 499 prior edits and pin last-optimize to now so the
@@ -2701,6 +2717,22 @@ async fn adaptive_fts_threshold_large_corpus() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     insert_block_direct(&pool, "ADAPT_LG", "content", "large db block").await;
+
+    // The Materializer constructor spawns a background task that reads the
+    // actual block count from the DB and writes it to `cached_block_count`.
+    // Wait for that to complete before storing the simulated value, otherwise
+    // the background write races with our store and clobbers the 10M value.
+    for _ in 0..100 {
+        if mat
+            .metrics()
+            .cached_block_count
+            .load(AtomicOrdering::Relaxed)
+            > 0
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
 
     // Simulate a 10 M-block corpus.
     // threshold = max(500, 10_000_000 / 10_000) = max(500, 1000) = 1000
