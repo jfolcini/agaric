@@ -179,6 +179,91 @@ function renderJournal(props?: { onNavigateToPage?: (pageId: string, title?: str
   )
 }
 
+// ── Journal-template mock helpers ───────────────────────────────────
+// Extracted to keep the caller's mockImplementation under the cognitive
+// complexity limit. Each helper models one command's response shape.
+
+/** `list_blocks` response when loading the template page's children. */
+function templateListBlocksResponse(args: unknown): unknown {
+  const params = args as { parentId?: string } | undefined
+  if (params?.parentId === 'TMPL-PAGE') {
+    return {
+      items: [
+        {
+          id: 'TC1',
+          block_type: 'content',
+          content: '## Morning Review',
+          parent_id: 'TMPL-PAGE',
+          position: 0,
+        },
+        {
+          id: 'TC2',
+          block_type: 'content',
+          content: '## Tasks',
+          parent_id: 'TMPL-PAGE',
+          position: 1,
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+  }
+  return emptyPage
+}
+
+/** `query_by_property` response that advertises the journal template page. */
+function templateQueryByPropertyResponse(args: unknown): unknown {
+  const params = args as { key: string }
+  if (params.key === 'journal-template') {
+    return {
+      items: [
+        {
+          id: 'TMPL-PAGE',
+          block_type: 'page',
+          content: 'Journal Template',
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+  }
+  return emptyPage
+}
+
+/** `create_block` response — daily page or a content block derived from it. */
+function templateCreateBlockResponse(args: unknown, todayStr: string): unknown {
+  const params = args as { blockType: string; content?: string; parentId?: string }
+  if (params.blockType === 'page') {
+    return {
+      id: 'DP-TMPL',
+      block_type: 'page',
+      content: todayStr,
+      parent_id: null,
+      position: null,
+    }
+  }
+  if (params.blockType === 'content') {
+    return {
+      id: `NEW-${params.content?.replace(/\s+/g, '-') ?? 'block'}`,
+      block_type: 'content',
+      content: params.content ?? '',
+      parent_id: params.parentId,
+      position: 0,
+    }
+  }
+  return emptyPage
+}
+
+/** Dispatcher used by the `auto-create applies journal template` test. */
+function makeJournalTemplateMockImpl(todayStr: string) {
+  return async (cmd: string, args?: unknown): Promise<unknown> => {
+    if (cmd === 'list_blocks') return templateListBlocksResponse(args)
+    if (cmd === 'query_by_property') return templateQueryByPropertyResponse(args)
+    if (cmd === 'create_block') return templateCreateBlockResponse(args, todayStr)
+    return emptyPage
+  }
+}
+
 describe('JournalPage', () => {
   // ── Daily Mode (default) ────────────────────────────────────────────
 
@@ -2209,73 +2294,7 @@ describe('JournalPage', () => {
     it('auto-create applies journal template when it exists', async () => {
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-        if (cmd === 'list_blocks') {
-          const params = args as { parentId?: string }
-          if (params?.parentId === 'TMPL-PAGE') {
-            return {
-              items: [
-                {
-                  id: 'TC1',
-                  block_type: 'content',
-                  content: '## Morning Review',
-                  parent_id: 'TMPL-PAGE',
-                  position: 0,
-                },
-                {
-                  id: 'TC2',
-                  block_type: 'content',
-                  content: '## Tasks',
-                  parent_id: 'TMPL-PAGE',
-                  position: 1,
-                },
-              ],
-              next_cursor: null,
-              has_more: false,
-            }
-          }
-          return emptyPage
-        }
-        if (cmd === 'query_by_property') {
-          const params = args as { key: string }
-          if (params.key === 'journal-template') {
-            return {
-              items: [
-                {
-                  id: 'TMPL-PAGE',
-                  block_type: 'page',
-                  content: 'Journal Template',
-                },
-              ],
-              next_cursor: null,
-              has_more: false,
-            }
-          }
-          return emptyPage
-        }
-        if (cmd === 'create_block') {
-          const params = args as { blockType: string; content?: string; parentId?: string }
-          if (params.blockType === 'page') {
-            return {
-              id: 'DP-TMPL',
-              block_type: 'page',
-              content: todayStr,
-              parent_id: null,
-              position: null,
-            }
-          }
-          if (params.blockType === 'content') {
-            return {
-              id: `NEW-${params.content?.replace(/\s+/g, '-') ?? 'block'}`,
-              block_type: 'content',
-              content: params.content ?? '',
-              parent_id: params.parentId,
-              position: 0,
-            }
-          }
-        }
-        return emptyPage
-      })
+      mockedInvoke.mockImplementation(makeJournalTemplateMockImpl(todayStr))
 
       renderJournal()
 
@@ -2836,6 +2855,85 @@ describe('JournalPage', () => {
         expect(scheduledDots.length).toBeGreaterThan(0)
         expect(propDots.length).toBeGreaterThan(0)
       })
+    })
+  })
+
+  // ── Smoke tests for journal-template mock helpers ──────────────────
+
+  describe('journal template mock helpers', () => {
+    it('templateListBlocksResponse: returns the template children for TMPL-PAGE', () => {
+      const result = templateListBlocksResponse({ parentId: 'TMPL-PAGE' }) as {
+        items: Array<{ id: string; content: string }>
+        has_more: boolean
+      }
+      expect(result.items).toHaveLength(2)
+      expect(result.items[0]?.id).toBe('TC1')
+      expect(result.items[0]?.content).toBe('## Morning Review')
+      expect(result.items[1]?.id).toBe('TC2')
+      expect(result.items[1]?.content).toBe('## Tasks')
+      expect(result.has_more).toBe(false)
+    })
+
+    it('templateListBlocksResponse: returns emptyPage for any other parentId', () => {
+      expect(templateListBlocksResponse({ parentId: 'OTHER-PAGE' })).toBe(emptyPage)
+      expect(templateListBlocksResponse(undefined)).toBe(emptyPage)
+    })
+
+    it('templateQueryByPropertyResponse: returns the template page for `journal-template` key', () => {
+      const result = templateQueryByPropertyResponse({ key: 'journal-template' }) as {
+        items: Array<{ id: string; content: string }>
+      }
+      expect(result.items).toHaveLength(1)
+      expect(result.items[0]?.id).toBe('TMPL-PAGE')
+      expect(result.items[0]?.content).toBe('Journal Template')
+    })
+
+    it('templateQueryByPropertyResponse: returns emptyPage for any other key', () => {
+      expect(templateQueryByPropertyResponse({ key: 'something-else' })).toBe(emptyPage)
+    })
+
+    it('templateCreateBlockResponse: returns a daily page when blockType is `page`', () => {
+      const result = templateCreateBlockResponse({ blockType: 'page' }, '2024-01-15') as {
+        id: string
+        content: string
+        parent_id: null
+      }
+      expect(result.id).toBe('DP-TMPL')
+      expect(result.content).toBe('2024-01-15')
+      expect(result.parent_id).toBe(null)
+    })
+
+    it('templateCreateBlockResponse: returns a derived content block when blockType is `content`', () => {
+      const result = templateCreateBlockResponse(
+        { blockType: 'content', content: '## Morning Review', parentId: 'DP-TMPL' },
+        '2024-01-15',
+      ) as { id: string; content: string; parent_id: string }
+      expect(result.id).toBe('NEW-##-Morning-Review')
+      expect(result.content).toBe('## Morning Review')
+      expect(result.parent_id).toBe('DP-TMPL')
+    })
+
+    it('templateCreateBlockResponse: falls back to emptyPage for unknown blockType', () => {
+      expect(templateCreateBlockResponse({ blockType: 'mystery' }, '2024-01-15')).toBe(emptyPage)
+    })
+
+    it('makeJournalTemplateMockImpl: dispatches each supported command', async () => {
+      const impl = makeJournalTemplateMockImpl('2024-01-15')
+      const listResult = (await impl('list_blocks', { parentId: 'TMPL-PAGE' })) as {
+        items: Array<unknown>
+      }
+      expect(listResult.items).toHaveLength(2)
+
+      const queryResult = (await impl('query_by_property', { key: 'journal-template' })) as {
+        items: Array<unknown>
+      }
+      expect(queryResult.items).toHaveLength(1)
+
+      const pageResult = (await impl('create_block', { blockType: 'page' })) as { id: string }
+      expect(pageResult.id).toBe('DP-TMPL')
+
+      // Falls through to emptyPage for unknown commands.
+      expect(await impl('something_else')).toBe(emptyPage)
     })
   })
 })

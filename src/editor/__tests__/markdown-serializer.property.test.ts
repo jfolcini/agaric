@@ -199,6 +199,44 @@ function normalizeDoc(doc: DocNode): DocNode {
 }
 
 /**
+ * Check whether a single text node has content that would be ambiguous on
+ * round-trip. Delimiter characters get escaped, `#[` / `[[` could introduce
+ * token boundaries, and link marks wrap in `[text](url)` syntax.
+ */
+function textNodeHasAmbiguity(node: TextNode): boolean {
+  if (/[*`\\[\]()]/.test(node.text)) return true
+  if (node.text.includes('#[')) return true
+  if (node.text.includes('[[')) return true
+  if (node.marks?.some((m) => m.type === 'link')) return true
+  return false
+}
+
+/**
+ * Check whether a paragraph starts with syntax that would be re-parsed as a
+ * different block kind (heading, fenced code block). Splitting this out of
+ * hasStructuralAmbiguity keeps each function under the complexity threshold.
+ */
+function paragraphStartsWithAmbiguousSyntax(block: ParagraphNode): boolean {
+  if (!block.content) return false
+  const firstText = block.content.find((n): n is TextNode => n.type === 'text')
+  if (!firstText) return false
+  if (/^#{1,6} /.test(firstText.text)) return true
+  if (firstText.text.startsWith('```')) return true
+  return false
+}
+
+/**
+ * Check whether any text node within a paragraph has ambiguous content.
+ */
+function paragraphHasAmbiguousTextNode(block: ParagraphNode): boolean {
+  if (!block.content) return false
+  for (const node of block.content) {
+    if (node.type === 'text' && textNodeHasAmbiguity(node)) return true
+  }
+  return false
+}
+
+/**
  * Check whether a doc contains text nodes whose content has characters that
  * would be ambiguous when serialized — e.g. a text node containing `*` that
  * gets escaped, but escaping changes the round-trip structure.
@@ -210,24 +248,9 @@ function normalizeDoc(doc: DocNode): DocNode {
 function hasStructuralAmbiguity(doc: DocNode): boolean {
   if (!doc.content) return false
   for (const block of doc.content) {
-    if (block.type !== 'paragraph' || !block.content) continue
-    for (const node of block.content) {
-      if (node.type !== 'text') continue
-      // Text with delimiter chars will be escaped; the parser produces a
-      // different node structure (merged text) but same content.
-      // Also: empty-ish text after escaping could produce different node counts.
-      if (/[*`\\[\]()]/.test(node.text)) return true
-      if (node.text.includes('#[')) return true
-      if (node.text.includes('[[')) return true
-      // Link marks add structural complexity — serialization wraps in [text](url)
-      // which changes the node structure after round-trip
-      if (node.marks?.some((m) => m.type === 'link')) return true
-    }
-    // Paragraph starting with heading syntax would parse back as heading
-    const firstText = block.content.find((n): n is TextNode => n.type === 'text')
-    if (firstText && /^#{1,6} /.test(firstText.text)) return true
-    // Paragraph starting with ``` would parse back as code fence
-    if (firstText?.text.startsWith('```')) return true
+    if (block.type !== 'paragraph') continue
+    if (paragraphHasAmbiguousTextNode(block)) return true
+    if (paragraphStartsWithAmbiguousSyntax(block)) return true
   }
   return false
 }
@@ -490,5 +513,93 @@ describe('property: parse recursion depth guard', () => {
       ),
       { numRuns: 200 },
     )
+  })
+})
+
+// -- Smoke tests for ambiguity helpers ----------------------------------------
+
+describe('hasStructuralAmbiguity helpers', () => {
+  it('textNodeHasAmbiguity: flags delimiter characters, token prefixes, and link marks', () => {
+    expect(textNodeHasAmbiguity({ type: 'text', text: 'hello' })).toBe(false)
+    expect(textNodeHasAmbiguity({ type: 'text', text: 'has *bold*' })).toBe(true)
+    expect(textNodeHasAmbiguity({ type: 'text', text: 'has `code`' })).toBe(true)
+    expect(textNodeHasAmbiguity({ type: 'text', text: 'tag #[X]' })).toBe(true)
+    expect(textNodeHasAmbiguity({ type: 'text', text: 'link [[X]]' })).toBe(true)
+    expect(
+      textNodeHasAmbiguity({
+        type: 'text',
+        text: 'plain',
+        marks: [{ type: 'link', attrs: { href: 'https://example.com' } }],
+      }),
+    ).toBe(true)
+  })
+
+  it('paragraphStartsWithAmbiguousSyntax: flags heading and code-fence starts', () => {
+    expect(
+      paragraphStartsWithAmbiguousSyntax({
+        type: 'paragraph',
+        content: [{ type: 'text', text: '# heading' }],
+      }),
+    ).toBe(true)
+    expect(
+      paragraphStartsWithAmbiguousSyntax({
+        type: 'paragraph',
+        content: [{ type: 'text', text: '```js' }],
+      }),
+    ).toBe(true)
+    expect(
+      paragraphStartsWithAmbiguousSyntax({
+        type: 'paragraph',
+        content: [{ type: 'text', text: 'plain content' }],
+      }),
+    ).toBe(false)
+    // Edge case: empty paragraph has no ambiguity signal.
+    expect(paragraphStartsWithAmbiguousSyntax({ type: 'paragraph' })).toBe(false)
+  })
+
+  it('paragraphHasAmbiguousTextNode: inspects each inline node', () => {
+    expect(
+      paragraphHasAmbiguousTextNode({
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'plain' },
+          { type: 'text', text: 'also plain' },
+        ],
+      }),
+    ).toBe(false)
+    expect(
+      paragraphHasAmbiguousTextNode({
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'plain' },
+          { type: 'text', text: 'has *bold*' },
+        ],
+      }),
+    ).toBe(true)
+    // Edge case: empty paragraph has nothing ambiguous to find.
+    expect(paragraphHasAmbiguousTextNode({ type: 'paragraph' })).toBe(false)
+  })
+
+  it('hasStructuralAmbiguity: composes the paragraph checks across the doc', () => {
+    const cleanDoc: DocNode = {
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'plain content' }] }],
+    }
+    expect(hasStructuralAmbiguity(cleanDoc)).toBe(false)
+
+    const ambiguousTextDoc: DocNode = {
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'has *bold*' }] }],
+    }
+    expect(hasStructuralAmbiguity(ambiguousTextDoc)).toBe(true)
+
+    const headingStartDoc: DocNode = {
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: '## Tasks' }] }],
+    }
+    expect(hasStructuralAmbiguity(headingStartDoc)).toBe(true)
+
+    // Edge case: empty doc has no ambiguity.
+    expect(hasStructuralAmbiguity({ type: 'doc' })).toBe(false)
   })
 })
