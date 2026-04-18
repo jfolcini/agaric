@@ -213,4 +213,147 @@ describe('usePollingQuery', () => {
     })
     expect(result.current.data).toBe('b')
   })
+
+  // ── PERF-21: visibility-aware polling ──────────────────────────
+
+  describe('document.hidden gating (PERF-21)', () => {
+    let hiddenValue = false
+
+    beforeEach(() => {
+      hiddenValue = false
+      Object.defineProperty(document, 'hidden', {
+        configurable: true,
+        get: () => hiddenValue,
+      })
+    })
+
+    afterEach(() => {
+      // Restore the default (spec says `hidden` is a non-configurable
+      // read-only getter, but jsdom lets us redefine it — we still need
+      // to clean up so the next test block starts fresh).
+      Object.defineProperty(document, 'hidden', {
+        configurable: true,
+        get: () => false,
+      })
+    })
+
+    it('skips the initial load when the page is already hidden', async () => {
+      hiddenValue = true
+      const queryFn = vi.fn().mockResolvedValue('ok')
+      renderHook(() => usePollingQuery(queryFn, { intervalMs: 5000 }))
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+
+      expect(queryFn).not.toHaveBeenCalled()
+    })
+
+    it('interval ticks while hidden do not fire the query', async () => {
+      const queryFn = vi.fn().mockResolvedValue('ok')
+      renderHook(() => usePollingQuery(queryFn, { intervalMs: 5000 }))
+
+      // Initial (visible) fetch lands
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(queryFn).toHaveBeenCalledTimes(1)
+
+      // Now the tab goes to the background — the next interval tick
+      // fires but load() short-circuits.
+      hiddenValue = true
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
+      expect(queryFn).toHaveBeenCalledTimes(1)
+
+      // Another interval tick — still no fetch while hidden.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
+      expect(queryFn).toHaveBeenCalledTimes(1)
+    })
+
+    it('fires a fresh load when the page becomes visible', async () => {
+      hiddenValue = true
+      const queryFn = vi.fn().mockResolvedValue('ok')
+      renderHook(() => usePollingQuery(queryFn, { intervalMs: 60_000 }))
+
+      // Initial load is skipped because hidden
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(queryFn).not.toHaveBeenCalled()
+
+      // Tab becomes visible
+      hiddenValue = false
+      await act(async () => {
+        document.dispatchEvent(new Event('visibilitychange'))
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(queryFn).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not fire when visibilitychange fires while still hidden', async () => {
+      const queryFn = vi.fn().mockResolvedValue('ok')
+      renderHook(() => usePollingQuery(queryFn, { intervalMs: 60_000 }))
+      // Initial visible fetch
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(queryFn).toHaveBeenCalledTimes(1)
+
+      // Visibility event fires but we're still hidden — should NOT reload
+      hiddenValue = true
+      await act(async () => {
+        document.dispatchEvent(new Event('visibilitychange'))
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(queryFn).toHaveBeenCalledTimes(1)
+    })
+
+    it('removes the visibilitychange listener on unmount', async () => {
+      const queryFn = vi.fn().mockResolvedValue('ok')
+      const { unmount } = renderHook(() => usePollingQuery(queryFn, { intervalMs: 60_000 }))
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(queryFn).toHaveBeenCalledTimes(1)
+
+      unmount()
+
+      // After unmount, dispatching visibilitychange MUST NOT trigger any
+      // additional fetch — listener was cleaned up.
+      hiddenValue = false
+      await act(async () => {
+        document.dispatchEvent(new Event('visibilitychange'))
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(queryFn).toHaveBeenCalledTimes(1)
+    })
+
+    it('manual refetch() also short-circuits when hidden', async () => {
+      const queryFn = vi.fn().mockResolvedValue('ok')
+      const { result } = renderHook(() => usePollingQuery(queryFn, { intervalMs: 60_000 }))
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(queryFn).toHaveBeenCalledTimes(1)
+
+      hiddenValue = true
+      await act(async () => {
+        await result.current.refetch()
+      })
+      expect(queryFn).toHaveBeenCalledTimes(1)
+
+      // Going visible and refetching works again
+      hiddenValue = false
+      await act(async () => {
+        await result.current.refetch()
+      })
+      expect(queryFn).toHaveBeenCalledTimes(2)
+    })
+  })
 })

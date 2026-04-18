@@ -72,13 +72,15 @@ async fn delete_property_writes_op_log_entry() {
     .unwrap();
 
     // seq 1 = create_block, seq 2 = set_property
+    // BUG-20: "status" is seeded as select with options
+    // ["active","paused","done","archived"] (migration 0011).
     set_property_inner(
         &pool,
         DEV,
         &mat,
         block.id.clone(),
         "status".into(),
-        Some("high".into()),
+        Some("active".into()),
         None,
         None,
         None,
@@ -530,7 +532,7 @@ async fn query_by_property_happy_path() {
         &mat,
         b3.id.clone(),
         "priority".into(),
-        Some("high".into()),
+        Some("1".into()),
         None,
         None,
         None,

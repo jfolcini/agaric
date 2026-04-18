@@ -763,6 +763,47 @@ describe('GraphView', () => {
       const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
       expect(zoomInstance.transform).toHaveBeenCalled()
     })
+
+    // BUG-18: rebinding graph zoom shortcuts via keyboard-config
+    it('rebinding graphZoomIn: new keys fire, old + does not', async () => {
+      localStorage.setItem(
+        'agaric-keyboard-shortcuts',
+        JSON.stringify({ graphZoomIn: 'Ctrl + Shift + Z' }),
+      )
+      try {
+        const pagesResponse = {
+          items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+          next_cursor: null,
+          has_more: false,
+        }
+
+        mockedInvoke.mockImplementation((cmd: string) => {
+          if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+          if (cmd === 'list_page_links') return Promise.resolve([])
+          return Promise.resolve(null)
+        })
+
+        render(<GraphView />)
+
+        await waitFor(() => {
+          expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+        })
+
+        const svg = screen.getByRole('img', { name: 'Page Relationships' })
+
+        // Old `+` should NOT fire zoom-in after rebinding
+        fireEvent.keyDown(svg, { key: '+' })
+        // biome-ignore lint/suspicious/noExplicitAny: d3 zoom mock access in test
+        const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
+        expect(zoomInstance.scaleBy).not.toHaveBeenCalled()
+
+        // New Ctrl+Shift+Z fires zoom-in
+        fireEvent.keyDown(svg, { key: 'z', ctrlKey: true, shiftKey: true })
+        expect(zoomInstance.scaleBy).toHaveBeenCalledWith(expect.anything(), 1.3)
+      } finally {
+        localStorage.removeItem('agaric-keyboard-shortcuts')
+      }
+    })
   })
 
   describe('error handling', () => {

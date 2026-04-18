@@ -170,6 +170,7 @@ fn sync_start_pairing_replaces_existing_session() {
 async fn sync_confirm_pairing_stores_peer_and_clears_session() {
     let (pool, _dir) = test_pool().await;
     let pairing_state = Mutex::new(None);
+    let scheduler = SyncScheduler::new();
 
     // Start pairing first
     let info = start_pairing_inner(&pairing_state, "device-local").unwrap();
@@ -178,6 +179,7 @@ async fn sync_confirm_pairing_stores_peer_and_clears_session() {
     confirm_pairing_inner(
         &pool,
         &pairing_state,
+        &scheduler,
         "device-local",
         info.passphrase,
         "device-remote".into(),

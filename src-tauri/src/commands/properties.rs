@@ -71,6 +71,25 @@ pub async fn set_todo_state_inner(
                 "Todo state must be 1-50 characters".into(),
             ));
         }
+
+        // BUG-20: Validate against todo_state property definition options.
+        // `set_property_in_tx` already performs this check when the
+        // definition exists; this fallback guards the case where the
+        // definition has been deleted, ensuring the built-in defaults are
+        // still enforced.
+        let def_row =
+            sqlx::query!("SELECT options FROM property_definitions WHERE key = 'todo_state'")
+                .fetch_optional(pool)
+                .await?;
+        if def_row.is_none() {
+            let default_options = ["TODO", "DOING", "DONE"];
+            if !default_options.iter().any(|d| d == s) {
+                return Err(AppError::Validation(format!(
+                    "todo_state '{s}' is not in allowed options: {}",
+                    default_options.join(", ")
+                )));
+            }
+        }
     }
 
     // Fetch current block to check existing todo_state for transition logic

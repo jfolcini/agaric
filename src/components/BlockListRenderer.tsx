@@ -147,34 +147,38 @@ export function BlockListRenderer({
   }, [collapsedIds])
 
   // ── Sibling aria props (UX-48) ─────────────────────────────────────
-  // Compute aria-setsize / aria-posinset for each block by grouping
-  // siblings that share the same parent in the flat list.
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: flat-list parent grouping inherently branches per-depth
+  // Compute aria-setsize / aria-posinset for each block by grouping siblings
+  // that share the same parent in the flat list. Single-pass O(N) algorithm
+  // (PERF-22): we keep a `lastAtDepth` map that records the most-recent index
+  // seen at each depth. Each block's parent is simply `lastAtDepth[depth-1]`,
+  // matching the semantics of the previous backward-scan — each block is
+  // grouped with the nearest preceding block at its parent's depth. Roots
+  // (depth 0) share the `-1` sentinel group.
   const siblingAriaProps = useMemo(() => {
     const result = new Map<string, { setsize: number; posinset: number }>()
     const groups = new Map<number, number[]>()
+    const lastAtDepth = new Map<number, number>()
 
     for (let i = 0; i < visibleItems.length; i++) {
       const block = visibleItems[i]
-      let parentIdx = -1
-      if (block && block.depth > 0) {
-        for (let j = i - 1; j >= 0; j--) {
-          if (visibleItems[j]?.depth === block.depth - 1) {
-            parentIdx = j
-            break
-          }
-        }
+      if (!block) continue
+      const parentIdx = block.depth > 0 ? (lastAtDepth.get(block.depth - 1) ?? -1) : -1
+      let list = groups.get(parentIdx)
+      if (!list) {
+        list = []
+        groups.set(parentIdx, list)
       }
-      if (!groups.has(parentIdx)) groups.set(parentIdx, [])
-      groups.get(parentIdx)?.push(i)
+      list.push(i)
+      lastAtDepth.set(block.depth, i)
     }
 
-    for (const [, indices] of groups) {
+    for (const indices of groups.values()) {
+      const setsize = indices.length
       for (let j = 0; j < indices.length; j++) {
         const idx = indices[j]
         const block = idx != null ? visibleItems[idx] : undefined
         if (block) {
-          result.set(block.id, { setsize: indices.length, posinset: j + 1 })
+          result.set(block.id, { setsize, posinset: j + 1 })
         }
       }
     }

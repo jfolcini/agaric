@@ -159,6 +159,7 @@ async fn update_peer_name_special_characters() {
 async fn pairing_lifecycle_creates_peer_ref() {
     let (pool, _dir) = test_pool().await;
     let pairing = PairingState(Mutex::new(None));
+    let scheduler = SyncScheduler::new();
     let device_id = "dev-local";
 
     // Start pairing
@@ -169,6 +170,7 @@ async fn pairing_lifecycle_creates_peer_ref() {
     confirm_pairing_inner(
         &pool,
         &pairing.0,
+        &scheduler,
         device_id,
         info.passphrase.clone(),
         "dev-remote".into(),
@@ -212,12 +214,14 @@ async fn pairing_start_then_cancel_clears_session() {
 async fn confirm_without_prior_start_still_creates_peer() {
     let (pool, _dir) = test_pool().await;
     let pairing = PairingState(Mutex::new(None));
+    let scheduler = SyncScheduler::new();
 
     // Confirm without starting — confirm_pairing_inner doesn't validate against
     // a stored session; it creates a new one from the passphrase directly.
     confirm_pairing_inner(
         &pool,
         &pairing.0,
+        &scheduler,
         "dev-1",
         "some random phrase".into(),
         "dev-remote".into(),
@@ -275,6 +279,7 @@ async fn full_pair_then_sync_workflow() {
     confirm_pairing_inner(
         &pool,
         &pairing.0,
+        &scheduler,
         "dev-local",
         info.passphrase,
         "dev-remote".into(),
@@ -306,6 +311,7 @@ async fn cancel_sync_succeeds() {
 async fn pair_multiple_devices_creates_separate_peer_refs() {
     let (pool, _dir) = test_pool().await;
     let pairing = PairingState(Mutex::new(None));
+    let scheduler = SyncScheduler::new();
     let device_id = "dev-local";
 
     // Pair with first device
@@ -313,6 +319,7 @@ async fn pair_multiple_devices_creates_separate_peer_refs() {
     confirm_pairing_inner(
         &pool,
         &pairing.0,
+        &scheduler,
         device_id,
         info1.passphrase,
         "dev-phone".into(),
@@ -325,6 +332,7 @@ async fn pair_multiple_devices_creates_separate_peer_refs() {
     confirm_pairing_inner(
         &pool,
         &pairing.0,
+        &scheduler,
         device_id,
         info2.passphrase,
         "dev-tablet".into(),
@@ -344,6 +352,7 @@ async fn pair_multiple_devices_creates_separate_peer_refs() {
 async fn re_pairing_same_device_upserts_peer_ref() {
     let (pool, _dir) = test_pool().await;
     let pairing = PairingState(Mutex::new(None));
+    let scheduler = SyncScheduler::new();
     let device_id = "dev-local";
 
     // Pair with device
@@ -351,6 +360,7 @@ async fn re_pairing_same_device_upserts_peer_ref() {
     confirm_pairing_inner(
         &pool,
         &pairing.0,
+        &scheduler,
         device_id,
         info1.passphrase,
         "dev-remote".into(),
@@ -363,6 +373,7 @@ async fn re_pairing_same_device_upserts_peer_ref() {
     confirm_pairing_inner(
         &pool,
         &pairing.0,
+        &scheduler,
         device_id,
         info2.passphrase,
         "dev-remote".into(),

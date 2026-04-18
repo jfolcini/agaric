@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT value_type, options FROM property_definitions WHERE key = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "value_type",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "options",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "a0a71a8351aea2d2127d5aa155a21df1ccf295de95a512e233767d8a9d9d7119"
+}

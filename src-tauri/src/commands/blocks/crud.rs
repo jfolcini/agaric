@@ -1022,38 +1022,77 @@ pub(crate) async fn set_property_in_tx(
         }
     }
 
-    // 1d. Type validation against property_definitions (non-reserved keys only)
-    if !is_clear && !is_reserved_property_key(key) {
-        let def_type: Option<String> =
-            sqlx::query_scalar("SELECT value_type FROM property_definitions WHERE key = ?")
-                .bind(key)
-                .fetch_optional(&mut **tx)
-                .await?;
+    // 1d. Type + options validation against property_definitions.
+    //
+    // Applies to both reserved (todo_state, priority, due_date, scheduled_date)
+    // and non-reserved keys — the select/option check applies wherever a
+    // property_definition row exists. The type check is skipped for reserved
+    // keys because those values are mapped to fixed columns on `blocks` and
+    // their field shape is already constrained by 1c above.
+    if !is_clear {
+        let def_meta = sqlx::query!(
+            "SELECT value_type, options FROM property_definitions WHERE key = ?",
+            key,
+        )
+        .fetch_optional(&mut **tx)
+        .await?;
 
-        if let Some(expected_type) = def_type {
-            let type_matches = match expected_type.as_str() {
-                "text" | "select" => value_text.is_some() || value_ref.is_some(),
-                "ref" => value_ref.is_some(),
-                "number" => value_num.is_some(),
-                "date" => value_date.is_some(),
-                _ => true,
-            };
-            if !type_matches {
-                let actual_type = if value_text.is_some() {
-                    "text"
-                } else if value_num.is_some() {
-                    "number"
-                } else if value_date.is_some() {
-                    "date"
-                } else if value_ref.is_some() {
-                    "ref"
-                } else {
-                    "unknown"
+        if let Some(meta) = def_meta {
+            let expected_type = meta.value_type;
+            let options_json = meta.options;
+
+            // Type validation — only for non-reserved keys. Reserved-key
+            // field-shape is enforced by 1c above.
+            if !is_reserved_property_key(key) {
+                let type_matches = match expected_type.as_str() {
+                    "text" | "select" => value_text.is_some() || value_ref.is_some(),
+                    "ref" => value_ref.is_some(),
+                    "number" => value_num.is_some(),
+                    "date" => value_date.is_some(),
+                    _ => true,
                 };
-                return Err(AppError::Validation(format!(
-                    "Property '{}' expects type '{}', got '{}'.",
-                    key, expected_type, actual_type
-                )));
+                if !type_matches {
+                    let actual_type = if value_text.is_some() {
+                        "text"
+                    } else if value_num.is_some() {
+                        "number"
+                    } else if value_date.is_some() {
+                        "date"
+                    } else if value_ref.is_some() {
+                        "ref"
+                    } else {
+                        "unknown"
+                    };
+                    return Err(AppError::Validation(format!(
+                        "Property '{}' expects type '{}', got '{}'.",
+                        key, expected_type, actual_type
+                    )));
+                }
+            }
+
+            // BUG-20: Options membership validation for select-type
+            // properties. When the definition declares a non-NULL options
+            // array, the supplied value_text must be one of the listed
+            // options. A NULL options column means "no restriction" — a
+            // select-type definition without options is treated permissively
+            // so custom keys stay flexible.
+            if expected_type == "select" {
+                if let Some(ref opts_json) = options_json {
+                    if let Some(ref actual) = value_text {
+                        let allowed: Vec<String> =
+                            serde_json::from_str(opts_json).map_err(|e| {
+                                AppError::Validation(format!(
+                                    "Property '{key}' has malformed options JSON: {e}"
+                                ))
+                            })?;
+                        if !allowed.iter().any(|a| a == actual) {
+                            return Err(AppError::Validation(format!(
+                                "Property '{key}' value '{actual}' is not in allowed options: {}",
+                                allowed.join(", ")
+                            )));
+                        }
+                    }
+                }
             }
         }
     }

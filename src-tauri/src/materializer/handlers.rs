@@ -84,8 +84,18 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
         OpType::CreateBlock => {
             let p: CreateBlockPayload = serde_json::from_str(&record.payload)?;
             let parent_id_str = p.parent_id.as_ref().map(|id| id.as_str().to_owned());
-            sqlx::query("INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, is_conflict) VALUES (?, ?, ?, ?, ?, 0)")
-                .bind(p.block_id.as_str()).bind(&p.block_type).bind(&p.content).bind(parent_id_str.as_deref()).bind(p.position).execute(&mut *conn).await?;
+            sqlx::query(
+                "INSERT OR IGNORE INTO blocks \
+                     (id, block_type, content, parent_id, position, is_conflict) \
+                 VALUES (?, ?, ?, ?, ?, 0)",
+            )
+            .bind(p.block_id.as_str())
+            .bind(&p.block_type)
+            .bind(&p.content)
+            .bind(parent_id_str.as_deref())
+            .bind(p.position)
+            .execute(&mut *conn)
+            .await?;
             let parent_str = parent_id_str.as_deref();
             tag_inheritance::inherit_parent_tags(&mut *conn, p.block_id.as_str(), parent_str)
                 .await?;
@@ -101,14 +111,45 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
         OpType::DeleteBlock => {
             let p: DeleteBlockPayload = serde_json::from_str(&record.payload)?;
             let now = &record.created_at;
-            sqlx::query("WITH RECURSIVE descendants(id) AS ( SELECT id FROM blocks WHERE id = ? UNION ALL SELECT b.id FROM blocks b INNER JOIN descendants d ON b.parent_id = d.id WHERE b.deleted_at IS NULL ) UPDATE blocks SET deleted_at = ? WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL")
-                .bind(p.block_id.as_str()).bind(now).execute(&mut *conn).await?;
+            // Cascade soft-delete: mark the target and every not-yet-deleted
+            // descendant. Mirror of the cascade in `commands/blocks/crud.rs`
+            // delete_block_inner, applied by the materializer on remote ops.
+            sqlx::query(
+                "WITH RECURSIVE descendants(id) AS ( \
+                     SELECT id FROM blocks WHERE id = ? \
+                     UNION ALL \
+                     SELECT b.id FROM blocks b \
+                     INNER JOIN descendants d ON b.parent_id = d.id \
+                     WHERE b.deleted_at IS NULL \
+                 ) \
+                 UPDATE blocks SET deleted_at = ? \
+                 WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
+            )
+            .bind(p.block_id.as_str())
+            .bind(now)
+            .execute(&mut *conn)
+            .await?;
             tag_inheritance::remove_subtree_inherited(&mut *conn, p.block_id.as_str()).await?;
         }
         OpType::RestoreBlock => {
             let p: RestoreBlockPayload = serde_json::from_str(&record.payload)?;
-            sqlx::query("WITH RECURSIVE descendants(id) AS ( SELECT id FROM blocks WHERE id = ? UNION ALL SELECT b.id FROM blocks b INNER JOIN descendants d ON b.parent_id = d.id ) UPDATE blocks SET deleted_at = NULL WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?")
-                .bind(p.block_id.as_str()).bind(&p.deleted_at_ref).execute(&mut *conn).await?;
+            // Restore every descendant that was soft-deleted at the same
+            // `deleted_at_ref` timestamp — i.e., the exact cohort that
+            // `delete_block` soft-deleted together.
+            sqlx::query(
+                "WITH RECURSIVE descendants(id) AS ( \
+                     SELECT id FROM blocks WHERE id = ? \
+                     UNION ALL \
+                     SELECT b.id FROM blocks b \
+                     INNER JOIN descendants d ON b.parent_id = d.id \
+                 ) \
+                 UPDATE blocks SET deleted_at = NULL \
+                 WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
+            )
+            .bind(p.block_id.as_str())
+            .bind(&p.deleted_at_ref)
+            .execute(&mut *conn)
+            .await?;
             tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
         }
         OpType::PurgeBlock => {
@@ -117,53 +158,119 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
             sqlx::query("PRAGMA defer_foreign_keys = ON")
                 .execute(&mut *conn)
                 .await?;
-            const DESC_CTE: &str = "WITH RECURSIVE descendants(id) AS ( SELECT id FROM blocks WHERE id = ? UNION ALL SELECT b.id FROM blocks b INNER JOIN descendants d ON b.parent_id = d.id )";
-            sqlx::query(&format!("{DESC_CTE} DELETE FROM block_tags WHERE block_id IN (SELECT id FROM descendants) OR tag_id IN (SELECT id FROM descendants)")).bind(block_id).execute(&mut *conn).await?;
-            sqlx::query(&format!("{DESC_CTE} DELETE FROM block_tag_inherited WHERE block_id IN (SELECT id FROM descendants) OR inherited_from IN (SELECT id FROM descendants)")).bind(block_id).execute(&mut *conn).await?;
-            sqlx::query(&format!("{DESC_CTE} DELETE FROM block_properties WHERE block_id IN (SELECT id FROM descendants)")).bind(block_id).execute(&mut *conn).await?;
-            sqlx::query(&format!("{DESC_CTE} UPDATE block_properties SET value_ref = NULL WHERE value_ref IN (SELECT id FROM descendants)")).bind(block_id).execute(&mut *conn).await?;
-            sqlx::query(&format!("{DESC_CTE} DELETE FROM block_links WHERE source_id IN (SELECT id FROM descendants) OR target_id IN (SELECT id FROM descendants)")).bind(block_id).execute(&mut *conn).await?;
-            sqlx::query(&format!("{DESC_CTE} DELETE FROM agenda_cache WHERE block_id IN (SELECT id FROM descendants)")).bind(block_id).execute(&mut *conn).await?;
+            // Shared CTE body reused across every cleanup statement below.
+            // Tracks the target block + all descendants (regardless of
+            // soft-delete status) so purge wipes every trace.
+            const DESC_CTE: &str = "WITH RECURSIVE descendants(id) AS ( \
+                 SELECT id FROM blocks WHERE id = ? \
+                 UNION ALL \
+                 SELECT b.id FROM blocks b \
+                 INNER JOIN descendants d ON b.parent_id = d.id \
+             )";
             sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM tags_cache WHERE tag_id IN (SELECT id FROM descendants)"
+                "{DESC_CTE} DELETE FROM block_tags \
+                 WHERE block_id IN (SELECT id FROM descendants) \
+                    OR tag_id IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
             .await?;
             sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM pages_cache WHERE page_id IN (SELECT id FROM descendants)"
+                "{DESC_CTE} DELETE FROM block_tag_inherited \
+                 WHERE block_id IN (SELECT id FROM descendants) \
+                    OR inherited_from IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
             .await?;
             sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM attachments WHERE block_id IN (SELECT id FROM descendants)"
-            ))
-            .bind(block_id)
-            .execute(&mut *conn)
-            .await?;
-            sqlx::query(&format!("{DESC_CTE} DELETE FROM block_drafts WHERE block_id IN (SELECT id FROM descendants)")).bind(block_id).execute(&mut *conn).await?;
-            sqlx::query(&format!("{DESC_CTE} UPDATE blocks SET conflict_source = NULL WHERE conflict_source IN (SELECT id FROM descendants)")).bind(block_id).execute(&mut *conn).await?;
-            sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM fts_blocks WHERE block_id IN (SELECT id FROM descendants)"
+                "{DESC_CTE} DELETE FROM block_properties \
+                 WHERE block_id IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
             .await?;
             sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM page_aliases WHERE page_id IN (SELECT id FROM descendants)"
+                "{DESC_CTE} UPDATE block_properties SET value_ref = NULL \
+                 WHERE value_ref IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
             .await?;
             sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM projected_agenda_cache WHERE block_id IN (SELECT id FROM descendants)"
+                "{DESC_CTE} DELETE FROM block_links \
+                 WHERE source_id IN (SELECT id FROM descendants) \
+                    OR target_id IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
             .await?;
             sqlx::query(&format!(
-                "{DESC_CTE} DELETE FROM blocks WHERE id IN (SELECT id FROM descendants)"
+                "{DESC_CTE} DELETE FROM agenda_cache \
+                 WHERE block_id IN (SELECT id FROM descendants)",
+            ))
+            .bind(block_id)
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query(&format!(
+                "{DESC_CTE} DELETE FROM tags_cache \
+                 WHERE tag_id IN (SELECT id FROM descendants)",
+            ))
+            .bind(block_id)
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query(&format!(
+                "{DESC_CTE} DELETE FROM pages_cache \
+                 WHERE page_id IN (SELECT id FROM descendants)",
+            ))
+            .bind(block_id)
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query(&format!(
+                "{DESC_CTE} DELETE FROM attachments \
+                 WHERE block_id IN (SELECT id FROM descendants)",
+            ))
+            .bind(block_id)
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query(&format!(
+                "{DESC_CTE} DELETE FROM block_drafts \
+                 WHERE block_id IN (SELECT id FROM descendants)",
+            ))
+            .bind(block_id)
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query(&format!(
+                "{DESC_CTE} UPDATE blocks SET conflict_source = NULL \
+                 WHERE conflict_source IN (SELECT id FROM descendants)",
+            ))
+            .bind(block_id)
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query(&format!(
+                "{DESC_CTE} DELETE FROM fts_blocks \
+                 WHERE block_id IN (SELECT id FROM descendants)",
+            ))
+            .bind(block_id)
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query(&format!(
+                "{DESC_CTE} DELETE FROM page_aliases \
+                 WHERE page_id IN (SELECT id FROM descendants)",
+            ))
+            .bind(block_id)
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query(&format!(
+                "{DESC_CTE} DELETE FROM projected_agenda_cache \
+                 WHERE block_id IN (SELECT id FROM descendants)",
+            ))
+            .bind(block_id)
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query(&format!(
+                "{DESC_CTE} DELETE FROM blocks \
+                 WHERE id IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)
             .execute(&mut *conn)
@@ -228,8 +335,19 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
                     .execute(&mut *conn)
                     .await?;
             } else {
-                sqlx::query("INSERT OR REPLACE INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) VALUES (?, ?, ?, ?, ?, ?)")
-                    .bind(p.block_id.as_str()).bind(&p.key).bind(&p.value_text).bind(p.value_num).bind(&p.value_date).bind(&p.value_ref).execute(&mut *conn).await?;
+                sqlx::query(
+                    "INSERT OR REPLACE INTO block_properties \
+                         (block_id, key, value_text, value_num, value_date, value_ref) \
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                )
+                .bind(p.block_id.as_str())
+                .bind(&p.key)
+                .bind(&p.value_text)
+                .bind(p.value_num)
+                .bind(&p.value_date)
+                .bind(&p.value_ref)
+                .execute(&mut *conn)
+                .await?;
             }
         }
         OpType::DeleteProperty => {
@@ -256,8 +374,20 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
         }
         OpType::AddAttachment => {
             let p: AddAttachmentPayload = serde_json::from_str(&record.payload)?;
-            sqlx::query("INSERT OR IGNORE INTO attachments (id, block_id, filename, fs_path, mime_type, size_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-                .bind(&p.attachment_id).bind(p.block_id.as_str()).bind(&p.filename).bind(&p.fs_path).bind(&p.mime_type).bind(p.size_bytes).bind(&record.created_at).execute(&mut *conn).await?;
+            sqlx::query(
+                "INSERT OR IGNORE INTO attachments \
+                     (id, block_id, filename, fs_path, mime_type, size_bytes, created_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&p.attachment_id)
+            .bind(p.block_id.as_str())
+            .bind(&p.filename)
+            .bind(&p.fs_path)
+            .bind(&p.mime_type)
+            .bind(p.size_bytes)
+            .bind(&record.created_at)
+            .execute(&mut *conn)
+            .await?;
         }
         OpType::DeleteAttachment => {
             let p: DeleteAttachmentPayload = serde_json::from_str(&record.payload)?;

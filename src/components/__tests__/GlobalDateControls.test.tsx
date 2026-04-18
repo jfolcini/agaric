@@ -55,6 +55,11 @@ describe('GlobalDateControls', () => {
     expect(screen.getByRole('button', { name: /today/i })).toBeInTheDocument()
   })
 
+  it('renders Agenda button', () => {
+    render(<GlobalDateControls />)
+    expect(screen.getByRole('button', { name: /go to agenda/i })).toBeInTheDocument()
+  })
+
   it('renders calendar button', () => {
     render(<GlobalDateControls />)
     expect(screen.getByRole('button', { name: /calendar/i })).toBeInTheDocument()
@@ -68,6 +73,88 @@ describe('GlobalDateControls', () => {
 
     expect(useNavigationStore.getState().currentView).toBe('journal')
     expect(useJournalStore.getState().mode).toBe('daily')
+  })
+
+  it('clicking Agenda navigates to journal agenda view', async () => {
+    const user = userEvent.setup()
+    render(<GlobalDateControls />)
+
+    await user.click(screen.getByRole('button', { name: /go to agenda/i }))
+
+    expect(useNavigationStore.getState().currentView).toBe('journal')
+    expect(useJournalStore.getState().mode).toBe('agenda')
+  })
+
+  it('clicking Agenda sets currentDate to today', async () => {
+    const user = userEvent.setup()
+    render(<GlobalDateControls />)
+
+    const beforeClick = new Date()
+    await user.click(screen.getByRole('button', { name: /go to agenda/i }))
+
+    const currentDate = useJournalStore.getState().currentDate
+    const diff = Math.abs(currentDate.getTime() - beforeClick.getTime())
+    expect(diff).toBeLessThan(5000)
+  })
+
+  it('Agenda button has aria-current="page" when on agenda view', () => {
+    useNavigationStore.setState({
+      currentView: 'journal',
+      tabs: [{ id: '0', pageStack: [], label: '' }],
+      activeTabIndex: 0,
+      selectedBlockId: null,
+    })
+    useJournalStore.setState({
+      mode: 'agenda',
+      currentDate: new Date(2025, 5, 15),
+      scrollToDate: null,
+      scrollToPanel: null,
+    })
+
+    render(<GlobalDateControls />)
+
+    const agendaBtn = screen.getByRole('button', { name: /go to agenda/i })
+    expect(agendaBtn).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('Agenda button does NOT have aria-current when not on agenda view', () => {
+    useNavigationStore.setState({
+      currentView: 'journal',
+      tabs: [{ id: '0', pageStack: [], label: '' }],
+      activeTabIndex: 0,
+      selectedBlockId: null,
+    })
+    useJournalStore.setState({
+      mode: 'daily',
+      currentDate: new Date(2025, 5, 15),
+      scrollToDate: null,
+      scrollToPanel: null,
+    })
+
+    render(<GlobalDateControls />)
+
+    const agendaBtn = screen.getByRole('button', { name: /go to agenda/i })
+    expect(agendaBtn).not.toHaveAttribute('aria-current')
+  })
+
+  it('Agenda button does NOT have aria-current when on agenda mode but different view', () => {
+    useNavigationStore.setState({
+      currentView: 'pages',
+      tabs: [{ id: '0', pageStack: [], label: '' }],
+      activeTabIndex: 0,
+      selectedBlockId: null,
+    })
+    useJournalStore.setState({
+      mode: 'agenda',
+      currentDate: new Date(2025, 5, 15),
+      scrollToDate: null,
+      scrollToPanel: null,
+    })
+
+    render(<GlobalDateControls />)
+
+    const agendaBtn = screen.getByRole('button', { name: /go to agenda/i })
+    expect(agendaBtn).not.toHaveAttribute('aria-current')
   })
 
   it('clicking Today sets currentDate to today', async () => {

@@ -227,3 +227,16 @@ jobs:
         run: cargo tauri android build --target x86_64 --debug
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+
+      - name: Build Android APK (aarch64 release, unsigned)
+        run: cargo tauri android build --target aarch64
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+
+      - name: Upload Android release APK (aarch64, unsigned)
+        uses: actions/upload-artifact@v4
+        with:
+          name: agaric-android-aarch64-unsigned
+          path: src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
+          if-no-files-found: error
+          retention-days: 14

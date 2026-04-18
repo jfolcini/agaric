@@ -1,5 +1,85 @@
 # Session Log
 
+## Session 407 — Backend validation, sync daemon dormancy, keyboard rebinding, UX polish (2026-04-18)
+
+**13 items resolved (BUG-18, BUG-20, UX-200, UX-204, UX-206, UX-213, PERF-21, PERF-22, PERF-25, MAINT-17, MAINT-39, MAINT-40, MAINT-42). REVIEW-LATER 56→43.**
+
+### Resolved items
+
+**Rust backend (A) — materializer maintenance:**
+- **MAINT-39** — New `Materializer::enqueue_full_cache_rebuild()` helper + module-scope `FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 6]` constant in `materializer/dispatch.rs`. Replaces 3 identical 8-line blocks in the `delete_block` / `restore_block` / `purge_block` match arms with single calls. Adding a 7th cache task is now a one-line edit. 5 new unit tests (canonical-order assertion + 3 dispatch-observability tests).
+- **MAINT-40** — Reformatted 17 single-line SQL statements in `materializer/handlers.rs` (lines 92-163 area) to multi-line literals. The `DeleteBlock` / `RestoreBlock` / `PurgeBlock` recursive CTEs are now readable — the single-line format is what originally hid BUG-21/BUG-43. Purely whitespace changes. Existing tests pass unchanged.
+- **MAINT-42** — Extracted inline tests for `draft.rs` (786 → 162 LOC impl + 628-LOC `draft/tests.rs`, 28 tests) and `ulid.rs` (587 → 127 LOC impl + 469-LOC `ulid/tests.rs`, 38 tests). Follows the `dag.rs` + `dag/tests.rs` precedent. All 66 extracted tests pass.
+
+**Rust backend (B) — validation + daemon lifecycle:**
+- **BUG-20** — `set_property_in_tx()` now validates select-type property values against `property_definitions.options`. Query is compile-time-checked (`sqlx::query!`). JSON-decode failures produce `AppError::Validation("Property '{key}' has malformed options JSON: …")`. Permissive when `options IS NULL`. `set_todo_state_inner` gets a fallback to `["TODO","DOING","DONE"]` when the definition row is missing. `set_priority_inner` keeps its hardcoded `"1"|"2"|"3"` pre-check as defense-in-depth on top of the new option-based validation. 7 new unit tests + 5 existing integration tests updated to use valid enum values.
+- **PERF-25** — New `SyncDaemon::start_if_peers_exist()` replaces `start()` at boot in `lib.rs`. With ≥1 peer: delegates to `start()` (active). With 0 peers: spawns a lightweight `spawn_dormant_waiter` task that skips mDNS + TLS listener entirely. Waiter selects on 30s backstop poll + `scheduler.wait_for_debounced_change()` + `shutdown_notify`. `confirm_pairing_inner` now takes `&SyncScheduler` and calls `scheduler.notify_change()` after `upsert_peer_ref` — wakes the dormant waiter within milliseconds. Fail-open on DB error (transient SQLite hiccup → active mode). Graceful degradation: once active, daemon keeps running even after peer removal. 8 new tests + 6 integration-test call-site updates.
+
+**Frontend (C) — keyboard shortcuts + perf:**
+- **BUG-18** — App.tsx (`handleJournalNav`, `handleGlobalShortcuts`, `handleTabShortcuts`) + GraphView.tsx (`handleZoomKey`) now use `matchesShortcutBinding()`. User-configured bindings in Settings > Keyboard take effect for all 13 shortcuts. 3 new graph zoom entries (`graphZoomIn=+ / =`, `graphZoomOut=-`, `graphZoomReset=0`) added to `DEFAULT_SHORTCUTS`. `matchesShortcutBinding` enhancements: `.split(' + ')` (space-plus-space) to support bindings with `+` as the literal key, ` / ` alternative-key splitting, arrow-key normalization (`←`/`→`/`↑`/`↓` ↔ `ArrowLeft`/…), `normalizeKey()` for `Space` ↔ `' '`, narrow `isSymbolKey()` whitelist `/[+?@=]/` (post-review fix — was originally too broad). `previousTab` checked before `nextTab` since `Ctrl+Shift+Tab` specializes `Ctrl+Tab`. GraphView zoom handler guards against typing in input / contenteditable (post-review fix).
+- **PERF-21** — `usePollingQuery` short-circuits `load()` when `document.hidden === true`. New `visibilitychange` listener fires an immediate reload when the page becomes visible. 6 new tests. JSDoc on `refetch` documents the visibility-respecting behavior (post-review fix).
+- **PERF-22** — `BlockListRenderer` per-block aria-setsize/posinset/level computation migrated from O(N²) backward scan to O(N) single-pass via `lastAtDepth: Map<number, number>`. 5 new tests (pathological trees, 1000-block stress, orphan depth jump). All existing aria tests pass unchanged.
+
+**Frontend (D) — UX polish:**
+- **UX-200** — Agenda quick-link Button added next to Today in `GlobalDateControls`. New i18n key `journal.goToAgenda` for aria-label. Active state: `variant="secondary"` + `aria-current="page"` when `currentView === 'journal' && mode === 'agenda'`. 6 new tests.
+- **UX-204** — Template creation form added atop `TemplatesView` (always visible, same pattern as `PageBrowser`). `createBlock({ blockType: 'page', content: name })` → `setProperty({ key: 'template', valueText: 'true' })`. Optimistic prepend; toast.error + input-preserved on failure. 4 new i18n keys. 8 new tests.
+- **UX-213** — `BlockDatePicker` refactored from hand-rolled focus trap (`querySelectorAll` + manual Tab cycling + manual backdrop + manual Escape listener) to Radix `Dialog` + `DialogContent`. Props API unchanged — no caller updates. Sr-only `DialogTitle` + `DialogDescription` added for a11y. Handles focus trap, Escape-to-close, focus-restore-to-trigger, scroll-lock, outside-click. Tests updated to assert Radix behavior; hand-rolled internals tests removed. 9 tests.
+
+**Orchestrator trivial:**
+- **MAINT-17** — CI android-build job now runs both `cargo tauri android build --target x86_64 --debug` (existing emulator check) AND `--target aarch64` (release profile, ProGuard/R8 exercised). Uploads the unsigned aarch64 APK as an artifact (`agaric-android-aarch64-unsigned`, 14-day retention). Closes the gap where release minification rules would only be caught at release time.
+- **UX-206** — `GraphView` container class updated: `graph-view relative h-full w-full flex-1 min-h-0 overflow-hidden rounded-lg border border-border bg-background`. Removed `min-h-[400px]` from the SVG. Graph now has a visible border, proper fill-available-space behavior, and rounded corners consistent with the rest of the UI.
+
+### Post-review fixes applied by orchestrator
+
+- **C critical #1:** `isSymbolKey()` whitelist was too broad (`![a-z0-9]/i`). Narrowed to `/[+?@=]/` — only US-ANSI Shift-produced punctuation this app actually binds to. Added 4 new tests (`[`, `]` require strict shift; `@`, `?` relaxed).
+- **C critical #2 (skipped):** Reviewer suggested a migration to normalize old `"Ctrl+F"` → `"Ctrl + F"` format in localStorage. Grep confirmed all `DEFAULT_SHORTCUTS` use the spaced form and no historical bindings use the old form. Not a real issue.
+- **C important #4:** GraphView zoom handler now guards against input / contenteditable / textarea targets.
+- **C important #5:** `UsePollingQueryResult.refetch` JSDoc documents the `document.hidden` short-circuit.
+- **B:** No post-review fixes required — all concerns were "acceptable as-is" notes.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src-tauri/src/materializer/dispatch.rs` | MAINT-39: `FULL_CACHE_REBUILD_TASKS` + `enqueue_full_cache_rebuild()` |
+| `src-tauri/src/materializer/handlers.rs` | MAINT-40: 17 SQL sites reformatted |
+| `src-tauri/src/materializer/tests.rs` | MAINT-39: 5 new unit tests |
+| `src-tauri/src/draft.rs` + `src-tauri/src/draft/tests.rs` | MAINT-42: tests extracted |
+| `src-tauri/src/ulid.rs` + `src-tauri/src/ulid/tests.rs` | MAINT-42: tests extracted |
+| `src-tauri/src/commands/blocks/crud.rs` | BUG-20: options-membership validation |
+| `src-tauri/src/commands/properties.rs` | BUG-20: todo_state fallback |
+| `src-tauri/src/commands/tests/property_cmd_tests.rs` | BUG-20: 7 new tests |
+| `src-tauri/src/command_integration_tests/property_integration.rs` | BUG-20: import test value fixes |
+| `src-tauri/src/commands/tests/page_cmd_tests.rs` | BUG-20: import test value fixes |
+| `src-tauri/src/sync_daemon/mod.rs` | PERF-25: `start_if_peers_exist` + `spawn_dormant_waiter` |
+| `src-tauri/src/sync_daemon/tests.rs` | PERF-25: 8 new tests |
+| `src-tauri/src/lib.rs` | PERF-25: `start_if_peers_exist` at boot |
+| `src-tauri/src/commands/sync_cmds.rs` | PERF-25: `confirm_pairing` notifies scheduler |
+| `src-tauri/src/commands/tests/sync_cmd_tests.rs` + `command_integration_tests/sync_integration.rs` | PERF-25: call-site updates |
+| `src-tauri/.sqlx/` | 2 new compile-time query cache entries |
+| `src/App.tsx` + `__tests__/App.test.tsx` | BUG-18: 3 handlers migrated |
+| `src/components/GraphView.tsx` + `__tests__/GraphView.test.tsx` | BUG-18: zoom via `matchesShortcutBinding`; UX-206 container styles |
+| `src/lib/keyboard-config.ts` + `__tests__/keyboard-config.test.ts` | BUG-18: 3 zoom shortcut defaults + matcher enhancements + symbol whitelist |
+| `src/hooks/usePollingQuery.ts` + `__tests__/usePollingQuery.test.ts` | PERF-21 |
+| `src/components/BlockListRenderer.tsx` + `__tests__/BlockListRenderer.test.tsx` | PERF-22 |
+| `src/components/JournalPage.tsx` + `__tests__/GlobalDateControls.test.tsx` | UX-200 |
+| `src/components/TemplatesView.tsx` + `__tests__/TemplatesView.test.tsx` | UX-204 |
+| `src/components/block-tree/BlockDatePicker.tsx` + `__tests__/BlockDatePicker.test.tsx` | UX-213 |
+| `src/lib/i18n.ts` | +6 keys (journal.goToAgenda, templates.*, journal.datePickerLabel) |
+| `.github/workflows/ci.yml` | MAINT-17: aarch64 release APK step + artifact upload |
+| `REVIEW-LATER.md` | Removed 13 resolved items, count 56→43 |
+| `SESSION-LOG.md`, `FEATURE-MAP.md` | This session |
+
+### Stats
+
+- ~50 files changed
+- Backend: 2082 Rust tests pass (+20 new). 1 known flake (`adaptive_fts_threshold_large_corpus` at high nextest parallelism — pre-existing)
+- Frontend: 243 tests in the touched files pass (includes +34 new tests across batch5-c and batch5-d)
+- 4 parallel build subagents + 4 review subagents. A APPROVE, B APPROVE (minor notes only), C APPROVE_WITH_FIXES (4 post-review fixes applied), D APPROVE
+- 3 worktrees used (a-mat, b-sync, d-ux5) + C in main tree. C's `GraphView.tsx` required orchestrator to land UX-206 after C merge since both touched the same file.
+- Known pre-existing: npm audit (dompurify CVE baseline), cargo deny (CA-cert sandbox permissions)
+
+
 ## Session 406 — Log dir/path safety, cache coordination, agenda polish, shortcut/gesture UX (2026-04-18)
 
 **13 items resolved (BUG-23, BUG-31, BUG-34, BUG-35, BUG-37, BUG-38, BUG-42, UX-195, UX-196, UX-197, UX-199, UX-219, UX-221, UX-223, UX-225, TEST-38, MAINT-20, MAINT-38). REVIEW-LATER 72→56.** (18 unique IDs resolved; some share a single fix — UX-223 + BUG-31 bundled in platform.ts; BUG-35 + TEST-38 bundled in sync_files validator.)

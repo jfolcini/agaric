@@ -953,6 +953,17 @@ async fn set_todo_state_accepts_custom_keyword_cancelled() {
 
     mat.flush_background().await.unwrap();
 
+    // BUG-20: Backend validates todo_state against the property_definitions
+    // options. To accept a custom keyword like CANCELLED, the user must
+    // first extend the options list for the todo_state definition.
+    update_property_def_options_inner(
+        &pool,
+        "todo_state".into(),
+        r#"["TODO","DOING","DONE","CANCELLED"]"#.into(),
+    )
+    .await
+    .unwrap();
+
     let result = set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("CANCELLED".into()))
         .await
         .unwrap();
@@ -960,7 +971,7 @@ async fn set_todo_state_accepts_custom_keyword_cancelled() {
     assert_eq!(
         result.todo_state.as_deref(),
         Some("CANCELLED"),
-        "todo_state should be CANCELLED"
+        "todo_state should be CANCELLED after options update"
     );
 
     mat.shutdown();
@@ -3542,4 +3553,331 @@ async fn delete_property_def_preserves_user_facing_errors_through_sanitize() {
         matches!(sanitized, Err(AppError::Validation(_))),
         "Validation must pass through sanitization unchanged, got: {sanitized:?}"
     );
+}
+
+// ─── BUG-20: Select/enum property value validation against options ───
+//
+// Previously the backend only validated property *types*, not whether
+// the supplied value was one of the allowed options for select-type
+// definitions. These tests exercise the option-membership check added
+// to `set_property_in_tx` and the fallback in `set_todo_state_inner`.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bug20_set_todo_state_accepts_seeded_option() {
+    // Happy path: TODO is in the seeded options list for the todo_state
+    // property definition (migration 0014).
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "bug20 happy".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let result = set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        result.todo_state.as_deref(),
+        Some("TODO"),
+        "TODO is in seeded options and must be accepted"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bug20_set_todo_state_rejects_value_not_in_options() {
+    // Error path: FROB is NOT in the seeded options list and must be
+    // rejected with AppError::Validation.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "bug20 reject".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let result =
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("FROB".into())).await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("FROB") && msg.contains("allowed options")),
+        "setting todo_state to FROB must return Validation with options message, got: {result:?}"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bug20_set_property_rejects_select_value_not_in_custom_options() {
+    // Error path: a user-defined select property with custom options
+    // must reject values outside the list.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    create_property_def_inner(
+        &pool,
+        "mood".into(),
+        "select".into(),
+        Some(r#"["happy","sad","meh"]"#.into()),
+    )
+    .await
+    .unwrap();
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "bug20 custom select".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Happy: "happy" is in options
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "mood".into(),
+        Some("happy".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Error: "angry" is not in options
+    let result = set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "mood".into(),
+        Some("angry".into()),
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("angry") && msg.contains("allowed options")),
+        "setting mood to 'angry' must return Validation error referencing allowed options, got: {result:?}"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bug20_set_property_text_type_has_no_options_restriction() {
+    // Happy path: text-type properties do not enforce any options check.
+    // `assignee` is seeded as text-type (migration 0014) with NULL options.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "bug20 text".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "assignee".into(),
+        Some("anyone-whatsoever".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    assert_eq!(props.len(), 1, "text property should be saved");
+    assert_eq!(
+        props[0].value_text.as_deref(),
+        Some("anyone-whatsoever"),
+        "arbitrary text value must be accepted for text-type property"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bug20_select_property_with_null_options_is_permissive() {
+    // Edge: a select-type property definition with NULL options (no
+    // restriction) must accept any value_text.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Create a select-type definition. `create_property_def_inner` requires
+    // non-empty options for select, so we bypass it and insert directly
+    // with NULL options — exercising the defensive permissive branch in
+    // the validation logic.
+    sqlx::query(
+        "INSERT INTO property_definitions (key, value_type, options, created_at) \
+         VALUES ('freeform_select', 'select', NULL, '2025-01-01T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "bug20 null opts".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "freeform_select".into(),
+        Some("any-value".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    assert_eq!(
+        props.len(),
+        1,
+        "select-type with NULL options must not enforce options check"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bug20_set_priority_rejects_value_not_in_seeded_options() {
+    // Priority definition is seeded with options ["1","2","3"] at migration
+    // 0014. Calling set_property_inner directly for "priority" with a value
+    // outside the list must be rejected by the in_tx options check.
+    //
+    // This exercises the reserved-key branch where the existing hardcoded
+    // validation in `set_priority_inner` is bypassed.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "bug20 priority".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let result = set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "priority".into(),
+        Some("99".into()),
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("99") && msg.contains("allowed options")),
+        "setting priority to 99 via set_property must return Validation with options message, got: {result:?}"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bug20_todo_state_fallback_when_definition_deleted() {
+    // Fallback path: if the todo_state property_definition row is deleted,
+    // set_todo_state_inner must still enforce the built-in defaults
+    // ["TODO","DOING","DONE"].
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Directly remove the row; bypass delete_property_def_inner which
+    // refuses to delete built-in keys.
+    sqlx::query("DELETE FROM property_definitions WHERE key = 'todo_state'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "bug20 fallback".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Happy path: TODO is in built-in fallback
+    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+        .await
+        .unwrap();
+
+    // Error path: NONSENSE is rejected via fallback defaults
+    let result =
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("NONSENSE".into())).await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("NONSENSE") && msg.contains("TODO")),
+        "without definition row, todo_state must fall back to built-in defaults and reject unknown values, got: {result:?}"
+    );
+
+    mat.shutdown();
 }

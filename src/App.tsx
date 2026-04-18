@@ -237,69 +237,77 @@ function App() {
   useSyncEvents()
 
   // ── Journal navigation shortcuts (Alt+Arrow, Alt+T) ────────────────
+  // Uses keyboard-config matchers so users can rebind these (BUG-18).
   useEffect(() => {
     function handleJournalNav(e: KeyboardEvent) {
-      if (!e.altKey) return
       const { currentView } = useNavigationStore.getState()
       if (currentView !== 'journal') return
 
-      const target = e.target as HTMLElement
-      if (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')
+      const target = e.target as HTMLElement | null
+      if (
+        target?.isContentEditable ||
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA'
+      )
         return
+
+      const isPrev = matchesShortcutBinding(e, 'prevDayWeekMonth')
+      const isNext = !isPrev && matchesShortcutBinding(e, 'nextDayWeekMonth')
+      const isToday = !isPrev && !isNext && matchesShortcutBinding(e, 'goToToday')
+      if (!isPrev && !isNext && !isToday) return
 
       const { mode, currentDate, setCurrentDate } = useJournalStore.getState()
 
-      if (e.key === 'ArrowLeft') {
+      if (isPrev) {
         e.preventDefault()
         if (mode === 'daily') setCurrentDate(subDays(currentDate, 1))
         else if (mode === 'weekly') setCurrentDate(subWeeks(currentDate, 1))
         else setCurrentDate(subMonths(currentDate, 1))
         announce(t('announce.navigatedToPrevious'))
+        return
       }
-      if (e.key === 'ArrowRight') {
+      if (isNext) {
         e.preventDefault()
         if (mode === 'daily') setCurrentDate(addDays(currentDate, 1))
         else if (mode === 'weekly') setCurrentDate(addWeeks(currentDate, 1))
         else setCurrentDate(addMonths(currentDate, 1))
         announce(t('announce.navigatedToNext'))
+        return
       }
-      if (e.key === 't' || e.key === 'T') {
-        e.preventDefault()
-        setCurrentDate(new Date())
-        announce(t('announce.jumpedToToday'))
-      }
+      // isToday
+      e.preventDefault()
+      setCurrentDate(new Date())
+      announce(t('announce.jumpedToToday'))
     }
     document.addEventListener('keydown', handleJournalNav)
     return () => document.removeEventListener('keydown', handleJournalNav)
   }, [t])
 
-  // ── Global shortcuts (Ctrl+F → search, Ctrl+N → new page) ──────────
+  // ── Global shortcuts (focusSearch, createNewPage, gotoConflicts) ──
+  // All go through matchesShortcutBinding so rebinding in Settings takes
+  // effect (BUG-18).
   useEffect(() => {
     function handleGlobalShortcuts(e: KeyboardEvent) {
-      // Alt+C → jump to Conflicts view (UX-216)
+      const target = e.target as HTMLElement | null
+      const typingInField =
+        target?.isContentEditable || target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA'
+
+      // Alt+C → jump to Conflicts view (UX-216). Only fire when not typing.
       if (matchesShortcutBinding(e, 'gotoConflicts')) {
-        const target = e.target as HTMLElement | null
-        if (
-          target?.isContentEditable ||
-          target?.tagName === 'INPUT' ||
-          target?.tagName === 'TEXTAREA'
-        ) {
-          return
-        }
+        if (typingInField) return
         e.preventDefault()
         useNavigationStore.getState().setView('conflicts')
         announce(t('announce.conflictsOpened'))
         return
       }
 
-      const mod = e.ctrlKey || e.metaKey
-      if (!mod) return
-      if (e.key === 'f') {
+      if (matchesShortcutBinding(e, 'focusSearch')) {
         e.preventDefault()
         useNavigationStore.getState().setView('search')
         announce(t('announce.searchOpened'))
+        return
       }
-      if (e.key === 'n') {
+      if (matchesShortcutBinding(e, 'createNewPage')) {
         e.preventDefault()
         createBlock({ blockType: 'page', content: 'Untitled' })
           .then((resp) => {
@@ -317,37 +325,43 @@ function App() {
     return () => window.removeEventListener('keydown', handleGlobalShortcuts)
   }, [t])
 
-  // ── Tab shortcuts (Ctrl+T, Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab) ──────
+  // ── Tab shortcuts (openInNewTab, closeActiveTab, nextTab, previousTab) ──
+  // Routed through matchesShortcutBinding so users can rebind (BUG-18).
   useEffect(() => {
     function handleTabShortcuts(e: KeyboardEvent) {
-      const mod = e.ctrlKey || e.metaKey
-      if (!mod) return
-
       const state = useNavigationStore.getState()
       if (state.currentView !== 'page-editor') return
 
-      if (e.key === 't') {
+      if (matchesShortcutBinding(e, 'openInNewTab')) {
         e.preventDefault()
         const activeTab = state.tabs[state.activeTabIndex]
         const top = activeTab?.pageStack[activeTab.pageStack.length - 1]
         if (top) {
           state.openInNewTab(top.pageId, top.title)
         }
+        return
       }
-      if (e.key === 'w') {
+      if (matchesShortcutBinding(e, 'closeActiveTab')) {
         e.preventDefault()
         state.closeTab(state.activeTabIndex)
+        return
       }
-      if (e.key === 'Tab') {
+      // previousTab (Ctrl+Shift+Tab) must be checked BEFORE nextTab
+      // (Ctrl+Tab) because the Shift+Tab binding is strictly more specific —
+      // without the ordering the nextTab matcher would fire first and
+      // Shift+Tab would be misrouted once the user rebound one of them.
+      if (matchesShortcutBinding(e, 'previousTab')) {
         e.preventDefault()
         if (state.tabs.length <= 1) return
-        if (e.shiftKey) {
-          const prev = state.activeTabIndex === 0 ? state.tabs.length - 1 : state.activeTabIndex - 1
-          state.switchTab(prev)
-        } else {
-          const next = (state.activeTabIndex + 1) % state.tabs.length
-          state.switchTab(next)
-        }
+        const prev = state.activeTabIndex === 0 ? state.tabs.length - 1 : state.activeTabIndex - 1
+        state.switchTab(prev)
+        return
+      }
+      if (matchesShortcutBinding(e, 'nextTab')) {
+        e.preventDefault()
+        if (state.tabs.length <= 1) return
+        const next = (state.activeTabIndex + 1) % state.tabs.length
+        state.switchTab(next)
       }
     }
     window.addEventListener('keydown', handleTabShortcuts)

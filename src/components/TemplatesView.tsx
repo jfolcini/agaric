@@ -5,7 +5,7 @@
  * first child block, and allows navigating to or removing template status.
  */
 
-import { LayoutTemplate, Search, X } from 'lucide-react'
+import { LayoutTemplate, Plus, Search, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -15,8 +15,10 @@ import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { deleteProperty, queryByProperty } from '../lib/tauri'
+import { createBlock, deleteProperty, queryByProperty, setProperty } from '../lib/tauri'
 import { loadTemplatePagesWithPreview } from '../lib/template-utils'
 import { useNavigationStore } from '../stores/navigation'
 import { EmptyState } from './EmptyState'
@@ -35,6 +37,8 @@ export function TemplatesView(): React.ReactElement {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [pendingRemoval, setPendingRemoval] = useState<{ id: string; name: string } | null>(null)
+  const [newTemplateName, setNewTemplateName] = useState('')
+  const [isCreating, setIsCreating] = useState(false)
 
   const loadTemplates = useCallback(async () => {
     setLoading(true)
@@ -64,6 +68,24 @@ export function TemplatesView(): React.ReactElement {
     loadTemplates()
   }, [loadTemplates])
 
+  const handleCreateTemplate = useCallback(async () => {
+    const name = newTemplateName.trim()
+    if (!name) return
+    setIsCreating(true)
+    try {
+      const page = await createBlock({ blockType: 'page', content: name })
+      await setProperty({ blockId: page.id, key: 'template', valueText: 'true' })
+      setTemplates((prev) => [
+        { id: page.id, content: name, preview: null, isJournalTemplate: false },
+        ...prev,
+      ])
+      setNewTemplateName('')
+    } catch {
+      toast.error(t('templates.createFailed'))
+    }
+    setIsCreating(false)
+  }, [newTemplateName, t])
+
   const handleRemoveTemplate = useCallback(
     async (id: string, name: string) => {
       try {
@@ -87,6 +109,35 @@ export function TemplatesView(): React.ReactElement {
 
   return (
     <section className="space-y-4" aria-label={t('sidebar.templates')}>
+      {/* Create template form — always visible, including empty state */}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          handleCreateTemplate()
+        }}
+        className="flex flex-col sm:flex-row sm:items-center gap-2"
+      >
+        <Label htmlFor="new-template-name" className="sr-only">
+          {t('templates.newTemplateInputLabel')}
+        </Label>
+        <Input
+          id="new-template-name"
+          value={newTemplateName}
+          onChange={(e) => setNewTemplateName(e.target.value)}
+          placeholder={t('templates.newTemplatePlaceholder')}
+          className="flex-1"
+        />
+        <Button
+          type="submit"
+          variant="outline"
+          disabled={isCreating || !newTemplateName.trim()}
+          aria-label={t('templates.create')}
+        >
+          {isCreating ? <Spinner /> : <Plus className="h-4 w-4" />}
+          {t('templates.create')}
+        </Button>
+      </form>
+
       <ListViewState
         loading={loading}
         items={templates}

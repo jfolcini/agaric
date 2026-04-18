@@ -554,4 +554,238 @@ describe('TemplatesView', () => {
       expect(mockedToastError).toHaveBeenCalledWith('Failed to remove template status')
     })
   })
+
+  // ── UX-204: create template form ───────────────────────────────────
+
+  describe('create template form', () => {
+    it('renders input and Create button', async () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+      render(<TemplatesView />)
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('New template name...')).toBeInTheDocument()
+      })
+      expect(screen.getByRole('button', { name: /create template/i })).toBeInTheDocument()
+    })
+
+    it('disables Create button when input is empty', async () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+      render(<TemplatesView />)
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('New template name...')).toBeInTheDocument()
+      })
+      const createBtn = screen.getByRole('button', { name: /create template/i })
+      expect(createBtn).toBeDisabled()
+    })
+
+    it('disables Create button when input is whitespace only', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(emptyPage)
+      render(<TemplatesView />)
+
+      const input = await screen.findByPlaceholderText('New template name...')
+      await user.type(input, '   ')
+
+      const createBtn = screen.getByRole('button', { name: /create template/i })
+      expect(createBtn).toBeDisabled()
+    })
+
+    it('valid submit calls createBlock then setProperty with template=true', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'query_by_property') return emptyPage
+        if (cmd === 'list_blocks') return emptyPage
+        if (cmd === 'create_block') {
+          return {
+            id: 'T_NEW',
+            block_type: 'page',
+            content: (args as { content: string }).content,
+            parent_id: null,
+            position: null,
+            deleted_at: null,
+            is_conflict: false,
+          }
+        }
+        if (cmd === 'set_property') {
+          return {
+            id: 'T_NEW',
+            block_type: 'page',
+            content: 'My Template',
+            parent_id: null,
+            position: null,
+            deleted_at: null,
+            is_conflict: false,
+          }
+        }
+        return emptyPage
+      })
+
+      render(<TemplatesView />)
+
+      const input = await screen.findByPlaceholderText('New template name...')
+      await user.type(input, 'My Template')
+
+      const createBtn = screen.getByRole('button', { name: /create template/i })
+      await user.click(createBtn)
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+          blockType: 'page',
+          content: 'My Template',
+          parentId: null,
+          position: null,
+        })
+      })
+
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'T_NEW',
+        key: 'template',
+        valueText: 'true',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+
+    it('resets input after successful creation', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'query_by_property') return emptyPage
+        if (cmd === 'list_blocks') return emptyPage
+        if (cmd === 'create_block') {
+          return {
+            id: 'T_NEW',
+            block_type: 'page',
+            content: 'My Template',
+            parent_id: null,
+            position: null,
+            deleted_at: null,
+            is_conflict: false,
+          }
+        }
+        if (cmd === 'set_property') {
+          return {
+            id: 'T_NEW',
+            block_type: 'page',
+            content: 'My Template',
+            parent_id: null,
+            position: null,
+            deleted_at: null,
+            is_conflict: false,
+          }
+        }
+        return emptyPage
+      })
+
+      render(<TemplatesView />)
+
+      const input = (await screen.findByPlaceholderText('New template name...')) as HTMLInputElement
+      await user.type(input, 'My Template')
+      expect(input.value).toBe('My Template')
+
+      const createBtn = screen.getByRole('button', { name: /create template/i })
+      await user.click(createBtn)
+
+      await waitFor(() => {
+        expect(input.value).toBe('')
+      })
+    })
+
+    it('adds newly-created template to the list optimistically', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'query_by_property') return emptyPage
+        if (cmd === 'list_blocks') return emptyPage
+        if (cmd === 'create_block') {
+          return {
+            id: 'T_NEW',
+            block_type: 'page',
+            content: 'My Template',
+            parent_id: null,
+            position: null,
+            deleted_at: null,
+            is_conflict: false,
+          }
+        }
+        if (cmd === 'set_property') {
+          return {
+            id: 'T_NEW',
+            block_type: 'page',
+            content: 'My Template',
+            parent_id: null,
+            position: null,
+            deleted_at: null,
+            is_conflict: false,
+          }
+        }
+        return emptyPage
+      })
+
+      render(<TemplatesView />)
+
+      const input = await screen.findByPlaceholderText('New template name...')
+      await user.type(input, 'My Template')
+      await user.click(screen.getByRole('button', { name: /create template/i }))
+
+      expect(await screen.findByText('My Template')).toBeInTheDocument()
+    })
+
+    it('shows error toast and preserves input when createBlock fails', async () => {
+      const user = userEvent.setup()
+      const mockedToastError = vi.mocked(toast.error)
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'query_by_property') return emptyPage
+        if (cmd === 'list_blocks') return emptyPage
+        if (cmd === 'create_block') throw new Error('backend fail')
+        return emptyPage
+      })
+
+      render(<TemplatesView />)
+
+      const input = (await screen.findByPlaceholderText('New template name...')) as HTMLInputElement
+      await user.type(input, 'My Template')
+      await user.click(screen.getByRole('button', { name: /create template/i }))
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith('Failed to create template')
+      })
+      // Input preserved on error
+      expect(input.value).toBe('My Template')
+    })
+
+    it('shows error toast and preserves input when setProperty fails', async () => {
+      const user = userEvent.setup()
+      const mockedToastError = vi.mocked(toast.error)
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'query_by_property') return emptyPage
+        if (cmd === 'list_blocks') return emptyPage
+        if (cmd === 'create_block') {
+          return {
+            id: 'T_NEW',
+            block_type: 'page',
+            content: 'My Template',
+            parent_id: null,
+            position: null,
+            deleted_at: null,
+            is_conflict: false,
+          }
+        }
+        if (cmd === 'set_property') throw new Error('property fail')
+        return emptyPage
+      })
+
+      render(<TemplatesView />)
+
+      const input = (await screen.findByPlaceholderText('New template name...')) as HTMLInputElement
+      await user.type(input, 'My Template')
+      await user.click(screen.getByRole('button', { name: /create template/i }))
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith('Failed to create template')
+      })
+      // Input preserved on error (setProperty failure)
+      expect(input.value).toBe('My Template')
+    })
+  })
 })

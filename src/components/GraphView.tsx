@@ -26,6 +26,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { listBlocks, listPageLinks, listTagsByPrefix } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
+import { matchesShortcutBinding } from '../lib/keyboard-config'
 import { logger } from '../lib/logger'
 import type { WorkerOutboundMessage } from '../workers/graph-worker-types'
 import { EmptyState } from './EmptyState'
@@ -359,17 +360,28 @@ export function GraphView(): React.ReactElement {
     svgSel.call(zoomBehavior)
     zoomBehaviorRef.current = zoomBehavior
 
-    // Keyboard zoom handler (UX-146)
+    // Keyboard zoom handler (UX-146, rebindable via BUG-18)
     svg.setAttribute('tabindex', '0')
     function handleZoomKey(e: KeyboardEvent) {
+      // Guard: don't intercept +/- when the user is typing in any input
+      // field (e.g. if a foreignObject ever hosts one, or events bubble from
+      // an overlay). Consistent with App.tsx handlers.
+      const target = e.target as HTMLElement | null
+      if (
+        target?.isContentEditable ||
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA'
+      ) {
+        return
+      }
       const svgSelection = select(svg)
-      if (e.key === '+' || e.key === '=') {
+      if (matchesShortcutBinding(e, 'graphZoomIn')) {
         e.preventDefault()
         zoomBehavior.scaleBy(svgSelection.transition().duration(200), 1.3)
-      } else if (e.key === '-') {
+      } else if (matchesShortcutBinding(e, 'graphZoomOut')) {
         e.preventDefault()
         zoomBehavior.scaleBy(svgSelection.transition().duration(200), 1 / 1.3)
-      } else if (e.key === '0') {
+      } else if (matchesShortcutBinding(e, 'graphZoomReset')) {
         e.preventDefault()
         zoomBehavior.transform(svgSelection.transition().duration(300), zoomIdentity)
       }
@@ -550,7 +562,10 @@ export function GraphView(): React.ReactElement {
   if (nodes.length === 0) return <EmptyState icon={Network} message={t('graph.noPages')} />
 
   return (
-    <div className="graph-view relative h-full w-full" data-testid="graph-view">
+    <div
+      className="graph-view relative h-full w-full flex-1 min-h-0 overflow-hidden rounded-lg border border-border bg-background"
+      data-testid="graph-view"
+    >
       {/* Tag filter dropdown */}
       <div className="absolute top-2 left-2 z-10" data-testid="graph-tag-filter">
         <Select
@@ -584,12 +599,7 @@ export function GraphView(): React.ReactElement {
             : t('graph.truncatedFilterHint', { count: nodes.length })}
         </Badge>
       )}
-      <svg
-        ref={svgRef}
-        className="w-full h-full min-h-[400px]"
-        role="img"
-        aria-label={t('graph.title')}
-      />
+      <svg ref={svgRef} className="w-full h-full" role="img" aria-label={t('graph.title')} />
       <div className="absolute bottom-3 right-3 flex flex-col gap-1">
         <Button variant="outline" size="icon" onClick={handleZoomIn} aria-label={t('graph.zoomIn')}>
           <Plus className="h-4 w-4" />

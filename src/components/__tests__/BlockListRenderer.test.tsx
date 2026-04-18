@@ -482,4 +482,153 @@ describe('BlockListRenderer', () => {
     const dropIndicator = sentinelLi?.querySelector('.drop-indicator')
     expect(dropIndicator).toBeInTheDocument()
   })
+
+  // ── PERF-22: O(N) sibling aria walk regression tests ──────────────
+
+  describe('sibling aria walk — pathological structures (PERF-22)', () => {
+    it('resets sibling groups when tree returns to a previously-seen depth', () => {
+      // ROOT1
+      //   CHILD_A (d=1 under ROOT1)
+      //     GRAND (d=2 under CHILD_A)
+      // ROOT2        ← back to depth 0
+      //   CHILD_B  ← depth 1, must group with ROOT2 (not CHILD_A)
+      //   CHILD_C  ← also under ROOT2
+      const blocks = [
+        makeBlock({ id: 'ROOT1', content: 'r1', depth: 0 }),
+        makeBlock({ id: 'CHILD_A', content: 'ca', depth: 1 }),
+        makeBlock({ id: 'GRAND', content: 'gc', depth: 2 }),
+        makeBlock({ id: 'ROOT2', content: 'r2', depth: 0 }),
+        makeBlock({ id: 'CHILD_B', content: 'cb', depth: 1 }),
+        makeBlock({ id: 'CHILD_C', content: 'cc', depth: 1 }),
+      ]
+      const { container } = render(
+        <BlockListRenderer {...makeProps({ visibleItems: blocks, blocks })} />,
+      )
+
+      const items = container.querySelectorAll('li[data-block-id]')
+      // ROOT1 + ROOT2 are the two roots — setsize=2
+      expect(items[0]).toHaveAttribute('aria-setsize', '2')
+      expect(items[0]).toHaveAttribute('aria-posinset', '1')
+      expect(items[3]).toHaveAttribute('aria-setsize', '2')
+      expect(items[3]).toHaveAttribute('aria-posinset', '2')
+
+      // CHILD_A is ROOT1's only child — setsize=1
+      expect(items[1]).toHaveAttribute('aria-setsize', '1')
+      expect(items[1]).toHaveAttribute('aria-posinset', '1')
+
+      // GRAND is CHILD_A's only child — setsize=1
+      expect(items[2]).toHaveAttribute('aria-setsize', '1')
+      expect(items[2]).toHaveAttribute('aria-posinset', '1')
+
+      // CHILD_B + CHILD_C are ROOT2's children — setsize=2, NOT grouped with CHILD_A
+      expect(items[4]).toHaveAttribute('aria-setsize', '2')
+      expect(items[4]).toHaveAttribute('aria-posinset', '1')
+      expect(items[5]).toHaveAttribute('aria-setsize', '2')
+      expect(items[5]).toHaveAttribute('aria-posinset', '2')
+    })
+
+    it('handles a deeply nested single chain correctly', () => {
+      // A 15-level single-child chain — every block has setsize=1, posinset=1
+      const blocks = Array.from({ length: 15 }, (_, i) =>
+        makeBlock({ id: `LVL${i}`, content: `level ${i}`, depth: i }),
+      )
+      const { container } = render(
+        <BlockListRenderer {...makeProps({ visibleItems: blocks, blocks })} />,
+      )
+
+      const items = container.querySelectorAll('li[data-block-id]')
+      expect(items).toHaveLength(15)
+      for (let i = 0; i < items.length; i++) {
+        expect(items[i]).toHaveAttribute('aria-level', String(i + 1))
+        expect(items[i]).toHaveAttribute('aria-setsize', '1')
+        expect(items[i]).toHaveAttribute('aria-posinset', '1')
+      }
+    })
+
+    it('handles wide sibling groups (20 root blocks) in a single pass', () => {
+      const blocks = Array.from({ length: 20 }, (_, i) =>
+        makeBlock({ id: `ROOT_${i}`, content: `r${i}`, depth: 0 }),
+      )
+      const { container } = render(
+        <BlockListRenderer {...makeProps({ visibleItems: blocks, blocks })} />,
+      )
+
+      const items = container.querySelectorAll('li[data-block-id]')
+      expect(items).toHaveLength(20)
+      for (let i = 0; i < 20; i++) {
+        expect(items[i]).toHaveAttribute('aria-setsize', '20')
+        expect(items[i]).toHaveAttribute('aria-posinset', String(i + 1))
+      }
+    })
+
+    it('performance smoke: 1000 blocks with varied depth produces correct aria', () => {
+      // Alternating depth pattern: 0, 1, 2, 1, 0, 1, 2, 1, ... (repeating chunks of 4)
+      // This is a stress test for the O(N) algorithm — it must never crash
+      // or produce stale-parent links.
+      const blocks: ReturnType<typeof makeBlock>[] = []
+      const depths = [0, 1, 2, 1]
+      for (let i = 0; i < 1000; i++) {
+        const d = depths[i % 4]
+        if (d == null) continue
+        blocks.push(makeBlock({ id: `BLK_${i}`, content: `b${i}`, depth: d }))
+      }
+
+      const { container } = render(
+        <BlockListRenderer {...makeProps({ visibleItems: blocks, blocks })} />,
+      )
+
+      const items = container.querySelectorAll('li[data-block-id]')
+      expect(items).toHaveLength(1000)
+
+      // Every item must have numeric aria-posinset and aria-setsize ≥ 1.
+      for (const el of items) {
+        const setsize = Number(el.getAttribute('aria-setsize'))
+        const posinset = Number(el.getAttribute('aria-posinset'))
+        expect(setsize).toBeGreaterThanOrEqual(1)
+        expect(posinset).toBeGreaterThanOrEqual(1)
+        expect(posinset).toBeLessThanOrEqual(setsize)
+      }
+
+      // Roots (depth 0) all share the same sibling group. With 250 chunks
+      // of 4, there are 250 roots — every root's setsize must equal 250.
+      const roots = Array.from(items).filter((el) => el.getAttribute('aria-level') === '1')
+      expect(roots).toHaveLength(250)
+      for (const root of roots) {
+        expect(root.getAttribute('aria-setsize')).toBe('250')
+      }
+    })
+
+    it('matches the documented semantics: nearest preceding block at parent depth', () => {
+      // Corner case: orphan depth jump (d=2 with no immediate d=1 parent
+      // in the same subtree). The algorithm uses the most recent block at
+      // depth-1 seen globally — matching the previous backward-scan.
+      //
+      //   ROOT      d=0
+      //     CHILD   d=1
+      //       GC    d=2
+      //   R2        d=0
+      //     O_GC    d=2  ← orphan; parent resolves to CHILD (stale)
+      const blocks = [
+        makeBlock({ id: 'ROOT', content: 'r', depth: 0 }),
+        makeBlock({ id: 'CHILD', content: 'c', depth: 1 }),
+        makeBlock({ id: 'GC', content: 'g', depth: 2 }),
+        makeBlock({ id: 'R2', content: 'r2', depth: 0 }),
+        makeBlock({ id: 'O_GC', content: 'og', depth: 2 }),
+      ]
+      const { container } = render(
+        <BlockListRenderer {...makeProps({ visibleItems: blocks, blocks })} />,
+      )
+
+      const items = container.querySelectorAll('li[data-block-id]')
+      // Two roots (ROOT + R2)
+      expect(items[0]).toHaveAttribute('aria-setsize', '2')
+      expect(items[3]).toHaveAttribute('aria-setsize', '2')
+      // GC and O_GC are both grouped under CHILD (last-seen d=1) — this
+      // mirrors the backward-scan oracle and is documented in the code
+      // comment; orphan depth jumps in real data never occur, but the
+      // algorithm must be deterministic.
+      expect(items[2]).toHaveAttribute('aria-setsize', '2')
+      expect(items[4]).toHaveAttribute('aria-setsize', '2')
+    })
+  })
 })

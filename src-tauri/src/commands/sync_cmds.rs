@@ -112,10 +112,15 @@ pub fn start_pairing_inner(
 ///
 /// Validates the passphrase against the current session, stores the peer
 /// reference in the database, and clears the pairing session.
-#[instrument(skip(pool, pairing_state), err)]
+///
+/// PERF-25: After persisting the peer, signals the scheduler so the
+/// dormant sync daemon (if any) transitions to active mode without
+/// waiting for the next poll interval.
+#[instrument(skip(pool, pairing_state, scheduler), err)]
 pub async fn confirm_pairing_inner(
     pool: &SqlitePool,
     pairing_state: &Mutex<Option<PairingSession>>,
+    scheduler: &SyncScheduler,
     device_id: &str,
     passphrase: String,
     remote_device_id: String,
@@ -132,6 +137,11 @@ pub async fn confirm_pairing_inner(
     *pairing_state
         .lock()
         .map_err(|_| AppError::InvalidOperation("pairing state lock poisoned".into()))? = None;
+
+    // PERF-25: Wake a dormant daemon (if any). Harmless if the daemon is
+    // already active — `notify_change` is debounced by
+    // `wait_for_debounced_change`.
+    scheduler.notify_change();
 
     Ok(())
 }
@@ -286,10 +296,12 @@ pub async fn confirm_pairing(
     pool: State<'_, WritePool>,
     pairing_state: State<'_, PairingState>,
     device_id: State<'_, DeviceId>,
+    scheduler: State<'_, Arc<SyncScheduler>>,
 ) -> Result<(), AppError> {
     confirm_pairing_inner(
         &pool.0,
         &pairing_state.0,
+        &scheduler,
         device_id.as_str(),
         passphrase,
         remote_device_id,

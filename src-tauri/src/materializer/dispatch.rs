@@ -7,6 +7,22 @@ use crate::op_log::OpRecord;
 use std::sync::atomic::Ordering;
 use tokio::sync::mpsc;
 
+/// Fixed set of rebuild tasks enqueued after any `delete_block` /
+/// `restore_block` / `purge_block` op, in their canonical order.
+///
+/// Exposed at module scope so tests can assert the exact sequence and so
+/// `enqueue_full_cache_rebuild` has a single source of truth to iterate.
+/// Adding a new block-referencing cache should only require appending to
+/// this array — the three dispatch arms pick up the change automatically.
+pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 6] = [
+    MaterializeTask::RebuildTagsCache,
+    MaterializeTask::RebuildPagesCache,
+    MaterializeTask::RebuildAgendaCache,
+    MaterializeTask::RebuildProjectedAgendaCache,
+    MaterializeTask::RebuildTagInheritanceCache,
+    MaterializeTask::RebuildPageIds,
+];
+
 impl Materializer {
     pub(super) fn fg_sender(&self) -> Result<mpsc::Sender<MaterializeTask>, AppError> {
         self.fg_tx
@@ -54,6 +70,24 @@ impl Materializer {
         block_type: &str,
     ) -> Result<(), AppError> {
         self.enqueue_background_tasks(record, Some(block_type))
+    }
+
+    /// Enqueue the full cache-rebuild fan-out that every block-structure
+    /// mutation (`delete_block` / `restore_block` / `purge_block`) triggers.
+    ///
+    /// Any of these ops can invalidate every block-referencing cache
+    /// simultaneously, so the three dispatch arms enqueue an identical set
+    /// of rebuild tasks. Centralising the list here means adding a future
+    /// cache only requires one edit, not three, and the materializer's
+    /// dedup layer collapses duplicates across consecutive mutations.
+    ///
+    /// Order is fixed by [`FULL_CACHE_REBUILD_TASKS`] so tests can assert
+    /// the exact sequence against `BackgroundQueue::inspect()` / metrics.
+    pub(super) fn enqueue_full_cache_rebuild(&self) -> Result<(), AppError> {
+        for task in FULL_CACHE_REBUILD_TASKS {
+            self.try_enqueue_background(task.clone())?;
+        }
+        Ok(())
     }
 
     pub async fn dispatch_op(&self, record: &OpRecord) -> Result<(), AppError> {
@@ -159,12 +193,7 @@ impl Materializer {
             }
             "delete_block" => {
                 let hint: BlockIdHint = serde_json::from_str(&record.payload)?;
-                self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildPageIds)?;
+                self.enqueue_full_cache_rebuild()?;
                 if !hint.block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::RemoveFtsBlock {
                         block_id: hint.block_id,
@@ -173,12 +202,7 @@ impl Materializer {
             }
             "restore_block" => {
                 let hint: BlockIdHint = serde_json::from_str(&record.payload)?;
-                self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildPageIds)?;
+                self.enqueue_full_cache_rebuild()?;
                 if !hint.block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::UpdateFtsBlock {
                         block_id: hint.block_id,
@@ -187,12 +211,7 @@ impl Materializer {
             }
             "purge_block" => {
                 let hint: BlockIdHint = serde_json::from_str(&record.payload)?;
-                self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildTagInheritanceCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildPageIds)?;
+                self.enqueue_full_cache_rebuild()?;
                 if !hint.block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::RemoveFtsBlock {
                         block_id: hint.block_id,

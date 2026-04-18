@@ -22,6 +22,7 @@ mod tests;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use sqlx::SqlitePool;
 use tokio::sync::Notify;
@@ -29,6 +30,7 @@ use tokio::task::JoinHandle;
 
 use crate::error::AppError;
 use crate::materializer::Materializer;
+use crate::peer_refs;
 use crate::sync_events::{SyncEvent, SyncEventSink};
 use crate::sync_net::SyncCert;
 use crate::sync_scheduler::SyncScheduler;
@@ -79,6 +81,182 @@ pub struct SyncDaemon {
 }
 
 impl SyncDaemon {
+    /// Interval at which the dormant waiter re-checks the peer table.
+    ///
+    /// Exposed so tests can reason about the polling cadence; the dormant
+    /// waiter also wakes immediately on `scheduler.notify_change()`, so
+    /// pair events transition to active within milliseconds.
+    pub const DORMANT_POLL_INTERVAL: Duration = Duration::from_secs(30);
+
+    /// PERF-25: count the paired peers to decide whether the daemon should
+    /// enter active mode on startup.
+    ///
+    /// Returns `Ok(true)` when at least one paired peer exists — the
+    /// daemon must initialize mDNS and the TLS listener right away.
+    /// Returns `Ok(false)` when no peers exist — the daemon can skip mDNS
+    /// multicast traffic and TCP listening until the user pairs a device.
+    ///
+    /// On query failure, returns the underlying error; callers should fail
+    /// open (start the full daemon) rather than silently staying dormant,
+    /// because a transient DB issue must not prevent sync.
+    pub async fn should_start_active(pool: &SqlitePool) -> Result<bool, AppError> {
+        let peers = peer_refs::list_peer_refs(pool).await?;
+        Ok(!peers.is_empty())
+    }
+
+    /// PERF-25: Spawn the daemon only if peers exist, otherwise start a
+    /// dormant waiter that transitions to active once peers appear.
+    ///
+    /// This avoids mDNS announce/browse, TLS listener binding, and the
+    /// 30s resync tick for users who have not yet paired a device. On
+    /// first-launch (the common case), it is a pure overhead save.
+    ///
+    /// ## Wake mechanisms
+    ///
+    /// The dormant waiter observes peer arrival through two channels:
+    /// 1. A periodic poll (`DORMANT_POLL_INTERVAL`, default 30 s) so the
+    ///    daemon eventually transitions even if no signal is delivered.
+    /// 2. `scheduler.wait_for_debounced_change()` — `confirm_pairing`
+    ///    calls `scheduler.notify_change()` after a successful pair, so
+    ///    the transition typically happens within milliseconds.
+    ///
+    /// On DB error the daemon falls back to active startup so a transient
+    /// failure does not disable sync.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn start_if_peers_exist(
+        pool: SqlitePool,
+        device_id: String,
+        materializer: Materializer,
+        scheduler: Arc<SyncScheduler>,
+        cert: SyncCert,
+        event_sink: Arc<dyn SyncEventSink>,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<Self, AppError> {
+        match Self::should_start_active(&pool).await {
+            Ok(true) => {
+                // Paired peers already exist — start the full daemon.
+                Self::start(
+                    pool,
+                    device_id,
+                    materializer,
+                    scheduler,
+                    cert,
+                    event_sink,
+                    cancel,
+                )
+                .await
+            }
+            Ok(false) => {
+                // No paired peers — spawn a lightweight waiter. The mDNS
+                // service and TLS listener are NOT initialized here; they
+                // are created only once the user pairs a device.
+                tracing::info!(
+                    "SyncDaemon starting in dormant mode (no paired peers, mDNS and TLS listener deferred)"
+                );
+                Self::spawn_dormant_waiter(
+                    pool,
+                    device_id,
+                    materializer,
+                    scheduler,
+                    cert,
+                    event_sink,
+                    cancel,
+                )
+            }
+            Err(e) => {
+                // Fail-open: a transient DB query error must not keep the
+                // daemon dormant forever. Log and proceed with normal
+                // startup — the daemon's own `list_peer_refs` calls will
+                // retry each cycle.
+                tracing::warn!(
+                    error = %e,
+                    "peer_refs query failed at daemon start; falling back to active startup"
+                );
+                Self::start(
+                    pool,
+                    device_id,
+                    materializer,
+                    scheduler,
+                    cert,
+                    event_sink,
+                    cancel,
+                )
+                .await
+            }
+        }
+    }
+
+    /// Internal: spawn the dormant waiter task that polls for peers and
+    /// transitions to the full `daemon_loop` when any arrive.
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_dormant_waiter(
+        pool: SqlitePool,
+        device_id: String,
+        materializer: Materializer,
+        scheduler: Arc<SyncScheduler>,
+        cert: SyncCert,
+        event_sink: Arc<dyn SyncEventSink>,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<Self, AppError> {
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown_notify = Arc::new(Notify::new());
+        let shutdown_notify_task = shutdown_notify.clone();
+        let cancel_flag = cancel.clone();
+
+        let handle = tokio::spawn(async move {
+            let mut poll = tokio::time::interval(Self::DORMANT_POLL_INTERVAL);
+            poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            // Burn the first immediate tick so we don't double-query on start.
+            poll.tick().await;
+
+            loop {
+                tokio::select! {
+                    _ = poll.tick() => {
+                        if peers_appeared(&pool).await {
+                            break;
+                        }
+                    }
+                    _ = scheduler.wait_for_debounced_change() => {
+                        // Likely a pair event; recheck immediately.
+                        if peers_appeared(&pool).await {
+                            break;
+                        }
+                    }
+                    _ = shutdown_notify_task.notified() => {
+                        tracing::info!("SyncDaemon shutdown received while dormant");
+                        return;
+                    }
+                }
+            }
+
+            tracing::info!(
+                "SyncDaemon transitioning from dormant to active (paired peer detected)"
+            );
+
+            if let Err(e) = orchestrator::daemon_loop(
+                pool,
+                device_id,
+                materializer,
+                scheduler,
+                cert,
+                event_sink,
+                shutdown_notify_task,
+                cancel_flag,
+            )
+            .await
+            {
+                tracing::error!(error = %e, "SyncDaemon (post-dormant) exited with error");
+            }
+        });
+
+        Ok(Self {
+            shutdown,
+            shutdown_notify,
+            cancel,
+            handle: Some(handle),
+        })
+    }
+
     /// Spawn the background daemon task.
     ///
     /// The daemon will:
@@ -139,5 +317,24 @@ impl SyncDaemon {
     /// cleared on the next session attempt.
     pub fn cancel_active_sync(&self) {
         self.cancel.store(true, Ordering::Release);
+    }
+}
+
+/// PERF-25: peek at the peer table from the dormant waiter.
+///
+/// Returns `true` if at least one paired peer row exists. Any DB error
+/// is logged at `warn!` and treated as "no peers" so the waiter loops
+/// again instead of crashing — this matches the fail-open stance in
+/// `SyncDaemon::start_if_peers_exist`.
+async fn peers_appeared(pool: &SqlitePool) -> bool {
+    match peer_refs::list_peer_refs(pool).await {
+        Ok(peers) => !peers.is_empty(),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "peer_refs query failed in dormant waiter; remaining dormant"
+            );
+            false
+        }
     }
 }

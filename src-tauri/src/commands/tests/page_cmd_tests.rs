@@ -357,7 +357,9 @@ async fn import_markdown_handles_properties() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let content = "- Task\n  priority:: high\n  status:: TODO";
+    // BUG-20: values must be in the seeded options:
+    //   priority: ["1","2","3"]; status: ["active","paused","done","archived"]
+    let content = "- Task\n  priority:: 1\n  status:: done";
     let result = import_markdown_inner(&pool, DEV, &mat, content.into(), Some("Props.md".into()))
         .await
         .unwrap();
@@ -425,7 +427,9 @@ async fn import_markdown_single_transaction() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let content = "- Parent block\n  priority:: high\n  status:: active\n  - Child A\n  - Child B\n    - Grandchild";
+    // BUG-20: values must be in the seeded options:
+    //   priority: ["1","2","3"]; status: ["active","paused","done","archived"]
+    let content = "- Parent block\n  priority:: 1\n  status:: active\n  - Child A\n  - Child B\n    - Grandchild";
     let result = import_markdown_inner(&pool, DEV, &mat, content.into(), Some("TxTest.md".into()))
         .await
         .unwrap();
@@ -506,7 +510,7 @@ async fn import_markdown_single_transaction() {
     .unwrap();
     assert_eq!(
         refreshed_parent.priority.as_deref(),
-        Some("high"),
+        Some("1"),
         "priority reserved property should be in blocks.priority"
     );
 

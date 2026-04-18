@@ -663,4 +663,413 @@ describe('keyboard-config', () => {
       expect(configKeyToTipTap('Alt + T')).toBe('Alt-t')
     })
   })
+
+  // ── BUG-18: graph zoom + arrow normalization + ` / ` alternatives ──
+
+  describe('Graph zoom shortcuts (BUG-18)', () => {
+    it('graphZoomIn exists with `+ / =` default in global category', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'graphZoomIn')
+      expect(s).toBeDefined()
+      expect(s?.keys).toBe('+ / =')
+      expect(s?.category).toBe('keyboard.category.global')
+      expect(s?.description).toBe('graph.zoomIn')
+    })
+
+    it('graphZoomOut exists with `-` default in global category', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'graphZoomOut')
+      expect(s).toBeDefined()
+      expect(s?.keys).toBe('-')
+      expect(s?.category).toBe('keyboard.category.global')
+      expect(s?.description).toBe('graph.zoomOut')
+    })
+
+    it('graphZoomReset exists with `0` default in global category', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'graphZoomReset')
+      expect(s).toBeDefined()
+      expect(s?.keys).toBe('0')
+      expect(s?.category).toBe('keyboard.category.global')
+      expect(s?.description).toBe('graph.zoomReset')
+    })
+
+    it('graphZoomIn matches both `+` and `=` via alternative splitting', () => {
+      // `+` — typical US layout produces `e.key === '+'` with Shift pressed
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: false, metaKey: false, shiftKey: true, key: '+' },
+          'graphZoomIn',
+        ),
+      ).toBe(true)
+      // `+` — some layouts produce `+` without shift
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, key: '+' },
+          'graphZoomIn',
+        ),
+      ).toBe(true)
+      // `=` — unshifted on US layout
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, key: '=' },
+          'graphZoomIn',
+        ),
+      ).toBe(true)
+    })
+
+    it('graphZoomOut matches `-`', () => {
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, key: '-' },
+          'graphZoomOut',
+        ),
+      ).toBe(true)
+    })
+
+    it('graphZoomReset matches `0` only without Ctrl', () => {
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, key: '0' },
+          'graphZoomReset',
+        ),
+      ).toBe(true)
+      // Ctrl+0 is NOT graphZoomReset (different binding)
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: false, key: '0' },
+          'graphZoomReset',
+        ),
+      ).toBe(false)
+    })
+
+    it('graphZoomIn does not match arbitrary keys', () => {
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, key: 'x' },
+          'graphZoomIn',
+        ),
+      ).toBe(false)
+    })
+
+    it('rebinding graphZoomIn to Ctrl+Shift+Z takes effect', () => {
+      setCustomShortcut('graphZoomIn', 'Ctrl + Shift + Z')
+      // New binding fires
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: true, key: 'z' },
+          'graphZoomIn',
+        ),
+      ).toBe(true)
+      // Old defaults do NOT fire after rebind
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, key: '+' },
+          'graphZoomIn',
+        ),
+      ).toBe(false)
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, key: '=' },
+          'graphZoomIn',
+        ),
+      ).toBe(false)
+    })
+  })
+
+  // BUG-18 post-review: narrow the isSymbolKey whitelist to only +?@= so that
+  // rebinding to non-Shift-produced symbols (e.g. [, ], ;, ') keeps strict
+  // Shift matching.
+  describe('Symbol-key shift relaxation is narrow (BUG-18)', () => {
+    it('`[` binding requires exact shift state (no shift)', () => {
+      setCustomShortcut('graphZoomIn', '[')
+      // Without shift matches
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, key: '[' },
+          'graphZoomIn',
+        ),
+      ).toBe(true)
+      // With shift does NOT match (key would be `{` on US anyway, but guard
+      // against a layout where Shift+[ still yields `[`).
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: false, metaKey: false, shiftKey: true, key: '[' },
+          'graphZoomIn',
+        ),
+      ).toBe(false)
+    })
+
+    it('`]` binding requires exact shift state (no shift)', () => {
+      setCustomShortcut('graphZoomIn', ']')
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, key: ']' },
+          'graphZoomIn',
+        ),
+      ).toBe(true)
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: false, metaKey: false, shiftKey: true, key: ']' },
+          'graphZoomIn',
+        ),
+      ).toBe(false)
+    })
+
+    it('`@` binding IS shift-relaxed (Shift+2 → `@` on US layout)', () => {
+      setCustomShortcut('graphZoomIn', '@')
+      // Shift-produced @ must match
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: false, metaKey: false, shiftKey: true, key: '@' },
+          'graphZoomIn',
+        ),
+      ).toBe(true)
+      // AltGr-produced @ (on DE keyboard, no Shift) must also match
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, key: '@' },
+          'graphZoomIn',
+        ),
+      ).toBe(true)
+    })
+
+    it('`?` binding IS shift-relaxed (Shift+/ → `?` on US layout)', () => {
+      setCustomShortcut('graphZoomIn', '?')
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: false, metaKey: false, shiftKey: true, key: '?' },
+          'graphZoomIn',
+        ),
+      ).toBe(true)
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, key: '?' },
+          'graphZoomIn',
+        ),
+      ).toBe(true)
+    })
+  })
+
+  describe('Arrow key normalization (BUG-18)', () => {
+    it('`Alt + ←` matches ArrowLeft with altKey', () => {
+      expect(
+        matchesShortcutBinding(
+          { altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, key: 'ArrowLeft' },
+          'prevDayWeekMonth',
+        ),
+      ).toBe(true)
+    })
+
+    it('`Alt + →` matches ArrowRight with altKey', () => {
+      expect(
+        matchesShortcutBinding(
+          { altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, key: 'ArrowRight' },
+          'nextDayWeekMonth',
+        ),
+      ).toBe(true)
+    })
+
+    it('ArrowLeft without altKey does NOT match prevDayWeekMonth', () => {
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, key: 'ArrowLeft' },
+          'prevDayWeekMonth',
+        ),
+      ).toBe(false)
+    })
+
+    it('`Alt + T` matches both `t` and `T` for goToToday', () => {
+      expect(
+        matchesShortcutBinding(
+          { altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, key: 't' },
+          'goToToday',
+        ),
+      ).toBe(true)
+      expect(
+        matchesShortcutBinding(
+          { altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, key: 'T' },
+          'goToToday',
+        ),
+      ).toBe(true)
+    })
+  })
+
+  describe('Global shortcut rebinding (BUG-18)', () => {
+    it('rebinding focusSearch to Ctrl+Shift+Q fires on new binding and not on old', () => {
+      // Default Ctrl+F fires
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: false, key: 'f' },
+          'focusSearch',
+        ),
+      ).toBe(true)
+
+      setCustomShortcut('focusSearch', 'Ctrl + Shift + Q')
+
+      // New binding fires
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: true, key: 'q' },
+          'focusSearch',
+        ),
+      ).toBe(true)
+      // Old Ctrl+F does NOT fire after rebind
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: false, key: 'f' },
+          'focusSearch',
+        ),
+      ).toBe(false)
+    })
+
+    it('rebinding createNewPage to Ctrl+Alt+M fires on new binding and not on old', () => {
+      setCustomShortcut('createNewPage', 'Ctrl + Alt + M')
+      expect(
+        matchesShortcutBinding(
+          { altKey: true, ctrlKey: true, metaKey: false, shiftKey: false, key: 'm' },
+          'createNewPage',
+        ),
+      ).toBe(true)
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: false, key: 'n' },
+          'createNewPage',
+        ),
+      ).toBe(false)
+    })
+  })
+
+  describe('Tab shortcut bindings (BUG-18)', () => {
+    it('Ctrl+Tab matches nextTab', () => {
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: false, key: 'Tab' },
+          'nextTab',
+        ),
+      ).toBe(true)
+    })
+
+    it('Ctrl+Shift+Tab matches previousTab', () => {
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: true, key: 'Tab' },
+          'previousTab',
+        ),
+      ).toBe(true)
+    })
+
+    it('Ctrl+Tab does NOT match previousTab (shift not pressed)', () => {
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: false, key: 'Tab' },
+          'previousTab',
+        ),
+      ).toBe(false)
+    })
+
+    it('Ctrl+Shift+Tab does NOT match nextTab (more specific binding)', () => {
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: true, key: 'Tab' },
+          'nextTab',
+        ),
+      ).toBe(false)
+    })
+
+    it('Ctrl+T matches openInNewTab', () => {
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: false, key: 't' },
+          'openInNewTab',
+        ),
+      ).toBe(true)
+    })
+
+    it('Ctrl+W matches closeActiveTab', () => {
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: false, key: 'w' },
+          'closeActiveTab',
+        ),
+      ).toBe(true)
+    })
+
+    it('rebinding openInNewTab to Ctrl+Alt+T fires on new binding and not on old', () => {
+      setCustomShortcut('openInNewTab', 'Ctrl + Alt + T')
+      expect(
+        matchesShortcutBinding(
+          { altKey: true, ctrlKey: true, metaKey: false, shiftKey: false, key: 't' },
+          'openInNewTab',
+        ),
+      ).toBe(true)
+      // Old plain Ctrl+T no longer fires
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: false, key: 't' },
+          'openInNewTab',
+        ),
+      ).toBe(false)
+    })
+  })
+
+  describe('Journal shortcut rebinding (BUG-18)', () => {
+    it('rebinding prevDayWeekMonth to Ctrl+PageUp fires on new and not old', () => {
+      // Default Alt+← fires
+      expect(
+        matchesShortcutBinding(
+          { altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, key: 'ArrowLeft' },
+          'prevDayWeekMonth',
+        ),
+      ).toBe(true)
+
+      setCustomShortcut('prevDayWeekMonth', 'Ctrl + PageUp')
+
+      // New binding fires
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: false, key: 'PageUp' },
+          'prevDayWeekMonth',
+        ),
+      ).toBe(true)
+      // Old Alt+← does not fire
+      expect(
+        matchesShortcutBinding(
+          { altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, key: 'ArrowLeft' },
+          'prevDayWeekMonth',
+        ),
+      ).toBe(false)
+    })
+
+    it('rebinding goToToday to Ctrl+Home fires on new and not on Alt+T', () => {
+      setCustomShortcut('goToToday', 'Ctrl + Home')
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: false, key: 'Home' },
+          'goToToday',
+        ),
+      ).toBe(true)
+      expect(
+        matchesShortcutBinding(
+          { altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, key: 't' },
+          'goToToday',
+        ),
+      ).toBe(false)
+    })
+  })
+
+  describe('` / ` alternative splitting (BUG-18)', () => {
+    it('custom `/` alternatives match either side', () => {
+      setCustomShortcut('focusSearch', 'Ctrl + F / Ctrl + Shift + F')
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: false, key: 'f' },
+          'focusSearch',
+        ),
+      ).toBe(true)
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: true, key: 'f' },
+          'focusSearch',
+        ),
+      ).toBe(true)
+    })
+  })
 })

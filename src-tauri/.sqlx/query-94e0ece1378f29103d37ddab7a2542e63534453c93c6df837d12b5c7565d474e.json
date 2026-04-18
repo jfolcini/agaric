@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT options FROM property_definitions WHERE key = 'todo_state'",
+  "describe": {
+    "columns": [
+      {
+        "name": "options",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "94e0ece1378f29103d37ddab7a2542e63534453c93c6df837d12b5c7565d474e"
+}

@@ -451,8 +451,14 @@ pub fn run() {
             let _ = rustls::crypto::ring::default_provider().install_default();
 
             // Spawn SyncDaemon (#382, #383, #278)
+            //
+            // PERF-25: Use `start_if_peers_exist` so the daemon enters
+            // dormant mode when no peers are paired. mDNS announce/browse
+            // and the TLS listener are deferred until the user pairs a
+            // device. The dormant waiter wakes on `scheduler.notify_change`
+            // (called by `confirm_pairing`) and on a periodic poll.
             tauri::async_runtime::spawn(async move {
-                match sync_daemon::SyncDaemon::start(
+                match sync_daemon::SyncDaemon::start_if_peers_exist(
                     daemon_pool,
                     daemon_device_id,
                     daemon_materializer,

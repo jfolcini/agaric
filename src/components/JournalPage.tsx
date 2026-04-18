@@ -270,13 +270,19 @@ export function JournalPage({
 
 // ── Global Date Controls (rendered in App header for non-journal views) ──
 
-/** Compact date controls — Today button + calendar dropdown. Shown in all views. */
+/** Compact date controls — Today button + Agenda button + calendar dropdown. Shown in all views. */
 export function GlobalDateControls(): React.ReactElement {
   const { t } = useTranslation()
-  const { currentDate, navigateToDate } = useJournalStore(
-    useShallow((s) => ({ currentDate: s.currentDate, navigateToDate: s.navigateToDate })),
+  const { currentDate, mode, navigateToDate } = useJournalStore(
+    useShallow((s) => ({
+      currentDate: s.currentDate,
+      mode: s.mode,
+      navigateToDate: s.navigateToDate,
+    })),
   )
-  const { setView } = useNavigationStore(useShallow((s) => ({ setView: s.setView })))
+  const { currentView, setView } = useNavigationStore(
+    useShallow((s) => ({ currentView: s.currentView, setView: s.setView })),
+  )
   const [calendarOpen, setCalendarOpen] = useState(false)
   const [pageMap, setPageMap] = useState<Set<string>>(new Set())
 
@@ -311,6 +317,14 @@ export function GlobalDateControls(): React.ReactElement {
     navigateToDate(today, 'daily')
   }
 
+  function handleAgenda() {
+    const today = new Date()
+    setView('journal')
+    navigateToDate(today, 'agenda')
+  }
+
+  const isAgendaActive = currentView === 'journal' && mode === 'agenda'
+
   function handleSelectDate(day: Date) {
     setView('journal')
     navigateToDate(day, 'daily')
@@ -335,6 +349,15 @@ export function GlobalDateControls(): React.ReactElement {
     <div className="flex items-center gap-1">
       <Button variant="outline" size="xs" onClick={handleToday} aria-label={t('journal.goToToday')}>
         {t('journal.today')}
+      </Button>
+      <Button
+        variant={isAgendaActive ? 'secondary' : 'outline'}
+        size="xs"
+        onClick={handleAgenda}
+        aria-label={t('journal.goToAgenda')}
+        aria-current={isAgendaActive ? 'page' : undefined}
+      >
+        {t('journal.agenda')}
       </Button>
       <div className="relative">
         <Button

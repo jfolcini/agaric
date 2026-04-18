@@ -1,20 +1,24 @@
 /**
  * BlockDatePicker — floating date picker overlay with text input + calendar.
  *
- * Renders a modal-like popover with:
+ * Renders a Radix Dialog with:
  *   - A text input that accepts natural language dates (today, +3d, Apr 15)
  *   - A Calendar widget for visual date selection
- *   - Escape to close, focus-trap via Tab
+ *
+ * Radix Dialog provides: focus trap, Escape-to-close, focus-restore-to-trigger,
+ * scroll-lock, outside-click dismissal, and proper ARIA semantics.
  *
  * Extracted from BlockTree.tsx for file organization (F-22).
+ * Refactored to Radix Dialog (UX-213) — removes the hand-rolled focus trap.
  */
 
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useWeekStart } from '../../hooks/useWeekStart'
 import { parseDate } from '../../lib/parse-date'
 import { Calendar } from '../ui/calendar'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '../ui/dialog'
 import { Input } from '../ui/input'
 import { ScrollArea } from '../ui/scroll-area'
 
@@ -27,7 +31,6 @@ export function BlockDatePicker({
 }): React.ReactElement {
   const { t } = useTranslation()
   const { weekStartsOn } = useWeekStart()
-  const dialogRef = useRef<HTMLDivElement>(null)
   const [dateTextInput, setDateTextInput] = useState('')
   const [dateTextPreview, setDateTextPreview] = useState<string | null>(null)
 
@@ -41,56 +44,21 @@ export function BlockDatePicker({
     [onSelect],
   )
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        onClose()
-      }
-      // Focus trap: keep Tab within the dialog
-      if (e.key === 'Tab') {
-        const dialog = dialogRef.current
-        if (!dialog) return
-        const focusable = dialog.querySelectorAll<HTMLElement>(
-          'a[href], input, select, textarea, button:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        )
-        if (focusable.length === 0) return
-        const first = focusable[0] as HTMLElement
-        const last = focusable[focusable.length - 1] as HTMLElement
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault()
-          last.focus()
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault()
-          first.focus()
-        }
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
-
-  // Auto-focus the text input on mount
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    const input = dialog.querySelector<HTMLElement>('input')
-    input?.focus()
-  }, [])
-
   return (
-    <>
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
-      <div className="fixed inset-0 z-40" onClick={onClose} />
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose()
+      }}
+    >
+      <DialogContent
         aria-label={t('journal.datePickerLabel')}
-        className="date-picker-popup fixed z-50 rounded-md border bg-popover p-3 shadow-lg left-1/2 top-1/3 -translate-x-1/2 max-w-[calc(100vw-2rem)] max-sm:left-2 max-sm:right-2 max-sm:translate-x-0"
+        className="date-picker-popup max-w-[calc(100vw-2rem)] sm:max-w-md"
         data-testid="date-picker-popup"
       >
+        {/* Radix requires DialogTitle for accessibility — visually hidden since aria-label is used */}
+        <DialogTitle className="sr-only">{t('journal.datePickerLabel')}</DialogTitle>
+        <DialogDescription className="sr-only">{t('dateChip.placeholder')}</DialogDescription>
         <ScrollArea className="max-sm:max-h-[70vh]">
           <div className="pb-2">
             <div className="flex items-center gap-2">
@@ -113,6 +81,7 @@ export function BlockDatePicker({
                   }
                 }}
                 aria-label={t('journal.typeDateLabel')}
+                autoFocus
               />
             </div>
             {dateTextInput && (
@@ -130,7 +99,7 @@ export function BlockDatePicker({
           </div>
           <Calendar mode="single" weekStartsOn={weekStartsOn} showOutsideDays onSelect={onSelect} />
         </ScrollArea>
-      </div>
-    </>
+      </DialogContent>
+    </Dialog>
   )
 }

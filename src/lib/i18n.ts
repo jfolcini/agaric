@@ -89,6 +89,7 @@ const resources = {
       'journal.nextWeek': 'Next week',
       'journal.nextMonth': 'Next month',
       'journal.goToToday': 'Go to today',
+      'journal.goToAgenda': 'Go to agenda',
       'journal.openCalendar': 'Open calendar picker',
       'journal.monthlyCalendarLabel': 'Monthly calendar',
       'journal.loadCountsFailed': 'Failed to load calendar counts',
@@ -469,6 +470,10 @@ const resources = {
       'templates.navigateLabel': 'Open template {{name}}',
       'templates.removeTemplateLabel': 'Remove template status from {{name}}',
       'templates.noResults': 'No templates match your search.',
+      'templates.create': 'Create template',
+      'templates.newTemplatePlaceholder': 'New template name...',
+      'templates.newTemplateInputLabel': 'New template name',
+      'templates.createFailed': 'Failed to create template',
 
       // F-33: Graph view
       'graph.noPages': 'No pages to visualize',

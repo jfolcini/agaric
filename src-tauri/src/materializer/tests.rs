@@ -2800,3 +2800,172 @@ async fn dispatch_background_or_warn_handles_unknown_op_type_gracefully() {
     mat.dispatch_background_or_warn(&record);
     mat.shutdown();
 }
+
+// ---------------------------------------------------------------------------
+// MAINT-39: enqueue_full_cache_rebuild helper
+// ---------------------------------------------------------------------------
+
+/// The canonical fan-out list must contain the six block-referencing cache
+/// rebuild variants in a fixed order. Adding a 7th cache means extending
+/// this array; the dispatch arms pick it up automatically. Any drift between
+/// the delete/restore/purge arms and this constant is a regression.
+#[test]
+fn full_cache_rebuild_tasks_has_six_entries_in_canonical_order() {
+    let tasks = &super::dispatch::FULL_CACHE_REBUILD_TASKS;
+    assert_eq!(
+        tasks.len(),
+        6,
+        "FULL_CACHE_REBUILD_TASKS must contain exactly the 6 block-referencing caches"
+    );
+    assert!(
+        matches!(tasks[0], MaterializeTask::RebuildTagsCache),
+        "tasks[0] must be RebuildTagsCache, got {:?}",
+        tasks[0]
+    );
+    assert!(
+        matches!(tasks[1], MaterializeTask::RebuildPagesCache),
+        "tasks[1] must be RebuildPagesCache, got {:?}",
+        tasks[1]
+    );
+    assert!(
+        matches!(tasks[2], MaterializeTask::RebuildAgendaCache),
+        "tasks[2] must be RebuildAgendaCache, got {:?}",
+        tasks[2]
+    );
+    assert!(
+        matches!(tasks[3], MaterializeTask::RebuildProjectedAgendaCache),
+        "tasks[3] must be RebuildProjectedAgendaCache, got {:?}",
+        tasks[3]
+    );
+    assert!(
+        matches!(tasks[4], MaterializeTask::RebuildTagInheritanceCache),
+        "tasks[4] must be RebuildTagInheritanceCache, got {:?}",
+        tasks[4]
+    );
+    assert!(
+        matches!(tasks[5], MaterializeTask::RebuildPageIds),
+        "tasks[5] must be RebuildPageIds, got {:?}",
+        tasks[5]
+    );
+}
+
+/// `enqueue_full_cache_rebuild` must push each of the six canonical tasks
+/// through the background queue and let the consumer process them. Using
+/// `bg_processed` as the observability signal rather than queue inspection
+/// keeps the test robust against consumer timing.
+///
+/// Note: `flush_background` enqueues a `Barrier` task that also counts as
+/// processed, so the expected delta is `6 + 1 = 7`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn enqueue_full_cache_rebuild_dispatches_all_six_tasks() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+
+    let before = mat.metrics().bg_processed.load(AtomicOrdering::Relaxed);
+    mat.enqueue_full_cache_rebuild()
+        .expect("enqueue_full_cache_rebuild must succeed on a fresh materializer");
+    mat.flush_background()
+        .await
+        .expect("flush_background must succeed after enqueuing the rebuild fan-out");
+    let after = mat.metrics().bg_processed.load(AtomicOrdering::Relaxed);
+
+    // 6 rebuild tasks + 1 flush Barrier.
+    assert_eq!(
+        after - before,
+        7,
+        "enqueue_full_cache_rebuild must dispatch exactly the 6 FULL_CACHE_REBUILD_TASKS entries (before={before}, after={after}, expected 6 + 1 flush barrier)"
+    );
+}
+
+/// `dispatch_op` on a `DeleteBlock` op must produce the full cache fan-out
+/// + a `RemoveFtsBlock` for the target — 7 background tasks in total plus
+/// the flush barrier. This guards against the delete arm drifting away
+/// from `enqueue_full_cache_rebuild`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_delete_block_enqueues_full_cache_rebuild_plus_fts_removal() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    insert_block_direct(&pool, "BLK-M39-D", "content", "to delete").await;
+
+    let before_bg = mat.metrics().bg_processed.load(AtomicOrdering::Relaxed);
+    let r = make_op_record(
+        &pool,
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::test_id("blk-m39-d"),
+        }),
+    )
+    .await;
+    mat.dispatch_op(&r).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    mat.flush_background().await.unwrap();
+    let after_bg = mat.metrics().bg_processed.load(AtomicOrdering::Relaxed);
+
+    // 6 rebuild tasks + 1 RemoveFtsBlock + 1 flush Barrier = 8.
+    assert_eq!(
+        after_bg - before_bg,
+        8,
+        "delete_block must enqueue 6 cache rebuilds + 1 RemoveFtsBlock (+ 1 flush barrier)"
+    );
+}
+
+/// `dispatch_op` on a `RestoreBlock` op must produce the full cache fan-out
+/// + an `UpdateFtsBlock` for the target — 7 background tasks in total plus
+/// the flush barrier.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_restore_block_enqueues_full_cache_rebuild_plus_fts_update() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    insert_block_direct(&pool, "BLK-M39-R", "content", "was deleted").await;
+    soft_delete_block_direct(&pool, "BLK-M39-R").await;
+
+    let before_bg = mat.metrics().bg_processed.load(AtomicOrdering::Relaxed);
+    let r = make_op_record(
+        &pool,
+        OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: BlockId::test_id("blk-m39-r"),
+            deleted_at_ref: FIXED_TS.into(),
+        }),
+    )
+    .await;
+    mat.dispatch_op(&r).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    mat.flush_background().await.unwrap();
+    let after_bg = mat.metrics().bg_processed.load(AtomicOrdering::Relaxed);
+
+    // 6 rebuild tasks + 1 UpdateFtsBlock + 1 flush Barrier = 8.
+    assert_eq!(
+        after_bg - before_bg,
+        8,
+        "restore_block must enqueue 6 cache rebuilds + 1 UpdateFtsBlock (+ 1 flush barrier)"
+    );
+}
+
+/// `dispatch_op` on a `PurgeBlock` op must produce the full cache fan-out
+/// + a `RemoveFtsBlock` for the target — 7 background tasks in total plus
+/// the flush barrier.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_purge_block_enqueues_full_cache_rebuild_plus_fts_removal() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    insert_block_direct(&pool, "BLK-M39-P", "content", "to purge").await;
+
+    let before_bg = mat.metrics().bg_processed.load(AtomicOrdering::Relaxed);
+    let r = make_op_record(
+        &pool,
+        OpPayload::PurgeBlock(PurgeBlockPayload {
+            block_id: BlockId::test_id("blk-m39-p"),
+        }),
+    )
+    .await;
+    mat.dispatch_op(&r).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    mat.flush_background().await.unwrap();
+    let after_bg = mat.metrics().bg_processed.load(AtomicOrdering::Relaxed);
+
+    // 6 rebuild tasks + 1 RemoveFtsBlock + 1 flush Barrier = 8.
+    assert_eq!(
+        after_bg - before_bg,
+        8,
+        "purge_block must enqueue 6 cache rebuilds + 1 RemoveFtsBlock (+ 1 flush barrier)"
+    );
+}

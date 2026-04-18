@@ -13,7 +13,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { addDays, addMonths, addWeeks, subDays, subMonths, subWeeks } from 'date-fns'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { App } from '../../App'
 import { announce } from '../../lib/announcer'
@@ -669,6 +669,154 @@ describe('App', () => {
       // Date should not change
       expect(useJournalStore.getState().currentDate.getTime()).toBe(startDate.getTime())
       expect(announce).not.toHaveBeenCalled()
+    })
+  })
+
+  // ── BUG-18: shortcut rebinding (keyboard-config integration) ──────
+
+  describe('shortcut rebinding (BUG-18)', () => {
+    // localStorage is cleared here because `useUndoShortcuts` and other
+    // stores share state; the outer beforeEach clears mocks but not this
+    // key specifically.
+    beforeEach(() => {
+      localStorage.removeItem('agaric-keyboard-shortcuts')
+    })
+
+    afterEach(() => {
+      localStorage.removeItem('agaric-keyboard-shortcuts')
+    })
+
+    it('rebinding focusSearch: new keys fire, old Ctrl+F does not', async () => {
+      localStorage.setItem(
+        'agaric-keyboard-shortcuts',
+        JSON.stringify({ focusSearch: 'Ctrl + Shift + Q' }),
+      )
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      // Old Ctrl+F does NOT fire
+      fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+      await Promise.resolve()
+      expect(useNavigationStore.getState().currentView).toBe('journal')
+
+      // New Ctrl+Shift+Q fires
+      fireEvent.keyDown(window, { key: 'q', ctrlKey: true, shiftKey: true })
+      await waitFor(() => {
+        expect(useNavigationStore.getState().currentView).toBe('search')
+      })
+    })
+
+    it('rebinding createNewPage: new keys fire, old Ctrl+N does not', async () => {
+      localStorage.setItem(
+        'agaric-keyboard-shortcuts',
+        JSON.stringify({ createNewPage: 'Ctrl + Alt + M' }),
+      )
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'create_block') {
+          return {
+            id: 'NEW_PAGE_1',
+            block_type: 'page',
+            content: 'Untitled',
+            parent_id: null,
+            position: null,
+            deleted_at: null,
+            is_conflict: false,
+          }
+        }
+        return emptyPage
+      })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      // Old Ctrl+N does NOT fire create_block
+      fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
+      await Promise.resolve()
+      expect(mockedInvoke).not.toHaveBeenCalledWith(
+        'create_block',
+        expect.objectContaining({ blockType: 'page', content: 'Untitled' }),
+      )
+
+      // New Ctrl+Alt+M fires
+      fireEvent.keyDown(window, { key: 'm', ctrlKey: true, altKey: true })
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'create_block',
+          expect.objectContaining({ blockType: 'page', content: 'Untitled' }),
+        )
+      })
+    })
+
+    it('rebinding goToToday: new keys fire, old Alt+T does not', async () => {
+      localStorage.setItem(
+        'agaric-keyboard-shortcuts',
+        JSON.stringify({ goToToday: 'Ctrl + Home' }),
+      )
+      const pastDate = new Date(2024, 0, 1)
+      useJournalStore.setState({ mode: 'daily', currentDate: pastDate })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      // Old Alt+T does NOT fire
+      fireEvent.keyDown(document, { key: 't', altKey: true })
+      await Promise.resolve()
+      expect(useJournalStore.getState().currentDate.getTime()).toBe(pastDate.getTime())
+
+      // New Ctrl+Home fires
+      const beforePress = new Date()
+      fireEvent.keyDown(document, { key: 'Home', ctrlKey: true })
+      await waitFor(() => {
+        const state = useJournalStore.getState()
+        const diff = Math.abs(state.currentDate.getTime() - beforePress.getTime())
+        expect(diff).toBeLessThan(5000)
+      })
+    })
+
+    it('rebinding prevDayWeekMonth: new keys fire, old Alt+← does not', async () => {
+      localStorage.setItem(
+        'agaric-keyboard-shortcuts',
+        JSON.stringify({ prevDayWeekMonth: 'Ctrl + PageUp' }),
+      )
+      const startDate = new Date(2025, 5, 15)
+      useJournalStore.setState({ mode: 'daily', currentDate: startDate })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      // Old Alt+← does NOT fire
+      fireEvent.keyDown(document, { key: 'ArrowLeft', altKey: true })
+      await Promise.resolve()
+      expect(useJournalStore.getState().currentDate.getTime()).toBe(startDate.getTime())
+
+      // New Ctrl+PageUp fires
+      fireEvent.keyDown(document, { key: 'PageUp', ctrlKey: true })
+      await waitFor(() => {
+        expect(useJournalStore.getState().currentDate.getTime()).toBe(
+          subDays(startDate, 1).getTime(),
+        )
+      })
+    })
+
+    it('default bindings still fire when no custom overrides are set', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      // Ctrl+F switches to search
+      fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+      await waitFor(() => {
+        expect(useNavigationStore.getState().currentView).toBe('search')
+      })
     })
   })
 
