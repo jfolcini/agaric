@@ -1,5 +1,102 @@
 # Session Log
 
+## Session 415 — UX-228 + UX-198 + FEAT-2 + BUG-44 + all remaining REVIEW-LATER decisions recorded (2026-04-18)
+
+**4 items resolved (UX-228, UX-198, FEAT-2, BUG-44). REVIEW-LATER 22→19. Decisions recorded inline for the other 18 items, with UX-201 split into UX-201a + UX-201b.**
+
+Two-commit session: one infra commit recording every open item's decision so future sweeps can pick up DECIDED items without re-prompting, plus one code commit landing the four items the user chose for immediate work. 3-way parallel subagent fanout (non-overlapping worktrees where App.tsx conflicts would have collided), two review dimensions per item (technical + UX where user-facing), orchestrator-applied cleanup for a review nit before commit.
+
+### Decisions recorded up front (commit `c3f9dfc`)
+
+- **Immediate batch** (4): UX-228 implement close-all, FEAT-2 remove dead surface, BUG-44 wire filters, UX-198 hoist sticky headers.
+- **Scheduled** (DECIDED, awaiting dedicated session): FEAT-4 v1 (Agent access MCP, all 6 open questions accepted with recommended answers), FEAT-5 v1 (bug-report dialog, all 5 open questions accepted), MAINT-48 React 19, MAINT-49 TypeScript 6, UX-201a (TODO/priority consolidation), UX-201b (configurable priority levels), PUB-1 GPL-3.0-or-later, PUB-4 `.env.example`, PUB-6 README footer, PUB-7 ship all 4 standard repo files, PUB-8 gitleaks + detect-private-key, PUB-9 markdownlint-cli2 + lychee, PUB-10 keep orchestration files in root.
+- **Deferred** (no action until trigger): PERF-19/20/23 (LOW severity, "only if needed"), PUB-2 identity/history, PUB-3 user-only legal task, PUB-5 updater endpoint.
+- **Split**: UX-201 → UX-201a (consolidation) + UX-201b (>3 priority levels).
+- Rewrote the `PUB` section preamble to reflect DECIDED vs DEFERRED status.
+
+### Resolved items (commit `8846a41`)
+
+**UX-228 — `closeOverlays` Escape shortcut now actually closes overlays (1 build + 2 reviews):**
+- New constant file `src/lib/overlay-events.ts` exporting `CLOSE_ALL_OVERLAYS_EVENT = 'agaric:closeAllOverlays'`.
+- `src/App.tsx`: new `useEffect` handler that dispatches the CustomEvent when `matchesShortcutBinding(e, 'closeOverlays')` fires and the user is NOT typing in INPUT/TEXTAREA/contenteditable. Announces `t('announce.overlaysClosed')`. Also adds a listener that closes `shortcutsOpen`.
+- Hardened `isTypingInField` helper to check `getAttribute('contenteditable') === 'true'` (fixes jsdom tests + is strictly more correct in production).
+- `src/components/KeyboardShortcuts.tsx` + `src/components/WelcomeModal.tsx`: subscribe to the event and close themselves.
+- `src/lib/i18n.ts`: new `announce.overlaysClosed` key.
+- 15 new tests across `App.test.tsx` (8), `KeyboardShortcuts.test.tsx` (3), `WelcomeModal.test.tsx` (5). All imports of the event constant use the exported symbol (nit applied by orchestrator post-review).
+- Reviews: technical APPROVE-WITH-NITS (fixed), UX APPROVE.
+
+**UX-198 — Sticky headers actually stick now (1 build + 2 reviews):**
+- New `src/components/ViewHeaderOutlet.tsx` (Provider + Slot + hook) + `src/components/ViewHeader.tsx` (portal consumer with inline fallback for isolated tests and deferred warn via `setTimeout(0)` to avoid false-positive warns on the initial commit).
+- `src/App.tsx` wraps the `<SidebarInset>` body in `<ViewHeaderOutletProvider>` and renders `<ViewHeaderOutletSlot />` between the app-shell `<header>` and the `<ScrollArea>`.
+- 6 view components (AgendaView, PageBrowser, SearchPanel, PageHeader, ConflictList, HistoryView) wrap their header content in `<ViewHeader>` and drop the old `sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-X border-b border-border/40` classes.
+- `PageBrowser.tsx`: dropped the `style={{ backgroundColor: 'var(--background, #fff)' }}` inline-style workaround that existed because the old sticky never actually stuck (stacking-context hack); the outlet architecture makes it unnecessary.
+- `PageHeader.tsx`: `<ConfirmDialog>` extracted as a sibling of the `<ViewHeader>` (AlertDialog portals anyway, so placement is cosmetic).
+- 15 new tests (8 ViewHeaderOutlet + 7 ViewHeader) + 6 regression tests (one per affected view) + 1 integration test in App.test.tsx asserting the outlet slot precedes `<ScrollArea>` via `compareDocumentPosition`.
+- Reviews: technical APPROVE, UX APPROVE.
+
+**FEAT-2 — Dead `clearLinkMetadataAuth` surface removed + BUG-44 — `list_unlinked_references` filters/sort wired (1 build + 1 review):**
+- FEAT-2: removed `clear_link_metadata_auth_inner` + `clear_link_metadata_auth` Tauri wrapper + both `#[cfg(test)] mod tests` items in `src-tauri/src/commands/link_metadata.rs`; removed re-exports from `src-tauri/src/commands/mod.rs`; removed both `lib.rs` registrations; removed `clearLinkMetadataAuth` from `src/lib/tauri.ts`; removed the mock handler + the mock test. `link_metadata::clear_auth_flag` module-level helper intact. Grep-guard shows zero hits.
+- BUG-44: `eval_unlinked_references(pool, page_id, page)` → `(pool, page_id, filters, sort, page)`. Filters applied via the shared `resolve_filter` helper (AND semantics, concurrent resolve + intersect) and sort via the shared `sort_ids` helper — same path as `eval_backlink_query_grouped`. Per-block sort order preserved within each group. `total_count` reflects post-filter, post-self-reference-exclusion count (AGENTS.md Backend Pattern #4). Tauri wrapper + `list_unlinked_references_inner` + `listUnlinkedReferences` TS wrapper all accept the new params. `UnlinkedReferences.tsx` passes `filters: filters.length > 0 ? filters : null` + `sort` into the IPC call and adds them to the `fetchGroups` deps. `bindings.ts` regenerated once by specta.
+- 6 new Rust tests (no-filters regression, tag-filter exact count, property-filter exact count, Created asc/desc, PropertyText ordering, post-filter total_count regression) + 3 new frontend tests (filter refetch, sort refetch, error-path toast). 21 existing Rust callsites of `eval_unlinked_references` mechanically updated with `None, None`. Bench signature updated.
+- Review: technical APPROVE (FEAT-2 + BUG-44).
+
+### Post-review fixes applied by orchestrator
+
+- Replaced hardcoded `'agaric:closeAllOverlays'` string literals in the three UX-228 test files with imports of `CLOSE_ALL_OVERLAYS_EVENT` (technical-review nit).
+- Removed a broken `/tmp/agaric-*/.sqlx` symlink created when setting up the worktrees — the real sqlx cache lives at `src-tauri/.sqlx` per crate.
+- Moved the `biome-ignore lint/a11y/useSemanticElements` comment in `SearchPanel.tsx` from above `<ViewHeader>` (where UX-198's wrap broke the adjacency) to directly above the offending `<form>`.
+- Updated two pre-existing `listUnlinkedReferences` wrapper tests in `src/lib/__tests__/tauri.test.ts` for the new `filters`/`sort` fields in the IPC payload.
+- Ran `cargo fmt` once after the merged Rust tests (rustfmt rewrapped an `assert_eq!` with a message to 3-arg form).
+- Ran `npx biome check --write src` once after merging to auto-fix format/import-sort on 9 files.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `REVIEW-LATER.md` | −4 items (22→19), split UX-201 into UX-201a + UX-201b, decisions recorded for all 19 remaining, PUB preamble rewritten |
+| `src/App.tsx` | UX-228 + UX-198 wiring (Escape event + ViewHeader outlet) |
+| `src/components/ViewHeaderOutlet.tsx` | NEW — provider + slot + hook |
+| `src/components/ViewHeader.tsx` | NEW — portal consumer |
+| `src/components/WelcomeModal.tsx` / `KeyboardShortcuts.tsx` | UX-228 event listeners |
+| `src/components/journal/AgendaView.tsx`, `PageBrowser.tsx`, `SearchPanel.tsx`, `PageHeader.tsx`, `ConflictList.tsx`, `HistoryView.tsx` | UX-198 wrap in `<ViewHeader>`, drop sticky classes |
+| `src/components/UnlinkedReferences.tsx` | BUG-44 pass filters/sort into IPC |
+| `src/lib/overlay-events.ts` | NEW — event constant |
+| `src/lib/i18n.ts` | `announce.overlaysClosed` key |
+| `src/lib/tauri.ts` | remove clearLinkMetadataAuth; extend listUnlinkedReferences |
+| `src/lib/tauri-mock/handlers.ts` | remove clearLinkMetadataAuth mock |
+| `src/lib/bindings.ts` | specta regen |
+| `src-tauri/src/commands/link_metadata.rs` | FEAT-2 removal |
+| `src-tauri/src/commands/mod.rs` / `lib.rs` | FEAT-2 registration removal |
+| `src-tauri/src/commands/queries.rs` | BUG-44 command signature |
+| `src-tauri/src/backlink/grouped.rs` / `tests.rs` | BUG-44 filter/sort + 6 tests |
+| `src-tauri/benches/backlink_query_bench.rs` | bench signature |
+| 9 component + 1 wrapper + 1 mock test file | tests for new + changed behaviour |
+| `SESSION-LOG.md` | This session |
+
+### Stats
+
+- **2 commits** this session: `c3f9dfc` (decisions recorded) + `8846a41` (code changes).
+- **38 files changed** in the code commit. +1829 / −447 lines.
+- **3 parallel build subagents** (all APPROVE on their own verification) + **5 review subagents** (1 tech + 1 UX for UX-228, 1 tech + 1 UX for UX-198, 1 tech for FEAT-2+BUG-44). All APPROVE; only nit was the UX-228 hardcoded event-name in tests, fixed by orchestrator.
+- **Tests:** 149 scoped tests + 407 view-regression tests passed post-merge. `prek run --all-files` 20/20 hooks pass.
+
+### Verification
+
+- `prek run --all-files` → 20/20 hooks pass (biome, tsc, vitest, license, depcheck, cargo fmt/clippy/nextest/deny/machete).
+- `cd src-tauri && cargo nextest run backlink::` → 137 passed (includes 6 new `eval_unlinked_refs_*` tests).
+- `npx vitest run` scoped to affected test files → 556 passed total across the 12 affected files.
+- `npx tsc --noEmit` → clean.
+- `git diff --stat HEAD~2..HEAD` → `+1900 / −481` (two commits combined).
+
+### Remaining REVIEW-LATER backlog (19 items)
+
+- **DECIDED awaiting scheduled session:** FEAT-4, FEAT-5, MAINT-48, MAINT-49, UX-201a, UX-201b, PUB-1, PUB-4, PUB-6, PUB-7, PUB-8, PUB-9, PUB-10 (13 items).
+- **DEFERRED "until trigger":** PERF-19, PERF-20, PERF-23, PUB-2, PUB-3, PUB-5 (6 items).
+
+No items still waiting on user decisions — every remaining item has a recorded decision inline.
+
+---
+
 ## Session 414 — MAINT-51 umbrella complete + @types/node 25 (2026-04-18)
 
 **3 items resolved (MAINT-50, MAINT-51, MAINT-74). REVIEW-LATER 25→22.**
