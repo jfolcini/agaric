@@ -2396,11 +2396,6 @@ describe('LinkMetadata commands', () => {
     })
     expect(typeof result['fetched_at']).toBe('string')
   })
-
-  it('clear_link_metadata_auth returns null', () => {
-    const result = invoke('clear_link_metadata_auth', { url: 'https://example.com' })
-    expect(result).toBeNull()
-  })
 })
 
 // ---------------------------------------------------------------------------

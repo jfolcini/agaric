@@ -19,6 +19,7 @@ import { App } from '../../App'
 import { announce } from '../../lib/announcer'
 import { t } from '../../lib/i18n'
 import { logger } from '../../lib/logger'
+import { CLOSE_ALL_OVERLAYS_EVENT } from '../../lib/overlay-events'
 import { useBootStore } from '../../stores/boot'
 import { useJournalStore } from '../../stores/journal'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
@@ -1133,6 +1134,138 @@ describe('App', () => {
     })
   })
 
+  // ── UX-228: close-all-overlays shortcut ─────────────────────────────
+
+  describe('closeOverlays shortcut (UX-228)', () => {
+    it('Escape on window dispatches agaric:closeAllOverlays event', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      const spy = vi.fn()
+      window.addEventListener(CLOSE_ALL_OVERLAYS_EVENT, spy)
+      try {
+        fireEvent.keyDown(window, { key: 'Escape' })
+        expect(spy).toHaveBeenCalledTimes(1)
+      } finally {
+        window.removeEventListener(CLOSE_ALL_OVERLAYS_EVENT, spy)
+      }
+    })
+
+    it('Escape announces "Overlays closed"', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      fireEvent.keyDown(window, { key: 'Escape' })
+
+      await waitFor(() => {
+        expect(announce).toHaveBeenCalledWith(t('announce.overlaysClosed'))
+      })
+    })
+
+    it('Escape inside an <input> does NOT dispatch the event', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      const spy = vi.fn()
+      window.addEventListener(CLOSE_ALL_OVERLAYS_EVENT, spy)
+      const input = document.createElement('input')
+      document.body.appendChild(input)
+      try {
+        fireEvent.keyDown(input, { key: 'Escape' })
+        await Promise.resolve()
+        expect(spy).not.toHaveBeenCalled()
+      } finally {
+        document.body.removeChild(input)
+        window.removeEventListener(CLOSE_ALL_OVERLAYS_EVENT, spy)
+      }
+    })
+
+    it('Escape inside a <textarea> does NOT dispatch the event', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      const spy = vi.fn()
+      window.addEventListener(CLOSE_ALL_OVERLAYS_EVENT, spy)
+      const textarea = document.createElement('textarea')
+      document.body.appendChild(textarea)
+      try {
+        fireEvent.keyDown(textarea, { key: 'Escape' })
+        await Promise.resolve()
+        expect(spy).not.toHaveBeenCalled()
+      } finally {
+        document.body.removeChild(textarea)
+        window.removeEventListener(CLOSE_ALL_OVERLAYS_EVENT, spy)
+      }
+    })
+
+    it('Escape inside a [contenteditable] element does NOT dispatch the event', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      const spy = vi.fn()
+      window.addEventListener(CLOSE_ALL_OVERLAYS_EVENT, spy)
+      const editable = document.createElement('div')
+      editable.setAttribute('contenteditable', 'true')
+      document.body.appendChild(editable)
+      try {
+        fireEvent.keyDown(editable, { key: 'Escape' })
+        await Promise.resolve()
+        expect(spy).not.toHaveBeenCalled()
+      } finally {
+        document.body.removeChild(editable)
+        window.removeEventListener(CLOSE_ALL_OVERLAYS_EVENT, spy)
+      }
+    })
+
+    it('Escape closes the shortcuts sheet when it is open', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      // Open the sheet
+      fireEvent.keyDown(document, { key: '?' })
+      await waitFor(() => {
+        expect(screen.getByText(t('shortcuts.title'))).toBeInTheDocument()
+      })
+
+      // Dispatch the global close event directly to avoid depending on
+      // Radix's internal Escape handling (which fires regardless).
+      window.dispatchEvent(new CustomEvent(CLOSE_ALL_OVERLAYS_EVENT))
+
+      await waitFor(() => {
+        expect(screen.queryByText(t('shortcuts.title'))).not.toBeInTheDocument()
+      })
+    })
+
+    it('plain "a" key does NOT dispatch closeAllOverlays', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      const spy = vi.fn()
+      window.addEventListener(CLOSE_ALL_OVERLAYS_EVENT, spy)
+      try {
+        fireEvent.keyDown(window, { key: 'a' })
+        await Promise.resolve()
+        expect(spy).not.toHaveBeenCalled()
+      } finally {
+        window.removeEventListener(CLOSE_ALL_OVERLAYS_EVENT, spy)
+      }
+    })
+  })
+
   // ── Error paths ─────────────────────────────────────────────────────────
 
   describe('error paths', () => {
@@ -1325,6 +1458,32 @@ describe('App', () => {
       const cls = main?.getAttribute('class') ?? ''
       expect(cls).toContain('env(safe-area-inset-bottom)')
       expect(cls).toContain('pb-[calc(1rem+env(safe-area-inset-bottom))]')
+    })
+  })
+
+  // UX-198: view-level sticky headers didn't stick because the nearest
+  // scroll ancestor was the ScrollArea viewport, not the view component.
+  // The fix hoists headers into a <ViewHeaderOutletSlot /> rendered
+  // between App's fixed app-shell <header> and the main <ScrollArea>, so
+  // portaled headers live outside the scroll container entirely.
+  describe('ViewHeaderOutlet (UX-198)', () => {
+    it('renders the view-header outlet above the main scroll area', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      const outlet = screen.getByTestId('view-header-outlet')
+      const scrollAreaRoot = document.querySelector('[data-slot="main-content"]')
+      expect(outlet).toBeInTheDocument()
+      expect(scrollAreaRoot).not.toBeNull()
+
+      // The slot must be a *preceding* sibling of the scroll-area root
+      // (both live inside the SidebarInset). Using compareDocumentPosition
+      // gives a deterministic ordering check that doesn't depend on the
+      // exact wrapper structure.
+      const position = outlet.compareDocumentPosition(scrollAreaRoot as Node)
+      expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     })
   })
 })

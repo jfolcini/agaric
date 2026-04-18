@@ -37,6 +37,7 @@ import { PageOutline } from './PageOutline'
 import { PagePropertyTable } from './PagePropertyTable'
 import { PageTagSection } from './PageTagSection'
 import { PageTitleEditor } from './PageTitleEditor'
+import { ViewHeader } from './ViewHeader'
 
 export interface PageHeaderProps {
   pageId: string
@@ -397,121 +398,129 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   )
 
   return (
-    <div className="page-header sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-4 border-b border-border/40 space-y-2">
-      {/* Title row */}
-      <div className="flex items-center gap-2">
-        {onBack && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={onBack}
-            aria-label={t('pageHeader.goBack')}
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-        )}
-        <PageTitleEditor
-          title={title}
-          editableTitle={editableTitle}
-          titleRef={titleRef}
-          onInput={handleTitleInput}
-          onBlur={handleTitleBlur}
-          onKeyDown={handleTitleKeyDown}
-        />
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={handleToggleStar}
-          aria-label={starred ? t('pageHeader.unstarPage') : t('pageHeader.starPage')}
-          className="shrink-0 text-muted-foreground hover:text-star data-[starred=true]:text-star"
-          data-starred={starred}
-        >
-          <Star className="h-4 w-4" fill={starred ? 'currentColor' : 'none'} />
-        </Button>
-        <PageOutline />
-        <PageHeaderMenu
-          canRedo={canRedo}
-          kebabOpen={kebabOpen}
-          isTemplate={isTemplate}
-          isJournalTemplate={isJournalTemplate}
-          onUndo={handlePageUndo}
-          onRedo={handlePageRedo}
-          onKebabOpenChange={setKebabOpen}
-          onAddAlias={handleKebabAddAlias}
-          onAddTag={handleKebabAddTag}
-          onAddProperty={handleKebabAddProperty}
-          onToggleTemplate={handleToggleTemplate}
-          onToggleJournalTemplate={handleToggleJournalTemplate}
-          onExport={handleExport}
-          onDeleteRequest={() => {
-            setKebabOpen(false)
-            setDeleteDialogOpen(true)
-          }}
-          onOpenInNewTab={handleOpenInNewTab}
-        />
-      </div>
-
-      {/* Breadcrumb for namespaced page titles */}
-      {title.includes('/') &&
-        (() => {
-          const segments = title.split('/')
-          return (
-            <nav
-              className="flex items-center gap-1 text-xs text-muted-foreground px-1 mt-1"
-              aria-label={t('pageHeader.breadcrumbLabel')}
+    <>
+      <ViewHeader>
+        <div className="page-header space-y-2">
+          {/* Title row */}
+          <div className="flex items-center gap-2">
+            {onBack && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={onBack}
+                aria-label={t('pageHeader.goBack')}
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+            )}
+            <PageTitleEditor
+              title={title}
+              editableTitle={editableTitle}
+              titleRef={titleRef}
+              onInput={handleTitleInput}
+              onBlur={handleTitleBlur}
+              onKeyDown={handleTitleKeyDown}
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleToggleStar}
+              aria-label={starred ? t('pageHeader.unstarPage') : t('pageHeader.starPage')}
+              className="shrink-0 text-muted-foreground hover:text-star data-[starred=true]:text-star"
+              data-starred={starred}
             >
-              {segments.slice(0, -1).map((segment, i) => {
-                const ancestorPath = segments.slice(0, i + 1).join('/')
-                return (
-                  <span key={ancestorPath} className="flex items-center gap-1">
-                    {i > 0 && <span className="text-muted-foreground/50">/</span>}
-                    <button
-                      type="button"
-                      className="hover:text-foreground hover:underline transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 rounded touch-target"
-                      onClick={() => navigateToNamespace()}
-                    >
-                      {segment}
-                    </button>
+              <Star className="h-4 w-4" fill={starred ? 'currentColor' : 'none'} />
+            </Button>
+            <PageOutline />
+            <PageHeaderMenu
+              canRedo={canRedo}
+              kebabOpen={kebabOpen}
+              isTemplate={isTemplate}
+              isJournalTemplate={isJournalTemplate}
+              onUndo={handlePageUndo}
+              onRedo={handlePageRedo}
+              onKebabOpenChange={setKebabOpen}
+              onAddAlias={handleKebabAddAlias}
+              onAddTag={handleKebabAddTag}
+              onAddProperty={handleKebabAddProperty}
+              onToggleTemplate={handleToggleTemplate}
+              onToggleJournalTemplate={handleToggleJournalTemplate}
+              onExport={handleExport}
+              onDeleteRequest={() => {
+                setKebabOpen(false)
+                setDeleteDialogOpen(true)
+              }}
+              onOpenInNewTab={handleOpenInNewTab}
+            />
+          </div>
+
+          {/* Breadcrumb for namespaced page titles */}
+          {title.includes('/') &&
+            (() => {
+              const segments = title.split('/')
+              return (
+                <nav
+                  className="flex items-center gap-1 text-xs text-muted-foreground px-1 mt-1"
+                  aria-label={t('pageHeader.breadcrumbLabel')}
+                >
+                  {segments.slice(0, -1).map((segment, i) => {
+                    const ancestorPath = segments.slice(0, i + 1).join('/')
+                    return (
+                      <span key={ancestorPath} className="flex items-center gap-1">
+                        {i > 0 && <span className="text-muted-foreground/50">/</span>}
+                        <button
+                          type="button"
+                          className="hover:text-foreground hover:underline transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 rounded touch-target"
+                          onClick={() => navigateToNamespace()}
+                        >
+                          {segment}
+                        </button>
+                      </span>
+                    )
+                  })}
+                  <span className="text-muted-foreground/50">/</span>
+                  <span className="font-medium text-foreground">
+                    {segments[segments.length - 1]}
                   </span>
-                )
-              })}
-              <span className="text-muted-foreground/50">/</span>
-              <span className="font-medium text-foreground">{segments[segments.length - 1]}</span>
-            </nav>
-          )
-        })()}
+                </nav>
+              )
+            })()}
 
-      {/* Aliases */}
-      <PageAliasSection
-        aliases={aliases}
-        editingAliases={editingAliases}
-        aliasInput={aliasInput}
-        onAliasInputChange={setAliasInput}
-        onAddAlias={handleAddAlias}
-        onRemoveAlias={handleRemoveAlias}
-        onStartEditing={() => setEditingAliases(true)}
-        onStopEditing={() => setEditingAliases(false)}
-      />
+          {/* Aliases */}
+          <PageAliasSection
+            aliases={aliases}
+            editingAliases={editingAliases}
+            aliasInput={aliasInput}
+            onAliasInputChange={setAliasInput}
+            onAddAlias={handleAddAlias}
+            onRemoveAlias={handleRemoveAlias}
+            onStartEditing={() => setEditingAliases(true)}
+            onStopEditing={() => setEditingAliases(false)}
+          />
 
-      {/* Tag badges row */}
-      {(appliedTags.length > 0 || showTagPicker || forceTagSection) && (
-        <PageTagSection
-          appliedTags={appliedTags}
-          availableTags={availableTags}
-          allTags={allTags}
-          tagQuery={tagQuery}
-          showTagPicker={showTagPicker}
-          onTagQueryChange={setTagQuery}
-          onTagPickerChange={handleTagPickerChange}
-          onAddTag={handleTagAdd}
-          onRemoveTag={handleRemoveTag}
-          onCreateTag={handleTagCreate}
-        />
-      )}
+          {/* Tag badges row */}
+          {(appliedTags.length > 0 || showTagPicker || forceTagSection) && (
+            <PageTagSection
+              appliedTags={appliedTags}
+              availableTags={availableTags}
+              allTags={allTags}
+              tagQuery={tagQuery}
+              showTagPicker={showTagPicker}
+              onTagQueryChange={setTagQuery}
+              onTagPickerChange={handleTagPickerChange}
+              onAddTag={handleTagAdd}
+              onRemoveTag={handleRemoveTag}
+              onCreateTag={handleTagCreate}
+            />
+          )}
 
-      <PagePropertyTable pageId={pageId} forceExpanded={forcePropertyExpanded} />
+          <PagePropertyTable pageId={pageId} forceExpanded={forcePropertyExpanded} />
+        </div>
+      </ViewHeader>
 
-      {/* Delete page confirmation dialog */}
+      {/* Delete page confirmation dialog (rendered outside the header outlet —
+          it's a portal-mounted AlertDialog, so placement here is just to keep
+          the dialog lifecycle tied to the PageHeader mount). */}
       <ConfirmDialog
         open={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
@@ -521,6 +530,6 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         actionLabel={t('pageHeader.deletePage')}
         onAction={handleDeletePage}
       />
-    </div>
+    </>
   )
 }

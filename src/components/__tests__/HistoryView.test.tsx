@@ -1194,4 +1194,28 @@ describe('HistoryView', () => {
       expect(items[4]).toHaveClass('ring-2')
     })
   })
+
+  // UX-198: the filter-bar + selection-toolbar header used to render inside
+  // a `sticky top-0` wrapper. It's now hoisted to the App-level outlet via
+  // <ViewHeader>. The filter bar must still render (via ViewHeader's inline
+  // fallback) but the stale sticky classes must be gone from the subtree.
+  describe('UX-198 header outlet migration', () => {
+    it('has no sticky top-0 wrapper, but filter bar still renders', async () => {
+      const page = {
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'ux198 regression' })],
+        next_cursor: null,
+        has_more: false,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      const { container } = render(<HistoryView />)
+      await screen.findByText(/ux198 regression/)
+
+      // Filter bar / selection toolbar content still renders inline.
+      expect(container.querySelector('.history-view-header')).toBeInTheDocument()
+      // Old sticky wrapper is gone.
+      const sticky = container.querySelector('.sticky.top-0')
+      expect(sticky).toBeNull()
+    })
+  })
 })

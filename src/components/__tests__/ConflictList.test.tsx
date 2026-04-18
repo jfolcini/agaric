@@ -2561,4 +2561,26 @@ describe('ConflictList', () => {
     const listbox = screen.getByRole('listbox', { name: t('conflicts.listLabel') })
     expect(listbox).toBeInTheDocument()
   })
+
+  // UX-198: the conflict-list toolbar header used to sit inside a
+  // `sticky top-0` wrapper. It's now hoisted to the App-level outlet via
+  // <ViewHeader>. The toolbar must still render (via ViewHeader's inline
+  // fallback) but the stale sticky classes must be gone from the subtree.
+  it('UX-198: no sticky top-0 wrapper, but toolbar still renders when conflicts exist', async () => {
+    const page = {
+      items: [makeConflict({ id: 'C1', content: 'sticky regression' })],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    const { container } = render(<ConflictList />)
+    await screen.findByText('sticky regression')
+
+    // Refresh button from the header still renders.
+    expect(screen.getByRole('button', { name: t('conflict.refreshLabel') })).toBeInTheDocument()
+    // Old sticky wrapper is gone.
+    const sticky = container.querySelector('.sticky.top-0')
+    expect(sticky).toBeNull()
+  })
 })

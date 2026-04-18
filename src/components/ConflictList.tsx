@@ -54,6 +54,7 @@ import { ConflictListItem } from './ConflictListItem'
 import { EmptyState } from './EmptyState'
 import { LoadingSkeleton } from './LoadingSkeleton'
 import { LoadMoreButton } from './LoadMoreButton'
+import { ViewHeader } from './ViewHeader'
 
 /** Truncate long content for dialog previews. */
 function truncatePreview(text: string, max = 120): string {
@@ -411,31 +412,33 @@ export function ConflictList(): React.ReactElement {
       )}
 
       {blocks.length > 0 && (
-        <div className="sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-4 border-b border-border/40 space-y-4">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-muted-foreground">{t('conflict.helpText')}</p>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="conflict-refresh-btn shrink-0 ml-2"
-              onClick={reload}
-              disabled={loading}
-              aria-label={t('conflict.refreshLabel')}
-            >
-              <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-            </Button>
-          </div>
+        <ViewHeader>
+          <div className="conflict-list-header space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">{t('conflict.helpText')}</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="conflict-refresh-btn shrink-0 ml-2"
+                onClick={reload}
+                disabled={loading}
+                aria-label={t('conflict.refreshLabel')}
+              >
+                <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+              </Button>
+            </div>
 
-          {selectedIds.size > 0 && (
-            <ConflictBatchToolbar
-              selectedCount={selectedIds.size}
-              totalCount={blocks.length}
-              onToggleSelectAll={handleToggleSelectAll}
-              onKeepAll={() => setBatchAction('keep')}
-              onDiscardAll={() => setBatchAction('discard')}
-            />
-          )}
-        </div>
+            {selectedIds.size > 0 && (
+              <ConflictBatchToolbar
+                selectedCount={selectedIds.size}
+                totalCount={blocks.length}
+                onToggleSelectAll={handleToggleSelectAll}
+                onKeepAll={() => setBatchAction('keep')}
+                onDiscardAll={() => setBatchAction('discard')}
+              />
+            )}
+          </div>
+        </ViewHeader>
       )}
 
       <div

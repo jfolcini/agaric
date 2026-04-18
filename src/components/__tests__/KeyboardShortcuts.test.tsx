@@ -13,6 +13,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
+import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { __resetPlatformCacheForTests } from '@/lib/platform'
 import { KeyboardShortcuts } from '../KeyboardShortcuts'
 
@@ -306,5 +307,41 @@ describe('KeyboardShortcuts', () => {
     const row = strikethroughLabel.closest('tr') as HTMLElement
     const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
     expect(kbdTexts).toEqual(['Ctrl', 'Shift', 'X'])
+  })
+
+  // UX-228: closeOverlays shortcut dispatches a window CustomEvent;
+  // KeyboardShortcuts listens and calls onOpenChange(false). Verified
+  // here without the full App so we catch regressions even when the
+  // component is rendered standalone (e.g. from a future settings tab).
+  describe('closeOverlays event (UX-228)', () => {
+    it('dispatching agaric:closeAllOverlays while open calls onOpenChange(false)', () => {
+      const onOpenChange = vi.fn()
+      render(<KeyboardShortcuts open={true} onOpenChange={onOpenChange} />)
+
+      window.dispatchEvent(new CustomEvent(CLOSE_ALL_OVERLAYS_EVENT))
+
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+    })
+
+    it('dispatching agaric:closeAllOverlays while closed still calls onOpenChange(false) idempotently', () => {
+      const onOpenChange = vi.fn()
+      render(<KeyboardShortcuts open={false} onOpenChange={onOpenChange} />)
+
+      window.dispatchEvent(new CustomEvent(CLOSE_ALL_OVERLAYS_EVENT))
+
+      // The listener is unconditional (setOpen(false) is idempotent).
+      // What we care about is that the handler ran without throwing.
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+    })
+
+    it('unsubscribes on unmount', () => {
+      const onOpenChange = vi.fn()
+      const { unmount } = render(<KeyboardShortcuts open={true} onOpenChange={onOpenChange} />)
+
+      unmount()
+      window.dispatchEvent(new CustomEvent(CLOSE_ALL_OVERLAYS_EVENT))
+
+      expect(onOpenChange).not.toHaveBeenCalled()
+    })
   })
 })

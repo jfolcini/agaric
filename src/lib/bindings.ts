@@ -395,9 +395,9 @@ async listBacklinksGrouped(blockId: string, filters: BacklinkFilter[] | null, so
 /**
  * Tauri command: unlinked references query. Delegates to [`list_unlinked_references_inner`].
  */
-async listUnlinkedReferences(pageId: string, cursor: string | null, limit: number | null) : Promise<Result<GroupedBacklinkResponse, { kind: string; message: string }>> {
+async listUnlinkedReferences(pageId: string, filters: BacklinkFilter[] | null, sort: BacklinkSort | null, cursor: string | null, limit: number | null) : Promise<Result<GroupedBacklinkResponse, { kind: string; message: string }>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_unlinked_references", { pageId, cursor, limit }) };
+    return { status: "ok", data: await TAURI_INVOKE("list_unlinked_references", { pageId, filters, sort, cursor, limit }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -876,14 +876,6 @@ async fetchLinkMetadata(url: string) : Promise<Result<LinkMetadata, { kind: stri
 async getLinkMetadata(url: string) : Promise<Result<LinkMetadata | null, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_link_metadata", { url }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async clearLinkMetadataAuth(url: string) : Promise<Result<null, { kind: string; message: string }>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("clear_link_metadata_auth", { url }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

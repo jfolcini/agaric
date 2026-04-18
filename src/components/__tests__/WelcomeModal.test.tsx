@@ -32,6 +32,7 @@ vi.mock('lucide-react', () => ({
   ),
 }))
 
+import { CLOSE_ALL_OVERLAYS_EVENT } from '../../lib/overlay-events'
 import { useBootStore } from '../../stores/boot'
 import { WelcomeModal } from '../WelcomeModal'
 
@@ -176,5 +177,69 @@ describe('WelcomeModal', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // UX-228: the closeOverlays shortcut (Escape by default) dispatches a
+  // window CustomEvent that WelcomeModal listens for. Verifies the modal
+  // dismisses, marks onboarding done, and stays dismissed on re-render.
+  describe('closeOverlays event (UX-228)', () => {
+    it('dispatching agaric:closeAllOverlays closes the modal', async () => {
+      render(<WelcomeModal />)
+
+      // Sanity: modal is open
+      expect(screen.getByText('Welcome to Agaric')).toBeInTheDocument()
+
+      window.dispatchEvent(new CustomEvent(CLOSE_ALL_OVERLAYS_EVENT))
+
+      await waitFor(() => {
+        expect(screen.queryByText('Welcome to Agaric')).not.toBeInTheDocument()
+      })
+    })
+
+    it('dispatching agaric:closeAllOverlays marks onboarding done', async () => {
+      render(<WelcomeModal />)
+
+      expect(localStorage.getItem('agaric-onboarding-done')).toBeNull()
+      window.dispatchEvent(new CustomEvent(CLOSE_ALL_OVERLAYS_EVENT))
+
+      await waitFor(() => {
+        expect(localStorage.getItem('agaric-onboarding-done')).toBe('true')
+      })
+    })
+
+    it('does not throw when event fires while modal is already closed', () => {
+      localStorage.setItem('agaric-onboarding-done', 'true')
+      render(<WelcomeModal />)
+
+      // Should be a no-op — no error, no extra writes
+      expect(() => {
+        window.dispatchEvent(new CustomEvent(CLOSE_ALL_OVERLAYS_EVENT))
+      }).not.toThrow()
+    })
+
+    it('unsubscribes on unmount', async () => {
+      const { unmount } = render(<WelcomeModal />)
+
+      unmount()
+
+      // After unmount the handler should not run. We cannot assert the
+      // callback directly, but we can verify localStorage does not get
+      // written by the now-detached listener.
+      localStorage.removeItem('agaric-onboarding-done')
+      window.dispatchEvent(new CustomEvent(CLOSE_ALL_OVERLAYS_EVENT))
+      await Promise.resolve()
+      expect(localStorage.getItem('agaric-onboarding-done')).toBeNull()
+    })
+
+    it('has no a11y violations after dismissal via close-all-overlays', async () => {
+      const { container } = render(<WelcomeModal />)
+      window.dispatchEvent(new CustomEvent(CLOSE_ALL_OVERLAYS_EVENT))
+      await waitFor(() => {
+        expect(screen.queryByText('Welcome to Agaric')).not.toBeInTheDocument()
+      })
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 })

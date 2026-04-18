@@ -1,5 +1,5 @@
 import { FileText, Keyboard, Tag } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { logger } from '@/lib/logger'
+import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { createBlock } from '@/lib/tauri'
 import { useBootStore } from '@/stores/boot'
 
@@ -112,6 +113,18 @@ export function WelcomeModal() {
     setOpen(false)
     markOnboardingDone()
   }, [])
+
+  // UX-228: close the modal when the global "close all overlays" shortcut
+  // fires. Treat this as a dismissal (same as clicking outside the Radix
+  // Dialog) so the onboarding flag is set and the modal does not re-open
+  // on the next launch.
+  useEffect(() => {
+    function handleClose() {
+      handleDismiss()
+    }
+    window.addEventListener(CLOSE_ALL_OVERLAYS_EVENT, handleClose)
+    return () => window.removeEventListener(CLOSE_ALL_OVERLAYS_EVENT, handleClose)
+  }, [handleDismiss])
 
   const handleCreateSamplePages = useCallback(async () => {
     setCreating(true)

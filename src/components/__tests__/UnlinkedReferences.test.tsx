@@ -40,7 +40,31 @@ vi.mock('lucide-react', () => ({
 }))
 
 vi.mock('../BacklinkFilterBuilder', () => ({
-  BacklinkFilterBuilder: () => <div data-testid="backlink-filter-builder">Advanced Filters</div>,
+  BacklinkFilterBuilder: ({
+    onFiltersChange,
+    onSortChange,
+  }: {
+    onFiltersChange: (filters: unknown[]) => void
+    onSortChange: (sort: unknown) => void
+  }) => (
+    <div data-testid="backlink-filter-builder">
+      Advanced Filters
+      <button
+        type="button"
+        data-testid="test-apply-tag-filter"
+        onClick={() => onFiltersChange([{ type: 'HasTag', tag_id: 'TEST_TAG' }])}
+      >
+        Apply Tag Filter
+      </button>
+      <button
+        type="button"
+        data-testid="test-apply-sort"
+        onClick={() => onSortChange({ type: 'Created', dir: 'Desc' })}
+      >
+        Sort Desc
+      </button>
+    </div>
+  ),
 }))
 
 const mockNavigateToPage = vi.fn()
@@ -241,6 +265,8 @@ describe('UnlinkedReferences', () => {
     await waitFor(() => {
       expect(mockedListUnlinked).toHaveBeenCalledWith({
         pageId: 'PAGE1',
+        filters: null,
+        sort: null,
         cursor: null,
         limit: 20,
       })
@@ -446,6 +472,8 @@ describe('UnlinkedReferences', () => {
     await waitFor(() => {
       expect(mockedListUnlinked).toHaveBeenCalledWith({
         pageId: 'PAGE1',
+        filters: null,
+        sort: null,
         cursor: 'cursor_page2',
         limit: 20,
       })
@@ -505,6 +533,8 @@ describe('UnlinkedReferences', () => {
     await waitFor(() => {
       expect(mockedListUnlinked).toHaveBeenCalledWith({
         pageId: 'PAGE2',
+        filters: null,
+        sort: null,
         cursor: null,
         limit: 20,
       })
@@ -999,5 +1029,109 @@ describe('UnlinkedReferences', () => {
     const container = screen.getByRole('group', { name: t('unlinkedRefs.listLabel') })
     expect(container).toBeInTheDocument()
     expect(container.className).toContain('unlinked-references-list')
+  })
+
+  // ---------------------------------------------------------------------------
+  // BUG-44: filter + sort are forwarded to the backend IPC call
+  // ---------------------------------------------------------------------------
+
+  it('selecting a filter triggers a refetch with filters in payload (BUG-44)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+
+    // Expand
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await screen.findByText('mention text')
+
+    // Open advanced filters
+    await user.click(screen.getByRole('button', { name: /show filters/i }))
+    expect(screen.getByTestId('backlink-filter-builder')).toBeInTheDocument()
+
+    // Initial fetch had no filters
+    expect(mockedListUnlinked).toHaveBeenCalledWith(
+      expect.objectContaining({ filters: null, sort: null }),
+    )
+
+    mockedListUnlinked.mockClear()
+
+    // Apply a tag filter via the mocked builder
+    await user.click(screen.getByTestId('test-apply-tag-filter'))
+
+    // Refetch should fire with the new filter list
+    await waitFor(() => {
+      expect(mockedListUnlinked).toHaveBeenCalledWith({
+        pageId: 'PAGE1',
+        filters: [{ type: 'HasTag', tag_id: 'TEST_TAG' }],
+        sort: null,
+        cursor: null,
+        limit: 20,
+      })
+    })
+  })
+
+  it('changing sort triggers a refetch with the new sort in payload (BUG-44)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await screen.findByText('mention text')
+    await user.click(screen.getByRole('button', { name: /show filters/i }))
+
+    mockedListUnlinked.mockClear()
+
+    // Change sort via the mocked builder
+    await user.click(screen.getByTestId('test-apply-sort'))
+
+    await waitFor(() => {
+      expect(mockedListUnlinked).toHaveBeenCalledWith({
+        pageId: 'PAGE1',
+        filters: null,
+        sort: { type: 'Created', dir: 'Desc' },
+        cursor: null,
+        limit: 20,
+      })
+    })
+  })
+
+  it('shows error toast when listUnlinkedReferences fetch rejects (BUG-44 error path)', async () => {
+    const { toast } = await import('sonner')
+    mockedListUnlinked.mockRejectedValueOnce(new Error('network boom'))
+
+    const { container } = renderUnlinkedReferences({
+      pageId: 'PAGE1',
+      pageTitle: 'My Page',
+    })
+
+    await waitFor(() => {
+      expect(mockedListUnlinked).toHaveBeenCalled()
+    })
+
+    // Error surfaces as a toast and the component does not crash.
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to load unlinked references')
+    })
+    // Component returns null when totalCount=0 and no filters active — that's the
+    // graceful fallback behaviour when the initial fetch fails.
+    expect(container.querySelector('.unlinked-references')).not.toBeInTheDocument()
   })
 })

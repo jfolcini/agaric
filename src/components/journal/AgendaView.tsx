@@ -12,6 +12,7 @@ import { batchResolve, queryByProperty } from '../../lib/tauri'
 import type { AgendaFilter } from '../AgendaFilterBuilder'
 import { AgendaFilterBuilder, AgendaSortGroupControls } from '../AgendaFilterBuilder'
 import { AgendaResults } from '../AgendaResults'
+import { ViewHeader } from '../ViewHeader'
 import { buildPageTitleMap, processFilterResult } from './AgendaView.helpers'
 
 interface AgendaViewProps {
@@ -100,16 +101,18 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
 
   return (
     <div className="agenda-view space-y-4" data-testid="agenda-view">
-      <div className="sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-3 border-b border-border/40">
-        <AgendaFilterBuilder filters={agendaFilters} onFiltersChange={setAgendaFilters} />
-        <div className="border-t border-border/40 my-3" aria-hidden="true" />
-        <AgendaSortGroupControls
-          groupBy={agendaGroupBy}
-          onGroupByChange={setAgendaGroupBy}
-          sortBy={agendaSortBy}
-          onSortByChange={setAgendaSortBy}
-        />
-      </div>
+      <ViewHeader>
+        <div className="agenda-view-header">
+          <AgendaFilterBuilder filters={agendaFilters} onFiltersChange={setAgendaFilters} />
+          <div className="border-t border-border/40 my-3" aria-hidden="true" />
+          <AgendaSortGroupControls
+            groupBy={agendaGroupBy}
+            onGroupByChange={setAgendaGroupBy}
+            sortBy={agendaSortBy}
+            onSortByChange={setAgendaSortBy}
+          />
+        </div>
+      </ViewHeader>
       <AgendaResults
         blocks={filteredBlocks}
         loading={agendaLoading}

@@ -1552,4 +1552,18 @@ describe('SearchPanel', () => {
       expect(options[0]).toHaveAttribute('aria-selected', 'true')
     })
   })
+
+  // UX-198: the search form used to live inside a `sticky top-0` wrapper.
+  // It's now hoisted to the App-level outlet via <ViewHeader>. The form
+  // must still render (via ViewHeader's inline fallback in isolated tests)
+  // but the stale sticky classes must be gone from this component's subtree.
+  describe('UX-198 header outlet migration', () => {
+    it('has no sticky top-0 element and still renders the search form', () => {
+      const { container } = render(<SearchPanel />)
+      expect(screen.getByPlaceholderText(t('search.searchPlaceholder'))).toBeInTheDocument()
+      expect(screen.getByRole('search')).toBeInTheDocument()
+      const sticky = container.querySelector('.sticky.top-0')
+      expect(sticky).toBeNull()
+    })
+  })
 })

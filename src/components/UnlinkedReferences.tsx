@@ -67,6 +67,8 @@ export function UnlinkedReferences({
       try {
         const resp = await listUnlinkedReferences({
           pageId,
+          filters: filters.length > 0 ? filters : null,
+          sort,
           cursor: cursor ?? null,
           limit: 20,
         })
@@ -98,7 +100,7 @@ export function UnlinkedReferences({
         setLoading(false)
       }
     },
-    [pageId, t],
+    [pageId, filters, sort, t],
   )
 
   // Fetch on mount and when pageId changes (eager — needed to know if we

@@ -59,6 +59,7 @@ import {
   useSidebar,
 } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
+import { ViewHeaderOutletProvider, ViewHeaderOutletSlot } from './components/ViewHeaderOutlet'
 import { WelcomeModal } from './components/WelcomeModal'
 import { useItemCount } from './hooks/useItemCount'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
@@ -72,6 +73,7 @@ import { announce } from './lib/announcer'
 import { formatRelativeTime } from './lib/format-relative-time'
 import { matchesShortcutBinding } from './lib/keyboard-config'
 import { logger } from './lib/logger'
+import { CLOSE_ALL_OVERLAYS_EVENT } from './lib/overlay-events'
 import { createBlock, flushDraft, getConflicts, listBlocks, listDrafts } from './lib/tauri'
 import { cn } from './lib/utils'
 import { type JournalMode, useJournalStore } from './stores/journal'
@@ -85,9 +87,15 @@ import { useSyncStore } from './stores/sync'
 
 /** Returns true when the event target is an editable input/textarea/contentEditable. */
 function isTypingInField(target: HTMLElement | null): boolean {
-  return Boolean(
-    target?.isContentEditable || target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA',
-  )
+  if (!target) return false
+  if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return true
+  // Check both the IDL property (reflects inherited contenteditable) and
+  // the attribute directly so jsdom-based tests that construct a bare
+  // `<div contenteditable="true">` without a full document inheritance
+  // chain still behave like the real browser. Matches the `?` global
+  // listener in `KeyboardShortcuts.tsx`.
+  if (target.isContentEditable) return true
+  return target.getAttribute?.('contenteditable') === 'true'
 }
 
 /** Per-mode date shifters used by journal nav shortcuts. */
@@ -541,6 +549,38 @@ function App() {
     return () => window.removeEventListener('keydown', handleGlobalShortcuts)
   }, [t])
 
+  // ── Global "close all overlays" shortcut (Escape by default) ────────
+  // UX-228: dispatch a plain DOM CustomEvent on `window` so any top-level
+  // overlay (KeyboardShortcuts sheet, WelcomeModal, future non-Radix
+  // popovers) can listen and close itself. The shortcut is rebindable
+  // through Settings — we route via `matchesShortcutBinding` rather than
+  // hardcoding `e.key === 'Escape'`. Deliberately skipped when focus is
+  // inside the block editor or an input/textarea so the key keeps its
+  // native semantics there (blur, cancel suggestion, etc.).
+  useEffect(() => {
+    function handleCloseOverlays(e: KeyboardEvent) {
+      if (!matchesShortcutBinding(e, 'closeOverlays')) return
+      if (isTypingInField(e.target as HTMLElement | null)) return
+      e.preventDefault()
+      window.dispatchEvent(new CustomEvent(CLOSE_ALL_OVERLAYS_EVENT))
+      announce(t('announce.overlaysClosed'))
+    }
+    window.addEventListener('keydown', handleCloseOverlays)
+    return () => window.removeEventListener('keydown', handleCloseOverlays)
+  }, [t])
+
+  // ── Close the shortcuts sheet when "close all overlays" fires ───────
+  // UX-228: the sheet is Radix-managed and already closes when Escape is
+  // pressed *inside* it, but if focus has drifted elsewhere the global
+  // handler above is what dismisses it.
+  useEffect(() => {
+    function handleClose() {
+      setShortcutsOpen(false)
+    }
+    window.addEventListener(CLOSE_ALL_OVERLAYS_EVENT, handleClose)
+    return () => window.removeEventListener(CLOSE_ALL_OVERLAYS_EVENT, handleClose)
+  }, [])
+
   // ── Tab shortcuts (openInNewTab, closeActiveTab, nextTab, previousTab) ──
   // Routed through matchesShortcutBinding so users can rebind (BUG-18).
   // Dispatches through TAB_SHORTCUTS so the handler stays well under the
@@ -740,46 +780,57 @@ function App() {
           <SidebarRail />
         </Sidebar>
         <SidebarInset>
-          <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-4">
-            <SidebarTrigger className="md:hidden" />
-            {currentView === 'journal' ? (
-              <JournalControls />
-            ) : (
-              <>
-                <span className="font-medium" data-testid="header-label">
-                  {headerLabel}
-                </span>
-                <div className="flex-1" />
-                <GlobalDateControls />
-              </>
-            )}
-          </header>
-          <ScrollArea
-            viewportRef={setMainContentViewport}
-            className="flex-1"
-            // UX-225: re-apply the bottom safe-area inset to the scroll
-            // viewport so the last block of a long scroll doesn't sit
-            // under the iPhone home indicator / Android gesture bar.
-            // `scroll-pb-[env(…)]` extends the scroll end so keyboard
-            // scroll-into-view stops short of the inset as well.
-            viewportClassName="p-4 md:p-6 outline-none pb-[calc(1rem+env(safe-area-inset-bottom))] md:pb-[calc(1.5rem+env(safe-area-inset-bottom))] scroll-pb-[env(safe-area-inset-bottom)]"
-            data-slot="main-content"
-          >
-            <div
-              className={
-                fadeVisible ? 'opacity-100 transition-opacity duration-150 ease-out' : 'opacity-0'
-              }
-              data-testid="view-transition-wrapper"
+          <ViewHeaderOutletProvider>
+            <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-4">
+              <SidebarTrigger className="md:hidden" />
+              {currentView === 'journal' ? (
+                <JournalControls />
+              ) : (
+                <>
+                  <span className="font-medium" data-testid="header-label">
+                    {headerLabel}
+                  </span>
+                  <div className="flex-1" />
+                  <GlobalDateControls />
+                </>
+              )}
+            </header>
+            {/*
+             * UX-198: view-level sticky headers didn't stick because the
+             * nearest scroll ancestor was the <ScrollArea> viewport below,
+             * not the view component. Hoisting the headers to an outlet
+             * that lives _outside_ the scroll container lets them stay
+             * visible as the view scrolls, without relying on sticky
+             * positioning at all.
+             */}
+            <ViewHeaderOutletSlot className="border-b border-border/40 px-4 md:px-6 py-3 space-y-2" />
+            <ScrollArea
+              viewportRef={setMainContentViewport}
+              className="flex-1"
+              // UX-225: re-apply the bottom safe-area inset to the scroll
+              // viewport so the last block of a long scroll doesn't sit
+              // under the iPhone home indicator / Android gesture bar.
+              // `scroll-pb-[env(…)]` extends the scroll end so keyboard
+              // scroll-into-view stops short of the inset as well.
+              viewportClassName="p-4 md:p-6 outline-none pb-[calc(1rem+env(safe-area-inset-bottom))] md:pb-[calc(1.5rem+env(safe-area-inset-bottom))] scroll-pb-[env(safe-area-inset-bottom)]"
+              data-slot="main-content"
             >
-              <ViewRouter
-                currentView={currentView}
-                activePage={activePage ?? null}
-                onPageSelect={handlePageSelect}
-                onBack={goBack}
-                navigateToPage={navigateToPage}
-              />
-            </div>
-          </ScrollArea>
+              <div
+                className={
+                  fadeVisible ? 'opacity-100 transition-opacity duration-150 ease-out' : 'opacity-0'
+                }
+                data-testid="view-transition-wrapper"
+              >
+                <ViewRouter
+                  currentView={currentView}
+                  activePage={activePage ?? null}
+                  onPageSelect={handlePageSelect}
+                  onBack={goBack}
+                  navigateToPage={navigateToPage}
+                />
+              </div>
+            </ScrollArea>
+          </ViewHeaderOutletProvider>
         </SidebarInset>
       </SidebarProvider>
       <KeyboardShortcuts open={shortcutsOpen} onOpenChange={setShortcutsOpen} />

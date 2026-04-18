@@ -1521,4 +1521,25 @@ describe('PageBrowser', () => {
       }
     })
   })
+
+  describe('UX-198 header outlet migration', () => {
+    // The create-page form + search/sort bar used to live inside a
+    // `sticky top-0` wrapper div. It's now hoisted to the App-level outlet
+    // via <ViewHeader>; the per-view subtree must not contain the stale
+    // sticky-positioning classes. The header content still renders
+    // (inline fallback when no provider is present) so existing tests
+    // querying the create-page form continue to work.
+    it('UX-198: no sticky top-0 wrapper div, but header content still renders', async () => {
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      const { container } = render(<PageBrowser />)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /New Page/i })).toBeInTheDocument()
+      })
+      // The old sticky wrapper is gone.
+      const sticky = container.querySelector('.sticky.top-0')
+      expect(sticky).toBeNull()
+      // The new page form is still rendered inline (via ViewHeader fallback).
+      expect(screen.getByRole('button', { name: /New Page/i })).toBeInTheDocument()
+    })
+  })
 })

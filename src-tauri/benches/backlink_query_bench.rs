@@ -697,7 +697,14 @@ fn bench_list_unlinked_references(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
             b.to_async(&rt).iter(|| {
-                list_unlinked_references_inner(&pool, "UNLINK_TARGET_0000000000", None, Some(50))
+                list_unlinked_references_inner(
+                    &pool,
+                    "UNLINK_TARGET_0000000000",
+                    None,
+                    None,
+                    None,
+                    Some(50),
+                )
             });
         });
     }

@@ -1508,3 +1508,19 @@ describe('PageHeader rich title rendering (BUG-1)', () => {
     })
   })
 })
+
+// UX-198: PageHeader used to render its content inside a `sticky top-0`
+// wrapper div. It's now hoisted to the App-level outlet via <ViewHeader>.
+// The header's children (title editor, star button, etc.) must still render
+// (via ViewHeader's inline fallback) but the stale sticky classes must be
+// gone from the component's subtree.
+describe('PageHeader UX-198 header outlet migration', () => {
+  it('no sticky top-0 wrapper but header content still renders', () => {
+    const { container } = renderPageHeader(<PageHeader pageId="PAGE_1" title="Hoist test" />)
+    // The title editor (inside the old header wrapper) still renders.
+    expect(screen.getByRole('textbox', { name: /page title/i })).toBeInTheDocument()
+    // The old sticky wrapper is gone.
+    const sticky = container.querySelector('.sticky.top-0')
+    expect(sticky).toBeNull()
+  })
+})

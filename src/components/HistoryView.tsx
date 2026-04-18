@@ -29,6 +29,7 @@ import { HistoryFilterBar } from './HistoryFilterBar'
 import { HistoryListItem } from './HistoryListItem'
 import { HistorySelectionToolbar } from './HistorySelectionToolbar'
 import { LoadMoreButton } from './LoadMoreButton'
+import { ViewHeader } from './ViewHeader'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -282,18 +283,20 @@ export function HistoryView(): React.ReactElement {
       {/* Op log compaction card */}
       <CompactionCard />
 
-      <div className="sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-4 border-b border-border/40 space-y-2">
-        {/* Filter bar */}
-        <HistoryFilterBar opTypeFilter={opTypeFilter} onFilterChange={setOpTypeFilter} />
+      <ViewHeader>
+        <div className="history-view-header space-y-2">
+          {/* Filter bar */}
+          <HistoryFilterBar opTypeFilter={opTypeFilter} onFilterChange={setOpTypeFilter} />
 
-        {/* Selection toolbar */}
-        <HistorySelectionToolbar
-          selectedCount={selected.size}
-          reverting={reverting}
-          onRevertClick={() => setConfirmRevert(true)}
-          onClearSelection={clearSelection}
-        />
-      </div>
+          {/* Selection toolbar */}
+          <HistorySelectionToolbar
+            selectedCount={selected.size}
+            reverting={reverting}
+            onRevertClick={() => setConfirmRevert(true)}
+            onClearSelection={clearSelection}
+          />
+        </div>
+      </ViewHeader>
 
       {/* Loading skeletons */}
       {loading && entries.length === 0 && (

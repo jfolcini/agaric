@@ -524,14 +524,18 @@ export function listBacklinksGrouped(params: {
   })
 }
 
-/** Query unlinked references grouped by source page, with pagination. */
+/** Query unlinked references grouped by source page, with filters, sort, and pagination. */
 export function listUnlinkedReferences(params: {
   pageId: string
+  filters?: BacklinkFilter[] | null | undefined
+  sort?: BacklinkSort | null | undefined
   cursor?: string | null | undefined
   limit?: number | null | undefined
 }): Promise<GroupedBacklinkResponse> {
   return invoke('list_unlinked_references', {
     pageId: params.pageId,
+    filters: params.filters ?? null,
+    sort: params.sort ?? null,
     cursor: params.cursor ?? null,
     limit: params.limit ?? null,
   })
@@ -862,9 +866,4 @@ export function fetchLinkMetadata(url: string): Promise<LinkMetadata> {
 /** Get cached link metadata (no network fetch). */
 export function getLinkMetadata(url: string): Promise<LinkMetadata | null> {
   return invoke('get_link_metadata', { url })
-}
-
-/** Clear auth_required flag for a URL (user retry). */
-export function clearLinkMetadataAuth(url: string): Promise<void> {
-  return invoke('clear_link_metadata_auth', { url })
 }

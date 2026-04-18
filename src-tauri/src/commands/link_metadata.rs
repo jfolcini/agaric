@@ -2,7 +2,6 @@
 
 use sqlx::SqlitePool;
 use tauri::State;
-use tracing::instrument;
 
 use crate::db::{ReadPool, WritePool};
 use crate::error::AppError;
@@ -32,15 +31,6 @@ pub async fn get_link_metadata_inner(
     url: String,
 ) -> Result<Option<LinkMetadata>, AppError> {
     link_metadata::get_cached(pool, &url).await
-}
-
-/// Clear the auth_required flag for a URL (user retry).
-#[instrument(skip(pool), err)]
-pub async fn clear_link_metadata_auth_inner(
-    pool: &SqlitePool,
-    url: String,
-) -> Result<(), AppError> {
-    link_metadata::clear_auth_flag(pool, &url).await
 }
 
 /// Check if a `fetched_at` timestamp (RFC 3339) is older than `max_days`.
@@ -75,16 +65,6 @@ pub async fn get_link_metadata(
     url: String,
 ) -> Result<Option<LinkMetadata>, AppError> {
     get_link_metadata_inner(&pool.0, url).await
-}
-
-#[cfg(not(tarpaulin_include))]
-#[tauri::command]
-#[specta::specta]
-pub async fn clear_link_metadata_auth(
-    pool: State<'_, WritePool>,
-    url: String,
-) -> Result<(), AppError> {
-    clear_link_metadata_auth_inner(&pool.0, url).await
 }
 
 #[cfg(test)]
@@ -279,58 +259,6 @@ mod tests {
         assert_eq!(result.url, "https://cached.example.com");
         assert_eq!(result.title.as_deref(), Some("Cached"));
         assert_eq!(result.description.as_deref(), Some("A cached page"));
-    }
-
-    // ==================================================================
-    // clear_link_metadata_auth_inner tests
-    // ==================================================================
-
-    #[tokio::test]
-    async fn clear_auth_inner_resets_flag_and_updates_timestamp() {
-        let (pool, _dir) = test_pool().await;
-
-        let meta = LinkMetadata {
-            url: "https://auth.example.com".to_string(),
-            title: Some("Auth Page".to_string()),
-            favicon_url: None,
-            description: None,
-            fetched_at: "2025-01-15T12:00:00.000Z".to_string(),
-            auth_required: true,
-        };
-        link_metadata::upsert(&pool, &meta).await.unwrap();
-
-        clear_link_metadata_auth_inner(&pool, "https://auth.example.com".to_string())
-            .await
-            .unwrap();
-
-        let cached = link_metadata::get_cached(&pool, "https://auth.example.com")
-            .await
-            .unwrap()
-            .expect("metadata should still exist after clearing auth flag");
-
-        assert!(
-            !cached.auth_required,
-            "auth_required should be false after clear"
-        );
-        assert_ne!(
-            cached.fetched_at, "2025-01-15T12:00:00.000Z",
-            "fetched_at should be updated to now"
-        );
-    }
-
-    #[tokio::test]
-    async fn clear_auth_inner_noop_when_url_missing() {
-        let (pool, _dir) = test_pool().await;
-
-        // Should succeed silently even if the URL doesn't exist.
-        let result =
-            clear_link_metadata_auth_inner(&pool, "https://nonexistent.example.com".to_string())
-                .await;
-
-        assert!(
-            result.is_ok(),
-            "clearing auth on nonexistent URL should not error"
-        );
     }
 
     // ==================================================================

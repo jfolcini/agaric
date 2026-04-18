@@ -589,4 +589,22 @@ describe('AgendaView', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  // UX-198: AgendaView's filter/sort header is now hoisted to the App-level
+  // outlet via <ViewHeader>, so the per-view wrapper no longer uses sticky
+  // positioning. The header content must still render (via the ViewHeader
+  // inline fallback used in isolated tests), but there must be no element
+  // with the old `sticky top-0` classes on this component's subtree.
+  it('UX-198: no sticky top-0 on the header wrapper', async () => {
+    const { container } = render(<AgendaView />)
+    await waitFor(() => {
+      expect(screen.getByTestId('agenda-filter-builder')).toBeInTheDocument()
+    })
+    // Header children still render.
+    expect(screen.getByTestId('agenda-filter-builder')).toBeInTheDocument()
+    expect(screen.getByTestId('agenda-sort-group-controls')).toBeInTheDocument()
+    // But nothing in the subtree has the old sticky-positioning classes.
+    const sticky = container.querySelector('.sticky.top-0')
+    expect(sticky).toBeNull()
+  })
 })

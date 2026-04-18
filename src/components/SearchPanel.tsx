@@ -40,6 +40,7 @@ import { EmptyState } from './EmptyState'
 import { PageLink } from './PageLink'
 import { ResultCard } from './ResultCard'
 import { SearchablePopover } from './SearchablePopover'
+import { ViewHeader } from './ViewHeader'
 
 /** Returns true if the text contains CJK codepoints. */
 function hasCJK(text: string): boolean {
@@ -336,26 +337,28 @@ export function SearchPanel(): React.ReactElement {
 
   return (
     <div className="search-panel space-y-4">
-      {/* biome-ignore lint/a11y/useSemanticElements: jsdom doesn't support <search> element */}
-      <form
-        onSubmit={handleSubmit}
-        role="search"
-        className="sticky top-0 z-10 bg-background -mx-4 px-4 md:-mx-6 md:px-6 pb-4 border-b border-border/40 flex flex-col sm:flex-row sm:items-center gap-2"
-      >
-        <Input
-          ref={searchInputRef}
-          value={query}
-          onChange={handleInputChange}
-          placeholder={t('search.searchPlaceholder')}
-          aria-label={t('search.searchLabel')}
-          className="flex-1"
-          autoFocus
-        />
-        <Button type="submit" variant="outline" disabled={!query.trim()}>
-          {t('search.searchButton')}
-        </Button>
-        {(typing || searchLoading) && <Spinner className="text-muted-foreground" />}
-      </form>
+      <ViewHeader>
+        {/* biome-ignore lint/a11y/useSemanticElements: jsdom doesn't support <search> element */}
+        <form
+          onSubmit={handleSubmit}
+          role="search"
+          className="search-panel-header flex flex-col sm:flex-row sm:items-center gap-2"
+        >
+          <Input
+            ref={searchInputRef}
+            value={query}
+            onChange={handleInputChange}
+            placeholder={t('search.searchPlaceholder')}
+            aria-label={t('search.searchLabel')}
+            className="flex-1"
+            autoFocus
+          />
+          <Button type="submit" variant="outline" disabled={!query.trim()}>
+            {t('search.searchButton')}
+          </Button>
+          {(typing || searchLoading) && <Spinner className="text-muted-foreground" />}
+        </form>
+      </ViewHeader>
 
       {/* Filter chip bar */}
       {/* biome-ignore lint/a11y/useSemanticElements: fieldset is for forms, not filter chip groups */}

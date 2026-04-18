@@ -17,6 +17,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { getCurrentShortcuts } from '../lib/keyboard-config'
+import { CLOSE_ALL_OVERLAYS_EVENT } from '../lib/overlay-events'
 import { modKey } from '../lib/platform'
 
 interface ShortcutDef {
@@ -134,6 +135,18 @@ export function KeyboardShortcuts({
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [setOpen])
+
+  // UX-228: close the sheet when the global "close all overlays" shortcut
+  // fires (Escape by default). Radix already handles Escape when focus is
+  // inside the sheet, but if focus has drifted elsewhere we still want the
+  // sheet to dismiss.
+  useEffect(() => {
+    function handleClose() {
+      setOpen(false)
+    }
+    window.addEventListener(CLOSE_ALL_OVERLAYS_EVENT, handleClose)
+    return () => window.removeEventListener(CLOSE_ALL_OVERLAYS_EVENT, handleClose)
   }, [setOpen])
 
   return (

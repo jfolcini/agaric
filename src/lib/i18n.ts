@@ -108,6 +108,7 @@ const resources = {
       'announce.searchOpened': 'Search opened',
       'announce.newPageCreated': 'New page created',
       'announce.conflictsOpened': 'Conflicts view opened',
+      'announce.overlaysClosed': 'Overlays closed',
       'announce.editingBlock': 'Editing block: {{preview}}',
       'announce.emptyBlock': 'empty block',
       'announce.blockDeleted': 'Block deleted',

@@ -1698,6 +1698,8 @@ describe('listUnlinkedReferences', () => {
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('list_unlinked_references', {
       pageId: 'PAGE1',
+      filters: null,
+      sort: null,
       cursor: null,
       limit: null,
     })
@@ -1711,6 +1713,8 @@ describe('listUnlinkedReferences', () => {
 
     expect(mockedInvoke).toHaveBeenCalledWith('list_unlinked_references', {
       pageId: 'PAGE1',
+      filters: null,
+      sort: null,
       cursor: 'cur1',
       limit: 20,
     })

@@ -166,12 +166,21 @@ pub async fn list_backlinks_grouped_inner(
 /// Query unlinked references for a page — blocks that mention the page's
 /// title without having an explicit `[[link]]`.
 ///
+/// When `filters` is provided, filters are applied to the FTS match set using
+/// AND semantics at the top level (same resolver as [`list_backlinks_grouped_inner`]).
+/// When `sort` is provided, blocks within the paginated groups are ordered
+/// accordingly; the default is `Created { Asc }` (ULID order).
+/// `total_count` and `filtered_count` both reflect the post-filter,
+/// post-self-reference-exclusion block count (AGENTS.md pattern #4).
+///
 /// # Errors
 /// - [`AppError::Validation`] — `page_id` is empty
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool, filters, sort), err)]
 pub async fn list_unlinked_references_inner(
     pool: &SqlitePool,
     page_id: &str,
+    filters: Option<Vec<BacklinkFilter>>,
+    sort: Option<BacklinkSort>,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<GroupedBacklinkResponse, AppError> {
@@ -179,7 +188,7 @@ pub async fn list_unlinked_references_inner(
         return Err(AppError::Validation("page_id must not be empty".into()));
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
-    backlink::eval_unlinked_references(pool, page_id, &page).await
+    backlink::eval_unlinked_references(pool, page_id, filters, sort, &page).await
 }
 
 /// Count backlinks per target page for a batch of page IDs in a single query.
@@ -335,10 +344,12 @@ pub async fn list_backlinks_grouped(
 pub async fn list_unlinked_references(
     read_pool: State<'_, ReadPool>,
     page_id: String,
+    filters: Option<Vec<BacklinkFilter>>,
+    sort: Option<BacklinkSort>,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<GroupedBacklinkResponse, AppError> {
-    list_unlinked_references_inner(&read_pool.0, &page_id, cursor, limit)
+    list_unlinked_references_inner(&read_pool.0, &page_id, filters, sort, cursor, limit)
         .await
         .map_err(sanitize_internal_error)
 }

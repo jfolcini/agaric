@@ -3481,7 +3481,7 @@ async fn eval_unlinked_refs_empty_when_page_has_no_title() {
         .unwrap();
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "PAGE1", &page)
+    let resp = eval_unlinked_references(&pool, "PAGE1", None, None, &page)
         .await
         .unwrap();
     assert!(resp.groups.is_empty(), "no title means no unlinked refs");
@@ -3510,7 +3510,7 @@ async fn eval_unlinked_refs_finds_mentioning_blocks() {
     insert_fts(&pool, "BLK_B1", "We should check Project Alpha for updates").await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
         .await
         .unwrap();
     assert_eq!(resp.groups.len(), 1, "one source page group");
@@ -3551,7 +3551,7 @@ async fn eval_unlinked_refs_excludes_linked_blocks() {
     insert_block_link(&pool, "BLK_C1", "TARGET").await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
         .await
         .unwrap();
     assert!(
@@ -3577,7 +3577,7 @@ async fn eval_unlinked_refs_excludes_own_page_blocks() {
     insert_fts(&pool, "BLK_SELF", "This page is about Project Alpha").await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
         .await
         .unwrap();
     assert!(
@@ -3609,7 +3609,7 @@ async fn eval_unlinked_refs_handles_special_chars_in_title() {
     insert_fts(&pool, "BLK_D1", "Read C++ \"Tips\" & Tricks for help").await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
         .await
         .unwrap();
     assert_eq!(
@@ -3652,7 +3652,7 @@ async fn eval_unlinked_refs_cursor_pagination() {
 
     // First page: limit=1
     let page1 = PageRequest::new(None, Some(1)).unwrap();
-    let resp1 = eval_unlinked_references(&pool, "TARGET", &page1)
+    let resp1 = eval_unlinked_references(&pool, "TARGET", None, None, &page1)
         .await
         .unwrap();
     assert_eq!(resp1.groups.len(), 1, "first page has 1 group");
@@ -3665,7 +3665,7 @@ async fn eval_unlinked_refs_cursor_pagination() {
 
     // Second page via cursor
     let page2 = PageRequest::new(resp1.next_cursor, Some(1)).unwrap();
-    let resp2 = eval_unlinked_references(&pool, "TARGET", &page2)
+    let resp2 = eval_unlinked_references(&pool, "TARGET", None, None, &page2)
         .await
         .unwrap();
     assert_eq!(resp2.groups.len(), 1, "second page has 1 group");
@@ -3675,7 +3675,7 @@ async fn eval_unlinked_refs_cursor_pagination() {
 
     // Third page via cursor
     let page3 = PageRequest::new(resp2.next_cursor, Some(1)).unwrap();
-    let resp3 = eval_unlinked_references(&pool, "TARGET", &page3)
+    let resp3 = eval_unlinked_references(&pool, "TARGET", None, None, &page3)
         .await
         .unwrap();
     assert_eq!(resp3.groups.len(), 1, "third page has 1 group");
@@ -3715,7 +3715,7 @@ async fn eval_unlinked_refs_mixed_linked_and_unlinked() {
     insert_block_link(&pool, "BLK_E2", "TARGET").await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
         .await
         .unwrap();
     // Only BLK_E1 should appear (BLK_E2 is linked)
@@ -3767,7 +3767,7 @@ async fn eval_unlinked_refs_matches_alias() {
     insert_fts(&pool, "BLK_F1", "We should look at ProjAlpha for guidance").await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
         .await
         .unwrap();
     assert_eq!(resp.groups.len(), 1, "one group matching via alias");
@@ -3816,7 +3816,7 @@ async fn eval_unlinked_refs_matches_title_or_alias() {
     insert_fts(&pool, "BLK_H1", "ProX has the details we need").await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
         .await
         .unwrap();
     assert_eq!(
@@ -3857,7 +3857,7 @@ async fn eval_unlinked_refs_linked_blocks_excluded_even_with_alias() {
     insert_block_link(&pool, "BLK_I1", "TARGET").await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
         .await
         .unwrap();
     assert!(
@@ -3888,7 +3888,7 @@ async fn eval_unlinked_refs_empty_alias_ignored() {
     insert_fts(&pool, "BLK_J1", "Some unrelated content here").await;
 
     let page = default_page();
-    let resp = eval_unlinked_references(&pool, "TARGET", &page)
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
         .await
         .unwrap();
     assert!(
@@ -3952,4 +3952,288 @@ async fn property_is_empty_scoped_to_candidate_set() {
 
     // Exactly 2 results.
     assert_eq!(set.len(), 2, "expected exactly BLK_B and BLK_D");
+}
+
+// ======================================================================
+// BUG-44 — eval_unlinked_references with filters and sort
+// ======================================================================
+
+/// Seed four PAGE_B-scoped blocks that mention "Project Alpha" without a
+/// `[[TARGET]]` link. Used by the filter/sort tests below.
+///
+/// Layout:
+/// * TARGET (page): "Project Alpha"
+/// * PAGE_B (page): "Page B"
+///   ├── BLK_B1 — content "mentions Project Alpha daily", priority=high, has tag T_A
+///   ├── BLK_B2 — content "Project Alpha backlog entry",  priority=low,  has tag T_B
+///   ├── BLK_B3 — content "notes on Project Alpha here",  priority=high, no tags
+///   └── BLK_B4 — content "Project Alpha summary plan",   no priority,   has tag T_A
+async fn setup_unlinked_refs_for_filters(pool: &SqlitePool) {
+    // Target page
+    insert_block_with_parent(pool, "TARGET", "page", "Project Alpha", None, None).await;
+    // Source page + its 4 mention blocks
+    insert_block_with_parent(pool, "PAGE_B", "page", "Page B", None, None).await;
+
+    insert_block_with_parent(
+        pool,
+        "BLK_B1",
+        "content",
+        "mentions Project Alpha daily",
+        Some("PAGE_B"),
+        Some(1),
+    )
+    .await;
+    insert_block_with_parent(
+        pool,
+        "BLK_B2",
+        "content",
+        "Project Alpha backlog entry",
+        Some("PAGE_B"),
+        Some(2),
+    )
+    .await;
+    insert_block_with_parent(
+        pool,
+        "BLK_B3",
+        "content",
+        "notes on Project Alpha here",
+        Some("PAGE_B"),
+        Some(3),
+    )
+    .await;
+    insert_block_with_parent(
+        pool,
+        "BLK_B4",
+        "content",
+        "Project Alpha summary plan",
+        Some("PAGE_B"),
+        Some(4),
+    )
+    .await;
+
+    // Index all four in FTS so they're discoverable
+    insert_fts(pool, "BLK_B1", "mentions Project Alpha daily").await;
+    insert_fts(pool, "BLK_B2", "Project Alpha backlog entry").await;
+    insert_fts(pool, "BLK_B3", "notes on Project Alpha here").await;
+    insert_fts(pool, "BLK_B4", "Project Alpha summary plan").await;
+
+    // Properties
+    insert_property(pool, "BLK_B1", "priority", Some("high"), None, None).await;
+    insert_property(pool, "BLK_B2", "priority", Some("low"), None, None).await;
+    insert_property(pool, "BLK_B3", "priority", Some("high"), None, None).await;
+    // BLK_B4 intentionally has no priority
+
+    // Tags — tag rows must exist as 'tag' blocks before tags_cache + block_tags FKs resolve.
+    insert_block(pool, "T_A", "tag", "tag-a").await;
+    insert_block(pool, "T_B", "tag", "tag-b").await;
+    insert_tag_cache(pool, "T_A", "tag-a", 2).await;
+    insert_tag_cache(pool, "T_B", "tag-b", 1).await;
+    insert_tag_assoc(pool, "BLK_B1", "T_A").await;
+    insert_tag_assoc(pool, "BLK_B2", "T_B").await;
+    insert_tag_assoc(pool, "BLK_B4", "T_A").await;
+}
+
+#[tokio::test]
+async fn eval_unlinked_refs_no_filters_no_sort_regression() {
+    // Regression: existing behaviour preserved when no filters/sort passed.
+    let (pool, _dir) = test_pool().await;
+    setup_unlinked_refs_for_filters(&pool).await;
+
+    let page = default_page();
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page)
+        .await
+        .unwrap();
+
+    assert_eq!(resp.groups.len(), 1, "one source page group");
+    assert_eq!(resp.groups[0].page_id, "PAGE_B");
+    assert_eq!(resp.groups[0].blocks.len(), 4, "all four blocks");
+    assert_eq!(resp.total_count, 4, "total count pre-filter is 4");
+    assert_eq!(resp.filtered_count, 4, "filtered count matches total");
+}
+
+#[tokio::test]
+async fn eval_unlinked_refs_tag_filter_excludes_non_matching() {
+    // Tag filter on T_A keeps BLK_B1 + BLK_B4 (2 of 4).
+    let (pool, _dir) = test_pool().await;
+    setup_unlinked_refs_for_filters(&pool).await;
+
+    let filters = vec![BacklinkFilter::HasTag {
+        tag_id: "T_A".into(),
+    }];
+
+    let page = default_page();
+    let resp = eval_unlinked_references(&pool, "TARGET", Some(filters), None, &page)
+        .await
+        .unwrap();
+
+    assert_eq!(resp.groups.len(), 1, "one source page group");
+    assert_eq!(resp.groups[0].blocks.len(), 2, "exactly 2 tagged blocks");
+    let ids: std::collections::HashSet<&str> = resp.groups[0]
+        .blocks
+        .iter()
+        .map(|b| b.id.as_str())
+        .collect();
+    assert!(ids.contains("BLK_B1"), "BLK_B1 has T_A");
+    assert!(ids.contains("BLK_B4"), "BLK_B4 has T_A");
+    // Post-filter counts — AGENTS.md "Backend Patterns" #4.
+    assert_eq!(
+        resp.total_count, 2,
+        "total_count reflects post-filter count, not pre-filter 4"
+    );
+    assert_eq!(resp.filtered_count, 2, "filtered_count matches");
+}
+
+#[tokio::test]
+async fn eval_unlinked_refs_property_filter_matches_exact_value() {
+    // PropertyText filter on priority=high keeps BLK_B1 + BLK_B3.
+    let (pool, _dir) = test_pool().await;
+    setup_unlinked_refs_for_filters(&pool).await;
+
+    let filters = vec![BacklinkFilter::PropertyText {
+        key: "priority".into(),
+        op: CompareOp::Eq,
+        value: "high".into(),
+    }];
+
+    let page = default_page();
+    let resp = eval_unlinked_references(&pool, "TARGET", Some(filters), None, &page)
+        .await
+        .unwrap();
+
+    assert_eq!(resp.groups.len(), 1);
+    assert_eq!(
+        resp.groups[0].blocks.len(),
+        2,
+        "exactly 2 high-priority blocks"
+    );
+    let ids: std::collections::HashSet<&str> = resp.groups[0]
+        .blocks
+        .iter()
+        .map(|b| b.id.as_str())
+        .collect();
+    assert!(ids.contains("BLK_B1"));
+    assert!(ids.contains("BLK_B3"));
+    assert_eq!(resp.total_count, 2, "post-filter total_count == 2");
+    assert_eq!(resp.filtered_count, 2);
+}
+
+#[tokio::test]
+async fn eval_unlinked_refs_sort_created_asc_vs_desc() {
+    // Created { Asc } vs Created { Desc } produce reversed ULID order.
+    // BLK_B1 < BLK_B2 < BLK_B3 < BLK_B4 lexicographically (our IDs are
+    // lex-sortable stand-ins for ULIDs).
+    let (pool, _dir) = test_pool().await;
+    setup_unlinked_refs_for_filters(&pool).await;
+
+    let page = default_page();
+
+    // Asc
+    let resp_asc = eval_unlinked_references(
+        &pool,
+        "TARGET",
+        None,
+        Some(BacklinkSort::Created { dir: SortDir::Asc }),
+        &page,
+    )
+    .await
+    .unwrap();
+    let ids_asc: Vec<&str> = resp_asc.groups[0]
+        .blocks
+        .iter()
+        .map(|b| b.id.as_str())
+        .collect();
+    assert_eq!(
+        ids_asc,
+        vec!["BLK_B1", "BLK_B2", "BLK_B3", "BLK_B4"],
+        "ascending Created order"
+    );
+
+    // Desc
+    let resp_desc = eval_unlinked_references(
+        &pool,
+        "TARGET",
+        None,
+        Some(BacklinkSort::Created { dir: SortDir::Desc }),
+        &page,
+    )
+    .await
+    .unwrap();
+    let ids_desc: Vec<&str> = resp_desc.groups[0]
+        .blocks
+        .iter()
+        .map(|b| b.id.as_str())
+        .collect();
+    assert_eq!(
+        ids_desc,
+        vec!["BLK_B4", "BLK_B3", "BLK_B2", "BLK_B1"],
+        "descending Created order"
+    );
+}
+
+#[tokio::test]
+async fn eval_unlinked_refs_sort_property_text_orders_by_value() {
+    // PropertyText sort on "priority": blocks with the property sort first
+    // (by value asc: high, high, low), blocks without it go last (BLK_B4).
+    let (pool, _dir) = test_pool().await;
+    setup_unlinked_refs_for_filters(&pool).await;
+
+    let page = default_page();
+    let resp = eval_unlinked_references(
+        &pool,
+        "TARGET",
+        None,
+        Some(BacklinkSort::PropertyText {
+            key: "priority".into(),
+            dir: SortDir::Asc,
+        }),
+        &page,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(resp.groups.len(), 1);
+    let ids: Vec<&str> = resp.groups[0]
+        .blocks
+        .iter()
+        .map(|b| b.id.as_str())
+        .collect();
+    assert_eq!(ids.len(), 4, "all four blocks returned");
+
+    // First two entries must be the two "high" blocks (BLK_B1, BLK_B3)
+    // — order between them is a tiebreaker on ID (BLK_B1 < BLK_B3).
+    assert_eq!(&ids[..2], &["BLK_B1", "BLK_B3"], "two 'high' first");
+    // Then "low" (BLK_B2), then the unset-priority BLK_B4 sorts last.
+    assert_eq!(ids[2], "BLK_B2", "'low' before unset");
+    assert_eq!(ids[3], "BLK_B4", "unset priority sorts last");
+}
+
+#[tokio::test]
+async fn eval_unlinked_refs_total_count_reflects_post_filter() {
+    // Explicit regression for AGENTS.md "Backend Patterns" #4:
+    // total_count must be the post-filter count, not the pre-filter count.
+    let (pool, _dir) = test_pool().await;
+    setup_unlinked_refs_for_filters(&pool).await;
+
+    // Unfiltered: 4 blocks.
+    let page = default_page();
+    let unfiltered = eval_unlinked_references(&pool, "TARGET", None, None, &page)
+        .await
+        .unwrap();
+    assert_eq!(unfiltered.total_count, 4);
+    assert_eq!(unfiltered.filtered_count, 4);
+
+    // Narrow to priority=high (2 blocks).
+    let filters = vec![BacklinkFilter::PropertyText {
+        key: "priority".into(),
+        op: CompareOp::Eq,
+        value: "high".into(),
+    }];
+    let filtered = eval_unlinked_references(&pool, "TARGET", Some(filters), None, &page)
+        .await
+        .unwrap();
+    assert_eq!(
+        filtered.total_count, 2,
+        "total_count must be the post-filter count (2), not pre-filter (4)"
+    );
+    assert_eq!(filtered.filtered_count, 2);
 }

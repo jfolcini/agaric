@@ -1200,8 +1200,6 @@ export const HANDLERS: Record<string, Handler> = {
       auth_required: false,
     }
   },
-
-  clear_link_metadata_auth: returnNull,
 }
 
 /**

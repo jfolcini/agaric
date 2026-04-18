@@ -261,15 +261,23 @@ pub async fn eval_backlink_query_grouped(
 /// 2. Sanitize title for FTS5.
 /// 3. FTS5 query to find blocks mentioning the title, excluding blocks
 ///    that have a `block_links` row with `target_id = page_id`.
-/// 4. Resolve root pages for all matching blocks.
-/// 5. Exclude blocks whose root page is the target page itself.
-/// 6. Group by source page, sort groups alphabetically by `page_title`.
-/// 7. Apply cursor pagination on groups.
-/// 8. Fetch full `BlockRow` data for the paginated groups.
-/// 9. Return `GroupedBacklinkResponse`.
+/// 4. Apply `filters` (if any) to the FTS match set using the shared
+///    filter resolver — AND semantics at the top level.
+/// 5. Resolve root pages for all matching blocks.
+/// 6. Exclude blocks whose root page is the target page itself.
+/// 7. Apply `sort` (if any) across the filtered block IDs using the shared
+///    sort helper. Defaults to `Created { Asc }` (ULID order).
+/// 8. Group by source page, sort groups alphabetically by `page_title`.
+/// 9. Apply cursor pagination on groups.
+/// 10. Fetch full `BlockRow` data for the paginated groups.
+/// 11. Return `GroupedBacklinkResponse`. `total_count` and `filtered_count`
+///     reflect the post-filter (self-reference-excluded) block count, per
+///     the `total_count` contract in AGENTS.md (backend pattern #4).
 pub async fn eval_unlinked_references(
     pool: &SqlitePool,
     page_id: &str,
+    filters: Option<Vec<BacklinkFilter>>,
+    sort: Option<BacklinkSort>,
     page: &PageRequest,
 ) -> Result<GroupedBacklinkResponse, AppError> {
     // 1. Fetch the page title
@@ -369,13 +377,43 @@ pub async fn eval_unlinked_references(
         });
     }
 
-    // 4. Resolve root pages for all matching IDs
-    let root_map = resolve_root_pages(pool, &matching_ids).await?;
+    // 4. Apply filters (AND semantics at top level) — mirrors
+    //    eval_backlink_query_grouped step #2. Filters are resolved
+    //    concurrently and intersected with the FTS match set.
+    let filtered_matching: FxHashSet<String> = if let Some(ref filter_list) = filters {
+        if filter_list.is_empty() {
+            matching_ids
+        } else {
+            let futures = filter_list.iter().map(|f| resolve_filter(pool, f, 0));
+            let results = try_join_all(futures).await?;
+            let mut result = matching_ids;
+            for set in results {
+                result.retain(|id| set.contains(id));
+            }
+            result
+        }
+    } else {
+        matching_ids
+    };
 
-    // 5. Group blocks by root page, excluding blocks whose root page is the target page
+    if filtered_matching.is_empty() {
+        return Ok(GroupedBacklinkResponse {
+            groups: vec![],
+            next_cursor: None,
+            has_more: false,
+            total_count: 0,
+            filtered_count: 0,
+            truncated,
+        });
+    }
+
+    // 5. Resolve root pages for all filtered IDs
+    let root_map = resolve_root_pages(pool, &filtered_matching).await?;
+
+    // 6. Group blocks by root page, excluding blocks whose root page is the target page
     let mut page_groups: std::collections::HashMap<String, (Option<String>, Vec<String>)> =
         std::collections::HashMap::new();
-    for block_id_item in &matching_ids {
+    for block_id_item in &filtered_matching {
         if let Some((root_page_id, page_title)) = root_map.get(block_id_item) {
             // Exclude self-references
             if root_page_id == page_id {
@@ -389,10 +427,12 @@ pub async fn eval_unlinked_references(
         }
     }
 
+    // `total_count` and `filtered_count` reflect the post-filter,
+    // post-self-reference-exclusion count (AGENTS.md "Backend Patterns" #4).
     let filtered_count = page_groups.values().map(|(_, blocks)| blocks.len()).sum();
     let total_count = filtered_count;
 
-    // 6. Sort groups alphabetically by page_title (None sorts last)
+    // 7. Sort groups alphabetically by page_title (None sorts last)
     let mut group_list: Vec<(String, Option<String>, Vec<String>)> = page_groups
         .into_iter()
         .map(|(pid, (title, blocks))| (pid, title, blocks))
@@ -408,7 +448,7 @@ pub async fn eval_unlinked_references(
         }
     });
 
-    // 7. Apply cursor pagination on groups
+    // 8. Apply cursor pagination on groups
     let start_after = page.after.as_ref().map(|c| c.id.as_str());
     let groups_after_cursor: Vec<&(String, Option<String>, Vec<String>)> =
         if let Some(after_id) = start_after {
@@ -444,12 +484,17 @@ pub async fn eval_unlinked_references(
         });
     }
 
-    // 8. Fetch full BlockRow data for all blocks in one batch
-    let all_block_ids: Vec<String> = actual_groups
+    // 9. Sort all block IDs across groups by the user-specified sort, then distribute.
+    //    Mirrors eval_backlink_query_grouped step #7 — default to Created Asc (ULID order).
+    let sort = sort.unwrap_or(BacklinkSort::Created { dir: SortDir::Asc });
+    let all_block_ids_set: FxHashSet<String> = actual_groups
         .iter()
         .flat_map(|(_, _, block_ids_in_group)| block_ids_in_group.iter().cloned())
         .collect();
-    let all_ids_vec: Vec<&str> = all_block_ids.iter().map(String::as_str).collect();
+    let sorted_all = sort_ids(pool, &all_block_ids_set, &sort).await?;
+
+    // 10. Fetch full BlockRow data for all blocks in one batch
+    let all_ids_vec: Vec<&str> = sorted_all.iter().map(String::as_str).collect();
     let fetched_rows = if all_ids_vec.is_empty() {
         vec![]
     } else {
@@ -475,12 +520,25 @@ pub async fn eval_unlinked_references(
     let row_map: std::collections::HashMap<&str, &BlockRow> =
         fetched_rows.iter().map(|r| (r.id.as_str(), r)).collect();
 
-    // 9. Distribute fetched rows back into groups
+    // Build a position map from sorted order
+    let sort_order: std::collections::HashMap<&str, usize> = sorted_all
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.as_str(), i))
+        .collect();
+
+    // 11. Distribute fetched rows back into groups, maintaining sort order
     let mut groups: Vec<BacklinkGroup> = Vec::with_capacity(actual_groups.len());
     for (group_page_id, page_title, block_ids_in_group) in &actual_groups {
-        let block_rows: Vec<BlockRow> = block_ids_in_group
+        let mut blocks: Vec<(&str, usize)> = block_ids_in_group
             .iter()
-            .filter_map(|bid| row_map.get(bid.as_str()).map(|r| (*r).clone()))
+            .filter_map(|bid| sort_order.get(bid.as_str()).map(|&pos| (bid.as_str(), pos)))
+            .collect();
+        blocks.sort_by_key(|&(_, pos)| pos);
+
+        let block_rows: Vec<BlockRow> = blocks
+            .iter()
+            .filter_map(|&(bid, _)| row_map.get(bid).map(|r| (*r).clone()))
             .collect();
 
         groups.push(BacklinkGroup {
@@ -490,7 +548,7 @@ pub async fn eval_unlinked_references(
         });
     }
 
-    // 10. Build cursor from last group's page_id if has_more
+    // 12. Build cursor from last group's page_id if has_more
     let next_cursor = if has_more {
         let last = actual_groups.last().expect("has_more implies non-empty");
         Some(

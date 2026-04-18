@@ -273,7 +273,6 @@ pub fn run() {
         // Link metadata (UX-165)
         commands::fetch_link_metadata,
         commands::get_link_metadata,
-        commands::clear_link_metadata_auth,
     ]);
 
     let mut tauri_builder = tauri::Builder::default()
@@ -705,7 +704,6 @@ mod specta_tests {
             // Link metadata (UX-165)
             crate::commands::fetch_link_metadata,
             crate::commands::get_link_metadata,
-            crate::commands::clear_link_metadata_auth,
         ])
     }
 

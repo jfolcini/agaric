@@ -42,6 +42,7 @@ import type { BlockRow } from '../lib/tauri'
 import { createBlock, listBlocks, resolvePageByAlias } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
 import { LoadMoreButton } from './LoadMoreButton'
+import { ViewHeader } from './ViewHeader'
 
 type SortOption = 'alphabetical' | 'recent' | 'created'
 
@@ -303,87 +304,88 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
   return (
     <div className="page-browser space-y-4">
-      <div
-        className="sticky top-0 z-10 bg-background isolate -mx-4 px-4 md:-mx-6 md:px-6 pb-4 border-b border-border/40 space-y-2"
-        style={{ backgroundColor: 'var(--background, #fff)' }}
-      >
-        {/* Create page form */}
-        <form
-          ref={formRef}
-          onSubmit={(e) => {
-            e.preventDefault()
-            handleCreatePage()
-          }}
-          className="flex flex-col sm:flex-row sm:items-center gap-2"
-        >
-          <Label htmlFor="new-page-name" className="sr-only">
-            {t('pageBrowser.createPageInputLabel')}
-          </Label>
-          <Input
-            ref={newPageInputRef}
-            id="new-page-name"
-            value={newPageName}
-            onChange={(e) => setNewPageName(e.target.value)}
-            placeholder={t('pageBrowser.newPagePlaceholder')}
-            className="flex-1"
-          />
-          <Button type="submit" variant="outline" disabled={isCreating || !newPageName.trim()}>
-            {isCreating ? <Spinner /> : <Plus className="h-4 w-4" />}
-            {t('pageBrowser.newPage')}
-          </Button>
-        </form>
-
-        {/* Search/filter input + sort dropdown */}
-        {pages.length > 0 && (
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1">
-              <Search
-                className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
-                aria-hidden="true"
-              />
-              <Input
-                value={filterText}
-                onChange={(e) => setFilterText(e.target.value)}
-                placeholder={t('pageBrowser.searchPlaceholder')}
-                className="pl-8"
-                aria-label={t('pageBrowser.searchPlaceholder')}
-              />
-            </div>
-            <Select value={sortOption} onValueChange={(v) => handleSortChange(v as SortOption)}>
-              <SelectTrigger
-                size="sm"
-                className="w-auto min-w-[7rem]"
-                aria-label={t('pageBrowser.sortLabel')}
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="alphabetical">{t('pageBrowser.sortAlphabetical')}</SelectItem>
-                <SelectItem value="recent">{t('pageBrowser.sortRecent')}</SelectItem>
-                <SelectItem value="created">{t('pageBrowser.sortCreated')}</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button
-              variant={showStarredOnly ? 'default' : 'ghost'}
-              size="icon"
-              onClick={() => setShowStarredOnly((prev) => !prev)}
-              aria-label={showStarredOnly ? t('pageBrowser.showAll') : t('pageBrowser.showStarred')}
-              aria-pressed={showStarredOnly}
-              className="relative shrink-0"
-            >
-              <Star className="h-4 w-4" fill={showStarredOnly ? 'currentColor' : 'none'} />
-              {starredCount > 0 && (
-                <Badge
-                  variant="secondary"
-                  className="starred-count absolute -top-1.5 -right-1.5 h-4 min-w-[1rem] px-1 text-xs"
-                >
-                  {starredCount}
-                </Badge>
-              )}
+      <ViewHeader>
+        <div className="page-browser-header space-y-2">
+          {/* Create page form */}
+          <form
+            ref={formRef}
+            onSubmit={(e) => {
+              e.preventDefault()
+              handleCreatePage()
+            }}
+            className="flex flex-col sm:flex-row sm:items-center gap-2"
+          >
+            <Label htmlFor="new-page-name" className="sr-only">
+              {t('pageBrowser.createPageInputLabel')}
+            </Label>
+            <Input
+              ref={newPageInputRef}
+              id="new-page-name"
+              value={newPageName}
+              onChange={(e) => setNewPageName(e.target.value)}
+              placeholder={t('pageBrowser.newPagePlaceholder')}
+              className="flex-1"
+            />
+            <Button type="submit" variant="outline" disabled={isCreating || !newPageName.trim()}>
+              {isCreating ? <Spinner /> : <Plus className="h-4 w-4" />}
+              {t('pageBrowser.newPage')}
             </Button>
-          </div>
-        )}
-      </div>
+          </form>
+
+          {/* Search/filter input + sort dropdown */}
+          {pages.length > 0 && (
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search
+                  className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                <Input
+                  value={filterText}
+                  onChange={(e) => setFilterText(e.target.value)}
+                  placeholder={t('pageBrowser.searchPlaceholder')}
+                  className="pl-8"
+                  aria-label={t('pageBrowser.searchPlaceholder')}
+                />
+              </div>
+              <Select value={sortOption} onValueChange={(v) => handleSortChange(v as SortOption)}>
+                <SelectTrigger
+                  size="sm"
+                  className="w-auto min-w-[7rem]"
+                  aria-label={t('pageBrowser.sortLabel')}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="alphabetical">{t('pageBrowser.sortAlphabetical')}</SelectItem>
+                  <SelectItem value="recent">{t('pageBrowser.sortRecent')}</SelectItem>
+                  <SelectItem value="created">{t('pageBrowser.sortCreated')}</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                variant={showStarredOnly ? 'default' : 'ghost'}
+                size="icon"
+                onClick={() => setShowStarredOnly((prev) => !prev)}
+                aria-label={
+                  showStarredOnly ? t('pageBrowser.showAll') : t('pageBrowser.showStarred')
+                }
+                aria-pressed={showStarredOnly}
+                className="relative shrink-0"
+              >
+                <Star className="h-4 w-4" fill={showStarredOnly ? 'currentColor' : 'none'} />
+                {starredCount > 0 && (
+                  <Badge
+                    variant="secondary"
+                    className="starred-count absolute -top-1.5 -right-1.5 h-4 min-w-[1rem] px-1 text-xs"
+                  >
+                    {starredCount}
+                  </Badge>
+                )}
+              </Button>
+            </div>
+          )}
+        </div>
+      </ViewHeader>
 
       {loading && pages.length === 0 && (
         <div aria-busy="true">
