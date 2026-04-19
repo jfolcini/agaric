@@ -1357,7 +1357,7 @@ identical UI.
 **DB path:** `/data/data/com.agaric.app/notes.db` (via `app.path().app_data_dir()`). Same
 SQLite WAL mode, same pool configuration, same migrations.
 
-**SDK requirements:** Min SDK 24, Target SDK 36, NDK 27.
+**SDK requirements:** Min SDK 30 (Android 11, Sep 2020), Target SDK 36, NDK 27, Java/Kotlin target 17.
 
 ### Status
 

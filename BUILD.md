@@ -99,8 +99,13 @@ export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
 First-time Android setup:
 
 ```bash
-# Initialize Tauri Android project (only needed once)
+# Initialize Tauri Android project (only needed once; regenerates src-tauri/gen/android/)
 cargo tauri android init
+
+# Apply our platform-baseline overrides (minSdk 24 -> 30, jvmTarget 1.8 -> 17).
+# `src-tauri/gen/android/` is gitignored because Tauri regenerates it, so these
+# overrides live in a post-init script that is idempotent — safe to re-run.
+bash scripts/patch-android-build.sh
 
 # Create an emulator AVD
 sdkmanager "system-images;android-34;google_apis;x86_64"
@@ -348,9 +353,10 @@ adb logcat -s RustStdoutStderr:V
 | Property | Value |
 | -------- | ----- |
 | Package ID | `com.agaric.app` |
-| Min SDK | 24 (Android 7.0) |
+| Min SDK | 30 (Android 11, Sep 2020) |
 | Target SDK | 36 |
 | NDK | 27 |
+| Java / Kotlin target | 17 |
 | Debug APK size | ~400 MB (unstripped symbols) |
 | Release APK size | ~24 MB (R8 minified) |
 | ProGuard | Configured and verified working |

@@ -232,7 +232,7 @@ Baseline performance at 100K blocks (established by benchmarks):
 - **Status:** Both debug and release APKs build, install, and launch successfully.
 - **Release APK:** ~24 MB (vs ~400 MB debug). ProGuard/R8 minification works — keep rules verified.
 - **Generated project:** `src-tauri/gen/android/`
-- **Min SDK:** 24, **Target SDK:** 36, **NDK:** 27
+- **Min SDK:** 30 (Android 11, Sep 2020), **Target SDK:** 36, **NDK:** 27, **Java/Kotlin target:** 17
 - **Emulator AVD:** `spike_test` (x86_64, API 34) — start with `emulator -avd spike_test -gpu host &`
 - **DB path:** `/data/data/com.agaric.app/notes.db` (via `app.path().app_data_dir()`)
 - **Known issues:** See REVIEW-LATER.md for open items (deferred by design).

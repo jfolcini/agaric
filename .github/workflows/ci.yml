@@ -223,6 +223,16 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --locked
 
+      - name: Initialize Tauri Android project
+        # Tauri re-generates src-tauri/gen/android/ on first build, but doing
+        # it explicitly here gives the patch step below a stable target file.
+        run: cargo tauri android init
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+
+      - name: Apply platform-baseline overrides (minSdk 30, jvmTarget 17)
+        run: bash scripts/patch-android-build.sh
+
       - name: Build Android APK (x86_64 debug)
         run: cargo tauri android build --target x86_64 --debug
         env:
