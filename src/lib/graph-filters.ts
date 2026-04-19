@@ -20,8 +20,6 @@
  * - `tag` with an empty `tagIds` array is treated as a no-op.
  */
 
-import { getPriorityLevels } from './priority-levels'
-
 /**
  * Minimum set of node fields needed to evaluate every filter dimension.
  *
@@ -172,16 +170,7 @@ export const GRAPH_STATUS_VALUES = ['TODO', 'DOING', 'DONE', 'CANCELLED'] as con
 
 /**
  * Default allowed priority values — kept for back-compat with tests and
- * code paths that don't yet read the dynamic set. UX-201b exposes the
- * live user-configured list via `getGraphPriorityValues()`.
+ * code paths that don't yet read the dynamic set. UX-201b callers now read
+ * the live user-configured list via `getPriorityLevels()` directly.
  */
 export const GRAPH_PRIORITY_VALUES = ['1', '2', '3'] as const
-
-/**
- * Returns the active priority values for the Graph filter (UX-201b).
- * Reads the user-configured priority levels; callers that need to
- * re-render on change should subscribe via `usePriorityLevels()`.
- */
-export function getGraphPriorityValues(): readonly string[] {
-  return getPriorityLevels()
-}

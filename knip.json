@@ -3,7 +3,7 @@
   "entry": ["src/App.tsx"],
   "project": ["src/**/*.{ts,tsx}"],
   "ignore": ["src/lib/bindings.ts", "src/lib/tauri.ts", "src/vitest-axe.d.ts"],
-  "ignoreDependencies": ["tailwindcss"],
+  "ignoreDependencies": ["tailwindcss", "markdownlint-cli2"],
   "ignoreBinaries": [
     "ISC",
     "Apache-2.0",
