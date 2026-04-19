@@ -62,7 +62,7 @@ specta-typescript = "0.0.9"
 tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
 rustc-hash = "2.1.2"
 diffy = "0.4.2"
-similar = "2"
+similar = "3"
 zstd = "0.13"
 ciborium = "0.2"
 tracing = { version = "0.1.44", features = ["attributes"] }
@@ -74,7 +74,7 @@ rustls = { version = "0.23", default-features = false, features = ["std", "tls12
 tokio-rustls = "0.26"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 rcgen = "0.14"
-mdns-sd = "0.18"
+mdns-sd = "0.19"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 hkdf = "0.12"
 sha2 = "0.10"
