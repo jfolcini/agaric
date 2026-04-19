@@ -659,6 +659,136 @@ describe('StaticBlock', () => {
     })
   })
 
+  // -- TEST-4c: role="button" div (non-nested interactive elements) -----------
+  //
+  // StaticBlock's outer element is a <div role="button"> rather than a native
+  // <button> so it can contain nested interactive children (QueryResult's
+  // chevron toggle and edit-query pencil) without producing invalid HTML
+  // ("<button> cannot be a descendant of <button>").
+
+  describe('TEST-4c: role="button" div focus model', () => {
+    it('outer focusable element is a <div>, not a <button>', () => {
+      render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
+      const outer = screen.getByRole('button', { name: 'Edit block' })
+      expect(outer.tagName).toBe('DIV')
+      expect(outer.getAttribute('role')).toBe('button')
+      expect(outer.getAttribute('tabindex')).toBe('0')
+    })
+
+    it('outer element has no nested <button> descendants for plain content', () => {
+      const { container } = render(
+        <StaticBlock blockId="B1" content="Hello world" onFocus={vi.fn()} />,
+      )
+      const outer = screen.getByRole('button', { name: 'Edit block' })
+      // The outer itself is a div — any nested <button> is a nesting violation.
+      expect(outer.tagName).toBe('DIV')
+      const nestedButtons = outer.querySelectorAll('button')
+      expect(nestedButtons.length).toBe(0)
+      // Full-container sanity check: no element is both a <button> element AND
+      // a descendant of another <button> element.
+      const allButtons = container.querySelectorAll('button')
+      for (const btn of allButtons) {
+        expect(btn.parentElement?.closest('button')).toBeNull()
+      }
+    })
+
+    it('pressing Enter on the outer element calls onFocus', async () => {
+      const onFocus = vi.fn()
+      const user = userEvent.setup()
+      render(<StaticBlock blockId="B1" content="Hello" onFocus={onFocus} />)
+
+      const outer = screen.getByRole('button', { name: 'Edit block' })
+      outer.focus()
+      expect(outer).toHaveFocus()
+
+      await user.keyboard('{Enter}')
+      expect(onFocus).toHaveBeenCalledWith('B1')
+      expect(onFocus).toHaveBeenCalledTimes(1)
+    })
+
+    it('pressing Space on the outer element calls onFocus and prevents default', () => {
+      const onFocus = vi.fn()
+      render(<StaticBlock blockId="B1" content="Hello" onFocus={onFocus} />)
+
+      const outer = screen.getByRole('button', { name: 'Edit block' })
+      const event = fireEvent.keyDown(outer, { key: ' ', code: 'Space' })
+      // fireEvent.keyDown returns true if event was not canceled; we expect
+      // preventDefault to have fired (page should not scroll on Space).
+      expect(event).toBe(false)
+      expect(onFocus).toHaveBeenCalledWith('B1')
+    })
+
+    it('Ctrl+Enter on the outer element triggers onSelect toggle (not onFocus)', async () => {
+      const onFocus = vi.fn()
+      const onSelect = vi.fn()
+      const user = userEvent.setup()
+      render(<StaticBlock blockId="B1" content="Hello" onFocus={onFocus} onSelect={onSelect} />)
+
+      const outer = screen.getByRole('button', { name: 'Edit block' })
+      outer.focus()
+      await user.keyboard('{Control>}{Enter}{/Control}')
+      expect(onSelect).toHaveBeenCalledWith('B1', 'toggle')
+      expect(onFocus).not.toHaveBeenCalled()
+    })
+
+    it('Shift+Enter on the outer element triggers onSelect range (not onFocus)', async () => {
+      const onFocus = vi.fn()
+      const onSelect = vi.fn()
+      const user = userEvent.setup()
+      render(<StaticBlock blockId="B1" content="Hello" onFocus={onFocus} onSelect={onSelect} />)
+
+      const outer = screen.getByRole('button', { name: 'Edit block' })
+      outer.focus()
+      await user.keyboard('{Shift>}{Enter}{/Shift}')
+      expect(onSelect).toHaveBeenCalledWith('B1', 'range')
+      expect(onFocus).not.toHaveBeenCalled()
+    })
+
+    it('keydown bubbling from a nested element does NOT trigger outer onFocus', () => {
+      // Reproduce the inner-button bubble scenario: a keydown event whose
+      // target is a descendant element must not call the outer's onFocus
+      // handler. The guard is `e.target === e.currentTarget` in handleOuterKeyDown.
+      const onFocus = vi.fn()
+      const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={onFocus} />)
+      const outer = screen.getByRole('button', { name: 'Edit block' })
+
+      // Simulate a keydown targeted at an inner span (the richContent node),
+      // bubbling up to the outer div. This mirrors the QueryResult chevron
+      // button case where Enter on the inner real <button> bubbles up here.
+      const inner = outer.querySelector('span') ?? container.querySelector('span')
+      expect(inner).not.toBeNull()
+      fireEvent.keyDown(inner as Element, { key: 'Enter', bubbles: true })
+      expect(onFocus).not.toHaveBeenCalled()
+    })
+
+    it('query-block variant is also a <div role="button"> with no nested button-in-button', () => {
+      // Query blocks render QueryResult inside the outer focusable element.
+      // QueryResult renders its own real <button>s (chevron toggle). Since the
+      // outer is now a <div>, these inner <button>s are valid HTML.
+      const { container } = render(
+        <StaticBlock blockId="B1" content="{{query type:tag expr:project}}" onFocus={vi.fn()} />,
+      )
+      const outer = container.querySelector('[data-testid="block-static"]')
+      expect(outer).not.toBeNull()
+      expect(outer?.tagName).toBe('DIV')
+      expect(outer?.getAttribute('role')).toBe('button')
+      // Sanity: any <button> in the subtree must not have another <button>
+      // ancestor (no button-in-button).
+      const allButtons = container.querySelectorAll('button')
+      for (const btn of allButtons) {
+        expect(btn.parentElement?.closest('button')).toBeNull()
+      }
+    })
+
+    it('has no a11y violations with role="button" div (plain content)', async () => {
+      const { container } = render(
+        <StaticBlock blockId="B1" content="Plain content" onFocus={vi.fn()} />,
+      )
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
   // -- Attachment inline rendering --------------------------------------------
 
   describe('attachment rendering', () => {

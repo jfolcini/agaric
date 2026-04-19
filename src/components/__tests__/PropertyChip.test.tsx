@@ -50,7 +50,7 @@ describe('PropertyChip', () => {
     expect(keySpan.className).toContain('opacity-60')
   })
 
-  it('has no a11y violations', async () => {
+  it('has no a11y violations (default, non-interactive)', async () => {
     const { container } = render(<PropertyChip propKey="effort" value="2h" />)
 
     await waitFor(async () => {
@@ -59,34 +59,66 @@ describe('PropertyChip', () => {
     })
   })
 
-  it('renders as button when onClick is provided', () => {
+  it('has no a11y violations (both zones interactive)', async () => {
+    const { container } = render(
+      <PropertyChip propKey="effort" value="2h" onClick={() => {}} onKeyClick={() => {}} />,
+    )
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  it('root is a non-button <div role="group"> (TEST-4b)', () => {
     const { container } = render(<PropertyChip propKey="effort" value="2h" onClick={() => {}} />)
 
     const chip = container.querySelector('.property-chip')
-    expect(chip).toBeInTheDocument()
-    expect(chip?.tagName.toLowerCase()).toBe('button')
+    expect(chip?.tagName.toLowerCase()).toBe('div')
+    expect(chip).toHaveAttribute('role', 'group')
   })
 
-  it('renders as button even without onClick', () => {
+  it('renders the value as a button when onClick is provided', () => {
+    render(<PropertyChip propKey="effort" value="2h" onClick={() => {}} />)
+
+    const valueButton = screen.getByRole('button', { name: 'Effort: 2h' })
+    expect(valueButton.tagName.toLowerCase()).toBe('button')
+    expect(valueButton.textContent).toBe('2h')
+  })
+
+  it('renders the value as a static span when onClick is not provided', () => {
     const { container } = render(<PropertyChip propKey="effort" value="2h" />)
 
-    const chip = container.querySelector('.property-chip')
-    expect(chip?.tagName.toLowerCase()).toBe('button')
+    // No value-zone button exists without onClick
+    expect(screen.queryByRole('button', { name: 'Effort: 2h' })).not.toBeInTheDocument()
+    const valueSpan = container.querySelector('.property-chip-value')
+    expect(valueSpan?.tagName.toLowerCase()).toBe('span')
+    expect(valueSpan?.textContent).toBe('2h')
   })
 
-  it('calls onClick when clicked', async () => {
+  it('renders no nested <button> elements (TEST-4b)', () => {
+    const { container } = render(
+      <PropertyChip propKey="effort" value="2h" onClick={() => {}} onKeyClick={() => {}} />,
+    )
+
+    for (const button of container.querySelectorAll('button')) {
+      expect(button.querySelector('button')).toBeNull()
+    }
+  })
+
+  it('calls onClick when the value zone is clicked', async () => {
     const user = userEvent.setup()
     const handleClick = vi.fn()
 
     render(<PropertyChip propKey="effort" value="2h" onClick={handleClick} />)
 
-    const chip = screen.getByRole('button')
-    await user.click(chip)
+    const valueButton = screen.getByRole('button', { name: 'Effort: 2h' })
+    await user.click(valueButton)
 
     expect(handleClick).toHaveBeenCalledOnce()
   })
 
-  it('adds hover styles only when onClick is provided', () => {
+  it('adds hover styles on the wrapper only when onClick is provided', () => {
     const { container: withClick } = render(
       <PropertyChip propKey="effort" value="2h" onClick={() => {}} />,
     )
@@ -95,13 +127,13 @@ describe('PropertyChip', () => {
     const chipWithClick = withClick.querySelector('.property-chip')
     const chipWithoutClick = withoutClick.querySelector('.property-chip')
 
-    expect(chipWithClick?.className).toContain('cursor-pointer')
     expect(chipWithClick?.className).toContain('hover:bg-accent/50')
-    expect(chipWithoutClick?.className).not.toContain('cursor-pointer')
+    expect(chipWithClick?.className).toContain('active:bg-accent/70')
     expect(chipWithoutClick?.className).not.toContain('hover:bg-accent/50')
+    expect(chipWithoutClick?.className).not.toContain('active:bg-accent/70')
   })
 
-  it('key label calls onKeyClick when clicked', async () => {
+  it('fires only onKeyClick when the key label is clicked (event isolation)', async () => {
     const user = userEvent.setup()
     const handleKeyClick = vi.fn()
     const handleClick = vi.fn()
@@ -115,12 +147,33 @@ describe('PropertyChip', () => {
       />,
     )
 
-    const keyLabel = screen.getByText('Effort:')
-    await user.click(keyLabel)
+    const keyButton = screen.getByRole('button', { name: /Edit property/ })
+    await user.click(keyButton)
 
     expect(handleKeyClick).toHaveBeenCalledOnce()
-    // onClick should NOT be called because onKeyClick stops propagation
+    // Sibling buttons inside a non-interactive wrapper — no bubble to value handler.
     expect(handleClick).not.toHaveBeenCalled()
+  })
+
+  it('fires only onClick when the value zone is clicked (event isolation)', async () => {
+    const user = userEvent.setup()
+    const handleKeyClick = vi.fn()
+    const handleClick = vi.fn()
+
+    render(
+      <PropertyChip
+        propKey="effort"
+        value="2h"
+        onClick={handleClick}
+        onKeyClick={handleKeyClick}
+      />,
+    )
+
+    const valueButton = screen.getByRole('button', { name: 'Effort: 2h' })
+    await user.click(valueButton)
+
+    expect(handleClick).toHaveBeenCalledOnce()
+    expect(handleKeyClick).not.toHaveBeenCalled()
   })
 
   it('key label has hover:underline class when onKeyClick is provided', () => {
@@ -176,35 +229,39 @@ describe('PropertyChip', () => {
     expect(keyLabel?.querySelector('svg')).toBeNull()
   })
 
-  it('outer button has aria-label when onClick is provided (B-19)', () => {
-    const { container } = render(<PropertyChip propKey="effort" value="2h" onClick={() => {}} />)
+  it('wrapper always has aria-label summarising the chip (B-19)', () => {
+    // Non-interactive chip — the group label still describes the key/value
+    // pair for assistive tech that walks groupings.
+    const { container: nonInteractive } = render(<PropertyChip propKey="effort" value="2h" />)
+    const chipNonInteractive = nonInteractive.querySelector('.property-chip')
+    expect(chipNonInteractive).toHaveAttribute('aria-label', 'Effort: 2h')
 
-    const chip = container.querySelector('.property-chip')
-    expect(chip).toHaveAttribute('aria-label', 'Effort: 2h')
+    // Interactive chip — same grouping label.
+    const { container: interactive } = render(
+      <PropertyChip propKey="effort" value="2h" onClick={() => {}} />,
+    )
+    const chipInteractive = interactive.querySelector('.property-chip')
+    expect(chipInteractive).toHaveAttribute('aria-label', 'Effort: 2h')
   })
 
-  it('outer button has no aria-label when onClick is not provided (B-19)', () => {
+  it('wrapper shows a focus ring when either inner button has focus (UX-209)', () => {
     const { container } = render(<PropertyChip propKey="effort" value="2h" />)
 
     const chip = container.querySelector('.property-chip')
-    expect(chip).not.toHaveAttribute('aria-label')
+    // Wrapper carries the focus-within ring so tabbing into either sibling
+    // button lights up the whole pill — no double rings on individual buttons.
+    expect(chip?.className).toContain('focus-within:ring-[3px]')
+    expect(chip?.className).toContain('focus-within:ring-ring/50')
   })
 
-  it('outer button has normalized focus-visible ring classes (UX-209)', () => {
-    const { container } = render(<PropertyChip propKey="effort" value="2h" />)
+  it('inner buttons do not paint their own focus-visible ring (avoids double ring)', () => {
+    render(<PropertyChip propKey="effort" value="2h" onClick={() => {}} onKeyClick={() => {}} />)
 
-    const chip = container.querySelector('.property-chip')
-    expect(chip?.className).toContain('focus-visible:ring-[3px]')
-    expect(chip?.className).toContain('focus-visible:ring-ring/50')
-    expect(chip?.className).toContain('focus-visible:outline-hidden')
-  })
-
-  it('key label button has normalized focus-visible ring classes (UX-209)', () => {
-    render(<PropertyChip propKey="effort" value="2h" onKeyClick={() => {}} />)
-
-    const keyLabel = screen.getByText('Effort:')
-    expect(keyLabel.className).toContain('focus-visible:ring-[3px]')
-    expect(keyLabel.className).toContain('focus-visible:ring-ring/50')
-    expect(keyLabel.className).toContain('focus-visible:outline-hidden')
+    const keyButton = screen.getByRole('button', { name: /Edit property/ })
+    const valueButton = screen.getByRole('button', { name: 'Effort: 2h' })
+    expect(keyButton.className).not.toContain('focus-visible:ring-[3px]')
+    expect(keyButton.className).toContain('focus-visible:outline-hidden')
+    expect(valueButton.className).not.toContain('focus-visible:ring-[3px]')
+    expect(valueButton.className).toContain('focus-visible:outline-hidden')
   })
 })

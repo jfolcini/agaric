@@ -28,7 +28,10 @@ vi.mock('../EditableBlock', () => ({
   ),
 }))
 
-// Mock PropertyChip with a simple rendering that passes through onClick and onKeyClick
+// Mock PropertyChip — mirrors the TEST-4b shape: non-button wrapper with a
+// single inner key button. `onClick` rides on the wrapper so the existing
+// tests that fire `user.click(getByTestId('property-chip-…'))` still trigger
+// the value-edit flow without producing a nested `<button>`.
 vi.mock('../PropertyChip', () => ({
   PropertyChip: (props: {
     propKey: string
@@ -36,11 +39,15 @@ vi.mock('../PropertyChip', () => ({
     onClick?: () => void
     onKeyClick?: () => void
   }) => (
-    <button
-      type="button"
+    // biome-ignore lint/a11y/useSemanticElements: mirrors PropertyChip's production role="group" — see TEST-4b.
+    <div
       data-testid={`property-chip-${props.propKey}`}
       className="property-chip"
+      role="group"
       onClick={props.onClick}
+      onKeyDown={(e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' || e.key === ' ') props.onClick?.()
+      }}
     >
       <button
         data-testid={`property-key-${props.propKey}`}
@@ -53,7 +60,7 @@ vi.mock('../PropertyChip', () => ({
         {props.propKey}:
       </button>
       <span>{props.value}</span>
-    </button>
+    </div>
   ),
 }))
 

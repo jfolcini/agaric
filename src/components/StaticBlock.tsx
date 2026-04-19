@@ -147,16 +147,64 @@ function StaticBlockInner({
     setPdfViewerOpen(true)
   }, [])
 
+  // Keyboard handler for the outer role="button" div: a native <button> fires
+  // its onClick on Enter *and* Space automatically, but a div with role="button"
+  // does not — it only fires on mouse click. We replicate that native behaviour
+  // manually here.
+  //
+  // The `e.target === e.currentTarget` guard prevents the outer focus handler
+  // from hijacking Enter/Space when focus is on a nested real <button>
+  // (QueryResult's chevron toggle, edit-query pencil, etc). A keydown on an
+  // inner button bubbles up; without this guard Enter on the chevron would
+  // both toggle the chevron AND refocus the whole block into the editor.
+  const handleOuterKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (e.target !== e.currentTarget) return
+      if (e.key !== 'Enter' && e.key !== ' ') return
+      // preventDefault is load-bearing for Space (suppresses page scroll on a
+      // role=button) and harmless for Enter (the block isn't inside a form,
+      // so there's nothing to submit).
+      e.preventDefault()
+      if ((e.ctrlKey || e.metaKey) && onSelect) {
+        onSelect(blockId, 'toggle')
+      } else if (e.shiftKey && onSelect) {
+        onSelect(blockId, 'range')
+      } else {
+        onFocus(blockId)
+      }
+    },
+    [blockId, onFocus, onSelect],
+  )
+
+  const handleOuterClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if ((e.ctrlKey || e.metaKey) && onSelect) {
+        e.preventDefault()
+        onSelect(blockId, 'toggle')
+      } else if (e.shiftKey && onSelect) {
+        e.preventDefault()
+        onSelect(blockId, 'range')
+      } else {
+        onFocus(blockId)
+      }
+    },
+    [blockId, onFocus, onSelect],
+  )
+
   // Detect {{query ...}} blocks and render QueryResult instead of the text
   if (content?.startsWith('{{query ') && content.endsWith('}}')) {
     const expression = content.slice(8, -2).trim()
     return (
-      <button
-        type="button"
-        className="block-static w-full min-h-[1.75rem] rounded-md text-left text-sm"
+      // biome-ignore lint/a11y/useSemanticElements: outer must be a div so inner QueryResult <button>s (chevron, edit pencil) are valid HTML — nested <button> is invalid DOM. See TEST-4c.
+      <div
+        role="button"
+        tabIndex={0}
+        className="block-static w-full min-h-[1.75rem] rounded-md text-left text-sm focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden [@media(pointer:coarse)]:min-h-[2.75rem]"
         data-testid="block-static"
         data-block-id={blockId}
-        onClick={() => onFocus(blockId)}
+        aria-label={t('block.editLabel')}
+        onClick={handleOuterClick}
+        onKeyDown={handleOuterKeyDown}
       >
         <QueryResult
           expression={expression}
@@ -164,14 +212,16 @@ function StaticBlockInner({
           onNavigate={onNavigate ? (pageId) => onNavigate(pageId) : undefined}
           resolveBlockTitle={resolveBlockTitle}
         />
-      </button>
+      </div>
     )
   }
 
   return (
     <>
-      <button
-        type="button"
+      {/* biome-ignore lint/a11y/useSemanticElements: outer must be a div so nested interactive children (QueryResult buttons, attachment open buttons) are valid HTML — native <button> cannot contain a <button> descendant. Keyboard semantics are replicated via handleOuterKeyDown. See TEST-4c. */}
+      <div
+        role="button"
+        tabIndex={0}
         className={cn(
           'block-static w-full min-h-[1.75rem] cursor-text rounded-md px-3 py-1 text-left text-sm transition-colors hover:bg-accent/50 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden [@media(pointer:coarse)]:min-h-[2.75rem]',
           isSelected && 'ring-2 ring-primary/50 bg-primary/5',
@@ -179,24 +229,15 @@ function StaticBlockInner({
         data-testid="block-static"
         data-block-id={blockId}
         aria-label={t('block.editLabel')}
-        onClick={(e) => {
-          if ((e.ctrlKey || e.metaKey) && onSelect) {
-            e.preventDefault()
-            onSelect(blockId, 'toggle')
-          } else if (e.shiftKey && onSelect) {
-            e.preventDefault()
-            onSelect(blockId, 'range')
-          } else {
-            onFocus(blockId)
-          }
-        }}
+        onClick={handleOuterClick}
+        onKeyDown={handleOuterKeyDown}
       >
         {richContent ?? (
           <span className="block-placeholder text-muted-foreground italic">
             {t('block.emptyPlaceholder')}
           </span>
         )}
-      </button>
+      </div>
       {hasAttachments && (
         <AttachmentRenderer
           blockId={blockId}

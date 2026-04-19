@@ -1,5 +1,91 @@
 # Session Log
 
+## Session 427 — TEST-4b + TEST-4c: nested-button HTML-semantic cluster resolved (2026-04-19)
+
+**2 REVIEW-LATER items fully resolved. Open items 19 → 17. TEST-4 category now fully resolved** (TEST-4a in session 423, TEST-4d in session 424, TEST-4b + TEST-4c here — the shared "Vitest stderr warning floor" preamble is removed with no sub-items remaining).
+
+User asked to follow `PROMPT.md` again. Picked the two remaining nested-button fixes. Both had recorded design alternatives in REVIEW-LATER — orchestrator committed to Option A upfront for both (per the spec's own recommendation for TEST-4c; consistent with the two-real-buttons UX for TEST-4b). Two parallel build subagents + pipelined review subagents, no worktrees.
+
+### Resolved items
+
+- **TEST-4b** — PropertyChip nested-button restructure via Option A (split container). Outer `<button>` replaced with `<div role="group" aria-label={chipLabel}>`; value zone becomes a conditional `<button>` when `onClick` provided (else `<span>`); key zone stays conditional `<button>`/`<span>` on `onKeyClick`. The wrapper carries `focus-within:ring-[3px] focus-within:ring-ring/50` so tabbing into either inner button lights the whole pill; individual inner buttons carry `focus-visible:outline-hidden` only (no double ring). The `e.stopPropagation()` shim in the key-click handler was removed — sibling buttons no longer need it. The `.property-chip-value` test hook was added as a stable selector for the value span (when non-interactive). Both consumer test mocks (`BlockInlineControls.test.tsx`, `SortableBlock.test.tsx`) were rewritten to mirror production shape — `nested-interactive: { enabled: false }` axe-rule suppression removed from BlockInlineControls' overflow test (no longer needed). Two new event-isolation tests assert clicking one zone does NOT fire the other zone's handler. A no-nested-buttons assertion (`container.querySelectorAll('button').forEach(b => expect(b.querySelector('button')).toBeNull())`) provides regression safety.
+
+- **TEST-4c** — StaticBlock → QueryResult nested-button resolution via Option A (StaticBlock as `<div role="button" tabIndex={0}>`). Both code paths (query-block branch + normal branch) migrated. Inline `onClick` arrow handler extracted to `handleOuterClick = useCallback(...)` shared by both branches. New `handleOuterKeyDown = useCallback(...)` replicates native button keyboard semantics: Enter fires the focus handler, Space fires the focus handler AND calls `preventDefault()` to suppress page-scroll, Ctrl/Meta+Enter routes to `onSelect('toggle')`, Shift+Enter routes to `onSelect('range')`. The `e.target === e.currentTarget` guard prevents bubbled keydown from nested children (QueryResult's chevron toggle, edit-query pencil) from hijacking the outer handler — without this guard, pressing Enter on the chevron would both toggle it AND refocus the whole block into the editor. 9 new tests cover tag-check, no-nested-buttons DOM-validity, Enter/Space firing, Ctrl/Shift modifier routing, keydown-bubbling guard, query-block variant, axe audit. Playwright smoke (`e2e/smoke.spec.ts` + `e2e/editor-lifecycle.spec.ts` — the primary coverage per the spec) passes 13/13 under `--workers=1` (CI config).
+
+**Helper decision (TEST-4c):** the Enter/Space keyboard handler pattern was inlined rather than extracted to `src/lib/a11y.ts` because it currently appears exactly once in the repo (grep `role="button"` returned zero existing sites). Per the spec's "only if the pattern shows up more than once" guidance, inlining is the right call. If a second site appears later, promote then.
+
+### Reviewer findings applied inline
+
+The TEST-4c reviewer surfaced two findings during the pipelined review. Orchestrator applied both inline rather than round-tripping to the builder:
+
+1. **CRITICAL** — Query-block branch at `src/components/StaticBlock.tsx:202` was missing `[@media(pointer:coarse)]:min-h-[2.75rem]` touch-target class. This was a **pre-existing** a11y gap (the query-block branch lacked it even before TEST-4c's change — confirmed by `git show HEAD:src/components/StaticBlock.tsx`), but the reviewer flagged it during the pass and it's a 1-token fix. Added the class.
+2. **MINOR** — The comment on `preventDefault()` said "Space on a role=button must not scroll the page", but the code also preventDefaults on Enter. Clarified the comment to explain that `preventDefault()` is load-bearing for Space (suppresses page scroll) and harmless for Enter (block isn't inside a form, nothing to submit).
+
+### Verification
+
+- **Rust full suite:** `cargo nextest run -p agaric` — 2172/2172 pass (unchanged; this session is frontend-only).
+- **Frontend full suite:** `npx vitest run` — 7340/7340 pass (+12 over last session: 9 new PropertyChip tests + 9 new StaticBlock tests, with 6 net after consolidation and factor updates).
+- **Targeted:** StaticBlock.test.tsx 105/105, PropertyChip.test.tsx 25/25, BlockInlineControls.test.tsx 62/62, SortableBlock.test.tsx 185/185, QueryResult.test.tsx 73/73 (not touched, verification only).
+- **Playwright smoke + editor-lifecycle** under `--workers=1`: 13/13 pass.
+- **Stderr regression:** `grep -c "<button> cannot be a descendant of <button>" /tmp/vitest-full.stderr` = **0**. `grep -c "validateDOMNesting"` = **0**. The whole nested-button warning class is gone.
+- **prek `run --all-files`:** 24/24.
+- **`cargo clippy --all-targets -- -D warnings`:** clean.
+- **No `.sqlx/` cache regen, no bindings regen** — no SQL / Tauri-IPC type changes.
+
+### Pipeline
+
+2 parallel background build subagents + 2 pipelined parallel review subagents.
+
+**Same-file non-collision:** Both subagents wrote to `REVIEW-LATER.md`. TEST-4b's subagent decremented 19 → 18 and explicitly noted "TEST-4c content untouched to avoid merge conflicts with the parallel subagent". TEST-4c's subagent wrote to `StaticBlock.tsx` and `StaticBlock.test.tsx` only — no REVIEW-LATER edit. Orchestrator did the final REVIEW-LATER 18 → 17 (TEST-4c removal + preamble cleanup + "Previously resolved" 330+ → 332+) at end-of-session.
+
+**Review-pipeline value proven again:** the TEST-4c reviewer caught two sibling / clarity findings that the builder missed. The critical one (missing touch-target on query-block variant) was a pre-existing gap, but the reviewer's pass surfaced it while the diff was still hot. Applied inline by the orchestrator — 2-line fix + 1 comment update.
+
+### Architectural stability
+
+Both changes stay strictly within existing abstractions:
+
+- **TEST-4b:** swaps an HTML element (button → div with role=group) and restructures children. Zero new abstractions. Existing `focus-within:ring-*` CSS primitive + sibling-button HTML pattern are both standard.
+- **TEST-4c:** swaps an HTML element (button → div with role=button + tabIndex + onKeyDown). Two `biome-ignore lint/a11y/useSemanticElements` suppressions with explanatory comments that name the TEST-4c rationale. Every other behaviour (click, aria-label, data-testid, data-block-id, focus ring, hover, selection ring, touch target, Ctrl/Shift click modifiers, cursor style) is preserved verbatim.
+
+Zero new ops, tables, stores, hooks, or sync messages. Zero new Rust dependencies. Zero new Tauri plugins. Zero new i18n keys beyond what's already there.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src/components/PropertyChip.tsx` | TEST-4b: outer `<button>` → `<div role="group" aria-label>`, sibling inner buttons with `focus-visible:outline-hidden`, wrapper carries `focus-within:ring-*`. Removed `e.stopPropagation()` shim. |
+| `src/components/__tests__/PropertyChip.test.tsx` | TEST-4b: rewritten — structure assertions, 2 event-isolation tests, no-nested-buttons regression lock, axe on interactive + non-interactive configs. 25 tests. |
+| `src/components/__tests__/BlockInlineControls.test.tsx` | TEST-4b: PropertyChip mock rewritten to match production shape. Removed `nested-interactive: { enabled: false }` axe-rule suppression. |
+| `src/components/__tests__/SortableBlock.test.tsx` | TEST-4b: PropertyChip mock rewritten to match production shape. |
+| `src/components/StaticBlock.tsx` | TEST-4c: both branches (query + normal) → `<div role="button" tabIndex={0}>`. New `handleOuterClick` + `handleOuterKeyDown` useCallbacks. `e.target === e.currentTarget` bubbling guard. Query-block variant gains the touch-target class (orchestrator fix from reviewer finding). `preventDefault` comment clarified. |
+| `src/components/__tests__/StaticBlock.test.tsx` | TEST-4c: 9 new tests under `TEST-4c: role="button" div focus model` describe block. No existing tests needed modification. |
+| `REVIEW-LATER.md` | Remove TEST-4b + TEST-4c table rows + detail sections. Remove the now-empty TEST-4 shared preamble (`Vitest stderr warning floor — shared context for TEST-4c`) — no sub-items remain. Summary 19 → 17 (TEST-4b subagent took 19 → 18; orchestrator 18 → 17). "Previously resolved" 330+ → 332+. Session count 115 → 116. |
+
+### Review findings summary
+
+- **TEST-4b reviewer (APPROVED, no findings)** — all 9 checks pass. Structure correct, accessibility complete, event isolation locked in by 2 new tests, nested-button regression guarded, consumer mocks mirror production, visual integrity preserved, stderr clean, scope tight, verification run matches builder's reported counts.
+- **TEST-4c reviewer (APPROVED with 2 findings, applied inline by orchestrator)** — checks 1-8 + 10 pass; check 9 (Playwright) builder-verified at 13/13. Findings: (1) touch-target class missing from query-block branch (pre-existing gap, applied fix inline); (2) preventDefault-comment-vs-code inconsistency (applied comment clarification inline).
+
+### Non-goals / scope discipline
+
+- Did NOT touch `QueryResult.tsx` — its existing inner `<button>` elements (chevron toggle, edit pencil) already have `e.stopPropagation()` per TEST-4c reviewer Check 4.
+- Did NOT extract the Enter/Space keyboard pattern to `src/lib/a11y.ts` — single site, inline is right per the spec.
+- Did NOT add any `waitFor` / timeout changes to tests beyond what was already established in session 425.
+- Did NOT revisit the `BacklinkFilterBuilder` pre-existing flake observed once in TEST-4c's full-suite run — it's the TEST-3-family flake that session 425 partially addressed; remains in the known-flake zone documented in `src/__tests__/AGENTS.md`.
+- Did NOT touch FEAT-4, TEST-1a/b/c/d, MAINT-79/83/84, PUB-* — those are next-batch candidates.
+
+### Post-session state
+
+- REVIEW-LATER: 17 open items (1 FEAT + 3 MAINT + 3 PERF + 4 TEST + 6 PUB). The TEST-4 category is now fully resolved — all 4 sub-items (a / b / c / d) closed across sessions 423, 424, 427.
+- Next batch candidates:
+  - **TEST-1a** (M) — E2E systemic fixes (mock reset + expect.timeout bump + exact-match audit). Prerequisite for TEST-1b / c / d. ~3 h estimated.
+  - **MAINT-79** (S) — Android `jni` 0.21 → 0.22. Compile-driven, single-site; full verification needs emulator.
+  - **MAINT-83** (S–M) — Android Gradle 9.0 compat. Investigation-first.
+  - **MAINT-84** (S) — Android `minSdk` 30 → 34. Needs user approval before merge.
+  - **FEAT-4** (L) — MCP server. Too big for a single-session autonomous pickup.
+  - **PERF-19 / 20 / 23** — deliberate non-fixes per their own decisions; skip unless scope triggers.
+  - **PUB-1 / 2 / 3 / 5 / 6 / 7** — publish-prep, blocked on user timing decision.
+
 ## Session 426 — FEAT-5 + PERF-24 + MAINT-86 (2026-04-19)
 
 **3 REVIEW-LATER items fully resolved. Open items 22 → 19.** New user-facing capability (bug-report dialog). 94 % bundle-size reduction (1876 kB → 112 kB entry chunk). Dead-code cleanup with regression tests locked in.

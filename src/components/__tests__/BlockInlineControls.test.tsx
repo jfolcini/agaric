@@ -60,6 +60,10 @@ vi.mock('@/components/ui/chevron-toggle', () => ({
   ),
 }))
 
+// PropertyChip mock — mirrors the TEST-4b shape: a non-button wrapper with
+// two sibling buttons. We attach onClick to the wrapper (not a hidden third
+// button) so `user.click(getByTestId('property-chip-${key}'))` still
+// exercises the value-edit path without reintroducing nested buttons.
 vi.mock('../PropertyChip', () => ({
   PropertyChip: (props: {
     propKey: string
@@ -67,11 +71,15 @@ vi.mock('../PropertyChip', () => ({
     onClick?: () => void
     onKeyClick?: () => void
   }) => (
-    <button
-      type="button"
+    // biome-ignore lint/a11y/useSemanticElements: mirrors PropertyChip's production role="group" — see TEST-4b.
+    <div
       data-testid={`property-chip-${props.propKey}`}
       className="property-chip"
+      role="group"
       onClick={props.onClick}
+      onKeyDown={(e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' || e.key === ' ') props.onClick?.()
+      }}
     >
       <button
         data-testid={`property-key-${props.propKey}`}
@@ -84,7 +92,7 @@ vi.mock('../PropertyChip', () => ({
         {props.propKey}:
       </button>
       <span>{props.value}</span>
-    </button>
+    </div>
   ),
 }))
 
@@ -511,13 +519,7 @@ describe('BlockInlineControls', () => {
     it('has no a11y violations when overflow button is rendered', async () => {
       const { container } = renderControls(makeProps({ filteredProperties: fourProps }))
       await waitFor(async () => {
-        // The test-file-level PropertyChip mock nests a <button> inside a <button>
-        // (to exercise both onClick + onKeyClick paths) which trips the
-        // `nested-interactive` rule. That is unrelated to the overflow button
-        // under test — disable just that rule so we still validate the rest.
-        const results = await axe(container, {
-          rules: { 'nested-interactive': { enabled: false } },
-        })
+        const results = await axe(container)
         expect(results).toHaveNoViolations()
       })
     })
