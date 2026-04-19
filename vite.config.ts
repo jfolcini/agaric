@@ -19,11 +19,14 @@ export default defineConfig({
   envPrefix: ['VITE_', 'TAURI_'],
   build: {
     // Tauri ships WebKitGTK / WebView2 / WKWebView — all current platform
-    // webviews understand ES2022 natively, which sidesteps an esbuild
-    // worker-pipeline bug that mis-transforms destructuring on lower
-    // targets (safari13/14 'Transforming destructuring … is not supported
-    // yet' on discriminated-union narrowing in workers).
-    target: process.env['TAURI_PLATFORM'] === 'windows' ? 'chrome105' : 'es2022',
+    // webviews understand ES2022 natively. Using a single uniform target
+    // across desktop and mobile sidesteps an esbuild worker-pipeline bug
+    // that mis-transforms destructuring on lower targets (safari13/14
+    // 'Transforming destructuring … is not supported yet' on
+    // discriminated-union narrowing in workers). WebView2 on Windows is
+    // Chromium-based and evergreen; `es2022` is a subset it handles
+    // natively, so we don't need the old `chrome105` override.
+    target: 'es2022',
     minify: !process.env['TAURI_DEBUG'] ? 'esbuild' : false,
     sourcemap: !!process.env['TAURI_DEBUG'],
   },
