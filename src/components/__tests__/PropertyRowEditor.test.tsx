@@ -17,8 +17,9 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { __resetPriorityLevelsForTests, getPriorityLevels } from '../../lib/priority-levels'
 import type { PropertyDefinition, PropertyRow } from '../../lib/tauri'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -69,6 +70,11 @@ function makeDef(key: string, valueType: string, options?: string): PropertyDefi
 
 beforeEach(() => {
   vi.clearAllMocks()
+  __resetPriorityLevelsForTests()
+})
+
+afterEach(() => {
+  __resetPriorityLevelsForTests()
 })
 
 describe('PropertyRowEditor rendering', () => {
@@ -921,6 +927,66 @@ describe('PropertyRowEditor ref picker', () => {
 
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // UX-201b: saving options on the `priority` definition must refresh the
+  // shared priority-levels cache from the block-level editor too.
+  describe('priority level refresh (UX-201b)', () => {
+    it('updates getPriorityLevels() after saving new priority options', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce(makeDef('priority', 'select', '["1","2","3","4"]'))
+
+      render(
+        <PropertyRowEditor
+          blockId="BLOCK_1"
+          prop={makeProp('priority', { value_text: '1' })}
+          def={makeDef('priority', 'select', '["1","2","3"]')}
+          onSave={vi.fn()}
+        />,
+      )
+
+      await user.click(
+        screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'priority' })),
+      )
+
+      const input = screen.getByLabelText(t('pageProperty.newOptionLabel'))
+      await user.type(input, '4')
+      await user.click(screen.getByLabelText(t('pageProperty.addOptionLabel')))
+      await user.click(screen.getByRole('button', { name: t('pageProperty.saveOptionsButton') }))
+
+      await waitFor(() => {
+        expect(getPriorityLevels()).toEqual(['1', '2', '3', '4'])
+      })
+    })
+
+    it('does not refresh priority levels when editing a non-priority key', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce(makeDef('stage', 'select', '["x","y","z"]'))
+
+      render(
+        <PropertyRowEditor
+          blockId="BLOCK_1"
+          prop={makeProp('stage', { value_text: 'x' })}
+          def={makeDef('stage', 'select', '["x","y"]')}
+          onSave={vi.fn()}
+        />,
+      )
+
+      await user.click(screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })))
+
+      const input = screen.getByLabelText(t('pageProperty.newOptionLabel'))
+      await user.type(input, 'z')
+      await user.click(screen.getByLabelText(t('pageProperty.addOptionLabel')))
+      await user.click(screen.getByRole('button', { name: t('pageProperty.saveOptionsButton') }))
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('update_property_def_options', {
+          key: 'stage',
+          options: '["x","y","z"]',
+        })
+      })
+      expect(getPriorityLevels()).toEqual(['1', '2', '3'])
     })
   })
 })

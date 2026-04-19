@@ -1,12 +1,22 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { AgendaFilterDimension } from '../filter-dimension-metadata'
 import {
   ALL_DIMENSIONS,
   DIMENSION_OPTIONS,
   dimensionLabel,
+  getPriorityChoices,
   getTaskStates,
   TASK_STATES,
 } from '../filter-dimension-metadata'
+import { __resetPriorityLevelsForTests, setPriorityLevels } from '../priority-levels'
+
+beforeEach(() => {
+  __resetPriorityLevelsForTests()
+})
+
+afterEach(() => {
+  __resetPriorityLevelsForTests()
+})
 
 describe('filter-dimension-metadata', () => {
   // -----------------------------------------------------------------------
@@ -57,8 +67,25 @@ describe('filter-dimension-metadata', () => {
       expect(choices).toEqual(['TODO', 'DOING', 'CANCELLED', 'DONE'])
     })
 
-    it('priority choices are fixed strings', () => {
-      expect(DIMENSION_OPTIONS.priority.choices).toEqual(['1', '2', '3'])
+    it('priority choices is a function returning the active levels (UX-201b)', () => {
+      const meta = DIMENSION_OPTIONS.priority
+      expect(typeof meta.choices).toBe('function')
+      const choices = (meta.choices as () => string[])()
+      expect(choices).toEqual(['1', '2', '3'])
+    })
+
+    it('priority choices reflect user-configured levels (UX-201b)', () => {
+      setPriorityLevels(['A', 'B', 'C', 'D'])
+      const choices = (DIMENSION_OPTIONS.priority.choices as () => string[])()
+      expect(choices).toEqual(['A', 'B', 'C', 'D'])
+    })
+
+    it('getPriorityChoices returns a copy (callers cannot mutate the cache)', () => {
+      setPriorityLevels(['A', 'B', 'C'])
+      const copy = getPriorityChoices()
+      copy[0] = 'MUTATED'
+      const second = getPriorityChoices()
+      expect(second[0]).toBe('A')
     })
 
     it('dueDate has 7 choices including Overdue and Next N days', () => {

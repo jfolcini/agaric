@@ -4,10 +4,11 @@
 
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { GraphFilter } from '@/lib/graph-filters'
 import { t } from '@/lib/i18n'
+import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 import { GraphFilterBar } from '../GraphFilterBar'
 
 // Mock Popover to avoid Radix portal / positioning issues in jsdom — matches
@@ -51,6 +52,11 @@ describe('GraphFilterBar', () => {
 
   beforeEach(() => {
     onFiltersChange = vi.fn<(filters: GraphFilter[]) => void>()
+    __resetPriorityLevelsForTests()
+  })
+
+  afterEach(() => {
+    __resetPriorityLevelsForTests()
   })
 
   it('renders the add-filter button and no pills when no filters are active', () => {
@@ -287,6 +293,50 @@ describe('GraphFilterBar', () => {
     await waitFor(async () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // UX-201b: priority filter checkboxes reflect the user-configured level set.
+  describe('priority level subscription (UX-201b)', () => {
+    it('renders priority checkboxes for custom user-configured levels', async () => {
+      setPriorityLevels(['High', 'Mid', 'Low'])
+      const user = userEvent.setup()
+      render(<GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />)
+
+      const dimensionSelect = screen.getByLabelText(t('graph.filter.selectDimension'))
+      await user.selectOptions(dimensionSelect, 'priority')
+
+      // Default-valued i18n fallback is `P${level}` — three custom checkboxes.
+      expect(screen.getByRole('checkbox', { name: 'PHigh' })).toBeInTheDocument()
+      expect(screen.getByRole('checkbox', { name: 'PMid' })).toBeInTheDocument()
+      expect(screen.getByRole('checkbox', { name: 'PLow' })).toBeInTheDocument()
+      // The default '1', '2', '3' checkboxes are not rendered.
+      expect(screen.queryByRole('checkbox', { name: 'P1' })).not.toBeInTheDocument()
+    })
+
+    it('re-renders when levels change via setPriorityLevels after mount', async () => {
+      const user = userEvent.setup()
+      render(<GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />)
+
+      const dimensionSelect = screen.getByLabelText(t('graph.filter.selectDimension'))
+      await user.selectOptions(dimensionSelect, 'priority')
+
+      // Defaults: 1/2/3 resolve through i18n to their translated labels.
+      expect(
+        screen.getByRole('checkbox', { name: t('graph.filter.priorityValue.1') }),
+      ).toBeInTheDocument()
+      // P5 not present yet.
+      expect(screen.queryByRole('checkbox', { name: 'P5' })).not.toBeInTheDocument()
+
+      // Live update — subscribe pushes new levels.
+      setPriorityLevels(['1', '2', '3', '4', '5'])
+
+      // Levels 4 and 5 have no i18n keys, so they render via the `P${level}`
+      // defaultValue fallback.
+      await waitFor(() => {
+        expect(screen.getByRole('checkbox', { name: 'P4' })).toBeInTheDocument()
+        expect(screen.getByRole('checkbox', { name: 'P5' })).toBeInTheDocument()
+      })
     })
   })
 })

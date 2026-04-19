@@ -9,12 +9,13 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
+import { __resetPriorityLevelsForTests, getPriorityLevels } from '@/lib/priority-levels'
 import { PropertyDefinitionsList } from '../PropertyDefinitionsList'
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
@@ -33,6 +34,7 @@ function makePropDef(key: string, valueType = 'text', options: string | null = n
 
 beforeEach(() => {
   vi.clearAllMocks()
+  __resetPriorityLevelsForTests()
 })
 
 describe('PropertyDefinitionsList', () => {
@@ -461,6 +463,65 @@ describe('PropertyDefinitionsList', () => {
       await screen.findByText('Todo State')
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // UX-201b: saving `priority.options` must refresh the shared priority
+  // levels cache so the rest of the app (badge colours, agenda sort,
+  // filter choices) reflects the new set without a reload.
+  describe('priority level refresh (UX-201b)', () => {
+    it('updates getPriorityLevels() when priority options are saved', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce([makePropDef('priority', 'select', '["1","2","3"]')])
+
+      render(<PropertyDefinitionsList />)
+
+      expect(await screen.findByText('Priority')).toBeInTheDocument()
+
+      mockedInvoke.mockResolvedValueOnce(makePropDef('priority', 'select', '["1","2","3","4"]'))
+
+      const editBtn = screen.getByRole('button', { name: /Edit options/i })
+      await user.click(editBtn)
+
+      const optionsInput = screen.getByLabelText(t('propertiesView.optionsJsonLabel'))
+      // fireEvent.change bypasses userEvent's key parsing (which interprets
+      // `[` / `]` as key descriptors).
+      fireEvent.change(optionsInput, { target: { value: '["1","2","3","4"]' } })
+
+      const saveBtn = screen.getByRole('button', { name: /^Save$/i })
+      await user.click(saveBtn)
+
+      await waitFor(() => {
+        expect(getPriorityLevels()).toEqual(['1', '2', '3', '4'])
+      })
+    })
+
+    it('does NOT refresh priority levels when editing a different property', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce([makePropDef('stage', 'select', '["a","b"]')])
+
+      render(<PropertyDefinitionsList />)
+
+      expect(await screen.findByText('Stage')).toBeInTheDocument()
+
+      mockedInvoke.mockResolvedValueOnce(makePropDef('stage', 'select', '["x","y","z"]'))
+
+      const editBtn = screen.getByRole('button', { name: /Edit options/i })
+      await user.click(editBtn)
+
+      const optionsInput = screen.getByLabelText(t('propertiesView.optionsJsonLabel'))
+      fireEvent.change(optionsInput, { target: { value: '["x","y","z"]' } })
+
+      const saveBtn = screen.getByRole('button', { name: /^Save$/i })
+      await user.click(saveBtn)
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('update_property_def_options', {
+          key: 'stage',
+          options: '["x","y","z"]',
+        })
+      })
+      expect(getPriorityLevels()).toEqual(['1', '2', '3'])
     })
   })
 })

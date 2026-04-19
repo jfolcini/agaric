@@ -1,3 +1,4 @@
+import { getPriorityLevels, priorityRank } from './priority-levels'
 import type { BlockRow } from './tauri'
 
 export type AgendaSortBy = 'date' | 'priority' | 'state' | 'page'
@@ -18,14 +19,6 @@ function stateRank(state: string | null): number {
   if (state === 'CANCELLED') return 2
   if (state === 'DONE') return 3
   return 4
-}
-
-/** Priority sort rank: 1=0, 2=1, 3=2, null/other=3 */
-function priorityRank(priority: string | null): number {
-  if (priority === '1') return 0
-  if (priority === '2') return 1
-  if (priority === '3') return 2
-  return 3
 }
 
 /**
@@ -125,26 +118,28 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
 }
 
 /**
- * Group blocks by priority level. Returns groups in order: P1, P2, P3, No priority.
- * Within each group, blocks are sorted by date ASC then state.
+ * Group blocks by priority level. Returns groups in level order
+ * (configurable via UX-201b), with "No priority" last. Within each group,
+ * blocks are sorted by date ASC then state.
+ *
+ * Index-keyed `CLASS_MAP` matches the first three groups to the
+ * destructive / pending / active semantic tokens; level 4+ re-uses the
+ * "active" token (same fallback as `priorityColor`).
  */
 export function groupByPriority(blocks: BlockRow[]): AgendaGroup[] {
-  const buckets = new Map<string, BlockRow[]>([
-    ['P1', []],
-    ['P2', []],
-    ['P3', []],
-    ['No priority', []],
-  ])
+  const levels = getPriorityLevels()
+  const groupLabel = (p: string) => `P${p}`
+  const NO_PRIORITY = 'No priority'
+
+  const buckets = new Map<string, BlockRow[]>()
+  for (const lv of levels) buckets.set(groupLabel(lv), [])
+  buckets.set(NO_PRIORITY, [])
 
   for (const block of blocks) {
     const key =
-      block.priority === '1'
-        ? 'P1'
-        : block.priority === '2'
-          ? 'P2'
-          : block.priority === '3'
-            ? 'P3'
-            : 'No priority'
+      block.priority != null && levels.indexOf(block.priority) >= 0
+        ? groupLabel(block.priority)
+        : NO_PRIORITY
     buckets.get(key)?.push(block)
   }
 
@@ -157,20 +152,27 @@ export function groupByPriority(blocks: BlockRow[]): AgendaGroup[] {
     return stateRank(a.todo_state) - stateRank(b.todo_state)
   }
 
-  const CLASS_MAP: Record<string, string> = {
-    P1: 'text-destructive',
-    P2: 'text-status-pending-foreground',
-    P3: 'text-status-active-foreground',
-    'No priority': 'text-muted-foreground',
+  const INDEX_CLASS = [
+    'text-destructive',
+    'text-status-pending-foreground',
+    'text-status-active-foreground',
+  ] as const
+
+  const classForLevel = (lv: string): string => {
+    const idx = levels.indexOf(lv)
+    if (idx < 0) return ''
+    return INDEX_CLASS[Math.min(idx, INDEX_CLASS.length - 1)] ?? ''
   }
 
   const result: AgendaGroup[] = []
   for (const [label, group] of buckets) {
     if (group.length === 0) continue
+    const className =
+      label === NO_PRIORITY ? 'text-muted-foreground' : classForLevel(label.replace(/^P/, ''))
     result.push({
       label,
       blocks: [...group].sort(sortWithin),
-      className: CLASS_MAP[label],
+      className,
     })
   }
   return result

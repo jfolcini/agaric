@@ -10,6 +10,21 @@ import { PropertyChip } from './PropertyChip'
 import { ChevronToggle } from './ui/chevron-toggle'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
+/**
+ * Display label for a priority level. UX-201b: priority levels are
+ * user-configurable; the label is always `P{level}` so any string key
+ * (numeric or alpha) renders correctly.
+ */
+export function priorityLabel(priority: string): string {
+  return `P${priority}`
+}
+
+/**
+ * Legacy lookup table for the default three levels. Prefer
+ * `priorityLabel(priority)` for new code — it handles arbitrary
+ * user-configured levels (UX-201b), whereas this record only covers
+ * `'1' | '2' | '3'`.
+ */
 export const PRIORITY_DISPLAY: Record<string, string> = { '1': 'P1', '2': 'P2', '3': 'P3' }
 
 export const MONTH_SHORT = [
@@ -242,7 +257,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
               type="button"
               className="priority-badge flex-shrink-0 p-0.5 transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
               data-testid="priority-badge"
-              aria-label={t('block.priorityCycle', { level: PRIORITY_DISPLAY[priority] })}
+              aria-label={t('block.priorityCycle', { level: priorityLabel(priority) })}
               onClick={(e) => {
                 e.stopPropagation()
                 onTogglePriority?.(blockId)
@@ -254,12 +269,12 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
                   priorityColor(priority),
                 )}
               >
-                {PRIORITY_DISPLAY[priority]}
+                {priorityLabel(priority)}
               </span>
             </button>
           </TooltipTrigger>
           <TooltipContent side="bottom" sideOffset={4}>
-            {t('block.priorityTip', { level: PRIORITY_DISPLAY[priority] })}
+            {t('block.priorityTip', { level: priorityLabel(priority) })}
           </TooltipContent>
         </Tooltip>
       )}

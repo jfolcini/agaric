@@ -1,4 +1,5 @@
 import { i18n } from './i18n'
+import { getPriorityLevels } from './priority-levels'
 
 export type AgendaFilterDimension =
   | 'status'
@@ -25,12 +26,21 @@ export function getTaskStates(): string[] {
   return [...TASK_STATES]
 }
 
+/**
+ * Priority filter choices. User-configurable via the `priority` property
+ * definition's options (UX-201b) — returns a fresh copy of the active
+ * levels at call time.
+ */
+export function getPriorityChoices(): string[] {
+  return [...getPriorityLevels()]
+}
+
 export const DIMENSION_OPTIONS: Record<
   AgendaFilterDimension,
   { labelKey: string; choices: string[] | null | (() => string[]) }
 > = {
   status: { labelKey: 'agendaFilter.status', choices: getTaskStates },
-  priority: { labelKey: 'agendaFilter.priority', choices: ['1', '2', '3'] },
+  priority: { labelKey: 'agendaFilter.priority', choices: getPriorityChoices },
   dueDate: {
     labelKey: 'agendaFilter.dueDate',
     choices: [

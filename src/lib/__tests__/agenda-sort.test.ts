@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   groupByDate,
   groupByPage,
@@ -10,7 +10,16 @@ import {
   sortByPriority,
   sortByState,
 } from '../agenda-sort'
+import { __resetPriorityLevelsForTests, setPriorityLevels } from '../priority-levels'
 import type { BlockRow } from '../tauri'
+
+beforeEach(() => {
+  __resetPriorityLevelsForTests()
+})
+
+afterEach(() => {
+  __resetPriorityLevelsForTests()
+})
 
 function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
   return {
@@ -473,5 +482,64 @@ describe('sortByPage', () => {
     const sorted = sortByPage(blocks, pageTitles)
     expect(sorted[0]?.id).toBe('has-page')
     expect(sorted[1]?.id).toBe('no-page')
+  })
+})
+
+// -----------------------------------------------------------------------
+// UX-201b: priority sort / group with user-configured levels.
+// -----------------------------------------------------------------------
+describe('UX-201b: custom priority levels', () => {
+  it('sortByPriority honours extended level set (A > B > C > D)', () => {
+    setPriorityLevels(['A', 'B', 'C', 'D'])
+    const blocks = [
+      makeBlock({ id: 'd', priority: 'D', due_date: '2025-06-10' }),
+      makeBlock({ id: 'a', priority: 'A', due_date: '2025-06-10' }),
+      makeBlock({ id: 'c', priority: 'C', due_date: '2025-06-10' }),
+      makeBlock({ id: 'b', priority: 'B', due_date: '2025-06-10' }),
+      makeBlock({ id: 'n', priority: null, due_date: '2025-06-10' }),
+    ]
+    const sorted = sortByPriority(blocks)
+    expect(sorted.map((x) => x.id)).toEqual(['a', 'b', 'c', 'd', 'n'])
+  })
+
+  it('sortAgendaBlocks tiebreaker uses configured level order', () => {
+    setPriorityLevels(['High', 'Mid', 'Low'])
+    const blocks = [
+      makeBlock({
+        id: 'low',
+        due_date: '2025-06-10',
+        todo_state: 'TODO',
+        priority: 'Low',
+      }),
+      makeBlock({
+        id: 'high',
+        due_date: '2025-06-10',
+        todo_state: 'TODO',
+        priority: 'High',
+      }),
+    ]
+    const sorted = sortAgendaBlocks(blocks)
+    expect(sorted.map((x) => x.id)).toEqual(['high', 'low'])
+  })
+
+  it('groupByPriority produces a group per configured level', () => {
+    setPriorityLevels(['1', '2', '3', '4'])
+    const blocks = [
+      makeBlock({ id: 'p1', priority: '1' }),
+      makeBlock({ id: 'p2', priority: '2' }),
+      makeBlock({ id: 'p3', priority: '3' }),
+      makeBlock({ id: 'p4', priority: '4' }),
+      makeBlock({ id: 'pn', priority: null }),
+    ]
+    const groups = groupByPriority(blocks)
+    expect(groups.map((g) => g.label)).toEqual(['P1', 'P2', 'P3', 'P4', 'No priority'])
+    expect(groups[3]?.blocks[0]?.id).toBe('p4')
+  })
+
+  it('groupByPriority handles alphabetical custom level keys', () => {
+    setPriorityLevels(['A', 'B'])
+    const blocks = [makeBlock({ id: 'a', priority: 'A' }), makeBlock({ id: 'b', priority: 'B' })]
+    const groups = groupByPriority(blocks)
+    expect(groups.map((g) => g.label)).toEqual(['PA', 'PB'])
   })
 })

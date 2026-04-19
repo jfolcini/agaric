@@ -15,8 +15,8 @@ import { Filter, Plus, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { usePriorityLevels } from '@/hooks/usePriorityLevels'
 import {
-  GRAPH_PRIORITY_VALUES,
   GRAPH_STATUS_VALUES,
   type GraphFilter,
   type GraphFilterType,
@@ -90,6 +90,10 @@ function AddFilterForm({
   onCancel,
 }: AddFilterFormProps): React.ReactElement {
   const { t } = useTranslation()
+
+  // UX-201b: subscribe to the user-configured priority levels so the
+  // filter checkbox list reflects the live set without a reload.
+  const priorityLevels = usePriorityLevels()
 
   const [dimension, setDimension] = useState<GraphFilterType | ''>('')
 
@@ -235,7 +239,7 @@ function AddFilterForm({
         <fieldset className="flex flex-col gap-1 border-0 p-0 m-0">
           <legend className="sr-only">{t('graph.filter.priority')}</legend>
           <div className="flex flex-col gap-1">
-            {GRAPH_PRIORITY_VALUES.map((v) => (
+            {priorityLevels.map((v) => (
               <label
                 key={v}
                 className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-muted"
@@ -244,9 +248,9 @@ function AddFilterForm({
                   type="checkbox"
                   checked={priorityValues.includes(v)}
                   onChange={() => setPriorityValues((c) => toggleMultiValue(c, v))}
-                  aria-label={t(`graph.filter.priorityValue.${v}`)}
+                  aria-label={t(`graph.filter.priorityValue.${v}`, { defaultValue: `P${v}` })}
                 />
-                <span>{t(`graph.filter.priorityValue.${v}`)}</span>
+                <span>{t(`graph.filter.priorityValue.${v}`, { defaultValue: `P${v}` })}</span>
               </label>
             ))}
           </div>

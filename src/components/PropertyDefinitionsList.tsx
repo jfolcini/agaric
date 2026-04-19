@@ -25,8 +25,10 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { logger } from '@/lib/logger'
 import { LOCKED_PROPERTY_OPTIONS, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
+import { setPriorityLevels } from '../lib/priority-levels'
 import type { PropertyDefinition } from '../lib/tauri'
 import {
   createPropertyDef,
@@ -114,6 +116,26 @@ export function PropertyDefinitionsList(): React.ReactElement {
         const updated = await updatePropertyDefOptions(key, editOptionsValue)
         setDefinitions((prev) => prev.map((d) => (d.key === key ? updated : d)))
         setEditingOptionsKey(null)
+        // UX-201b: sync the active priority level cache when the user
+        // edits `priority.options`. Other property keys are untouched.
+        if (key === 'priority' && updated.options != null) {
+          try {
+            const parsed: unknown = JSON.parse(updated.options)
+            if (Array.isArray(parsed)) {
+              const levels = parsed.filter((v): v is string => typeof v === 'string')
+              if (levels.length > 0) setPriorityLevels(levels)
+            }
+          } catch (parseErr) {
+            // Server already accepted the payload; the cache just won't
+            // update. Log so silent drift doesn't mask real bugs.
+            logger.warn(
+              'PropertyDefinitionsList',
+              'Could not parse saved priority options after successful update',
+              { options: updated.options },
+              parseErr,
+            )
+          }
+        }
       } catch (err) {
         toast.error(t('property.errorUpdate', { error: String(err) }))
       }

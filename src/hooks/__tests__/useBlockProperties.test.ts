@@ -15,9 +15,10 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 import { announce } from '../../lib/announcer'
+import { __resetPriorityLevelsForTests, setPriorityLevels } from '../../lib/priority-levels'
 import {
   createPageBlockStore,
   PageBlockContext,
@@ -57,6 +58,11 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockedInvoke.mockResolvedValue(undefined)
   pageStore = createPageBlockStore('PAGE_1')
+  __resetPriorityLevelsForTests()
+})
+
+afterEach(() => {
+  __resetPriorityLevelsForTests()
 })
 
 describe('useBlockProperties getTodoState', () => {
@@ -325,6 +331,71 @@ describe('useBlockProperties handleTogglePriority', () => {
     const block2 = pageStore.getState().blocks.find((b) => b.id === 'BLOCK_2')
     expect(block2?.priority).toBe('2')
     expect(block2?.todo_state).toBe('TODO')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// UX-201b: configurable priority cycle
+// ---------------------------------------------------------------------------
+
+describe('useBlockProperties handleTogglePriority — configurable levels (UX-201b)', () => {
+  it('reads the cycle at click time (not at hook mount)', async () => {
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1')] })
+
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
+
+    // Extend the level set AFTER the hook has mounted — the handler must
+    // still pick up the new cycle on the next toggle.
+    setPriorityLevels(['1', '2', '3', '4'])
+
+    await act(async () => {
+      await result.current.handleTogglePriority('BLOCK_1')
+    })
+    expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')?.priority).toBe('1')
+
+    await act(async () => {
+      await result.current.handleTogglePriority('BLOCK_1')
+    })
+    expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')?.priority).toBe('2')
+
+    await act(async () => {
+      await result.current.handleTogglePriority('BLOCK_1')
+    })
+    expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')?.priority).toBe('3')
+
+    await act(async () => {
+      await result.current.handleTogglePriority('BLOCK_1')
+    })
+    // NEW level — previously this would have cycled back to null.
+    expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')?.priority).toBe('4')
+
+    await act(async () => {
+      await result.current.handleTogglePriority('BLOCK_1')
+    })
+    expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')?.priority).toBeNull()
+  })
+
+  it('cycles through custom alphabetical levels', async () => {
+    setPriorityLevels(['High', 'Mid', 'Low'])
+    pageStore.setState({ blocks: [makeBlock('BLOCK_1')] })
+
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
+
+    await act(async () => {
+      await result.current.handleTogglePriority('BLOCK_1')
+    })
+    expect(mockedInvoke).toHaveBeenLastCalledWith('set_priority', {
+      blockId: 'BLOCK_1',
+      level: 'High',
+    })
+
+    await act(async () => {
+      await result.current.handleTogglePriority('BLOCK_1')
+    })
+    expect(mockedInvoke).toHaveBeenLastCalledWith('set_priority', {
+      blockId: 'BLOCK_1',
+      level: 'Mid',
+    })
   })
 })
 

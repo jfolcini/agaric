@@ -30,6 +30,7 @@ import { logger } from '@/lib/logger'
 import { LOCKED_PROPERTY_OPTIONS } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
 import { useDateInput } from '../hooks/useDateInput'
+import { setPriorityLevels } from '../lib/priority-levels'
 import type { BlockRow, PropertyDefinition, PropertyRow } from '../lib/tauri'
 import { listBlocks, setProperty, updatePropertyDefOptions } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
@@ -158,6 +159,12 @@ export function PropertyRowEditor({
       const updatedDef = await updatePropertyDefOptions(def.key, JSON.stringify(editingOptions))
       onDefUpdated?.(updatedDef)
       setEditOptionsOpen(false)
+      // UX-201b: keep the priority-levels cache in sync when editing the
+      // `priority` definition from the block-level editor.
+      if (def.key === 'priority') {
+        const levels = editingOptions.filter((v) => typeof v === 'string' && v.trim() !== '')
+        if (levels.length > 0) setPriorityLevels(levels)
+      }
     } catch (err) {
       logger.error(
         'PropertyRowEditor',

@@ -15,6 +15,7 @@ import { useCallback } from 'react'
 import { toast } from 'sonner'
 import { announce } from '../lib/announcer'
 import { i18n } from '../lib/i18n'
+import { getPriorityCycle } from '../lib/priority-levels'
 import { setPriority as setPriorityCmd, setTodoState as setTodoStateCmd } from '../lib/tauri'
 import { usePageBlockStoreApi } from '../stores/page-blocks'
 import { useUndoStore } from '../stores/undo'
@@ -35,9 +36,6 @@ const STATE_LABELS: Record<string, string> = {
   CANCELLED: 'Cancelled',
   DONE: 'Done',
 }
-
-/** Priority cycle: none -> 1 -> 2 -> 3 -> none. */
-const PRIORITY_CYCLE: readonly (string | null)[] = [null, '1', '2', '3']
 
 export interface UseBlockPropertiesReturn {
   getTodoState: (blockId: string) => string | null
@@ -91,13 +89,19 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
     [pageStore],
   )
 
-  /** Cycle through priority levels: none -> 1 -> 2 -> 3 -> none. */
+  /**
+   * Cycle through priority levels. The cycle is
+   * `[null, ...getPriorityLevels()]` — user-configurable via the
+   * `priority` property definition's options (UX-201b). Called at click
+   * time so the cycle always reflects the current level set.
+   */
   const handleTogglePriority = useCallback(
     async (blockId: string) => {
+      const cycle = getPriorityCycle()
       const current = pageStore.getState().blocks.find((b) => b.id === blockId)?.priority ?? null
-      const currentIdx = PRIORITY_CYCLE.indexOf(current)
-      const nextIdx = (currentIdx + 1) % PRIORITY_CYCLE.length
-      const nextState = PRIORITY_CYCLE[nextIdx] ?? null
+      const currentIdx = cycle.indexOf(current)
+      const nextIdx = (currentIdx + 1) % cycle.length
+      const nextState = cycle[nextIdx] ?? null
 
       // Optimistic update (before IPC) to prevent race on rapid toggles
       pageStore.setState((s) => ({

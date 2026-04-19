@@ -74,7 +74,15 @@ import { formatRelativeTime } from './lib/format-relative-time'
 import { matchesShortcutBinding } from './lib/keyboard-config'
 import { logger } from './lib/logger'
 import { CLOSE_ALL_OVERLAYS_EVENT } from './lib/overlay-events'
-import { createBlock, flushDraft, getConflicts, listBlocks, listDrafts } from './lib/tauri'
+import { setPriorityLevels } from './lib/priority-levels'
+import {
+  createBlock,
+  flushDraft,
+  getConflicts,
+  listBlocks,
+  listDrafts,
+  listPropertyDefs,
+} from './lib/tauri'
 import { cn } from './lib/utils'
 import { type JournalMode, useJournalStore } from './stores/journal'
 import { type PageEntry, selectPageStack, useNavigationStore, type View } from './stores/navigation'
@@ -458,6 +466,50 @@ function App() {
       })
       .catch((err: unknown) => {
         logger.warn('App', 'Failed to list drafts during boot recovery', undefined, err)
+      })
+  }, [])
+
+  // ── Load user-configured priority levels (UX-201b) ────────────────
+  // The `priority` property definition's `options` JSON is the source of
+  // truth for the active level set. Parse defensively — malformed JSON
+  // or a missing definition leaves the default `['1','2','3']` levels in
+  // place.
+  useEffect(() => {
+    listPropertyDefs()
+      .then((defs) => {
+        if (!Array.isArray(defs)) return
+        const priorityDef = defs.find((d) => d.key === 'priority')
+        if (!priorityDef) return
+        if (priorityDef.options == null) return
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(priorityDef.options)
+        } catch (err) {
+          logger.warn(
+            'App',
+            'priority property definition has invalid JSON options',
+            { options: priorityDef.options },
+            err,
+          )
+          return
+        }
+        if (!Array.isArray(parsed)) {
+          logger.warn('App', 'priority property options is not an array', {
+            options: priorityDef.options,
+          })
+          return
+        }
+        const levels = parsed.filter((v): v is string => typeof v === 'string')
+        if (levels.length === 0) return
+        setPriorityLevels(levels)
+      })
+      .catch((err: unknown) => {
+        logger.warn(
+          'App',
+          'Failed to load property definitions for priority levels',
+          undefined,
+          err,
+        )
       })
   }, [])
 

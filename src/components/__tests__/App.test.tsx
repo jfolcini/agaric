@@ -20,6 +20,7 @@ import { announce } from '../../lib/announcer'
 import { t } from '../../lib/i18n'
 import { logger } from '../../lib/logger'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '../../lib/overlay-events'
+import { __resetPriorityLevelsForTests, getPriorityLevels } from '../../lib/priority-levels'
 import { useBootStore } from '../../stores/boot'
 import { useJournalStore } from '../../stores/journal'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
@@ -86,6 +87,9 @@ beforeEach(() => {
 
   // Dismiss onboarding modal so it doesn't block interactions.
   localStorage.setItem('agaric-onboarding-done', 'true')
+
+  // Reset UX-201b priority levels cache between tests.
+  __resetPriorityLevelsForTests()
 
   // Default mock: all invoke calls return an empty page response.
   // This covers: boot store's list_blocks, JournalPage, PageBrowser, TagList, TrashView.
@@ -1484,6 +1488,107 @@ describe('App', () => {
       // exact wrapper structure.
       const position = outlet.compareDocumentPosition(scrollAreaRoot as Node)
       expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    })
+  })
+
+  // UX-201b: on boot, App reads the `priority` property definition's
+  // options JSON and hydrates the shared priority-levels cache so badge
+  // colours / sort / filter choices reflect the user's configured set.
+  describe('priority levels boot load (UX-201b)', () => {
+    it('hydrates getPriorityLevels() from listPropertyDefs on mount', async () => {
+      __resetPriorityLevelsForTests()
+
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_property_defs') {
+          return [
+            {
+              key: 'priority',
+              value_type: 'select',
+              options: '["1","2","3","4"]',
+              created_at: '2025-01-01T00:00:00Z',
+            },
+          ]
+        }
+        return emptyPage
+      })
+
+      render(<App />)
+
+      await waitFor(() => {
+        expect(getPriorityLevels()).toEqual(['1', '2', '3', '4'])
+      })
+    })
+
+    it('keeps defaults when priority definition is missing', async () => {
+      __resetPriorityLevelsForTests()
+
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_property_defs') return []
+        return emptyPage
+      })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+      expect(getPriorityLevels()).toEqual(['1', '2', '3'])
+    })
+
+    it('keeps defaults and logs warn on invalid JSON options', async () => {
+      __resetPriorityLevelsForTests()
+
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_property_defs') {
+          return [
+            {
+              key: 'priority',
+              value_type: 'select',
+              options: 'not-json',
+              created_at: '2025-01-01T00:00:00Z',
+            },
+          ]
+        }
+        return emptyPage
+      })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+          'App',
+          'priority property definition has invalid JSON options',
+          expect.any(Object),
+          expect.any(Error),
+        )
+      })
+      expect(getPriorityLevels()).toEqual(['1', '2', '3'])
+    })
+
+    it('keeps defaults and logs warn when options is not an array', async () => {
+      __resetPriorityLevelsForTests()
+
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_property_defs') {
+          return [
+            {
+              key: 'priority',
+              value_type: 'select',
+              options: '{"x":"y"}',
+              created_at: '2025-01-01T00:00:00Z',
+            },
+          ]
+        }
+        return emptyPage
+      })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+          'App',
+          'priority property options is not an array',
+          expect.any(Object),
+        )
+      })
+      expect(getPriorityLevels()).toEqual(['1', '2', '3'])
     })
   })
 })
