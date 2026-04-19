@@ -70,13 +70,16 @@ Priority badges use semantic tokens (NOT hardcoded Tailwind colors). Use `priori
 
 ### Task Checkbox Colors
 
-File: `src/components/SortableBlock.tsx`
+File: `src/components/BlockInlineControls.tsx` (`TASK_CHECKBOX_STYLES`)
+
+Task checkboxes use semantic tokens (`task-todo`, `task-doing`, `task-cancelled`, `task-done`) — never hardcoded Tailwind colors. The cycle is locked to `none → TODO → DOING → CANCELLED → DONE → none` (UX-201a).
 
 | State | Visual |
 |-------|--------|
 | TODO | Empty square — `border-2 border-muted-foreground` |
-| DOING | Blue dot — `border-blue-500 bg-blue-500/20` |
-| DONE | Green checkmark — `border-green-600 bg-green-600` + white check, block gets `line-through opacity-50` |
+| DOING | Blue dot — `border-task-doing bg-task-doing/20` + inner dot in `bg-task-doing` |
+| CANCELLED | Muted X — `border-task-cancelled bg-task-cancelled/20` + `X` glyph in `text-task-cancelled` (block gets `line-through opacity-50`) |
+| DONE | Green check — `border-task-done bg-task-done` + white check glyph (block gets `line-through opacity-50`) |
 
 ### Alert / Callout Tokens
 
@@ -298,18 +301,24 @@ File: `src/editor/use-block-keyboard.ts`
 
 ### Formatting Shortcuts
 
-File: `src/editor/use-roving-editor.ts` (priority shortcuts), TipTap built-ins (text formatting)
+Files: `src/editor/use-roving-editor.ts` (priority + heading shortcuts), TipTap built-ins (text formatting).
+
+These shortcuts fire when a block editor has focus. The text-formatting ones (Ctrl+B/I/E/K and Ctrl+Shift+C/X/H) are TipTap defaults; the priority, heading, and date shortcuts are wired via `src/lib/keyboard-config.ts`.
 
 | Shortcut | Action |
 |----------|--------|
-| Ctrl+B | Bold |
+| Ctrl+B | Bold (in editor) — **note:** global `Ctrl+B` toggles the sidebar when no editor is focused |
 | Ctrl+I | Italic |
 | Ctrl+E | Inline code |
 | Ctrl+K | Insert/edit external link |
 | Ctrl+Shift+C | Toggle code block |
-| Ctrl+Shift+1 | Set priority A (high) |
-| Ctrl+Shift+2 | Set priority B (medium) |
-| Ctrl+Shift+3 | Set priority C (low) |
+| Ctrl+Shift+X | Toggle strikethrough |
+| Ctrl+Shift+H | Toggle highlight |
+| Ctrl+1 … Ctrl+6 | Set heading level 1 … 6 |
+| Ctrl+Shift+1 | Set priority 1 (high) — default levels; user-configurable via `priority` property definition (UX-201b) |
+| Ctrl+Shift+2 | Set priority 2 (medium) |
+| Ctrl+Shift+3 | Set priority 3 (low) |
+| Ctrl+Shift+D | Open date picker for the focused block |
 
 ### Picker Triggers
 
@@ -333,16 +342,18 @@ File: `src/components/BlockTree.tsx` (`handleSlashCommand`)
 | `/tag` | Insert tag reference `@` |
 | `/code` | Toggle code block |
 | `/quote` | Toggle blockquote |
-| `/table` | Insert 3x3 table with header row |
-| `/query` | Insert query block `{{query ...}}` |
+| `/callout` | Insert callout block — submenu picks variant (`info` / `warning` / `tip` / `error` / `note`) |
+| `/table` | Insert 3×3 table with header row (or `/table NxM` for specific dimensions) |
+| `/numbered-list` | Insert ordered list |
+| `/divider` | Insert horizontal rule |
+| `/query` | Insert query block `{{query …}}` |
 | `/template` | Open template picker |
-| `/repeat-*` | Set repeat pattern (daily, weekly, monthly, etc.) |
-| `/effort-*` | Set effort property (1-5) |
-| `/assignee` | Set assignee property |
-| `/location` | Set location property |
+| `/repeat-*` | Set repeat pattern (daily, weekly, monthly, yearly, `.+` from completion, `++` catch-up, `repeat-remove`, `repeat-until`, `repeat-limit-N`) |
+| `/effort-*` | Set effort property (`15m` / `30m` / `1h` / `2h` / `4h` / `1d`) |
+| `/assignee` | Set assignee property (`me` or custom…) |
+| `/location` | Set location property (`office` / `home` / `remote` / custom…) |
+| `/attach` | Attach file to block |
 | `/h1`–`/h6` | Set heading level |
-| `/strikethrough` | Toggle strikethrough |
-| `/highlight` | Toggle highlight |
 
 **Agent guidance:** Slash commands are the primary way to expose new block-level actions. To add a new one: add an entry to the commands array in `BlockTree.tsx`, handle it in `handleSlashCommand`, add i18n keys under `slash.*`, and update the command count in `BlockTree.test.tsx`.
 
@@ -354,15 +365,16 @@ File: `src/App.tsx` (global keydown handler), `src/components/ui/sidebar.tsx` (C
 |----------|--------|
 | Ctrl+F | Focus search |
 | Ctrl+N | Create new page |
-| Ctrl+B | Toggle sidebar |
+| Ctrl+B | Toggle sidebar (when no editor is focused — inside a focused editor, `Ctrl+B` is Bold) |
 | ? | Show keyboard shortcuts panel |
 | Alt+Left | Previous day/week/month (journal) |
 | Alt+Right | Next day/week/month (journal) |
 | Alt+T | Go to today (journal) |
 | Ctrl+Z | Undo (page-level, outside editor) |
 | Ctrl+Y | Redo (page-level, outside editor) |
+| Ctrl+Shift+D | Open date picker for the focused block |
 | Ctrl+Shift+P | Open block properties drawer |
-| Escape | Close dialog / cancel editing |
+| Escape | Close all overlays (UX-228 — dispatches `CLOSE_ALL_OVERLAYS_EVENT`, closes `KeyboardShortcuts`, `WelcomeModal`, and Radix dialogs/popovers) when pressed outside contentEditable / `INPUT` / `TEXTAREA`; inside the editor, cancels editing / clears selection / zooms out depending on context |
 
 ### History View Shortcuts (inside HistorySheet)
 

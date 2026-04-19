@@ -497,7 +497,7 @@ stripping, export mapping, and a migration audit.
 
 ### Custom serializer
 
-Standalone TypeScript module (`src/editor/markdown-serializer.ts`, ~960 lines) with zero external
+Standalone TypeScript module (`src/editor/markdown-serializer.ts`, ~1140 lines) with zero external
 dependencies. Converts between ProseMirror document nodes and the storage format.
 
 **Serialize (ProseMirror → Markdown):**
@@ -885,10 +885,10 @@ status/priority colors use these tokens — no hardcoded Tailwind colors for sem
 
 ### Tauri command wrappers
 
-`src/lib/tauri.ts` provides 74 type-safe wrappers over auto-generated `bindings.ts`. Handles
+`src/lib/tauri.ts` provides 79 type-safe wrappers over auto-generated `bindings.ts`. Handles
 Tauri 2's requirement for explicit `null` (not `undefined`) on `Option<T>` parameters.
 
-### Extracted hooks (44 in src/hooks/)
+### Extracted hooks (53 in src/hooks/)
 
 BlockTree's concerns are decomposed into focused hooks. Additional hooks extracted from
 component decompositions provide reusable logic across multiple views.
@@ -984,7 +984,7 @@ changes the hook re-fetches page 1 (paginated) or restarts polling.
 - `parse-date.ts` — Date parsing helpers
 - `date-utils.ts` — Date formatting/range helpers (formatCompactDate, getDateRangeForFilter, getTodayString)
 - `open-url.ts` — URL opening utilities
-- `i18n.ts` — i18next setup with ~1,150 translation keys
+- `i18n.ts` — i18next setup with ~1,440 translation keys
 - `utils.ts` — cn() classname utility (clsx + tailwind-merge)
 - `agenda-sort.ts` — Agenda sorting/grouping (sortAgendaBlocks, groupByDate/priority/state)
 - `agenda-filters.ts` — Pure `executeAgendaFilters()` function for client-side agenda filtering
@@ -1007,7 +1007,7 @@ changes the hook re-fetches page 1 (paginated) or restarts polling.
 - `file-utils.ts` — guessMimeType() + extractFileInfo() for file attachments
 - `attachment-utils.ts` — getAssetUrl(), formatSize() for attachment display
 - `toolbar-config.ts` — Toolbar button config arrays + factory functions
-- `keyboard-config.ts` — 40 DEFAULT_SHORTCUTS, localStorage persistence, conflict detection
+- `keyboard-config.ts` — 68 `DEFAULT_SHORTCUTS`, localStorage persistence, conflict detection
 - `logger.ts` — Dual-write logging (console + Rust IPC), stack capture, rate limiting (5/min)
 - `tag-colors.ts` — Tag color assignments
 - `starred-pages.ts` — Starred pages tracking
@@ -1145,7 +1145,7 @@ dispatch after boot (stale-while-revalidate handles it).
 
 ### specta + tauri-specta
 
-All 74 Tauri commands are annotated with `#[specta::specta]`. TypeScript bindings are auto-
+All 80 Tauri commands are annotated with `#[specta::specta]`. TypeScript bindings are auto-
 generated to `src/lib/bindings.ts`. A pre-commit test (`ts_bindings_up_to_date`) fails if the
 committed bindings diverge from the Rust types.
 
@@ -1665,8 +1665,8 @@ architectural changes were required.
 
 | Command | Purpose |
 |---------|---------|
-| `set_todo_state` | Set todo state (null/TODO/DOING/DONE). Recurrence support on done transition: creates sibling with shifted dates, sets `repeat-origin` ref to original block. |
-| `set_priority` | Set priority (null/1/2/3). |
+| `set_todo_state` | Set todo state (null/TODO/DOING/CANCELLED/DONE — locked cycle per UX-201a). Recurrence support on done transition: creates sibling with shifted dates, sets `repeat-origin` ref to original block. |
+| `set_priority` | Set priority. Default levels are `'1' / '2' / '3'`; user-configurable via the `priority` property definition's `options` JSON (UX-201b). `null` clears the priority. |
 | `set_due_date` | Set due date (YYYY-MM-DD or null). |
 | `set_scheduled_date` | Set scheduled date (YYYY-MM-DD or null). |
 
@@ -1838,8 +1838,8 @@ empirically validated through bugs found, fixes applied, and alternatives reject
 - **Use semantic color tokens, not hardcoded Tailwind classes.** `text-status-overdue` not
   `text-red-700`. 14 semantic tokens for status/conflict/priority in light+dark themes.
 - **Focus ring consistency: `ring-[3px] ring-ring/50`** is the standard across Button, Input, and
-  most ui/ primitives. Six outliers remain in `filter-pill.tsx` (line 48) and `sidebar.tsx`
-  (5 menu item locations) that use `ring-2` instead — should be standardized.
+  most ui/ primitives. Five outliers remain in `sidebar.tsx` (5 menu item locations) that use
+  `ring-2` instead — should be standardized.
 
 ### Testing
 
