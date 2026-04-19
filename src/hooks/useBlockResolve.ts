@@ -42,7 +42,7 @@ export interface UseBlockResolveReturn {
   onCreatePage: (label: string) => Promise<string>
   onCreateTag: (name: string) => Promise<string>
   /** Ref to the pages list cache for search. Updated by the preload effect. */
-  pagesListRef: React.MutableRefObject<Array<{ id: string; title: string }>>
+  pagesListRef: React.RefObject<Array<{ id: string; title: string }>>
 }
 
 // ── searchPages strategy helpers ────────────────────────────────────────
@@ -53,7 +53,7 @@ export interface UseBlockResolveReturn {
 // passed in explicitly. Keeping them as free functions (rather than inline
 // closures) makes the dispatcher below a linear, low-complexity sequence.
 
-type PagesListRef = React.MutableRefObject<Array<{ id: string; title: string }>>
+type PagesListRef = React.RefObject<Array<{ id: string; title: string }>>
 
 /** Splits a `parent/child/leaf` title into `{ label: leaf, breadcrumb: 'parent / child' }`. */
 function formatNamespacedLabel(title: string): {

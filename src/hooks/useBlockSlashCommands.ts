@@ -20,7 +20,7 @@
  * command arrays and search helpers are re-exported from this module.
  */
 
-import type { MutableRefObject } from 'react'
+import type { RefObject } from 'react'
 import { useCallback, useRef } from 'react'
 import { toast } from 'sonner'
 import type { StoreApi } from 'zustand'
@@ -70,7 +70,7 @@ export interface UseBlockSlashCommandsParams {
   rootParentId: string | null
   pageStore: StoreApi<PageBlockState>
   rovingEditor: Pick<RovingEditorHandle, 'editor' | 'mount'>
-  datePickerCursorPos: MutableRefObject<number | undefined>
+  datePickerCursorPos: RefObject<number | undefined>
   setDatePickerMode: (mode: DatePickerMode) => void
   setDatePickerOpen: (open: boolean) => void
   blocks: Array<{ id: string; parent_id: string | null; content: string | null }>
@@ -102,7 +102,7 @@ interface SlashCommandContext {
   rootParentId: string | null
   rovingEditor: Pick<RovingEditorHandle, 'editor' | 'mount'>
   pageStore: StoreApi<PageBlockState>
-  datePickerCursorPos: MutableRefObject<number | undefined>
+  datePickerCursorPos: RefObject<number | undefined>
   setDatePickerMode: (mode: DatePickerMode) => void
   setDatePickerOpen: (open: boolean) => void
   t: TFn
@@ -513,7 +513,7 @@ export function useBlockSlashCommands({
 
   // Omitted deps explanation:
   //   - rootParentId, rovingEditor, t: latest values read via *Ref.current (see refs above)
-  //   - datePickerCursorPos: a MutableRefObject, stable for the lifetime of the owner
+  //   - datePickerCursorPos: a RefObject, stable for the lifetime of the owner
   //   - pageStore: a Zustand StoreApi, stable for the lifetime of the owner
   //   - setDatePickerMode, setDatePickerOpen: setter props, treated as stable by callers
   //   - openTemplatePicker: accessed via ref so callers can change `t` without rebuilding

@@ -277,7 +277,7 @@ function SortableBlockInner({
       <div
         ref={(node) => {
           setNodeRef(node)
-          ;(blockRef as React.MutableRefObject<HTMLDivElement | null>).current = node
+          ;(blockRef as React.RefObject<HTMLDivElement | null>).current = node
         }}
         style={style}
         data-block-id={blockId}

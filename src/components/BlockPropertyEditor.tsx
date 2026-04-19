@@ -74,7 +74,9 @@ export function BlockPropertyEditor({
               }}
             >
               <input
-                ref={(el) => el?.focus()}
+                ref={(el) => {
+                  el?.focus()
+                }}
                 type="text"
                 className="rounded border px-2 py-1 text-sm w-full"
                 placeholder={t('block.searchPages')}
@@ -131,7 +133,9 @@ export function BlockPropertyEditor({
             </fieldset>
           ) : (
             <input
-              ref={(el) => el?.focus()}
+              ref={(el) => {
+                el?.focus()
+              }}
               type="text"
               className="rounded border px-2 py-1 text-sm w-32"
               aria-label={t('block.editProperty')}
@@ -163,7 +167,9 @@ export function BlockPropertyEditor({
       {editingKey && (
         <div className="property-key-editor absolute z-50 mt-1 rounded-md border bg-popover p-1 shadow-lg">
           <input
-            ref={(el) => el?.focus()}
+            ref={(el) => {
+              el?.focus()
+            }}
             type="text"
             className="rounded border px-2 py-1 text-sm w-32"
             aria-label={t('block.editProperty')}

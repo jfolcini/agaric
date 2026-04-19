@@ -12,7 +12,7 @@
  * - Heading shortcut Ctrl+1-6
  */
 
-import type { MutableRefObject } from 'react'
+import type { RefObject } from 'react'
 import { useEffect } from 'react'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 import { useBlockStore } from '../stores/blocks'
@@ -33,7 +33,7 @@ export interface UseBlockTreeKeyboardShortcutsOptions {
   rovingEditor: {
     editor: { state: { selection: { $anchor: { pos: number } } } } | null
   }
-  datePickerCursorPos: MutableRefObject<number | undefined>
+  datePickerCursorPos: RefObject<number | undefined>
   setDatePickerMode: (mode: DatePickerMode) => void
   setDatePickerOpen: (open: boolean) => void
   /** Current zoomed-in block id, or null when viewing the page root. */

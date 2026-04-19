@@ -27,7 +27,7 @@ vi.mock('lucide-react', () => ({
 
 import { DependencyIndicator, type DependencyIndicatorProps } from '../DependencyIndicator'
 
-function makeCache(): React.MutableRefObject<Map<string, unknown[]>> {
+function makeCache(): React.RefObject<Map<string, unknown[]>> {
   return { current: new Map() }
 }
 

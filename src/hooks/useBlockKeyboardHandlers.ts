@@ -1,4 +1,4 @@
-import type { MutableRefObject } from 'react'
+import type { RefObject } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 import { logger } from '@/lib/logger'
@@ -21,7 +21,7 @@ export interface UseBlockKeyboardHandlersParams {
   moveUp: (id: string) => Promise<void>
   moveDown: (id: string) => Promise<void>
   createBelow: (afterBlockId: string) => Promise<string | null>
-  justCreatedBlockIds: MutableRefObject<Set<string>>
+  justCreatedBlockIds: RefObject<Set<string>>
   /** Discard any persisted draft for the given block (called on Escape). */
   discardDraft: (blockId: string) => void
   // biome-ignore lint/suspicious/noExplicitAny: TFunction overload set is too complex

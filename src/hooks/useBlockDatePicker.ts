@@ -1,4 +1,4 @@
-import type { MutableRefObject } from 'react'
+import type { RefObject } from 'react'
 import { useCallback, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import type { StoreApi } from 'zustand'
@@ -25,14 +25,14 @@ export interface UseBlockDatePickerParams {
   rootParentId: string | null
   pageStore: StoreApi<PageBlockState>
   rovingEditor: Pick<RovingEditorHandle, 'editor'>
-  pagesListRef: MutableRefObject<Array<{ id: string; title: string }>>
+  pagesListRef: RefObject<Array<{ id: string; title: string }>>
   t: TFn
 }
 
 export interface UseBlockDatePickerReturn {
   datePickerOpen: boolean
   datePickerMode: DatePickerMode
-  datePickerCursorPos: MutableRefObject<number | undefined>
+  datePickerCursorPos: RefObject<number | undefined>
   setDatePickerOpen: (open: boolean) => void
   setDatePickerMode: (mode: DatePickerMode) => void
   handleDatePick: (d: Date) => Promise<void>
@@ -48,7 +48,7 @@ interface DatePickContext {
   rootParentId: string | null
   pageStore: StoreApi<PageBlockState>
   rovingEditor: Pick<RovingEditorHandle, 'editor'>
-  pagesListRef: MutableRefObject<Array<{ id: string; title: string }>>
+  pagesListRef: RefObject<Array<{ id: string; title: string }>>
   t: TFn
   /** ISO date string: YYYY-MM-DD. */
   dateStr: string

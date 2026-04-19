@@ -23,7 +23,7 @@ export interface DependencyIndicatorProps {
   /** Block ID to check for blocked_by property */
   blockId: string
   /** Shared cache so multiple indicators don't re-fetch the same block */
-  propertiesCache: React.MutableRefObject<Map<string, PropertyRow[]>>
+  propertiesCache: React.RefObject<Map<string, PropertyRow[]>>
   /** Additional CSS classes */
   className?: string
 }
