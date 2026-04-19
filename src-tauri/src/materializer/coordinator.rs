@@ -11,7 +11,7 @@ use crate::lifecycle::LifecycleHooks;
 use sqlx::SqlitePool;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 
 #[derive(Clone)]
 pub struct Materializer {
@@ -20,6 +20,15 @@ pub struct Materializer {
     pub(super) shutdown_flag: Arc<AtomicBool>,
     pub(super) metrics: Arc<QueueMetrics>,
     pub(super) reader_pool: SqlitePool,
+    /// Set once the initial background task spawned by [`Materializer::build`]
+    /// has finished populating [`QueueMetrics::cached_block_count`]. Tests
+    /// that want to overwrite `cached_block_count` with a simulated value
+    /// must first await [`Materializer::wait_for_initial_block_count_cache`]
+    /// so the stale writer cannot clobber the simulated value after the
+    /// `.store(…)` call. Production code does not observe this flag; the
+    /// field is cheap (two pointer-sized Arcs per Materializer).
+    pub(super) block_count_cache_ready_flag: Arc<AtomicBool>,
+    pub(super) block_count_cache_ready_notify: Arc<Notify>,
 }
 
 impl Materializer {
@@ -72,6 +81,8 @@ impl Materializer {
         let shutdown_flag = Arc::new(AtomicBool::new(false));
         let metrics = Arc::new(QueueMetrics::default());
         let reader_pool = reader_pool_for_caches;
+        let block_count_cache_ready_flag = Arc::new(AtomicBool::new(false));
+        let block_count_cache_ready_notify = Arc::new(Notify::new());
         {
             let p = write_pool.clone();
             let s = shutdown_flag.clone();
@@ -92,6 +103,8 @@ impl Materializer {
         {
             let p = reader_pool.clone();
             let m = metrics.clone();
+            let flag = block_count_cache_ready_flag.clone();
+            let notify = block_count_cache_ready_notify.clone();
             Self::spawn_task(async move {
                 if let Ok(count) = sqlx::query_scalar::<_, i64>(
                     "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL",
@@ -102,6 +115,15 @@ impl Materializer {
                     #[allow(clippy::cast_sign_loss)]
                     m.cached_block_count.store(count as u64, Ordering::Relaxed);
                 }
+                // Signal completion so tests can observe a deterministic
+                // post-init state. Release-ordering pairs with the Acquire
+                // load in `wait_for_initial_block_count_cache`. The notify
+                // wake is a belt-and-suspenders addition for waiters that
+                // attached before the flag was set; the double-checked
+                // pattern in the waiter handles the race where notify
+                // fires before anyone is waiting.
+                flag.store(true, Ordering::Release);
+                notify.notify_waiters();
             });
         }
         {
@@ -115,6 +137,8 @@ impl Materializer {
             shutdown_flag,
             metrics,
             reader_pool,
+            block_count_cache_ready_flag,
+            block_count_cache_ready_notify,
         }
     }
 
@@ -192,6 +216,41 @@ impl Materializer {
                     .store(count as u64, Ordering::Relaxed);
             }
         });
+    }
+
+    /// Await completion of the one-shot background task spawned in
+    /// [`Materializer::build`] that populates
+    /// [`QueueMetrics::cached_block_count`] from the current DB state.
+    ///
+    /// Tests that want to overwrite `cached_block_count` with a simulated
+    /// value (e.g. to exercise the adaptive FTS-optimize threshold at
+    /// 10 M-block scale without inserting 10 M rows) must call this before
+    /// their `.store(simulated_count, …)`. Otherwise the stale initial
+    /// writer may race with the simulation and clobber the value after it
+    /// has been set, producing a deterministic-in-isolation but
+    /// parallelism-flaky test. See TEST-2 in REVIEW-LATER.md for history.
+    ///
+    /// The method is cheap in the common "already initialized" case — a
+    /// single Acquire atomic load. Production code does not need to call
+    /// this; the helper is `pub` purely so tests in sibling modules can
+    /// use it. Two `Arc`s on the `Materializer` back the signal and are
+    /// negligible cost.
+    pub async fn wait_for_initial_block_count_cache(&self) {
+        // Double-checked pattern: check the flag, construct a Notified
+        // future *before* rechecking so we cannot miss a notification
+        // fired between the two checks, then await. If notify_waiters
+        // ran before we attached a waiter the flag load after the
+        // construction catches it.
+        loop {
+            if self.block_count_cache_ready_flag.load(Ordering::Acquire) {
+                return;
+            }
+            let notified = self.block_count_cache_ready_notify.notified();
+            if self.block_count_cache_ready_flag.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
+        }
     }
 
     pub async fn enqueue_foreground(&self, task: MaterializeTask) -> Result<(), AppError> {

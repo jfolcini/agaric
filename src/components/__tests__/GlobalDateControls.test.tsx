@@ -18,13 +18,18 @@ import { useJournalStore } from '../../stores/journal'
 import { useNavigationStore } from '../../stores/navigation'
 import { GlobalDateControls } from '../JournalPage'
 
-// Mock the Calendar component used by JournalCalendarDropdown
+// Mock the Calendar component used by JournalCalendarDropdown.
+//
+// The Calendar receives react-day-picker props (mode, defaultMonth, weekStartsOn,
+// showWeekNumber, showOutsideDays, selected, modifiers, components, ...) plus our
+// wrapper-level callbacks (onWeekNumberClick, onMonthClick, onSelect). None of
+// those should be forwarded onto a plain <div> — React 19 warns loudly about
+// unrecognized camelCase props ("does not recognize the `weekStartsOn` prop on
+// a DOM element ...") and about unknown event-handler props. We therefore drop
+// the props entirely from the mock: the tests in this file only care that a
+// calendar is rendered, not about its configuration.
 vi.mock('../ui/calendar', () => ({
-  Calendar: (props: Record<string, unknown>) => (
-    <div data-testid="mock-calendar" {...props}>
-      Calendar
-    </div>
-  ),
+  Calendar: () => <div data-testid="mock-calendar">Calendar</div>,
 }))
 
 const mockedInvoke = vi.mocked(invoke)

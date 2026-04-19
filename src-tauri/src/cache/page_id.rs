@@ -24,15 +24,26 @@ pub async fn rebuild_page_ids(pool: &SqlitePool) -> Result<(), AppError> {
 }
 
 async fn rebuild_page_ids_impl(pool: &SqlitePool) -> Result<u64, AppError> {
+    // Invariant #9: recursive CTE over `blocks` must filter `is_conflict = 0`
+    // in both members and bound `depth < 100`. Conflict copies share
+    // `parent_id` with the original and must not be walked through (or the
+    // rebuild would compute a page ancestor via the original's parent chain,
+    // then rewrite `page_id` — which is exactly the bug fixed here). Their
+    // `page_id` is assigned at conflict-creation time and must be preserved
+    // by the rebuild.
     let result = sqlx::query(
-        "WITH RECURSIVE ancestors(block_id, cur_id, cur_type) AS ( \
-             SELECT b.id, b.id, b.block_type FROM blocks b \
+        "WITH RECURSIVE ancestors(block_id, cur_id, cur_type, depth) AS ( \
+             SELECT b.id, b.id, b.block_type, 0 FROM blocks b \
+             WHERE b.is_conflict = 0 \
              UNION ALL \
-             SELECT a.block_id, parent.id, parent.block_type \
+             SELECT a.block_id, parent.id, parent.block_type, a.depth + 1 \
              FROM ancestors a \
              JOIN blocks child ON child.id = a.cur_id \
              JOIN blocks parent ON parent.id = child.parent_id \
              WHERE a.cur_type != 'page' \
+               AND child.is_conflict = 0 \
+               AND parent.is_conflict = 0 \
+               AND a.depth < 100 \
          ), \
          page_ancestors AS ( \
              SELECT block_id, cur_id AS page_id \
@@ -41,7 +52,8 @@ async fn rebuild_page_ids_impl(pool: &SqlitePool) -> Result<u64, AppError> {
          ) \
          UPDATE blocks SET page_id = ( \
              SELECT pa.page_id FROM page_ancestors pa WHERE pa.block_id = blocks.id \
-         )",
+         ) \
+         WHERE is_conflict = 0",
     )
     .execute(pool)
     .await?;

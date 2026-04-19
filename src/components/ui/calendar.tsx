@@ -81,21 +81,32 @@ const Calendar = ({
             const Icon = orientation === 'left' ? ChevronLeft : ChevronRight
             return <Icon className="size-4" {...chevronProps} />
           },
-          // Custom WeekNumber component to make week numbers clickable
+          // Custom WeekNumber component to make week numbers clickable.
+          //
+          // IMPORTANT: react-day-picker's default WeekNumber renders a <th>, and
+          // the parent Week renders a <tr>. If we return a bare <button> here,
+          // the DOM becomes <tr><button>...</button></tr> — which triggers
+          // React 19's "In HTML, <button> cannot be a child of <tr>" hydration
+          // warning. Wrap the interactive element in a <th> so the <tr><th>...
+          // nesting stays valid and forward the week number cell's ARIA /
+          // styling attributes onto the <th> (not the <button>) so voice-over
+          // tools see the table cell correctly.
           ...(onWeekNumberClick
             ? {
-                WeekNumber: ({ children, week }) => {
+                WeekNumber: ({ week, children, ...thProps }) => {
                   const dates = week?.days?.map((d: { date: Date }) => d.date) ?? []
                   const weekNum = typeof children === 'number' ? children : Number(children)
                   return (
-                    <button
-                      type="button"
-                      className="text-[0.7rem] text-muted-foreground w-8 text-center cursor-pointer hover:text-foreground hover:bg-accent rounded-md transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
-                      onClick={() => onWeekNumberClick(weekNum, dates)}
-                      aria-label={i18n.t('journal.goToWeek', { weekNum })}
-                    >
-                      {children}
-                    </button>
+                    <th {...thProps}>
+                      <button
+                        type="button"
+                        className="text-[0.7rem] text-muted-foreground w-8 text-center cursor-pointer hover:text-foreground hover:bg-accent rounded-md transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+                        onClick={() => onWeekNumberClick(weekNum, dates)}
+                        aria-label={i18n.t('journal.goToWeek', { weekNum })}
+                      >
+                        {children}
+                      </button>
+                    </th>
                   )
                 },
               }

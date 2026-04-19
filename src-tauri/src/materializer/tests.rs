@@ -86,6 +86,77 @@ async fn new_creates_materializer_with_functional_queues() {
     );
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// TEST-2: wait_for_initial_block_count_cache
+//
+// Deterministic synchronization point for tests that want to overwrite
+// `cached_block_count` with a simulated value. Verifies:
+// 1. The initial background refresh populates `cached_block_count` from
+//    the real DB state by the time the helper returns.
+// 2. The helper is idempotent — calling it multiple times is safe.
+// 3. After the helper returns, a test store of a simulated value is
+//    durable: no stale writer clobbers it later.
+// ──────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn wait_for_initial_block_count_cache_returns_after_refresh() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_direct(&pool, "COUNT_A", "content", "a").await;
+    insert_block_direct(&pool, "COUNT_B", "content", "b").await;
+    insert_block_direct(&pool, "COUNT_C", "content", "c").await;
+    let mat = Materializer::new(pool.clone());
+
+    // Before the helper returns the count may be 0 (the initial refresh
+    // has not been scheduled yet). After it returns it MUST reflect the
+    // actual DB count.
+    mat.wait_for_initial_block_count_cache().await;
+
+    let cached = mat
+        .metrics()
+        .cached_block_count
+        .load(AtomicOrdering::Relaxed);
+    assert_eq!(
+        cached, 3,
+        "cached block count should equal the actual DB count (3) once the helper returns"
+    );
+
+    // Idempotency: a second call must still return promptly. If we used a
+    // `Notify` without the `AtomicBool` backing flag, a late-attaching
+    // waiter would block forever on the already-consumed notification.
+    mat.wait_for_initial_block_count_cache().await;
+}
+
+#[tokio::test]
+async fn wait_for_initial_block_count_cache_allows_simulated_overwrite() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_direct(&pool, "SIM_A", "content", "a").await;
+    let mat = Materializer::new(pool.clone());
+
+    mat.wait_for_initial_block_count_cache().await;
+
+    // Overwrite with a simulated value. No stale writer should appear
+    // afterwards — this is the core contract the adaptive-FTS-threshold
+    // tests depend on.
+    mat.metrics()
+        .cached_block_count
+        .store(10_000_000, AtomicOrdering::Relaxed);
+
+    // Yield a few times so any late-arriving task would have a chance to
+    // run on the current-thread runtime.
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+
+    let cached = mat
+        .metrics()
+        .cached_block_count
+        .load(AtomicOrdering::Relaxed);
+    assert_eq!(
+        cached, 10_000_000,
+        "simulated count must survive — no stale writer may clobber it after the helper returns"
+    );
+}
+
 /// PERF-24: the lifecycle-aware constructor must produce a fully
 /// functional materializer — it only changes the behaviour of the
 /// internal metrics-snapshot task, not of the main queues.
@@ -2647,20 +2718,13 @@ async fn adaptive_fts_threshold_small_db() {
 
     // The Materializer constructor spawns a background task that reads the
     // actual block count from the DB and writes it to `cached_block_count`.
-    // Wait for that to complete so the test sees a deterministic count, then
-    // verify the threshold = max(500, count/10_000) = 500 still holds for a
-    // small DB.
-    for _ in 0..100 {
-        if mat
-            .metrics()
-            .cached_block_count
-            .load(AtomicOrdering::Relaxed)
-            > 0
-        {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
+    // Wait for that to complete deterministically so the test sees a stable
+    // count, then verify the threshold = max(500, count/10_000) = 500 still
+    // holds for a small DB.
+    //
+    // Previously this was a 1-second polling loop on `> 0`, which raced
+    // under nextest parallelism (TEST-2 in REVIEW-LATER.md).
+    mat.wait_for_initial_block_count_cache().await;
     let cached = mat
         .metrics()
         .cached_block_count
@@ -2720,19 +2784,10 @@ async fn adaptive_fts_threshold_large_corpus() {
 
     // The Materializer constructor spawns a background task that reads the
     // actual block count from the DB and writes it to `cached_block_count`.
-    // Wait for that to complete before storing the simulated value, otherwise
-    // the background write races with our store and clobbers the 10M value.
-    for _ in 0..100 {
-        if mat
-            .metrics()
-            .cached_block_count
-            .load(AtomicOrdering::Relaxed)
-            > 0
-        {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
+    // Wait for that deterministically before simulating the 10M-block
+    // count below — otherwise the stale writer races our `.store(10M)` and
+    // clobbers it with the real count (TEST-2 in REVIEW-LATER.md).
+    mat.wait_for_initial_block_count_cache().await;
 
     // Simulate a 10 M-block corpus.
     // threshold = max(500, 10_000_000 / 10_000) = max(500, 1000) = 1000

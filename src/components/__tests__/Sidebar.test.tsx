@@ -98,19 +98,28 @@ describe('Sidebar', () => {
   it('has no a11y violations in default state', async () => {
     const { container } = renderSidebar()
 
-    await waitFor(async () => {
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
-    })
+    // axe's first call per worker loads rules and can exceed the default 1s
+    // waitFor timeout under full-suite worker contention. 5000ms matches the
+    // precedent in TemplatePicker.test.tsx.
+    await waitFor(
+      async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
   })
 
   it('has no a11y violations when collapsed', async () => {
     const { container } = renderSidebar({ defaultOpen: false })
 
-    await waitFor(async () => {
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
-    })
+    await waitFor(
+      async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
   })
 
   it('renders sidebar trigger button', () => {

@@ -1,5 +1,103 @@
 # Session Log
 
+## Session 424 — TEST-2 (found real invariant-#9 product bug) + TEST-3 + TEST-4d (2026-04-19)
+
+**2 REVIEW-LATER items fully resolved + 1 re-scoped + 1 successor filed. Open items 25 → 24. Real product bug fixed as a side effect of flake investigation.**
+
+User asked to follow `PROMPT.md` again — another parallel-subagent batch. Picked a 3-item test-suite health cluster: TEST-2 (Rust nextest flakes), TEST-3 (Vitest frontend flakes), TEST-4d (react-day-picker upstream investigation). All three touched disjoint files — 3 parallel subagents, no worktrees.
+
+### Real product bug (TEST-2 headline finding)
+
+**`rebuild_page_ids_impl` CTE violated AGENTS.md invariant #9** — `src-tauri/src/cache/page_id.rs:26`. The background page-id rebuild walked the block parent chain in a recursive CTE that did NOT filter `is_conflict = 0` and had no `depth < 100` bound. When `move_block` dispatched `RebuildPageIds`, the CTE walked through conflict copies and **reparented them** to the destination page, violating the invariant that conflict copies are never moved with their originals. The in-transaction CTE in `move_block_inner` filtered conflicts correctly, but the dispatched background rebuild did not — a classic CQRS-split correctness gap.
+
+The flaky test `move_block_does_not_reparent_conflict_copy_descendants` was the symptom: if the background task completed before the test's assertion, the bug showed (`page_id = 'CF_MV_NEW'` instead of `'CF_MV_OLD'`). If it hadn't completed, the stale correct value passed.
+
+Fix: added `WHERE b.is_conflict = 0` to the base member, `AND child.is_conflict = 0 AND parent.is_conflict = 0` to the recursive member, a `depth` column with `AND a.depth < 100` bound, and `WHERE is_conflict = 0` on the outer UPDATE. Block comment documents the invariant rationale. Uses `sqlx::query(...)` (runtime) so no `.sqlx/` cache regen needed.
+
+Test now calls `mat.flush_background().await.unwrap()` before asserting, so the regression-lock covers the post-rebuild state.
+
+### Resolved items
+
+- **TEST-2** — both known flaky Rust tests stabilised, one by fixing a real bug, the other by adding a new sync primitive.
+  - `move_block_does_not_reparent_conflict_copy_descendants`: fixed via the CTE bug above.
+  - `adaptive_fts_threshold_large_corpus`: the 1-second polling loop in the test waiting for a background block-count-refresh task could race with the test's own `.store(10_000_000)` simulation under CPU contention. Replaced with a new `Materializer::wait_for_initial_block_count_cache()` helper that uses the double-checked `Notify` pattern (`Arc<AtomicBool>` + `Arc<Notify>`, `Release`/`Acquire` pairing). Two new tests cover the helper itself (task-completes-first, waiter-attaches-first orderings + idempotent second call).
+  - `cargo nextest run -p agaric` × 2 consecutive runs: 2134/2134 pass, zero flakes.
+- **TEST-4d** — react-day-picker upstream investigation landed as **Option C (fix on our side)**, not an upstream issue.
+  - Upstream research: `npm view react-day-picker dist-tags` showed `latest: 9.14.0`, `next: 10.0.0-next.0`. Review of v9.12.0 → v9.14.0 release notes + closed issues showed no React-19 DOM-nesting or prop-spreading work. Source inspection of `node_modules/react-day-picker@9.14.0` internals confirmed `Root` renders a bare `<div>` with carefully-selected props (no camelCase leaks) and `WeekNumber` defaults to `<th>`. No upstream bug.
+  - `<button> cannot be a child of <tr>` was OUR custom `WeekNumber` override in `src/components/ui/calendar.tsx` returning a bare `<button>` where react-day-picker's `Week` expected a `<th>`. Fixed by wrapping the interactive `<button>` in `<th>`: `<tr><th>{...thProps}<button>{children}</button></th></tr>`. Preserves click handler, ARIA label, focus-visible ring.
+  - The 4 × "does not recognize camelCaseProp" + 2 × "Unknown event handler" warnings were OUR **test-side** Calendar mock in `src/components/__tests__/GlobalDateControls.test.tsx` spreading the full `props` object onto a raw `<div>`. Fixed by dropping the spread and rendering `<div data-testid="mock-calendar">Calendar</div>` minimally (tests only care the placeholder renders).
+  - **Stderr reductions verified:** `<button> cannot be a child of <tr>` 2 → 0, all 4 `does not recognize` day-picker props 4 → 0, both `Unknown event handler` leaks 2 → 0.
+  - No dependency bump — react-day-picker stays on 9.14.0.
+
+### Re-scoped item (kept open with updated scope)
+
+- **TEST-3** — both originally-listed sites are now resolved:
+  - `BlockTree.test.tsx:1311` was already fixed in a prior commit (`932f6f7`) — the REVIEW-LATER description was stale. Current fixture `toHaveLength(22)` + id array matches the current `SLASH_COMMANDS` source of truth exactly.
+  - `Sidebar.test.tsx` — root-caused and fixed. The REVIEW-LATER hypothesis ("touch-gesture timer + mock-Radix") was wrong — the real cause was axe-core's first-call rule-loading exceeding the default 1000ms `waitFor` timeout under full-suite worker contention. The *second* axe test (same file, cached rules) never flaked — only the first per worker did. Fix: `{ timeout: 5000 }` on the two `waitFor(async () => { axe(container) })` wrappers, following the precedent in `TemplatePicker.test.tsx:134`. Verified 10/10 pass in isolation + 4/5 full-suite runs (the 5th had an unrelated flake elsewhere).
+  - TEST-3 updated **in place** with 4 newly-surfaced flaky sites observed during investigation (BacklinkFilterBuilder, ConflictList, JournalPage, HistoryView), all confirmed via single-file-isolation run (295/295 pass in isolation → same full-suite-load flake family). Fix templates noted per-site: HistoryView uses the same axe-waitFor timeout pattern as Sidebar; BacklinkFilterBuilder needs extending the existing Radix-pointerdown waitFor pattern; JournalPage needs `findBy*` post-mutation; ConflictList needs a reproduction pass. Cost stays S (~2h total).
+
+### Successor item filed
+
+- **TEST-5** — "Background `refresh_block_count_cache()` calls post-FTS-optimize have no sync primitive". Surfaced during TEST-2 work by the technical reviewer. The new `wait_for_initial_block_count_cache()` covers the one-shot init task, but the post-optimize `refresh_block_count_cache()` calls at `src-tauri/src/materializer/dispatch.rs:191` are still fire-and-forget spawns. Current test suite doesn't exercise the optimize-then-simulate-count pattern, so it's a latent determinism gap, not an active flake. Fix sketch: either (a) add a counted `pending_block_count_refreshes: AtomicU32` + notify + `wait_for_block_count_refreshes()` helper, or (b) convert the spawns to `MaterializeTask` variants that drain via the existing `flush_background()`. Cost S.
+
+### Verification
+
+- **Rust full suite:** `cargo nextest run -p agaric` — 2134/2134 pass, 1 skipped (intentional `specta_tests::ts_bindings_up_to_date` manual-only), zero flakes across 2 consecutive runs.
+- **Frontend full suite:** `npx vitest run` — 7297/7298 (one ConflictList flake, which is one of the 4 newly-filed TEST-3 sites; passes in isolation).
+- **Isolation sanity check** for TEST-3's 4 newly-surfaced sites: `npx vitest run BacklinkFilterBuilder ConflictList JournalPage HistoryView` — **295/295 pass** (confirming they're full-suite-load flakes, not real bugs).
+- No `.sqlx/` cache regen needed (all new Rust queries runtime, not compile-time `query!()`).
+- No `src/lib/bindings.ts` regen needed (no Tauri command types touched).
+
+### Pipeline
+
+3 parallel background build subagents + 3 parallel review subagents (pipelined as each build completed). Reviewers surfaced 3 candidate follow-up items; orchestrator validated each before filing only the one that was substantive (TEST-5). The other two candidates (tag-inheritance CTE audit; other cache rebuild tasks) were proven clean by the reviewer — all tag_inheritance recursive CTEs already filter `is_conflict = 0` + bound depth, and the other cache rebuild tasks (`tags.rs`, `pages.rs`, `agenda.rs`, `projected_agenda.rs`) don't use recursive CTEs at all. No speculative successor items filed.
+
+Notable deviations from original REVIEW-LATER predictions, all evidence-backed and reviewer-approved:
+
+- **TEST-3 Sidebar root cause was not what the item predicted.** Original hypothesis: touch-gesture timer + mock-Radix. Actual: axe-core first-call cold-load exceeding the default 1s waitFor.
+- **TEST-3 Site #1 was already resolved.** The BlockTree fixture was updated by a prior `932f6f7` commit; REVIEW-LATER hadn't caught up.
+- **TEST-4d was never an upstream issue.** Both warning classes traced to our own code (WeekNumber override structure + test-mock prop-spreading).
+- **TEST-2's second flake was a real product bug, not a parallelism race.** The invariant-#9 violation would have caused data corruption in production eventually — any move of a block with a conflict-copy descendant would reparent the conflict copy.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src-tauri/src/cache/page_id.rs` | TEST-2: CTE fix — `is_conflict = 0` filter + `depth < 100` bound + `WHERE is_conflict = 0` on outer UPDATE. Invariant-#9 compliance. Block comment explains rationale. |
+| `src-tauri/src/materializer/coordinator.rs` | TEST-2: new `wait_for_initial_block_count_cache()` public async helper + two `Arc` fields on `Materializer`. Double-checked `Notify` pattern with `Acquire`/`Release` ordering. Initialised in every constructor path. |
+| `src-tauri/src/materializer/tests.rs` | TEST-2: replaced 1-second polling loops in `adaptive_fts_threshold_small_db` + `adaptive_fts_threshold_large_corpus` with the new helper. Added 2 new tests covering the helper (task-completes-first, waiter-attaches-first, idempotency). |
+| `src-tauri/src/commands/tests/block_cmd_tests.rs` | TEST-2: `move_block_does_not_reparent_conflict_copy_descendants` now calls `mat.flush_background().await.unwrap()` before assertions — regression-locks the CTE fix. |
+| `src/components/__tests__/Sidebar.test.tsx` | TEST-3: `{ timeout: 5000 }` on the two axe `waitFor` wrappers + explanatory comment pointing at axe cold-load. Matches TemplatePicker precedent. |
+| `src/components/ui/calendar.tsx` | TEST-4d: WeekNumber override now renders `<th><button>` instead of bare `<button>` — valid HTML under react-day-picker's `<tr>` layout. |
+| `src/components/__tests__/GlobalDateControls.test.tsx` | TEST-4d: Calendar mock no longer spreads `...props` onto `<div>` — avoids React "does not recognize" warnings for camelCase day-picker props. |
+| `REVIEW-LATER.md` | Remove TEST-2 + TEST-4d detail sections + table rows. Rewrite TEST-3 body in place with 4 newly-surfaced sites + per-site fix templates. Add TEST-5 (orphan-task sync). Summary 25 → 24, "Previously resolved" 322+ → 324+, session count 113 → 114. TEST-4b/c shared preamble updated to drop stale TEST-4d cross-references. |
+
+### Review subagent findings (all green)
+
+- **TEST-4d reviewer** — WeekNumber `<th>` wrap correct, click handler preserved, ARIA / focus-visible preserved. Calendar mock minimization is scope-correct. Spot-checked 4 other Calendar mocks across the test tree — all already use minimal placeholders.
+- **TEST-3 reviewer** — Sidebar fix matches TemplatePicker precedent exactly. Fixture claim on BlockTree verified (22 items, exact order). Recommended confirming 4 newly-surfaced sites pass in isolation (confirmed by orchestrator: 295/295 pass in isolation).
+- **TEST-2 reviewer** — CTE fix covers all 4 required pieces (base filter, recursive filter on both sides, depth bound, outer UPDATE filter). Double-checked `Notify` pattern correct — handles both race orderings. All three candidate follow-up items validated: tag-inheritance CTEs are all filtered correctly; other cache rebuild tasks have no recursive CTEs; only the orphan-task sync concern (TEST-5) is substantive.
+
+### Non-goals / scope discipline
+
+- Did NOT regenerate `.sqlx/` cache — TEST-2's CTE uses `sqlx::query(..., ...)` runtime path, not compile-time macro.
+- Did NOT regenerate `src/lib/bindings.ts` — no Tauri command types touched.
+- Did NOT add `#[ignore]` to any flaky test — per the "deterministic tests, not hidden flakes" rule.
+- Did NOT touch `src/components/__tests__/BlockTree.test.tsx` — the "fixture was frozen" claim was stale (prior commit already fixed it).
+- Did NOT bump react-day-picker — investigation confirmed no upstream bug, so a bump wouldn't help.
+- Did NOT add a global console filter for day-picker — the fixes are at the source, not the output.
+
+### Post-session state
+
+- REVIEW-LATER: 24 open items (3 FEAT + 3 MAINT + 4 PERF + 8 TEST + 6 PUB).
+- Next batch candidates by domain:
+  - **TEST-5** (S) — companion to TEST-2's sync primitive, natural pickup.
+  - **TEST-3** (S, ~2h) — four sites with documented fix templates per site.
+  - **TEST-4b/c** (M each) — require design decisions (two-option paths in the body), not pure autonomous work.
+  - **PERF-24** (M) — Vite main bundle analysis + split; build-time work.
+  - **FEAT-6** (M) — snapshot catch-up wiring in sync orchestrator; Rust + protocol work.
+  - **MAINT-79** (S) — Android jni bump; needs emulator verification.
+
 ## Session 423 — MAINT-82 + MAINT-85 + TEST-4a fully resolved + MAINT-84 Vite half (2026-04-19)
 
 **3 REVIEW-LATER items fully resolved + 1 partially resolved. Open items 28 → 25.**

@@ -2345,6 +2345,13 @@ async fn move_block_does_not_reparent_conflict_copy_descendants() {
     .await
     .unwrap();
 
+    // `move_block` dispatches `RebuildPageIds` as a background task (see
+    // dispatch.rs `move_block` arm). The assertions below must reflect the
+    // FINAL state after the rebuild has run — otherwise the test races the
+    // background task and is non-deterministic. Flush the background queue
+    // to wait for quiescence before reading.
+    mat.flush_background().await.unwrap();
+
     // Real descendant follows BLK into NEW_PAGE.
     let rc_page: Option<String> =
         sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = 'CF_MV_RC'")
@@ -2358,7 +2365,11 @@ async fn move_block_does_not_reparent_conflict_copy_descendants() {
     );
 
     // Conflict copy's page_id must NOT be rewritten — the descendants CTE
-    // skips `is_conflict = 1` rows.
+    // in `move_block_inner` skips `is_conflict = 1` rows, AND the background
+    // `rebuild_page_ids` CTE must also skip conflict copies (invariant #9).
+    // Without the `is_conflict = 0` filter in `rebuild_page_ids_impl`, the
+    // rebuild would walk CF_MV_CC → CF_MV_BLK → CF_MV_NEW and incorrectly
+    // set CF_MV_CC.page_id = CF_MV_NEW.
     let cc_page: Option<String> =
         sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = 'CF_MV_CC'")
             .fetch_one(&pool)
@@ -2367,7 +2378,8 @@ async fn move_block_does_not_reparent_conflict_copy_descendants() {
     assert_eq!(
         cc_page,
         Some("CF_MV_OLD".into()),
-        "conflict-copy descendant's page_id must NOT be rewritten by move_block"
+        "conflict-copy descendant's page_id must NOT be rewritten by move_block \
+         or the subsequent rebuild_page_ids background task"
     );
 }
 
