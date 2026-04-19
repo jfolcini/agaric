@@ -1532,7 +1532,7 @@ Six commands registered in the invoke handler (`commands.rs` + `lib.rs`):
 | `confirm_pairing` | `confirm_pairing_inner()` | Derive key from passphrase, upsert `peer_ref`, clear session |
 | `cancel_pairing` | `cancel_pairing_inner()` | Clear pairing session |
 | `start_sync` | `start_sync_inner()` | Check backoff, acquire lock, notify daemon via `scheduler.notify_change()` |
-| `cancel_sync` | `cancel_sync_inner()` | Placeholder (future: cancel active sync task) |
+| `cancel_sync` | `cancel_sync_inner()` | Set cancel flag (checked in sync message loop) |
 | `set_peer_address` | `set_peer_address_inner()` | Store a manual `host:port` address for a peer in `peer_refs.last_address` (migration 0017) |
 
 Managed state: `PairingState(Mutex<Option<PairingSession>>)`, `Arc<SyncScheduler>`.
