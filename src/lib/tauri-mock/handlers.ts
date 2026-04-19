@@ -1155,6 +1155,20 @@ export const HANDLERS: Record<string, Handler> = {
   get_log_dir: () => '/mock/logs',
 
   // ---------------------------------------------------------------------------
+  // Bug report (FEAT-5)
+  // ---------------------------------------------------------------------------
+
+  collect_bug_report_metadata: () => ({
+    app_version: '0.1.0',
+    os: 'mock',
+    arch: 'mock',
+    device_id: 'mock-device-id',
+    recent_errors: [],
+  }),
+
+  read_logs_for_report: () => [],
+
+  // ---------------------------------------------------------------------------
   // Op log compaction commands
   // ---------------------------------------------------------------------------
 

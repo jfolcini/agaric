@@ -5,12 +5,16 @@
  *  - General   -- DeadlineWarningSection
  *  - Properties -- PropertyDefinitionsList
  *  - Appearance -- theme selector (7 themes, UX-203) + font size selector
+ *  - Keyboard -- KeyboardSettingsTab
+ *  - Data -- DataSettingsTab (lazy)
  *  - Sync & Devices -- DeviceManagement
+ *  - Help -- Report a bug (FEAT-5); future home of About / updates
  */
 
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Button } from '@/components/ui/button'
 import {
   Select,
   SelectContent,
@@ -20,11 +24,18 @@ import {
 } from '@/components/ui/select'
 import { type ThemePreference, useTheme } from '@/hooks/useTheme'
 import { cn } from '@/lib/utils'
-import { DataSettingsTab } from './DataSettingsTab'
+import { BugReportDialog } from './BugReportDialog'
 import { DeadlineWarningSection } from './DeadlineWarningSection'
 import { DeviceManagement } from './DeviceManagement'
 import { KeyboardSettingsTab } from './KeyboardSettingsTab'
+import { LoadingSkeleton } from './LoadingSkeleton'
 import { PropertyDefinitionsList } from './PropertyDefinitionsList'
+
+// DataSettingsTab drags in `jszip` (~135 kB) for "Export as ZIP". The tab
+// is rarely opened, so defer the import until the user clicks it (PERF-24).
+const DataSettingsTab = lazy(() =>
+  import('./DataSettingsTab').then((m) => ({ default: m.DataSettingsTab })),
+)
 
 /**
  * Theme select uses 'system' as the user-facing alias for the internal 'auto'
@@ -39,9 +50,17 @@ type ThemeSelectValue =
   | 'dracula'
   | 'one-dark-pro'
 
-type SettingsTab = 'general' | 'properties' | 'appearance' | 'keyboard' | 'data' | 'sync'
+type SettingsTab = 'general' | 'properties' | 'appearance' | 'keyboard' | 'data' | 'sync' | 'help'
 
-const TAB_IDS: SettingsTab[] = ['general', 'properties', 'appearance', 'keyboard', 'data', 'sync']
+const TAB_IDS: SettingsTab[] = [
+  'general',
+  'properties',
+  'appearance',
+  'keyboard',
+  'data',
+  'sync',
+  'help',
+]
 
 const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
   general: 'settings.tabGeneral',
@@ -50,6 +69,7 @@ const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
   keyboard: 'settings.tabKeyboard',
   data: 'settings.tabData',
   sync: 'settings.tabSync',
+  help: 'settings.tabHelp',
 }
 
 const FONT_SIZE_KEY = 'agaric-font-size'
@@ -91,6 +111,7 @@ export function SettingsView(): React.ReactElement {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
   const { theme, setTheme } = useTheme()
   const [fontSize, setFontSize] = useState<FontSize>(readFontSize)
+  const [bugReportOpen, setBugReportOpen] = useState<boolean>(false)
 
   // Apply font size on mount and changes
   useEffect(() => {
@@ -200,10 +221,32 @@ export function SettingsView(): React.ReactElement {
 
         {activeTab === 'keyboard' && <KeyboardSettingsTab />}
 
-        {activeTab === 'data' && <DataSettingsTab />}
+        {activeTab === 'data' && (
+          <Suspense fallback={<LoadingSkeleton count={4} height="h-6" />}>
+            <DataSettingsTab />
+          </Suspense>
+        )}
 
         {activeTab === 'sync' && <DeviceManagement />}
+
+        {activeTab === 'help' && (
+          <div className="space-y-4 max-w-xl">
+            <div className="space-y-2">
+              <h3 className="text-sm font-medium">{t('help.reportBugTitle')}</h3>
+              <p className="text-sm text-muted-foreground">{t('help.reportBugDescription')}</p>
+              <Button
+                variant="outline"
+                onClick={() => setBugReportOpen(true)}
+                aria-label={t('help.reportBugButton')}
+              >
+                {t('help.reportBugButton')}
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
+
+      <BugReportDialog open={bugReportOpen} onOpenChange={setBugReportOpen} />
     </div>
   )
 }

@@ -1855,6 +1855,42 @@ const resources = {
 
       // UX-212: PageBrowser new page input label
       'pageBrowser.createPageInputLabel': 'New page name',
+
+      // FEAT-5: Bug report dialog
+      'settings.tabHelp': 'Help',
+      'help.reportBugTitle': 'Report a bug',
+      'help.reportBugDescription':
+        'Found a problem? Send us what happened and — if you like — the recent logs from your device.',
+      'help.reportBugButton': 'Report a bug',
+      'bugReport.title': 'Report a bug',
+      'bugReport.description':
+        'Your report is never sent automatically. Review what will be shared, optionally attach logs, then open a prefilled GitHub issue.',
+      'bugReport.fieldTitleLabel': 'Short title',
+      'bugReport.fieldTitlePlaceholder': 'e.g. Editor crashes when I press Ctrl+Z',
+      'bugReport.fieldDescriptionLabel': 'What went wrong?',
+      'bugReport.fieldDescriptionPlaceholder':
+        'What were you doing? What did you expect? What happened instead?',
+      'bugReport.includeLogsLabel': 'Include diagnostic logs',
+      'bugReport.includeLogsHint':
+        'Saves a ZIP to your Downloads folder that you can attach to the GitHub issue.',
+      'bugReport.redactLabel': 'Redact file paths and device ID',
+      'bugReport.redactHint':
+        'Replaces your home directory with ~ and blanks the device ID in every log line.',
+      'bugReport.previewTitle': 'Preview',
+      'bugReport.previewHint': 'This is exactly what will be placed in the GitHub issue body.',
+      'bugReport.logsListTitle': 'Log files included in the ZIP',
+      'bugReport.logsListEmpty': 'No log files to include.',
+      'bugReport.logsSize': '{{size}} bytes',
+      'bugReport.confirmCheckbox': "I've reviewed what will be shared",
+      'bugReport.cancel': 'Cancel',
+      'bugReport.copy': 'Copy report',
+      'bugReport.copied': 'Report copied to clipboard',
+      'bugReport.copyFailed': 'Failed to copy report',
+      'bugReport.openIssue': 'Open in GitHub',
+      'bugReport.loadMetadataFailed': 'Failed to collect bug-report metadata',
+      'bugReport.readLogsFailed': 'Failed to read logs',
+      'bugReport.buildZipFailed': 'Failed to build ZIP',
+      'bugReport.reportCrashTitle': 'Report this crash',
     },
   },
 }

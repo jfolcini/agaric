@@ -29,6 +29,7 @@ use crate::ulid::BlockId;
 mod agenda;
 mod attachments;
 mod blocks;
+mod bug_report;
 mod compaction;
 mod drafts;
 mod history;
@@ -57,6 +58,10 @@ pub use blocks::{
     list_blocks_inner, move_block, move_block_inner, purge_all_deleted, purge_all_deleted_inner,
     purge_block, purge_block_inner, restore_all_deleted, restore_all_deleted_inner, restore_block,
     restore_block_inner,
+};
+pub use bug_report::{
+    collect_bug_report_metadata, collect_bug_report_metadata_inner, read_logs_for_report,
+    read_logs_for_report_inner, BugReport, LogFileEntry,
 };
 pub use compaction::{
     compact_op_log_cmd, compact_op_log_cmd_inner, get_compaction_status,
@@ -127,6 +132,10 @@ pub use blocks::{
     __specta__fn__restore_all_deleted, __specta__fn__restore_block,
 };
 #[doc(hidden)]
+pub use bug_report::{
+    __specta__fn__collect_bug_report_metadata, __specta__fn__read_logs_for_report,
+};
+#[doc(hidden)]
 pub use compaction::{__specta__fn__compact_op_log_cmd, __specta__fn__get_compaction_status};
 #[doc(hidden)]
 pub use drafts::{
@@ -191,6 +200,8 @@ pub use blocks::{
     __cmd__get_block, __cmd__list_blocks, __cmd__move_block, __cmd__purge_all_deleted,
     __cmd__purge_block, __cmd__restore_all_deleted, __cmd__restore_block,
 };
+#[doc(hidden)]
+pub use bug_report::{__cmd__collect_bug_report_metadata, __cmd__read_logs_for_report};
 #[doc(hidden)]
 pub use compaction::{__cmd__compact_op_log_cmd, __cmd__get_compaction_status};
 #[doc(hidden)]

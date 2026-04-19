@@ -1,9 +1,10 @@
-import { AlertCircle, RefreshCw } from 'lucide-react'
+import { AlertCircle, Bug, RefreshCw } from 'lucide-react'
 import React from 'react'
 import { Button } from '@/components/ui/button'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { relaunchApp } from '@/lib/relaunch-app'
+import { BugReportDialog } from './BugReportDialog'
 
 interface ErrorBoundaryProps {
   children: React.ReactNode
@@ -12,16 +13,17 @@ interface ErrorBoundaryProps {
 interface ErrorBoundaryState {
   hasError: boolean
   error: Error | null
+  reportOpen: boolean
 }
 
 export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
     super(props)
-    this.state = { hasError: false, error: null }
+    this.state = { hasError: false, error: null, reportOpen: false }
   }
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { hasError: true, error }
+    return { hasError: true, error, reportOpen: false }
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
@@ -33,6 +35,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
 
   render() {
     if (this.state.hasError) {
+      const error = this.state.error
       return (
         <div className="flex h-screen flex-col items-center justify-center gap-4 transition-opacity duration-200">
           <div
@@ -42,13 +45,29 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
             <AlertCircle className="h-8 w-8 text-destructive" />
             <h2 className="text-lg font-semibold">{i18n.t('error.generic')}</h2>
             <p className="text-sm text-muted-foreground max-w-sm text-center">
-              {this.state.error?.message ?? i18n.t('error.unexpected')}
+              {error?.message ?? i18n.t('error.unexpected')}
             </p>
-            <Button variant="outline" onClick={() => void relaunchApp()}>
-              <RefreshCw className="h-3.5 w-3.5" />
-              {i18n.t('action.reload')}
-            </Button>
+            <div className="flex flex-wrap gap-2 justify-center">
+              <Button variant="outline" onClick={() => void relaunchApp()}>
+                <RefreshCw className="h-3.5 w-3.5" />
+                {i18n.t('action.reload')}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => this.setState({ reportOpen: true })}
+                aria-label={i18n.t('bugReport.reportCrashTitle')}
+              >
+                <Bug className="h-3.5 w-3.5" />
+                {i18n.t('bugReport.reportCrashTitle')}
+              </Button>
+            </div>
           </div>
+          <BugReportDialog
+            open={this.state.reportOpen}
+            onOpenChange={(open) => this.setState({ reportOpen: open })}
+            initialTitle={error?.message ?? ''}
+            initialDescription={error?.stack ?? ''}
+          />
         </div>
       )
     }

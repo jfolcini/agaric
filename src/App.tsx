@@ -19,27 +19,14 @@ import {
   Trash2,
   WifiOff,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { BootGate } from './components/BootGate'
-import { ConflictList } from './components/ConflictList'
 import { FeatureErrorBoundary } from './components/FeatureErrorBoundary'
-import { GraphView } from './components/GraphView'
-import { HistoryView } from './components/HistoryView'
 import { GlobalDateControls, JournalControls, JournalPage } from './components/JournalPage'
-import { KeyboardShortcuts } from './components/KeyboardShortcuts'
-import { PageBrowser } from './components/PageBrowser'
-import { PageEditor } from './components/PageEditor'
-import { PropertiesView } from './components/PropertiesView'
-import { SearchPanel } from './components/SearchPanel'
-import { SettingsView } from './components/SettingsView'
-import { StatusPanel } from './components/StatusPanel'
+import { LoadingSkeleton } from './components/LoadingSkeleton'
 import { TabBar } from './components/TabBar'
-import { TagFilterPanel } from './components/TagFilterPanel'
-import { TagList } from './components/TagList'
-import { TemplatesView } from './components/TemplatesView'
-import { TrashView } from './components/TrashView'
 import { ScrollArea } from './components/ui/scroll-area'
 import {
   Sidebar,
@@ -60,7 +47,6 @@ import {
 } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
 import { ViewHeaderOutletProvider, ViewHeaderOutletSlot } from './components/ViewHeaderOutlet'
-import { WelcomeModal } from './components/WelcomeModal'
 import { useItemCount } from './hooks/useItemCount'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
 import { usePrimaryFocusRegistry } from './hooks/usePrimaryFocus'
@@ -88,6 +74,63 @@ import { type JournalMode, useJournalStore } from './stores/journal'
 import { type PageEntry, selectPageStack, useNavigationStore, type View } from './stores/navigation'
 import { useResolveStore } from './stores/resolve'
 import { useSyncStore } from './stores/sync'
+
+// ---------------------------------------------------------------------------
+// Lazy-loaded views — PERF-24
+// ---------------------------------------------------------------------------
+//
+// Only the journal (default view) and the sidebar/header shell are in the
+// entry chunk. Every other top-level view is split into its own chunk and
+// loaded on demand. Keeps the initial parse budget small — especially on
+// Android / low-end hardware — without touching page-editor UX (the user
+// always clicks _into_ a page, giving us a natural Suspense moment).
+//
+// Each lazy() import automatically becomes its own Rollup chunk. The
+// Suspense fallback uses `LoadingSkeleton` (the shared primitive) so the
+// transient state matches the rest of the app visually.
+const ConflictList = lazy(() =>
+  import('./components/ConflictList').then((m) => ({ default: m.ConflictList })),
+)
+const GraphView = lazy(() =>
+  import('./components/GraphView').then((m) => ({ default: m.GraphView })),
+)
+const HistoryView = lazy(() =>
+  import('./components/HistoryView').then((m) => ({ default: m.HistoryView })),
+)
+const KeyboardShortcuts = lazy(() =>
+  import('./components/KeyboardShortcuts').then((m) => ({ default: m.KeyboardShortcuts })),
+)
+const PageBrowser = lazy(() =>
+  import('./components/PageBrowser').then((m) => ({ default: m.PageBrowser })),
+)
+const PageEditor = lazy(() =>
+  import('./components/PageEditor').then((m) => ({ default: m.PageEditor })),
+)
+const PropertiesView = lazy(() =>
+  import('./components/PropertiesView').then((m) => ({ default: m.PropertiesView })),
+)
+const SearchPanel = lazy(() =>
+  import('./components/SearchPanel').then((m) => ({ default: m.SearchPanel })),
+)
+const SettingsView = lazy(() =>
+  import('./components/SettingsView').then((m) => ({ default: m.SettingsView })),
+)
+const StatusPanel = lazy(() =>
+  import('./components/StatusPanel').then((m) => ({ default: m.StatusPanel })),
+)
+const TagFilterPanel = lazy(() =>
+  import('./components/TagFilterPanel').then((m) => ({ default: m.TagFilterPanel })),
+)
+const TagList = lazy(() => import('./components/TagList').then((m) => ({ default: m.TagList })))
+const TemplatesView = lazy(() =>
+  import('./components/TemplatesView').then((m) => ({ default: m.TemplatesView })),
+)
+const TrashView = lazy(() =>
+  import('./components/TrashView').then((m) => ({ default: m.TrashView })),
+)
+const WelcomeModal = lazy(() =>
+  import('./components/WelcomeModal').then((m) => ({ default: m.WelcomeModal })),
+)
 
 // ---------------------------------------------------------------------------
 // Keyboard shortcut dispatch tables
@@ -289,10 +332,24 @@ interface ViewRouterProps {
 }
 
 /**
+ * Shared Suspense fallback for lazy-loaded views. Matches the visual
+ * language of other loading states (skeleton rows). `aria-busy` tells
+ * assistive tech the region is mid-load.
+ */
+function ViewFallback() {
+  return (
+    <div className="space-y-2" aria-busy="true" role="status" data-testid="view-fallback">
+      <LoadingSkeleton count={4} height="h-6" />
+    </div>
+  )
+}
+
+/**
  * Renders the main view body based on `currentView`. Extracted from `App`
  * so the parent component stays well under the cognitive-complexity budget
  * (MAINT-52). Each branch is a `FeatureErrorBoundary` so a crashed view
- * never unmounts the shell.
+ * never unmounts the shell. Non-journal views are lazy-loaded (PERF-24);
+ * the nested `Suspense` boundary shows a skeleton until the chunk arrives.
  */
 function ViewRouter({
   currentView,
@@ -311,77 +368,99 @@ function ViewRouter({
     case 'search':
       return (
         <FeatureErrorBoundary name="Search">
-          <SearchPanel />
+          <Suspense fallback={<ViewFallback />}>
+            <SearchPanel />
+          </Suspense>
         </FeatureErrorBoundary>
       )
     case 'pages':
       return (
         <FeatureErrorBoundary name="Pages">
-          <PageBrowser onPageSelect={onPageSelect} />
+          <Suspense fallback={<ViewFallback />}>
+            <PageBrowser onPageSelect={onPageSelect} />
+          </Suspense>
         </FeatureErrorBoundary>
       )
     case 'tags':
       return (
         <FeatureErrorBoundary name="Tags">
-          <div className="space-y-8">
-            <TagList onTagClick={(tagId, tagName) => navigateToPage(tagId, tagName)} />
-            <div className="flex items-center gap-4">
-              <div className="flex-1 border-t border-border" />
-              <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Filter
-              </span>
-              <div className="flex-1 border-t border-border" />
+          <Suspense fallback={<ViewFallback />}>
+            <div className="space-y-8">
+              <TagList onTagClick={(tagId, tagName) => navigateToPage(tagId, tagName)} />
+              <div className="flex items-center gap-4">
+                <div className="flex-1 border-t border-border" />
+                <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Filter
+                </span>
+                <div className="flex-1 border-t border-border" />
+              </div>
+              <TagFilterPanel />
             </div>
-            <TagFilterPanel />
-          </div>
+          </Suspense>
         </FeatureErrorBoundary>
       )
     case 'trash':
       return (
         <FeatureErrorBoundary name="Trash">
-          <TrashView />
+          <Suspense fallback={<ViewFallback />}>
+            <TrashView />
+          </Suspense>
         </FeatureErrorBoundary>
       )
     case 'properties':
       return (
         <FeatureErrorBoundary name="Properties">
-          <PropertiesView />
+          <Suspense fallback={<ViewFallback />}>
+            <PropertiesView />
+          </Suspense>
         </FeatureErrorBoundary>
       )
     case 'settings':
       return (
         <FeatureErrorBoundary name="Settings">
-          <SettingsView />
+          <Suspense fallback={<ViewFallback />}>
+            <SettingsView />
+          </Suspense>
         </FeatureErrorBoundary>
       )
     case 'status':
       return (
         <FeatureErrorBoundary name="Status">
-          <StatusPanel />
+          <Suspense fallback={<ViewFallback />}>
+            <StatusPanel />
+          </Suspense>
         </FeatureErrorBoundary>
       )
     case 'conflicts':
       return (
         <FeatureErrorBoundary name="Conflicts">
-          <ConflictList />
+          <Suspense fallback={<ViewFallback />}>
+            <ConflictList />
+          </Suspense>
         </FeatureErrorBoundary>
       )
     case 'history':
       return (
         <FeatureErrorBoundary name="History">
-          <HistoryView />
+          <Suspense fallback={<ViewFallback />}>
+            <HistoryView />
+          </Suspense>
         </FeatureErrorBoundary>
       )
     case 'templates':
       return (
         <FeatureErrorBoundary name="Templates">
-          <TemplatesView />
+          <Suspense fallback={<ViewFallback />}>
+            <TemplatesView />
+          </Suspense>
         </FeatureErrorBoundary>
       )
     case 'graph':
       return (
         <FeatureErrorBoundary name="Graph">
-          <GraphView />
+          <Suspense fallback={<ViewFallback />}>
+            <GraphView />
+          </Suspense>
         </FeatureErrorBoundary>
       )
     case 'page-editor':
@@ -390,12 +469,14 @@ function ViewRouter({
         <>
           <TabBar />
           <FeatureErrorBoundary name="PageEditor">
-            <PageEditor
-              pageId={activePage.pageId}
-              title={activePage.title}
-              onBack={onBack}
-              onNavigateToPage={onPageSelect}
-            />
+            <Suspense fallback={<ViewFallback />}>
+              <PageEditor
+                pageId={activePage.pageId}
+                title={activePage.title}
+                onBack={onBack}
+                onNavigateToPage={onPageSelect}
+              />
+            </Suspense>
           </FeatureErrorBoundary>
         </>
       )
@@ -885,8 +966,10 @@ function App() {
           </ViewHeaderOutletProvider>
         </SidebarInset>
       </SidebarProvider>
-      <KeyboardShortcuts open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
-      <WelcomeModal />
+      <Suspense fallback={null}>
+        <KeyboardShortcuts open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+        <WelcomeModal />
+      </Suspense>
       <Toaster position="bottom-right" richColors closeButton />
     </BootGate>
   )

@@ -224,6 +224,8 @@ export const commands = {
 	fetched_at: string,
 	auth_required: boolean,
 } | null, AppErrorSchema>(__TAURI_INVOKE("get_link_metadata", { url })),
+	collectBugReportMetadata: () => typedError<BugReport, AppErrorSchema>(__TAURI_INVOKE("collect_bug_report_metadata")),
+	readLogsForReport: (redact: boolean) => typedError<LogFileEntry[], AppErrorSchema>(__TAURI_INVOKE("read_logs_for_report", { redact })),
 };
 
 /* Types */
@@ -298,6 +300,16 @@ export type BlockRow = {
 	due_date: string | null,
 	scheduled_date: string | null,
 	page_id: string | null,
+};
+
+// Metadata returned by [`collect_bug_report_metadata`].
+export type BugReport = {
+	app_version: string,
+	os: string,
+	arch: string,
+	device_id: string,
+	// Last ~20 error/warn lines from today's `agaric.log`, newest last.
+	recent_errors: string[],
 };
 
 export type BulkTrashResponse = {
@@ -388,6 +400,12 @@ export type LinkMetadata = {
 	description: string | null,
 	fetched_at: string,
 	auth_required: boolean,
+};
+
+// One log file's name + contents returned by [`read_logs_for_report`].
+export type LogFileEntry = {
+	name: string,
+	contents: string,
 };
 
 export type MoveResponse = {

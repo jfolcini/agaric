@@ -11,6 +11,9 @@ vi.mock('lucide-react', () => ({
   RefreshCw: (props: { className?: string }) => (
     <svg data-testid="refresh-cw-icon" className={props.className} />
   ),
+  Bug: (props: { className?: string }) => (
+    <svg data-testid="bug-icon" className={props.className} />
+  ),
 }))
 
 const relaunchMock = vi.fn()
@@ -18,10 +21,36 @@ vi.mock('@tauri-apps/plugin-process', () => ({
   relaunch: () => relaunchMock(),
 }))
 
+// Mock BugReportDialog to a lightweight marker so we can assert on open state
+// and prefilled props without dragging in the full IPC surface.
+vi.mock('../BugReportDialog', () => ({
+  BugReportDialog: ({
+    open,
+    initialTitle,
+    initialDescription,
+  }: {
+    open: boolean
+    initialTitle?: string
+    initialDescription?: string
+  }) =>
+    open ? (
+      <div data-testid="bug-report-dialog">
+        <span data-testid="bug-dialog-title">{initialTitle ?? ''}</span>
+        <span data-testid="bug-dialog-description">{initialDescription ?? ''}</span>
+      </div>
+    ) : null,
+}))
+
 import { ErrorBoundary } from '../ErrorBoundary'
 
 function ThrowingChild(): React.ReactElement {
   throw new Error('test render error')
+}
+
+function ThrowingChildWithStack(): React.ReactElement {
+  const err = new Error('crash with stack')
+  err.stack = 'Error: crash with stack\n    at mock (file.ts:10:20)'
+  throw err
 }
 
 beforeEach(() => {
@@ -116,5 +145,35 @@ describe('ErrorBoundary', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  it('renders a "Report this crash" button alongside Reload', () => {
+    render(
+      <ErrorBoundary>
+        <ThrowingChild />
+      </ErrorBoundary>,
+    )
+
+    expect(screen.getByRole('button', { name: /Reload/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Report this crash/i })).toBeInTheDocument()
+    // Dialog is not open by default.
+    expect(screen.queryByTestId('bug-report-dialog')).not.toBeInTheDocument()
+  })
+
+  it('opens BugReportDialog prefilled with the caught error message and stack', async () => {
+    const user = userEvent.setup()
+    render(
+      <ErrorBoundary>
+        <ThrowingChildWithStack />
+      </ErrorBoundary>,
+    )
+
+    await user.click(screen.getByRole('button', { name: /Report this crash/i }))
+
+    expect(screen.getByTestId('bug-report-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('bug-dialog-title')).toHaveTextContent('crash with stack')
+    expect(screen.getByTestId('bug-dialog-description')).toHaveTextContent(
+      'at mock (file.ts:10:20)',
+    )
   })
 })

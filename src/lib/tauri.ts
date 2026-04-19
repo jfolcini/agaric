@@ -867,3 +867,37 @@ export function fetchLinkMetadata(url: string): Promise<LinkMetadata> {
 export function getLinkMetadata(url: string): Promise<LinkMetadata | null> {
   return invoke('get_link_metadata', { url })
 }
+
+// ---------------------------------------------------------------------------
+// Bug report (FEAT-5)
+// ---------------------------------------------------------------------------
+
+export interface BugReport {
+  app_version: string
+  os: string
+  arch: string
+  device_id: string
+  recent_errors: string[]
+}
+
+export interface LogFileEntry {
+  name: string
+  contents: string
+}
+
+/**
+ * Gather app version, OS/arch, device ID and a tail of recent error/warn
+ * lines from today's log for pre-filling a bug report.
+ */
+export function collectBugReportMetadata(): Promise<BugReport> {
+  return invoke('collect_bug_report_metadata')
+}
+
+/**
+ * Enumerate rolled log files within the last 7 days. When `redact=true`,
+ * home paths are replaced with `~`, the device ID is blanked, and long
+ * lines are truncated.
+ */
+export function readLogsForReport(redact: boolean): Promise<LogFileEntry[]> {
+  return invoke('read_logs_for_report', { redact })
+}

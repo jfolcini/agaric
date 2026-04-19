@@ -437,8 +437,20 @@ impl SyncOrchestrator {
                 Ok(None)
             }
 
-            // ---- Snapshot (not yet implemented) -----------------------------
-            SyncMessage::SnapshotOffer { .. } => Ok(Some(SyncMessage::SnapshotReject)),
+            // ---- Snapshot ---------------------------------------------------
+            // The snapshot catch-up sub-flow runs entirely at the sync daemon
+            // layer (`sync_daemon::snapshot_transfer`) AFTER the main loop
+            // exits with `ResetRequired`. `handle_message` must never receive
+            // a `SnapshotOffer` on any reachable path — if one arrives here,
+            // it indicates a protocol state-machine bug (e.g. a regression in
+            // the daemon-layer interception). Fail loudly so the caller can
+            // surface the violation instead of silently reject-and-continue.
+            SyncMessage::SnapshotOffer { .. } => Err(AppError::InvalidOperation(
+                "SnapshotOffer must be handled by the sync daemon \
+                 snapshot_transfer sub-flow, not by the orchestrator state \
+                 machine"
+                    .into(),
+            )),
             SyncMessage::SnapshotAccept | SyncMessage::SnapshotReject => Ok(None),
 
             // ---- File transfer (F-14) ----------------------------------------

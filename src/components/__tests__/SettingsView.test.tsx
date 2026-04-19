@@ -46,6 +46,14 @@ vi.mock('../DataSettingsTab', () => ({
   DataSettingsTab: () => <div data-testid="data-settings-tab">Data Settings Content</div>,
 }))
 
+// FEAT-5: BugReportDialog is rendered by SettingsView but its heavy internal
+// logic (IPC + logs) is orthogonal to the SettingsView tests here. Mock it
+// as an inert marker so the original tab tests keep their existing scope.
+vi.mock('../BugReportDialog', () => ({
+  BugReportDialog: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="bug-report-dialog">Bug Report Dialog</div> : null,
+}))
+
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
@@ -66,17 +74,35 @@ beforeEach(() => {
 })
 
 describe('SettingsView', () => {
-  it('renders with 6 tabs', () => {
+  it('renders with 7 tabs', () => {
     render(<SettingsView />)
 
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(6)
+    expect(tabs).toHaveLength(7)
     expect(tabs[0]).toHaveTextContent(t('settings.tabGeneral'))
     expect(tabs[1]).toHaveTextContent(t('settings.tabProperties'))
     expect(tabs[2]).toHaveTextContent(t('settings.tabAppearance'))
     expect(tabs[3]).toHaveTextContent(t('settings.tabKeyboard'))
     expect(tabs[4]).toHaveTextContent(t('settings.tabData'))
     expect(tabs[5]).toHaveTextContent(t('settings.tabSync'))
+    expect(tabs[6]).toHaveTextContent(t('settings.tabHelp'))
+  })
+
+  it('Help tab opens the bug-report dialog on click', async () => {
+    const user = userEvent.setup()
+    render(<SettingsView />)
+
+    const helpTab = screen.getByRole('tab', { name: t('settings.tabHelp') })
+    await user.click(helpTab)
+    expect(helpTab).toHaveAttribute('aria-selected', 'true')
+
+    // Dialog is not open by default.
+    expect(screen.queryByTestId('bug-report-dialog')).not.toBeInTheDocument()
+
+    const reportBtn = screen.getByRole('button', { name: t('help.reportBugButton') })
+    await user.click(reportBtn)
+
+    expect(screen.getByTestId('bug-report-dialog')).toBeInTheDocument()
   })
 
   it('General tab shows deadline warning section by default (UX-202: no TaskStatesSection)', () => {

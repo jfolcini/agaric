@@ -1315,8 +1315,11 @@ async fn orchestrator_handles_error_message() {
     mat.shutdown();
 }
 
-/// The SyncOrchestrator handles SnapshotOffer by rejecting (not yet
-/// implemented).
+/// The SyncOrchestrator must surface a stray `SnapshotOffer` as an
+/// `InvalidOperation` error. The real snapshot catch-up runs at the
+/// daemon layer (`sync_daemon::snapshot_transfer`); anything that makes
+/// it into `handle_message` indicates the daemon-layer interception has
+/// regressed (MAINT-86).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn orchestrator_rejects_snapshot_offer() {
     let (pool, _dir) = test_pool().await;
@@ -1326,13 +1329,17 @@ async fn orchestrator_rejects_snapshot_offer() {
     orchestrator.start().await.unwrap();
 
     let offer = SyncMessage::SnapshotOffer { size_bytes: 1024 };
-    let response = orchestrator.handle_message(offer).await.unwrap();
-    match response {
-        Some(SyncMessage::SnapshotReject) => {
-            // Expected — snapshots not yet implemented
+    let result = orchestrator.handle_message(offer).await;
+    let err = match result {
+        Err(crate::error::AppError::InvalidOperation(msg)) => msg,
+        other => {
+            panic!("expected AppError::InvalidOperation for stray SnapshotOffer, got {other:?}")
         }
-        other => panic!("expected SnapshotReject, got {:?}", other),
-    }
+    };
+    assert!(
+        err.contains("SnapshotOffer") && err.contains("snapshot_transfer"),
+        "error must name variant + daemon sub-flow, got: {err}"
+    );
 
     mat.shutdown();
 }

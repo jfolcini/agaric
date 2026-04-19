@@ -601,6 +601,52 @@ async fn orchestrator_rejects_op_batch_before_head_exchange() {
     materializer.shutdown();
 }
 
+/// Regression test for MAINT-86: `handle_message` must not silently
+/// reject stray `SnapshotOffer` messages. The snapshot catch-up
+/// sub-flow runs at the daemon layer (`sync_daemon::snapshot_transfer`)
+/// after the main loop exits with `ResetRequired`. If `SnapshotOffer`
+/// ever reaches `handle_message`, the daemon-layer interception has
+/// regressed — surface that as `AppError::InvalidOperation` so the
+/// caller cannot paper over the bug.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_rejects_snapshot_offer_as_unreachable_protocol_state() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+
+    // Drive to ExchangingHeads so state-validation passes SnapshotOffer
+    // through and we hit the handler body (not the terminal-state reject).
+    let _start = orch.start().await.unwrap();
+    assert_eq!(
+        orch.session().state,
+        SyncState::ExchangingHeads,
+        "start() must transition to ExchangingHeads"
+    );
+
+    let result = orch
+        .handle_message(SyncMessage::SnapshotOffer { size_bytes: 1024 })
+        .await;
+
+    let err = match result {
+        Err(crate::error::AppError::InvalidOperation(msg)) => msg,
+        other => panic!(
+            "SnapshotOffer routed through handle_message must return \
+             AppError::InvalidOperation — the daemon layer's \
+             snapshot_transfer sub-flow is the only reachable path. got: {other:?}"
+        ),
+    };
+    assert!(
+        err.contains("SnapshotOffer"),
+        "error message must name the offending variant, got: {err}"
+    );
+    assert!(
+        err.contains("snapshot_transfer"),
+        "error message must point callers at the daemon sub-flow, got: {err}"
+    );
+
+    materializer.shutdown();
+}
+
 /// After a full sync completes, sending another HeadExchange should
 /// fail because Complete is a terminal state.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

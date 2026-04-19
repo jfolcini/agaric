@@ -1,5 +1,104 @@
 # Session Log
 
+## Session 426 — FEAT-5 + PERF-24 + MAINT-86 (2026-04-19)
+
+**3 REVIEW-LATER items fully resolved. Open items 22 → 19.** New user-facing capability (bug-report dialog). 94 % bundle-size reduction (1876 kB → 112 kB entry chunk). Dead-code cleanup with regression tests locked in.
+
+User asked to follow `PROMPT.md` again. Picked three items with disjoint file sets but different scales: MAINT-86 (trivial dead-code cleanup, <15 min), PERF-24 (M — Vite bundle analysis + split), FEAT-5 (M — full-stack bug-report dialog). Three parallel build subagents + pipelined review subagents, no worktrees.
+
+### Resolved items
+
+- **FEAT-5** — bug-report dialog with prefilled GitHub issue + optional log ZIP export. All 9 recorded design decisions from REVIEW-LATER honoured (help tab in SettingsView; Redact default ON; Logs default OFF; GitHub-only via `BUG_TRACKER` constant matching `tauri.conf.json`; no default labels; Markdown copy; ZIP saved-to-disk, not URL-embedded; confirmation checkbox gates primary button; scrollable live preview). 10 new files (~1861 LOC): two Tauri commands `collect_bug_report_metadata` + `read_logs_for_report` in `src-tauri/src/commands/bug_report.rs` (666 LOC with 22 inline tests covering happy path + empty dir + oversized-file truncation + rolled-file-age exclusion + redaction correctness), `BugReportDialog.tsx` (374 LOC) with three-section layout (Form / live Preview / Footer), pure-function modules `bug-report.ts` (URL builder + body formatter) + `bug-report-zip.ts` (JSZip wrapper mirroring `export-graph.ts`) + `config.ts` (`BUG_TRACKER` single source of truth), new `ui/switch.tsx` + `ui/textarea.tsx` primitives following React-19 ref-as-prop + CVA + `cn()` patterns. Entry points: SettingsView Help tab (new) + ErrorBoundary "Report this crash" button (prefills `error.message` + `error.stack`). Redaction semantics: `$HOME` → `~`, `device_id` → `[REDACTED_DEVICE_ID]`, lines >8 KB truncated preserving UTF-8 boundaries, files older than 7 days skipped, per-file cap 2 MB with tail-preserving truncation. All error paths route through `logger.warn` + `toast.error` (no silent catches). All strings i18n'd under `bugReport.*` / `help.*`.
+
+- **PERF-24** — Vite main bundle 94 % reduction. `dist/assets/index-*.js` 1876 kB / 568 kB gzip → **112 kB / 33 kB gzip**. Chunk-size warning cleared. `INEFFECTIVE_DYNAMIC_IMPORT` warning (previously from `useBlockPropertyEvents.ts` dynamically importing `@tauri-apps/api/event`) also cleared. Approach: analyse-first with `rollup-plugin-visualizer` behind `ANALYZE=1` env (kept as devDependency for future tuning), then combined options 1 + 2 per the REVIEW-LATER recommendation: (1) manual chunks grouping heavy vendors into named chunks — `editor` (TipTap + ProseMirror + linkifyjs + rope-sequence + w3c-keyname, 446 kB), `highlight` (lowlight + highlight.js + @wooorm/*, 151 kB), `dnd` (@dnd-kit/*, 53 kB), `datepicker` (react-day-picker, 76 kB), `ui-radix` (@radix-ui/* + @floating-ui/*, 108 kB), `react-vendor` (React + React-DOM + scheduler + i18next, 228 kB), `d3` (d3-*, 134 kB); (2) 14 non-journal views wrapped in `React.lazy` + shared `<Suspense fallback={<ViewFallback />}>` (LoadingSkeleton-based, `aria-busy` + `role="status"` for a11y); `KeyboardShortcuts` + `WelcomeModal` use `<Suspense fallback={null}>` (modals only visible when triggered). `JournalPage` stays statically imported (default view; lazy-loading it would delay first paint). `DataSettingsTab` lazy-loaded inside SettingsView to defer the JSZip cost until the user actually opens the Data tab.
+
+- **MAINT-86** — removed unreachable `SnapshotOffer { .. } => Ok(Some(SyncMessage::SnapshotReject))` arm in `src-tauri/src/sync_protocol/orchestrator.rs`. With the daemon-layer interception in place, `handle_message` never sees `SnapshotOffer` on any reachable path. Fix: converted to `Err(AppError::InvalidOperation("SnapshotOffer must be handled by the sync daemon snapshot_transfer sub-flow, not by the orchestrator state machine"))` + load-bearing block comment explaining the invariant + the philosophy ("fail loudly on protocol regressions, not silently reject-and-continue"). Belt-and-suspenders regression tests added in both `sync_protocol/tests.rs` (new `orchestrator_rejects_snapshot_offer_as_unreachable_protocol_state`) and `sync_integration_tests.rs` (existing `orchestrator_rejects_snapshot_offer` updated from the old `Ok(Some(SnapshotReject))` contract to the new `Err(InvalidOperation(_))` contract with `"SnapshotOffer"` + `"snapshot_transfer"` substring fingerprints). Builder git-stash-reverted the production change, confirmed both tests FAIL; git-stash-popped, confirmed both PASS — regression safety proven.
+
+### Verification
+
+- **Rust full suite:** `cargo nextest run -p agaric` — **2172 / 2172 pass** (+22 from new `commands::bug_report` tests), 1 skipped (intentional `specta_tests::ts_bindings_up_to_date` manual-only). Zero flakes.
+- **Frontend full suite:** `npx vitest run` — **7328 / 7328 pass** (+30 from new FEAT-5 tests: 11 dialog + 12 bug-report + 4 bug-report-zip + 2 ErrorBoundary + 1 SettingsView). Zero flakes.
+- **Specta bindings:** `cargo test -- specta_tests --ignored` — bindings regenerated; `src/lib/bindings.ts` gains `BugReport`, `LogFileEntry`, `collectBugReportMetadata`, `readLogsForReport`.
+- **Vite build:** `npx vite build` — no warnings, entry chunk **112.40 kB / 32.72 kB gzip** (verified in orchestrator re-run). No `chunk-size-limit`, no `INEFFECTIVE_DYNAMIC_IMPORT`.
+- **prek `run --all-files`:** 24 / 24 (knip runs successfully now with new JS imports).
+- **`cargo clippy --all-targets -- -D warnings`:** clean.
+- **No `.sqlx/` cache regen** (no SQL changes).
+
+### Pipeline
+
+3 parallel background build subagents launched simultaneously. MAINT-86 completed first (~5 min, trivial), PERF-24 mid-run (~20 min, bundle analysis + lazy-loading 14 views), FEAT-5 last (~40 min, 10 new files). Three pipelined review subagents in parallel with later builds — MAINT-86 and PERF-24 reviews launched while FEAT-5 was still building.
+
+**Cross-subagent file-conflict check:** FEAT-5 and PERF-24 both edited `src/components/SettingsView.tsx` — FEAT-5 added the new `help` tab + `BugReportDialog` import, PERF-24 added the `React.lazy(DataSettingsTab)` wrapper. PERF-24's subagent noted in its summary that it saw FEAT-5's `help` tab already present when it started. No file conflict surfaced; the two edits touched non-overlapping lines. Both subagents also edited `REVIEW-LATER.md` (MAINT-86 removed its own entry; PERF-24 removed its own). No collision there either — the counts chained cleanly (22 → 21 → 20). FEAT-5 subagent explicitly left REVIEW-LATER removal for the orchestrator.
+
+### Review subagent findings
+
+- **MAINT-86 reviewer (APPROVED)** — production-path audit confirmed the arm was genuinely unreachable on any real code path; all 3 callers (responder `server.rs`, initiator `orchestrator.rs`, snapshot_transfer module) read `SnapshotOffer` via direct `conn.recv_json()`, never through `handle_message`. Regression tests drive the orchestrator to a reachable pre-`ResetRequired` state so state-validation doesn't short-circuit the test. No findings.
+- **PERF-24 reviewer (APPROVED)** — vite config structure correct, `manualChunks` properly placed inside `build.rollupOptions.output`, chunk groupings prevent React duplication. 14 lazy-imports follow `React.lazy(() => import(...))` pattern, shared `<Suspense>` wraps the view switch (not per-component, cheaper), `ViewFallback` is a real skeleton (not blank), `JournalPage` correctly remains static. Reviewer couldn't run `npx vite build` in read-only mode; orchestrator re-ran it and confirmed 112 kB entry + zero warnings. No findings.
+- **FEAT-5 reviewer (APPROVED)** — all 9 recorded design decisions honoured. Backend: both commands decorated correctly, 22 tests cover happy path + empty dir + oversized-file truncation + rolled-file exclusion + redaction (home + device + long line + UTF-8 boundary preservation). Frontend: three-section dialog layout correct, toggle defaults correct (logs OFF / redact ON), primary button correctly gated on `confirmed` checkbox, all error paths route through `logger.warn` + `toast.error`. i18n complete — no hardcoded English strings. `BUG_TRACKER` values match `tauri.conf.json`'s updater endpoint exactly. UI primitives `switch.tsx` + `textarea.tsx` follow React-19 ref-as-prop + CVA + `cn()` patterns. "Known acceptable state" confirmed: URL 404 until PUB-5 lands is explicit per spec. No findings.
+
+### Notable observations
+
+- **No REVIEW-LATER conflicts despite 3 subagents editing the same file.** MAINT-86 subagent removed its entry (22 → 21), PERF-24 subagent removed its entry (21 → 20), FEAT-5 subagent left its entry for the orchestrator (20 → 19 after orchestrator removal). The `Previously resolved` count was bumped once at the end (327+ → 330+) to reflect the 3 resolutions. The sequential write ordering of subagents-into-same-file is apparently deterministic enough in this setup that concurrent edits compose correctly — but the builder summaries all explicitly note "re-read before writing" as the canonical pattern.
+- **PERF-24 and FEAT-5 both edited `SettingsView.tsx` without conflict.** FEAT-5 added lines for the `help` tab and `BugReportDialog`; PERF-24 added lines for the `React.lazy(DataSettingsTab)` wrapper. Different regions of the file. The PERF-24 subagent's summary explicitly flagged this as "files already modified in the tree when the session started" — that's the right posture for subagents: always re-read, expect to see uncommitted work from siblings.
+- **Bundle size numbers are real, not builder-claimed.** Orchestrator re-ran `npx vite build` post-merge and verified `dist/assets/index-BENF4Ynu.js` is 112.40 kB raw / 32.72 kB gzip. PERF-24's claim validated independently.
+- **All 9 FEAT-5 design decisions survived review.** The FEAT-5 reviewer's Check 9 ("known acceptable state — `BUG_TRACKER` points at a GitHub repo that doesn't exist until PUB-5 lands") explicitly validated this is intentional. Pressing "Open in GitHub" does open a valid URL; the URL 404s on landing until the publish target is live.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src-tauri/src/sync_protocol/orchestrator.rs` | MAINT-86: `SnapshotOffer` arm returns `Err(InvalidOperation(...))` + load-bearing comment. |
+| `src-tauri/src/sync_protocol/tests.rs` | MAINT-86: new `orchestrator_rejects_snapshot_offer_as_unreachable_protocol_state` test. |
+| `src-tauri/src/sync_integration_tests.rs` | MAINT-86: updated `orchestrator_rejects_snapshot_offer` assertion contract. |
+| `src-tauri/src/commands/bug_report.rs` | FEAT-5: new module (666 LOC) — 2 commands + 22 inline tests. |
+| `src-tauri/src/commands/mod.rs` | FEAT-5: `mod bug_report` + `pub use` + specta/cmd exports. |
+| `src-tauri/src/lib.rs` | FEAT-5: register 2 new commands in both `collect_commands!` blocks. |
+| `src/lib/bindings.ts` | FEAT-5: auto-regenerated (`BugReport`, `LogFileEntry`, `collectBugReportMetadata`, `readLogsForReport`). |
+| `src/lib/tauri.ts` | FEAT-5: hand-written wrappers for the 2 new commands. |
+| `src/lib/tauri-mock/handlers.ts` | FEAT-5: mock handlers for both commands. |
+| `src/lib/i18n.ts` | FEAT-5: 22 new `bugReport.*` / `help.*` / `settings.tabHelp` keys. |
+| `src/lib/config.ts` | FEAT-5: new `BUG_TRACKER` constant. |
+| `src/lib/bug-report.ts` | FEAT-5: new module — `buildGitHubIssueUrl` + `formatReportBody`. |
+| `src/lib/bug-report-zip.ts` | FEAT-5: new module — `buildReportZip` (JSZip) + `bugReportZipFilename`. |
+| `src/lib/__tests__/bug-report.test.ts` | FEAT-5: 12 tests (URL encoding, truncation, owner/repo, labels). |
+| `src/lib/__tests__/bug-report-zip.test.ts` | FEAT-5: 4 tests (ZIP structure, empty entries, filename). |
+| `src/components/BugReportDialog.tsx` | FEAT-5: new Radix Dialog (374 LOC). |
+| `src/components/__tests__/BugReportDialog.test.tsx` | FEAT-5: 11 tests. |
+| `src/components/ui/switch.tsx` | FEAT-5: new Radix Switch primitive. |
+| `src/components/ui/textarea.tsx` | FEAT-5: new Textarea primitive. |
+| `src/components/SettingsView.tsx` | FEAT-5: new `help` tab; PERF-24: `React.lazy(DataSettingsTab)`. |
+| `src/components/ErrorBoundary.tsx` | FEAT-5: "Report this crash" button + prefilled dialog. |
+| `src/components/__tests__/SettingsView.test.tsx` | FEAT-5: 6→7 tabs + help-flow test. |
+| `src/components/__tests__/ErrorBoundary.test.tsx` | FEAT-5: 2 new tests (button + prefill). |
+| `vite.config.ts` | PERF-24: `rollup-plugin-visualizer` behind `ANALYZE=1` + `manualChunks` groupings. |
+| `src/App.tsx` | PERF-24: 14 views lazy-loaded, shared `<Suspense fallback={<ViewFallback />}>`. |
+| `src/hooks/useBlockPropertyEvents.ts` | PERF-24: dynamic → static `@tauri-apps/api/event` import. |
+| `package.json` + `package-lock.json` | PERF-24: `rollup-plugin-visualizer` devDependency. |
+| `FEATURE-MAP.md` | FEAT-5: SettingsView updated to 7 tabs + new `BugReportDialog` entry. |
+| `REVIEW-LATER.md` | Remove FEAT-5 + PERF-24 + MAINT-86 table rows + detail sections. Summary 22 → 19. "Previously resolved" 327+ → 330+; sessions 114 → 115. |
+
+### Non-goals / scope discipline
+
+- Did NOT add any new Rust dependency (JSZip on frontend is enough).
+- Did NOT add any new Tauri plugin (`tauri-plugin-dialog` / `tauri-plugin-fs`) — browser-provided download prompt IS the save-as UX.
+- Did NOT add any new op types, tables, stores, or sync messages — entirely additive UI + two read-only backend commands + one sync-protocol arm + bundler config.
+- Did NOT touch `src/lib/tauri-mock.ts` core (only `src/lib/tauri-mock/handlers.ts` for the two new mocked commands).
+- Did NOT touch the `sync_daemon::snapshot_transfer` module — the FEAT-6 production path stays intact; only the orchestrator arm was cleaned up.
+- Did NOT remove `rollup-plugin-visualizer` after the analysis — kept as devDependency for future tuning. Invoke with `ANALYZE=1 npm run build` to regenerate `dist/stats.html`.
+- Did NOT resolve PUB-5 / PUB-6 / PUB-7 — they remain deferred until publish target + timing are locked in. `BUG_TRACKER` pointing at a 404 is intentional per FEAT-5 spec.
+
+### Post-session state
+
+- REVIEW-LATER: 19 open items (1 FEAT + 3 MAINT + 3 PERF + 6 TEST + 6 PUB).
+- Next batch candidates (sorted by estimated autonomous-ness):
+  - **TEST-4b** (M) — PropertyChip nested-button; Option A vs Option B design decision, but either is clearly documented; agent could commit upfront.
+  - **TEST-4c** (M) — StaticBlock → QueryResult; spec says "Option A is the likely call", so agent can commit upfront.
+  - **FEAT-4** (L) — MCP server for agent access. Too big for a single-session autonomous pickup; better approached as a multi-session plan.
+  - **TEST-1a/b/c/d** — E2E Playwright flake floor. Serial dependency chain; a becomes prereq for b and c; d is strictly last.
+  - **MAINT-79 / 83 / 84** — Android work. `jni` bump is compile-driven (S); Gradle 9.0 needs investigation (S–M); `minSdk` bump needs user approval.
+  - **PERF-19 / 20 / 23** — deliberate non-fixes per their decisions; skip unless scope triggers.
+  - **PUB-1 / 2 / 3 / 5 / 6 / 7** — publish-prep; blocked on user timing decision.
+
 ## Session 425 — TEST-3 + TEST-5 + FEAT-6 resolved (+ MAINT-86 filed) (2026-04-19)
 
 **3 REVIEW-LATER items fully resolved + 1 small follow-up filed. Open items 24 → 22. FEAT-6 ships the snapshot-driven catch-up that had been "implemented but not wired" since the snapshot machinery landed.**

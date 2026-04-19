@@ -273,6 +273,9 @@ pub fn run() {
         // Link metadata (UX-165)
         commands::fetch_link_metadata,
         commands::get_link_metadata,
+        // Bug report (FEAT-5)
+        commands::collect_bug_report_metadata,
+        commands::read_logs_for_report,
     ]);
 
     // `mut` is only consumed by the `#[cfg(not(mobile))]` updater plugin
@@ -708,6 +711,9 @@ mod specta_tests {
             // Link metadata (UX-165)
             crate::commands::fetch_link_metadata,
             crate::commands::get_link_metadata,
+            // Bug report (FEAT-5)
+            crate::commands::collect_bug_report_metadata,
+            crate::commands::read_logs_for_report,
         ])
     }
 

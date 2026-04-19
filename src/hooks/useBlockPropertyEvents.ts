@@ -8,6 +8,7 @@
  * useEffect re-runs in consumer components.
  */
 
+import { listen } from '@tauri-apps/api/event'
 import { useEffect, useRef, useState } from 'react'
 import { logger } from '../lib/logger'
 
@@ -32,40 +33,30 @@ export function useBlockPropertyEvents(): UseBlockPropertyEventsReturn {
   useEffect(() => {
     let cancelled = false
 
-    async function setup() {
-      try {
-        const { listen } = await import('@tauri-apps/api/event')
-        const unlisten = await listen<PropertyChangedPayload>(EVENT_NAME, (_event) => {
-          if (cancelled) return
-          // Debounce: batch rapid consecutive changes
-          if (timerRef.current) clearTimeout(timerRef.current)
-          timerRef.current = setTimeout(() => {
-            if (!cancelled) {
-              setInvalidationKey((prev) => prev + 1)
-            }
-          }, DEBOUNCE_MS)
-        })
-
-        return () => {
-          cancelled = true
-          if (timerRef.current) clearTimeout(timerRef.current)
-          unlisten()
+    // `@tauri-apps/api/event` is statically imported by useSyncEvents /
+    // ConflictList so it's already in the entry chunk — using a static
+    // import here too avoids Rolldown's INEFFECTIVE_DYNAMIC_IMPORT warning
+    // without changing behaviour.
+    const unlistenPromise = listen<PropertyChangedPayload>(EVENT_NAME, (_event) => {
+      if (cancelled) return
+      // Debounce: batch rapid consecutive changes
+      if (timerRef.current) clearTimeout(timerRef.current)
+      timerRef.current = setTimeout(() => {
+        if (!cancelled) {
+          setInvalidationKey((prev) => prev + 1)
         }
-      } catch {
-        logger.warn('useBlockPropertyEvents', 'Failed to listen for property change events')
-        return undefined
-      }
-    }
-
-    let cleanup: (() => void) | undefined
-    setup().then((fn) => {
-      cleanup = fn
+      }, DEBOUNCE_MS)
+    }).catch((err: unknown) => {
+      logger.warn('useBlockPropertyEvents', 'Failed to listen for property change events', {}, err)
+      return undefined
     })
 
     return () => {
       cancelled = true
       if (timerRef.current) clearTimeout(timerRef.current)
-      cleanup?.()
+      unlistenPromise.then((unlisten) => {
+        if (unlisten) unlisten()
+      })
     }
   }, [])
 
