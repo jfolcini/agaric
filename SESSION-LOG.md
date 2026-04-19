@@ -1,5 +1,68 @@
 # Session Log
 
+## Session 419 — MAINT-49 TypeScript 5.9 → 6 major upgrade (2026-04-19)
+
+**1 item resolved (MAINT-49). REVIEW-LATER 13→12.**
+
+Clean major-version bump: TypeScript 5.9.3 → 6.0.3. The only new TS 6 diagnostic surfaced by the existing codebase was `TS5101` flagging `baseUrl` as deprecated (stops functioning in TS 7); removed that line from `tsconfig.app.json`. The remaining `paths` entry (`"@/*": ["./src/*"]`) resolves relative to the tsconfig directory in TS 6 when `baseUrl` is absent, which matches the previous behaviour since the tsconfig sits at the repo root.
+
+All other TS 6 breaking-change surfaces from the REVIEW-LATER notes turned out to be non-issues here:
+
+- **Default `--target` shift ES2020 → ES2022.** Both `tsconfig.app.json` and `tsconfig.node.json` pin `target: "ES2023"` explicitly, so the default shift doesn't apply.
+- **Stricter `satisfies` inference, removed deprecated flags.** Full test suite passed with no new diagnostics.
+- **`@types/*` peer-TS pins.** Reviewer audit confirmed none of the `@types/*` devDeps pin a TS 5.x peer.
+- **Path-alias consumption across tools.** Vite and Vitest each define their own `resolve.alias` for `@` in their configs and do not rely on the tsconfig `paths`; knip/biome/playwright don't consume it either. The tsconfig paths entry is for tsc's type resolution only, and `traceResolution` confirmed `@/components/ui/button` still resolves post-removal.
+
+### Resolved items
+
+**MAINT-49 — TypeScript 6 upgrade:**
+- `package.json`: `"typescript": "~5.9.3"` → `"^6.0.3"`.
+- `package-lock.json`: regenerated.
+- `tsconfig.app.json`: removed deprecated `"baseUrl": "."` (TS6 TS5101). `paths` entry kept; resolves relative to tsconfig dir, which is already the repo root.
+
+### Tests
+
+- No source code changed; no new tests required. Vitest run: **7298 tests across 292 test files, all green**.
+- `npx tsc -b --force` → clean (zero errors, zero warnings).
+
+### Out-of-scope pre-existing issue
+
+`npm run build` (Vite production build) fails with a `vite:worker-import-meta-url` esbuild error transforming object destructuring in `useGraphSimulation.ts` under the `safari13` target. Reproduced on `main` with TypeScript 5.9.3 reinstalled, so it is unrelated to this upgrade. Filing separately if/when it blocks a release.
+
+### Pipeline / reviewer exchange
+
+- No build subagents (single-file dev-dep bump, no parallelism benefit). Orchestrator applied the changes directly.
+- One technical review subagent — APPROVE. Verified: the three-file diff is minimal and sufficient; `@types/*` compatibility; path-alias resolution across tools; no architectural invariant touched; REVIEW-LATER item fully addressed.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `package.json` | `typescript` devDep: `~5.9.3` → `^6.0.3`. |
+| `package-lock.json` | Regenerated for typescript 6.0.3. |
+| `tsconfig.app.json` | Removed deprecated `"baseUrl": "."`. |
+| `REVIEW-LATER.md` | −1 item (13→12) — MAINT-49 table row + detail section removed. MAINT-48 decision note no longer references MAINT-49. Previously-resolved bumped 311→312 / 109→110. |
+| `SESSION-LOG.md` | This session. |
+
+### Stats
+
+- **3 production files changed** (package.json, package-lock.json, tsconfig.app.json) + 2 docs.
+- **1 review subagent** (tech APPROVE).
+- **Tests:** 7298 passed across 292 suites. `npx tsc -b --force` clean.
+
+### Verification
+
+- `npx tsc -b --force` → zero errors, zero warnings.
+- `npx vitest run` → 7298/7298 passing.
+- `prek run --all-files` → all hooks pass.
+
+### Remaining REVIEW-LATER backlog (12 items)
+
+- **DECIDED awaiting scheduled session:** FEAT-4, FEAT-5, MAINT-48, PUB-1, PUB-6, PUB-7 (6 items).
+- **DEFERRED "until trigger":** PERF-19, PERF-20, PERF-23, PUB-2, PUB-3, PUB-5 (6 items).
+
+---
+
 ## Session 418 — UX-201b configurable priority levels (2026-04-19)
 
 **1 item resolved (UX-201b). REVIEW-LATER 14→13.**
