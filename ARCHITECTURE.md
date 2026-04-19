@@ -208,7 +208,7 @@ recovery (3), drafts (2), PRAGMAs (1), and misc (3 in soft_delete, peer_refs, me
 
 ### Schema
 
-15 tables + 1 FTS5 virtual table, 24 indexes across 27 migrations.
+18 tables + 1 FTS5 virtual table, 29 indexes across 30 migrations.
 
 **Core tables:**
 
@@ -1173,14 +1173,14 @@ CI doesn't need a live database. `cargo sqlx prepare --check` is a CI gate.
 
 | Layer | Tool | Scope |
 |-------|------|-------|
-| Rust unit tests | cargo nextest | Inline `#[cfg(test)] mod tests` in every module (~1,706 tests) |
+| Rust unit tests | cargo nextest | Inline `#[cfg(test)] mod tests` in every module (~2,130 tests) |
 | Rust integration | cargo nextest | Pipeline tests, API contract tests |
 | Rust snapshots | insta (25 YAML snapshots) | Op payload serialization, command responses, backlink queries, pagination |
-| Frontend unit | Vitest (jsdom) | Pure functions, store logic, hooks (~5,960 tests across 258 files) |
+| Frontend unit | Vitest (jsdom) | Pure functions, store logic, hooks (~7,300 tests across 292 files) |
 | Frontend component | Vitest + @testing-library/react | Render, interaction, a11y (vitest-axe) |
 | Frontend property | Vitest + fast-check | Markdown serializer fuzzing, round-trip stability |
 | Frontend typecheck | `vitest typecheck` | Compile-time type validation (enabled via `tsconfig.app.json`) |
-| E2E | Playwright (Chromium, 21 spec files) | Smoke, editor lifecycle, links, keyboard, Markdown syntax, slash commands, toolbar, tags, undo/redo, conflicts, history, error scenarios, sync UI, graph view, templates, properties, queries, import/export, features coverage, suggestion keyboard |
+| E2E | Playwright (Chromium, 26 spec files) | Smoke, editor lifecycle, links, keyboard, Markdown syntax, slash commands, toolbar, tags, undo/redo, conflicts, history, error scenarios, sync UI, graph view, templates, properties, queries, import/export, features coverage, suggestion keyboard |
 | Benchmarks | Criterion (24 bench files) | Agenda, aliases, attachments, backlinks, cache, commands, compaction, drafts, export, FTS, graph, hash, import, merge, move/reorder, op log, pagination, properties, property defs, snapshot, soft delete, sync, tag query, undo/redo (manual only) |
 
 ### Pre-commit hooks (prek)

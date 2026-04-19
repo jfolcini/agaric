@@ -151,7 +151,7 @@ cargo tauri android dev --target x86_64
 ### Frontend Tests (Vitest)
 
 ```bash
-npm test                    # Single run (~5000 tests)
+npm test                    # Single run (~7300 tests)
 npm run test:watch          # Watch mode
 npm run test:coverage       # With v8 coverage (thresholds: 80% lines/functions/statements, 75% branches)
 ```
@@ -196,7 +196,7 @@ E2E tests run against the Vite dev server with the in-memory mock backend. They 
 ```bash
 cd src-tauri
 
-# All benchmarks (16 bench files)
+# All benchmarks (24 bench files)
 cargo bench
 
 # Specific benchmark
@@ -216,7 +216,7 @@ prek run --all-files
 prek run
 ```
 
-The `prek.toml` configuration runs 15 hooks: Rust formatting, Clippy, Biome lint, TypeScript check, Vitest, sqlx cache check, and more. File-type-aware — Rust hooks skip when no `.rs` files are staged.
+The `prek.toml` configuration runs 23 hooks: builtin file checks, gitleaks secret scanning, Biome lint, TypeScript check, Vitest, markdownlint, lychee link checker, Rust formatting, Clippy, cargo nextest, cargo-deny, cargo-machete, npm audit, depcheck, license-checker, knip, and more. File-type-aware — Rust hooks skip when no `.rs` files are staged.
 
 ---
 

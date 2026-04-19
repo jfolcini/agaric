@@ -37,29 +37,29 @@ src/
 │   ├── smoke.test.ts
 │   ├── boot-store.test.ts
 │   └── fixtures/index.ts         # Shared fixture factories (makeBlock, makePage, etc.)
-├── components/__tests__/         # Component tests (.test.tsx) — 125+ files
+├── components/__tests__/         # Component tests (.test.tsx) — 133 files
 │   ├── App.test.tsx
 │   ├── PageBrowser.test.tsx
 │   ├── EditableBlock.test.tsx
 │   ├── SearchPanel.test.tsx
 │   └── ...
-├── editor/__tests__/             # Editor logic tests — 18+ files
+├── editor/__tests__/             # Editor logic tests — 20 files
 │   ├── markdown-serializer.test.ts        # Example-based
 │   ├── markdown-serializer.property.test.ts # fast-check
 │   ├── extensions.test.ts
 │   ├── use-block-keyboard.test.ts
 │   └── ...
-├── stores/__tests__/             # Zustand store tests — 7 files
+├── stores/__tests__/             # Zustand store tests — 8 files
 │   ├── blocks.test.ts
 │   ├── page-blocks.test.ts
 │   ├── navigation.test.ts
 │   └── undo.test.ts
-├── hooks/__tests__/              # Hook tests — 45+ files
+├── hooks/__tests__/              # Hook tests — 53 files
 │   ├── useViewportObserver.test.ts
 │   ├── useBlockCollapse.test.ts
 │   ├── useBlockZoom.test.ts
 │   └── ...
-├── lib/__tests__/                # Utility & wrapper tests — 33 files
+├── lib/__tests__/                # Utility & wrapper tests — 39 files
 │   ├── tauri.test.ts             # Invoke wrapper contract tests
 │   ├── tauri-mock.test.ts        # Mock layer tests
 │   ├── tree-utils.test.ts
@@ -153,6 +153,43 @@ render(<PageBrowser />)
 const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
 expect(skeletons.length).toBe(3)
 ```
+
+### React 19 test timing
+
+React 19 changed how state updates originating outside the React event system flush. The following do **not** flush within a bare `await new Promise(r => setTimeout(r, 0))` tick any more:
+
+- Worker `dispatchEvent` callbacks (`error`, `messageerror`, custom events)
+- `window.setTimeout` / `setInterval` callbacks
+- IPC promise resolutions chained off external events
+- `MutationObserver` / `IntersectionObserver` / `ResizeObserver` callbacks
+
+Three interchangeable fixes — pick the one that matches the assertion style:
+
+```tsx
+// Wrap the external-source wait in act(async):
+await act(async () => {
+  await new Promise((r) => setTimeout(r, 0))
+})
+expect(onWorkerError).toHaveBeenCalled()
+
+// Switch sync getByText to async findByText:
+// before: expect(screen.getByText('Loaded')).toBeInTheDocument()
+expect(await screen.findByText('Loaded')).toBeInTheDocument()
+
+// Or waitFor on the observable end state:
+await waitFor(() => {
+  expect(container.querySelector('[data-slot="skeleton"]')).not.toBeInTheDocument()
+})
+```
+
+**Do not** add arbitrary `await sleep(n)` calls — the flake only looks fixed. Reference sites:
+
+- `src/hooks/__tests__/useGraphSimulation.test.ts` — `act(async)` around a worker-dispatched error.
+- `src/components/__tests__/AttachmentList.test.tsx` — `act(async)` around `vi.advanceTimersByTime(3100)`.
+- `src/components/__tests__/ConflictList.test.tsx` — `findByText` after `findByText` so the second IPC resolution flushes.
+- `src/components/__tests__/BacklinkFilterBuilder.test.tsx` — `waitFor` on the Radix popover trigger label before clicking Apply (TEST-3 fix).
+
+The root `AGENTS.md` also flags this pattern at a higher level — this section lists the concrete recipes per frontend test style.
 
 ### Helper factories
 

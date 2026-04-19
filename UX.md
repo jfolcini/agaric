@@ -60,6 +60,8 @@ Files: `src/lib/priority-color.ts`, `src/components/ui/priority-badge.tsx`. Sema
 
 Priority badges use semantic tokens (NOT hardcoded Tailwind colors). Use `priorityColor(p)` or the `PriorityBadge` CVA variant — never inline `bg-red-100` etc.
 
+**Levels are user-configurable** (UX-201b): the `priority` property definition's `options` JSON drives the active cycle. The defaults below are what ships in the seed database; users can reconfigure via Properties → `priority`. The `priorityColor()` utility and `PriorityBadge` variants key off `priorityRank()` (active levels first in order, unknown last), so custom levels inherit a sensible colour without code changes.
+
 | Priority | Token class | Semantic token | Colorblind-safe cue |
 |----------|-------------|-----------------|---------------------|
 | 1 (Urgent / A) | `bg-priority-urgent text-priority-foreground` | `--priority-urgent` | (add ring in contexts where higher emphasis needed) |
@@ -291,7 +293,7 @@ File: `src/editor/use-block-keyboard.ts`
 | Ctrl+Shift+Left | Dedent block | — |
 | Ctrl+Shift+Up | Move block up among siblings | — |
 | Ctrl+Shift+Down | Move block down among siblings | — |
-| Ctrl+Enter | Cycle task state (TODO → DOING → DONE → none) | — |
+| Ctrl+Enter | Cycle task state (TODO → DOING → CANCELLED → DONE → none) | — |
 | Ctrl+. | Toggle collapse/expand children | Block has children |
 
 ### Formatting Shortcuts
@@ -323,10 +325,10 @@ File: `src/components/BlockTree.tsx` (`handleSlashCommand`)
 
 | Command | Effect |
 |---------|--------|
-| `/TODO` / `/DOING` / `/DONE` | Set task state |
+| `/TODO` / `/DOING` / `/CANCELLED` / `/DONE` | Set task state (locked cycle — UX-201a) |
 | `/date` / `/schedule` | Set scheduled date via picker |
 | `/due` | Set due date via picker |
-| `/priority-high` / `-medium` / `-low` | Set priority (A/B/C) |
+| `/priority-high` / `-medium` / `-low` | Set priority (default levels 1/2/3, user-configurable via property definitions — UX-201b) |
 | `/link` | Insert block link `[[` |
 | `/tag` | Insert tag reference `@` |
 | `/code` | Toggle code block |

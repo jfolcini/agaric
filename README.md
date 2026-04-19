@@ -83,7 +83,7 @@ Peer-to-peer sync over local WiFi — no cloud server needed. Append-only operat
 | Desktop shell | [Tauri 2](https://v2.tauri.app/) |
 | Frontend | React 19 + Vite + TipTap + Tailwind CSS 4 |
 | Backend | Rust + SQLite (via sqlx) |
-| Database | SQLite in WAL mode, 15 tables + 1 FTS5 virtual table, 23 indexes |
+| Database | SQLite in WAL mode, 18 tables + 1 FTS5 virtual table, 29 indexes across 30 migrations |
 | State | Zustand stores |
 | Linting | Biome (no ESLint/Prettier) |
 | Testing | Vitest + vitest-axe + fast-check (frontend), cargo-nextest + insta + Criterion (backend), Playwright (E2E) |
@@ -102,9 +102,9 @@ cargo tauri dev              # Launch app with hot reload
 ### Testing
 
 ```bash
-npm test                     # Frontend tests (~6000+ tests, Vitest)
-cd src-tauri && cargo nextest run   # Rust tests (~1700+ tests)
-npx playwright test          # E2E tests (21 spec files, Playwright + Chromium)
+npm test                     # Frontend tests (~7300 tests, Vitest)
+cd src-tauri && cargo nextest run   # Rust tests (~2100 tests)
+npx playwright test          # E2E tests (26 spec files, Playwright + Chromium)
 ```
 
 ### Building

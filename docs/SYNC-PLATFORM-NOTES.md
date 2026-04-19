@@ -5,7 +5,7 @@ Platform-specific considerations for the Agaric sync protocol.
 ## mDNS on Android (#233)
 
 ### Background
-Android restricts multicast by default. The `mdns-sd` 0.18.2 crate is pure Rust (no Avahi dependency)
+Android restricts multicast by default. The `mdns-sd` 0.19 crate is pure Rust (no Avahi dependency)
 and should work on Android if the multicast lock is acquired.
 
 ### Requirements
