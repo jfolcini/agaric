@@ -33,6 +33,20 @@ export const NON_DELETABLE_PROPERTIES = new Set([
 ])
 
 /**
+ * Properties whose `options` list is locked — users cannot edit them from
+ * the Properties tab. Currently only `todo_state`: the task cycle
+ * (`none → TODO → DOING → CANCELLED → DONE → none`) is intentionally fixed
+ * per UX-202, and the DB-side `options` are kept in sync with the in-code
+ * cycle via migration 0029. Editing them from the UI would let the DB
+ * drift out of sync with `TASK_CYCLE` in `useBlockProperties.ts`, silently
+ * breaking the status filter dimension in AgendaFilterBuilder.
+ *
+ * `priority` is NOT locked here even though its cycle is also fixed today
+ * (`null → 1 → 2 → 3 → null`); unlocking priority is UX-201b's scope.
+ */
+export const LOCKED_PROPERTY_OPTIONS = new Set(['todo_state'])
+
+/**
  * Build the type-appropriate `setProperty` params for initializing a
  * newly-added property.  Ref properties are initialized with a null
  * ref — the UI shows the page picker immediately so the user can

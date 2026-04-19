@@ -5,7 +5,7 @@
  * and edit options for select-type properties.
  */
 
-import { Plus, Search, Settings2, Trash2, X } from 'lucide-react'
+import { Lock, Plus, Search, Settings2, Trash2, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -25,7 +25,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
+import { LOCKED_PROPERTY_OPTIONS, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
 import type { PropertyDefinition } from '../lib/tauri'
 import {
@@ -219,7 +219,23 @@ export function PropertyDefinitionsList(): React.ReactElement {
                 <ListItem key={def.key}>
                   <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
                   <Badge variant="secondary">{def.value_type}</Badge>
-                  {def.value_type === 'select' && (
+                  {def.value_type === 'select' && LOCKED_PROPERTY_OPTIONS.has(def.key) && (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span
+                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground"
+                            data-testid={`locked-options-${def.key}`}
+                          >
+                            <Lock className="h-3 w-3" aria-hidden="true" />
+                            {t('propertiesView.optionsLocked')}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>{t('propertiesView.optionsLockedTooltip')}</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
+                  {def.value_type === 'select' && !LOCKED_PROPERTY_OPTIONS.has(def.key) && (
                     <Popover
                       open={editingOptionsKey === def.key}
                       onOpenChange={(open) => {

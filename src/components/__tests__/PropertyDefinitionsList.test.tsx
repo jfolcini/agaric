@@ -410,4 +410,57 @@ describe('PropertyDefinitionsList', () => {
       await screen.findByPlaceholderText(t('propertiesView.optionsJsonPlaceholder')),
     ).toBeInTheDocument()
   })
+
+  // UX-201a: todo_state's options are locked (cycle is fixed by code + migration 0029)
+  describe('locked options for todo_state (UX-201a)', () => {
+    it('does NOT render the Edit options button for todo_state', async () => {
+      mockedInvoke.mockResolvedValueOnce([
+        makePropDef('todo_state', 'select', '["TODO","DOING","CANCELLED","DONE"]'),
+        makePropDef('priority', 'select', '["1","2","3"]'),
+        makePropDef('effort', 'select', '["15m","30m","1h"]'),
+      ])
+
+      render(<PropertyDefinitionsList />)
+
+      await screen.findByText('Todo State')
+
+      // Only non-locked select properties show the Edit options button.
+      // Two select defs are not locked (priority, effort), so exactly two buttons.
+      const editButtons = screen.getAllByRole('button', { name: /Edit options/i })
+      expect(editButtons).toHaveLength(2)
+    })
+
+    it('renders a locked indicator for todo_state with accessible tooltip copy', async () => {
+      mockedInvoke.mockResolvedValueOnce([
+        makePropDef('todo_state', 'select', '["TODO","DOING","CANCELLED","DONE"]'),
+      ])
+
+      render(<PropertyDefinitionsList />)
+
+      const locked = await screen.findByTestId('locked-options-todo_state')
+      expect(locked).toHaveTextContent(t('propertiesView.optionsLocked'))
+    })
+
+    it('priority (not locked yet, UX-201b) still shows the Edit options button', async () => {
+      mockedInvoke.mockResolvedValueOnce([makePropDef('priority', 'select', '["1","2","3"]')])
+
+      render(<PropertyDefinitionsList />)
+
+      await screen.findByText('Priority')
+      expect(screen.getByRole('button', { name: /Edit options/i })).toBeInTheDocument()
+    })
+
+    it('renders without a11y violations when todo_state is locked', async () => {
+      mockedInvoke.mockResolvedValueOnce([
+        makePropDef('todo_state', 'select', '["TODO","DOING","CANCELLED","DONE"]'),
+        makePropDef('priority', 'select', '["1","2","3"]'),
+      ])
+
+      const { container } = render(<PropertyDefinitionsList />)
+
+      await screen.findByText('Todo State')
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
 })

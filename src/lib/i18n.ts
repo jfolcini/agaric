@@ -704,6 +704,9 @@ const resources = {
       'propertiesView.deleteTooltip': 'Delete property',
       'propertiesView.editOptionsTooltip': 'Edit options',
       'propertiesView.noFilterResults': 'No properties match your search',
+      'propertiesView.optionsLocked': 'Locked',
+      'propertiesView.optionsLockedTooltip':
+        'The TODO state cycle is fixed at TODO → DOING → CANCELLED → DONE. Options cannot be edited.',
       'properties.deleteDefinition': 'Delete property {{key}}',
 
       // Task states (aria-labels)

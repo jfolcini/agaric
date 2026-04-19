@@ -29,6 +29,7 @@ vi.mock('lucide-react', () => ({
   CalendarPlus: () => <svg data-testid="calendar-plus-icon" />,
   CheckCircle2: () => <svg data-testid="check-circle2-icon" />,
   Clock: () => <svg data-testid="clock-icon" />,
+  Lock: () => <svg data-testid="lock-icon" />,
   MapPin: () => <svg data-testid="map-pin-icon" />,
   Pencil: () => <svg data-testid="pencil-icon" />,
   Plus: () => <svg data-testid="plus-icon" />,
@@ -858,5 +859,68 @@ describe('PropertyRowEditor ref picker', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // UX-201a: todo_state's options are locked — the edit-options button must
+  // not appear on the block-level property editor either. Keeps
+  // `property_definitions.todo_state.options` in lockstep with TASK_CYCLE.
+  describe('locked options for todo_state (UX-201a)', () => {
+    it('does NOT render the edit options button for todo_state', () => {
+      render(
+        <PropertyRowEditor
+          blockId="BLOCK_1"
+          prop={makeProp('todo_state', { value_text: 'TODO' })}
+          def={makeDef('todo_state', 'select', '["TODO","DOING","CANCELLED","DONE"]')}
+          onSave={vi.fn()}
+        />,
+      )
+
+      expect(
+        screen.queryByLabelText(t('pageProperty.editOptionsLabel', { key: 'todo_state' })),
+      ).not.toBeInTheDocument()
+    })
+
+    it('renders a locked indicator for todo_state with accessible tooltip copy', () => {
+      render(
+        <PropertyRowEditor
+          blockId="BLOCK_1"
+          prop={makeProp('todo_state', { value_text: 'TODO' })}
+          def={makeDef('todo_state', 'select', '["TODO","DOING","CANCELLED","DONE"]')}
+          onSave={vi.fn()}
+        />,
+      )
+
+      const locked = screen.getByTestId('locked-options-todo_state')
+      expect(locked).toHaveTextContent(t('propertiesView.optionsLocked'))
+    })
+
+    it('priority (not locked yet, UX-201b) still shows the edit options button', () => {
+      render(
+        <PropertyRowEditor
+          blockId="BLOCK_1"
+          prop={makeProp('priority', { value_text: '1' })}
+          def={makeDef('priority', 'select', '["1","2","3"]')}
+          onSave={vi.fn()}
+        />,
+      )
+
+      expect(
+        screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'priority' })),
+      ).toBeInTheDocument()
+    })
+
+    it('renders without a11y violations when todo_state is locked', async () => {
+      const { container } = render(
+        <PropertyRowEditor
+          blockId="BLOCK_1"
+          prop={makeProp('todo_state', { value_text: 'TODO' })}
+          def={makeDef('todo_state', 'select', '["TODO","DOING","CANCELLED","DONE"]')}
+          onSave={vi.fn()}
+        />,
+      )
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 })

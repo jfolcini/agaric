@@ -9,7 +9,7 @@
  * Extracted from PagePropertyTable for reuse.
  */
 
-import { Pencil, Plus, X } from 'lucide-react'
+import { Lock, Pencil, Plus, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -25,7 +25,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { logger } from '@/lib/logger'
+import { LOCKED_PROPERTY_OPTIONS } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
 import { useDateInput } from '../hooks/useDateInput'
 import type { BlockRow, PropertyDefinition, PropertyRow } from '../lib/tauri'
@@ -309,7 +311,23 @@ export function PropertyRowEditor({
           </>
         )}
       </div>
-      {valueType === 'select' && (
+      {valueType === 'select' && LOCKED_PROPERTY_OPTIONS.has(prop.key) && (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                data-testid={`locked-options-${prop.key}`}
+              >
+                <Lock className="h-3 w-3" aria-hidden="true" />
+                {t('propertiesView.optionsLocked')}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{t('propertiesView.optionsLockedTooltip')}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
+      {valueType === 'select' && !LOCKED_PROPERTY_OPTIONS.has(prop.key) && (
         <Popover open={editOptionsOpen} onOpenChange={setEditOptionsOpen}>
           <PopoverTrigger asChild>
             <Button
