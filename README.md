@@ -134,17 +134,17 @@ src/                         # React frontend
   editor/                    #   TipTap editor setup and extensions
     extensions/              #   Custom TipTap extensions (tag-ref, block-link, etc.)
   stores/                    #   Zustand state stores (8 stores, per-page factory)
-  hooks/                     #   Custom React hooks (~44 hooks)
+  hooks/                     #   Custom React hooks (~53 hooks)
   lib/                       #   Tauri API wrappers, utilities, and bindings
   index.css                  #   Tailwind theme (OKLch colors, semantic tokens)
 src-tauri/                   # Rust backend
-  src/                       #   Commands, database, materializer, sync, merge (38 modules)
-  migrations/                #   SQLite migrations (22 files, auto-run on startup)
+  src/                       #   Commands, database, materializer, sync, merge
+  migrations/                #   SQLite migrations (30 files, auto-run on startup)
   tests/                     #   Integration tests
   benches/                   #   Criterion benchmarks (24 bench files)
   icons/                     #   App icons (all platforms)
   tauri.conf.json            #   Tauri configuration
-e2e/                         # Playwright E2E tests (21 spec files)
+e2e/                         # Playwright E2E tests (26 spec files)
 public/                      # Static assets (agaric.svg icon)
 BUILD.md                     # Complete build guide
 AGENTS.md                    # Developer conventions

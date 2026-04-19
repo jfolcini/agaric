@@ -216,7 +216,7 @@ prek run --all-files
 prek run
 ```
 
-The `prek.toml` configuration runs 23 hooks: builtin file checks, gitleaks secret scanning, Biome lint, TypeScript check, Vitest, markdownlint, lychee link checker, Rust formatting, Clippy, cargo nextest, cargo-deny, cargo-machete, npm audit, depcheck, license-checker, knip, and more. File-type-aware — Rust hooks skip when no `.rs` files are staged.
+The `prek.toml` configuration runs 25 hooks: 9 builtin file checks, gitleaks secret scanning, Biome lint, TypeScript check, CSS variable guard (`no-hsl-rgb-var-wrap`), Vitest, npm audit, license-checker, depcheck, knip, markdownlint, lychee link checker, cargo fmt, clippy, nextest, deny, machete. File-type-aware — Rust hooks skip when no `.rs` files are staged.
 
 ---
 

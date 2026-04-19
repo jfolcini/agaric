@@ -10,7 +10,7 @@ Local-first block-based note-taking app inspired by Org-mode and Logseq. React 1
 |----------|---------|
 | **AGENTS.md** (this file) | Invariants, conventions, architecture overview |
 | **[BUILD.md](BUILD.md)** | Build guide: prerequisites, platforms, Android, CI, troubleshooting |
-| **ARCHITECTURE.md** | Deep-dive: data model, op log, materializer, editor, sync, search (~1160 lines) |
+| **ARCHITECTURE.md** | Deep-dive: data model, op log, materializer, editor, sync, search (~1870 lines) |
 | **[FEATURE-MAP.md](FEATURE-MAP.md)** | Complete feature inventory: schema, commands, sync, editor, stores, testing. Use for discovery and review. |
 | `src-tauri/tests/AGENTS.md` | Rust test patterns, fixtures, pitfalls |
 | `src/__tests__/AGENTS.md` | Frontend test patterns, mocking, a11y |
@@ -24,8 +24,8 @@ See **[BUILD.md](BUILD.md)** for the full build guide (prerequisites, platform-s
 # Quick reference
 cargo tauri dev              # Dev mode with hot reload
 cargo tauri build            # Production build (per-platform)
-npm run test                 # Vitest (6500+ tests)
-cd src-tauri && cargo nextest run   # Rust tests (2000+ tests)
+npm run test                 # Vitest (7300+ tests)
+cd src-tauri && cargo nextest run   # Rust tests (2100+ tests)
 npx playwright test          # E2E tests (26 spec files)
 cargo tauri android build --target aarch64 --debug   # Android debug APK
 cargo tauri android build --target aarch64            # Android release APK (~24 MB)
@@ -68,7 +68,7 @@ Agaric is a **single-user, multi-device, local-first** application with **no clo
 - **WAL mode**, foreign keys ON on every connection
 - **Pool:** 2 writers + 4 readers (6 total)
 - **Migrations:** `src-tauri/migrations/` — auto-run on pool init (append-only, never modify shipped migrations)
-- **Schema:** 18 tables + 2 virtual tables (FTS5 trigram tokenizer + FTS5 `_config`), ~26 indexes, 2 triggers
+- **Schema:** 18 tables + 1 FTS5 virtual table (`fts_blocks`, trigram tokenizer), 29 indexes, 2 triggers across 30 migrations
 
 ## Frontend Architecture
 
@@ -174,7 +174,7 @@ cd src-tauri && cargo test -- specta_tests --ignored
 
 ## Pre-commit & CI
 
-- **Pre-commit:** `prek.toml` — file-type-aware hooks (Rust hooks skip when no `.rs` staged, etc.) covering biome, tsc, vitest, license check, depcheck, knip, cargo fmt/clippy/nextest/deny/machete
+- **Pre-commit:** `prek.toml` — 25 file-type-aware hooks (Rust hooks skip when no `.rs` staged, etc.) covering 9 builtin file checks, gitleaks (secret scanning), biome, tsc, `no-hsl-rgb-var-wrap`, vitest, npm-audit, license-checker, depcheck, knip, markdownlint, lychee, cargo fmt/clippy/nextest/deny/machete
 - **CI:** `.github/workflows/ci.yml` — 3 jobs: `check` (lint/test on Linux), `build` (matrix: Linux + Windows + macOS), `android-build`
 
 ## Testing Conventions
