@@ -1,5 +1,82 @@
 # Session Log
 
+## Session 418 — UX-201b configurable priority levels (2026-04-19)
+
+**1 item resolved (UX-201b). REVIEW-LATER 14→13.**
+
+Priority was hardcoded to `['1','2','3']` in 6+ places (cycle, badge, color, sort, group, filter metadata, plus an unlisted consumer in `graph-filters.ts`). This session makes the levels user-configurable via `property_definitions.priority.options`, with a module-level cache hydrated at boot and refreshed on save. UX-201a's `LOCKED_PROPERTY_OPTIONS` deliberately excluded `priority` so the existing edit-options UI in the Properties tab and the per-block editor already exposes it — no UI lock changes needed. Substantial refactor (24 files) but well-bounded: pure frontend, no new migrations, no new stores/ops/tables/sync types.
+
+### Resolved items
+
+**UX-201b — Configurable priority levels:**
+- New `src/lib/priority-levels.ts`: module-level cache (`DEFAULT_PRIORITY_LEVELS`, `setPriorityLevels`, `getPriorityLevels`, `getPriorityCycle`, `priorityRank`, `subscribePriorityLevels`, `__resetPriorityLevelsForTests`). Normalisation (trim, dedupe, drop-empty), no-op on equal arrays, Set-backed observer with try/catch + `logger.warn` on listener throw.
+- New `src/hooks/usePriorityLevels.ts`: thin `useSyncExternalStore` wrapper so components re-render on change.
+- `src/App.tsx`: boot-time effect reads `list_property_defs` once, parses `priority.options` defensively (Array.isArray guard, JSON.parse → logger.warn on failure, string-only filter, empty-result no-op) and calls `setPriorityLevels`. Malformed payloads leave defaults untouched.
+- `src/components/PropertyDefinitionsList.tsx` + `src/components/PropertyRowEditor.tsx`: after `updatePropertyDefOptions('priority', ...)` resolves, parse and propagate the new options via `setPriorityLevels`. Only fires for the `priority` key.
+- `src/lib/priority-color.ts`: index-based mapping (`INDEX_COLORS[Math.min(idx, 2)]`); levels 4+ and unknown values fall back to the `normal` semantic token. Accepts `string | null`.
+- `src/components/ui/priority-badge.tsx`: dropped CVA variants; uses `priorityColor()` directly. `priorityBadgeVariants` export removed (grep confirmed zero callers).
+- `src/hooks/useBlockProperties.ts`: `PRIORITY_CYCLE` constant removed; `handleTogglePriority` calls `getPriorityCycle()` at click time so the cycle tracks edits without requiring a remount.
+- `src/lib/agenda-sort.ts`: `priorityRank` imported from the new module; `groupByPriority` iterates `getPriorityLevels()` dynamically so custom levels get their own group buckets.
+- `src/lib/filter-dimension-metadata.ts`: `priority.choices` became a thunk that returns a fresh copy of the current levels (same pattern as `getTaskStates`).
+- `src/lib/graph-filters.ts` + `src/components/GraphFilterBar.tsx`: graph-view priority filter now subscribes via `usePriorityLevels()`; `aria-label` uses `t('graph.filter.priorityValue.${v}', { defaultValue: 'P${v}' })` so custom alpha levels still render a label. Old `GRAPH_PRIORITY_VALUES` constant kept for back-compat with an existing test.
+- `src/components/BlockInlineControls.tsx`: new `priorityLabel(priority)` helper used in the three aria-label / visible-text call sites (previously a hardcoded `PRIORITY_DISPLAY` lookup blanked out for unknown keys). The `PRIORITY_DISPLAY` constant kept for test back-compat.
+
+### Tests
+
+- 3 new test files: `priority-levels.test.ts` (21 tests — defaults, normalisation, no-op, listener lifecycle, priorityRank/cycle), `priority-color.test.ts` (12 tests — default + custom + unknown + level-4+ fallback), `usePriorityLevels.test.ts` (4 tests — initial, re-render, no-op, unmount).
+- 8 existing test files extended with UX-201b describe blocks covering: dynamic cycle read at click time, boot load (valid/missing/invalid/non-array), save-time refresh, custom-level `PriorityBadge` rendering, `filter-dimension-metadata` thunk copy-safety, `agenda-sort` custom level order + dynamic group buckets, and the Graph filter bar resubscribing when levels change.
+- Test isolation: every file that touches the module-level cache calls `__resetPriorityLevelsForTests()` in `beforeEach` + `afterEach`.
+
+### Pipeline / reviewer exchange
+
+- Single build subagent (detached HEAD worktree). Grepped for hardcoded priority and caught an out-of-spec consumer (`graph-filters.ts` + `GraphFilterBar.tsx`) that the original prompt's grep list missed; wired through and tested.
+- Parallel technical + UX reviewers. Both APPROVE (technical APPROVE-WITH-NITS).
+- Orchestrator applied two of the technical reviewer's three nits before merge: (1) added the missing GraphFilterBar subscription test (2 cases — custom levels + live re-render when `setPriorityLevels` fires after mount); (2) clarified the `priority-color.ts` comment to cover unknown values. The third nit (explicit test for the empty-array boot-time case) was skipped because the existing normalisation unit tests already cover that path.
+
+### Post-review fixes applied by orchestrator
+
+- Two new test cases added in `src/components/__tests__/GraphFilterBar.test.tsx` under a `priority level subscription (UX-201b)` describe block. Defaults use the `t('graph.filter.priorityValue.1')` etc. translations; custom levels use the `P${v}` defaultValue fallback.
+- Biome auto-fix pass across 9 files for format + import-sort. No semantic changes.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `REVIEW-LATER.md` | −1 item (14→13) — UX-201b table row + detail section removed. Empty UX heading removed. Previously-resolved bumped 310→311 / 108→109. |
+| `src/App.tsx` | Boot-time priority-levels load. |
+| `src/lib/priority-levels.ts` | NEW — module-level cache + observer. |
+| `src/hooks/usePriorityLevels.ts` | NEW — React subscription hook. |
+| `src/lib/priority-color.ts` | Index-based mapping driven by current levels. |
+| `src/components/ui/priority-badge.tsx` | Dropped CVA; uses `priorityColor()`. |
+| `src/hooks/useBlockProperties.ts` | Dynamic `getPriorityCycle()` at click time. |
+| `src/lib/agenda-sort.ts` | Uses external `priorityRank`; dynamic group buckets. |
+| `src/lib/filter-dimension-metadata.ts` | `priority.choices` is now a thunk. |
+| `src/lib/graph-filters.ts` + `src/components/GraphFilterBar.tsx` | Graph priority filter subscribes to the new levels. |
+| `src/components/BlockInlineControls.tsx` | New `priorityLabel()` helper. |
+| `src/components/PropertyDefinitionsList.tsx` + `src/components/PropertyRowEditor.tsx` | Save-time priority-levels refresh. |
+| 3 NEW test files + 8 updated test files | See Tests section above. |
+| `SESSION-LOG.md` | This session. |
+
+### Stats
+
+- **2 commits** this session: `09e6d89` (code) + this one (docs).
+- **24 files changed** in the code commit. +1196 / −84 lines (≈4× test-to-source ratio).
+- **1 build subagent** (APPROVE) + **2 parallel review subagents** (tech APPROVE-WITH-NITS → 2 nits applied by orchestrator; UX APPROVE).
+- **Tests:** 531 passed across 13 affected suites + 2 new cases added post-review. `npx tsc --noEmit` clean.
+
+### Verification
+
+- `prek run --all-files` → 23/23 hooks pass.
+- `npx vitest run` on the affected test suites → 533 tests passed post-merge.
+- No Rust touched; `cargo nextest run` (from prek) passes unchanged.
+
+### Remaining REVIEW-LATER backlog (13 items)
+
+- **DECIDED awaiting scheduled session:** FEAT-4, FEAT-5, MAINT-48, MAINT-49, PUB-1, PUB-6, PUB-7 (7 items).
+- **DEFERRED "until trigger":** PERF-19, PERF-20, PERF-23, PUB-2, PUB-3, PUB-5 (6 items).
+
+---
+
 ## Session 417 — UX-201a lock `todo_state.options` in both property editors (2026-04-19)
 
 **1 item resolved (UX-201a). REVIEW-LATER 15→14.**
