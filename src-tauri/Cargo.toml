@@ -97,7 +97,7 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-ut
 # Gated on target_os = "android" so desktop builds do not pull in
 # these transitive dependencies.
 [target.'cfg(target_os = "android")'.dependencies]
-jni = "0.21"
+jni = "0.22"
 ndk-context = "0.1"
 
 [profile.release]

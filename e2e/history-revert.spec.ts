@@ -1,5 +1,4 @@
-import { expect, test } from '@playwright/test'
-import { openPage, waitForBoot } from './helpers'
+import { expect, openPage, test, waitForBoot } from './helpers'
 
 /**
  * E2E tests for HistoryView batch revert (#137).
@@ -26,7 +25,7 @@ test.describe('HistoryView batch revert', () => {
     await expect(page.locator('[data-testid="sortable-block"]').last()).toBeVisible()
 
     // Navigate to History view
-    await page.getByRole('button', { name: 'History' }).click()
+    await page.getByRole('button', { name: 'History', exact: true }).click()
 
     // Verify history entries appear (op log should have create_block op at minimum)
     const historyItems = page.locator('[data-history-item]')
@@ -42,7 +41,7 @@ test.describe('HistoryView batch revert', () => {
     await expect(page.locator('[data-testid="sortable-block"]').last()).toBeVisible()
 
     // Navigate to History
-    await page.getByRole('button', { name: 'History' }).click()
+    await page.getByRole('button', { name: 'History', exact: true }).click()
     await expect(page.locator('[data-history-item]').first()).toBeVisible({ timeout: 5000 })
 
     // Click the first history item checkbox to select it
@@ -59,8 +58,8 @@ test.describe('HistoryView batch revert', () => {
 
     // Confirmation dialog should appear
     await expect(page.getByText(/Revert 1 operation/i)).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Revert' })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Revert', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible()
   })
 
   test('batch revert reverses a create_block operation', async ({ page }) => {
@@ -73,7 +72,7 @@ test.describe('HistoryView batch revert', () => {
     await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore + 1)
 
     // Navigate to History
-    await page.getByRole('button', { name: 'History' }).click()
+    await page.getByRole('button', { name: 'History', exact: true }).click()
     await expect(page.locator('[data-history-item]').first()).toBeVisible({ timeout: 5000 })
 
     // Find and select the create_block entry (most recent is first)
@@ -91,8 +90,8 @@ test.describe('HistoryView batch revert', () => {
     await page.getByRole('button', { name: /Revert selected/i }).click()
 
     // Confirm revert
-    await expect(page.getByRole('button', { name: 'Revert' })).toBeVisible()
-    await page.getByRole('button', { name: 'Revert' }).click()
+    await expect(page.getByRole('button', { name: 'Revert', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Revert', exact: true }).click()
 
     // Selection should be cleared after revert
     await expect(page.getByText(/selected/)).not.toBeVisible()
@@ -117,7 +116,7 @@ test.describe('HistoryView batch revert', () => {
     await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore - 1)
 
     // Navigate to History
-    await page.getByRole('button', { name: 'History' }).click()
+    await page.getByRole('button', { name: 'History', exact: true }).click()
     await expect(page.locator('[data-history-item]').first()).toBeVisible({ timeout: 5000 })
 
     // Find and select the delete_block entry
@@ -132,8 +131,8 @@ test.describe('HistoryView batch revert', () => {
 
     // Revert
     await page.getByRole('button', { name: /Revert selected/i }).click()
-    await expect(page.getByRole('button', { name: 'Revert' })).toBeVisible()
-    await page.getByRole('button', { name: 'Revert' }).click()
+    await expect(page.getByRole('button', { name: 'Revert', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Revert', exact: true }).click()
     await expect(page.getByText(/selected/)).not.toBeVisible()
 
     // Navigate back and verify block is restored
@@ -148,16 +147,16 @@ test.describe('HistoryView batch revert', () => {
     await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(blocksBefore + 1)
 
     // Navigate to History and select
-    await page.getByRole('button', { name: 'History' }).click()
+    await page.getByRole('button', { name: 'History', exact: true }).click()
     await expect(page.locator('[data-history-item]').first()).toBeVisible({ timeout: 5000 })
     await page.locator('[data-history-item]').first().locator('input[type="checkbox"]').click()
 
     // Click revert
     await page.getByRole('button', { name: /Revert selected/i }).click()
-    await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible()
 
     // Cancel
-    await page.getByRole('button', { name: 'Cancel' }).click()
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click()
 
     // Selection should still be active
     await expect(page.getByText('1 selected')).toBeVisible()

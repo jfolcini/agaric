@@ -1,10 +1,14 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './helpers'
+
+// TEST-1a: sync UI tests share mocked peer / pairing state within the
+// describe block and are sensitive to parallel mock-state collisions.
+test.describe.configure({ mode: 'serial' })
 
 test.describe('Sync UI', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     // Wait for app to boot
-    await expect(page.getByRole('button', { name: 'Journal' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
     // Navigate to Status
     await page.getByRole('button', { name: 'Status', exact: true }).click()
     await expect(page.locator('header').getByText('Status')).toBeVisible()

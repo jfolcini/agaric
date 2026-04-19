@@ -1,5 +1,4 @@
-import { expect, test } from '@playwright/test'
-import { openPage, waitForBoot } from './helpers'
+import { expect, openPage, test, waitForBoot } from './helpers'
 
 /**
  * E2E tests for the properties system.
@@ -166,7 +165,7 @@ test.describe('Set property via drawer', () => {
     await valueInput.fill('@home')
 
     // Click Save to apply
-    await page.getByRole('button', { name: 'Save' }).click()
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
 
     // The "No properties set" message should disappear
     await expect(page.getByText('No properties set')).not.toBeVisible()
@@ -227,7 +226,10 @@ test.describe('Property definitions view', () => {
 
   test('Properties sidebar shows seed property definitions', async ({ page }) => {
     // Navigate to Properties view via sidebar
-    await page.locator('[data-slot="sidebar"]').getByRole('button', { name: 'Properties' }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Properties', exact: true })
+      .click()
 
     // Should show the "Property Definitions" heading
     await expect(page.getByText('Property Definitions')).toBeVisible()
@@ -242,7 +244,10 @@ test.describe('Property definitions view', () => {
   })
 
   test('search filters property definitions by key', async ({ page }) => {
-    await page.locator('[data-slot="sidebar"]').getByRole('button', { name: 'Properties' }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Properties', exact: true })
+      .click()
     await expect(page.getByText('Property Definitions')).toBeVisible()
 
     // Type into the search input
@@ -258,7 +263,10 @@ test.describe('Property definitions view', () => {
   })
 
   test('creating a new property definition adds it to the list', async ({ page }) => {
-    await page.locator('[data-slot="sidebar"]').getByRole('button', { name: 'Properties' }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Properties', exact: true })
+      .click()
     await expect(page.getByText('Property Definitions')).toBeVisible()
 
     // Fill in the create form
@@ -273,7 +281,10 @@ test.describe('Property definitions view', () => {
   })
 
   test('deleting a property definition with confirmation removes it', async ({ page }) => {
-    await page.locator('[data-slot="sidebar"]').getByRole('button', { name: 'Properties' }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Properties', exact: true })
+      .click()
     await expect(page.getByText('Property Definitions')).toBeVisible()
 
     // Hover over the "context" row and click the delete button
@@ -289,7 +300,7 @@ test.describe('Property definitions view', () => {
     await expect(page.getByText('Delete this property definition?')).toBeVisible()
 
     // Confirm deletion
-    await page.getByRole('button', { name: 'Delete' }).click()
+    await page.getByRole('button', { name: 'Delete', exact: true }).click()
 
     // "context" should no longer be in the list
     await expect(page.locator('ul > li', { hasText: 'context' })).not.toBeVisible()
@@ -299,7 +310,10 @@ test.describe('Property definitions view', () => {
   })
 
   test('select-type property shows Edit options button', async ({ page }) => {
-    await page.locator('[data-slot="sidebar"]').getByRole('button', { name: 'Properties' }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Properties', exact: true })
+      .click()
     await expect(page.getByText('Property Definitions')).toBeVisible()
 
     // The "project" definition (type: select) should have an "Edit options" button

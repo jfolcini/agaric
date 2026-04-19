@@ -8,7 +8,7 @@ export default defineConfig({
   ...(process.env['CI'] ? { workers: 1 } : {}),
   reporter: 'list',
   expect: {
-    timeout: 3000,
+    timeout: 8000,
   },
   use: {
     baseURL: 'http://localhost:5173',

@@ -1,14 +1,46 @@
-import { expect, type Locator, type Page } from '@playwright/test'
+import { test as baseTest, expect, type Locator, type Page } from '@playwright/test'
+
+// ---------------------------------------------------------------------------
+// Custom `test` export with a global mock-state reset baked in (TEST-1a).
+//
+// Every spec file should `import { expect, test } from './helpers'` instead
+// of `@playwright/test`. The `beforeEach` below issues a best-effort reset
+// of the Tauri mock's module-scoped in-memory state (blocks, tags, op log,
+// error-injection map, attachments, property defs, aliases) so that one
+// test's mutations cannot bleed into the next.
+//
+// Optional chaining on the window lookup: if the page hasn't been navigated
+// yet (first test that calls `page.goto` inside its body), the hook is a
+// no-op — the subsequent page load runs `setupMock()` which seeds fresh.
+// For subsequent tests within the same worker/context, the mock module is
+// already loaded, so the reset actively wipes and re-seeds state.
+// ---------------------------------------------------------------------------
+
+declare global {
+  interface Window {
+    __resetTauriMock__?: () => void
+  }
+}
+
+export const test = baseTest
+
+test.beforeEach(async ({ page }) => {
+  // Best-effort: the page may or may not have navigated yet. When it has,
+  // this re-seeds the mock. When it hasn't, the optional chain no-ops.
+  await page.evaluate(() => window.__resetTauriMock__?.()).catch(() => {})
+})
+
+export { expect }
 
 /** Wait for the app to fully boot (BootGate resolved, sidebar visible). */
 export async function waitForBoot(page: Page) {
   await page.goto('/')
-  await expect(page.getByRole('button', { name: 'Journal' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
 }
 
 /** Navigate to the page editor for a given page title. */
 export async function openPage(page: Page, title: string) {
-  await page.getByRole('button', { name: 'Pages' }).click()
+  await page.getByRole('button', { name: 'Pages', exact: true }).click()
   await page.getByText(title, { exact: true }).click()
   await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
 }

@@ -1,5 +1,4 @@
-import { expect, test } from '@playwright/test'
-import { focusBlock, openPage, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
 
 /**
  * E2E tests for the (( block-ref picker.

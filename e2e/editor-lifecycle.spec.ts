@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './helpers'
 
 /**
  * Editor lifecycle: CRUD operations, navigation, persistence.
@@ -12,7 +12,7 @@ import { expect, test } from '@playwright/test'
  */
 
 async function openGettingStarted(page: import('@playwright/test').Page) {
-  await page.getByRole('button', { name: 'Pages' }).click()
+  await page.getByRole('button', { name: 'Pages', exact: true }).click()
   await page.getByText('Getting Started').click()
   await expect(page.locator('[aria-label="Page title"]')).toBeVisible({ timeout: 5000 })
 }
@@ -39,7 +39,7 @@ async function addBlock(page: import('@playwright/test').Page, text: string) {
 test.describe('Editor lifecycle', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
-    await expect(page.getByRole('button', { name: 'Journal' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
   })
 
   test('Getting Started page loads with seed blocks', async ({ page }) => {
@@ -108,11 +108,11 @@ test.describe('Editor lifecycle', () => {
 
   test('navigates between sidebar views', async ({ page }) => {
     // Navigate to Tags
-    await page.getByRole('button', { name: 'Tags' }).click()
+    await page.getByRole('button', { name: 'Tags', exact: true }).click()
     await expect(page.locator('header').getByText('Tags')).toBeVisible()
 
     // Navigate to Trash
-    await page.getByRole('button', { name: 'Trash' }).click()
+    await page.getByRole('button', { name: /^Trash/ }).click()
     await expect(page.locator('header').getByText('Trash')).toBeVisible()
 
     // Navigate to Status
@@ -120,16 +120,16 @@ test.describe('Editor lifecycle', () => {
     await expect(page.locator('header').getByText('Status')).toBeVisible()
 
     // Navigate to Conflicts
-    await page.getByRole('button', { name: 'Conflicts' }).click()
+    await page.getByRole('button', { name: /^Conflicts/ }).click()
     await expect(page.locator('header').getByText('Conflicts')).toBeVisible()
 
     // Navigate back to Journal (no header label — has mode tabs instead)
-    await page.getByRole('button', { name: 'Journal' }).click()
+    await page.getByRole('button', { name: 'Journal', exact: true }).click()
     await expect(page.getByRole('tab', { name: /daily/i })).toBeVisible()
   })
 
   test('pages view allows creating a new page', async ({ page }) => {
-    await page.getByRole('button', { name: 'Pages' }).click()
+    await page.getByRole('button', { name: 'Pages', exact: true }).click()
     await expect(page.locator('header').getByText('Pages')).toBeVisible()
 
     const input = page.getByPlaceholder('New page name...')
@@ -146,7 +146,7 @@ test.describe('Editor lifecycle', () => {
     await addBlock(page, 'Persistent block')
 
     // Navigate away and back
-    await page.getByRole('button', { name: 'Journal' }).click()
+    await page.getByRole('button', { name: 'Journal', exact: true }).click()
     await expect(page.getByRole('tab', { name: /daily/i })).toBeVisible()
 
     await openGettingStarted(page)
@@ -170,7 +170,7 @@ test.describe('Editor lifecycle', () => {
 
     // Reload the page — mock state resets
     await page.reload()
-    await expect(page.getByRole('button', { name: 'Journal' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
 
     // Navigate back to Getting Started
     await openGettingStarted(page)

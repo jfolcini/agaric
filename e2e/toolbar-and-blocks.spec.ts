@@ -1,5 +1,4 @@
-import { expect, test } from '@playwright/test'
-import { dragBlock, focusBlock, openPage, saveBlock, waitForBoot } from './helpers'
+import { dragBlock, expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
 
 /**
  * E2E tests for toolbar buttons and block interactions.
@@ -573,7 +572,7 @@ test.describe('Undo / Redo', () => {
     await editor.type(' extra')
 
     // Click Undo
-    await page.getByRole('button', { name: 'Undo' }).click()
+    await page.getByRole('button', { name: 'Undo', exact: true }).click()
 
     // Editor content should revert to original
     await expect(editor).toHaveText(originalText ?? '')
@@ -589,10 +588,10 @@ test.describe('Undo / Redo', () => {
     const withExtra = await editor.textContent()
 
     // Undo
-    await page.getByRole('button', { name: 'Undo' }).click()
+    await page.getByRole('button', { name: 'Undo', exact: true }).click()
 
     // Redo
-    await page.getByRole('button', { name: 'Redo' }).click()
+    await page.getByRole('button', { name: 'Redo', exact: true }).click()
 
     // Should have the extra text back
     await expect(editor).toHaveText(withExtra ?? '')

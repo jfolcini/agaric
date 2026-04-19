@@ -1,5 +1,4 @@
-import { expect, test } from '@playwright/test'
-import { openPage, waitForBoot } from './helpers'
+import { expect, openPage, test, waitForBoot } from './helpers'
 
 /**
  * E2E tests for batch block operations (TEST-14).

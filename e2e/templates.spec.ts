@@ -1,5 +1,9 @@
-import { expect, test } from '@playwright/test'
-import { focusBlock, openPage, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
+
+// TEST-1a: template-lifecycle tests chain create/remove/apply template
+// sequences inside a describe — serial run prevents cross-test mock-state
+// interleaving under fullyParallel.
+test.describe.configure({ mode: 'serial' })
 
 /**
  * E2E tests for the templates system.

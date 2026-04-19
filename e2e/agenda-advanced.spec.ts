@@ -1,5 +1,4 @@
-import { expect, test } from '@playwright/test'
-import { waitForBoot } from './helpers'
+import { expect, test, waitForBoot } from './helpers'
 
 /**
  * E2E tests for advanced agenda / journal interactions.

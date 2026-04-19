@@ -89,6 +89,12 @@ if [ "${1:-}" = "--dry" ]; then
 fi
 
 # Build a single -E expression: test(~mod1) + test(~mod2) + …
+#
+# `--no-tests=pass` makes nextest exit 0 (not 4) if the filter matches 0
+# tests. That's the legitimate case for cfg-gated modules (e.g.
+# `sync_daemon::android_multicast` which is entirely
+# `#[cfg(target_os = "android")]`) where a desktop run sees no compiled
+# tests but the compile step itself is already covered by `cargo clippy`.
 EXPR=""
 for mod in "${FILTERS[@]}"; do
   if [ -z "$EXPR" ]; then
@@ -98,4 +104,4 @@ for mod in "${FILTERS[@]}"; do
   fi
 done
 
-cd src-tauri && exec cargo nextest run -E "$EXPR"
+cd src-tauri && exec cargo nextest run --no-tests=pass -E "$EXPR"

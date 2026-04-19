@@ -1,5 +1,9 @@
-import { expect, test } from '@playwright/test'
-import { openPage, waitForBoot } from './helpers'
+import { expect, openPage, test, waitForBoot } from './helpers'
+
+// TEST-1a: block-level undo/redo tests mutate shared mock op-log state
+// within a describe, so run them serially to avoid cross-test interference
+// even under fullyParallel.
+test.describe.configure({ mode: 'serial' })
 
 /**
  * E2E tests for block-level undo/redo (#136).

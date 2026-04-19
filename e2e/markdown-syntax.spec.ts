@@ -1,5 +1,4 @@
-import { expect, test } from '@playwright/test'
-import { focusBlock, openPage, saveBlock, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
 
 /**
  * E2E tests for markdown syntax rendering.

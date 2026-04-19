@@ -1,12 +1,12 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './helpers'
 
 test.describe('Settings panel', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     // Wait for app to boot
-    await expect(page.getByRole('button', { name: 'Journal' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
     // Navigate to Settings
-    await page.getByRole('button', { name: 'Settings' }).click()
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
   })
 
   test('Settings view opens from sidebar', async ({ page }) => {
@@ -73,12 +73,12 @@ test.describe('Settings panel', () => {
     )
 
     // Navigate away to Journal
-    await page.getByRole('button', { name: 'Journal' }).click()
+    await page.getByRole('button', { name: 'Journal', exact: true }).click()
     // Wait until we're on the Journal view (Settings panel is gone)
     await expect(page.locator('[data-testid="settings-panel-appearance"]')).not.toBeVisible()
 
     // Navigate back to Settings
-    await page.getByRole('button', { name: 'Settings' }).click()
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
 
     // General tab is selected by default (component remounts, state resets)
     await expect(page.getByRole('tab', { name: 'General' })).toHaveAttribute(

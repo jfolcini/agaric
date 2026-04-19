@@ -1,5 +1,8 @@
-import { expect, test } from '@playwright/test'
-import { waitForBoot } from './helpers'
+import { expect, test, waitForBoot } from './helpers'
+
+// TEST-1a: conflict-resolution tests mutate conflict seed state (resolve,
+// delete, keep-both flows) — serial describe avoids parallel collisions.
+test.describe.configure({ mode: 'serial' })
 
 test.describe('Conflict resolution', () => {
   test.beforeEach(async ({ page }) => {
@@ -7,7 +10,7 @@ test.describe('Conflict resolution', () => {
   })
 
   test('Conflicts view shows conflict items', async ({ page }) => {
-    await page.getByRole('button', { name: 'Conflicts' }).click()
+    await page.getByRole('button', { name: /^Conflicts/ }).click()
     await expect(page.locator('header').getByText('Conflicts')).toBeVisible()
 
     // Should show at least 1 conflict item (seeded in tauri-mock)
@@ -15,7 +18,7 @@ test.describe('Conflict resolution', () => {
   })
 
   test('Keep button applies conflict content and removes item', async ({ page }) => {
-    await page.getByRole('button', { name: 'Conflicts' }).click()
+    await page.getByRole('button', { name: /^Conflicts/ }).click()
     await expect(page.locator('[data-testid="conflict-item"]').first()).toBeVisible()
 
     const countBefore = await page.locator('[data-testid="conflict-item"]').count()
@@ -32,7 +35,7 @@ test.describe('Conflict resolution', () => {
   })
 
   test('Discard requires confirmation', async ({ page }) => {
-    await page.getByRole('button', { name: 'Conflicts' }).click()
+    await page.getByRole('button', { name: /^Conflicts/ }).click()
     await expect(page.locator('[data-testid="conflict-item"]').first()).toBeVisible()
 
     // Click Discard — should show confirmation prompt, not remove item
@@ -41,7 +44,7 @@ test.describe('Conflict resolution', () => {
   })
 
   test('Discard No dismisses confirmation', async ({ page }) => {
-    await page.getByRole('button', { name: 'Conflicts' }).click()
+    await page.getByRole('button', { name: /^Conflicts/ }).click()
     await expect(page.locator('[data-testid="conflict-item"]').first()).toBeVisible()
 
     const countBefore = await page.locator('[data-testid="conflict-item"]').count()
@@ -56,7 +59,7 @@ test.describe('Conflict resolution', () => {
   })
 
   test('Discard Yes removes conflict permanently', async ({ page }) => {
-    await page.getByRole('button', { name: 'Conflicts' }).click()
+    await page.getByRole('button', { name: /^Conflicts/ }).click()
     await expect(page.locator('[data-testid="conflict-item"]').first()).toBeVisible()
 
     const countBefore = await page.locator('[data-testid="conflict-item"]').count()

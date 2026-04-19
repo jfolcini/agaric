@@ -1,5 +1,4 @@
-import { expect, test } from '@playwright/test'
-import { focusBlock, openPage, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
 
 /**
  * E2E tests for tag management flows.
@@ -22,7 +21,10 @@ import { focusBlock, openPage, waitForBoot } from './helpers'
 // ---------------------------------------------------------------------------
 
 async function navigateToTags(page: import('@playwright/test').Page) {
-  await page.locator('[data-slot="sidebar"]').getByRole('button', { name: 'Tags' }).click()
+  await page
+    .locator('[data-slot="sidebar"]')
+    .getByRole('button', { name: 'Tags', exact: true })
+    .click()
 }
 
 // ===========================================================================
@@ -97,8 +99,8 @@ test.describe('Tag deletion', () => {
 
     // Confirmation dialog should appear
     await expect(page.getByText('Delete tag?')).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Delete' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Delete', exact: true })).toBeVisible()
   })
 
   test('cancelling deletion keeps the tag', async ({ page }) => {
@@ -111,7 +113,7 @@ test.describe('Tag deletion', () => {
     await tagRow.getByRole('button', { name: 'Delete tag' }).click()
 
     // Click Cancel
-    await page.getByRole('button', { name: 'Cancel' }).click()
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click()
 
     // Tag should still be visible
     await expect(page.getByText('idea', { exact: true })).toBeVisible()
@@ -127,7 +129,7 @@ test.describe('Tag deletion', () => {
     await tagRow.getByRole('button', { name: 'Delete tag' }).click()
 
     // Click Delete to confirm
-    await page.getByRole('button', { name: 'Delete' }).click()
+    await page.getByRole('button', { name: 'Delete', exact: true }).click()
 
     // "idea" tag should no longer be visible
     await expect(page.getByText('idea', { exact: true })).not.toBeVisible()
@@ -158,7 +160,7 @@ test.describe('Tag filter panel', () => {
     // "work" tag should appear in the matching section with an "Add" button
     const matchingSection = page.locator('section', { hasText: 'Matching tags' })
     await expect(matchingSection.getByText('work')).toBeVisible()
-    await expect(matchingSection.getByRole('button', { name: 'Add' })).toBeVisible()
+    await expect(matchingSection.getByRole('button', { name: 'Add', exact: true })).toBeVisible()
   })
 
   test('adding a tag from search shows it as selected', async ({ page }) => {
@@ -169,7 +171,7 @@ test.describe('Tag filter panel', () => {
 
     // Click "Add" next to "personal"
     const matchingSection = page.locator('section', { hasText: 'Matching tags' })
-    await matchingSection.getByRole('button', { name: 'Add' }).click()
+    await matchingSection.getByRole('button', { name: 'Add', exact: true }).click()
 
     // "personal" should now appear in the "Selected:" area
     await expect(page.getByText('Selected:')).toBeVisible()

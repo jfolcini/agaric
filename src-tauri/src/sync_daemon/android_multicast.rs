@@ -12,7 +12,7 @@
 //! This module is compiled only on Android (`#[cfg(target_os =
 //! "android")]`). It bridges into Java via JNI using the current
 //! Activity context resolved through [`ndk_context`]. The acquired lock
-//! is kept alive for the daemon's lifetime by storing a `GlobalRef` in
+//! is kept alive for the daemon's lifetime by storing a `Global` reference in
 //! [`MulticastLock`]; `Drop` releases it.
 //!
 //! ### Manifest permissions required
@@ -34,8 +34,10 @@
 
 use std::fmt;
 
-use jni::objects::{GlobalRef, JObject, JValue};
-use jni::JavaVM;
+use jni::objects::{JObject, JValue};
+use jni::refs::Global;
+use jni::vm::JavaVM;
+use jni::{jni_sig, jni_str};
 
 /// Error returned when the multicast lock cannot be acquired.
 #[derive(Debug)]
@@ -78,7 +80,7 @@ impl From<jni::errors::Error> for MulticastLockError {
 /// JNI failure during release is logged at `warn` and swallowed, since
 /// process shutdown is imminent).
 pub struct MulticastLock {
-    lock: GlobalRef,
+    lock: Global<JObject<'static>>,
     vm: JavaVM,
 }
 
@@ -100,49 +102,65 @@ impl MulticastLock {
         // Tauri's Android entry point before this crate's Rust code
         // runs. Both pointers reference the process-global JavaVM and
         // Activity Context owned by the JVM for the app's lifetime.
-        let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }?;
+        let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) };
+        let context_ptr = ctx.context();
 
-        // Scope the `AttachGuard` borrow so it is dropped before we
-        // move `vm` into `Self`. Without the explicit scope, `env`
-        // lives until the end of the function and the compiler
-        // complains that `vm` is borrowed (E0505).
-        let global_ref = {
-            let mut env = vm.attach_current_thread()?;
-            // SAFETY: same invariant as above — ctx.context() is a
-            // valid live JNI reference to the Activity.
-            let context = unsafe { JObject::from_raw(ctx.context().cast()) };
+        // jni 0.22 replaced the `AttachGuard`-returning form of
+        // `attach_current_thread` with a callback-based API. The
+        // provided `env` is only valid for the duration of the
+        // callback, so every JNI call in the setup chain
+        // (`getSystemService` → `createMulticastLock` →
+        // `setReferenceCounted` → `acquire`) must run inside it, and
+        // the resulting `MulticastLock` is promoted to a `Global`
+        // reference before the closure returns so it survives the
+        // attach scope.
+        let global_ref = vm.attach_current_thread(
+            |env| -> Result<Global<JObject<'static>>, MulticastLockError> {
+                // SAFETY: same invariant as above — ctx.context() is a
+                // valid live JNI reference to the Activity. jni 0.22's
+                // `JObject::from_raw` now requires the `Env` to anchor
+                // the returned local reference's lifetime.
+                let context = unsafe { JObject::from_raw(env, context_ptr.cast()) };
 
-            // Context.getSystemService("wifi") → WifiManager
-            let wifi_service_name = env.new_string("wifi")?;
-            let wifi_manager = env
-                .call_method(
-                    &context,
-                    "getSystemService",
-                    "(Ljava/lang/String;)Ljava/lang/Object;",
-                    &[JValue::Object(&wifi_service_name)],
-                )?
-                .l()?;
+                // Context.getSystemService("wifi") → WifiManager
+                let wifi_service_name = env.new_string("wifi")?;
+                let wifi_manager = env
+                    .call_method(
+                        &context,
+                        jni_str!("getSystemService"),
+                        jni_sig!("(Ljava/lang/String;)Ljava/lang/Object;"),
+                        &[JValue::Object(&wifi_service_name)],
+                    )?
+                    .l()?;
 
-            // wifiManager.createMulticastLock("agaric-mdns") → MulticastLock
-            let tag = env.new_string("agaric-mdns")?;
-            let lock = env
-                .call_method(
-                    &wifi_manager,
-                    "createMulticastLock",
-                    "(Ljava/lang/String;)Landroid/net/wifi/WifiManager$MulticastLock;",
-                    &[JValue::Object(&tag)],
-                )?
-                .l()?;
+                // wifiManager.createMulticastLock("agaric-mdns") → MulticastLock
+                let tag = env.new_string("agaric-mdns")?;
+                let lock = env
+                    .call_method(
+                        &wifi_manager,
+                        jni_str!("createMulticastLock"),
+                        jni_sig!(
+                            "(Ljava/lang/String;)Landroid/net/wifi/WifiManager$MulticastLock;"
+                        ),
+                        &[JValue::Object(&tag)],
+                    )?
+                    .l()?;
 
-            // lock.setReferenceCounted(false) — one release() always unlocks.
-            env.call_method(&lock, "setReferenceCounted", "(Z)V", &[JValue::Bool(0)])?;
+                // lock.setReferenceCounted(false) — one release() always unlocks.
+                env.call_method(
+                    &lock,
+                    jni_str!("setReferenceCounted"),
+                    jni_sig!("(Z)V"),
+                    &[JValue::Bool(false)],
+                )?;
 
-            // lock.acquire()
-            env.call_method(&lock, "acquire", "()V", &[])?;
+                // lock.acquire()
+                env.call_method(&lock, jni_str!("acquire"), jni_sig!("()V"), &[])?;
 
-            // Promote to GlobalRef so it survives the AttachGuard drop.
-            env.new_global_ref(lock)?
-        };
+                // Promote to a `Global` reference so it survives the attach scope.
+                Ok(env.new_global_ref(lock)?)
+            },
+        )?;
 
         tracing::info!("Android WiFi multicast lock acquired (tag=agaric-mdns)");
         Ok(Self {
@@ -157,20 +175,25 @@ impl Drop for MulticastLock {
         // Best-effort release: any JNI failure during shutdown is
         // logged but cannot bubble up (we're in `Drop`), and the JVM
         // will reap the lock on process exit anyway.
-        let mut env = match self.vm.attach_current_thread() {
-            Ok(e) => e,
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "failed to attach JNI thread for multicast lock release"
-                );
-                return;
-            }
-        };
-        if let Err(e) = env.call_method(self.lock.as_obj(), "release", "()V", &[]) {
-            tracing::warn!(error = %e, "failed to release multicast lock");
-        } else {
-            tracing::info!("Android WiFi multicast lock released");
+        //
+        // `attach_current_thread` in jni 0.22 folds attach failures and
+        // callback failures into the same `Result`, so a single match
+        // covers both "failed to attach the JNI thread" and "release()
+        // returned a Java exception".
+        let result = self
+            .vm
+            .attach_current_thread(|env| -> Result<(), jni::errors::Error> {
+                env.call_method(
+                    self.lock.as_obj(),
+                    jni_str!("release"),
+                    jni_sig!("()V"),
+                    &[],
+                )?;
+                Ok(())
+            });
+        match result {
+            Ok(()) => tracing::info!("Android WiFi multicast lock released"),
+            Err(e) => tracing::warn!(error = %e, "failed to release multicast lock"),
         }
     }
 }

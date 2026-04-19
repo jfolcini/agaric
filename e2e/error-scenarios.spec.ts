@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './helpers'
 
 interface MockErrorWindow extends Window {
   __injectMockError?: (command: string, message: string) => void
@@ -16,7 +16,7 @@ interface MockErrorWindow extends Window {
  */
 
 async function openGettingStarted(page: import('@playwright/test').Page) {
-  await page.getByRole('button', { name: 'Pages' }).click()
+  await page.getByRole('button', { name: 'Pages', exact: true }).click()
   await page.getByText('Getting Started').click()
   await expect(page.locator('[aria-label="Page title"]')).toBeVisible({ timeout: 5000 })
 }
@@ -35,7 +35,7 @@ test.describe('Error scenarios', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     // Wait for BootGate to resolve and Journal view to load
-    await expect(page.getByRole('button', { name: 'Journal' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
   })
 
   test.afterEach(async ({ page }) => {
@@ -111,7 +111,7 @@ test.describe('Error scenarios', () => {
 
     // The block should still be visible (delete failed) and the app should not crash
     // Check app is still functional by verifying header is still visible
-    await expect(page.getByRole('button', { name: 'Journal' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
   })
 
   test('recovers after clearing injected errors', async ({ page }) => {

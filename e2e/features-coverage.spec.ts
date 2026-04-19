@@ -1,5 +1,4 @@
-import { expect, test } from '@playwright/test'
-import { focusBlock, openPage, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
 
 /**
  * E2E coverage tests for remaining feature gaps.
@@ -71,7 +70,10 @@ test.describe('Search', () => {
     await waitForBoot(page)
 
     // Navigate to Search view via sidebar
-    await page.locator('[data-slot="sidebar"]').getByRole('button', { name: 'Search' }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Search', exact: true })
+      .click()
     await expect(page.locator('[data-testid="header-label"]', { hasText: 'Search' })).toBeVisible()
 
     // Type a query matching seed data and submit
@@ -146,7 +148,7 @@ test.describe('Trash', () => {
     await deleteBtn.click()
 
     // Navigate to Trash
-    await page.getByRole('button', { name: 'Trash' }).click()
+    await page.getByRole('button', { name: /^Trash/ }).click()
 
     // Verify at least one trash item is visible
     await expect(page.locator('[data-testid="trash-item"]').first()).toBeVisible()
@@ -163,7 +165,7 @@ test.describe('Trash', () => {
     await deleteBtn.click()
 
     // Navigate to Trash
-    await page.getByRole('button', { name: 'Trash' }).click()
+    await page.getByRole('button', { name: /^Trash/ }).click()
 
     // Verify trash has items
     await expect(page.locator('[data-testid="trash-item"]').first()).toBeVisible()
@@ -186,7 +188,7 @@ test.describe('Trash', () => {
     await deleteBtn.click()
 
     // Navigate to Trash
-    await page.getByRole('button', { name: 'Trash' }).click()
+    await page.getByRole('button', { name: /^Trash/ }).click()
     await expect(page.locator('[data-testid="trash-item"]').first()).toBeVisible()
 
     // Click Purge on the first trash item
@@ -211,7 +213,7 @@ test.describe('Trash', () => {
     await deleteBtn.click()
 
     // Navigate to Trash
-    await page.getByRole('button', { name: 'Trash' }).click()
+    await page.getByRole('button', { name: /^Trash/ }).click()
     await expect(page.locator('[data-testid="trash-item"]').first()).toBeVisible()
 
     // Click Purge → confirmation appears
@@ -239,7 +241,7 @@ test.describe('Trash', () => {
     await deleteBtn.click()
 
     // Navigate to Trash
-    await page.getByRole('button', { name: 'Trash' }).click()
+    await page.getByRole('button', { name: /^Trash/ }).click()
     await expect(page.locator('[data-testid="trash-item"]').first()).toBeVisible()
 
     // Count trash items before purge
@@ -275,7 +277,7 @@ test.describe('Trash', () => {
     await deleteBtn.click()
 
     // Navigate to Trash
-    await page.getByRole('button', { name: 'Trash' }).click()
+    await page.getByRole('button', { name: /^Trash/ }).click()
     await expect(page.locator('[data-testid="trash-item"]').first()).toBeVisible()
     const countBefore = await page.locator('[data-testid="trash-item"]').count()
 
@@ -305,7 +307,7 @@ test.describe('Sidebar', () => {
     await expect(sidebar).toHaveAttribute('data-state', 'expanded')
 
     // Click the Collapse button in sidebar footer
-    await sidebar.getByRole('button', { name: 'Collapse' }).click()
+    await sidebar.getByRole('button', { name: 'Collapse', exact: true }).click()
 
     // Verify sidebar collapsed
     await expect(sidebar).toHaveAttribute('data-state', 'collapsed')

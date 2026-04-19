@@ -1,5 +1,4 @@
-import { expect, test } from '@playwright/test'
-import { openPage, waitForBoot } from './helpers'
+import { expect, openPage, test, waitForBoot } from './helpers'
 
 /**
  * E2E tests for import/export functionality.
@@ -134,7 +133,7 @@ test.describe('Import markdown', () => {
     await expect(page.getByText(/Imported \d+ blocks/)).toBeVisible({ timeout: 5000 })
 
     // Navigate to Pages and verify the imported page is listed
-    await page.getByRole('button', { name: 'Pages' }).click()
+    await page.getByRole('button', { name: 'Pages', exact: true }).click()
     await expect(page.getByText('My Imported Notes')).toBeVisible({ timeout: 5000 })
   })
 
