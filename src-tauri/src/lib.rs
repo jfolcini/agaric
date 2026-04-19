@@ -720,11 +720,7 @@ mod specta_tests {
         let builder = specta_builder();
         let tmp = std::env::temp_dir().join("agaric_bindings_check.ts");
         builder
-            .export(
-                specta_typescript::Typescript::default()
-                    .bigint(specta_typescript::BigIntExportBehavior::Number),
-                &tmp,
-            )
+            .export(specta_typescript::Typescript::default(), &tmp)
             .expect("Failed to export TypeScript bindings to temp file");
 
         let generated = std::fs::read_to_string(&tmp).expect("read generated");
@@ -768,11 +764,7 @@ mod specta_tests {
         let builder = specta_builder();
         let out_path = "../src/lib/bindings.ts";
         builder
-            .export(
-                specta_typescript::Typescript::default()
-                    .bigint(specta_typescript::BigIntExportBehavior::Number),
-                out_path,
-            )
+            .export(specta_typescript::Typescript::default(), out_path)
             .expect("Failed to export TypeScript bindings");
 
         // Prepend `// @ts-nocheck` so tsc ignores unused specta-generated declarations

@@ -5,8 +5,8 @@ use thiserror::Error;
 /// serialises to.  Used solely so specta can derive the TypeScript type for
 /// `AppError` — the real serialisation is still handled by the manual
 /// `Serialize` impl below.
-#[derive(specta::Type)]
-#[specta(rename = "AppError")]
+#[derive(Serialize, specta::Type)]
+#[serde(rename = "AppError")]
 #[allow(dead_code)] // Fields are read by specta's Type derive macro, not directly
 struct AppErrorSchema {
     kind: String,
@@ -88,11 +88,8 @@ impl Serialize for AppError {
 /// generated TypeScript type matches the `{ kind, message }` JSON shape
 /// produced by the manual `Serialize` impl above.
 impl specta::Type for AppError {
-    fn inline(
-        type_map: &mut specta::TypeCollection,
-        generics: specta::Generics,
-    ) -> specta::DataType {
-        AppErrorSchema::inline(type_map, generics)
+    fn definition(types: &mut specta::Types) -> specta::datatype::DataType {
+        AppErrorSchema::definition(types)
     }
 }
 

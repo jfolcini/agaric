@@ -57,9 +57,9 @@ chrono = { version = "0.4.44", features = ["serde"] }
 tokio = { version = "1", features = ["sync", "macros", "rt", "net"] }
 regex = "1"
 base64 = "0.22.1"
-specta = { version = "=2.0.0-rc.22", features = ["derive"] }
-specta-typescript = "0.0.9"
-tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
+specta = { version = "=2.0.0-rc.24", features = ["derive"] }
+specta-typescript = "0.0.11"
+tauri-specta = { version = "=2.0.0-rc.24", features = ["derive", "typescript"] }
 rustc-hash = "2.1.2"
 diffy = "0.4.2"
 similar = "3"
