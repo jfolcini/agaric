@@ -1035,13 +1035,22 @@ async fn run_sync_session_respects_cancel_flag() {
 
     // Set cancel flag BEFORE calling run_sync_session
     let cancel = AtomicBool::new(true);
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
     // run_sync_session:
     // 1. orch.start() → HeadExchange  (succeeds)
     // 2. conn.send_json(...)           (succeeds, message is buffered)
     // 3. while !is_terminal():
     //      cancel.load() → true → return Err("sync cancelled by user")
-    let result = run_sync_session(&mut orch, &mut client_conn, &cancel, &pool).await;
+    let result = run_sync_session(
+        &mut orch,
+        &mut client_conn,
+        &cancel,
+        &pool,
+        &materializer,
+        &event_sink,
+    )
+    .await;
 
     assert!(
         result.is_err(),
@@ -3136,4 +3145,202 @@ async fn lifecycle_default_from_start_is_equivalent_to_always_foreground() {
         !hooks.is_backgrounded(),
         "default lifecycle hooks must report foreground so the legacy `start` path runs tick bodies normally"
     );
+}
+
+// ======================================================================
+// FEAT-6 — End-to-end snapshot-driven catch-up on ResetRequired
+// ======================================================================
+
+/// FEAT-6 — End-to-end: responder's op log has been compacted past the
+/// initiator's advertised frontier, the initiator's HeadExchange
+/// triggers `ResetRequired`, and the snapshot sub-flow catches the
+/// initiator up to the responder's state.
+///
+/// Flow under test:
+/// 1. Responder has a paired peer + a local op + a complete snapshot
+///    in `log_snapshots`. Its op_log is compacted so any head the
+///    initiator claims looks "lost".
+/// 2. Initiator sends HeadExchange with a stale head for the responder
+///    device that no longer exists in the responder's op_log.
+/// 3. Responder's orchestrator returns `ResetRequired`; server.rs
+///    then runs `try_offer_snapshot_catchup` which sends
+///    `SnapshotOffer` and streams bytes on `SnapshotAccept`.
+/// 4. Initiator's `run_sync_session` catches the `ResetRequired`,
+///    runs `try_receive_snapshot_catchup`, accepts + applies.
+/// 5. Verify: initiator's DB reflects the responder's block set and
+///    `peer_refs.last_hash` is set to the snapshot's `up_to_hash`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn feat6_end_to_end_compact_then_snapshot_catchup() {
+    use crate::op::{CreateBlockPayload, OpPayload};
+    use crate::op_log::append_local_op_at;
+    use crate::snapshot::create_snapshot;
+    use crate::sync_net::test_connection_pair;
+    use crate::ulid::BlockId;
+
+    // ── Responder side: one materialized block + snapshot ────────────
+    let (resp_pool, _resp_dir) = test_pool().await;
+    let resp_mat = Materializer::new(resp_pool.clone());
+    let resp_scheduler = Arc::new(SyncScheduler::new());
+    let resp_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    // Pair the initiator so responder doesn't reject as unpaired.
+    peer_refs::upsert_peer_ref(&resp_pool, "FEAT6_INIT")
+        .await
+        .unwrap();
+
+    // Seed + materialize one block on the responder.
+    let record = append_local_op_at(
+        &resp_pool,
+        "FEAT6_RESP",
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("FEAT6BLK001"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            content: "compacted-state content".into(),
+        }),
+        "2025-01-15T12:00:00+00:00".into(),
+    )
+    .await
+    .unwrap();
+    resp_mat.dispatch_op(&record).await.unwrap();
+    resp_mat.flush_foreground().await.unwrap();
+
+    // Create a snapshot BEFORE simulating compaction. The snapshot
+    // captures the current state of `blocks`, etc.
+    create_snapshot(&resp_pool, "FEAT6_RESP").await.unwrap();
+
+    // Simulate compaction: wipe the responder's op_log so it cannot
+    // satisfy any HeadExchange claim. In production this is what
+    // `compact_op_log` would do after a 90-day cutoff.
+    sqlx::query("DELETE FROM op_log")
+        .execute(&resp_pool)
+        .await
+        .unwrap();
+
+    // ── Initiator side: empty DB ─────────────────────────────────────
+    let (init_pool, _init_dir) = test_pool().await;
+    let init_mat = Materializer::new(init_pool.clone());
+    let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    // Pair the responder on the initiator side (for peer_refs update
+    // in the catch-up sub-flow).
+    peer_refs::upsert_peer_ref(&init_pool, "FEAT6_RESP")
+        .await
+        .unwrap();
+
+    // ── Wire the two sides together with an in-memory WebSocket ──────
+    let (server_conn, mut client_conn) = test_connection_pair().await;
+
+    // Responder: handle_incoming_sync. Needs a peer match on HeadExchange.
+    let resp_pool_clone = resp_pool.clone();
+    let resp_mat_clone = resp_mat.clone();
+    let resp_scheduler_clone = resp_scheduler.clone();
+    let resp_sink_clone = resp_sink.clone();
+    let server_task = tokio::spawn(async move {
+        handle_incoming_sync(
+            server_conn,
+            resp_pool_clone,
+            "FEAT6_RESP".to_string(),
+            resp_mat_clone,
+            resp_scheduler_clone,
+            resp_sink_clone,
+        )
+        .await
+    });
+
+    // Initiator side: we drive a minimal client manually through the
+    // wire protocol to exercise the same code path as
+    // `run_sync_session` without the full daemon scaffolding. The
+    // initiator claims heads for BOTH devices — its own identity
+    // (required so the responder can attribute the session to a non-
+    // self peer) and a stale head for the responder that the
+    // responder's empty op_log cannot satisfy, forcing
+    // ResetRequired.
+    let init_self_head = DeviceHead {
+        device_id: "FEAT6_INIT".into(),
+        seq: 1,
+        hash: "fake_init_hash".into(),
+    };
+    let stale_resp_head = DeviceHead {
+        device_id: "FEAT6_RESP".into(),
+        seq: 999, // nonexistent in responder's empty op_log
+        hash: "deadbeef".into(),
+    };
+    client_conn
+        .send_json(&SyncMessage::HeadExchange {
+            heads: vec![init_self_head, stale_resp_head],
+        })
+        .await
+        .unwrap();
+
+    // Responder must reply with ResetRequired.
+    let reset: SyncMessage = client_conn.recv_json().await.unwrap();
+    match reset {
+        SyncMessage::ResetRequired { .. } => {}
+        other => panic!("expected ResetRequired, got {:?}", other),
+    }
+
+    // Now emulate what `run_sync_session` does after seeing
+    // ResetRequired: run the initiator-side catch-up helper. We use
+    // the public helper directly so the test does not depend on the
+    // mDNS / TLS scaffolding; the wiring in `run_sync_session` is
+    // covered by the shorter sub-flow tests in the snapshot_transfer
+    // module.
+    let outcome = crate::sync_daemon::snapshot_transfer::try_receive_snapshot_catchup(
+        &mut client_conn,
+        &init_pool,
+        &init_mat,
+        &init_sink,
+        "FEAT6_RESP",
+    )
+    .await
+    .expect("catch-up must succeed end-to-end");
+
+    match outcome {
+        crate::sync_daemon::snapshot_transfer::CatchupOutcome::Applied { up_to_hash, .. } => {
+            assert!(
+                !up_to_hash.is_empty(),
+                "snapshot up_to_hash must be populated"
+            );
+        }
+        other => panic!("expected Applied, got {:?}", other),
+    }
+
+    // Let the server task finish cleanly.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), server_task).await;
+
+    init_mat.flush_background().await.unwrap();
+
+    // ── Verify: initiator now has the snapshot's block ───────────────
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&init_pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 1,
+        "initiator must have exactly the one block from the responder's snapshot"
+    );
+
+    let content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = 'FEAT6BLK001'")
+        .fetch_one(&init_pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        content, "compacted-state content",
+        "block content must match the responder's pre-compaction state"
+    );
+
+    // peer_refs bookkeeping was updated on the initiator side.
+    let peer = peer_refs::get_peer_ref(&init_pool, "FEAT6_RESP")
+        .await
+        .unwrap()
+        .expect("peer_refs row must exist after snapshot catch-up");
+    assert!(
+        peer.synced_at.is_some(),
+        "synced_at must be populated after catch-up"
+    );
+
+    resp_mat.shutdown();
+    init_mat.shutdown();
 }

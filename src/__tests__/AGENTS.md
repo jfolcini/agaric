@@ -191,6 +191,25 @@ await waitFor(() => {
 
 The root `AGENTS.md` also flags this pattern at a higher level — this section lists the concrete recipes per frontend test style.
 
+### Raising `waitFor` / per-test timeouts
+
+Vitest's default `waitFor` timeout is 1 s and the default per-test timeout is 5 s. Under full-suite parallel-worker contention, two specific patterns genuinely need more:
+
+- **axe cold-load.** The first `axe(container)` call per worker loads the full rule set and can exceed 1 s under load. Wrap axe calls in `waitFor(async () => { expect(await axe(container)).toHaveNoViolations() }, { timeout: 5000 })`. Example: `src/components/__tests__/Sidebar.test.tsx`, `HistoryView.test.tsx`.
+- **Radix popover post-selection state chains.** `onPointerDown → setTimeout → setState → re-render` under worker contention can exceed 1 s. Wrap the observable end state in `waitFor(..., { timeout: 3000 })`. If the test also has additional async steps, use the third-argument per-test timeout as well:
+  ```tsx
+  it(
+    'example',
+    async () => {
+      // ... multiple async steps including waitFor(..., { timeout: 3000 }) ...
+    },
+    10000, // per-test timeout — leaves headroom above the 3 s waitFor
+  )
+  ```
+  Example: `src/components/__tests__/BacklinkFilterBuilder.test.tsx`, `JournalPage.test.tsx`.
+
+**Do not** raise these numbers to paper over real regressions. Raise them only when the observable state is one that load-sensitive scheduling (axe cold-load, Radix pointerdown chain, React 19 microtask) can legitimately push past the default.
+
 ### Helper factories
 
 Shared fixture factories live in `src/__tests__/fixtures/index.ts` — use these instead of per-file definitions:

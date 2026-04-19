@@ -777,29 +777,45 @@ describe('JournalPage', () => {
         expect(screen.getAllByTestId('block-tree')).toHaveLength(1)
       })
 
-      mockedInvoke
-        .mockResolvedValueOnce({
-          id: 'NEW_BLOCK',
-          block_type: 'content',
-          content: '',
-          parent_id: 'DP1',
-          position: 1,
-        })
-        .mockResolvedValueOnce({
-          items: [],
-          next_cursor: null,
-          has_more: false,
-        })
+      // Use a command-dispatched implementation instead of a chained
+      // mockResolvedValueOnce queue: under full-suite parallel load,
+      // background mount-time invokes can race with the Once queue and
+      // consume the planned responses out of order, leaving `block.id`
+      // undefined (TEST-3 flake). Dispatching by command name makes the
+      // click-time responses deterministic regardless of call order.
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'create_block') {
+          return {
+            id: 'NEW_BLOCK',
+            block_type: 'content',
+            content: '',
+            parent_id: 'DP1',
+            position: 1,
+          }
+        }
+        if (cmd === 'list_blocks') {
+          return { items: [], next_cursor: null, has_more: false }
+        }
+        return { items: [], next_cursor: null, has_more: false }
+      })
 
       const sections = screen.getAllByRole('region')
       const todaySection = sections[0] as HTMLElement
       const addBtn = within(todaySection).getByRole('button', { name: /add.*block/i })
       await user.click(addBtn)
 
-      await waitFor(() => {
-        expect(useBlockStore.getState().focusedBlockId).toBe('NEW_BLOCK')
-      })
-    })
+      // Under full-suite parallel load, the post-mutation focus update is
+      // scheduled as a React 19 microtask and the default 1s waitFor
+      // timeout can expire before the store reflects the new focused
+      // block (TEST-3 flake). 3s waitFor fits well below the 10s
+      // test-level timeout.
+      await waitFor(
+        () => {
+          expect(useBlockStore.getState().focusedBlockId).toBe('NEW_BLOCK')
+        },
+        { timeout: 3000 },
+      )
+    }, 10000)
   })
 
   // ── Open in editor ──────────────────────────────────────────────────

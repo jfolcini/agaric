@@ -9,7 +9,7 @@ use super::{
 use crate::error::AppError;
 use crate::lifecycle::LifecycleHooks;
 use sqlx::SqlitePool;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, Notify};
 
@@ -29,6 +29,54 @@ pub struct Materializer {
     /// field is cheap (two pointer-sized Arcs per Materializer).
     pub(super) block_count_cache_ready_flag: Arc<AtomicBool>,
     pub(super) block_count_cache_ready_notify: Arc<Notify>,
+    /// Count of in-flight `refresh_block_count_cache()` tasks spawned
+    /// after the initial one-shot refresh (currently: post-FTS-optimize,
+    /// see [`Materializer::refresh_block_count_cache`]).
+    ///
+    /// Incremented before each `tokio::spawn`, decremented via an RAII
+    /// guard when the spawned future terminates (normal completion,
+    /// panic, or runtime-shutdown cancellation — all paths hit `Drop`).
+    /// Paired with [`Self::pending_block_count_refreshes_notify`]: on
+    /// transition to zero the notify fires, waking any tasks blocked in
+    /// [`Materializer::wait_for_pending_block_count_refreshes`].
+    ///
+    /// Production code does not observe this counter; it exists so tests
+    /// that exercise the FTS-optimize path can deterministically gate on
+    /// "all post-optimize refresh tasks have drained" before simulating
+    /// a different `cached_block_count` value. See TEST-5 in
+    /// REVIEW-LATER.md (now resolved) for the rationale.
+    pub(super) pending_block_count_refreshes: Arc<AtomicU32>,
+    pub(super) pending_block_count_refreshes_notify: Arc<Notify>,
+}
+
+/// RAII guard that decrements
+/// [`Materializer::pending_block_count_refreshes`] on drop and fires the
+/// matching notify when the counter reaches zero.
+///
+/// Using a guard (rather than an explicit decrement at the tail of the
+/// spawned future) ensures the counter stays consistent even if the
+/// future panics or is cancelled mid-refresh (e.g. during runtime
+/// shutdown). Missing a decrement would permanently desync the counter
+/// from reality and leave `wait_for_pending_block_count_refreshes` hung.
+struct PendingRefreshGuard {
+    counter: Arc<AtomicU32>,
+    notify: Arc<Notify>,
+}
+
+impl Drop for PendingRefreshGuard {
+    fn drop(&mut self) {
+        // AcqRel matches the increment at spawn time; the post-decrement
+        // value is `prev - 1`, so `prev == 1` means "we just transitioned
+        // the counter to zero". Only the thread that observes that
+        // transition must call `notify_waiters()`. If another thread
+        // races and increments the counter back to 1 between the
+        // decrement and the notify, the notify still fires — waiters
+        // re-check the counter on wake and will re-park if needed.
+        let prev = self.counter.fetch_sub(1, Ordering::AcqRel);
+        if prev == 1 {
+            self.notify.notify_waiters();
+        }
+    }
 }
 
 impl Materializer {
@@ -83,6 +131,8 @@ impl Materializer {
         let reader_pool = reader_pool_for_caches;
         let block_count_cache_ready_flag = Arc::new(AtomicBool::new(false));
         let block_count_cache_ready_notify = Arc::new(Notify::new());
+        let pending_block_count_refreshes = Arc::new(AtomicU32::new(0));
+        let pending_block_count_refreshes_notify = Arc::new(Notify::new());
         {
             let p = write_pool.clone();
             let s = shutdown_flag.clone();
@@ -139,6 +189,8 @@ impl Materializer {
             reader_pool,
             block_count_cache_ready_flag,
             block_count_cache_ready_notify,
+            pending_block_count_refreshes,
+            pending_block_count_refreshes_notify,
         }
     }
 
@@ -201,10 +253,29 @@ impl Materializer {
 
     /// Spawn a lightweight task to refresh the cached block count used for
     /// the adaptive FTS-optimize threshold.
+    ///
+    /// Production code treats this as pure fire-and-forget. Tests that
+    /// need to observe completion (e.g. before simulating a different
+    /// `cached_block_count`) should call
+    /// [`Materializer::wait_for_pending_block_count_refreshes`] — the
+    /// counter + [`PendingRefreshGuard`] wiring below keeps the tracked
+    /// "in flight" count accurate across normal completion, panic, and
+    /// runtime-shutdown cancellation.
     pub(super) fn refresh_block_count_cache(&self) {
         let pool = self.reader_pool.clone();
         let metrics = self.metrics.clone();
+        // Increment BEFORE the spawn so a waiter cannot observe a
+        // zero-counter between this call returning and the spawned task
+        // incrementing itself later. The guard constructed here moves
+        // into the async block and decrements on drop.
+        self.pending_block_count_refreshes
+            .fetch_add(1, Ordering::AcqRel);
+        let guard = PendingRefreshGuard {
+            counter: self.pending_block_count_refreshes.clone(),
+            notify: self.pending_block_count_refreshes_notify.clone(),
+        };
         Self::spawn_task(async move {
+            let _g = guard;
             if let Ok(count) =
                 sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL")
                     .fetch_one(&pool)
@@ -247,6 +318,50 @@ impl Materializer {
             }
             let notified = self.block_count_cache_ready_notify.notified();
             if self.block_count_cache_ready_flag.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    /// Await until every in-flight `refresh_block_count_cache()` task
+    /// currently counted in
+    /// [`Self::pending_block_count_refreshes`] has drained to zero.
+    ///
+    /// Unlike [`Self::wait_for_initial_block_count_cache`] — which is a
+    /// one-shot gate on the background task spawned inside
+    /// [`Materializer::build`] — this helper covers the *repeatable*,
+    /// counted refreshes spawned after an FTS optimize (see
+    /// [`super::dispatch`]). Each `refresh_block_count_cache` call
+    /// increments the counter before `tokio::spawn`; the RAII
+    /// [`PendingRefreshGuard`] decrements it when the spawned future
+    /// terminates, firing a `Notify` on transition to zero.
+    ///
+    /// The two helpers compose: if a test wants a completely settled
+    /// block-count cache after an FTS-optimize round, call
+    /// [`Self::wait_for_initial_block_count_cache`] once (to gate the
+    /// startup refresh) and [`Self::wait_for_pending_block_count_refreshes`]
+    /// after the FTS-optimize trigger (to gate the post-optimize
+    /// refreshes). Either helper alone remains independently useful.
+    ///
+    /// Returns immediately if zero refreshes are in flight at call time
+    /// (cheap: a single `Acquire` load). Production code does not need
+    /// to call this; the helper is `pub` so integration tests in sibling
+    /// crates / modules can use it.
+    pub async fn wait_for_pending_block_count_refreshes(&self) {
+        // Double-checked pattern, identical in shape to
+        // wait_for_initial_block_count_cache: load the counter, build
+        // the Notified future, re-load. The second load closes the
+        // narrow window where the notify fires between the first load
+        // and our attach. AcqRel on the decrement side + Acquire here
+        // establishes a happens-before edge from "guard dropped" to
+        // "waiter observes zero".
+        loop {
+            if self.pending_block_count_refreshes.load(Ordering::Acquire) == 0 {
+                return;
+            }
+            let notified = self.pending_block_count_refreshes_notify.notified();
+            if self.pending_block_count_refreshes.load(Ordering::Acquire) == 0 {
                 return;
             }
             notified.await;

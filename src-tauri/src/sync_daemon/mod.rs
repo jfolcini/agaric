@@ -16,6 +16,7 @@
 mod discovery;
 mod orchestrator;
 mod server;
+mod snapshot_transfer;
 
 // Android-only: acquire WifiManager.MulticastLock at daemon start so the
 // `mdns-sd` crate's UDP multicast sockets receive packets (BUG-39).

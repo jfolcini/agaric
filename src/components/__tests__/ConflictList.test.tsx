@@ -2228,8 +2228,12 @@ describe('ConflictList', () => {
     expect(list).toBeInTheDocument()
     expect(list.className).toContain('conflict-items')
 
-    // Each conflict item should have role="option" (set via useEffect)
-    const options = screen.getAllByRole('option')
+    // Each conflict item should have role="option" (set via useEffect).
+    // Under full-suite parallel load, the useEffect that assigns role/aria
+    // attributes has not always run when the findByText above resolves
+    // (React 19 microtask timing — TEST-3 flake). Use findAllByRole so
+    // the query retries until the effect flushes.
+    const options = await screen.findAllByRole('option')
     expect(options).toHaveLength(2)
     for (const item of options) {
       expect(item.className).toContain('conflict-item')
@@ -2393,7 +2397,11 @@ describe('ConflictList', () => {
 
     await screen.findByText('conflict 1')
 
-    const options = screen.getAllByRole('option')
+    // findAllByRole, not getAllByRole: role="option" is set by a useEffect in
+    // ConflictList items (see ConflictList.tsx), and under React 19 microtask
+    // timing the effect may not have run when findByText('conflict 1')
+    // resolves. Matches the TEST-3 fix applied to the listbox-role test.
+    const options = await screen.findAllByRole('option')
     expect(options[0]?.getAttribute('aria-selected')).toBe('true')
     expect(options[1]?.getAttribute('aria-selected')).toBe('false')
 

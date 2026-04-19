@@ -157,6 +157,212 @@ async fn wait_for_initial_block_count_cache_allows_simulated_overwrite() {
     );
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// TEST-5: wait_for_pending_block_count_refreshes
+//
+// Counted sync primitive for the fire-and-forget refresh tasks spawned
+// after an FTS optimize (dispatch.rs:191). Unlike the one-shot
+// `wait_for_initial_block_count_cache` gate, these refreshes are
+// repeatable and can overlap — a test that wants to simulate a
+// different `cached_block_count` value after an optimize must first
+// await this helper or race against the late-arriving refresh.
+//
+// Tests verify:
+// 1. Happy path: spawn N refreshes, await the helper, confirm all drain
+//    and the cached count reflects the real DB state.
+// 2. "Waiter attaches while refreshes are in-flight": non-trivial wait,
+//    counter hits zero post-await.
+// 3. "All refreshes complete before waiter attaches": the helper must
+//    return promptly (no wedge on an already-consumed notify).
+// 4. Independence from `wait_for_initial_block_count_cache`: the two
+//    primitives cover disjoint concerns and compose.
+// ──────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn wait_for_pending_block_count_refreshes_with_no_refreshes_returns_immediately() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+
+    // No post-optimize refresh has been triggered — counter is zero.
+    // The helper must take the fast path (single Acquire load) and
+    // return without ever attaching to the notify.
+    tokio::time::timeout(
+        Duration::from_millis(500),
+        mat.wait_for_pending_block_count_refreshes(),
+    )
+    .await
+    .expect("helper must return immediately when no refreshes are pending");
+}
+
+#[tokio::test]
+async fn wait_for_pending_block_count_refreshes_drains_inflight_refreshes() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_direct(&pool, "PCR_A", "content", "a").await;
+    insert_block_direct(&pool, "PCR_B", "content", "b").await;
+    insert_block_direct(&pool, "PCR_C", "content", "c").await;
+    insert_block_direct(&pool, "PCR_D", "content", "d").await;
+    let mat = Materializer::new(pool.clone());
+
+    // Gate on the one-shot init first so the two primitives compose —
+    // otherwise the initial refresh could race with our simulated
+    // pre-state below.
+    mat.wait_for_initial_block_count_cache().await;
+
+    // Pre-set the cached count to a bogus value so the happy-path
+    // assertion at the end genuinely verifies the refresh ran (we
+    // expect it to be overwritten with the real DB count of 4).
+    mat.metrics()
+        .cached_block_count
+        .store(99_999, AtomicOrdering::Relaxed);
+
+    // Spawn three post-optimize-style refreshes. This is the exact
+    // call path dispatch.rs uses after an FTS optimize. Calling the
+    // method directly instead of going through the op-dispatch machinery
+    // keeps the test focused on the counter invariant.
+    mat.refresh_block_count_cache();
+    mat.refresh_block_count_cache();
+    mat.refresh_block_count_cache();
+
+    // Counter should be observably non-zero at least some of the time
+    // between spawn and drain. We don't assert exactly 3 because the
+    // first task may have completed already on a fast runtime — but
+    // the increment happens before the spawn so observing zero here
+    // would be a bug.
+    let snapshot = mat
+        .pending_block_count_refreshes
+        .load(AtomicOrdering::Acquire);
+    assert!(
+        snapshot >= 1,
+        "counter must be non-zero between spawn-time increment and task completion (saw {snapshot})"
+    );
+
+    // Wait for drain. A generous timeout guards against the helper
+    // wedging on an already-fired notify (bug we explicitly test for).
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        mat.wait_for_pending_block_count_refreshes(),
+    )
+    .await
+    .expect("helper must return once all pending refreshes complete");
+
+    assert_eq!(
+        mat.pending_block_count_refreshes
+            .load(AtomicOrdering::Acquire),
+        0,
+        "counter must be zero after wait_for_pending_block_count_refreshes returns"
+    );
+
+    // Verify the refresh actually executed: the last completing task
+    // overwrote our bogus sentinel with the real DB count.
+    let cached = mat
+        .metrics()
+        .cached_block_count
+        .load(AtomicOrdering::Relaxed);
+    assert_eq!(
+        cached, 4,
+        "cached block count must match real DB count (4) after pending refreshes drain"
+    );
+}
+
+#[tokio::test]
+async fn wait_for_pending_block_count_refreshes_returns_after_tasks_already_finished() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_direct(&pool, "PCR_DONE", "content", "done").await;
+    let mat = Materializer::new(pool.clone());
+    mat.wait_for_initial_block_count_cache().await;
+
+    // Trigger a refresh and yield aggressively to let it complete
+    // before we attach the waiter. On a single-threaded runtime a
+    // bounded number of yields is enough for the short SELECT COUNT(*)
+    // path; we loop until the counter observably hits zero or we
+    // exceed a safety bound.
+    mat.refresh_block_count_cache();
+    for _ in 0..1_000 {
+        if mat
+            .pending_block_count_refreshes
+            .load(AtomicOrdering::Acquire)
+            == 0
+        {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        mat.pending_block_count_refreshes
+            .load(AtomicOrdering::Acquire),
+        0,
+        "test precondition: task should have completed after 1_000 yields"
+    );
+
+    // Now attach the waiter AFTER the notify has already fired.
+    // The double-checked pattern in the helper must observe the zero
+    // counter on the first load and return without waiting. A broken
+    // implementation that only relied on `Notify` would wedge here
+    // because `notify_waiters()` only wakes currently-attached waiters.
+    tokio::time::timeout(
+        Duration::from_millis(500),
+        mat.wait_for_pending_block_count_refreshes(),
+    )
+    .await
+    .expect(
+        "helper must return promptly when tasks finished before the waiter attached \
+         (fast-path on the pre-notified counter load)",
+    );
+}
+
+#[tokio::test]
+async fn wait_for_pending_block_count_refreshes_handles_overlapping_spawns() {
+    let (pool, _dir) = test_pool().await;
+    for i in 0..5 {
+        insert_block_direct(&pool, &format!("PCR_OVL_{i:02}"), "content", "x").await;
+    }
+    let mat = Materializer::new(pool.clone());
+    mat.wait_for_initial_block_count_cache().await;
+
+    // Interleave spawn calls with yield_now so the runtime has a chance
+    // to progress earlier refreshes between each new spawn. This
+    // creates the "N refreshes in flight at once" ordering that most
+    // closely models the bursty FTS-optimize trigger path (edits
+    // crossing the threshold N times before the first refresh
+    // finishes).
+    for _ in 0..6 {
+        mat.refresh_block_count_cache();
+        tokio::task::yield_now().await;
+    }
+
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        mat.wait_for_pending_block_count_refreshes(),
+    )
+    .await
+    .expect("helper must drain overlapping refreshes without deadlocking");
+
+    assert_eq!(
+        mat.pending_block_count_refreshes
+            .load(AtomicOrdering::Acquire),
+        0,
+        "counter must reach zero after overlapping refreshes drain"
+    );
+
+    // Second call is a no-op fast path — verifies the notify has not
+    // been "consumed" in a way that permanently breaks the primitive.
+    tokio::time::timeout(
+        Duration::from_millis(500),
+        mat.wait_for_pending_block_count_refreshes(),
+    )
+    .await
+    .expect("second wait after drain must return on the fast path");
+
+    let cached = mat
+        .metrics()
+        .cached_block_count
+        .load(AtomicOrdering::Relaxed);
+    assert_eq!(
+        cached, 5,
+        "cached block count must match real DB count (5) after overlapping refreshes drain"
+    );
+}
+
 /// PERF-24: the lifecycle-aware constructor must produce a fully
 /// functional materializer — it only changes the behaviour of the
 /// internal metrics-snapshot task, not of the main queues.

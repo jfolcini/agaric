@@ -1099,8 +1099,22 @@ restoring core data, ensuring no stale cache entries survive.
 
 `property_definitions` and `page_aliases` are captured in snapshots (added with backward-compatible
 `#[serde(default)]` fields at SCHEMA_VERSION 2). Restoring a snapshot preserves property type
-metadata and page aliases. Note: snapshot restoration is implemented but not yet used in sync —
-the orchestrator rejects `SnapshotOffer` messages.
+metadata and page aliases.
+
+**Snapshot-driven catch-up in sync (FEAT-6).** When a peer's op log has been compacted past the
+remote's advertised frontier, the orchestrator now runs a snapshot exchange instead of terminating
+the session. After the HeadExchange triggers `SyncState::ResetRequired`, the responder queries
+`log_snapshots` for its most recent complete snapshot and sends `SnapshotOffer { size_bytes }`;
+the initiator enforces a 256 MB size cap, sends `SnapshotAccept` or `SnapshotReject`, and on
+accept receives the compressed blob in 5 MB binary frames (the same transport used for attachment
+transfer). `apply_snapshot()` then wipes and restores the core tables atomically under
+`BEGIN IMMEDIATE` + `defer_foreign_keys`, and `peer_refs.last_hash` advances to the snapshot's
+`up_to_hash`. Post-snapshot delta catch-up is deferred to the next scheduled sync, which issues
+a new HeadExchange from the restored frontier and retrieves any ops the responder wrote after the
+snapshot was taken. The orchestrator's state machine is unchanged — the sub-flow is driven from
+`sync_daemon/snapshot_transfer.rs`, consuming/producing the pre-existing `SnapshotOffer`,
+`SnapshotAccept`, and `SnapshotReject` wire variants. If `log_snapshots` is empty on the
+responder, the session closes without an offer (matching pre-FEAT-6 behavior).
 
 **Rejected:** SQLite backup API dump (large, version-coupled), full op replay from op 1 (correct
 but slow), JSON instead of CBOR (2–5x larger).

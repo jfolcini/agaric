@@ -148,6 +148,29 @@ async fn settle() {
 
 **Not needed** after creating "content" blocks (no background tasks dispatched). Required to prevent SQLite write-lock contention between the materializer's background consumer and the next test write.
 
+### Block-count cache sync primitives
+
+`Materializer` exposes two `pub async` helpers that gate on the cached
+block-count state used by the adaptive FTS-optimize threshold. They
+cover disjoint concerns — do not confuse them:
+
+| Helper | Gates on | Call shape | Use when… |
+|--------|----------|------------|-----------|
+| `wait_for_initial_block_count_cache` | The **one-shot** background task spawned inside `Materializer::build` that populates `cached_block_count` from the current DB state at startup. | Set-once boolean flag + `Notify`. Idempotent — later calls fast-return. | The test wants to overwrite `cached_block_count` with a simulated value (e.g. to exercise the adaptive threshold at 10 M-block scale). Must be called before the `.store(…)` or the startup refresh can clobber the simulated value. See the `wait_for_initial_block_count_cache_*` tests in `materializer::tests` for canonical usage. |
+| `wait_for_pending_block_count_refreshes` | **All currently in-flight** `refresh_block_count_cache()` tasks (counted, repeatable). Today these are spawned only after an FTS optimize in `dispatch.rs`, but any future fire-and-forget site using the same helper is automatically covered. | `AtomicU32` counter + `Notify` + RAII `PendingRefreshGuard`. Waiter uses a double-checked pattern so late-attachers observe the zero counter on the fast path. Fast-returns when nothing is pending. | The test triggers an FTS optimize (or otherwise invokes a post-optimize refresh) and then wants to simulate a different `cached_block_count`. Without this helper the late-arriving refresh can clobber the simulated value between the `.store(…)` and the assertion. |
+
+The two helpers **compose**. Tests that walk both paths — initial
+refresh plus a post-optimize refresh — typically call the first once at
+the top of the test, run the work that triggers the post-optimize
+refreshes, then call the second before simulating / asserting. Either
+helper remains independently useful: a test that only exercises one
+path calls only one helper.
+
+Neither helper is `#[cfg(test)]`-gated (both are plain `pub`) — they
+remain available to integration tests in sibling modules / crates.
+Production code never needs to call either; the gate fields are two
+`Arc` pointers per `Materializer` and cost nothing at runtime.
+
 ### Error testing
 
 Error paths use `matches!` on `AppError` variants:

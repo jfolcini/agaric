@@ -395,10 +395,16 @@ describe('HistoryView', () => {
 
     const { container } = render(<HistoryView />)
 
-    await waitFor(async () => {
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
-    })
+    // axe's first call per worker loads rules and can exceed the default 1s
+    // waitFor timeout under full-suite worker contention. 5000ms matches the
+    // precedent in Sidebar.test.tsx / TemplatePicker.test.tsx (TEST-3 fix).
+    await waitFor(
+      async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
   })
 
   it('selection toolbar shows correct count', async () => {
@@ -608,10 +614,13 @@ describe('HistoryView', () => {
 
     const { container } = render(<HistoryView />)
 
-    await waitFor(async () => {
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
-    })
+    await waitFor(
+      async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
   })
 
   it('confirmation dialog Cancel button closes dialog without calling revertOps', async () => {

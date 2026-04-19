@@ -1081,9 +1081,19 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: 'Project' }))
       await user.click(screen.getByRole('option', { name: 'Review' }))
 
-      // Trigger should now show "Review"
-      expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument()
-    })
+      // Under full-suite parallel load, the post-selection state update chain
+      // (setTagValue → setTagSearchOpen(false) → re-render) can take longer
+      // than the default 1s waitFor timeout to fully settle. Using waitFor
+      // with a 3s timeout (test-level timeout bumped to 10s for headroom)
+      // mirrors the sibling "creates HasTag" guard and makes the
+      // trigger-label assertion deterministic (TEST-3 flake).
+      await waitFor(
+        () => {
+          expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument()
+        },
+        { timeout: 3000 },
+      )
+    }, 10000)
 
     it('creates HasTag filter when tag is selected and Apply clicked', async () => {
       const user = userEvent.setup()
@@ -1102,16 +1112,20 @@ describe('BacklinkFilterBuilder', () => {
       // setState chain can interleave with subsequent clicks, causing the
       // Apply handler to read the stale `tagValue` (TEST-3 flake). Asserting
       // the observable end state (trigger label updated) makes the wait
-      // deterministic.
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument()
-      })
+      // deterministic. 3s timeout + 10s test-level timeout mirrors the
+      // sibling "selects a tag from popover" test.
+      await waitFor(
+        () => {
+          expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument()
+        },
+        { timeout: 3000 },
+      )
 
       // Click Apply
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       expect(onFiltersChange).toHaveBeenCalledWith([{ type: 'HasTag', tag_id: '01TAG_REVW' }])
-    })
+    }, 10000)
 
     it('shows "Select tag" label when no tags are available', async () => {
       const user = userEvent.setup()

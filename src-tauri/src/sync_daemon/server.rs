@@ -243,6 +243,41 @@ pub(crate) async fn handle_incoming_sync(
         }
     }
 
+    // FEAT-6: Snapshot-driven catch-up (post-ResetRequired).
+    //
+    // If the main loop exited with `state == ResetRequired`, we
+    // signalled to the initiator that our op log cannot satisfy its
+    // heads (typically after compaction). Offer our most recent
+    // snapshot as an alternative path. If `log_snapshots` is empty
+    // (e.g. no compaction has run yet) we simply close the session,
+    // matching pre-FEAT-6 behavior.
+    if matches!(orch.session().state, SyncState::ResetRequired) {
+        let remote_id = orch.session().remote_device_id.clone();
+        match super::snapshot_transfer::try_offer_snapshot_catchup(
+            &mut conn,
+            &pool_ref,
+            &event_sink,
+            &remote_id,
+        )
+        .await
+        {
+            Ok(outcome) => {
+                tracing::info!(
+                    peer_id = %remote_id,
+                    outcome = ?outcome,
+                    "responder snapshot-offer sub-flow complete"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    peer_id = %remote_id,
+                    error = %e,
+                    "responder snapshot-offer sub-flow failed (non-fatal)"
+                );
+            }
+        }
+    }
+
     // ── File transfer phase (F-14) ────────────────────────────────────────
     // After the op-sync completes, transfer missing attachment files.
     // The responder responds first, then requests its own files.

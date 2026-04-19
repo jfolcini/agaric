@@ -1,5 +1,109 @@
 # Session Log
 
+## Session 425 — TEST-3 + TEST-5 + FEAT-6 resolved (+ MAINT-86 filed) (2026-04-19)
+
+**3 REVIEW-LATER items fully resolved + 1 small follow-up filed. Open items 24 → 22. FEAT-6 ships the snapshot-driven catch-up that had been "implemented but not wired" since the snapshot machinery landed.**
+
+User asked to follow `PROMPT.md` again — another parallel-subagent batch. Picked three items with disjoint file sets: TEST-3 (frontend tests), TEST-5 (Rust materializer sync primitive — companion to last session's `wait_for_initial_block_count_cache` helper), FEAT-6 (Rust sync orchestrator snapshot catch-up). Three parallel build subagents + pipelined review subagents, no worktrees.
+
+### Resolved items
+
+- **TEST-3** — all 4 flaky frontend-test sites stabilised. Fix patterns per site:
+  - `HistoryView.test.tsx` — axe `waitFor` timeout bumped 1 s → 5 s (first call per worker needs to load axe's rule set; matches the `Sidebar.test.tsx` precedent). Applied to BOTH axe calls in the file (the second "empty state" call was caught by the reviewer as an omission and fixed).
+  - `BacklinkFilterBuilder.test.tsx` — Radix `onPointerDown → setTimeout → setState` race under worker contention. Fix: `waitFor` on the observable trigger-label update (3 s timeout), with 10 s per-test timeout for headroom. Applied to BOTH sibling tests in the describe (the second "creates HasTag filter when tag is selected and Apply clicked" was caught by the reviewer as an omission and fixed).
+  - `JournalPage.test.tsx` — two races layered: (1) background mount-time invokes consuming the `mockResolvedValueOnce` queue before the click handler runs (fix: command-dispatched `mockImplementation`); (2) React 19 microtask scheduling for the post-mutation `setState({ focusedBlockId })` (fix: `waitFor` on the store state with 3 s timeout + 10 s per-test timeout).
+  - `ConflictList.test.tsx` — `role="option"` is assigned by a `useEffect` on items, not inline; under React 19 microtask timing the effect may not have run by the time `findByText` resolves. Fix: `await screen.findAllByRole('option')` instead of synchronous `getAllByRole`. Applied to BOTH sites in the file (the sibling "aria-selected reflects the currently focused item" test was caught by the reviewer as an omission and fixed).
+
+  Verification: each file 5/5 in isolation + 12 consecutive full-suite runs 7298/7298 pass after the first-pass builder fix; orchestrator's 3 reviewer-surfaced sibling-site fixes were then applied and 195/195 of the 3 targeted files pass.
+
+- **TEST-5** — counted sync primitive for post-FTS-optimize `refresh_block_count_cache()` spawns.
+  - Added `pending_block_count_refreshes: Arc<AtomicU32>` + `pending_block_count_refreshes_notify: Arc<Notify>` fields to `Materializer` in `src-tauri/src/materializer/coordinator.rs`.
+  - Private `PendingRefreshGuard` RAII struct — `Drop` decrements and calls `notify_waiters()` on transition to zero. Drop runs on panic / runtime-shutdown cancellation, so the counter stays consistent under all failure modes.
+  - `refresh_block_count_cache()` reworked: `fetch_add(1, AcqRel)` before `spawn_task`, guard moved into the spawned future.
+  - New `pub async fn wait_for_pending_block_count_refreshes(&self)` — double-checked `Notify` pattern (`load(Acquire) → notified() → load(Acquire) → await`). Composes cleanly with the existing `wait_for_initial_block_count_cache()` via a dedicated second `Notify` (not reused), so the two signals stay semantically independent.
+  - 4 new tests: no-refreshes fast-path, in-flight drain, tasks-already-finished ordering (with `tokio::time::timeout(500ms)` to prove no-wedge on a consumed notify), overlapping spawns.
+  - `src-tauri/tests/AGENTS.md` gains a "Block-count cache sync primitives" subsection comparing the two helpers.
+
+- **FEAT-6** — snapshot-driven catch-up wired into the sync orchestrator. The snapshot apply machinery (`apply_snapshot()` + 17 tests) and the wire messages (`SnapshotOffer/Accept/Reject`) had existed for a while but were never connected — `ResetRequired` terminated the session. Now:
+  - New module `src-tauri/src/sync_daemon/snapshot_transfer.rs` (941 lines, 412 prod + 529 tests): `try_offer_snapshot_catchup()` (responder) + `try_receive_snapshot_catchup()` (initiator). Uses chunked binary transport at the existing `FILE_CHUNK_SIZE` (5 MB) — same transport as the attachment-transfer path, not a new one.
+  - Orchestrator state machine is **unchanged**. The snapshot sub-flow runs parallel to the main message loop — analogous to how `sync_files::run_file_transfer_*` sits alongside `handle_message`. On `ResetRequired` the main loop exits, then the daemon-layer sub-flow runs.
+  - Initiator enforces a 256 MB size cap before sending `SnapshotAccept` (avoids wasted bandwidth on oversized offers) + defense-in-depth mid-stream bound-check.
+  - Apply is atomic: `apply_snapshot()` wraps the wipe + restore in `BEGIN IMMEDIATE` with `defer_foreign_keys = ON`; corrupted bytes roll the whole thing back and leave the DB byte-identical to pre-apply state (verified by `try_receive_snapshot_catchup_rolls_back_on_corrupted_bytes`).
+  - Post-apply the initiator updates `peer_refs.last_hash` to the snapshot's `up_to_hash`, and the next scheduled sync (~30 s) resumes delta sync via the normal `OpBatch` path. Deliberate simplification — keeps the state machine simple rather than restarting the session in-place.
+  - 11 new tests: each protocol path (Accept/Apply, Reject, no-snapshot, oversized offer, corrupted bytes, unexpected message, peer error) + constants-sanity + end-to-end compact-then-catch-up.
+  - Doc updates: `ARCHITECTURE.md` § 11 "Snapshots & Compaction" — the obsolete "not yet used in sync" sentence is gone, replaced by a 10-line paragraph describing the sub-flow. `FEATURE-MAP.md` § 8 Sync — new bullet.
+
+### Follow-up filed
+
+- **MAINT-86** (S, <15 min) — Remove unreachable `SnapshotOffer` fallback in `sync_protocol/orchestrator.rs:441`. With the FEAT-6 daemon-layer interception, `handle_message` no longer sees `SnapshotOffer` on any reachable path. The arm is dead code; harmless, but cleanup tightens the state-machine contract. Reviewer recommendation, filed as its own item for bookkeeping.
+
+### Verification
+
+- **Rust full suite:** `cargo nextest run -p agaric` — 2149/2149 pass, 1 skipped (intentional `specta_tests::ts_bindings_up_to_date`), zero flakes across consecutive runs during the build pipeline.
+- **Frontend full suite:** `npx vitest run` — 7298/7298 consistently across 12 consecutive runs after the initial TEST-3 fix; the 3 reviewer-surfaced sibling-site fixes keep the same pass counts.
+- **Targeted re-runs after reviewer sibling fixes:** 195/195 across HistoryView / ConflictList / BacklinkFilterBuilder.
+- **prek `run --all-files`:** 24/24 (knip skipped — no JS imports changed).
+- **No `.sqlx/` cache regen.** No `src/lib/bindings.ts` regen.
+- **`cargo clippy --all-targets -- -D warnings`:** clean.
+
+### Pipeline
+
+3 parallel background build subagents + pipelined review subagents (TEST-5 finished first, then FEAT-6, then TEST-3 — the last took longer because it debugged 4 sites across 4 files). Four technical review subagents in total — one per build track. The TEST-3 reviewer surfaced 3 HIGH-severity sibling-site findings (additional axe / Radix / useEffect-role sites in the same files that had the same root causes); the orchestrator applied those fixes directly rather than round-tripping to the builder. The FEAT-6 reviewer surfaced one dead-code cleanup opportunity (MAINT-86), filed as a follow-up item.
+
+No worktrees — subagents touched strictly disjoint files.
+
+### Notable observations (evidence-backed deviations from the plan)
+
+- **TEST-3 builder was thorough but missed 3 sibling sites with identical root causes.** The reviewer caught all 3; the orchestrator fixed them inline. This is exactly the value of mandatory separate reviewers — sibling tests with the same root cause are a common completeness gap.
+- **FEAT-6 was scoped tightly and landed cleanly.** The builder's caveats-in-summary (no peer_refs update on responder, local-ops wipe, hardcoded 256 MB cap, next-tick resume) are all deliberate simplifications the spec explicitly allowed. The 5th observation — dead code in `handle_message` — is now filed as MAINT-86.
+- **TEST-5's counted `Notify` primitive composes cleanly with the existing one-shot `Notify`.** Separate fields, separate `Notify` objects, separate test files — no semantic leakage.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src-tauri/src/materializer/coordinator.rs` | TEST-5: counter + Notify + RAII guard + `wait_for_pending_block_count_refreshes` helper. |
+| `src-tauri/src/materializer/tests.rs` | TEST-5: 4 new tests for the helper. |
+| `src-tauri/src/sync_daemon/snapshot_transfer.rs` | FEAT-6: new module — snapshot offer/accept/reject transport at daemon layer. +941 LOC (412 prod + 529 tests). |
+| `src-tauri/src/sync_daemon/mod.rs` | FEAT-6: `pub mod snapshot_transfer;`. |
+| `src-tauri/src/sync_daemon/orchestrator.rs` | FEAT-6: `materializer` + `event_sink` params on `run_sync_session`; on `ResetRequired` drive `try_receive_snapshot_catchup`. |
+| `src-tauri/src/sync_daemon/server.rs` | FEAT-6: on post-loop `ResetRequired`, call `try_offer_snapshot_catchup`. |
+| `src-tauri/src/sync_daemon/tests.rs` | FEAT-6: `feat6_end_to_end_compact_then_snapshot_catchup` + updated signature for existing tests. |
+| `src/components/__tests__/HistoryView.test.tsx` | TEST-3: both `axe(container)` calls wrapped with `{ timeout: 5000 }`. |
+| `src/components/__tests__/BacklinkFilterBuilder.test.tsx` | TEST-3: both sibling Radix tests gain 3 s `waitFor` + 10 s per-test timeout + observable-state wait. |
+| `src/components/__tests__/JournalPage.test.tsx` | TEST-3: command-dispatched `mockImplementation` + 3 s `waitFor` on store state + 10 s per-test timeout. |
+| `src/components/__tests__/ConflictList.test.tsx` | TEST-3: both sites use `await screen.findAllByRole('option')` instead of synchronous `getAllByRole`. |
+| `src/__tests__/AGENTS.md` | New "Raising `waitFor` / per-test timeouts" subsection documenting the two legitimate patterns (axe cold-load, Radix popover state chain) with the per-test `10000` timeout call-shape. |
+| `src-tauri/tests/AGENTS.md` | TEST-5: new "Block-count cache sync primitives" subsection comparing the two helpers. |
+| `ARCHITECTURE.md` | FEAT-6: § 11 "Snapshots & Compaction" — obsolete "not yet used in sync" sentence removed, replaced with 10-line description of the sub-flow. |
+| `FEATURE-MAP.md` | FEAT-6: § 8 Sync — new bullet describing snapshot-driven catch-up. |
+| `REVIEW-LATER.md` | Remove TEST-3 + TEST-5 + FEAT-6 table rows + detail sections. Add MAINT-86 (dead-code cleanup). Summary 25 → 22 open items (net: -3 resolved + 1 filed). "Previously resolved" 324+ → 327+. TEST-4 shared preamble + cross-references unaffected (TEST-4b/c/d scoping already settled in session 424). |
+
+### Review subagent findings
+
+- **TEST-5 reviewer (APPROVED)** — memory ordering correct (AcqRel on increment + decrement, Acquire on waiter loads), double-checked Notify pattern correct, RAII guard handles panic, idempotency verified, comprehensive test coverage, scope tight. No findings.
+- **FEAT-6 reviewer (APPROVED)** — protocol correctness verified, atomic-apply guaranteed by `BEGIN IMMEDIATE`, state-machine unchanged (the daemon-layer sub-flow is parallel, not nested), all 5 builder-surfaced edge cases validated. One follow-up: dead code in `sync_protocol/orchestrator.rs:441` (filed as MAINT-86).
+- **TEST-3 reviewer (3 HIGH findings — applied inline by orchestrator)** — sibling axe call in HistoryView, sibling Radix test in BacklinkFilterBuilder, sibling `getAllByRole` in ConflictList all needed the same fix as the builder had applied to the primary site. One MEDIUM finding: test-level timeout pattern was new to the codebase and not documented (orchestrator added the documentation inline).
+- **MAINT-84 + MAINT-85 reviewer (orchestrator work last session — no work this session):** N/A.
+
+### Non-goals / scope discipline
+
+- Did NOT file candidate follow-up items for SearchPanel × 2 + JournalPage × 1 unrelated flakes that surfaced in one of the pre-fix TEST-3 debugging runs — they did not recur in 12 consecutive post-fix runs, so they fail the "file if they recur" bar. If they reappear they can be filed as a new TEST-3 successor.
+- Did NOT touch the E2E flake floor (TEST-1a/b/c/d), the Vite bundle split (PERF-24), the Android items (MAINT-79/83/84), or the PUB-* items — those are separate-session candidates.
+- Did NOT remove the `sync_protocol/orchestrator.rs:441` dead code in this commit — it was filed as MAINT-86 to keep the FEAT-6 commit diff tight and give the follow-up its own bisectable commit.
+- Did NOT update `src/lib/bindings.ts` or `.sqlx/` — no Tauri command types or SQL changed.
+
+### Post-session state
+
+- REVIEW-LATER: 22 open items (2 FEAT + 4 MAINT + 4 PERF + 6 TEST + 6 PUB).
+- Next batch candidates:
+  - **MAINT-86** (S) — dead-code cleanup, trivial follow-up.
+  - **TEST-4b** (M) — PropertyChip nested-button; requires design decision.
+  - **TEST-4c** (M) — StaticBlock → QueryResult nested-button; architectural.
+  - **PERF-24** (M) — Vite main bundle split.
+  - **FEAT-5** (M) — Bug-report dialog.
+  - **MAINT-79 / 83 / 84** — Android work; `jni` bump is compile-driven (S), Gradle 9.0 compat needs investigation (S–M), `minSdk` bump needs user approval.
+
 ## Session 424 — TEST-2 (found real invariant-#9 product bug) + TEST-3 + TEST-4d (2026-04-19)
 
 **2 REVIEW-LATER items fully resolved + 1 re-scoped + 1 successor filed. Open items 25 → 24. Real product bug fixed as a side effect of flake investigation.**

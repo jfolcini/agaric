@@ -19,6 +19,7 @@ use super::discovery::{
     should_store_cert_hash,
 };
 use super::server::handle_incoming_sync;
+use super::snapshot_transfer;
 use super::SharedEventSink;
 
 // ---------------------------------------------------------------------------
@@ -434,7 +435,7 @@ pub(crate) async fn try_sync_with_peer(
         .with_event_sink(event_sink_box)
         .with_expected_remote_id(peer_id.to_string());
 
-    match run_sync_session(&mut orch, &mut conn, cancel, pool).await {
+    match run_sync_session(&mut orch, &mut conn, cancel, pool, materializer, event_sink).await {
         Ok(()) => {
             scheduler.record_success(peer_id);
             // Save the peer's address for future direct connections
@@ -496,11 +497,23 @@ pub(crate) async fn try_sync_with_peer(
 /// 2. Messages are exchanged until the orchestrator reaches a terminal state.
 /// 3. Returns `Ok(())` on `SyncState::Complete`, or `Err` on failure /
 ///    timeout.
+///
+/// FEAT-6: if the main loop exits with `state == ResetRequired` (the
+/// responder signalled that its op log has compacted past our heads),
+/// attempt a snapshot-driven catch-up via
+/// [`snapshot_transfer::try_receive_snapshot_catchup`]. On success the
+/// initiator's state matches the snapshot and `peer_refs` is advanced
+/// to its `up_to_hash`; the next scheduled sync picks up post-snapshot
+/// deltas via a normal `HeadExchange`. On failure (no offer arrives,
+/// offer over size cap, decode/apply failure) the sync returns `Err`
+/// so the caller records the failure and backs off.
 pub(crate) async fn run_sync_session(
     orch: &mut SyncOrchestrator,
     conn: &mut SyncConnection,
     cancel: &AtomicBool,
     pool: &SqlitePool,
+    materializer: &crate::materializer::Materializer,
+    event_sink: &Arc<dyn SyncEventSink>,
 ) -> Result<(), AppError> {
     // Initiator sends first message
     let first_msg = orch.start().await?;
@@ -530,11 +543,57 @@ pub(crate) async fn run_sync_session(
             }
             None => {
                 let state = &orch.session().state;
-                if matches!(state, SyncState::Failed(_) | SyncState::ResetRequired) {
+                if matches!(state, SyncState::Failed(_)) {
                     return Err(AppError::InvalidOperation(format!(
                         "sync ended in terminal state: {state:?}"
                     )));
                 }
+                // FEAT-6: `ResetRequired` is no longer a terminal failure —
+                // break out of the delta-sync loop and attempt snapshot
+                // catch-up below. Any other `None` branch falls through
+                // and the loop re-checks `is_terminal()`.
+                if matches!(state, SyncState::ResetRequired) {
+                    break;
+                }
+            }
+        }
+    }
+
+    // FEAT-6: Snapshot-driven catch-up (post-ResetRequired).
+    //
+    // When the responder signalled `ResetRequired`, its op log has
+    // compacted past our advertised heads so we cannot resume via
+    // delta replay. Ask the responder for a snapshot covering its
+    // current state; if one is offered (and within the local size
+    // cap), receive + apply it, advance `peer_refs` to the snapshot's
+    // `up_to_hash`, and return `Ok(())` so the caller records the
+    // session as successful. The next scheduled sync picks up any
+    // post-snapshot deltas via a normal `HeadExchange`.
+    if matches!(orch.session().state, SyncState::ResetRequired) {
+        let peer_id = orch.session().remote_device_id.clone();
+        match snapshot_transfer::try_receive_snapshot_catchup(
+            conn,
+            pool,
+            materializer,
+            event_sink,
+            &peer_id,
+        )
+        .await
+        {
+            Ok(outcome) => {
+                tracing::info!(
+                    peer_id = %peer_id,
+                    outcome = ?outcome,
+                    "snapshot-driven catch-up complete"
+                );
+                return Ok(());
+            }
+            Err(e) => {
+                // The catch-up sub-flow had its own error handling
+                // (oversized offer → SnapshotReject + Ok, decoded
+                // bytes failing → Err). Surface the error here so the
+                // scheduler records the failure and backs off.
+                return Err(e);
             }
         }
     }
