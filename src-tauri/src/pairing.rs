@@ -9,8 +9,8 @@ use crate::error::AppError;
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use hkdf::Hkdf;
-use rand::seq::SliceRandom;
-use rand::RngCore;
+use rand::seq::IndexedRandom;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::sync::LazyLock;
@@ -46,7 +46,7 @@ pub fn wordlist() -> &'static [&'static str] {
 /// Entropy: log2(7776^4) ~= 51.7 bits.
 pub fn generate_passphrase() -> String {
     let wl = wordlist();
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let words: Vec<&str> = (0..4)
         .map(|_| *wl.choose(&mut rng).expect("wordlist is non-empty"))
         .collect();
@@ -83,7 +83,7 @@ pub fn encrypt_message(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, AppE
     let cipher = ChaCha20Poly1305::new(Key::from_slice(key));
 
     let mut nonce_bytes = [0u8; 12];
-    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    rand::rng().fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let ciphertext = cipher

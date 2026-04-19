@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rand::Rng;
+use rand::RngExt;
 use tokio::sync::{Mutex, Notify};
 
 // ---------------------------------------------------------------------------
@@ -132,7 +132,7 @@ impl SyncScheduler {
         state.consecutive_failures += 1;
         let base = (state.backoff * 2).min(MAX_BACKOFF);
         // ±10 % jitter to spread out simultaneous retries across devices.
-        let jitter = rand::thread_rng().gen_range(0.9..=1.1);
+        let jitter = rand::rng().random_range(0.9..=1.1);
         let jittered_secs = (base.as_secs_f64() * jitter).max(MIN_BACKOFF.as_secs_f64());
         state.backoff = base; // store the deterministic base for the next doubling
         state.next_retry_at = Instant::now() + Duration::from_secs_f64(jittered_secs);
