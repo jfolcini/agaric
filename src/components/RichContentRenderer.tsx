@@ -396,7 +396,7 @@ function renderHeadingBlock(
   key: string,
   ctx: RenderContext,
 ): React.ReactElement {
-  const HeadingTag = `h${block.attrs.level}` as keyof JSX.IntrinsicElements
+  const HeadingTag = `h${block.attrs.level}` as keyof React.JSX.IntrinsicElements
   const cls = HEADING_CLASSES[block.attrs.level] ?? ''
   const inlined = block.content ? renderInlineContent(block.content, `${key}-i`, ctx) : []
   return (
@@ -461,7 +461,7 @@ function renderBlockquoteChild(
     return <p key={key}>{inlined}</p>
   }
   if (child.type === 'heading') {
-    const HTag = `h${child.attrs.level}` as keyof JSX.IntrinsicElements
+    const HTag = `h${child.attrs.level}` as keyof React.JSX.IntrinsicElements
     const hCls = HEADING_CLASSES[child.attrs.level] ?? ''
     const inlined = child.content ? renderInlineContent(child.content, `${key}-i`, ctx) : []
     return (

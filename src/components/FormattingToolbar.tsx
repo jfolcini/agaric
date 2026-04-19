@@ -16,7 +16,8 @@ import { getMarkRange } from '@tiptap/core'
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
 import { FileCode2, Heading, Link2 } from 'lucide-react'
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import type React from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { dispatchBlockEvent } from '@/lib/block-events'
 import type { ToolbarButtonConfig } from '@/lib/toolbar-config'
@@ -66,17 +67,23 @@ function getHeadingLevel(editor: Editor): number {
   return 0
 }
 
-const Tip = React.forwardRef<HTMLButtonElement, { label: string; children: React.ReactElement }>(
-  ({ label, children }, ref) => (
-    <Tooltip>
-      <TooltipTrigger asChild ref={ref}>
-        {children}
-      </TooltipTrigger>
-      <TooltipContent side="bottom" sideOffset={6}>
-        {label}
-      </TooltipContent>
-    </Tooltip>
-  ),
+const Tip = ({
+  ref,
+  label,
+  children,
+}: {
+  label: string
+  children: React.ReactElement
+  ref?: React.Ref<HTMLButtonElement>
+}) => (
+  <Tooltip>
+    <TooltipTrigger asChild ref={ref}>
+      {children}
+    </TooltipTrigger>
+    <TooltipContent side="bottom" sideOffset={6}>
+      {label}
+    </TooltipContent>
+  </Tooltip>
 )
 Tip.displayName = 'Tip'
 

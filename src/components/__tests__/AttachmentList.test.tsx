@@ -11,7 +11,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -156,7 +156,11 @@ describe('AttachmentList', () => {
     expect(mockedToast).toHaveBeenCalled()
 
     // Advance past the 3s timeout
-    vi.advanceTimersByTime(3100)
+    // React 19: state updates from setTimeout callbacks must be flushed via
+    // act() so the pendingDeleteId reset is visible before the next click.
+    await act(async () => {
+      vi.advanceTimersByTime(3100)
+    })
 
     // Now clicking should be a new first click, not a confirm
     mockedToast.mockClear()

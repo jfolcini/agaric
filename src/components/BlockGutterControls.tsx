@@ -28,6 +28,7 @@ interface GutterButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement
   label: string
   ariaLabel: string
   testId?: string
+  ref?: React.Ref<HTMLButtonElement>
 }
 
 /**
@@ -36,26 +37,32 @@ interface GutterButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement
  * Extra props (dnd-kit `attributes`/`listeners`, `onPointerDown`, etc.)
  * are forwarded to the underlying `<button>`.
  */
-export const GutterButton = React.forwardRef<HTMLButtonElement, GutterButtonProps>(
-  ({ icon: Icon, label, ariaLabel, testId, className, ...buttonProps }, ref) => (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          ref={ref}
-          type="button"
-          className={cn(GUTTER_BUTTON_BASE, className)}
-          aria-label={ariaLabel}
-          data-testid={testId}
-          {...buttonProps}
-        >
-          <Icon className="h-4 w-4" />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="bottom" sideOffset={4}>
-        {label}
-      </TooltipContent>
-    </Tooltip>
-  ),
+export const GutterButton = ({
+  ref,
+  icon: Icon,
+  label,
+  ariaLabel,
+  testId,
+  className,
+  ...buttonProps
+}: GutterButtonProps) => (
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <button
+        ref={ref}
+        type="button"
+        className={cn(GUTTER_BUTTON_BASE, className)}
+        aria-label={ariaLabel}
+        data-testid={testId}
+        {...buttonProps}
+      >
+        <Icon className="h-4 w-4" />
+      </button>
+    </TooltipTrigger>
+    <TooltipContent side="bottom" sideOffset={4}>
+      {label}
+    </TooltipContent>
+  </Tooltip>
 )
 GutterButton.displayName = 'GutterButton'
 

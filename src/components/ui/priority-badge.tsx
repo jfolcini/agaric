@@ -1,4 +1,4 @@
-import * as React from 'react'
+import type * as React from 'react'
 import { priorityColor } from '@/lib/priority-color'
 import { cn } from '@/lib/utils'
 
@@ -20,21 +20,20 @@ const BASE_CLASSES =
 interface PriorityBadgeProps {
   priority: string
   className?: string
+  ref?: React.Ref<HTMLSpanElement>
 }
 
-const PriorityBadge = React.forwardRef<HTMLSpanElement, PriorityBadgeProps>(
-  ({ priority, className }, ref) => {
-    return (
-      <span
-        ref={ref}
-        data-slot="priority-badge"
-        className={cn(BASE_CLASSES, priorityColor(priority), className)}
-      >
-        P{priority}
-      </span>
-    )
-  },
-)
+const PriorityBadge = ({ ref, priority, className }: PriorityBadgeProps) => {
+  return (
+    <span
+      ref={ref}
+      data-slot="priority-badge"
+      className={cn(BASE_CLASSES, priorityColor(priority), className)}
+    >
+      P{priority}
+    </span>
+  )
+}
 PriorityBadge.displayName = 'PriorityBadge'
 
 export { PriorityBadge }

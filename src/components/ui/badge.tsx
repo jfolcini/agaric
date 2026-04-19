@@ -1,6 +1,6 @@
 import { cva, type VariantProps } from 'class-variance-authority'
 import { Slot } from 'radix-ui'
-import * as React from 'react'
+import type * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -25,10 +25,13 @@ const badgeVariants = cva(
   },
 )
 
-const Badge = React.forwardRef<
-  HTMLSpanElement,
-  React.ComponentProps<'span'> & VariantProps<typeof badgeVariants> & { asChild?: boolean }
->(({ className, variant = 'default', asChild = false, ...props }, ref) => {
+const Badge = ({
+  ref,
+  className,
+  variant = 'default',
+  asChild = false,
+  ...props
+}: React.ComponentProps<'span'> & VariantProps<typeof badgeVariants> & { asChild?: boolean }) => {
   const Comp = asChild ? Slot.Root : 'span'
 
   return (
@@ -40,7 +43,7 @@ const Badge = React.forwardRef<
       {...props}
     />
   )
-})
+}
 Badge.displayName = 'Badge'
 
 export { Badge, badgeVariants }

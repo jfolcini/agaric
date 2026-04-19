@@ -15,7 +15,7 @@
 // declare their own per-file `vi.mock('sonner', () => ({ ... }))`, which
 // overrides this shared mock for that file. The shared mock is therefore
 // opt-out, not opt-in.
-import { createElement, forwardRef } from 'react'
+import { createElement } from 'react'
 import { vi } from 'vitest'
 
 // A callable mock function with method properties attached — sonner's `toast`
@@ -46,17 +46,19 @@ export const toast: ToastMock = Object.assign(vi.fn(), {
 })
 
 // Stub component exports so `import { Toaster } from 'sonner'` in app code
-// doesn't crash when resolved through the mock. Uses forwardRef so that the
-// UI wrapper in `src/components/ui/sonner.tsx` (which forwards its ref to the
-// inner `Toaster`) can still attach to a real DOM node in unit tests — see
-// `src/components/ui/__tests__/sonner.test.tsx`.
-export const Toaster = forwardRef<HTMLElement>((props, ref) =>
+// doesn't crash when resolved through the mock. Accepts ref as a prop so that
+// the UI wrapper in `src/components/ui/sonner.tsx` (which forwards its ref to
+// the inner `Toaster`) can still attach to a real DOM node in unit tests —
+// see `src/components/ui/__tests__/sonner.test.tsx`.
+export const Toaster = ({
+  ref,
+  ...props
+}: { ref?: React.Ref<HTMLElement> } & Record<string, unknown>) =>
   createElement('section', {
     ref,
     'data-testid': 'sonner-toaster-mock',
-    ...(props as Record<string, unknown>),
-  }),
-)
+    ...props,
+  })
 ;(Toaster as { displayName?: string }).displayName = 'Toaster'
 
 /** Reset all toast mock state. Call from test `beforeEach` if needed. */

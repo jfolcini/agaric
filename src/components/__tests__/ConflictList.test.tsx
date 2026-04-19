@@ -675,9 +675,12 @@ describe('ConflictList', () => {
 
     render(<ConflictList />)
 
-    // "Current:" label + original content
+    // "Current:" label + original content. Under React 19 the `Current:`
+    // label appears as soon as the conflict row mounts, but the original
+    // block content comes from a separate `get_block` call whose state
+    // update is flushed on a later microtask — wait for that separately.
     expect(await screen.findByText('Current:')).toBeInTheDocument()
-    expect(screen.getByText('old version')).toBeInTheDocument()
+    expect(await screen.findByText('old version')).toBeInTheDocument()
 
     // "Incoming:" label + conflict content
     expect(screen.getByText('Incoming:')).toBeInTheDocument()

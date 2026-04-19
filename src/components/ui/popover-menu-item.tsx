@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from 'class-variance-authority'
-import * as React from 'react'
+import type * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -25,24 +25,31 @@ const popoverMenuItemVariants = cva(
 
 interface PopoverMenuItemProps
   extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'disabled'>,
-    VariantProps<typeof popoverMenuItemVariants> {}
+    VariantProps<typeof popoverMenuItemVariants> {
+  ref?: React.Ref<HTMLButtonElement>
+}
 
-const PopoverMenuItem = React.forwardRef<HTMLButtonElement, PopoverMenuItemProps>(
-  ({ active, className, disabled, children, ...props }, ref) => {
-    return (
-      <button
-        ref={ref}
-        type="button"
-        data-slot="popover-menu-item"
-        className={cn(popoverMenuItemVariants({ active, disabled }), className)}
-        disabled={disabled === true}
-        {...props}
-      >
-        {children}
-      </button>
-    )
-  },
-)
+const PopoverMenuItem = ({
+  ref,
+  active,
+  className,
+  disabled,
+  children,
+  ...props
+}: PopoverMenuItemProps) => {
+  return (
+    <button
+      ref={ref}
+      type="button"
+      data-slot="popover-menu-item"
+      className={cn(popoverMenuItemVariants({ active, disabled }), className)}
+      disabled={disabled === true}
+      {...props}
+    >
+      {children}
+    </button>
+  )
+}
 PopoverMenuItem.displayName = 'PopoverMenuItem'
 
 export { PopoverMenuItem, popoverMenuItemVariants }

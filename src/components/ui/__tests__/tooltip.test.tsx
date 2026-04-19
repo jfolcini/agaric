@@ -52,7 +52,7 @@ describe('TooltipContent', () => {
     )
 
     // Radix renders tooltip text in both the visible content and a hidden a11y span.
-    // Use the ref directly to verify forwardRef works.
+    // Use the ref directly to verify ref forwarding works (ref is a prop in React 19).
     expect(ref.current).toBeInstanceOf(HTMLDivElement)
     expect(ref.current?.getAttribute('data-slot')).toBe('tooltip-content')
   })

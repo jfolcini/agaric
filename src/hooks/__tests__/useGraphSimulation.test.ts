@@ -8,7 +8,7 @@
  * logged on failure, and whether zoom callbacks invoke the d3 zoom API.
  */
 
-import { render } from '@testing-library/react'
+import { act, render } from '@testing-library/react'
 import { forceSimulation } from 'd3-force'
 import { zoom } from 'd3-zoom'
 import React from 'react'
@@ -301,8 +301,11 @@ describe('useGraphSimulation', () => {
       message: 'boom',
     })
 
-    // Wait a tick for the state-triggered re-render.
-    await new Promise((r) => setTimeout(r, 0))
+    // React 19: state updates from non-React events (worker dispatch) need
+    // `act` to flush the re-render + effect rerun before assertions.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
 
     expect(worker.terminated).toBe(true)
     expect(forceSimulation).toHaveBeenCalledTimes(1)
@@ -319,7 +322,9 @@ describe('useGraphSimulation', () => {
     const worker = MockWorker.instances[0] as InstanceType<typeof MockWorker>
 
     worker.dispatch('messageerror', { type: 'messageerror' })
-    await new Promise((r) => setTimeout(r, 0))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
 
     expect(worker.terminated).toBe(true)
     expect(forceSimulation).toHaveBeenCalled()

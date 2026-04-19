@@ -1,5 +1,5 @@
 import { Dialog as DialogPrimitive } from 'radix-ui'
-import * as React from 'react'
+import type * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -25,10 +25,11 @@ function DialogClose({ ...props }: React.ComponentProps<typeof DialogPrimitive.C
 }
 DialogClose.displayName = 'DialogClose'
 
-const DialogOverlay = React.forwardRef<
-  React.ComponentRef<typeof DialogPrimitive.Overlay>,
-  React.ComponentProps<typeof DialogPrimitive.Overlay>
->(({ className, ...props }, ref) => {
+const DialogOverlay = ({
+  ref,
+  className,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Overlay>) => {
   return (
     <DialogPrimitive.Overlay
       ref={ref}
@@ -40,13 +41,15 @@ const DialogOverlay = React.forwardRef<
       {...props}
     />
   )
-})
+}
 DialogOverlay.displayName = 'DialogOverlay'
 
-const DialogContent = React.forwardRef<
-  React.ComponentRef<typeof DialogPrimitive.Content>,
-  React.ComponentProps<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => {
+const DialogContent = ({
+  ref,
+  className,
+  children,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Content>) => {
   return (
     <DialogPortal>
       <DialogOverlay />
@@ -66,41 +69,38 @@ const DialogContent = React.forwardRef<
       </DialogPrimitive.Content>
     </DialogPortal>
   )
-})
+}
 DialogContent.displayName = 'DialogContent'
 
-const DialogHeader = React.forwardRef<HTMLDivElement, React.ComponentProps<'div'>>(
-  ({ className, ...props }, ref) => {
-    return (
-      <div
-        ref={ref}
-        data-slot="dialog-header"
-        className={cn('flex flex-col gap-2 text-center sm:text-left', className)}
-        {...props}
-      />
-    )
-  },
-)
+const DialogHeader = ({ ref, className, ...props }: React.ComponentProps<'div'>) => {
+  return (
+    <div
+      ref={ref}
+      data-slot="dialog-header"
+      className={cn('flex flex-col gap-2 text-center sm:text-left', className)}
+      {...props}
+    />
+  )
+}
 DialogHeader.displayName = 'DialogHeader'
 
-const DialogFooter = React.forwardRef<HTMLDivElement, React.ComponentProps<'div'>>(
-  ({ className, ...props }, ref) => {
-    return (
-      <div
-        ref={ref}
-        data-slot="dialog-footer"
-        className={cn('flex flex-col-reverse gap-2 sm:flex-row sm:justify-end', className)}
-        {...props}
-      />
-    )
-  },
-)
+const DialogFooter = ({ ref, className, ...props }: React.ComponentProps<'div'>) => {
+  return (
+    <div
+      ref={ref}
+      data-slot="dialog-footer"
+      className={cn('flex flex-col-reverse gap-2 sm:flex-row sm:justify-end', className)}
+      {...props}
+    />
+  )
+}
 DialogFooter.displayName = 'DialogFooter'
 
-const DialogTitle = React.forwardRef<
-  React.ComponentRef<typeof DialogPrimitive.Title>,
-  React.ComponentProps<typeof DialogPrimitive.Title>
->(({ className, ...props }, ref) => {
+const DialogTitle = ({
+  ref,
+  className,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Title>) => {
   return (
     <DialogPrimitive.Title
       ref={ref}
@@ -109,13 +109,14 @@ const DialogTitle = React.forwardRef<
       {...props}
     />
   )
-})
+}
 DialogTitle.displayName = 'DialogTitle'
 
-const DialogDescription = React.forwardRef<
-  React.ComponentRef<typeof DialogPrimitive.Description>,
-  React.ComponentProps<typeof DialogPrimitive.Description>
->(({ className, ...props }, ref) => {
+const DialogDescription = ({
+  ref,
+  className,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Description>) => {
   return (
     <DialogPrimitive.Description
       ref={ref}
@@ -124,7 +125,7 @@ const DialogDescription = React.forwardRef<
       {...props}
     />
   )
-})
+}
 DialogDescription.displayName = 'DialogDescription'
 
 export {

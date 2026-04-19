@@ -1,5 +1,5 @@
 import * as PopoverPrimitive from '@radix-ui/react-popover'
-import * as React from 'react'
+import type * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -18,10 +18,13 @@ function PopoverAnchor({ ...props }: React.ComponentProps<typeof PopoverPrimitiv
 }
 PopoverAnchor.displayName = 'PopoverAnchor'
 
-const PopoverContent = React.forwardRef<
-  HTMLDivElement,
-  React.ComponentProps<typeof PopoverPrimitive.Content>
->(({ className, align = 'center', sideOffset = 4, ...props }, ref) => {
+const PopoverContent = ({
+  ref,
+  className,
+  align = 'center',
+  sideOffset = 4,
+  ...props
+}: React.ComponentProps<typeof PopoverPrimitive.Content>) => {
   return (
     <PopoverPrimitive.Portal>
       <PopoverPrimitive.Content
@@ -38,7 +41,7 @@ const PopoverContent = React.forwardRef<
       />
     </PopoverPrimitive.Portal>
   )
-})
+}
 PopoverContent.displayName = 'PopoverContent'
 
 export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger }

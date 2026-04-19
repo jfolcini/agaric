@@ -1,7 +1,7 @@
-import * as React from 'react'
+import type * as React from 'react'
 import { Toaster as Sonner, type ToasterProps } from 'sonner'
 
-const Toaster = React.forwardRef<HTMLElement, ToasterProps>(({ ...props }, ref) => {
+const Toaster = ({ ref, ...props }: ToasterProps & { ref?: React.Ref<HTMLElement> }) => {
   return (
     <Sonner
       ref={ref}
@@ -17,7 +17,7 @@ const Toaster = React.forwardRef<HTMLElement, ToasterProps>(({ ...props }, ref) 
       {...props}
     />
   )
-})
+}
 Toaster.displayName = 'Toaster'
 
 export { Toaster }

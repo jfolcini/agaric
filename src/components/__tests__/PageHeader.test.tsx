@@ -16,6 +16,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
@@ -171,7 +172,7 @@ function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) 
 }
 
 /** Wrap PageHeader with PageBlockStoreProvider so usePageBlockStoreApi() resolves */
-function renderPageHeader(el: JSX.Element) {
+function renderPageHeader(el: React.ReactElement) {
   return render(
     <TooltipProvider>
       <PageBlockContext.Provider value={pageStore}>{el}</PageBlockContext.Provider>
