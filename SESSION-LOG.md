@@ -1,5 +1,58 @@
 # Session Log
 
+## Session 417 — UX-201a lock `todo_state.options` in both property editors (2026-04-19)
+
+**1 item resolved (UX-201a). REVIEW-LATER 15→14.**
+
+Narrow, focused session. The UX-201a deferred item was partially solved by earlier sessions: UX-202 already deleted `TaskStatesSection` and the `localStorage 'task_cycle'` duplication, and migration 0029 already updated `property_definitions.todo_state.options` to `["TODO","DOING","CANCELLED","DONE"]` to match the in-code `TASK_CYCLE`. Picked the "DB catches up, cycle stays locked" interpretation from the user. The only remaining drift risk was the Properties-tab UI letting users edit `todo_state.options` and silently desync the DB from the hardcoded cycle. This session closes that loophole in both affected components.
+
+### Resolved items
+
+**UX-201a — Lock `todo_state.options` editing in Properties-tab UI + block editor:**
+- New `LOCKED_PROPERTY_OPTIONS = new Set(['todo_state'])` in `src/lib/property-save-utils.ts`. Comment documents that `priority` is deliberately not locked (UX-201b will unlock it further) and that the lock mirrors the in-code `TASK_CYCLE`.
+- `src/components/PropertyDefinitionsList.tsx` — split the single `def.value_type === 'select'` render into two branches: locked select props render a `<Lock>` icon + "Locked" pill wrapped in a `<Tooltip>` ("The TODO state cycle is fixed at TODO → DOING → CANCELLED → DONE. Options cannot be edited."); unlocked select props still render the existing edit-options `<Popover>`.
+- `src/components/PropertyRowEditor.tsx` — same gate applied to the per-block property editor. The reviewer flagged this as a blocker: the Properties-tab lock alone wouldn't stop a user editing `todo_state.options` via the block editor's pencil icon.
+- `src/lib/i18n.ts` — two new keys: `propertiesView.optionsLocked` ("Locked") and `propertiesView.optionsLockedTooltip` (the explanation).
+- 8 new tests (4 per editor): lock-hides-button, locked-indicator-renders, priority-still-unlocked (UX-201b sentinel), `axe(container)` a11y. `'lock-icon'` added to each editor's lucide mock where needed.
+
+### Pipeline / reviewer exchange
+
+- Orchestrator did the implementation directly (change is small and single-domain; 2 subagents of overhead wouldn't pay off).
+- Single combined tech+UX review subagent returned REQUEST-CHANGES with one real blocker: the initial cut only locked `PropertyDefinitionsList`, leaving `PropertyRowEditor` as an unguarded second path into `updatePropertyDefOptions`. Orchestrator applied the same gate + 4 parallel tests to `PropertyRowEditor` and re-verified. Review also suggested minor nits (touch-target size on the locked span, tooltip copy rewording) — not applied; pill uses the same size/padding convention as the adjacent "Built-in" badge, and the tooltip copy is already explicit about the cycle.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `REVIEW-LATER.md` | −1 item (15→14) — UX-201a table row + detail section removed. Summary recomputed. |
+| `src/lib/property-save-utils.ts` | NEW `LOCKED_PROPERTY_OPTIONS` set with doc comment. |
+| `src/components/PropertyDefinitionsList.tsx` | Lock icon + tooltip branch + gated Popover (only non-locked select props). |
+| `src/components/PropertyRowEditor.tsx` | Same lock branch; Lock import; Tooltip imports added. |
+| `src/lib/i18n.ts` | `propertiesView.optionsLocked` + `propertiesView.optionsLockedTooltip` keys. |
+| `src/components/__tests__/PropertyDefinitionsList.test.tsx` | 4 new tests (lock hides button, indicator renders, priority still unlocked, axe). |
+| `src/components/__tests__/PropertyRowEditor.test.tsx` | 4 new tests mirroring the other file + `Lock` entry in the lucide mock. |
+| `SESSION-LOG.md` | This session. |
+
+### Stats
+
+- **2 commits** this session: `979687f` (code) + this one (docs).
+- **6 files changed** in the code commit. +173 / −5 lines.
+- **1 combined tech+UX review subagent** — REQUEST-CHANGES → re-verified after blocker addressed.
+- **Tests:** 61 pass across the two affected test files (38 PropertyRowEditor + 23 PropertyDefinitionsList, with 8 new).
+
+### Verification
+
+- `prek run --all-files` → 23/23 hooks pass.
+- `npx vitest run src/components/__tests__/PropertyRowEditor src/components/__tests__/PropertyDefinitionsList` → 61 passed.
+- Migration 0029 is already committed and already matches the in-code cycle; no new migration needed in this session.
+
+### Remaining REVIEW-LATER backlog (14 items)
+
+- **DECIDED awaiting scheduled session:** UX-201b, FEAT-4, FEAT-5, MAINT-48, MAINT-49, PUB-1, PUB-6, PUB-7 (8 items).
+- **DEFERRED "until trigger":** PERF-19, PERF-20, PERF-23, PUB-2, PUB-3, PUB-5 (6 items).
+
+---
+
 ## Session 416 — PUB-4 .env.example + PUB-8 gitleaks + PUB-9 markdownlint-cli2/lychee + PUB-10 no-op (2026-04-18)
 
 **4 items resolved (PUB-4, PUB-8, PUB-9, PUB-10). REVIEW-LATER 19→15.**
