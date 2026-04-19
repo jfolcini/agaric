@@ -351,12 +351,13 @@ test.describe('Priority buttons', () => {
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     const badge = firstBlock.locator('[data-testid="priority-badge"]')
     await expect(badge).toBeVisible()
-    await expect(badge).toHaveText('1')
+    // PriorityBadge always renders "P{priority}" (src/components/ui/priority-badge.tsx).
+    await expect(badge).toHaveText('P1')
 
     // Save and verify persists
     await saveBlock(page)
     await expect(firstBlock.locator('[data-testid="priority-badge"]')).toBeVisible()
-    await expect(firstBlock.locator('[data-testid="priority-badge"]')).toHaveText('1')
+    await expect(firstBlock.locator('[data-testid="priority-badge"]')).toHaveText('P1')
   })
 
   test('Priority 2 button sets medium priority, saves, and persists', async ({ page }) => {
@@ -368,12 +369,12 @@ test.describe('Priority buttons', () => {
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     const badge = firstBlock.locator('[data-testid="priority-badge"]')
     await expect(badge).toBeVisible()
-    await expect(badge).toHaveText('2')
+    await expect(badge).toHaveText('P2')
 
     // Save and verify persists
     await saveBlock(page)
     await expect(firstBlock.locator('[data-testid="priority-badge"]')).toBeVisible()
-    await expect(firstBlock.locator('[data-testid="priority-badge"]')).toHaveText('2')
+    await expect(firstBlock.locator('[data-testid="priority-badge"]')).toHaveText('P2')
   })
 
   test('Priority 3 button sets low priority, saves, and persists', async ({ page }) => {
@@ -385,12 +386,12 @@ test.describe('Priority buttons', () => {
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     const badge = firstBlock.locator('[data-testid="priority-badge"]')
     await expect(badge).toBeVisible()
-    await expect(badge).toHaveText('3')
+    await expect(badge).toHaveText('P3')
 
     // Save and verify persists
     await saveBlock(page)
     await expect(firstBlock.locator('[data-testid="priority-badge"]')).toBeVisible()
-    await expect(firstBlock.locator('[data-testid="priority-badge"]')).toHaveText('3')
+    await expect(firstBlock.locator('[data-testid="priority-badge"]')).toHaveText('P3')
   })
 })
 

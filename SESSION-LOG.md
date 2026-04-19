@@ -1,5 +1,114 @@
 # Session Log
 
+## Session 429 — TEST-1b Radix portal containment + TEST-1e drift cluster (2026-04-19)
+
+**2 REVIEW-LATER items fully resolved. Open items 16 → 14.** Two parallel E2E cleanup items — portal DOM-leak scoping and product/spec test-drift — land together. Full Playwright suite moves from 160/293 pass (TEST-1a baseline) to **173/293 + ~30 more newly-green specs** after the drift fixes. TEST-1c and TEST-1d remain; TEST-1c is now the last flake-floor prerequisite before TEST-1d can land.
+
+User asked to follow `PROMPT.md` again. Picked the two TEST-1 sub-items that are disjoint from each other and don't overlap on any spec file: TEST-1b (Radix portal DOM-leak containment in 5 portal-heavy specs) + TEST-1e (spec/product drift cluster — confirmed 2 sites from session 428 + surfaced 7 more during the isolation run). Deliberately held TEST-1c for next session because its scope (`templates.spec.ts`) would collide with TEST-1b. Two parallel build subagents + pipelined review subagents, no worktrees.
+
+### Resolved items
+
+- **TEST-1b** — E2E Radix portal DOM-leak containment. Landed 8 new scoped-locator helpers in `e2e/helpers.ts`:
+  - `activeDialog(page)` → `[data-slot="dialog-content"].last()`
+  - `activeAlertDialog(page)` → `[data-slot="alert-dialog-content"].last()`
+  - `activePopover(page)` → `[data-slot="popover-content"].last()`
+  - `activeSheet(page)` → `[data-slot="sheet-content"].last()`
+  - `activeRoleDialog(page)` → `[role="dialog"].last()` (Dialog + Sheet + hand-rolled TemplatePicker)
+  - `activeMenu(page)` → `[role="menu"].last()` (custom BlockContextMenu)
+  - `activeSuggestionPopup(page)` → `[data-testid="suggestion-popup"].last()` (TipTap ReactRenderer portal)
+  - `activeSuggestionList(page)` → `[data-testid="suggestion-list"].last()`
+
+  Each helper documents its rationale inline and uses `.last()` to select the fresh portal over stale queued ones. ~80 per-site refactors across 5 specs: `templates` (~25), `properties-system` (~20), `block-ref-picker` (9), `inner-links` (12), `suggestion-keyboard` (12). Sonner toast assertions were deliberately left at page scope (sonner is not a Radix portal). Non-portal DOM queries (sidebar nav, content blocks, toolbar) stayed unscoped per the "bucket (a) — safe to leave" categorisation. Per-spec isolation pass rate on portal-scoped sites: **100 %** across all 5 specs. Full-suite delta: **160 → 173 passing (+13)**.
+
+- **TEST-1e** — E2E spec / product test-drift cluster. 9 drift sites fixed (2 confirmed in session 428 + 7 surfaced during the deterministic `--workers=1` isolation run that TEST-1b had made possible). Fix pattern: prefer product-side `data-testid` additions over brittle spec-side text/class selectors; use spec-side fixes only when the drift is in an intended text format (like `P1` vs `1` or filter-pill count suffixes `(N)`).
+  - **Product-side (7 files, ~27 LOC):** `ConfirmDialog` gained optional `contentTestId` / `cancelTestId` / `actionTestId` props threaded to the Radix primitives; `TrashView` wires them as `trash-purge-{confirm,yes,no}`; `ConflictList` wires them as `conflict-discard-{confirm,yes,no}`; `TagList`'s tag-item button gets `data-testid={`tag-item-${tag.name}`}`; `DuePanel` gets `data-testid="due-panel"` + threads `testId="due-panel-header"` into the new `CollapsiblePanelHeader.testId` prop; `DuePanelFilters` gets `data-testid="due-panel-filters"`; `CollapsiblePanelHeader` gains an optional `testId` prop that forwards as `data-testid` on its button.
+  - **Component tests (3 files, additive):** `ConfirmDialog.test.tsx` (+2 cases), `CollapsiblePanelHeader.test.tsx` (+2 cases), `TagList.test.tsx` (+1 case) — each new prop verified present-when-set + absent-when-omitted, using exact `getByTestId` / `getAttribute` matchers.
+  - **Spec-side (5 files):** `tag-management` switches to `getByTestId('tag-item-work')` + `[data-slot="list-item"]` for row containers; `agenda-advanced` uses regex filter-pill names (`{ name: /^Due( \(\d+\))?$/ }`) to tolerate count badges, and a `.due-panel-priority` class selector to avoid widening the `PriorityBadge` primitive's API for one test; `features-coverage` asserts `toHaveText('P1')` instead of `toHaveText('1')` (PriorityBadge renders `P{priority}` per UX-201b); `toolbar-and-blocks` updates 6 assertion sites to `P1`/`P2`/`P3`; `history-revert` switches one stale `history-item-type` selector to the current `history-type-badge`.
+
+### Review subagent findings (both APPROVED, no blocking issues)
+
+- **TEST-1b reviewer** — verified helper correctness (all 8 helpers cover every Radix primitive + custom portal in the codebase; data-slot values checked against `src/components/ui/*`); spot-checked 3 specs' refactors; confirmed no over-scoping (every `.last()` is on a multi-portal flow); confirmed scope discipline (6 files, no `ui/` primitive touches, no config changes). One optional enhancement suggested (generic `activePortal(slot)` fallback) — deferred as nice-to-have, not blocking.
+- **TEST-1e reviewer** — verified `ConfirmDialog` prop threading across all 3 new props; confirmed backward compatibility (existing `ConfirmDialog` call sites that don't pass the new props render identically); verified `tag-item-${name}` can't collide (tag names are schema-unique); confirmed each new `data-testid` appears exactly once in product code; spot-checked the 5 spec refactors. No findings.
+
+### Verification
+
+- **Rust full suite:** `cargo nextest run -p agaric` — 2172/2172 pass (unchanged; frontend-only session).
+- **Frontend full suite:** `npx vitest run` — 7344/7345 pass (the 1 known-flake is `SearchPanel.test.tsx > shows toast when parent lookup fails on result click` — a TEST-3-family pre-existing flake that passes in isolation, unrelated to either fix).
+- **Targeted:** ConfirmDialog / TagList / TrashView / CollapsiblePanelHeader / DuePanel / ConflictList test files all green (278/278).
+- **Playwright isolation (`--workers=1`):** drift failures now resolve — confirmed spec-by-spec:
+  - `features-coverage.spec.ts:71-74, 201-227, 252-253, 286-292` (trash-purge dialog) — green.
+  - `features-coverage.spec.ts:377`, `toolbar-and-blocks.spec.ts:354, 371, 388` (P1/P2/P3 priority) — green.
+  - `tag-management.spec.ts` tag-item + ListItem selectors — green.
+  - `agenda-advanced.spec.ts:42, 59, 89, 110, 211, 226, 307, 423, 245` (due-panel testids + filter-pill regex) — green.
+  - `conflict-resolution.spec.ts:37, 46, 61` (conflict-discard dialog; product-side `ConflictList.tsx` fix, spec untouched) — green.
+  - `history-revert.spec.ts:82` (history-type-badge) — green.
+- **Playwright full suite under default parallelism:** 173/293 pass (+13 over TEST-1a's 160/293). Remaining failures are TEST-1c (fake-timer races in sync-ui / conflict-resolution / templates) + functional assertions in the mock (agenda / monthly rendering, format save-reload) that are out of TEST-1b/e scope.
+- **Playwright smoke:** 3/3 green.
+- **prek `run --all-files`:** 24/24.
+- **`cargo clippy --all-targets -- -D warnings`:** clean.
+- **No `.sqlx/` cache regen, no bindings regen.**
+
+### Pipeline
+
+2 parallel background build subagents + 2 pipelined review subagents. TEST-1b + TEST-1e ran concurrently and had overlapping working-tree visibility (both saw each other's in-progress edits during the long-running isolation runs). Neither stepped on the other's files — TEST-1b's scope was strictly `e2e/helpers.ts` + 5 named specs; TEST-1e's scope was product-side components + 5 different specs. REVIEW-LATER.md was touched only by the orchestrator at end-of-session.
+
+The spec's "TEST-1e's isolation-failing sites were HIDDEN under the parallel-flake noise before the systemic mock reset + 8 s `expect.timeout` + exact-match audit landed" prediction played out exactly: TEST-1b cleared portal-contamination flakes enough that the isolation run surfaced 7 new drift sites cleanly (not just the 2 originally known). TEST-1e's builder picked up all 7 in the same session.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `e2e/helpers.ts` | TEST-1b: 8 new scoped-locator helpers (+65 LOC) — `activeDialog`, `activeAlertDialog`, `activePopover`, `activeSheet`, `activeRoleDialog`, `activeMenu`, `activeSuggestionPopup`, `activeSuggestionList`. |
+| `e2e/templates.spec.ts` | TEST-1b: ~25 sites rescoped (kebab menu, template picker dialog, slash list). |
+| `e2e/properties-system.spec.ts` | TEST-1b: ~20 sites rescoped (context menu, property drawer, add-property popover, delete-property alert). |
+| `e2e/block-ref-picker.spec.ts` | TEST-1b: 9 sites rescoped (suggestion popup + list). |
+| `e2e/inner-links.spec.ts` | TEST-1b: 12 sites rescoped (typeLinkTrigger helper, `[[...]]` picker). |
+| `e2e/suggestion-keyboard.spec.ts` | TEST-1b: 12 sites rescoped (page/tag/slash picker flows). |
+| `src/components/ConfirmDialog.tsx` | TEST-1e: 3 optional testid props threaded to Radix primitives. |
+| `src/components/TrashView.tsx` | TEST-1e: wires `trash-purge-{confirm,yes,no}` testids. |
+| `src/components/ConflictList.tsx` | TEST-1e: wires `conflict-discard-{confirm,yes,no}` testids. |
+| `src/components/TagList.tsx` | TEST-1e: `data-testid={`tag-item-${tag.name}`}` on tag-item button. |
+| `src/components/DuePanel.tsx` | TEST-1e: `data-testid="due-panel"` on section + `testId="due-panel-header"` forwarded. |
+| `src/components/DuePanelFilters.tsx` | TEST-1e: `data-testid="due-panel-filters"` on outer div. |
+| `src/components/CollapsiblePanelHeader.tsx` | TEST-1e: new optional `testId` prop (renders as `data-testid` on button). |
+| `src/components/__tests__/{ConfirmDialog,CollapsiblePanelHeader,TagList}.test.tsx` | TEST-1e: 5 new test cases covering the new testid props. |
+| `e2e/tag-management.spec.ts` | TEST-1e: `getByTestId('tag-item-*')` + `[data-slot="list-item"]`. |
+| `e2e/agenda-advanced.spec.ts` | TEST-1e: regex filter-pill names tolerating `(N)` count badges + `.due-panel-priority` class selector. |
+| `e2e/features-coverage.spec.ts` | TEST-1e: trash-purge testids + `toHaveText('P1')`. |
+| `e2e/toolbar-and-blocks.spec.ts` | TEST-1e: 6 priority-badge assertion sites updated to `P1`/`P2`/`P3`. |
+| `e2e/history-revert.spec.ts` | TEST-1e: `[data-testid="history-type-badge"]` (was stale `history-item-type`). |
+| `REVIEW-LATER.md` | Remove TEST-1b + TEST-1e table rows + detail sections. Purge all residual `TEST-1b` / `TEST-1e` references from the shared preamble (buckets 4 + 6) and the remaining TEST-1c / TEST-1d scope / cost lines — rephrased as landed-fact without naming the items. Summary 16 → 14. "Previously resolved" 334+ → 336+. Session count 117 → 118. |
+
+### Watch-list (not filed)
+
+Two non-drift functional issues surfaced by TEST-1e's isolation run that are neither TEST-1b nor TEST-1c nor TEST-1e scope. Not filed this session because they may resolve once TEST-1c's fake-timer cluster lands, and filing speculative items violates the "no over-filing" principle. If they recur in the next session's isolation run, file then:
+
+- `e2e/history-revert.spec.ts:136` — `getByText(/selected/)` is ambiguous after UI evolution (matches multiple "N selected" strings).
+- `e2e/toolbar-and-blocks.spec.ts` priority-button-name not found after focus — suggests a toolbar i18n-key + focus-race timing bug; could be bucket 5 (fake timers) and absorbed into TEST-1c.
+
+### Non-goals / scope discipline
+
+- Did NOT touch `playwright.config.ts` — TEST-1a scope.
+- Did NOT touch the 3 TEST-1c specs (`sync-ui.spec.ts`, `conflict-resolution.spec.ts`, `templates.spec.ts`). TEST-1b touched `templates.spec.ts` but for portal containment, not fake-timer fixes — those are still open for TEST-1c.
+  - Exception: the product-side `ConflictList.tsx` gained the 3 testid wirings for TEST-1e (consumer of the extended `ConfirmDialog`). The spec `conflict-resolution.spec.ts` already used those testids; no spec change needed.
+- Did NOT file TEST-1f for the 2 non-drift functional failures in the watch-list above. Let TEST-1c first.
+- Did NOT add a generic `activePortal(slot)` helper — current 8-helper set covers every Radix and custom portal in use; add when a new portal type appears.
+- Did NOT update FEATURE-MAP.md — these testid additions are test-infrastructure, not user-facing features.
+- Did NOT touch Rust backend, Tauri commands, or `.sqlx/` cache.
+
+### Post-session state
+
+- REVIEW-LATER: 14 open items (1 FEAT + 2 MAINT + 3 PERF + 2 TEST + 6 PUB).
+  - TEST-1c (S–M, fake timers in sync-ui / conflict-resolution / templates) — only remaining flake-floor prereq.
+  - TEST-1d (S, wire Playwright into CI) — strictly last.
+- Next batch candidates:
+  - **TEST-1c** (S–M, ~2 h) — the last step before TEST-1d.
+  - **MAINT-83** (S–M) — Android Gradle 9.0 compat, investigation-first.
+  - **MAINT-84** (S) — Android `minSdk` 30 → 34, needs user approval.
+  - **FEAT-4** (L) — MCP server. Multi-session.
+  - **PERF-19 / 20 / 23** — deliberate non-fixes.
+  - **PUB-*** — publish-prep, user-timing-gated.
+
 ## Session 428 — MAINT-79 jni bump + TEST-1a E2E systemic fixes (TEST-1e filed) (2026-04-19)
 
 **2 REVIEW-LATER items fully resolved + 1 successor filed. Open items 17 → 16.** MAINT-79 clears the single-file Android JNI-API migration; TEST-1a lands the three systemic E2E-flake fixes (mock reset hook + `expect.timeout` bump + exact-match audit) that unblock the rest of the TEST-1 cascade. Two pre-existing test-drift bugs surfaced by TEST-1a's work get their own narrower TEST-1e entry.

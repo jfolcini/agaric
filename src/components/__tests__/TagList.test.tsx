@@ -89,6 +89,17 @@ describe('TagList', () => {
     expect(screen.getByText('7')).toBeInTheDocument()
   })
 
+  it('exposes a stable tag-item-<name> data-testid on each tag button', async () => {
+    mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'important', 3), makeTag('T2', 'work', 7)])
+
+    render(<TagList />)
+
+    // Wait for the tag buttons to render, then assert on the data-testid used
+    // by the E2E suite to survive the usage_count suffix in the visible text.
+    expect(await screen.findByTestId('tag-item-important')).toBeInTheDocument()
+    expect(screen.getByTestId('tag-item-work')).toBeInTheDocument()
+  })
+
   it('shows empty state when no tags exist', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 

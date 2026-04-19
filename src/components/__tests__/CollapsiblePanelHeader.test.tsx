@@ -85,6 +85,25 @@ describe('CollapsiblePanelHeader', () => {
     expect(button.className).toContain('done-panel-header')
   })
 
+  it('applies testId as data-testid on the button when provided', () => {
+    render(
+      <CollapsiblePanelHeader isCollapsed={false} onToggle={() => {}} testId="my-panel-header">
+        Header
+      </CollapsiblePanelHeader>,
+    )
+    expect(screen.getByTestId('my-panel-header')).toBe(screen.getByRole('button'))
+  })
+
+  it('does not set data-testid when testId prop is omitted', () => {
+    render(
+      <CollapsiblePanelHeader isCollapsed={false} onToggle={() => {}}>
+        Header
+      </CollapsiblePanelHeader>,
+    )
+    const button = screen.getByRole('button')
+    expect(button.getAttribute('data-testid')).toBeNull()
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(
       <CollapsiblePanelHeader isCollapsed={false} onToggle={() => {}} className="due-panel-header">

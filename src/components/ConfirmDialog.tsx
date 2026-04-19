@@ -33,6 +33,12 @@ interface ConfirmDialogProps {
   loading?: boolean
   children?: React.ReactNode
   className?: string | undefined
+  /** Optional data-testid for the AlertDialogContent root. */
+  contentTestId?: string | undefined
+  /** Optional data-testid for the Cancel button. */
+  cancelTestId?: string | undefined
+  /** Optional data-testid for the Action (confirm) button. */
+  actionTestId?: string | undefined
 }
 
 export function ConfirmDialog({
@@ -47,20 +53,25 @@ export function ConfirmDialog({
   loading = false,
   children,
   className,
+  contentTestId,
+  cancelTestId,
+  actionTestId,
 }: ConfirmDialogProps): React.ReactElement {
   const { t } = useTranslation()
   const resolvedCancelLabel = cancelLabel ?? t('dialog.cancel')
   const resolvedActionLabel = actionLabel ?? t('dialog.confirm')
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent className={className}>
+      <AlertDialogContent className={className} data-testid={contentTestId}>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
         {children}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={loading}>{resolvedCancelLabel}</AlertDialogCancel>
+          <AlertDialogCancel disabled={loading} data-testid={cancelTestId}>
+            {resolvedCancelLabel}
+          </AlertDialogCancel>
           <AlertDialogAction
             className={cn(
               actionVariant === 'destructive' && buttonVariants({ variant: 'destructive' }),
@@ -68,6 +79,7 @@ export function ConfirmDialog({
             onClick={onAction}
             disabled={loading}
             autoFocus
+            data-testid={actionTestId}
           >
             {loading && <Spinner />}
             {resolvedActionLabel}

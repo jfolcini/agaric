@@ -39,10 +39,12 @@ test.describe('Tags view — seed tags', () => {
   test('Tags sidebar button navigates to tags view showing seed tags', async ({ page }) => {
     await navigateToTags(page)
 
-    // All three seed tags should be visible as Badge text
-    await expect(page.getByText('work', { exact: true })).toBeVisible()
-    await expect(page.getByText('personal', { exact: true })).toBeVisible()
-    await expect(page.getByText('idea', { exact: true })).toBeVisible()
+    // All three seed tags should be visible via their stable data-testids
+    // (the visible button text is `${tag.name} ${usage_count}`, e.g. "work 0",
+    // so a getByText('work', { exact: true }) query does not match).
+    await expect(page.getByTestId('tag-item-work')).toBeVisible()
+    await expect(page.getByTestId('tag-item-personal')).toBeVisible()
+    await expect(page.getByTestId('tag-item-idea')).toBeVisible()
   })
 
   test('Tags view shows the create-tag form', async ({ page }) => {
@@ -69,8 +71,9 @@ test.describe('Tag creation', () => {
     await input.fill('urgent')
     await page.getByRole('button', { name: 'Add Tag' }).click()
 
-    // The new tag should appear in the list
-    await expect(page.getByText('urgent', { exact: true })).toBeVisible()
+    // The new tag should appear in the list — query by stable data-testid so
+    // the usage_count suffix in the button text does not confuse exact text match.
+    await expect(page.getByTestId('tag-item-urgent')).toBeVisible()
   })
 })
 
@@ -85,9 +88,12 @@ test.describe('Tag deletion', () => {
   })
 
   test('delete button opens confirmation dialog', async ({ page }) => {
-    // Each tag row is a div with rounded-lg + a "Delete tag" button inside
+    // Each tag row is a <li data-slot="list-item"> with a "Delete tag" button inside.
+    // The component used to render a <div class="rounded-lg">; it was refactored to
+    // the shared <ListItem> primitive (which renders <li>), so the old `div.rounded-lg`
+    // selector no longer resolves.
     const tagRow = page
-      .locator('div.rounded-lg')
+      .locator('[data-slot="list-item"]')
       .filter({ has: page.getByRole('button', { name: 'Delete tag' }) })
       .filter({ hasText: 'idea' })
     await expect(tagRow).toBeVisible()
@@ -105,7 +111,7 @@ test.describe('Tag deletion', () => {
 
   test('cancelling deletion keeps the tag', async ({ page }) => {
     const tagRow = page
-      .locator('div.rounded-lg')
+      .locator('[data-slot="list-item"]')
       .filter({ has: page.getByRole('button', { name: 'Delete tag' }) })
       .filter({ hasText: 'idea' })
     await expect(tagRow).toBeVisible()
@@ -115,13 +121,13 @@ test.describe('Tag deletion', () => {
     // Click Cancel
     await page.getByRole('button', { name: 'Cancel', exact: true }).click()
 
-    // Tag should still be visible
-    await expect(page.getByText('idea', { exact: true })).toBeVisible()
+    // Tag should still be visible — query by stable data-testid.
+    await expect(page.getByTestId('tag-item-idea')).toBeVisible()
   })
 
   test('confirming deletion removes the tag from the list', async ({ page }) => {
     const tagRow = page
-      .locator('div.rounded-lg')
+      .locator('[data-slot="list-item"]')
       .filter({ has: page.getByRole('button', { name: 'Delete tag' }) })
       .filter({ hasText: 'idea' })
     await expect(tagRow).toBeVisible()
@@ -132,11 +138,11 @@ test.describe('Tag deletion', () => {
     await page.getByRole('button', { name: 'Delete', exact: true }).click()
 
     // "idea" tag should no longer be visible
-    await expect(page.getByText('idea', { exact: true })).not.toBeVisible()
+    await expect(page.getByTestId('tag-item-idea')).not.toBeVisible()
 
     // Other tags should still be present
-    await expect(page.getByText('work', { exact: true })).toBeVisible()
-    await expect(page.getByText('personal', { exact: true })).toBeVisible()
+    await expect(page.getByTestId('tag-item-work')).toBeVisible()
+    await expect(page.getByTestId('tag-item-personal')).toBeVisible()
   })
 })
 

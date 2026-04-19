@@ -1,4 +1,12 @@
-import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
+import {
+  activeSuggestionList,
+  activeSuggestionPopup,
+  expect,
+  focusBlock,
+  openPage,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E tests for suggestion popup + keyboard interactions (T-1).
@@ -21,7 +29,9 @@ import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
 async function openPagePicker(page: import('@playwright/test').Page) {
   await page.keyboard.press('End')
   await page.keyboard.type(' [[', { delay: 30 })
-  const popup = page.locator('[data-testid="suggestion-popup"]')
+  // TEST-1b: scope to the active popup; stale popups from a previous test
+  // can transiently coexist with the fresh one in `document.body`.
+  const popup = activeSuggestionPopup(page)
   await expect(popup).toBeVisible()
   return popup
 }
@@ -30,7 +40,7 @@ async function openPagePicker(page: import('@playwright/test').Page) {
 async function openTagPicker(page: import('@playwright/test').Page) {
   await page.keyboard.press('End')
   await page.keyboard.type(' @', { delay: 30 })
-  const popup = page.locator('[data-testid="suggestion-popup"]')
+  const popup = activeSuggestionPopup(page)
   await expect(popup).toBeVisible()
   return popup
 }
@@ -39,7 +49,7 @@ async function openTagPicker(page: import('@playwright/test').Page) {
 async function openSlashPicker(page: import('@playwright/test').Page) {
   await page.keyboard.press('End')
   await page.keyboard.type(' /', { delay: 30 })
-  const popup = page.locator('[data-testid="suggestion-popup"]')
+  const popup = activeSuggestionPopup(page)
   await expect(popup).toBeVisible()
   return popup
 }
@@ -64,7 +74,7 @@ test.describe('Enter key with suggestion popup', () => {
     await page.keyboard.type('Quick', { delay: 30 })
 
     // The suggestion list should have a "Quick Notes" item
-    const list = page.locator('[data-testid="suggestion-list"]')
+    const list = activeSuggestionList(page)
     await expect(
       list.locator('[data-testid="suggestion-item"]', { hasText: 'Quick Notes' }),
     ).toBeVisible()
@@ -73,7 +83,7 @@ test.describe('Enter key with suggestion popup', () => {
     await page.keyboard.press('Enter')
 
     // The suggestion popup should close
-    await expect(page.locator('[data-testid="suggestion-popup"]')).not.toBeVisible()
+    await expect(activeSuggestionPopup(page)).not.toBeVisible()
 
     // A block_link chip should be inserted (not a new block)
     await expect(
@@ -87,12 +97,12 @@ test.describe('Enter key with suggestion popup', () => {
 
     await page.keyboard.type('work', { delay: 30 })
 
-    const list = page.locator('[data-testid="suggestion-list"]')
+    const list = activeSuggestionList(page)
     await expect(list.locator('[data-testid="suggestion-item"]', { hasText: 'work' })).toBeVisible()
 
     await page.keyboard.press('Enter')
 
-    await expect(page.locator('[data-testid="suggestion-popup"]')).not.toBeVisible()
+    await expect(activeSuggestionPopup(page)).not.toBeVisible()
     await expect(page.locator('[data-testid="tag-ref-chip"]', { hasText: 'work' })).toBeVisible()
   })
 })
@@ -113,13 +123,15 @@ test.describe('Tab key with suggestion popup', () => {
 
     await page.keyboard.type('Quick', { delay: 30 })
     await expect(
-      page.locator('[data-testid="suggestion-item"]', { hasText: 'Quick Notes' }),
+      activeSuggestionList(page).locator('[data-testid="suggestion-item"]', {
+        hasText: 'Quick Notes',
+      }),
     ).toBeVisible()
 
     // Tab should autocomplete (select first item)
     await page.keyboard.press('Tab')
 
-    await expect(page.locator('[data-testid="suggestion-popup"]')).not.toBeVisible()
+    await expect(activeSuggestionPopup(page)).not.toBeVisible()
     await expect(
       page.locator('[data-testid="block-link-chip"]', { hasText: 'Quick Notes' }),
     ).toBeVisible()
@@ -134,7 +146,7 @@ test.describe('Tab key with suggestion popup', () => {
     await page.keyboard.press('Tab')
 
     // Popup should close (command selected)
-    await expect(page.locator('[data-testid="suggestion-popup"]')).not.toBeVisible()
+    await expect(activeSuggestionPopup(page)).not.toBeVisible()
   })
 })
 
@@ -156,7 +168,7 @@ test.describe('Escape key with suggestion popup', () => {
     await page.keyboard.press('Escape')
 
     // Popup should be gone
-    await expect(page.locator('[data-testid="suggestion-popup"]')).not.toBeVisible()
+    await expect(activeSuggestionPopup(page)).not.toBeVisible()
 
     // Editor should still be mounted (contenteditable visible)
     await expect(page.locator('.block-editor [contenteditable="true"]')).toBeVisible()
@@ -168,7 +180,7 @@ test.describe('Escape key with suggestion popup', () => {
 
     // First Escape: dismiss popup
     await page.keyboard.press('Escape')
-    await expect(page.locator('[data-testid="suggestion-popup"]')).not.toBeVisible()
+    await expect(activeSuggestionPopup(page)).not.toBeVisible()
 
     // Second Escape: close editor (return to static block)
     await page.keyboard.press('Escape')
@@ -197,10 +209,10 @@ test.describe('Backspace key with suggestion popup', () => {
     await page.keyboard.press('Backspace')
 
     // Popup should still be visible (query is now "wor")
-    await expect(page.locator('[data-testid="suggestion-popup"]')).toBeVisible()
+    await expect(activeSuggestionPopup(page)).toBeVisible()
 
     // The suggestion list should still show items matching "wor"
-    const list = page.locator('[data-testid="suggestion-list"]')
+    const list = activeSuggestionList(page)
     await expect(list.locator('[data-testid="suggestion-item"]')).toHaveCount(
       await list.locator('[data-testid="suggestion-item"]').count(),
     )
@@ -221,7 +233,7 @@ test.describe('Arrow key navigation in popup', () => {
     await focusBlock(page)
     await openSlashPicker(page)
 
-    const list = page.locator('[data-testid="suggestion-list"]')
+    const list = activeSuggestionList(page)
     const items = list.locator('[data-testid="suggestion-item"]')
 
     // First item should be selected by default

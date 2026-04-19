@@ -1,4 +1,13 @@
-import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
+import {
+  activePopover,
+  activeRoleDialog,
+  activeSuggestionList,
+  expect,
+  focusBlock,
+  openPage,
+  test,
+  waitForBoot,
+} from './helpers'
 
 // TEST-1a: template-lifecycle tests chain create/remove/apply template
 // sequences inside a describe — serial run prevents cross-test mock-state
@@ -41,7 +50,9 @@ async function openKebabMenu(page: import('@playwright/test').Page) {
 async function typeSlashCommand(page: import('@playwright/test').Page, command: string) {
   await page.keyboard.press('End')
   await page.keyboard.type(` /${command}`, { delay: 30 })
-  const list = page.locator('[data-testid="suggestion-list"]')
+  // TEST-1b: scope to the last suggestion-list so stale portal DOM from
+  // a previous test can't match first.
+  const list = activeSuggestionList(page)
   await expect(list).toBeVisible()
   return list
 }
@@ -59,17 +70,19 @@ test.describe('Save page as template', () => {
     await openPage(page, 'Getting Started')
     await openKebabMenu(page)
 
-    // Should show "Save as template" (not "Remove template status")
-    await expect(page.getByText('Save as template')).toBeVisible()
+    // TEST-1b: the kebab menu is a Radix Popover; scope to the active
+    // popover-content so a stale portal from a previous test can't match.
+    await expect(activePopover(page).getByText('Save as template')).toBeVisible()
   })
 
   test('clicking "Save as template" shows success toast', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await openKebabMenu(page)
 
-    await page.getByText('Save as template').click()
+    await activePopover(page).getByText('Save as template').click()
 
-    // Success toast should appear
+    // Success toast is rendered by sonner (outside Radix portals) — leave
+    // it at page scope.
     await expect(page.getByText('Saved as template')).toBeVisible()
   })
 
@@ -78,12 +91,12 @@ test.describe('Save page as template', () => {
 
     // Save as template
     await openKebabMenu(page)
-    await page.getByText('Save as template').click()
+    await activePopover(page).getByText('Save as template').click()
     await expect(page.getByText('Saved as template')).toBeVisible()
 
     // Re-open kebab — should now show "Remove template status"
     await openKebabMenu(page)
-    await expect(page.getByText('Remove template status')).toBeVisible()
+    await expect(activePopover(page).getByText('Remove template status')).toBeVisible()
   })
 })
 
@@ -100,14 +113,14 @@ test.describe('Remove template status', () => {
     await openPage(page, 'Meeting Notes Template')
     await openKebabMenu(page)
 
-    await expect(page.getByText('Remove template status')).toBeVisible()
+    await expect(activePopover(page).getByText('Remove template status')).toBeVisible()
   })
 
   test('removing template status shows success toast', async ({ page }) => {
     await openPage(page, 'Meeting Notes Template')
     await openKebabMenu(page)
 
-    await page.getByText('Remove template status').click()
+    await activePopover(page).getByText('Remove template status').click()
 
     await expect(page.getByText('Template status removed')).toBeVisible()
   })
@@ -117,12 +130,12 @@ test.describe('Remove template status', () => {
 
     // Remove template status
     await openKebabMenu(page)
-    await page.getByText('Remove template status').click()
+    await activePopover(page).getByText('Remove template status').click()
     await expect(page.getByText('Template status removed')).toBeVisible()
 
     // Re-open kebab — should now show "Save as template"
     await openKebabMenu(page)
-    await expect(page.getByText('Save as template')).toBeVisible()
+    await expect(activePopover(page).getByText('Save as template')).toBeVisible()
   })
 })
 
@@ -145,8 +158,9 @@ test.describe('Template picker via slash command', () => {
     await expect(templateItem).toBeVisible()
     await templateItem.click()
 
-    // The template picker dialog should appear
-    const dialog = page.locator('[role="dialog"]')
+    // TEST-1b: The template picker sets role="dialog"; scope to the active
+    // one so a stale dialog from a previous test can't resolve-to-N.
+    const dialog = activeRoleDialog(page)
     await expect(dialog).toBeVisible()
 
     // Should show the seeded template
@@ -160,7 +174,7 @@ test.describe('Template picker via slash command', () => {
 
     await list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' }).click()
 
-    const dialog = page.locator('[role="dialog"]')
+    const dialog = activeRoleDialog(page)
     await expect(dialog).toBeVisible()
 
     // Should show "Select a template" heading
@@ -177,7 +191,7 @@ test.describe('Template picker via slash command', () => {
 
     await list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' }).click()
 
-    const dialog = page.locator('[role="dialog"]')
+    const dialog = activeRoleDialog(page)
     await expect(dialog).toBeVisible()
 
     await page.keyboard.press('Escape')
@@ -204,7 +218,7 @@ test.describe('Apply template', () => {
     await list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' }).click()
 
     // Pick the Meeting Notes Template from the picker
-    const dialog = page.locator('[role="dialog"]')
+    const dialog = activeRoleDialog(page)
     await expect(dialog).toBeVisible()
     await dialog.getByText('Meeting Notes Template').click()
 
@@ -218,7 +232,7 @@ test.describe('Apply template', () => {
     const list = await typeSlashCommand(page, 'template')
 
     await list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' }).click()
-    const dialog = page.locator('[role="dialog"]')
+    const dialog = activeRoleDialog(page)
     await expect(dialog).toBeVisible()
     await dialog.getByText('Meeting Notes Template').click()
 
@@ -249,7 +263,7 @@ test.describe('Template variable expansion', () => {
     const list = await typeSlashCommand(page, 'template')
 
     await list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' }).click()
-    const dialog = page.locator('[role="dialog"]')
+    const dialog = activeRoleDialog(page)
     await expect(dialog).toBeVisible()
     await dialog.getByText('Meeting Notes Template').click()
     await expect(page.getByText('Template inserted')).toBeVisible({ timeout: 5000 })
@@ -272,7 +286,7 @@ test.describe('Template variable expansion', () => {
     const list = await typeSlashCommand(page, 'template')
 
     await list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' }).click()
-    const dialog = page.locator('[role="dialog"]')
+    const dialog = activeRoleDialog(page)
     await expect(dialog).toBeVisible()
     await dialog.getByText('Meeting Notes Template').click()
     await expect(page.getByText('Template inserted')).toBeVisible({ timeout: 5000 })
@@ -300,15 +314,19 @@ test.describe('Journal template toggle', () => {
     await openPage(page, 'Getting Started')
     await openKebabMenu(page)
 
-    await expect(page.getByText('Set as journal template')).toBeVisible()
+    await expect(activePopover(page).getByText('Set as journal template')).toBeVisible()
   })
 
   test('setting journal template shows success toast', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await openKebabMenu(page)
 
-    await page.getByText('Set as journal template').click()
+    await activePopover(page).getByText('Set as journal template').click()
 
+    // The toast's body text matches the menu-item text verbatim ("Set as
+    // journal template"). Wait for the popover to fully unmount before
+    // asserting on the toast so both aren't matched simultaneously.
+    await expect(activePopover(page)).not.toBeVisible()
     await expect(page.getByText('Set as journal template', { exact: false })).toBeVisible()
   })
 
@@ -317,15 +335,17 @@ test.describe('Journal template toggle', () => {
 
     // Set as journal template
     await openKebabMenu(page)
-    await page.getByText('Set as journal template').click()
+    await activePopover(page).getByText('Set as journal template').click()
 
-    // Deterministic wait: the click closes the menu, indicating the
+    // Deterministic wait: the click closes the popover, indicating the
     // command dispatched. The in-memory mock backend applies the state
-    // change synchronously after dispatch.
-    await expect(page.locator('[role="menu"]')).not.toBeVisible()
+    // change synchronously after dispatch. Wait on the active popover
+    // going invisible — not on a stale `[role="menu"]` (the kebab is a
+    // Popover, not a menu).
+    await expect(activePopover(page)).not.toBeVisible()
 
     // Re-open kebab
     await openKebabMenu(page)
-    await expect(page.getByText('Remove journal template')).toBeVisible()
+    await expect(activePopover(page).getByText('Remove journal template')).toBeVisible()
   })
 })

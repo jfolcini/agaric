@@ -218,6 +218,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                     type="button"
                     className="cursor-pointer border-none bg-transparent p-0"
                     onClick={() => onTagClick?.(tag.tag_id, tag.name || 'Unnamed')}
+                    data-testid={`tag-item-${tag.name || 'Unnamed'}`}
                   >
                     <Badge
                       variant={color ? undefined : 'secondary'}

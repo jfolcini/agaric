@@ -6,6 +6,8 @@ interface CollapsiblePanelHeaderProps {
   isCollapsed: boolean
   onToggle: () => void
   className?: string
+  /** Optional data-testid passed straight through to the underlying button. */
+  testId?: string
   children: React.ReactNode
 }
 
@@ -13,6 +15,7 @@ export function CollapsiblePanelHeader({
   isCollapsed,
   onToggle,
   className,
+  testId,
   children,
 }: CollapsiblePanelHeaderProps) {
   const { t } = useTranslation()
@@ -20,6 +23,7 @@ export function CollapsiblePanelHeader({
     <button
       type="button"
       onClick={onToggle}
+      data-testid={testId}
       className={cn(
         className,
         'flex w-full items-center gap-2 rounded-md px-3 py-2',

@@ -130,6 +130,39 @@ describe('ConfirmDialog', () => {
     expect(content).toBeTruthy()
   })
 
+  it('applies contentTestId, cancelTestId, and actionTestId when provided', () => {
+    const { container } = render(
+      <ConfirmDialog
+        {...defaultProps}
+        contentTestId="my-confirm"
+        cancelTestId="my-cancel"
+        actionTestId="my-action"
+      />,
+    )
+
+    // Dialog content root gets the contentTestId
+    const content = container.ownerDocument.querySelector('[data-testid="my-confirm"]')
+    expect(content).toBeTruthy()
+
+    // Cancel and Action buttons get their respective test ids
+    expect(screen.getByTestId('my-cancel')).toBeInTheDocument()
+    expect(screen.getByTestId('my-action')).toBeInTheDocument()
+  })
+
+  it('does not render data-testid attributes when testid props are omitted', () => {
+    const { container } = render(<ConfirmDialog {...defaultProps} />)
+
+    // No data-testid attribute should be set on the dialog content / buttons
+    const content = container.ownerDocument.querySelector('[data-slot="alert-dialog-content"]')
+    expect(content).toBeTruthy()
+    expect(content?.getAttribute('data-testid')).toBeNull()
+
+    const actionBtn = screen.getByRole('button', { name: /Confirm/ })
+    const cancelBtn = screen.getByRole('button', { name: /Cancel/ })
+    expect(actionBtn.getAttribute('data-testid')).toBeNull()
+    expect(cancelBtn.getAttribute('data-testid')).toBeNull()
+  })
+
   it('focuses the action button on open', () => {
     render(<ConfirmDialog {...defaultProps} />)
 

@@ -555,6 +555,9 @@ export function ConflictList(): React.ReactElement {
           }
         }}
         className="conflict-discard-confirm"
+        contentTestId="conflict-discard-confirm"
+        cancelTestId="conflict-discard-no"
+        actionTestId="conflict-discard-yes"
       />
 
       {/* Batch action confirmation dialog */}

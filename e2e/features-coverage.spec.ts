@@ -371,10 +371,12 @@ test.describe('Context menu actions', () => {
     await expect(menu).toBeVisible()
     await menu.locator('[role="menuitem"]', { hasText: 'Set priority 1' }).click()
 
-    // Verify priority badge with "1" appears
+    // Verify priority badge with "P1" appears — the PriorityBadge renders a
+    // "P{priority}" label regardless of the underlying priority value
+    // (see src/components/ui/priority-badge.tsx).
     const badge = firstBlock.locator('[data-testid="priority-badge"]')
     await expect(badge).toBeVisible()
-    await expect(badge).toHaveText('1')
+    await expect(badge).toHaveText('P1')
   })
 })
 

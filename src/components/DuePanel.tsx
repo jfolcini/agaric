@@ -203,12 +203,13 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   })()
 
   return (
-    <section className="due-panel" aria-label={t('duePanel.duePanelLabel')}>
+    <section className="due-panel" aria-label={t('duePanel.duePanelLabel')} data-testid="due-panel">
       {/* Main header -- collapsible, always visible */}
       <CollapsiblePanelHeader
         isCollapsed={collapsed}
         onToggle={toggleCollapsed}
         className="due-panel-header"
+        testId="due-panel-header"
       >
         {headerLabel}
       </CollapsiblePanelHeader>

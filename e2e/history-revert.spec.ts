@@ -79,7 +79,7 @@ test.describe('HistoryView batch revert', () => {
     const createEntry = page
       .locator('[data-history-item]')
       .filter({
-        has: page.locator('[data-testid="history-item-type"]', { hasText: 'create_block' }),
+        has: page.locator('[data-testid="history-type-badge"]', { hasText: 'create_block' }),
       })
       .first()
     await expect(createEntry).toBeVisible()

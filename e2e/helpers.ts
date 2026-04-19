@@ -32,6 +32,71 @@ test.beforeEach(async ({ page }) => {
 
 export { expect }
 
+// ---------------------------------------------------------------------------
+// Portal-scoped locator helpers (TEST-1b).
+//
+// Radix UI primitives render Dialog / AlertDialog / Popover / Sheet / Tooltip
+// content into `document.body` via portals. When a test closes an overlay,
+// React may keep the DOM node around for a commit or two (e.g. during the
+// unmount animation), and the next test can briefly see both the stale and
+// the fresh portal container at the same time. Root-level queries like
+// `page.getByRole('button', { name: 'Apply' })` then either:
+//   - match two elements → `toBeVisible()` throws "resolved to N elements"
+//   - match the stale one first → the assertion hits the wrong subtree.
+//
+// The fix is test-side scoping: query WITHIN the active portal container,
+// and pick `.last()` so the most-recent portal wins when two coexist briefly.
+//
+// Prefer these helpers over root `page.getByRole` / `page.getByText` for any
+// query that targets content inside a Radix overlay. See TEST-1b in
+// REVIEW-LATER.md for the full rationale.
+// ---------------------------------------------------------------------------
+
+/** Active Radix Dialog content (data-slot="dialog-content"). */
+export function activeDialog(page: Page): Locator {
+  return page.locator('[data-slot="dialog-content"]').last()
+}
+
+/** Active Radix AlertDialog content (data-slot="alert-dialog-content"). */
+export function activeAlertDialog(page: Page): Locator {
+  return page.locator('[data-slot="alert-dialog-content"]').last()
+}
+
+/** Active Radix Popover content (data-slot="popover-content"). */
+export function activePopover(page: Page): Locator {
+  return page.locator('[data-slot="popover-content"]').last()
+}
+
+/** Active Radix Sheet content (data-slot="sheet-content"). */
+export function activeSheet(page: Page): Locator {
+  return page.locator('[data-slot="sheet-content"]').last()
+}
+
+/**
+ * Active `role="dialog"` node. Matches Radix Dialog / Sheet / AlertDialog
+ * (all apply role="dialog" internally) as well as hand-rolled pickers such
+ * as `TemplatePicker` that set the role manually. Use `activeDialog` /
+ * `activeSheet` when a tighter data-slot match is available.
+ */
+export function activeRoleDialog(page: Page): Locator {
+  return page.locator('[role="dialog"]').last()
+}
+
+/** Active custom block-context menu (role="menu"). */
+export function activeMenu(page: Page): Locator {
+  return page.locator('[role="menu"]').last()
+}
+
+/** Active TipTap suggestion popup container (ReactRenderer portal). */
+export function activeSuggestionPopup(page: Page): Locator {
+  return page.locator('[data-testid="suggestion-popup"]').last()
+}
+
+/** Active TipTap suggestion list (role="listbox" child of the popup). */
+export function activeSuggestionList(page: Page): Locator {
+  return page.locator('[data-testid="suggestion-list"]').last()
+}
+
 /** Wait for the app to fully boot (BootGate resolved, sidebar visible). */
 export async function waitForBoot(page: Page) {
   await page.goto('/')

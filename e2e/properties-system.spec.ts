@@ -1,4 +1,13 @@
-import { expect, openPage, test, waitForBoot } from './helpers'
+import {
+  activeAlertDialog,
+  activeMenu,
+  activePopover,
+  activeSheet,
+  expect,
+  openPage,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E tests for the properties system.
@@ -89,17 +98,21 @@ test.describe('Property drawer', () => {
     await expect(firstBlock).toBeVisible()
     await firstBlock.click({ button: 'right' })
 
-    // Click "Properties..." in the context menu
-    const menu = page.locator('[role="menu"]')
+    // TEST-1b: scope to the active `role="menu"` so stale context-menu DOM
+    // from a previous test (which lives in `document.body` after it closes
+    // and may briefly coexist with the fresh menu) can't match first.
+    const menu = activeMenu(page)
     await expect(menu).toBeVisible()
     await menu.locator('[role="menuitem"]', { hasText: 'Properties' }).click()
 
-    // The property drawer (Sheet) should open with title "Block Properties"
-    await expect(page.getByText('Block Properties')).toBeVisible()
+    // TEST-1b: the property drawer is a Radix Sheet; scope to the active
+    // sheet-content so stale Sheet portals from previous tests can't match.
+    const sheet = activeSheet(page)
+    await expect(sheet.getByText('Block Properties')).toBeVisible()
 
     // Verify both properties are listed: context and project
-    await expect(page.getByText('context', { exact: true })).toBeVisible()
-    await expect(page.getByText('project', { exact: true })).toBeVisible()
+    await expect(sheet.getByText('context', { exact: true })).toBeVisible()
+    await expect(sheet.getByText('project', { exact: true })).toBeVisible()
   })
 
   test('property drawer shows editable input with current values', async ({ page }) => {
@@ -108,15 +121,16 @@ test.describe('Property drawer', () => {
     // Open the property drawer for the first meeting block
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await firstBlock.click({ button: 'right' })
-    const menu = page.locator('[role="menu"]')
+    const menu = activeMenu(page)
     await expect(menu).toBeVisible()
     await menu.locator('[role="menuitem"]', { hasText: 'Properties' }).click()
 
-    await expect(page.getByText('Block Properties')).toBeVisible()
+    const sheet = activeSheet(page)
+    await expect(sheet.getByText('Block Properties')).toBeVisible()
 
     // The drawer shows Input elements with defaultValues from properties
     // context = "@office", project = "alpha"
-    const inputs = page.locator('[role="dialog"] input.flex-1')
+    const inputs = sheet.locator('input.flex-1')
     await expect(inputs.first()).toBeVisible()
 
     // Verify input values match seed data
@@ -140,38 +154,42 @@ test.describe('Set property via drawer', () => {
     // Right-click the first block and open properties
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await firstBlock.click({ button: 'right' })
-    const menu = page.locator('[role="menu"]')
+    const menu = activeMenu(page)
     await expect(menu).toBeVisible()
     await menu.locator('[role="menuitem"]', { hasText: 'Properties' }).click()
 
-    await expect(page.getByText('Block Properties')).toBeVisible()
+    const sheet = activeSheet(page)
+    await expect(sheet.getByText('Block Properties')).toBeVisible()
 
     // Should show "No properties set" initially for GS_1
-    await expect(page.getByText('No properties set')).toBeVisible()
+    await expect(sheet.getByText('No properties set')).toBeVisible()
 
-    // Click the "Add property" button to open the popover
-    await page.getByRole('button', { name: 'Add property' }).click()
+    // Click the "Add property" button to open the popover (scoped to the Sheet)
+    await sheet.getByRole('button', { name: 'Add property' }).click()
 
-    // Available property definitions should appear (context and project)
-    await expect(page.getByText('context')).toBeVisible()
-    await expect(page.getByText('project')).toBeVisible()
+    // TEST-1b: the definition picker is a Radix Popover separate from the
+    // Sheet; scope to the active popover-content so stale popover DOM
+    // cannot match the same label text.
+    const popover = activePopover(page)
+    await expect(popover.getByText('context')).toBeVisible()
+    await expect(popover.getByText('project')).toBeVisible()
 
     // Select "context" definition
-    await page.getByText('context').click()
+    await popover.getByText('context').click()
 
-    // An input field should appear for the value
-    const valueInput = page.locator('[role="dialog"] input[placeholder="context"]')
+    // An input field should appear for the value (inside the drawer)
+    const valueInput = sheet.locator('input[placeholder="context"]')
     await expect(valueInput).toBeVisible()
     await valueInput.fill('@home')
 
-    // Click Save to apply
-    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    // Click Save to apply (Save button lives in the drawer row)
+    await sheet.getByRole('button', { name: 'Save', exact: true }).click()
 
     // The "No properties set" message should disappear
-    await expect(page.getByText('No properties set')).not.toBeVisible()
+    await expect(sheet.getByText('No properties set')).not.toBeVisible()
 
     // The new property should now appear in the drawer
-    await expect(page.getByText('context', { exact: true })).toBeVisible()
+    await expect(sheet.getByText('context', { exact: true })).toBeVisible()
   })
 })
 
@@ -190,28 +208,25 @@ test.describe('Delete property via drawer', () => {
     // Open the property drawer for the first meeting block (has context + project)
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await firstBlock.click({ button: 'right' })
-    const menu = page.locator('[role="menu"]')
+    const menu = activeMenu(page)
     await expect(menu).toBeVisible()
     await menu.locator('[role="menuitem"]', { hasText: 'Properties' }).click()
-    await expect(page.getByText('Block Properties')).toBeVisible()
+    const sheet = activeSheet(page)
+    await expect(sheet.getByText('Block Properties')).toBeVisible()
 
     // Both properties should be visible
-    await expect(page.getByText('context', { exact: true })).toBeVisible()
-    await expect(page.getByText('project', { exact: true })).toBeVisible()
+    await expect(sheet.getByText('context', { exact: true })).toBeVisible()
+    await expect(sheet.getByText('project', { exact: true })).toBeVisible()
 
     // Click the delete (X) button for the first property
-    const deleteButtons = page.locator('[role="dialog"] button[aria-label="Delete property"]')
+    const deleteButtons = sheet.locator('button[aria-label="Delete property"]')
     await expect(deleteButtons.first()).toBeVisible()
     await deleteButtons.first().click()
 
     // The "context" property should disappear from the drawer
     // (project should remain)
-    await expect(
-      page.locator('[role="dialog"]').getByText('context', { exact: true }),
-    ).not.toBeVisible()
-    await expect(
-      page.locator('[role="dialog"]').getByText('project', { exact: true }),
-    ).toBeVisible()
+    await expect(sheet.getByText('context', { exact: true })).not.toBeVisible()
+    await expect(sheet.getByText('project', { exact: true })).toBeVisible()
   })
 })
 
@@ -296,11 +311,14 @@ test.describe('Property definitions view', () => {
     await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
 
-    // Confirmation dialog should appear
-    await expect(page.getByText('Delete this property definition?')).toBeVisible()
+    // TEST-1b: the confirmation is a Radix AlertDialog; scope to the
+    // active alert-dialog-content so a stale AlertDialog from a previous
+    // test can't match.
+    const confirm = activeAlertDialog(page)
+    await expect(confirm.getByText('Delete this property definition?')).toBeVisible()
 
     // Confirm deletion
-    await page.getByRole('button', { name: 'Delete', exact: true }).click()
+    await confirm.getByRole('button', { name: 'Delete', exact: true }).click()
 
     // "context" should no longer be in the list
     await expect(page.locator('ul > li', { hasText: 'context' })).not.toBeVisible()

@@ -1,4 +1,12 @@
-import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
+import {
+  activeSuggestionList,
+  activeSuggestionPopup,
+  expect,
+  focusBlock,
+  openPage,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E tests for the (( block-ref picker.
@@ -29,7 +37,11 @@ import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
 async function openBlockRefPicker(page: import('@playwright/test').Page, query: string) {
   await page.keyboard.press('End')
   await page.keyboard.type(` ((${query}`, { delay: 30 })
-  const list = page.locator('[data-testid="suggestion-list"]')
+  // TEST-1b: scope to the active (last-in-DOM) suggestion-list. The
+  // ReactRenderer popup container can transiently coexist with a stale
+  // popup from a previous test before the cleanup runs, so a bare page
+  // locator would "resolve to 2 elements" under parallel pressure.
+  const list = activeSuggestionList(page)
   await expect(list).toBeVisible({ timeout: 5000 })
   return list
 }
@@ -45,7 +57,7 @@ test.describe('Block ref picker — (( trigger', () => {
     await page.keyboard.press('End')
     await page.keyboard.type(' ((', { delay: 30 })
     // The popup container is created even before results arrive
-    await expect(page.locator('[data-testid="suggestion-popup"]')).toBeVisible()
+    await expect(activeSuggestionPopup(page)).toBeVisible()
   })
 
   test('picker shows search results matching block content', async ({ page }) => {
@@ -63,7 +75,7 @@ test.describe('Block ref picker — (( trigger', () => {
     await expect(list.locator('[data-testid="suggestion-item"]').first()).toBeVisible()
     await page.keyboard.press('Enter')
     // Popup should close and block-ref chip should appear
-    await expect(page.locator('[data-testid="suggestion-popup"]')).not.toBeVisible()
+    await expect(activeSuggestionPopup(page)).not.toBeVisible()
     await expect(page.locator('[data-testid="block-ref-chip"]')).toBeVisible()
   })
 
@@ -71,7 +83,7 @@ test.describe('Block ref picker — (( trigger', () => {
     await focusBlock(page)
     const list = await openBlockRefPicker(page, 'Welcome')
     await list.locator('[data-testid="suggestion-item"]').first().click()
-    await expect(page.locator('[data-testid="suggestion-popup"]')).not.toBeVisible()
+    await expect(activeSuggestionPopup(page)).not.toBeVisible()
     await expect(page.locator('[data-testid="block-ref-chip"]')).toBeVisible()
   })
 
@@ -79,9 +91,9 @@ test.describe('Block ref picker — (( trigger', () => {
     await focusBlock(page)
     await page.keyboard.press('End')
     await page.keyboard.type(' ((', { delay: 30 })
-    await expect(page.locator('[data-testid="suggestion-popup"]')).toBeVisible()
+    await expect(activeSuggestionPopup(page)).toBeVisible()
     await page.keyboard.press('Escape')
-    await expect(page.locator('[data-testid="suggestion-popup"]')).not.toBeVisible()
+    await expect(activeSuggestionPopup(page)).not.toBeVisible()
     // No block-ref chip should have been inserted
     await expect(page.locator('[data-testid="block-ref-chip"]')).not.toBeVisible()
     // Editor should still be active
@@ -112,7 +124,7 @@ test.describe('Block ref picker — (( trigger', () => {
     // Backspace should delete the last character — query becomes "Welcom"
     await page.keyboard.press('Backspace')
     // Popup should still be visible (query still >= 2 chars)
-    await expect(page.locator('[data-testid="suggestion-popup"]')).toBeVisible()
+    await expect(activeSuggestionPopup(page)).toBeVisible()
   })
 
   test('Tab selects highlighted item (autocomplete)', async ({ page }) => {
@@ -121,7 +133,7 @@ test.describe('Block ref picker — (( trigger', () => {
     await expect(list.locator('[data-testid="suggestion-item"]').first()).toBeVisible()
     // Tab should autocomplete (select first highlighted item)
     await page.keyboard.press('Tab')
-    await expect(page.locator('[data-testid="suggestion-popup"]')).not.toBeVisible()
+    await expect(activeSuggestionPopup(page)).not.toBeVisible()
     await expect(page.locator('[data-testid="block-ref-chip"]')).toBeVisible()
   })
 })

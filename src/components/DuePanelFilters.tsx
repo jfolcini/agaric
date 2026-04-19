@@ -41,7 +41,10 @@ export function DuePanelFilters({
   ]
 
   return (
-    <div className="due-panel-filters flex items-center gap-1 px-2 py-1">
+    <div
+      className="due-panel-filters flex items-center gap-1 px-2 py-1"
+      data-testid="due-panel-filters"
+    >
       {filterOptions.map((opt) => {
         const count = sourceCounts
           ? opt.countKey === 'all'

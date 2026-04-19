@@ -604,6 +604,9 @@ export function TrashView(): React.ReactElement {
           if (confirmPurgeId) handlePurge(confirmPurgeId)
         }}
         className="trash-purge-confirm"
+        contentTestId="trash-purge-confirm"
+        cancelTestId="trash-purge-no"
+        actionTestId="trash-purge-yes"
       />
 
       {/* Batch purge confirmation dialog */}

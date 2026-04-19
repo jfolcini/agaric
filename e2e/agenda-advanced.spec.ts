@@ -60,9 +60,14 @@ test.describe('Due date filtering', () => {
     await expect(duePanel).toBeVisible({ timeout: 5000 })
 
     // Click "Due" filter pill inside the filter bar
+    // DuePanelFilters appends `(N)` to the label when sourceCounts has entries,
+    // so the exact-text query `getByText('Due', { exact: true })` no longer
+    // resolves. Regex `/^Due( \(\d+\))?$/` tolerates the count suffix while
+    // staying anchored (there is no "Due: ..." toggle button to worry about,
+    // but the anchored form is consistent with the Scheduled filter below).
     const filterBar = duePanel.locator('[data-testid="due-panel-filters"]')
     await expect(filterBar).toBeVisible()
-    const dueFilter = filterBar.getByText('Due', { exact: true })
+    const dueFilter = filterBar.getByRole('button', { name: /^Due( \(\d+\))?$/ })
     await dueFilter.click()
 
     // Wait for the filter to take effect
@@ -89,10 +94,13 @@ test.describe('Scheduled date filtering', () => {
     const duePanel = page.locator('[data-testid="due-panel"]')
     await expect(duePanel).toBeVisible({ timeout: 5000 })
 
-    // Click "Scheduled" filter pill
+    // Click "Scheduled" filter pill — regex tolerates `(N)` badge suffix but
+    // excludes the neighbouring "Scheduled: show all" toggle button.
     const filterBar = duePanel.locator('[data-testid="due-panel-filters"]')
     await expect(filterBar).toBeVisible()
-    const scheduledFilter = filterBar.getByText('Scheduled', { exact: true })
+    const scheduledFilter = filterBar.getByRole('button', {
+      name: /^Scheduled( \(\d+\))?$/,
+    })
     await scheduledFilter.click()
 
     // Verify the filter is active
@@ -115,19 +123,20 @@ test.describe('Scheduled date filtering', () => {
     await expect(items.first()).toBeVisible({ timeout: 5000 })
     const initialCount = await items.count()
 
-    // Switch to "Scheduled" filter (fewer items)
+    // Switch to "Scheduled" filter (fewer items). Regex tolerates the `(N)`
+    // badge suffix but excludes the neighbouring "Scheduled: show all" toggle.
     const filterBar = duePanel.locator('[data-testid="due-panel-filters"]')
-    const scheduledFilter = filterBar.getByText('Scheduled', { exact: true })
+    const scheduledFilter = filterBar.getByRole('button', {
+      name: /^Scheduled( \(\d+\))?$/,
+    })
     await scheduledFilter.click()
     // Deterministic wait: filter is active (aria-pressed flips to true)
     await expect(scheduledFilter).toHaveAttribute('aria-pressed', 'true')
 
-    // Switch back to "All"
-    await filterBar.getByText('All', { exact: true }).click()
-    await expect(filterBar.getByText('All', { exact: true })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    )
+    // Switch back to "All" — regex tolerates `(N)` badge suffix.
+    const allFilter = filterBar.getByRole('button', { name: /^All( \(\d+\))?$/ })
+    await allFilter.click()
+    await expect(allFilter).toHaveAttribute('aria-pressed', 'true')
 
     // Count should be restored to the initial value
     await expect(items.first()).toBeVisible({ timeout: 5000 })
@@ -229,8 +238,11 @@ test.describe('Overdue tasks', () => {
       timeout: 5000,
     })
 
-    // BLOCK_OVERDUE_1 has priority '1', so "P1" badge should appear
-    const priorityBadge = duePanel.locator('[data-testid="due-panel-priority"]')
+    // BLOCK_OVERDUE_1 has priority '1', so "P1" badge should appear.
+    // PriorityBadge itself does not expose a data-testid prop; DuePanel tags
+    // the instance with the `due-panel-priority` class (see
+    // src/components/DuePanel.tsx), so we target it via class selector.
+    const priorityBadge = duePanel.locator('.due-panel-priority')
     await expect(priorityBadge.first()).toBeVisible()
     await expect(priorityBadge.first()).toContainText('P1')
   })

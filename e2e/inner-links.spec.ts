@@ -1,4 +1,12 @@
-import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
+import {
+  activeSuggestionList,
+  activeSuggestionPopup,
+  expect,
+  focusBlock,
+  openPage,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * Exhaustive E2E tests for inner links ([[ULID]] block links).
@@ -151,8 +159,9 @@ async function typeLinkTrigger(page: import('@playwright/test').Page) {
   // Move to end of content, then type [[
   await page.keyboard.press('End')
   await page.keyboard.type(' [[', { delay: 30 })
-  // Wait for the suggestion popup
-  await expect(page.locator('[data-testid="suggestion-list"]')).toBeVisible({ timeout: 5000 })
+  // TEST-1b: scope to the active suggestion-list (the TipTap ReactRenderer
+  // popup can transiently coexist with a stale one from the previous test).
+  await expect(activeSuggestionList(page)).toBeVisible({ timeout: 5000 })
 }
 
 test.describe('Inner links — [[ picker', () => {
@@ -177,7 +186,7 @@ test.describe('Inner links — [[ picker', () => {
     await page.keyboard.press('End')
     await page.keyboard.type(' [[', { delay: 30 })
 
-    const list = page.locator('[data-testid="suggestion-list"]')
+    const list = activeSuggestionList(page)
     await expect(list).toBeVisible()
 
     // Should show at least Getting Started and Quick Notes
@@ -191,7 +200,7 @@ test.describe('Inner links — [[ picker', () => {
 
     await page.keyboard.type(' [[Quick', { delay: 30 })
 
-    const list = page.locator('[data-testid="suggestion-list"]')
+    const list = activeSuggestionList(page)
     await expect(list).toBeVisible()
 
     // Should show Quick Notes
@@ -208,7 +217,7 @@ test.describe('Inner links — [[ picker', () => {
     await page.keyboard.press('End')
     await page.keyboard.type(' [[', { delay: 30 })
 
-    const list = page.locator('[data-testid="suggestion-list"]')
+    const list = activeSuggestionList(page)
     await expect(list).toBeVisible()
 
     // Click "Quick Notes" in the suggestion list
@@ -228,7 +237,7 @@ test.describe('Inner links — [[ picker', () => {
 
     // Type [[ first to open picker, then type a query that doesn't match
     await page.keyboard.type(' [[', { delay: 30 })
-    const list = page.locator('[data-testid="suggestion-list"]')
+    const list = activeSuggestionList(page)
     await expect(list).toBeVisible({ timeout: 5000 })
 
     // Type a non-matching query
@@ -247,12 +256,12 @@ test.describe('Inner links — [[ picker', () => {
 
     await page.keyboard.press('End')
     await page.keyboard.type(' [[', { delay: 30 })
-    await expect(page.locator('[data-testid="suggestion-list"]')).toBeVisible()
+    await expect(activeSuggestionList(page)).toBeVisible()
 
     await page.keyboard.press('Escape')
 
     // Popup should be gone
-    await expect(page.locator('[data-testid="suggestion-popup"]')).not.toBeVisible()
+    await expect(activeSuggestionPopup(page)).not.toBeVisible()
   })
 
   test('keyboard navigation: ArrowDown + Enter selects item', async ({ page }) => {
@@ -262,7 +271,7 @@ test.describe('Inner links — [[ picker', () => {
 
     await page.keyboard.press('End')
     await page.keyboard.type(' [[', { delay: 30 })
-    await expect(page.locator('[data-testid="suggestion-list"]')).toBeVisible()
+    await expect(activeSuggestionList(page)).toBeVisible()
 
     // Arrow down to select second item, then Enter
     await page.keyboard.press('ArrowDown')
@@ -294,7 +303,7 @@ test.describe('Inner links — link persistence', () => {
     // Insert a link
     await page.keyboard.press('End')
     await page.keyboard.type(' [[', { delay: 30 })
-    const list = page.locator('[data-testid="suggestion-list"]')
+    const list = activeSuggestionList(page)
     await expect(list).toBeVisible({ timeout: 5000 })
     await list.locator('[data-testid="suggestion-item"]', { hasText: 'Quick Notes' }).click()
     await expect(
@@ -381,7 +390,7 @@ test.describe('[[ picker — create new page & input-rule auto-resolve', () => {
     await page.keyboard.press('End')
     await page.keyboard.type(' [[', { delay: 30 })
 
-    const list = page.locator('[data-testid="suggestion-list"]')
+    const list = activeSuggestionList(page)
     await expect(list).toBeVisible({ timeout: 5000 })
 
     // Type a non-existent page name
