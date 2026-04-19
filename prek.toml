@@ -57,6 +57,20 @@ language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx", "css"]
 
+# Legacy React API guard — block re-introduction of APIs we migrated away from
+# (MAINT-48 React 19, MAINT-49 TypeScript 6, follow-up MutableRefObject removal).
+# Two legitimate `React.JSX.IntrinsicElements` uses in RichContentRenderer.tsx are
+# the correct React-19 form and are excluded by the `[^.]` prefix in the pattern.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "no-legacy-react-apis"
+name = "no legacy react apis"
+entry = "bash -c 'set -e; if grep -rnE \"\\bforwardRef\\b|\\bReact\\.forwardRef\\b|\\bMutableRefObject\\b|\\bReact\\.ComponentRef\\b\" src/ --include=\"*.ts\" --include=\"*.tsx\" --exclude-dir=mocks --exclude=bindings.ts; then echo \"ERROR: legacy React API detected — forwardRef / MutableRefObject / React.ComponentRef were removed during the React 19 / TS 6 migration\"; exit 1; fi; if grep -rnE \"(^|[^.])JSX\\.(IntrinsicElements|Element)\" src/ --include=\"*.ts\" --include=\"*.tsx\" --exclude-dir=mocks --exclude=bindings.ts; then echo \"ERROR: ambient JSX.* namespace detected — use React.JSX.IntrinsicElements / React.ReactElement instead (React 19 dropped the global JSX namespace)\"; exit 1; fi'"
+language = "system"
+pass_filenames = false
+types_or = ["ts", "tsx"]
+
 # Vitest: smart related-only tests (run on TS changes)
 [[repos]]
 repo = "local"

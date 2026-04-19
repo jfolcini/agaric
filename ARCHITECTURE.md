@@ -1838,8 +1838,7 @@ empirically validated through bugs found, fixes applied, and alternatives reject
 - **Use semantic color tokens, not hardcoded Tailwind classes.** `text-status-overdue` not
   `text-red-700`. 14 semantic tokens for status/conflict/priority in light+dark themes.
 - **Focus ring consistency: `ring-[3px] ring-ring/50`** is the standard across Button, Input, and
-  most ui/ primitives. Five outliers remain in `sidebar.tsx` (5 menu item locations) that use
-  `ring-2` instead — should be standardized.
+  all `ui/` primitives (including `sidebar.tsx`).
 
 ### Testing
 

@@ -45,6 +45,32 @@ export const toast: ToastMock = Object.assign(vi.fn(), {
   dismiss: vi.fn(),
 })
 
+// React-only props on the real sonner `<Toaster>` that are meaningless as DOM
+// attributes. Spreading them onto a `<section>` triggers React "does not
+// recognize the <foo> prop on a DOM element" warnings (TEST-4a). We filter
+// them out before forwarding the rest (which intentionally includes
+// `data-*` / `aria-*` / `className` / `style` etc. for test inspection).
+const TOASTER_REACT_ONLY_PROPS = new Set([
+  'richColors',
+  'closeButton',
+  'expand',
+  'visibleToasts',
+  'position',
+  'theme',
+  'offset',
+  'hotkey',
+  'duration',
+  'gap',
+  'loadingIcon',
+  'icons',
+  'toastOptions',
+  'cn',
+  'invert',
+  'dir',
+  'pauseWhenPageIsHidden',
+  'swipeDirections',
+])
+
 // Stub component exports so `import { Toaster } from 'sonner'` in app code
 // doesn't crash when resolved through the mock. Accepts ref as a prop so that
 // the UI wrapper in `src/components/ui/sonner.tsx` (which forwards its ref to
@@ -53,12 +79,19 @@ export const toast: ToastMock = Object.assign(vi.fn(), {
 export const Toaster = ({
   ref,
   ...props
-}: { ref?: React.Ref<HTMLElement> } & Record<string, unknown>) =>
-  createElement('section', {
+}: { ref?: React.Ref<HTMLElement> } & Record<string, unknown>) => {
+  const domProps: Record<string, unknown> = {}
+  for (const key of Object.keys(props)) {
+    if (!TOASTER_REACT_ONLY_PROPS.has(key)) {
+      domProps[key] = props[key]
+    }
+  }
+  return createElement('section', {
     ref,
     'data-testid': 'sonner-toaster-mock',
-    ...props,
+    ...domProps,
   })
+}
 ;(Toaster as { displayName?: string }).displayName = 'Toaster'
 
 /** Reset all toast mock state. Call from test `beforeEach` if needed. */

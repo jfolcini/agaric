@@ -1,5 +1,73 @@
 # Session Log
 
+## Session 423 — MAINT-82 + MAINT-85 + TEST-4a fully resolved + MAINT-84 Vite half (2026-04-19)
+
+**3 REVIEW-LATER items fully resolved + 1 partially resolved. Open items 28 → 25.**
+
+User asked to follow `PROMPT.md` — a parallel-subagent batch-close pass on REVIEW-LATER.md. Picked a tight 4-item frontend hygiene batch: MAINT-82 (React-19 / TS-6 migration tie-off), MAINT-85 (sidebar focus-ring standardization), MAINT-84 Vite half (target `es2022` → `es2023`), and TEST-4a (vitest stderr easy wins: sonner mock + UnlinkedReferences memo + BlockListRenderer key + Radix describedby). MAINT-84 Android half (`minSdk 30 → 34`) deferred per the item's explicit "needs user approval" gate.
+
+### Resolved items
+
+- **MAINT-82** — React-19 / TypeScript-6 migration hygiene tie-off. Four tasks: (1) static-import `act` across 5 hook test files (`useViewportObserver`, `useUndoShortcuts`, `useBlockTouchLongPress`, `useBlockSwipeActions`, `useSyncEvents`) — dropped dynamic `(React as any).act` dance; `beforeEach` now sync; removed `biome-ignore lint/suspicious/noExplicitAny: act typing varies…` comments. (2) purged stale "React 18" stamps in `DonePanel.test.tsx` + `BacklinkGroupRenderer.test.tsx`. (3) added new `no-legacy-react-apis` prek hook (`prek.toml:64-72`) that greps `src/` for `\bforwardRef\b`, `\bReact\.forwardRef\b`, `\bMutableRefObject\b`, `\bReact\.ComponentRef\b`, and `(^|[^.])JSX\.(IntrinsicElements|Element)` — excluding `mocks/` + `bindings.ts`; the `[^.]` prefix correctly excludes the two legitimate `React.JSX.IntrinsicElements` uses in `src/components/RichContentRenderer.tsx`. (4) verify-and-close: `npx tsc -b --force` clean, `grep -rn "React 18|forwardRef|MutableRefObject|React\.ComponentRef" src/ --include="*.ts" --include="*.tsx"` zero matches, vitest 156/156 on the 7 affected files. prek total 23 → 24 hooks.
+- **MAINT-85** — sidebar focus-ring standardization. Five sites in `src/components/ui/sidebar.tsx` (`SidebarGroupLabel:634`, `SidebarGroupAction:658`, `sidebarMenuButtonVariants:710`, `SidebarMenuAction:804`, `SidebarMenuSubButton:929`) migrated from `ring-sidebar-ring … focus-visible:ring-2` to the design-system standard `focus-visible:ring-[3px] focus-visible:ring-ring/50`. The bare `ring-sidebar-ring` base class dropped (no-op without `ring-2` width). Sidebar tests 54/54 pass. `ARCHITECTURE.md:1840` "Five outliers remain in sidebar.tsx…" sentence removed per REVIEW-LATER's "When fixed, update documentation" directive.
+- **TEST-4a** — vitest stderr easy wins (4 of 4 fixes landed). (1) sonner mock (`src/__tests__/mocks/sonner.ts`) — added `TOASTER_REACT_ONLY_PROPS` allow-list so `richColors`, `closeButton`, `expand`, `visibleToasts`, `position`, `theme`, `offset`, `hotkey`, `duration`, `gap`, `loadingIcon`, `icons`, `toastOptions`, `cn`, `invert`, `dir`, `pauseWhenPageIsHidden`, `swipeDirections` are filtered before `...props` spread on the mock `<section>`. Legitimate DOM attrs (`data-*`, `aria-*`, `className`, `style`, `data-slot`, `ref`) still flow through. (2) `UnlinkedReferences.tsx` — two-layer defensive narrowing: `Array.isArray(resp.groups) ? resp.groups : []` at the state-setter boundary in `fetchGroups`, plus `Array.isArray(groups) ? groups : []` at the `pageTitles` `useMemo` boundary. Eliminates the 4 "The above error occurred in `<UnlinkedReferences>`" banners from permissive App-level error-path tests that resolve every `invoke` with a generic empty-page shape. (3) `BlockTree.tsx` (lines 326–342) — root-cause fix for the key-prop warning: the auto-create-first-block `useEffect` was writing `{ ...result, depth: 0 }` to the page store on mocked responses missing an `id`, which then tripped `BlockListRenderer:203`'s `key={block.id}` mapping. Guard added: if `!result?.id`, `logger.warn` and skip the `setState`. In production the guard never fires (real backend always returns a `BlockRow` with `id`); in tests it prevents the malformed transient state from reaching the reconciler. (4) `KeyboardShortcuts.tsx` — removed manual `aria-describedby="shortcuts-description"` + `id="shortcuts-description"` overrides. Radix's `DescriptionWarning` checks `document.getElementById(context.descriptionId)` where `descriptionId` is the auto-generated id; overriding broke the auto-wire and made the warning fire on every mount. Letting Radix own the id fixes it. Full-tree audit of all other `DialogContent` / `SheetContent` sites found zero additional gaps — all already have a sibling `Description` or explicit `aria-describedby={undefined}` opt-out. **Stderr reductions:** `Missing Description` 17 → 0; `does not recognize` (sonner props) 4 → 0; `above error occurred in <UnlinkedReferences>` 4 → 0; `Each child in a list should have a unique "key" prop` 1 → 0. Full vitest suite 7298/7298.
+
+### Partially resolved
+
+- **MAINT-84** — Vite half landed. `vite.config.ts:29` `target: 'es2022'` → `'es2023'`. Inline comment updated to note alignment with `tsconfig.app.json target: ES2023`. `npx vite build` clean; main bundle size unchanged at 1.88 MB / 568 kB gzip (ES2023 features sparse, downlevel cost already negligible). The Android `minSdk 30 → 34` half remains open and is now the entirety of MAINT-84's remaining scope; REVIEW-LATER entry updated in place to reflect this narrower scope plus the existing "needs user approval before merge" risk callout.
+
+### Baseline / regression check
+
+- `npx vitest run` — full suite 7298/7298 passing (292 files) on the first retry. First run showed 2 flakes (`ConflictList.test.tsx > listbox role` + `SearchPanel.test.tsx > toast on parent lookup fail`) that passed in isolation and passed on rerun — classic full-suite-parallel-load flakes matching the TEST-3 pattern but at different sites than TEST-3's two current known ones. Not added to TEST-3 on a single observation; file if they recur.
+- `npx vite build` — clean, identical bundle sizes, PERF-24 chunk-size warning unchanged (expected; out of scope).
+- `prek run --all-files no-legacy-react-apis` — new hook passes on the current tree.
+- Rust untouched this session (no `cargo nextest` / clippy / sqlx-prepare needed).
+
+### Pipeline
+
+- 3 background build subagents launched in parallel (MAINT-82, TEST-4a fixes 1+2, TEST-4a fixes 3+4). Orchestrator handled MAINT-84 Vite + MAINT-85 sidebar directly while subagents worked. Review subagents (4 total — one per build track including the orchestrator's own work) launched in parallel as each build completed; reviewers reported clean. Notable reviewer observation: TEST-4a fix #4 (Radix describedby) took a slightly different fix path than the original REVIEW-LATER spec suggested — the spec recommended `useId()` with same-id on both `SheetContent` and `SheetDescription`, but the Radix library actually looks up `context.descriptionId` (its own internal id), so only removing the manual overrides silences the warning. Evidence-backed deviation from the spec, accepted.
+
+No worktrees — the three subagents touched strictly non-overlapping files. Single commit after all reviews cleared.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `vite.config.ts` | Vite `build.target` `es2022` → `es2023` (MAINT-84 Vite half). |
+| `src/components/ui/sidebar.tsx` | MAINT-85: 5 focus-ring sites migrated to `ring-[3px] ring-ring/50`. |
+| `ARCHITECTURE.md` | MAINT-85 follow-up: drop "Five outliers remain in sidebar.tsx…" sentence. |
+| `src/hooks/__tests__/{useViewportObserver,useUndoShortcuts,useBlockTouchLongPress,useBlockSwipeActions,useSyncEvents}.test.ts` | MAINT-82 Task 1: static-import `act` from `@testing-library/react`. |
+| `src/components/__tests__/{DonePanel,BacklinkGroupRenderer}.test.tsx` | MAINT-82 Task 2: purge "React 18" version stamps. |
+| `prek.toml` | MAINT-82 Task 3: new `no-legacy-react-apis` local hook (23 → 24 hooks). |
+| `src/__tests__/mocks/sonner.ts` | TEST-4a #1: `TOASTER_REACT_ONLY_PROPS` allow-list filters non-DOM props. |
+| `src/components/UnlinkedReferences.tsx` | TEST-4a #2: two-layer `Array.isArray` narrowing (state + memo boundaries). |
+| `src/components/BlockTree.tsx` | TEST-4a #3: guard `if (!result?.id)` with `logger.warn` in auto-create effect. |
+| `src/components/KeyboardShortcuts.tsx` | TEST-4a #4: drop manual `aria-describedby` + `id` overrides; let Radix auto-wire. |
+| `REVIEW-LATER.md` | Remove MAINT-82 + MAINT-85 + TEST-4a detail sections + table rows; rewrite MAINT-84 body for Android-only scope; refresh TEST-4b/c/d cross-references; summary count 28 → 25; "Previously resolved" 319+ → 322+. |
+
+### Review subagent findings (all green)
+
+- **MAINT-82 reviewer** — all 4 tasks complete; grep-verified zero `React 18`, `forwardRef`, `MutableRefObject`, `React.ComponentRef` matches in `src/`; hook's `[^.]` prefix correctly preserves `React.JSX.IntrinsicElements`; TOML well-formed.
+- **TEST-4a 1+2 reviewer** — allow-list comprehensive; two-layer narrowing legitimate; scope discipline confirmed (no touches to BlockListRenderer/KeyboardShortcuts); stderr reductions verified.
+- **TEST-4a 3+4 reviewer** — BlockTree guard cannot mask a real product bug (`create_block_in_tx` always populates `id` in production); spot-checked the Dialog/Sheet audit (WelcomeModal / PairingDialog / PageOutline / BlockPropertyDrawer / HistorySheet / QueryBuilderModal all OK); no external selector references to `#shortcuts-description`.
+- **MAINT-84 + MAINT-85 reviewer** — Vite target change produced no bundle-size regression; 5 sidebar sites consistent; OKLch color math shows `ring-ring/50` has strong contrast against both `--sidebar-background` tokens (light and dark); `ARCHITECTURE.md` edit coherent.
+
+### Non-goals / scope discipline
+
+- MAINT-84 Android half (`minSdk 30 → 34`) NOT touched — REVIEW-LATER explicitly gates the Android half on user approval. MAINT-84 updated in place to reflect that only the Android half remains open.
+- No architectural changes. No new schema, no new ops, no new stores, no new sync messages. 11 code files touched, all existing abstractions.
+- No weakening of strict settings. No `@ts-ignore` / `@ts-expect-error`. One new `biome-ignore`: none (the fix removed biome-ignores rather than adding). No silent `.catch(() => {})`.
+
+### Post-session state
+
+- REVIEW-LATER: 25 open items (3 FEAT + 3 MAINT + 4 PERF + 9 TEST + 6 PUB).
+- Next batch candidates by domain:
+  - TEST-4b/c/d (stderr floor remainder, all parallelizable).
+  - PERF-19/20/23 (deliberate non-fixes per their decisions — skip unless scope triggers).
+  - PERF-24 (Vite main bundle split — real work, matches the current Vite target bump momentum).
+  - MAINT-79 (Android jni bump — single-site, compile-driven).
+  - MAINT-83 (Android Gradle 9.0 — investigation-first).
+
 ## Session 422 — baseline verification + TEST-3 fix + MAINT-80 closeout + docs staleness sweep (2026-04-19)
 
 **1 TEST-3 sub-item resolved + 1 MAINT-80 residue cleaned. REVIEW-LATER 18 items unchanged; TEST-3 narrowed 3 → 2 sites.**

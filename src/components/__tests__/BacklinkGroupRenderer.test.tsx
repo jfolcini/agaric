@@ -392,7 +392,7 @@ describe('BacklinkGroupRenderer', () => {
         }
       }
 
-      // Persistent mock — React 18 retries render after errors, so
+      // Persistent mock — React retries render after errors, so
       // mockImplementationOnce is consumed on the first attempt and the
       // retry succeeds with the default. Use mockImplementation instead.
       mockFn.mockImplementation(() => {

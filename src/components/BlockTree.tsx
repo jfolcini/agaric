@@ -327,6 +327,17 @@ export function BlockTree({
       .then((result) => {
         // Only apply if we're still on the same page
         if (pageStore.getState().rootParentId !== rootParentId) return
+        // Defensive guard: a malformed result (missing id) must never reach the
+        // store, because downstream renderers key by block.id and would emit
+        // "Each child in a list should have a unique key" warnings for the
+        // transient render before the next refetch. In production this guard
+        // never fires; it catches test-mock leaks and any future regression.
+        if (!result?.id) {
+          logger.warn('BlockTree', 'auto-create returned result without id; skipping store write', {
+            rootParentId: rootParentId ?? '',
+          })
+          return
+        }
         pageStore.setState({
           blocks: [
             {

@@ -1,3 +1,4 @@
+import { act } from '@testing-library/react'
 import { createElement } from 'react'
 import type { Root } from 'react-dom/client'
 import { createRoot } from 'react-dom/client'
@@ -105,9 +106,6 @@ const mockedToastWarning = vi.mocked(toast.warning)
 
 // -- Minimal renderHook (matches project pattern) -----------------------------
 
-// biome-ignore lint/suspicious/noExplicitAny: act typing varies across React versions
-let act: (cb: () => void) => void = undefined as any
-
 function renderHook(hookFn: () => void): { unmount: () => void } {
   const container = document.createElement('div')
   document.body.appendChild(container)
@@ -137,12 +135,9 @@ function renderHook(hookFn: () => void): { unmount: () => void } {
 
 let hadTauriInternals: boolean
 
-beforeEach(async () => {
+beforeEach(() => {
   // biome-ignore lint/suspicious/noExplicitAny: React test env global
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
-  const React = await import('react')
-  // biome-ignore lint/suspicious/noExplicitAny: act typing varies across React versions
-  act = (React as any).act
   vi.clearAllMocks()
 
   // Save original state

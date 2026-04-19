@@ -1,3 +1,4 @@
+import { act } from '@testing-library/react'
 import { createElement } from 'react'
 import type { Root } from 'react-dom/client'
 import { createRoot } from 'react-dom/client'
@@ -7,9 +8,6 @@ import {
   LONG_PRESS_MOVE_THRESHOLD,
   useBlockTouchLongPress,
 } from '../useBlockTouchLongPress'
-
-// biome-ignore lint/suspicious/noExplicitAny: act typing varies across React versions
-let act: (cb: () => void) => void = undefined as any
 
 function renderHook<T>(hookFn: () => T): {
   result: { current: T }
@@ -43,12 +41,9 @@ function renderHook<T>(hookFn: () => T): {
 }
 
 describe('useBlockTouchLongPress', () => {
-  beforeEach(async () => {
+  beforeEach(() => {
     // biome-ignore lint/suspicious/noExplicitAny: React test env global
     ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
-    const React = await import('react')
-    // biome-ignore lint/suspicious/noExplicitAny: act typing varies across React versions
-    act = (React as any).act
     vi.useFakeTimers()
   })
 

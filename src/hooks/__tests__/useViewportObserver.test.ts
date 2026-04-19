@@ -4,6 +4,7 @@
  * ref transitions (BUG-29 regression).
  */
 
+import { act } from '@testing-library/react'
 import { createElement } from 'react'
 import type { Root } from 'react-dom/client'
 import { createRoot } from 'react-dom/client'
@@ -51,10 +52,6 @@ class MockIntersectionObserver {
 
 // -- Minimal renderHook (no external deps needed) -----------------------------
 
-// React 18.3 exports act; import dynamically to avoid TS issues with older type defs
-// biome-ignore lint/suspicious/noExplicitAny: act typing varies across React versions
-let act: (cb: () => void) => void = undefined as any
-
 function renderHook<T>(hookFn: () => T): {
   result: { current: T }
   unmount: () => void
@@ -88,14 +85,10 @@ function renderHook<T>(hookFn: () => T): {
 
 // -- Setup / teardown ---------------------------------------------------------
 
-beforeEach(async () => {
+beforeEach(() => {
   // Suppress "The current testing environment is not configured to support act(...)"
   // biome-ignore lint/suspicious/noExplicitAny: React test env global
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
-  // Dynamically import act to work across React 18.3+
-  const React = await import('react')
-  // biome-ignore lint/suspicious/noExplicitAny: act typing varies across React versions
-  act = (React as any).act
   MockIntersectionObserver.instances = []
   vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)
 })

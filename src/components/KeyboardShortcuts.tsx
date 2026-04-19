@@ -151,15 +151,13 @@ export function KeyboardShortcuts({
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
-      <SheetContent side="right" aria-describedby="shortcuts-description">
+      <SheetContent side="right">
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
             <Keyboard className="h-5 w-5" />
             {t('shortcuts.title')}
           </SheetTitle>
-          <SheetDescription id="shortcuts-description">
-            {t('keyboard.sheetDescription')}
-          </SheetDescription>
+          <SheetDescription>{t('keyboard.sheetDescription')}</SheetDescription>
         </SheetHeader>
         <ScrollArea className="px-4 pb-4" data-testid="shortcuts-table">
           <table className="w-full text-sm">

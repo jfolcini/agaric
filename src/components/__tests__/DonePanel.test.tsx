@@ -156,8 +156,8 @@ describe('DonePanel', () => {
     const { container } = render(<DonePanel date="2025-06-15" />)
 
     // UX-130: component returns null when empty. React 19 flushes the
-    // loading→empty→null transition on a later microtask than React 18 did,
-    // so wait on the observable end state rather than on the IPC call alone.
+    // loading→empty→null transition on a later microtask, so wait on the
+    // observable end state rather than on the IPC call alone.
     await waitFor(() => {
       expect(container.querySelector('.done-panel')).not.toBeInTheDocument()
     })

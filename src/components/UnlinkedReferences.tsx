@@ -72,11 +72,17 @@ export function UnlinkedReferences({
           cursor: cursor ?? null,
           limit: 20,
         })
+        // TEST-4a: some callers (notably App-level smoke tests that resolve
+        // every `invoke` with a generic empty-page shape) return responses
+        // where `groups` is missing. Narrow to an array at the state-setter
+        // boundary so every downstream reader can rely on the declared
+        // `BacklinkGroup[]` invariant.
+        const respGroups = Array.isArray(resp.groups) ? resp.groups : []
         if (cursor) {
           // Append: merge groups with same page_id
           setGroups((prev) => {
             const merged = [...prev]
-            for (const newGroup of resp.groups) {
+            for (const newGroup of respGroups) {
               const existing = merged.find((g) => g.page_id === newGroup.page_id)
               if (existing) {
                 existing.blocks = [...existing.blocks, ...newGroup.blocks]
@@ -87,7 +93,7 @@ export function UnlinkedReferences({
             return merged
           })
         } else {
-          setGroups(resp.groups)
+          setGroups(respGroups)
         }
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
@@ -182,7 +188,14 @@ export function UnlinkedReferences({
 
   const pageTitles = useMemo(() => {
     const map = new Map<string, string>()
-    for (const g of groups) {
+    // Defensive narrowing (TEST-4a): some App-level tests resolve
+    // `listUnlinkedReferences` with a stubbed response where `groups` is not an
+    // array. Before this guard, the `for..of` below threw inside render and
+    // React printed a four-line "above error occurred in <UnlinkedReferences>"
+    // banner per affected test. Falling back to an empty array keeps stderr
+    // clean while still exercising the error-boundary path.
+    const safeGroups = Array.isArray(groups) ? groups : []
+    for (const g of safeGroups) {
       if (g.page_title) map.set(g.page_id, g.page_title)
     }
     return map
