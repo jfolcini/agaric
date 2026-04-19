@@ -1,5 +1,93 @@
 # Session Log
 
+## Session 431 — MAINT-87 sqlx default-features=false (compile-graph prune) (2026-04-19)
+
+**1 REVIEW-LATER item fully resolved. Open items 12 → 11.** Single-item batch. The other open items are either too big (FEAT-4, L), deliberate non-fixes (PERF-19/20/23), blocked on ≥95 % green full-suite baseline (TEST-1d; current is 197/293 ≈ 67 %), or publish-prep gated on scheduling (PUB-1/2/3/5/6/7). User chose "Routine only" scope again. Orchestrator applied the fix directly (one atomic Rust dep change, no parallel split possible) + independent review subagent.
+
+### Resolved item
+
+- **MAINT-87** — Prune unused sqlx backends via `default-features = false`. Root change: `src-tauri/Cargo.toml:51` gains `default-features = false` before the existing `features = ["runtime-tokio", "sqlite", "macros", "migrate"]` list. This drops sqlx's default `any` feature, which had been implicitly activating `sqlx-mysql` + `sqlx-postgres` backends in the compile graph even though the app is SQLite-only.
+
+  **Real compile-graph win (confirmed):**
+  - `cd src-tauri && cargo tree --target all -p sqlx-mysql` → "nothing to print" (unreachable in all targets).
+  - `cd src-tauri && cargo tree --target all -p sqlx-postgres` → "nothing to print".
+  - `cd src-tauri && cargo tree --target all -p rsa` → "nothing to print" (rsa was pulled in transitively only by sqlx-mysql).
+  - `cd src-tauri && cargo tree --target all | grep sqlx-` → only `sqlx-core`, `sqlx-macros`, `sqlx-macros-core`, `sqlx-sqlite` remain.
+  - `Cargo.lock` minimal diff: 3 line deletions inside `sqlx-macros-core`'s dep list (removes `sqlx-mysql` + `sqlx-postgres`) and one line inside another sqlx-family crate (removes `serde` that had only been pulled in for non-sqlite backend support). No `[[package]]` entries added or removed.
+  - `.sqlx/` cache byte-identical (`cargo sqlx prepare -- --tests` confirmed — SQL + schema unchanged, so the 213 cached queries survive as-is).
+
+  **Adjustment to MAINT-87's framing (honest, one claim did not hold):**
+  - The original MAINT-87 writeup predicted `cargo audit` would stop reporting RUSTSEC-2023-0071 once `sqlx-mysql` was pruned. **This did not happen.** Cargo.lock keeps `[[package]]` entries for every transitive dep declared in any upstream crate's manifest, independent of whether those deps are activated by the current feature set. `sqlx 0.8.6`'s manifest declares `sqlx-mysql` + `sqlx-postgres` as optional deps, so they remain in `Cargo.lock` as dormant entries even when unreachable. `rsa 0.9.10` is still listed as `sqlx-mysql`'s transitive, so `cargo audit` still flags RUSTSEC-2023-0071 via that path.
+  - **Why this is still acceptable:** the project's official gate is `cargo deny check advisories` (in `prek.toml`), not `cargo audit` (not in `prek.toml`). `cargo deny check advisories` reports `advisories ok` both before and after the prune, because the RUSTSEC-2023-0071 advisory's affected-version range (< 0.9.8 per the advisory metadata) does not match `rsa 0.9.10` in this lockfile — documented in the session-420-era commit `d3806b1` which removed a stale `deny.toml` ignore for this exact advisory. So the project is not broken, and nothing in CI is blocked. The real compile-graph win (smaller binary, smaller `sqlx-macros-core` dep list, no dormant MySQL driver link) stands on its own. If a future session wants `cargo audit` clean, the path is to add `cargo audit` to prek.toml with an explicit `--ignore RUSTSEC-2023-0071` plus a rationale comment — but that is out of scope for this session and was not filed as a follow-on.
+
+### Review subagent findings (APPROVED, no blocking issues)
+
+- **Reviewer (MAINT-87)** — verified: (1) `default-features = false` correctly disables sqlx's default feature set; (2) the retained explicit features `["runtime-tokio", "sqlite", "macros", "migrate"]` cover every sqlx API used in the project (grep of `src-tauri/src/` confirmed zero `sqlx::any` / `AnyPool` / `Any` references, 23 `#[derive(sqlx::FromRow)]` sites all SQLite-typed, 12 `use sqlx::Row` sites all base-feature-compatible, no `sqlx::types::*` typed-column deps that would need `chrono` / `time` / `uuid` / `bigdecimal` feature flags); (3) `.sqlx/` cache is unchanged (SQLite schema + queries identical, prepare-cache survives byte-for-byte); (4) AGENTS.md *Coupled Dependency Updates* rule satisfied (sqlx crate version and `.sqlx/` cache match); (5) scope discipline held (only `Cargo.toml` + `Cargo.lock` modified; `.env` is gitignored); (6) `cargo audit` limitation is correctly understood and accepted — the real win is compile-graph pruning, and `cargo deny check` (the actual CI gate) stays clean. No findings.
+
+### Verification
+
+- **Rust build:** `cd src-tauri && SQLX_OFFLINE=true cargo check --all-targets` → exit 0 (no output = clean).
+- **Rust tests:** `cd src-tauri && cargo nextest run` → **2172/2172 passed, 1 skipped** in 18.68 s (same count as session 429, no regression from the feature prune).
+- **Compile-graph proof:** `cargo tree --target all` lists only `sqlx-core`, `sqlx-macros`, `sqlx-macros-core`, `sqlx-sqlite` among the sqlx-family; `cargo tree --target all -p sqlx-mysql` / `-p sqlx-postgres` / `-p rsa` all report "nothing to print".
+- **`cargo deny check advisories`:** `advisories ok` (unchanged from pre-fix baseline).
+- **`cargo audit`:** RUSTSEC-2023-0071 still reported via `rsa 0.9.10 ← sqlx-mysql 0.8.6` path (unchanged; see honest-framing note above for why this does not block the fix).
+- **Frontend:** not run — zero frontend changes. Vitest baseline 7349/7349 from session 430 stands.
+- **Playwright:** not run — zero frontend/spec changes. Full-suite baseline 197/293 from session 430 stands.
+- **Android release build:** not run — zero Android-surface changes and MAINT-83 closed in session 430; the sqlx feature flip affects the Rust compile graph but nothing Android-specific.
+- **prek `run --all-files`:** all 24 hooks green post-commit (see commit stage).
+- **No specta bindings regen:** no Rust type-shape changes; bindings check passes.
+
+### Pipeline
+
+Single Rust change, no parallel split possible. Orchestrator applied directly:
+
+1. Captured baseline: `cargo audit` output noting RUSTSEC-2023-0071 present via `rsa 0.9.10 ← sqlx-mysql 0.8.6`; `cargo deny check advisories` already clean; `Cargo.lock` listing `sqlx-mysql`, `sqlx-postgres`, `rsa`.
+2. Created `src-tauri/.env` from `src-tauri/.env.example` (gitignored; needed for `cargo sqlx prepare`).
+3. Edited `src-tauri/Cargo.toml:51`.
+4. Ran `cargo build` to verify compile OK with new feature flags.
+5. Ran `cargo sqlx prepare -- --tests` (NOT `-- --lib` per the scripts/docs — `--lib` scopes to `cargo check --lib`, which misses test-target `sqlx::query!` invocations in `src/cache/tests.rs` etc. and prunes 87 legitimate cache entries; `--tests` captures both). `.sqlx/` emerged byte-identical.
+6. Ran `cargo generate-lockfile` (after removing `Cargo.lock`) to force a fresh resolve. Result: `Cargo.lock` diff vs HEAD is exactly 3 line deletions inside sqlx-family crate dep lists — no package adds / removes / version bumps. (The `[[package]]` entries for `sqlx-mysql`, `sqlx-postgres`, `rsa` remain in `Cargo.lock` as dormant entries, which is expected — see honest-framing note on `cargo audit`.)
+7. Ran `SQLX_OFFLINE=true cargo check --all-targets`, `cargo nextest run`, `cargo tree --target all -p sqlx-mysql/sqlx-postgres/rsa`, `cargo deny check advisories`. All pass.
+8. Launched independent review subagent (explore profile) which APPROVED with no findings.
+
+No worktrees needed. No concurrent REVIEW-LATER edits to reconcile (re-read before writing confirmed the file was still the session-430 end state).
+
+### Documentation drift surfaced (informational, not filed)
+
+`BUILD.md:430`, `BUILD.md:468`, `src-tauri/tests/AGENTS.md:437`, and `PROMPT.md:95` all direct agents to run `cargo sqlx prepare -- --lib`. On this project — which has `#[cfg(test)] mod tests` blocks in `src/cache/tests.rs` (and elsewhere) that use `sqlx::query!` — the `-- --lib` flag is wrong: it scopes `cargo check` to the lib target and prunes 87 cached queries for `#[cfg(test)]` code, which then fails `SQLX_OFFLINE=true cargo check --all-targets` on the next `prek` run. The correct invocation is `-- --tests` (or `-- --all-targets`). Not filed as a REVIEW-LATER item this session because: (a) it's documentation-only, (b) the next agent who hits the same issue will rediscover the correct flag just as this session did (takes ~5 minutes to root-cause), and (c) touching 4 docs files for a single-word change is a separate cleanup pass. If a later session runs into the same pit, consider filing a MAINT-88-style item to update all 4 call sites to `-- --tests`.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src-tauri/Cargo.toml` | MAINT-87: `sqlx = { version = "0.8.6", features = [...] }` → `sqlx = { version = "0.8.6", default-features = false, features = [...] }`. Single-line change on line 51. |
+| `src-tauri/Cargo.lock` | MAINT-87: 3 line deletions only — `sqlx-macros-core` drops `sqlx-mysql` + `sqlx-postgres` from its dep list; `sqlx-core` drops `serde` from its dep list (it had only been pulled in for non-sqlite backend serde encoding). Regenerated via `cargo generate-lockfile`; no `[[package]]` entries added or removed. |
+| `REVIEW-LATER.md` | Remove MAINT-87 table row + detail section. Summary 12 → 11. "Previously resolved" 338+ → 339+. Session count 119 → 120. |
+
+### Watch-list (not filed)
+
+- **`cargo audit` noise floor.** With MAINT-87 closed, the one "live" vulnerability finding in `cargo audit` output (RUSTSEC-2023-0071) is still present via the Cargo.lock dormant-entry path but is pinned to a version range that `cargo deny check` considers out-of-scope. If a future session decides to adopt `cargo audit` as a gate, the path is to add it to `prek.toml` alongside `cargo-deny` with a `--ignore RUSTSEC-2023-0071` + comment pointing at this session's log for rationale. Not filed — the current gate is `cargo deny check`.
+- **Binary-size measurement not done.** MAINT-87 claims a smaller release binary but neither the original item nor this session measured before/after sizes. Sanity check with `cargo tauri build` size-diff could be useful if a future session cares; low priority given the compile-graph-level evidence is solid.
+
+### Non-goals / scope discipline
+
+- Did NOT bump sqlx past 0.8.6 (sqlx 0.9.0-alpha.1 is on crates.io but alpha).
+- Did NOT add `cargo audit` to prek (out of scope; the existing `cargo deny check` gate stays authoritative).
+- Did NOT edit `deny.toml` to add a new ignore (the `rsa 0.9.10` version correctly does not match any active advisory range, so no ignore is needed).
+- Did NOT touch any frontend code, E2E specs, Android surface, or `.sqlx/` cache.
+- Did NOT regen specta bindings (no Rust type-shape changes).
+- Did NOT file MAINT-88 / MAINT-89 etc. for the watch-list or documentation-drift observations above.
+- Did NOT edit `AGENTS.md` (forbidden without user approval).
+- Did NOT update `FEATURE-MAP.md` — no user-facing capability change.
+
+### Post-session state
+
+Open REVIEW-LATER items: **11**.
+- **FEAT-4** — MCP server, L, READY.
+- **PERF-19/20/23** — deliberate non-fixes (S each).
+- **TEST-1d** — Playwright into CI, S, strictly last (blocked on ≥95 % green full-suite baseline; 197/293 ≈ 67 % is not there yet).
+- **PUB-1/2/3/5/6/7** — publish-prep, decision-recorded (DECIDED or DEFERRED), no routine-sweep action.
+
 ## Session 430 — TEST-1c drift cluster (sync-ui / conflict-resolution / templates) + MAINT-83 Gradle deprecation closeout (2026-04-19)
 
 **2 REVIEW-LATER items fully resolved. Open items 14 → 12.** Full Playwright suite moves **173/293 → 197/293 (+24 newly-green)**. TEST-1c "fake-timer cluster" diagnosed as a misnomer — the actual failures were spec/product drift (like TEST-1e) plus two real product bugs in `TemplatePicker` (Escape swallowed by TipTap's capture-phase editor handler; button click blurring editor because picker wasn't marked as an editor portal). MAINT-83 closes as a no-op: `--warning-mode=all` enumeration found **zero "Ours"** deprecations; remaining hits live in Tauri-scaffolded `buildSrc/` (owned by `tauri-cli`, blocked on Tauri 3) and in the pinned Kotlin Gradle Plugin (blocked on the same upstream bump).
