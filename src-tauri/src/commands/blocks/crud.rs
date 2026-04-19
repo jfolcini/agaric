@@ -1046,21 +1046,17 @@ pub(crate) async fn set_property_in_tx(
         value_text.is_none() && value_num.is_none() && value_date.is_none() && value_ref.is_none();
     if !is_clear {
         match key {
-            "due_date" | "scheduled_date" => {
-                if value_date.is_none() {
-                    return Err(AppError::Validation(format!(
-                        "Property '{}' requires value_date, not value_text/value_num/value_ref.",
-                        key
-                    )));
-                }
+            "due_date" | "scheduled_date" if value_date.is_none() => {
+                return Err(AppError::Validation(format!(
+                    "Property '{}' requires value_date, not value_text/value_num/value_ref.",
+                    key
+                )));
             }
-            "todo_state" | "priority" => {
-                if value_text.is_none() {
-                    return Err(AppError::Validation(format!(
-                        "Property '{}' requires value_text, not value_date/value_num/value_ref.",
-                        key
-                    )));
-                }
+            "todo_state" | "priority" if value_text.is_none() => {
+                return Err(AppError::Validation(format!(
+                    "Property '{}' requires value_text, not value_date/value_num/value_ref.",
+                    key
+                )));
             }
             _ => {}
         }

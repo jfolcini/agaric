@@ -1988,16 +1988,15 @@ async fn inmem_handle_incoming_sync_tofu_stores_cert_hash() {
         // Client receives the server's response (OpBatch)
         let resp: SyncMessage = client_conn.recv_json().await.unwrap();
         match resp {
-            SyncMessage::OpBatch { is_last, .. } => {
-                if is_last {
-                    client_conn
-                        .send_json(&SyncMessage::SyncComplete {
-                            last_hash: "".to_string(),
-                        })
-                        .await
-                        .unwrap();
-                }
+            SyncMessage::OpBatch { is_last, .. } if is_last => {
+                client_conn
+                    .send_json(&SyncMessage::SyncComplete {
+                        last_hash: "".to_string(),
+                    })
+                    .await
+                    .unwrap();
             }
+            SyncMessage::OpBatch { .. } => {}
             _ => {
                 // ResetRequired or other — just let the session end
             }

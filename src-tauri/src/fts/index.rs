@@ -175,7 +175,7 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
     let mut seen = std::collections::HashSet::new();
     let unique_ids: Vec<String> = tag_refs
         .into_iter()
-        .chain(link_refs.into_iter())
+        .chain(link_refs)
         .filter(|bid| seen.insert(bid.clone()))
         .collect();
 
