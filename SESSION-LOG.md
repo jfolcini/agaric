@@ -1,5 +1,74 @@
 # Session Log
 
+## Session 421 — MAINT-75..81 dependency-hygiene batch (2026-04-19)
+
+**6 items resolved + 1 partially resolved. REVIEW-LATER 18 → 12.**
+
+Worked the 7 new MAINT-75..81 dep-hygiene items together since they accumulated in the same baseline snapshot. Everything except the Android-only `jni 0.22` rewrite landed cleanly — that sub-item of MAINT-79 stays on the backlog as its own tracked row because the new `attach_current_thread` callback API is non-mechanical on the multicast-lock caller.
+
+### Resolved items
+
+- **MAINT-75** — `@biomejs/biome` 2.4.9 → 2.4.12, `i18next` 26.0.5 → 26.0.6, `rustup stable` 1.94.1 → 1.95. Rust 1.95 shipped three new clippy lints (`collapsible_match` on `commands/blocks/crud.rs` and `sync_daemon/tests.rs`, `useless_conversion` on `fts/index.rs`) that needed in-place fixes to keep `cargo clippy --all-targets -- -D warnings` clean. `esbuild 0.28` noted in the item is transitive via Vite and not forced.
+- **MAINT-76** — `rand 0.8 → 0.10`. `thread_rng()` → `rng()`; `SliceRandom::choose` → `IndexedRandom::choose`; `Rng::gen_range` → `RngExt::random_range`; `RngCore` (for `fill_bytes`) replaced by `Rng` from the rand_core re-export. Touched `src/pairing.rs` + `src/sync_scheduler.rs`. Closes RUSTSEC-2026-0097.
+- **MAINT-77** — `sha2 0.10 → 0.11`, `hkdf 0.12 → 0.13`. `digest 0.11.2` now in the graph for the direct deps; `digest 0.10.7` stays for `chacha20poly1305 0.10.1` which is still on aead 0.5 (chacha20poly1305 0.11 is still `-rc.3`). Our `Sha256::new().chain_update(...).finalize()` / `Hkdf::<Sha256>::new(...).expand(...)` call sites preserved signatures across the bump — no source changes needed in `src/pairing.rs`, `src/sync_net/{websocket,tls,tests}.rs`.
+- **MAINT-78** — Specta family `specta` rc.22 → rc.24, `tauri-specta` rc.21 → rc.24, `specta-typescript` 0.0.9 → 0.0.11. Two Rust API breaks: (a) `#[specta(rename = "...")]` on containers was dropped — moved to `#[serde(rename = "...")]` + added `Serialize` derive on `AppErrorSchema`; (b) the `specta::Type` trait collapsed `inline(type_map, generics) -> DataType` into `definition(types) -> DataType`, and `DataType` moved from the crate root to `specta::datatype::DataType` — updated the manual `impl Type for AppError`. Also dropped the `.bigint(BigIntExportBehavior::Number)` configuration, which specta-typescript 0.0.11 removed in favour of unconditionally forbidding bigint primitives (we don't use u64/i64 in specta-visible types, so no new failures). Regenerated `src/lib/bindings.ts` (-1185 / +589 lines — mostly format churn: tabs, a new `typedError<T,E>` helper wrapper, arrow-fn commands instead of async methods). Our hand-written `src/lib/tauri.ts` wrapper only imports data types from `bindings.ts`, so the reshape is invisible to consumers.
+- **MAINT-79 (partial)** — `mdns-sd 0.18 → 0.19`, `similar 2 → 3`. API surfaces preserved; no source changes needed beyond `Cargo.toml` + `Cargo.lock`. Android build verified via `cargo tauri android build --target aarch64 --debug`. The `jni 0.21 → 0.22` sub-item is split out as the remaining MAINT-79 row in REVIEW-LATER — see the "deferred remnant" detail there.
+- **MAINT-80** — Added an `[advisories].ignore` entry for **RUSTSEC-2023-0071** (`rsa 0.9.10` via sqlx-macros-core) to `src-tauri/deny.toml` with an inline comment pointing back to MAINT-80. cargo-deny emits an informational `advisory-not-detected` warning because it already excludes proc-macro-host deps from its graph, but the ignore stays as documentation + future-proofing for anyone running `cargo audit` manually or wiring it into CI.
+- **MAINT-81** — Closed **GHSA-v3rj-xjv7-4jmq** (smol-toml DoS) by adding a top-level `"overrides": { "smol-toml": ">=1.6.1" }` to `package.json` — cleaner than downgrading `markdownlint-cli2` to 0.21.0 (which loses 0.22's TOML config support). `npm audit` now reports 0 vulnerabilities; removed the `1115393` allowance from `.nsprc` since it is no longer needed.
+
+### Pipeline / reviewer exchange
+
+Seven back-to-back commits, each commit verified by `prek run --all-files` (23/23) before moving on:
+
+```
+978d07e chore(MAINT-77): bump sha2 0.10 -> 0.11 + hkdf 0.12 -> 0.13
+c23fdea chore(MAINT-78): bump specta rc.22 -> rc.24 + specta-typescript 0.0.11
+146cdfe chore(MAINT-79): bump similar 2 -> 3 + mdns-sd 0.18 -> 0.19 (jni deferred)
+1d86318 chore(MAINT-76): rand 0.8 -> 0.10 major bump (closes RUSTSEC-2026-0097)
+752e16a chore(MAINT-81): close GHSA-v3rj-xjv7-4jmq by overriding smol-toml >=1.6.1
+5eb40be chore(MAINT-80): document RUSTSEC-2023-0071 (rsa via sqlx-macros) as ignored
+a0298b1 chore(MAINT-75): patch/minor dep bumps — biome 2.4.12, i18next 26.0.6, rust 1.95
+```
+
+No build subagents (each item was a focused mechanical bump) and no review subagents this batch — `prek`'s 23 hooks (biome, tsc, vitest, clippy, cargo fmt, cargo nextest, cargo deny, cargo machete, npm audit, depcheck, license-checker, markdownlint, lychee, knip, …) plus the full `cargo nextest` (2132 tests) + `vitest run` (7298 tests) suites cover the verification surface end-to-end.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `package.json` + `package-lock.json` | biome 2.4.12; i18next 26.0.6; `smol-toml >=1.6.1` override; markdownlint-cli2 dedupe. |
+| `.nsprc` | Removed `1115393` (smol-toml) advisory allowance — root cause closed by the override. |
+| `src-tauri/Cargo.toml` | `rand 0.10`; `sha2 0.11`; `hkdf 0.13`; `mdns-sd 0.19`; `similar 3`; `specta =2.0.0-rc.24`; `tauri-specta =2.0.0-rc.24`; `specta-typescript 0.0.11`. |
+| `src-tauri/Cargo.lock` | Transitive resolutions for the above (+ `digest 0.11`, `crypto-common 0.2`, `rand_core 0.10`, `chacha20 0.10`, `constant_time_eq 0.4.3`, etc.). |
+| `src-tauri/deny.toml` | RUSTSEC-2023-0071 ignore + inline rationale. |
+| `src-tauri/src/error.rs` | specta `Type` trait migration: `inline(type_map, generics)` → `definition(types)`; `DataType` path → `specta::datatype::DataType`; `#[specta(rename)]` → `#[serde(rename)]` + `Serialize` derive. |
+| `src-tauri/src/lib.rs` | Dropped `.bigint(BigIntExportBehavior::Number)` from both specta export call sites; formatted. |
+| `src-tauri/src/pairing.rs` | `rand::thread_rng()` → `rand::rng()`; `SliceRandom` → `IndexedRandom`; `RngCore` → `Rng`. |
+| `src-tauri/src/sync_scheduler.rs` | `rand::Rng` import → `rand::RngExt`; `gen_range` → `random_range`. |
+| `src-tauri/src/commands/blocks/crud.rs` + `src-tauri/src/sync_daemon/tests.rs` + `src-tauri/src/fts/index.rs` | Rust 1.95 clippy fixes: collapsed two `match` + nested `if` pairs into match guards, dropped a redundant `.into_iter()`. |
+| `src/lib/bindings.ts` | Full regeneration against specta-rc.24 / tauri-specta-rc.24. Data-type signatures preserved; only the generated `commands` object reshape changes (not consumed by `src/lib/tauri.ts`). |
+| `REVIEW-LATER.md` | −6 items (18 → 12). MAINT-79 row rewritten as "jni 0.21 → 0.22 remaining scope"; MAINT-75/76/77/78/80/81 rows + detail sections removed entirely. Previously-resolved bumped 313 → 319 / 111 → 112. |
+| `SESSION-LOG.md` | This session. |
+
+### Stats
+
+- **7 commits** (7 MAINT items × 1 commit each) + this docs commit.
+- **Tests:** Rust `cargo nextest` 2132 passing (one flake on `move_block_does_not_reparent_conflict_copy_descendants` that recovers on retry — existing flake, not caused by any bump). Frontend `vitest run` 7298/7298 passing. `prek run --all-files` 23/23 green on every step.
+
+### Verification
+
+- Every commit ran the full prek pipeline as part of its pre-commit run.
+- `cargo tauri android build --target aarch64 --debug` succeeds after the similar + mdns-sd + specta combined state (jni pinned at 0.21).
+- Desktop build (`npm run tauri:build`) not re-run this session since the last `f57e3d3` vite fix; no library changes below the frontend touched the Tauri packaging path.
+
+### Remaining REVIEW-LATER backlog (12 items)
+
+- **DECIDED awaiting scheduled session:** FEAT-4, FEAT-5, PUB-1, PUB-6, PUB-7 (5 items).
+- **DEFERRED "until trigger":** PERF-19, PERF-20, PERF-23, PUB-2, PUB-3, PUB-5 (6 items).
+- **Remaining MAINT-79 remnant:** the `jni 0.22` Android callback-API rewrite (1 item).
+
+---
+
 ## Session 420 — MAINT-48 React 18 → 19 major upgrade (2026-04-19)
 
 **1 item resolved (MAINT-48). REVIEW-LATER 12→11.**
