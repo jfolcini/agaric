@@ -30,9 +30,5 @@
   "1116663": {
     "active": true,
     "notes": "dompurify ADD_TAGS+FORBID_TAGS bypass via transitive dep mermaid; mermaid does not expose ADD_TAGS/FORBID_TAGS to users and per AGENTS.md threat model the app is single-user local-first with no adversarial input"
-  },
-  "1115393": {
-    "active": true,
-    "notes": "smol-toml DoS via markdownlint-cli2>smol-toml (dev-only transitive dep, markdownlint runs against our own trusted docs only, no adversarial TOML input)"
   }
 }

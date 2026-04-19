@@ -20,6 +20,9 @@
     "android:build": "cargo tauri android build",
     "tauri:build": "cargo tauri build && [ \"$(uname)\" = Linux ] && bash scripts/fix-appimage-icons.sh || true"
   },
+  "overrides": {
+    "smol-toml": ">=1.6.1"
+  },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
