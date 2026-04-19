@@ -205,9 +205,13 @@ export function DeviceManagement(): React.ReactElement {
             <>
               {/* Local device ID */}
               <dl className="device-id-section rounded-lg border bg-muted/30 p-4 mb-4">
-                <dt className="text-sm text-muted-foreground">{t('device.localDeviceIdLabel')}</dt>
+                <dt className="text-sm text-muted-foreground" data-testid="local-device-id-label">
+                  {t('device.localDeviceIdLabel')}
+                </dt>
                 <dd className="device-id-value flex items-center gap-2 text-sm font-mono mt-1">
-                  <span className="break-all">{deviceId}</span>
+                  <span className="break-all" data-testid="local-device-id-value">
+                    {deviceId}
+                  </span>
                   <Button
                     variant="ghost"
                     size="sm"

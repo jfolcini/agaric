@@ -23,8 +23,12 @@ test.describe('Conflict resolution', () => {
 
     const countBefore = await page.locator('[data-testid="conflict-item"]').count()
 
-    // Click Keep on first conflict
+    // Click Keep on first conflict — opens confirmation dialog
     await page.locator('[data-testid="conflict-keep-btn"]').first().click()
+    await expect(page.locator('[data-testid="conflict-keep-confirm"]')).toBeVisible()
+
+    // Confirm keep — only then is the conflict applied + removed
+    await page.locator('[data-testid="conflict-keep-yes"]').click()
 
     // Conflict should be removed from list
     if (countBefore === 1) {

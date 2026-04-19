@@ -66,6 +66,47 @@ describe('TemplatePicker', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  it('calls onClose when Escape is pressed while focus is outside the picker', () => {
+    // Regression for TEST-1c-B: the TipTap editor installs a capture-phase
+    // keydown listener on its container that calls stopPropagation on Escape.
+    // The picker must intercept Escape on the document BEFORE the editor's
+    // listener — otherwise Escape fails to close the picker when focus is
+    // still in the editor (or anywhere outside the picker).
+    const outside = document.createElement('div')
+    // Capture-phase handler mimicking `useBlockKeyboard`: intercepts Escape
+    // and stops propagation before it can bubble.
+    outside.addEventListener(
+      'keydown',
+      (e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          e.stopPropagation()
+        }
+      },
+      true,
+    )
+    document.body.appendChild(outside)
+    try {
+      render(<TemplatePicker templatePages={templatePages} onSelect={onSelect} onClose={onClose} />)
+      // Dispatch Escape with the "editor-owned" element as target so the
+      // editor's capture listener would normally claim it.
+      fireEvent.keyDown(outside, { key: 'Escape' })
+      expect(onClose).toHaveBeenCalledTimes(1)
+    } finally {
+      document.body.removeChild(outside)
+    }
+  })
+
+  it('marks the dialog as an editor portal so TipTap stays mounted', () => {
+    // Regression for TEST-1c-B: without `data-editor-portal`, the editor's
+    // blur handler treats the picker as an unrelated element and unmounts
+    // on button-focus, clearing `focusedBlockId` before the click-handler
+    // can insert the template.
+    render(<TemplatePicker templatePages={templatePages} onSelect={onSelect} onClose={onClose} />)
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveAttribute('data-editor-portal')
+  })
+
   it('navigates with ArrowDown and ArrowUp', () => {
     render(<TemplatePicker templatePages={templatePages} onSelect={onSelect} onClose={onClose} />)
 

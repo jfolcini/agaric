@@ -1,5 +1,89 @@
 # Session Log
 
+## Session 430 — TEST-1c drift cluster (sync-ui / conflict-resolution / templates) + MAINT-83 Gradle deprecation closeout (2026-04-19)
+
+**2 REVIEW-LATER items fully resolved. Open items 14 → 12.** Full Playwright suite moves **173/293 → 197/293 (+24 newly-green)**. TEST-1c "fake-timer cluster" diagnosed as a misnomer — the actual failures were spec/product drift (like TEST-1e) plus two real product bugs in `TemplatePicker` (Escape swallowed by TipTap's capture-phase editor handler; button click blurring editor because picker wasn't marked as an editor portal). MAINT-83 closes as a no-op: `--warning-mode=all` enumeration found **zero "Ours"** deprecations; remaining hits live in Tauri-scaffolded `buildSrc/` (owned by `tauri-cli`, blocked on Tauri 3) and in the pinned Kotlin Gradle Plugin (blocked on the same upstream bump).
+
+User asked to follow `PROMPT.md` again. Picked the last open TEST-1 sub-item with non-overlapping scope (TEST-1c — 3 specs `sync-ui.spec.ts` / `conflict-resolution.spec.ts` / `templates.spec.ts`, held back in session 429 because TEST-1b was rescoping `templates.spec.ts`) plus MAINT-83 which needed a one-shot gradle enumeration to know whether it closes as no-op. User chose "Routine only" scope (declined to bundle PUB-1/6/7 publish-prep). 3 parallel background build subagents, pipelined review subagents, no worktrees (non-overlapping file sets).
+
+### Resolved items
+
+- **TEST-1c** — E2E drift cluster in `sync-ui.spec.ts` + `conflict-resolution.spec.ts` + `templates.spec.ts`. The REVIEW-LATER scope named it "fake-timer cluster" but the actual failures were three distinct kinds, none of them timer-driven:
+  - **`sync-ui.spec.ts`** — UX-143 (commit `6777587`) had already removed `DeviceManagement` from `StatusPanel` and moved it into `SettingsView → "Sync & Devices"` tab. All 7 pairing/device tests were still navigating to the Status view, so every `getByText('Device ID')`-style assertion timed out. Fix: added `data-testid="local-device-id-{label,value}"` to `DeviceManagement.tsx`, restructured the spec into two nested describes (`Status panel` stays under Status; `Device management` navigates via `[data-testid="settings-panel-sync"]`), tightened the empty-state lookup to `.device-no-peers` to avoid strict-mode ambiguity with the Pair New Device button.
+  - **`conflict-resolution.spec.ts`** — `ConflictList.tsx` now routes Keep through a `ConfirmDialog` (the Discard flow already did, and had been re-wired in TEST-1e with `conflict-discard-{confirm,yes,no}` testids). The Keep dialog was missing the matching props. Fix: wired `contentTestId="conflict-keep-confirm"` / `cancelTestId="conflict-keep-no"` / `actionTestId="conflict-keep-yes"` on the Keep `ConfirmDialog` instance (mirror of the Discard instance), updated the spec's "Keep button applies conflict content" test to click through `conflict-keep-yes` after the initial Keep click.
+  - **`templates.spec.ts`** — root-caused two real product bugs in `src/components/block-tree/TemplatePicker.tsx`:
+    1. **Escape swallowed.** `useBlockKeyboard` attaches a capture-phase `keydown` listener on `editor.view.dom.parentElement` that calls `event.stopPropagation()` for Escape. The picker's bubble-phase `document.addEventListener('keydown', ...)` never fired because the editor's capture-phase handler always won (editor also kept refocusing itself after picker mount, so Escape was routed through the editor's subtree). Fix: switched picker to capture phase with `document.addEventListener('keydown', handleKeyDown, true)` + `removeEventListener(..., true)` and added `e.stopPropagation()` on Escape + ArrowUp + ArrowDown.
+    2. **Apply-template cascade.** Clicking a template button blurred the TipTap editor. `useEditorBlur`'s portal guard checks `EDITOR_PORTAL_SELECTORS` (8 selectors, one of them `[data-editor-portal]`). The picker's `role="dialog"` div didn't match any, so the editor unmounted + `setFocused(null)` ran before `handleTemplateSelect`, which then bailed with `focusedBlockId === null` — no insert, no toast. Fix: added `data-editor-portal=""` on the picker's dialog div.
+  - Six new vitest tests (two per touched component) assert the new testids/attributes and the capture-phase Escape-precedence behaviour.
+
+- **MAINT-83** — Silence ours-only Gradle deprecation warnings from `--warning-mode=all`. `cd src-tauri/gen/android && ./gradlew build --warning-mode=all --stacktrace -Dorg.gradle.deprecation.trace=true` enumerated **three deprecation hits, all outside our authored surface**:
+  - **Tauri-scaffolded (2):** `Invocation of Task.project at execution time` + `Project.exec(Action)` — both stack-trace to `src-tauri/gen/android/buildSrc/src/main/java/com/agaric/app/kotlin/BuildTask.kt:53`, the Tauri-CLI-owned `BuildTask.runTauriCli` `project.exec { ... }` block. Upstream [tauri-apps/tauri#14984](https://github.com/tauri-apps/tauri/pull/14984) migrates these to `ExecOperations` when the AGP 9.0.1 / Gradle 9.3.1 / Kotlin 2.3.10 / JVM target 24 bump lands on the Tauri 3 breaking-change line. Per AGENTS.md's new *Coupled Dependency Updates* rule (landed in `d695282`), the repo does not hand-patch Tauri's Android scaffold.
+  - **Kotlin Gradle Plugin (1):** `StartParameter.isConfigurationCacheRequested property has been deprecated` — two stack frames inside KGP 1.9.25 internals (`DefaultKotlinBasePlugin.apply` / `KotlinAndroidPluginWrapper.apply` and `CompilerSystemPropertiesService$Companion.registerIfAbsent`), both resolved only by a future Tauri 3 bump that also moves Kotlin → 2.3.10.
+  - Also noted but out of scope: `WryActivity.kt:34 'onBackPressed(): Unit' is deprecated` — Kotlin compiler warning about an Android API inside the Tauri-generated `app/src/main/java/com/agaric/app/generated/` directory. Same bucket.
+  - `count(ours) == 0` → per the MAINT-83 execution plan step 5, the item closes as a no-op. `cargo tauri android build --target aarch64 --debug` remained clean (APK + AAB build, ~exit 0). The orchestrator did not need to edit the scaffold or touch `scripts/patch-android-build.sh`.
+
+### Review subagent findings (both APPROVED, no blocking issues)
+
+- **Subagent A (`sync-ui` + `conflict-resolution`) reviewer** — verified scope discipline (6 files touched, none outside the intended set); confirmed testid naming follows the `component-purpose` kebab pattern; confirmed `ConfirmDialog`'s `contentTestId/cancelTestId/actionTestId` are optional props (landed TEST-1e) so adding them to the Keep instance is backward-compatible; verified `.device-no-peers` class exists at `DeviceManagement.tsx:276`; verified `data-testid="settings-panel-sync"` is generated by `SettingsView.tsx:168` via `settings-panel-${activeTab}`; verified the new testids sit inside the `{deviceId && (…)}` conditional so the spec naturally waits for the loaded state. No findings.
+- **Subagent B (`TemplatePicker`) reviewer** — verified capture-phase listener uses `true` as 3rd argument on BOTH `addEventListener` and `removeEventListener` (if the remove had been missing the `true`, the cleanup would have been a silent no-op and the listener would leak per mount); verified `stopPropagation()` is called on every handled key (Escape + ArrowUp + ArrowDown) so TipTap's neighbouring capture listener cannot also process them; verified `data-editor-portal=""` empty-string value is correctly placed on the dialog div (not the backdrop `<div onClick={onClose}>`, which must still be permeable to editor blur so clicking outside closes the picker); verified the new vitest regression test actually proves capture-phase precedence (installs an outer capture-phase `stopPropagation` listener and asserts picker still receives Escape — a bubble-phase outer listener wouldn't have exercised the bug). No findings.
+
+### Verification
+
+- **Rust full suite:** not run — frontend-only session, zero `.rs` edits, zero `.sqlx/` changes. `cargo nextest run` is the same 2172/2172 that session 429 recorded.
+- **Frontend full suite:** `npx vitest run` — **7349/7349 pass** in 81.22 s (295 test files). Session 429's known-flake in `SearchPanel.test.tsx > shows toast when parent lookup fails on result click` did NOT surface this run.
+- **Targeted vitest:** component test files for all 3 touched components + guardrail consumers — `DeviceManagement.test.tsx` 44/44, `ConflictList.test.tsx` 88/88, `TemplatePicker.test.tsx` 11/11 (9 existing + 2 new), plus `SettingsView`/`StatusPanel`/`App` guardrails 122/122.
+- **Playwright (3 targeted specs under default parallelism):** **30/30 pass** in 44.8 s — `sync-ui` 9/9, `conflict-resolution` 5/5, `templates` 16/16. Baseline under the TEST-1c diagnostic pre-fix run was `sync-ui 2 passed + 1 failed + 6 did-not-run`, `conflict-resolution 1 passed + 1 failed + 3 did-not-run`, `templates 8 passed + 1 failed + 7 did-not-run` (serial-stop-after-fail) = **11/30 pre-fix → 30/30 post-fix**.
+- **Playwright full suite under default parallelism (8 workers):** **197 passed / 96 failed in 4.5 min** (previously 173/293 after session 429's TEST-1b + TEST-1e, TEST-1a baseline 160/293). **+24 newly-green specs** over session 429. All TEST-1c-touched specs are clean in the full-parallel run (no sync-ui / conflict-resolution / templates failures in the 96). The remaining 96 failures cluster in spec files out of scope for TEST-1c: `markdown-syntax` (16), `slash-commands` (9), `query-blocks` (11), `import-export` (13), `properties-system` (7), `toolbar-and-blocks` (12), `keyboard-shortcuts` (3), plus smaller clusters in `agenda-advanced`, `features-coverage`, `graph-view`, `history-revert`, `inner-links`, `suggestion-keyboard`, `tag-management`, `property-picker`, `settings`. These are the next flake-floor buckets — none of them are TEST-1c/d-adjacent.
+- **Android release build:** `cargo tauri android build --target aarch64 --debug` — 1 APK + 1 AAB, exit 0. No regression from MAINT-83's zero-file investigation.
+- **prek `run --all-files`:** all hooks green post-commit (see commit stage).
+- **No `.sqlx/` cache regen, no specta bindings regen.**
+
+### Pipeline
+
+3 parallel background build subagents (TEST-1c-A / TEST-1c-B / MAINT-83) launched simultaneously with non-overlapping file scopes, so no worktrees needed. Reviews were pipelined: Subagent C (MAINT-83) finished first with zero file changes — no review subagent launched since there is nothing to review. Subagent A finished next and its reviewer ran in parallel with Subagent B's still-running build. Subagent B's reviewer ran after Subagent B completed. Both reviews APPROVED with no blocking findings. `REVIEW-LATER.md` was touched only by the orchestrator at session end after re-reading to account for concurrent edits (d695282 narrowed MAINT-83 scope, b5ac4e4 filed MAINT-87, 992c52d dropped MAINT-84 — all landed during this session's build subagent window).
+
+The REVIEW-LATER "fake-timer cluster" label for TEST-1c turned out to be inherited from the session 421-era fake-timer work (`useGraphSimulation` / `AttachmentList` / `ConflictList` / `DonePanel`) and never updated when `ConfirmDialog` was added to the Keep flow, when `DeviceManagement` moved out of StatusPanel, or when the TemplatePicker-vs-TipTap capture-phase collision was introduced. The diagnostic pre-fix run was the cheapest way to learn this (4 min total for 3 spec files). The REVIEW-LATER item that "looks like fake timers" is a pattern worth remembering for the next session that picks a `TEST-1*`-style ambiguous scope.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src/components/DeviceManagement.tsx` | TEST-1c: `data-testid="local-device-id-label"` on `<dt>` + `data-testid="local-device-id-value"` on the device-id `<span>`. |
+| `src/components/ConflictList.tsx` | TEST-1c: wired `contentTestId`/`cancelTestId`/`actionTestId` on the Keep `ConfirmDialog` (`conflict-keep-{confirm,yes,no}`), mirroring the Discard dialog that already had them. |
+| `src/components/block-tree/TemplatePicker.tsx` | TEST-1c: (1) switched picker's `document.addEventListener('keydown', ...)` to capture phase (`{ capture: true }` on both add + remove) + `e.stopPropagation()` on Escape/ArrowUp/ArrowDown. (2) added `data-editor-portal=""` on the dialog div so `useEditorBlur` keeps the editor mounted while the picker is open. Two comments reference TEST-1c-B explaining both fixes. |
+| `src/components/__tests__/DeviceManagement.test.tsx` | TEST-1c: +1 test asserting both `local-device-id-{label,value}` testids resolve to the correct `<dt>`/`<span>` after load. |
+| `src/components/__tests__/ConflictList.test.tsx` | TEST-1c: +1 test asserting `conflict-keep-{confirm,yes,no}` testids appear only after opening the Keep confirmation dialog. |
+| `src/components/__tests__/TemplatePicker.test.tsx` | TEST-1c: +2 tests — capture-phase Escape precedence (outer capture-phase `stopPropagation` listener does not block `onClose`) + `data-editor-portal` attribute unconditionally present on the dialog. |
+| `e2e/sync-ui.spec.ts` | TEST-1c: split into `Status panel` (2 tests) + `Device management` (7 tests, navigate via Settings → Sync & Devices tab) + use the new `local-device-id-{label,value}` testids + `.device-no-peers` class locator for empty state. |
+| `e2e/conflict-resolution.spec.ts` | TEST-1c: Keep test now clicks through `conflict-keep-yes` after the initial Keep click (matching the Discard flow). |
+| `REVIEW-LATER.md` | Remove TEST-1c + MAINT-83 table rows + detail sections. Drop the bucket-5 "fake-timer cluster" reference from the shared TEST preamble since TEST-1c is closed. Relax TEST-1d's title-line dependency wording to `(strictly last; depends on a ≥95 % green full-suite baseline)` — the original phrasing pinned it to TEST-1c specifically. Summary 14 → 12. "Previously resolved" 336+ → 338+. Session count 118 → 119. |
+
+### Watch-list (not filed)
+
+Session logs after TEST-1b/e warned that the next sweep might surface either (a) fake-timer-type issues that the systemic 8 s `expect.timeout` + scoped portal helpers didn't absorb, or (b) new drift. This session confirmed it was **all (b)** — zero fake-timer fixes landed; the three "timer" failure descriptions in the TEST-1c summary all root-caused to product + test drift or pure product bugs. Keep the pattern in mind for TEST-1d: do not blindly trust the REVIEW-LATER label on an ambiguous flake-bucket item; run the specs diagnostically before launching build subagents.
+
+Templates suite had one flake observed during Subagent B's verification: `e2e/templates.spec.ts:229` ("applied template blocks appear on the page") failed once on `focusBlock` in a back-to-back isolation run. Passed in all three subsequent runs (two workers=1, one default-parallel in the full suite). Bucket: state carryover between the two back-to-back "Apply template" tests in the same serial describe (both insert into "Getting Started"); the in-memory mock backend reset hook only fires between worker-level `beforeEach` runs, not between tests within a single serial describe that share the same page context. Not filed this session because it's a 1-in-4 occurrence and the standard `expect.timeout` absorbed it in the full-parallel run. If it recurs in the next full-suite run, file then as a describe-level `beforeEach` reset helper candidate.
+
+### Non-goals / scope discipline
+
+- Did NOT touch `playwright.config.ts`, `e2e/helpers.ts`, or TEST-1a/b scope helpers — those are already landed.
+- Did NOT add `window.__testAdvanceTimers__` (the REVIEW-LATER TEST-1c text mentioned it as an option); no fake-timer fixes were needed once the drift was diagnosed.
+- Did NOT touch the other 96 full-suite failures (`markdown-syntax`, `slash-commands`, `query-blocks`, `import-export`, etc.) — those are separate flake-floor buckets and not TEST-1c scope. They are the next candidate for a future TEST-1f-style item or for TEST-1d itself once someone decides what "CI-ready baseline" means.
+- Did NOT touch Rust, `.sqlx/`, or specta bindings.
+- Did NOT touch Tauri Android scaffold (`gen/android/buildSrc/`, `gen/android/tauri.settings.gradle`) or AGP/Gradle/Kotlin version pins — forbidden by the new AGENTS.md *Coupled Dependency Updates* rule + the narrowed MAINT-83 scope.
+- Did NOT edit `AGENTS.md` (forbidden without user approval).
+- Did NOT update FEATURE-MAP.md — no new user-facing capability, the 8-selector `EDITOR_PORTAL_SELECTORS` count is unchanged (the `[data-editor-portal]` selector was already registered; this session just added the attribute to one more element).
+- Did NOT file any follow-on items this session (no TEST-1f / TEST-1g / MAINT-88 — watch-list findings above are speculative and land only if they recur).
+
+### Post-session state
+
+Open REVIEW-LATER items: **12**.
+- **FEAT-4** — MCP server, L, READY (open-questions resolved in session 427, awaiting scheduling).
+- **MAINT-87** — sqlx `default-features = false` (filed `b5ac4e4`; closes RUSTSEC-2023-0071), S.
+- **PERF-19/20/23** — deliberate non-fixes (S each).
+- **TEST-1d** — Playwright into CI, S, strictly last (blocked on ≥95 % green full-suite baseline; 197/293 ≈ 67 % is not there yet).
+- **PUB-1/2/3/5/6/7** — publish-prep, decision-recorded (DECIDED or DEFERRED), no routine-sweep action.
+
 ## Session 429 — TEST-1b Radix portal containment + TEST-1e drift cluster (2026-04-19)
 
 **2 REVIEW-LATER items fully resolved. Open items 16 → 14.** Two parallel E2E cleanup items — portal DOM-leak scoping and product/spec test-drift — land together. Full Playwright suite moves from 160/293 pass (TEST-1a baseline) to **173/293 + ~30 more newly-green specs** after the drift fixes. TEST-1c and TEST-1d remain; TEST-1c is now the last flake-floor prerequisite before TEST-1d can land.

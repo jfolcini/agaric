@@ -28,10 +28,13 @@ export function TemplatePicker({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
+        e.stopPropagation()
         onClose()
+        return
       }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
+        e.stopPropagation()
         const dialog = dialogRef.current
         if (!dialog) return
         const buttons = dialog.querySelectorAll<HTMLElement>('button')
@@ -45,8 +48,16 @@ export function TemplatePicker({
         buttons[next]?.focus()
       }
     }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
+    // Capture phase so the picker sees Escape/Arrow keys BEFORE the TipTap
+    // editor's container-level capture listener (useBlockKeyboard attaches a
+    // capture-phase keydown listener on `editor.view.dom.parentElement` that
+    // calls stopPropagation()). A capture-phase listener on `document` fires
+    // before any element-level capture listener below it, so the picker
+    // dependably claims these keys whenever it is open — regardless of
+    // whether focus is still inside the editor (a separate race where the
+    // editor re-focuses itself after mount/auto-focus effects run).
+    document.addEventListener('keydown', handleKeyDown, true)
+    return () => document.removeEventListener('keydown', handleKeyDown, true)
   }, [onClose])
 
   useEffect(() => {
@@ -64,6 +75,12 @@ export function TemplatePicker({
         role="dialog"
         aria-modal="true"
         aria-label={t('slash.templatePicker')}
+        // `data-editor-portal` tells `useEditorBlur` to keep the TipTap editor
+        // mounted while the picker is open (via EDITOR_PORTAL_SELECTORS).
+        // Without it the editor unmounts on button-focus, clearing
+        // `focusedBlockId`, so `handleTemplateSelect` bails out with no
+        // template inserted and no toast. See TEST-1c-B.
+        data-editor-portal=""
         className="fixed z-50 rounded-md border bg-popover p-2 shadow-lg left-1/2 top-1/3 -translate-x-1/2 min-w-[200px] max-w-[calc(100vw-2rem)] sm:max-w-[300px] max-sm:left-2 max-sm:right-2 max-sm:translate-x-0"
       >
         <ScrollArea className="max-h-[60vh]">

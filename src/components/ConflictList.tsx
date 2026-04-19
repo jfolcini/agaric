@@ -520,6 +520,9 @@ export function ConflictList(): React.ReactElement {
           if (confirmKeepBlock) handleKeep(confirmKeepBlock)
         }}
         className="conflict-keep-confirm"
+        contentTestId="conflict-keep-confirm"
+        cancelTestId="conflict-keep-no"
+        actionTestId="conflict-keep-yes"
       />
 
       {/* Discard confirmation dialog */}

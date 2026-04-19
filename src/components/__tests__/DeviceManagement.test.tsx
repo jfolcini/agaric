@@ -137,6 +137,27 @@ describe('DeviceManagement', () => {
     expect(screen.getByText('Local Device ID')).toBeInTheDocument()
   })
 
+  it('exposes stable testids on the local device id label and value (TEST-1c)', async () => {
+    // e2e/sync-ui.spec.ts targets these test-ids instead of the English
+    // label text (which has been i18n-ified to "Local Device ID"). Keep
+    // them in sync if renaming the UI string.
+    mockInvokeByCommand({
+      get_device_id: mockDeviceId,
+      list_peer_refs: [],
+    })
+
+    render(<DeviceManagement />)
+
+    // Value waits for loadData() to resolve; label waits implicitly with it.
+    const valueEl = await screen.findByTestId('local-device-id-value')
+    expect(valueEl).toHaveTextContent(mockDeviceId)
+    expect(valueEl.tagName).toBe('SPAN')
+
+    const labelEl = screen.getByTestId('local-device-id-label')
+    expect(labelEl).toHaveTextContent('Local Device ID')
+    expect(labelEl.tagName).toBe('DT')
+  })
+
   it('shows list of paired peers', async () => {
     mockInvokeByCommand({
       get_device_id: mockDeviceId,

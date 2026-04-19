@@ -1419,6 +1419,42 @@ describe('ConflictList', () => {
     expect(dialog?.textContent).toContain('original content')
   })
 
+  it('Keep dialog exposes confirm/yes/no testids matching the discard pattern (TEST-1c)', async () => {
+    const user = userEvent.setup()
+    const conflict = makeConflict({ id: 'C1', content: 'incoming changes' })
+    mockInvokeByCommand({
+      get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
+      get_block: originalBlock,
+    })
+
+    render(<ConflictList />)
+    await screen.findByText('incoming changes')
+
+    // Dialog closed initially — no test-ids visible
+    expect(screen.queryByTestId('conflict-keep-confirm')).toBeNull()
+    expect(screen.queryByTestId('conflict-keep-yes')).toBeNull()
+    expect(screen.queryByTestId('conflict-keep-no')).toBeNull()
+
+    // Open Keep confirmation
+    await user.click(screen.getByRole('button', { name: /Keep/i }))
+
+    // Root content carries conflict-keep-confirm, and cancel/action buttons
+    // carry conflict-keep-no / conflict-keep-yes respectively. These mirror
+    // the conflict-discard-{confirm,yes,no} scheme and unblock the
+    // e2e/conflict-resolution.spec.ts "Keep button" test (TEST-1c).
+    const confirmRoot = screen.getByTestId('conflict-keep-confirm')
+    expect(confirmRoot).toBeInTheDocument()
+    expect(confirmRoot.classList.contains('conflict-keep-confirm')).toBe(true)
+
+    const yesBtn = screen.getByTestId('conflict-keep-yes')
+    expect(yesBtn).toBeInTheDocument()
+    expect(yesBtn.tagName).toBe('BUTTON')
+
+    const noBtn = screen.getByTestId('conflict-keep-no')
+    expect(noBtn).toBeInTheDocument()
+    expect(noBtn.tagName).toBe('BUTTON')
+  })
+
   it('Discard dialog shows content preview of conflict (#651 C-6)', async () => {
     const user = userEvent.setup()
     const conflict = makeConflict({ id: 'C1', content: 'conflict to discard' })
