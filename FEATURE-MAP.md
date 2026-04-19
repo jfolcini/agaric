@@ -421,6 +421,8 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 
 ## 10. Shared Components & Utilities
 
+> **Platform baseline:** React 19 + TypeScript 6. All shared UI primitives accept `ref` as a regular optional prop (no `forwardRef`). `React.ComponentProps<typeof X>` / `React.ComponentProps<'tag'>` already include `ref?` automatically in React 19, so Radix/shadcn-style wrappers do not need an explicit `ref?` declaration unless they define their own `*Props` interface.
+
 ### Shared UI Components
 - **EmptyState** (`src/components/EmptyState.tsx`): Consistent empty state display with icon, title, and optional description. Used by 16 components including DaySection, DuePanel, DonePanel, LinkedReferences, UnlinkedReferences, BlockTree, SearchPanel, and others.
 - **ConfirmDialog** (`src/components/ConfirmDialog.tsx`): Wraps AlertDialog primitives with title/description/cancel/action props, optional `children` slot, `actionVariant` (default/destructive), `loading` spinner, `autoFocus` on action button for keyboard confirmation (UX-19). Used by 15 components.

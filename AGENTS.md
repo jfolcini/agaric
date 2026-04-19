@@ -1,6 +1,6 @@
 # Developer Documentation — Agaric
 
-Local-first block-based note-taking app inspired by Org-mode and Logseq. React + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log with CQRS materializer for offline-first sync.
+Local-first block-based note-taking app inspired by Org-mode and Logseq. React 19 + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log with CQRS materializer for offline-first sync.
 
 > **No changes to this file (AGENTS.md) without explicit user approval. Ever.**
 
@@ -116,6 +116,7 @@ Every frontend change — new component, bugfix, feature — must build on exist
 - **`EmptyState`** component for all empty list/panel states. Never `return null` or show raw text for empty states.
 - **`LoadingSkeleton`** for initial load states. Inline spinners only for action feedback (submit buttons, pagination).
 - **Floating UI lifecycle logging**: Any component that creates DOM outside the React tree (portals, `document.body.appendChild`, `ReactRenderer`), manages capture-phase outside-click listeners, or uses `computePosition` must: (1) log failures at warn level via `logger.warn`, (2) guard callback invocations on stale/null state and log the desync, (3) handle positioning `.catch()` with a logged fallback, (4) be listed in `EDITOR_PORTAL_SELECTORS` if it should prevent editor blur. See `suggestion-renderer.ts` as the reference implementation.
+- **Ref-as-prop (React 19)**: components that accept a ref declare `ref?: React.Ref<ElementType>` as a normal optional prop — either inherited via `React.ComponentProps<typeof X>` / `React.ComponentProps<'tag'>` (which include `ref?` automatically in React 19) or added explicitly to the props interface. Never wrap in `React.forwardRef` — it is deprecated. For imperative handles, declare `ref` as a prop and call `useImperativeHandle(ref, () => ...)` directly inside the function body (see `src/editor/SuggestionList.tsx`).
 
 ### Anti-patterns — do not do these
 
@@ -129,6 +130,7 @@ Every frontend change — new component, bugfix, feature — must build on exist
 - **N+1 query patterns** — use `json_each()` batch queries on the backend instead of loops. See `fts.rs` batch resolve.
 - **Silent `.catch(() => {})` blocks** — always use `logger.warn` or `logger.error`. Silent error swallowing masks real bugs.
 - **Weakening strict settings** — do not add `@ts-ignore` or `biome-ignore` without a clear justification comment. Do not relax `exactOptionalPropertyTypes`, `noImplicitReturns`, or `unsafe_code = "deny"`.
+- **`React.forwardRef` wrappers** — deprecated in React 19. Accept `ref` as a normal prop instead (see "Ref-as-prop" in Mandatory patterns above). Likewise **never use `React.ComponentRef<typeof X>`** (deprecated) or the ambient `JSX.*` namespace (React 19 dropped the global — use `React.JSX.IntrinsicElements` / `React.ReactElement`).
 
 ### When extending the design system
 
@@ -184,6 +186,7 @@ cd src-tauri && cargo test -- specta_tests --ignored
 - **Tarpaulin:** Expensive (~60s). Only run when working on coverage gaps.
 - **Exact count assertions:** Prefer `assert_eq!(count, 5)` over `assert!(count >= 1)`. Inequality assertions hide duplicate results and missing filters.
 - **Silent catch blocks forbidden:** Never use `.catch(() => {})`. Use `logger.warn` or `logger.error` for all catch blocks — silent error swallowing masks real bugs.
+- **React 19 test timing:** state updates originating from non-React event sources — worker `dispatchEvent`, `window.setTimeout` / `setInterval` callbacks, IPC promise resolutions chained off external events — no longer flush within a bare `await new Promise(r => setTimeout(r, 0))` tick. Wrap such waits in `act(async () => { ... })`, switch sync `getByText` to async `findByText`, or `waitFor` on the observable end state. Do not add arbitrary sleeps.
 - **Detailed conventions:** `src-tauri/tests/AGENTS.md` (Rust), `src/__tests__/AGENTS.md` (frontend)
 
 ## Tooling Efficiency
@@ -198,7 +201,7 @@ During development, run only the relevant check:
 
 Strict compiler and linter settings are enabled project-wide. **Do not weaken these.**
 
-- **TypeScript:** `exactOptionalPropertyTypes: true`, `noImplicitReturns: true` — use `| undefined` for optional properties, never pass `undefined` implicitly.
+- **TypeScript:** `exactOptionalPropertyTypes: true`, `noImplicitReturns: true` — use `| undefined` for optional properties, never pass `undefined` implicitly. On TypeScript 6 the deprecated `baseUrl` in `tsconfig.app.json` was removed; `paths: { "@/*": ["./src/*"] }` resolves relative to the tsconfig directory (the repo root) — keep it that way.
 - **Biome:** `noEvolvingTypes: error`, `useAwait: error`, `noUndeclaredDependencies: error`, `useExplicitLengthCheck: error` — test files have `useAwait` overridden where needed.
 - **Rust:** `unsafe_code = "deny"` in `[lints.rust]`. All clippy warnings must be resolved.
 - **Non-null assertions:** Banned (`noNonNullAssertion` in Biome). Use `as Type` casts or proper narrowing instead of `!`.

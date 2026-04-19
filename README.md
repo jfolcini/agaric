@@ -81,7 +81,7 @@ Peer-to-peer sync over local WiFi — no cloud server needed. Append-only operat
 | Layer | Technology |
 | ----- | ---------- |
 | Desktop shell | [Tauri 2](https://v2.tauri.app/) |
-| Frontend | React 18 + Vite + TipTap + Tailwind CSS 4 |
+| Frontend | React 19 + Vite + TipTap + Tailwind CSS 4 |
 | Backend | Rust + SQLite (via sqlx) |
 | Database | SQLite in WAL mode, 15 tables + 1 FTS5 virtual table, 23 indexes |
 | State | Zustand stores |

@@ -41,7 +41,7 @@ Anytype, faster than Logseq.
 | Layer | Choice | Why |
 |-------|--------|-----|
 | Desktop shell | Tauri 2.0 | Lightweight native wrapper. Ships a WebView, not a bundled browser. |
-| Frontend | React 18 + Vite | Locked by TipTap and shadcn/ui ecosystem. |
+| Frontend | React 19 + Vite | Locked by TipTap and shadcn/ui ecosystem. Components accept `ref` as a regular prop (no `forwardRef`). |
 | Editor | TipTap (ProseMirror) | WYSIWYG inline nodes for token chips. See [Editor Architecture](#7-editor-architecture). |
 | UI library | shadcn/ui + Tailwind | Copy-paste components, no lock-in. Noto Sans in font stack. `rtl:` variants for future i18n. |
 | Linting/formatting | Biome | Replaces ESLint + Prettier. Non-negotiable from day one — retrofitting means a whole-repo reformat. |

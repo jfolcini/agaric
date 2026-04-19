@@ -1,5 +1,92 @@
 # Session Log
 
+## Session 420 — MAINT-48 React 18 → 19 major upgrade (2026-04-19)
+
+**1 item resolved (MAINT-48). REVIEW-LATER 12→11.**
+
+React 18.3.1 → 19.2.5. `@types/react` 18.3.28 → 19.2.14 and `@types/react-dom` 18.3.7 → 19.2.3 in lockstep. Core mechanical change: every `React.forwardRef<T, P>((props, ref) => ...)` wrapper replaced with a plain function component that accepts `ref` as a regular prop — the React 19 idiom. 40 source files touched, all changes type-level or ref-plumbing. No markup, no CSS, no behaviour changes.
+
+Tool chain: `npx codemod@latest run react/19/remove-forward-ref` for the automated pass, then a small Python pass to strip the redundant `& { ref: React.RefObject<X>; }` intersections the codemod emits (they made `ref` required and rejected callback refs — the right type in React 19 is `React.Ref<X>` which is already included implicitly in `React.ComponentProps<typeof X>`). Subagent restored the type annotations the codemod stripped from generic `forwardRef<Target, Props>` call sites (sidebar.tsx was the largest — 22 components), followed by a biome auto-format pass on the 31 affected files.
+
+Four test files needed timing adjustments for React 19's microtask scheduling (setStates originating outside React events no longer flush within a `setTimeout(0)` microtask — they need `act()` or `findBy*`). All behavioural invariants preserved.
+
+### Resolved items
+
+**MAINT-48 — React 19 upgrade:**
+
+- **Packages:** `react` / `react-dom` 18.3.1 → 19.2.5. `@types/react` 18.3.28 → 19.2.14. `@types/react-dom` 18.3.7 → 19.2.3.
+- **Codemod:** stripped `forwardRef` from 31 files. Zero `forwardRef` / `React.forwardRef` remains in `src/` (verified by grep).
+- **Intersection strip:** orchestrator Python pass removed 28 redundant `& { ref: React.RefObject<X>; }` intersections emitted by the codemod — React 19's `React.ComponentProps<typeof X>` already includes `ref?: React.Ref<X>`.
+- **Type restoration:** the codemod erases types from `forwardRef<T, P>` generics; a subagent hand-restored types on the ~14 files where this happened (button, badge, priority-badge, status-badge, search-input, spinner, popover-menu-item, section-title, close-button, list-item, card-button, alert-list-item, Tip in FormattingToolbar, GutterButton in BlockGutterControls, SuggestionList, sidebar's 22 components, Toaster mock).
+- **`React.ComponentRef` → `React.ElementRef`:** no leftover `ComponentRef` usage. Deprecated in React 19 — zero instances remained.
+- **`JSX` namespace:** replaced `JSX.IntrinsicElements` with `React.JSX.IntrinsicElements` in `RichContentRenderer.tsx` (2 sites) and `JSX.Element` with `React.ReactElement` in `PageHeader.test.tsx` — React 19 dropped the ambient global.
+- **`useImperativeHandle`:** `SuggestionList.tsx` imperative-ref pattern preserved. React 19 supports `useImperativeHandle` with ref-as-prop directly; no wrapper needed.
+
+**Test timing fixes (React 19 scheduling):**
+
+- `src/hooks/__tests__/useGraphSimulation.test.ts` — wrapped `setTimeout(0)` wait in `act()` so worker-dispatched `error` / `messageerror` state updates flush before the assertions on `worker.terminated` and `forceSimulation` call count.
+- `src/components/__tests__/AttachmentList.test.tsx` — the pending-delete 3-second auto-reset test wraps `vi.advanceTimersByTime(3100)` in `act()` so the `setPendingDeleteId(null)` fires before the second-click assertion.
+- `src/components/__tests__/ConflictList.test.tsx` — replaced `getByText('old version')` (sync) with `findByText('old version')` after `findByText('Current:')`, because the `get_block` IPC call's state update now flushes on a later microtask than the `list_conflicts` one.
+- `src/components/__tests__/DonePanel.test.tsx` — the "returns null when empty" test waits on the observable end state (`.done-panel` absent from DOM) rather than on the IPC call alone.
+
+### Tests
+
+- **7298 vitest tests across 292 suites** — all green. Same count as pre-upgrade. No suites skipped, no snapshots mutated.
+- **`npx tsc -b --force`** clean (zero errors, zero warnings).
+- **Playwright smoke** (`e2e/smoke.spec.ts`) passes. A broader run surfaces 5 flakes in `editor-lifecycle` + `undo-redo-blocks`; reproduced identically on the React 18 baseline (verified by stashing the WIP and re-running), so they are pre-existing and unrelated.
+- **Visual smoke (chrome-browser MCP)**: Journal and Status pages render correctly against `http://localhost:5173`. Sidebar navigation works. No React-related console errors (only the expected `tauri-mock` unhandled-command warnings from browser mode).
+
+### Pipeline / reviewer exchange
+
+1. Orchestrator surveyed current React usage (88 `forwardRef` sites across 32 files), verified peer-dep compatibility for `@tiptap/react`, `@radix-ui/*`, `radix-ui` umbrella, `react-day-picker`, `@testing-library/react`, `sonner`, and `react-i18next` — all accept React 19.
+2. Orchestrator installed the four packages, ran the codemod, ran a Python fix-up for redundant intersections, and fixed the ~5 simplest untyped components manually (button, badge, priority-badge, status-badge, search-input).
+3. Single focused build subagent (sequential, per MAINT-48's "no parallel subagents" decision) restored types in the remaining files — notably sidebar.tsx (22 components), and caught follow-on issues the orchestrator missed (JSX namespace in RichContentRenderer, Calendar ref export, Sheet/Select inline types, sonner mock Toaster type).
+4. Orchestrator fixed the 4 test timing issues surfaced by React 19 scheduling.
+5. Parallel review subagents — technical APPROVE + UX APPROVE. Both audits independently verified no leftover `forwardRef`, no deprecated React 19 APIs (no `ReactDOM.render`, no `PropTypes`, no string refs, no legacy context), all peer deps compatible, no architectural invariants touched.
+6. Orchestrator did the final visual smoke with chrome-browser MCP (Journal + Status pages) to close out the UX reviewer's "live browser" gap.
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `package.json` + `package-lock.json` | `react` / `react-dom` 18.3.1 → 19.2.5; `@types/react` 18.3.28 → 19.2.14; `@types/react-dom` 18.3.7 → 19.2.3. |
+| `src/components/ui/` — 28 files | `forwardRef` stripped; `ref` is now a regular (optional) prop. Types restored where the codemod erased them. |
+| `src/components/BlockGutterControls.tsx` + `src/components/FormattingToolbar.tsx` + `src/editor/SuggestionList.tsx` | Same forwardRef → ref-as-prop rewrite. |
+| `src/components/RichContentRenderer.tsx` | `JSX.IntrinsicElements` → `React.JSX.IntrinsicElements`. |
+| `src/components/__tests__/PageHeader.test.tsx` | `JSX.Element` → `React.ReactElement` + explicit React import. |
+| `src/__tests__/mocks/sonner.ts` | `Toaster` mock rewritten as ref-as-prop function. Comment updated. |
+| `src/components/ui/__tests__/tooltip.test.tsx` | Comment updated ("forwardRef" → "ref forwarding (ref is a prop in React 19)"). |
+| `src/hooks/__tests__/useGraphSimulation.test.ts` | Added `act()` wrappers around the worker-event `setTimeout(0)` waits. |
+| `src/components/__tests__/AttachmentList.test.tsx` | `act()` around `vi.advanceTimersByTime(3100)`. |
+| `src/components/__tests__/ConflictList.test.tsx` | `findByText('old version')` instead of sync `getByText`. |
+| `src/components/__tests__/DonePanel.test.tsx` | `waitFor` on observable end state instead of on IPC call. |
+| `REVIEW-LATER.md` | −1 item (12 → 11) — MAINT-48 table row + detail section removed. Previously-resolved bumped 312 → 313 / 110 → 111. |
+| `SESSION-LOG.md` | This session. |
+
+### Stats
+
+- **40 source files changed** + **4 test files** + 2 docs (`REVIEW-LATER.md`, `SESSION-LOG.md`).
+- **1 build subagent** (APPROVE) + **2 parallel review subagents** (tech APPROVE, UX APPROVE).
+- **Tests:** 7298/7298 passing. `npx tsc -b --force` clean.
+
+### Verification
+
+- `npx tsc -b --force` → zero errors, zero warnings.
+- `npx vitest run` → 7298/7298 across 292 suites.
+- `prek run --all-files` → 23/23 hooks pass (biome check required a `--write` pass to format the codemod's output; re-staged and clean on the second run).
+- `npx playwright test e2e/smoke.spec.ts` → 3/3 passing.
+- `chrome-browser` MCP visual smoke on Journal + Status pages → no console errors, sidebar/header/buttons/badges render correctly.
+
+### Remaining REVIEW-LATER backlog (18 items)
+
+- **This session resolved:** 1 (MAINT-48). Count immediately post-commit: 11.
+- **Concurrent addition by another agent:** MAINT-75 through MAINT-81 (7 new maintenance items — dep-bump backlog, rust-sec advisories, npm audit). Final count after merge: 18.
+- **DECIDED awaiting scheduled session:** FEAT-4, FEAT-5, PUB-1, PUB-6, PUB-7 (5 items).
+- **DEFERRED "until trigger":** PERF-19, PERF-20, PERF-23, PUB-2, PUB-3, PUB-5 (6 items).
+- **Newly added (awaiting triage):** MAINT-75, MAINT-76, MAINT-77, MAINT-78, MAINT-79, MAINT-80, MAINT-81 (7 items).
+
+---
+
 ## Session 419 — MAINT-49 TypeScript 5.9 → 6 major upgrade (2026-04-19)
 
 **1 item resolved (MAINT-49). REVIEW-LATER 13→12.**
