@@ -1097,6 +1097,16 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: 'Project' }))
       await user.click(screen.getByRole('option', { name: 'Review' }))
 
+      // Wait for the tag selection to propagate before clicking Apply.
+      // Under full-suite parallel load, Radix's onPointerDown → setTimeout →
+      // setState chain can interleave with subsequent clicks, causing the
+      // Apply handler to read the stale `tagValue` (TEST-3 flake). Asserting
+      // the observable end state (trigger label updated) makes the wait
+      // deterministic.
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument()
+      })
+
       // Click Apply
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
