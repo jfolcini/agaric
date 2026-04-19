@@ -37,6 +37,15 @@ ignore = [
     { id = "RUSTSEC-2025-0098", reason = "Tauri transitive dep: unic-ucd-version" },
     { id = "RUSTSEC-2025-0100", reason = "Tauri transitive dep: unic-ucd-ident" },
     { id = "RUSTSEC-2024-0436", reason = "Tauri transitive dep: paste (via serde_with, specta)" },
+    # RUSTSEC-2023-0071 (`rsa`) — unreachable at runtime. The `rsa` crate is
+    # pulled in by `sqlx-macros-core -> sqlx-mysql` so that `query!` / `query_as!`
+    # can detect the database type at compile time. We only enable the `sqlite`
+    # driver (see src-tauri/Cargo.toml, sqlx features = [sqlite, …]); `sqlx-mysql`
+    # is linked into the proc-macro host only and is never loaded by the app.
+    # No fixed upgrade is available upstream; tracked as MAINT-80 in
+    # REVIEW-LATER.md — drop this ignore when sqlx-macros gates drivers behind
+    # features.
+    { id = "RUSTSEC-2023-0071", reason = "MAINT-80: rsa 0.9.10 via sqlx-macros-core (proc-macro host only, never runtime-reachable); upstream has no fix" },
 ]
 
 # ── Licenses ────────────────────────────────────────────────────────────────
