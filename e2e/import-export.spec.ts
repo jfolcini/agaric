@@ -36,7 +36,7 @@ async function triggerExport(page: import('@playwright/test').Page) {
 // ===========================================================================
 
 async function navigateToStatus(page: import('@playwright/test').Page) {
-  await page.getByRole('button', { name: 'Status' }).click()
+  await page.getByRole('button', { name: 'Status', exact: true }).click()
   await expect(page.locator('header').getByText('Status')).toBeVisible()
 }
 

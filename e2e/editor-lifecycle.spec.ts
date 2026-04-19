@@ -26,6 +26,14 @@ async function addBlock(page: import('@playwright/test').Page, text: string) {
   await editor.press('Enter')
   // Wait for the static block with the new text to appear
   await expect(page.getByText(text)).toBeVisible()
+  // Enter saves the just-typed block AND opens a fresh empty sibling
+  // editor (`use-block-keyboard.ts` "Enter: save + create new sibling"). The
+  // tests care about the content block only; dismiss the empty sibling with
+  // Escape so it doesn't count toward the sortable-block total.
+  const freshEditor = page.getByRole('textbox', { name: 'Block editor' })
+  if (await freshEditor.isVisible().catch(() => false)) {
+    await freshEditor.press('Escape')
+  }
 }
 
 test.describe('Editor lifecycle', () => {
@@ -108,7 +116,7 @@ test.describe('Editor lifecycle', () => {
     await expect(page.locator('header').getByText('Trash')).toBeVisible()
 
     // Navigate to Status
-    await page.getByRole('button', { name: 'Status' }).click()
+    await page.getByRole('button', { name: 'Status', exact: true }).click()
     await expect(page.locator('header').getByText('Status')).toBeVisible()
 
     // Navigate to Conflicts

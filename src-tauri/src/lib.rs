@@ -275,6 +275,10 @@ pub fn run() {
         commands::get_link_metadata,
     ]);
 
+    // `mut` is only consumed by the `#[cfg(not(mobile))]` updater plugin
+    // registration below. On Android/iOS the binding is never reassigned,
+    // so allow the warning there without relaxing it globally.
+    #[cfg_attr(mobile, allow(unused_mut))]
     let mut tauri_builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init());

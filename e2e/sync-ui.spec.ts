@@ -6,7 +6,7 @@ test.describe('Sync UI', () => {
     // Wait for app to boot
     await expect(page.getByRole('button', { name: 'Journal' })).toBeVisible()
     // Navigate to Status
-    await page.getByRole('button', { name: 'Status' }).click()
+    await page.getByRole('button', { name: 'Status', exact: true }).click()
     await expect(page.locator('header').getByText('Status')).toBeVisible()
   })
 

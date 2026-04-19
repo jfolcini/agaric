@@ -19,8 +19,11 @@ import { openPage, waitForBoot } from './helpers'
 
 /** Navigate away and back to force BlockTree to re-fetch from mock. */
 async function reopenPage(page: import('@playwright/test').Page, title: string) {
-  // Navigate to Status (a simple view that always shows "Status" in header)
-  await page.getByRole('button', { name: 'Status' }).click()
+  // Navigate to Status (a simple view that always shows "Status" in header).
+  // `exact: true` is load-bearing: a "Toggle template status" tooltip trigger
+  // also matches the accessible name "Status" by substring otherwise and
+  // Playwright strict-mode fails with two candidates.
+  await page.getByRole('button', { name: 'Status', exact: true }).click()
   await expect(page.locator('[data-testid="header-label"]')).toContainText('Status')
   await openPage(page, title)
 }
