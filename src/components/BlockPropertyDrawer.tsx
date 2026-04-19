@@ -19,7 +19,13 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
 import { buildInitParams, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
@@ -225,6 +231,7 @@ export function BlockPropertyDrawer({
       <SheetContent side="right" className="w-80">
         <SheetHeader>
           <SheetTitle>{t('property.drawerTitle')}</SheetTitle>
+          <SheetDescription>{t('property.drawerDescription')}</SheetDescription>
         </SheetHeader>
         <ScrollArea className="flex-1 overflow-hidden">
           <div className="mt-4 space-y-3 px-4 pb-4">

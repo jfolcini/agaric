@@ -9,7 +9,7 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { HistoryPanel } from './HistoryPanel'
 import { ScrollArea } from './ui/scroll-area'
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from './ui/sheet'
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from './ui/sheet'
 
 export interface HistorySheetProps {
   blockId: string | null
@@ -28,6 +28,7 @@ export function HistorySheet({
       <SheetContent side="right" className="w-3/4 sm:w-80">
         <SheetHeader>
           <SheetTitle>{t('history.title')}</SheetTitle>
+          <SheetDescription>{t('history.description')}</SheetDescription>
         </SheetHeader>
         <ScrollArea className="flex-1 overflow-hidden">
           <div className="mt-4 space-y-3 px-4 pb-4">

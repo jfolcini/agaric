@@ -429,6 +429,7 @@ const resources = {
 
       // History
       'history.title': 'Block History',
+      'history.description': 'View and revert the mutation history for this block.',
 
       // Page Header
       'pageHeader.pageTitle': 'Page title',
@@ -639,6 +640,8 @@ const resources = {
 
       // Property table
       'property.drawerTitle': 'Block Properties',
+      'property.drawerDescription':
+        'View, edit and add properties for this block (status, priority, dates, custom fields).',
       'property.loading': 'Loading...',
       'property.noProperties': 'No properties set',
       'property.loadFailed': 'Failed to load properties',
