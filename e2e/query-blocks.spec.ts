@@ -1,4 +1,12 @@
-import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
+import {
+  expect,
+  focusBlock,
+  openPage,
+  saveBlock,
+  test,
+  typeSlashCommand,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E tests for query blocks — created via the /query slash command.
@@ -19,19 +27,10 @@ import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './he
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Type a slash command filter inside the currently focused editor.
- * Moves to end of line, types ` /<command>`, and waits for the
- * suggestion list to appear.
- */
-async function typeSlashCommand(page: import('@playwright/test').Page, command: string) {
-  await page.keyboard.press('End')
-  await page.keyboard.type(` /${command}`, { delay: 30 })
-  const list = page.locator('[data-testid="suggestion-list"]')
-  await expect(list).toBeVisible()
-  return list
-}
+//
+// The canonical race-free `typeSlashCommand` helper lives in `./helpers` and
+// is imported above. See the JSDoc there for the split-keystroke rationale
+// (it avoids the slash-extension's 200ms single-match auto-execute timer).
 
 // ===========================================================================
 // 1. Creating a query block via /query slash command

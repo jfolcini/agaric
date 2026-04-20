@@ -1,11 +1,11 @@
 import {
   activePopover,
   activeRoleDialog,
-  activeSuggestionList,
   expect,
   focusBlock,
   openPage,
   test,
+  typeSlashCommand,
   waitForBoot,
 } from './helpers'
 
@@ -46,16 +46,9 @@ async function openKebabMenu(page: import('@playwright/test').Page) {
   await kebab.click()
 }
 
-/** Type a slash command filter inside the currently focused editor. */
-async function typeSlashCommand(page: import('@playwright/test').Page, command: string) {
-  await page.keyboard.press('End')
-  await page.keyboard.type(` /${command}`, { delay: 30 })
-  // TEST-1b: scope to the last suggestion-list so stale portal DOM from
-  // a previous test can't match first.
-  const list = activeSuggestionList(page)
-  await expect(list).toBeVisible()
-  return list
-}
+// The canonical race-free `typeSlashCommand` helper lives in `./helpers` and
+// is imported above. See the JSDoc there for the split-keystroke rationale
+// (it avoids the slash-extension's 200ms single-match auto-execute timer).
 
 // ===========================================================================
 // 1. Save a page as template

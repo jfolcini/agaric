@@ -1,4 +1,12 @@
-import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
+import {
+  expect,
+  focusBlock,
+  openPage,
+  saveBlock,
+  test,
+  typeSlashCommand,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E tests for slash commands (/ picker).
@@ -22,30 +30,10 @@ import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './he
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Type a slash command filter inside the currently focused editor.
- * Moves to end of line, types ` /` + waits for the suggestion list to
- * appear, then types the query. Splitting the keystrokes around the
- * visibility assertion avoids a race with the slash extension's
- * auto-execute feature: when exactly one item matches a query of
- * length >= 3, a 200ms timer fires the command and closes the popup
- * (see AUTO_EXEC_DELAY_MS in src/editor/extensions/slash-command.ts).
- * Commands like /todo, /doing, /done resolve to a single match, so
- * asserting visibility AFTER the full query is typed can miss the
- * popup's brief life. Asserting right after `/` (empty query → base
- * list, nothing to auto-execute) is race-free.
- */
-async function typeSlashCommand(page: import('@playwright/test').Page, command: string) {
-  await page.keyboard.press('End')
-  await page.keyboard.type(' /', { delay: 30 })
-  const list = page.locator('[data-testid="suggestion-list"]')
-  await expect(list).toBeVisible()
-  if (command) {
-    await page.keyboard.type(command, { delay: 30 })
-  }
-  return list
-}
+//
+// The canonical race-free `typeSlashCommand` helper lives in `./helpers` and
+// is imported above. See the JSDoc there for the split-keystroke rationale
+// (it avoids the slash-extension's 200ms single-match auto-execute timer).
 
 // ===========================================================================
 // 1. Slash menu basics

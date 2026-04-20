@@ -92,5 +92,5 @@ In REVIEW-LATER.md: remove resolved items entirely — both the summary table ro
 - Be pragmatic but rigorous. Fix what's there, don't gold-plate, don't refactor beyond the scope of the item.
 - Every commit must pass `prek run --all-files`.
 - Respect architectural invariants in AGENTS.md (append-only op log, CQRS split, cursor pagination, single TipTap instance, Biome only, sqlx compile-time queries, foreign keys ON, ULID uppercase normalization).
-- If a Rust change touches SQL queries, run `cargo sqlx prepare -- --lib` to update the `.sqlx/` cache.
+- If a Rust change touches SQL queries, run `cargo sqlx prepare -- --tests` to update the `.sqlx/` cache.
 - If a Rust change touches types used in Tauri commands, run `cd src-tauri && cargo test -- specta_tests --ignored` to regenerate `src/lib/bindings.ts`.

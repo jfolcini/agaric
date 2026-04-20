@@ -206,6 +206,30 @@ export async function dragBlock(page: Page, source: Locator, target: Locator): P
 }
 
 /**
+ * Type a slash command filter inside the currently focused editor.
+ * Moves to end of line, types ` /` + waits for the suggestion list to
+ * appear, then types the query. Splitting the keystrokes around the
+ * visibility assertion avoids a race with the slash extension's
+ * auto-execute feature: when exactly one item matches a query of
+ * length >= 3, a 200ms timer fires the command and closes the popup
+ * (see AUTO_EXEC_DELAY_MS in src/editor/extensions/slash-command.ts).
+ * Commands like /todo, /doing, /done resolve to a single match, so
+ * asserting visibility AFTER the full query is typed can miss the
+ * popup's brief life. Asserting right after `/` (empty query → base
+ * list, nothing to auto-execute) is race-free.
+ */
+export async function typeSlashCommand(page: Page, command: string) {
+  await page.keyboard.press('End')
+  await page.keyboard.type(' /', { delay: 30 })
+  const list = page.locator('[data-testid="suggestion-list"]')
+  await expect(list).toBeVisible()
+  if (command) {
+    await page.keyboard.type(command, { delay: 30 })
+  }
+  return list
+}
+
+/**
  * Select a character range inside the currently-focused TipTap editor
  * by directly manipulating the DOM Selection API, then dispatch a
  * `selectionchange` event so ProseMirror picks up the new range.

@@ -257,6 +257,25 @@ describe('BlockGutterControls gutter button classes', () => {
     expect(historyBtn.className).toContain('pointer-events-none')
     expect(historyBtn.className).toContain('group-hover:pointer-events-auto')
   })
+
+  it('all three gutter buttons carry the touch-target utility class (UX-245)', () => {
+    // Regression for UX-245: the .touch-target utility now sets both min-height
+    // and min-width to 44px under (pointer: coarse) so the 20-px-wide gutter
+    // buttons meet WCAG 2.5.8 on touch devices. jsdom cannot evaluate the
+    // @media query, so we assert structural presence of the utility class
+    // on each button instead of its computed width.
+    renderWithTooltip(
+      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
+    )
+
+    const dragHandle = screen.getByTestId('drag-handle')
+    const historyBtn = screen.getByRole('button', { name: /block history/i })
+    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
+
+    expect(dragHandle.className).toContain('touch-target')
+    expect(historyBtn.className).toContain('touch-target')
+    expect(deleteBtn.className).toContain('touch-target')
+  })
 })
 
 describe('BlockGutterControls accessibility', () => {

@@ -432,7 +432,7 @@ After changing SQL queries in Rust source:
 
 ```bash
 cd src-tauri
-cargo sqlx prepare -- --lib
+cargo sqlx prepare -- --tests
 ```
 
 This regenerates the `.sqlx/` cache files. Commit the changes. The CI `sqlx offline cache check` step verifies the cache is up to date.
@@ -470,7 +470,7 @@ Release APKs are unsigned. Sign them first (see [Signing a Release APK](#signing
 
 ### Rust compilation errors after SQL changes
 
-Run `cargo sqlx prepare -- --lib` to regenerate the offline query cache.
+Run `cargo sqlx prepare -- --tests` to regenerate the offline query cache.
 
 ### TypeScript errors after Rust type changes
 

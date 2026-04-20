@@ -32,7 +32,7 @@ Every change must:
 - Open a pull request against `main`.
 - Use a conventional-commit-style subject (`fix(ux): …`, `feat(sync): …`, `docs: …`, `test(e2e): …`). Body explains the _why_ and any non-obvious design choices.
 - Keep commits focused. Rebase + force-push on your PR branch is fine; on `main` is not.
-- If your change touches SQL queries, run `cargo sqlx prepare -- --lib` and commit the regenerated `.sqlx/` files in the same commit.
+- If your change touches SQL queries, run `cargo sqlx prepare -- --tests` and commit the regenerated `.sqlx/` files in the same commit.
 - If your change touches Rust types exposed via Tauri IPC, run `cd src-tauri && cargo test -- specta_tests --ignored` to regenerate `src/lib/bindings.ts`.
 - Coupled dependency stacks (Tauri + Android; React + ecosystem; TipTap; Radix; SQLx + `.sqlx/`; specta + tauri-specta) must move together per the rules in AGENTS.md §Coupled Dependency Updates. Partial bumps will be rejected.
 

@@ -878,6 +878,39 @@ describe('PageBlockStore', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // moveToParent race conditions
+  // ---------------------------------------------------------------------------
+  describe('moveToParent race conditions', () => {
+    it('notifies undo with the original rootParentId even if it changes during await', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
+      store.setState({ blocks: [blockA, blockB] })
+
+      // Deferred promise for move_block so we can mutate state mid-flight.
+      let resolveMove!: (v: unknown) => void
+      const movePending = new Promise((resolve) => {
+        resolveMove = resolve
+      })
+      mockedInvoke.mockReturnValueOnce(movePending)
+      // list_blocks call(s) for the load() that follows moveBlock resolve. Cover root + any child fetches.
+      mockedInvoke.mockResolvedValue({ items: [], next_cursor: null, has_more: false })
+
+      const promise = store.getState().moveToParent('B', 'A', 0)
+
+      // Simulate the user navigating to a different page while the IPC is in flight.
+      store.setState({ rootParentId: 'DIFFERENT_PAGE' })
+
+      // Resolve the move_block IPC; load() and notifyUndoNewAction run after.
+      resolveMove({ block_id: 'B', new_parent_id: 'A', new_position: 0 })
+      await promise
+
+      // The undo notification must target the ORIGINAL page, not the one the user navigated to.
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+      expect(mockOnNewAction).not.toHaveBeenCalledWith('DIFFERENT_PAGE')
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // dedent
   // ---------------------------------------------------------------------------
   describe('dedent', () => {

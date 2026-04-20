@@ -485,10 +485,10 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     },
 
     moveToParent: async (blockId: string, newParentId: string | null, newPosition: number) => {
+      const { rootParentId } = get()
       try {
         await moveBlock(blockId, newParentId, newPosition)
         // Reload the full tree to get the correct flattened order.
-        const { rootParentId } = get()
         await get().load()
         notifyUndoNewAction(rootParentId)
       } catch (err) {

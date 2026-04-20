@@ -434,7 +434,7 @@ criterion_main!(benches);
 
 4. **Snapshot test with non-deterministic data** — If you snapshot a response containing ULIDs, timestamps, or hashes without redaction, the snapshot will break on every run. Always redact: `.id => "[ULID]"`, `.hash => "[HASH]"`, etc.
 
-5. **`cargo sqlx prepare` after SQL changes** — The project uses compile-time checked SQL queries (`query!` macros). Changing SQL in source requires regenerating the offline cache: `cargo sqlx prepare -- --lib`. Tests will fail to compile otherwise.
+5. **`cargo sqlx prepare` after SQL changes** — The project uses compile-time checked SQL queries (`query!` macros). Changing SQL in source requires regenerating the offline cache: `cargo sqlx prepare -- --tests`. Tests will fail to compile otherwise.
 
 6. **Specta bindings drift** — If you change Rust types used in Tauri commands, the `ts_bindings_up_to_date` test will fail. Regenerate: `cargo test -p agaric-lib -- specta_tests --ignored`.
 

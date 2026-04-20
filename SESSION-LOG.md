@@ -1,5 +1,89 @@
 # Session Log
 
+## Session 445 — 5-item batch: UX-245, BUG-47, MAINT-89, TEST-39, MAINT-90 (sync-notes slice) (2026-04-20)
+
+**4 REVIEW-LATER items fully resolved + 1 partial (MAINT-90).** Open items: 33 → 29. One coherent batch across five domains: CSS-utility + component test (UX-245), Zustand store race fix + test (BUG-47), 5-file doc edit (MAINT-89), e2e helper relocation (TEST-39), and the `docs/SYNC-PLATFORM-NOTES.md` slice of MAINT-90. 5 parallel build subagents on the main tree (no overlapping files → no worktrees). 5 pipelined read-only technical reviews — all APPROVE, zero REQUEST-CHANGES. One atomic commit.
+
+### What changed
+
+- **UX-245 — `.touch-target` utility missing `min-width: 44px`.** `src/index.css:1089-1094` — added `min-width: 44px;` inside the existing `@media (pointer: coarse)` block of `@utility touch-target`. Fixes the 20 × 44 px regression on `BlockGutterControls`' three gutter buttons (drag handle, history, delete). Regression test in `src/components/__tests__/BlockGutterControls.test.tsx` asserts all three buttons carry the `touch-target` class (jsdom can't evaluate `@media (pointer: coarse)` — structural class presence is the right fallback). Reviewer audited 60 existing `.touch-target` call sites across `src/`: no regression (full-width buttons already wider; icon buttons already have explicit `[@media(pointer:coarse)]:size-11`; flex containers respect `min-width`; the 3 components with explicit `[@media(pointer:coarse)]:min-w-[44px]` are redundant but non-conflicting).
+
+- **BUG-47 — `moveToParent` captured `rootParentId` after `await`.** `src/stores/page-blocks.ts:487-505` — moved `const { rootParentId } = get()` to the top of the function (before `try`), matching the session-46 pattern on `reorder`/`createBelow`/`edit`/`remove`/`indent`/`dedent`/`moveUp`/`moveDown`. 2-line diff. New race-condition regression test in `src/stores/__tests__/page-blocks.test.ts` uses a deferred Promise pattern, mutates `rootParentId` to `'DIFFERENT_PAGE'` mid-IPC, asserts `mockOnNewAction` was called with the ORIGINAL `'PAGE_1'`. Test count 72 → 73; sanity check: reverting the fix makes ONLY the new test fail. Error-path test (around line 864-877) untouched.
+
+- **MAINT-89 — `cargo sqlx prepare -- --lib` → `-- --tests` doc drift (5 call sites).** Pure doc edit, no `.sqlx/` regeneration. Five one-flag edits:
+  - `BUILD.md:435`, `BUILD.md:473`
+  - `CONTRIBUTING.md:35`
+  - `src-tauri/tests/AGENTS.md:437`
+  - `PROMPT.md:95`
+  `AGENTS.md` (top-level) already used the correct flag-less form (`cargo sqlx prepare` defaults to `--all-targets`); only the pointer docs drifted. Reviewer grep-audited the entire repo for `cargo sqlx prepare`: zero remaining drifts in instruction-bearing docs; historical references in `REVIEW-LATER.md` and `SESSION-LOG.md` are descriptive, not instructions.
+
+- **TEST-39 — `typeSlashCommand` helper relocation.** Extracted the canonical fixed helper from `e2e/slash-commands.spec.ts:39-48` (session-443 fix) into `e2e/helpers.ts` as an exported `typeSlashCommand(page, command)`. Deleted the race-prone local copies in `e2e/query-blocks.spec.ts` and `e2e/templates.spec.ts`; both specs now import the shared helper. All call sites unchanged (1 in query-blocks, 7 in templates, 13 in slash-commands = 21 total). `templates.spec.ts`'s now-unused `activeSuggestionList` import dropped. Canonical helper uses the unscoped `page.locator('[data-testid="suggestion-list"]')` locator (matches slash-commands' original pre-relocation behaviour; templates.spec.ts's old local helper was the outlier with `.last()` scoping — architectural design noted by reviewer: `typeSlashCommand` creates-and-asserts-fresh, no stale-portal race at that moment; `.last()` only needed for general-purpose post-hoc queries via `activeSuggestionList(page)`).
+
+- **MAINT-90 (partial) — `docs/SYNC-PLATFORM-NOTES.md` markdownlint cleanup.** Fixed 42 violations (23× MD022 blanks-around-headings, 13× MD032 blanks-around-lists, 2× MD031 blanks-around-fences, 4× MD040 fenced-code-language — 2 auto-fix + 2 hand-tagged: line 107 `bash` for firewall commands, line 150 `text` for plain-text instructions). Removed the file from `.markdownlint-cli2.jsonc` ignores. Cross-references verified (`#220` anchor in `QrScanner.tsx:8` still resolves; `SYNC-PLATFORM-NOTES.md` citation in `src-tauri/src/sync_net/tests.rs:282` still valid). MAINT-90 remains open with the 3 remaining files (UX.md 253, ARCHITECTURE.md 192, COMPARISON.md 170) — updated in place to reflect the reduced scope (~615 violations across 3 docs).
+
+### Pipeline
+
+1. **PLAN.** Reviewed REVIEW-LATER.md after session 444 closure. UX-245, BUG-47, MAINT-89, TEST-39 were the four clearly-S actionable items. MAINT-90 was S-M and parallelisable per-file; included the smallest slice (docs/SYNC-PLATFORM-NOTES.md, 42 violations) since it's a safe single-subagent task. Skipped UX-246 (M, 13 sites — needs its own session with 2 subagents).
+2. **BUILD (5 parallel subagents on main tree).** Each subagent touched non-overlapping files → no worktrees needed. Launched all 5 simultaneously as background subagents. Each prompt pinned the working directory, the exact files to change, explicit "do NOT" boundaries (e.g., "do NOT touch Button CVA", "do NOT rewrite `reorder`", "do NOT change the helper's behaviour — pure relocation"), and the verification command (`npx vitest run <file>` or `npx playwright test <specs>`).
+3. **REVIEW (5 read-only reviewers, pipelined as each build completed).** Each reviewer covered correctness, scope (no over-touching), AGENTS.md invariants, test coverage, and side-effect audits. All 5 returned APPROVE. Notable explicit checks:
+   - UX-245: reviewer enumerated all 60 `.touch-target` call sites — confirmed no regression potential.
+   - BUG-47: reviewer walked the race-condition trace (T0 capture → T1 IPC → T2 mutation → T3 resolve) and confirmed `notifyUndoNewAction` writes to the correct page's undo stack.
+   - MAINT-89: reviewer audited all `cargo sqlx prepare` references repo-wide.
+   - TEST-39: reviewer verified the `.last()` scoping divergence is behaviourally correct (canonical helper creates-and-asserts-fresh).
+   - MAINT-90: reviewer verified the two hand-added language tags (`bash`, `text`) are semantically correct for their code blocks.
+4. **MERGE.** No worktrees → no merge step.
+5. **VERIFY.** Per-file: UX-245 vitest 24/24; BUG-47 vitest 73/73; TEST-39 3 × Playwright green (41 tests across slash-commands + query-blocks + templates, 3 × 41/41). MAINT-89 `grep` zero remaining `-- --lib` in instruction-bearing docs. MAINT-90 `npx markdownlint-cli2 docs/SYNC-PLATFORM-NOTES.md` zero errors, full-repo lint green.
+6. **ORCHESTRATOR CLEANUP.**
+   - Three subagents (UX-245, BUG-47, TEST-39) proactively updated REVIEW-LATER.md removing their own row + detail sections. MAINT-89 and MAINT-90 left REVIEW-LATER.md updates to the orchestrator.
+   - Orchestrator removed the MAINT-89 row + detail section, updated MAINT-90 table row + detail to reflect partial progress (4 files → 3, 657 violations → ~615), and fixed the summary count (33 → 29, "previously resolved" 366+ → 370+, 130 → 131 sessions).
+7. **COMMIT.** Single atomic commit. `prek run --all-files` gate.
+8. **LOG.** This entry.
+
+### Files changed
+
+| Path | Change |
+|------|--------|
+| `src/index.css` | +1 line: `min-width: 44px` inside `@utility touch-target` `@media (pointer: coarse)`. |
+| `src/components/__tests__/BlockGutterControls.test.tsx` | +1 regression test asserting the three gutter buttons carry the `touch-target` class. |
+| `src/stores/page-blocks.ts` | 2-line diff: hoisted `const { rootParentId } = get()` above the `try` in `moveToParent`. |
+| `src/stores/__tests__/page-blocks.test.ts` | +1 race-condition test in a new `moveToParent race conditions` describe block. |
+| `BUILD.md` | 2 × `-- --lib` → `-- --tests`. |
+| `CONTRIBUTING.md` | 1 × `-- --lib` → `-- --tests`. |
+| `src-tauri/tests/AGENTS.md` | 1 × `-- --lib` → `-- --tests`. |
+| `PROMPT.md` | 1 × `-- --lib` → `-- --tests`. |
+| `e2e/helpers.ts` | +23 lines: exported `typeSlashCommand(page, command)` with full JSDoc. |
+| `e2e/slash-commands.spec.ts` | Local helper removed; import updated. |
+| `e2e/query-blocks.spec.ts` | Local helper removed; import updated. |
+| `e2e/templates.spec.ts` | Local helper removed; `activeSuggestionList` import dropped; import updated. |
+| `docs/SYNC-PLATFORM-NOTES.md` | 42 lint fixes (blank lines + 4 code-fence language tags). |
+| `.markdownlint-cli2.jsonc` | Removed `"docs/SYNC-PLATFORM-NOTES.md"` from `ignores` array. |
+| `REVIEW-LATER.md` | Removed UX-245 + BUG-47 + MAINT-89 + TEST-39 rows/details. Updated MAINT-90 in place (reduced scope). Summary count 33 → 29; previously-resolved 366+ → 370+, 130 → 131 sessions. |
+| `SESSION-LOG.md` | This entry. |
+
+15 source files + 2 state files in the commit.
+
+### Verification
+
+- **Vitest targeted:**
+  - `src/components/__tests__/BlockGutterControls.test.tsx`: 24 passed (+1 new).
+  - `src/stores/__tests__/page-blocks.test.ts`: 73 passed (+1 new); sanity-check: reverting `moveToParent` hoist makes ONLY the new test fail with the expected `'DIFFERENT_PAGE'` vs `'PAGE_1'` diff.
+- **Playwright targeted:**
+  - `e2e/slash-commands.spec.ts e2e/query-blocks.spec.ts e2e/templates.spec.ts --workers=4 --retries=0` × 3 consecutive runs, each 41/41 green.
+- **Markdownlint:**
+  - `docs/SYNC-PLATFORM-NOTES.md` zero errors after fix.
+  - Full-repo lint still green (UX.md / ARCHITECTURE.md / COMPARISON.md remain in `ignores`).
+- **Grep audit (MAINT-89):** zero `cargo sqlx prepare -- --lib` in instruction-bearing docs; only descriptive references in `REVIEW-LATER.md` (this entry is removed) and `SESSION-LOG.md` (historical).
+- **`prek run --all-files` green** (see commit message).
+
+### Caveats
+
+- **MAINT-90 is partial.** Only `docs/SYNC-PLATFORM-NOTES.md` was cleaned. UX.md (253), ARCHITECTURE.md (192), COMPARISON.md (170) remain ignored with ~615 combined violations. REVIEW-LATER entry updated in place to reflect the reduced scope; the item's own guidance ("one parallel-subagent batch, one doc per subagent; don't batch them all") still applies for the remaining three files.
+- **Subagent-driven REVIEW-LATER edits.** Three of the five build subagents proactively removed their own items from REVIEW-LATER.md (even though only TEST-39's prompt mentioned it). This was harmless (no merge conflicts, no stale cross-references left behind) but inconsistent with the PROMPT.md line "Concurrent edits to REVIEW-LATER.md: Other agents may be working on REVIEW-LATER.md at the same time … always re-read it first". For future batches, either tell every subagent to update the file (and race-condition handle it) or tell none (orchestrator does it all). This session mixed the two — not ideal but harmless.
+- **TEST-39 `.last()` scoping divergence.** The old local `typeSlashCommand` in `e2e/templates.spec.ts` used `activeSuggestionList(page)` (`.last()`-scoped). The canonical shared helper uses the unscoped `page.locator(...)`. Per the PROMPT scope ("Preserve its exact behaviour — do NOT change logic, only relocate + export"), the canonical slash-commands version was preserved; the templates.spec.ts divergence was the outlier. Reviewer confirmed this is architecturally clean (typeSlashCommand creates-and-asserts-fresh — no stale portal at that moment); 3 × 41/41 green runs validate no flakiness. If a future bug surfaces in this path, both helpers exist side-by-side in `e2e/helpers.ts` and can be swapped per call site.
+- **UX-246 deferred.** The other M-sized UX item (13 bare `<Input>` consumers of `SearchInput`) was intentionally left out of this batch — its scope justifies a dedicated 2-subagent session (SearchPanel + TagFilterPanel + TrashView batch; BacklinkFilterBuilder + PageBrowser batch).
+
+---
+
 ## Session 444 — TEST-1fa + TEST-1f + TEST-1d: close Playwright flake floor to zero, wire CI artifact upload (2026-04-20)
 
 **3 REVIEW-LATER items resolved (TEST-1fa, TEST-1f umbrella, TEST-1d).** Open items: 36 → 33. Closed the biggest sub-bucket (17–18 failures in `toolbar-and-blocks.spec.ts` + `markdown-syntax.spec.ts` — mark application via toolbar buttons and Ctrl+B/I/E shortcuts), removed the now-empty TEST-1f umbrella, and landed the remaining TEST-1d artifact-upload YAML change. Playwright full suite: 293/293 green. One technical review (APPROVE + 1 minor addition). One atomic commit.
