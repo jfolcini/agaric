@@ -1134,4 +1134,47 @@ describe('UnlinkedReferences', () => {
     // graceful fallback behaviour when the initial fetch fails.
     expect(container.querySelector('.unlinked-references')).not.toBeInTheDocument()
   })
+
+  // ---------------------------------------------------------------------------
+  // UX-240: Filter toggle must stay inline with header on narrow viewports
+  // ---------------------------------------------------------------------------
+
+  // Conservative preventive styling: outer row is flex-nowrap with min-w-0,
+  // header button carries min-w-0, and the filter button remains shrink-0.
+  it('outer header row and children carry flex-nowrap / min-w-0 / shrink-0 (UX-240)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    const { container } = renderUnlinkedReferences({
+      pageId: 'PAGE1',
+      pageTitle: 'My Page',
+    })
+
+    // Expand so the filter button is rendered alongside the header.
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await screen.findByText('mention text')
+
+    const headerButton = container.querySelector('.unlinked-references-header')
+    expect(headerButton).toBeInTheDocument()
+    const outerRow = headerButton?.parentElement
+    expect(outerRow).toBeInTheDocument()
+    expect(outerRow).toHaveClass('flex', 'flex-nowrap', 'items-center', 'gap-1', 'min-w-0')
+
+    // The header button itself must allow flex shrinking.
+    expect(headerButton).toHaveClass('min-w-0')
+    // But still render full-width as a click target.
+    expect(headerButton).toHaveClass('w-full')
+
+    // Filter toggle keeps shrink-0 so it never collapses to zero width.
+    const filterButton = screen.getByRole('button', { name: /show filters/i })
+    expect(filterButton).toHaveClass('shrink-0')
+  })
 })

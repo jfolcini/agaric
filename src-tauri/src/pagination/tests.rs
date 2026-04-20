@@ -853,6 +853,346 @@ async fn list_trash_excludes_conflict_blocks() {
     );
 }
 
+// ── UX-243: roots-only trash listing ────────────────────────────────
+
+#[tokio::test]
+async fn list_trash_deleted_page_with_children_returns_only_root() {
+    // A deleted page with N children (all sharing `deleted_at` per
+    // cascade_soft_delete) must appear as a single root row — descendants
+    // must NOT leak into the list view.
+    let (pool, _dir) = test_pool().await;
+
+    let ts = "2025-03-10T12:00:00+00:00";
+    insert_block(&pool, "PAGE0001", "page", "root page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "CHILD001",
+        "content",
+        "c1",
+        Some("PAGE0001"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "CHILD002",
+        "content",
+        "c2",
+        Some("PAGE0001"),
+        Some(2),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "CHILD003",
+        "content",
+        "c3",
+        Some("PAGE0001"),
+        Some(3),
+    )
+    .await;
+
+    // Simulate cascade_soft_delete: same `deleted_at` on page + every child.
+    soft_delete_block(&pool, "PAGE0001", ts).await;
+    soft_delete_block(&pool, "CHILD001", ts).await;
+    soft_delete_block(&pool, "CHILD002", ts).await;
+    soft_delete_block(&pool, "CHILD003", ts).await;
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_trash(&pool, &page).await.unwrap();
+
+    assert_eq!(
+        resp.items.len(),
+        1,
+        "only the page root must appear, descendants filtered out"
+    );
+    assert_eq!(resp.items[0].id, "PAGE0001", "root must be the page");
+    assert!(
+        !resp.has_more,
+        "single-root page must fit on the first page"
+    );
+}
+
+#[tokio::test]
+async fn list_trash_loose_content_block_with_alive_parent_appears_as_root() {
+    // A content block deleted from inside an alive parent page is itself a
+    // root (parent is not in the deleted set at all).
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "ALIVEPAG", "page", "alive page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "LOOSE001",
+        "content",
+        "loose deleted",
+        Some("ALIVEPAG"),
+        Some(1),
+    )
+    .await;
+
+    soft_delete_block(&pool, "LOOSE001", "2025-04-01T00:00:00+00:00").await;
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_trash(&pool, &page).await.unwrap();
+
+    assert_eq!(
+        resp.items.len(),
+        1,
+        "loose deleted content with alive parent must appear"
+    );
+    assert_eq!(resp.items[0].id, "LOOSE001");
+}
+
+#[tokio::test]
+async fn list_trash_loose_deleted_block_with_different_batch_parent_appears() {
+    // A content block whose parent was *also* deleted but in a different
+    // batch (different `deleted_at`) is a root of its own batch — must
+    // appear in the trash list.
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "PARENT01", "page", "parent", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "CHILD001",
+        "content",
+        "child",
+        Some("PARENT01"),
+        Some(1),
+    )
+    .await;
+
+    // Parent deleted on 2025-05-01 — e.g. via a direct soft-delete of just
+    // the parent row (not cascade_soft_delete, which would share the ts).
+    soft_delete_block(&pool, "PARENT01", "2025-05-01T00:00:00+00:00").await;
+    // Child deleted separately on 2025-06-01 — different batch.
+    soft_delete_block(&pool, "CHILD001", "2025-06-01T00:00:00+00:00").await;
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_trash(&pool, &page).await.unwrap();
+
+    // Both are roots of their own batches.
+    let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(resp.items.len(), 2, "two independent roots expected");
+    assert!(
+        ids.contains(&"PARENT01") && ids.contains(&"CHILD001"),
+        "both parent (own batch) and child (own batch) must appear; got {ids:?}"
+    );
+}
+
+#[tokio::test]
+async fn list_trash_pagination_cursor_with_mixed_root_sizes() {
+    // Pagination cursor round-trips across pages even when some roots have
+    // many descendants (which stay filtered out of the list).
+    let (pool, _dir) = test_pool().await;
+
+    // 5 deleted roots, each at a distinct timestamp. Some of them also have
+    // a descendant sharing the timestamp — those descendants must NOT show
+    // up in the list, only the 5 roots.
+    for i in 1..=5_i64 {
+        let root_id = format!("ROOT{i:04}");
+        insert_block(&pool, &root_id, "page", &format!("root {i}"), None, None).await;
+        let ts = format!("2025-07-{i:02}T00:00:00+00:00");
+        soft_delete_block(&pool, &root_id, &ts).await;
+
+        // First 3 roots also have a descendant in the same batch.
+        if i <= 3 {
+            let child_id = format!("CHD_{i:04}");
+            insert_block(
+                &pool,
+                &child_id,
+                "content",
+                &format!("child of {i}"),
+                Some(&root_id),
+                Some(1),
+            )
+            .await;
+            soft_delete_block(&pool, &child_id, &ts).await;
+        }
+    }
+
+    // First page (limit 2) — expect ROOT0005, ROOT0004 (most recent first).
+    let r1 = list_trash(&pool, &PageRequest::new(None, Some(2)).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(r1.items.len(), 2, "first page must have exactly 2 roots");
+    assert!(r1.has_more, "more roots remain");
+    assert_eq!(r1.items[0].id, "ROOT0005");
+    assert_eq!(r1.items[1].id, "ROOT0004");
+
+    // Second page — expect ROOT0003, ROOT0002.
+    let r2 = list_trash(&pool, &PageRequest::new(r1.next_cursor, Some(2)).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(r2.items.len(), 2, "second page must have exactly 2 roots");
+    assert!(r2.has_more, "still one root left");
+    assert_eq!(r2.items[0].id, "ROOT0003");
+    assert_eq!(r2.items[1].id, "ROOT0002");
+
+    // Last page — expect ROOT0001 only.
+    let r3 = list_trash(&pool, &PageRequest::new(r2.next_cursor, Some(2)).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(r3.items.len(), 1, "last page must have 1 root");
+    assert!(!r3.has_more, "last page reached");
+    assert!(r3.next_cursor.is_none(), "no cursor after last page");
+    assert_eq!(r3.items[0].id, "ROOT0001");
+}
+
+#[tokio::test]
+async fn list_trash_conflict_filter_still_applies_to_roots() {
+    // is_conflict = 0 predicate must still filter conflict copies from the
+    // roots-only list (it's an additional constraint, not replaced by the
+    // roots predicate).
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "NORM0001", "page", "normal", None, None).await;
+    insert_block(&pool, "CONF0001", "page", "conflict", None, None).await;
+
+    soft_delete_block(&pool, "NORM0001", "2025-08-01T00:00:00+00:00").await;
+    soft_delete_block(&pool, "CONF0001", "2025-08-01T00:00:00+00:00").await;
+
+    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
+        .bind("CONF0001")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = list_trash(&pool, &page).await.unwrap();
+
+    assert_eq!(resp.items.len(), 1, "conflict root must still be filtered");
+    assert_eq!(resp.items[0].id, "NORM0001");
+}
+
+// ── UX-243: trash_descendant_counts helper ──────────────────────────
+
+#[tokio::test]
+async fn trash_descendant_counts_returns_per_root_counts() {
+    let (pool, _dir) = test_pool().await;
+
+    // ROOTA: 3 descendants. ROOTB: 0 descendants. ROOTC: not deleted.
+    let ts_a = "2025-09-01T00:00:00+00:00";
+    let ts_b = "2025-09-02T00:00:00+00:00";
+    insert_block(&pool, "ROOTA001", "page", "a", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "A_CHD001",
+        "content",
+        "a1",
+        Some("ROOTA001"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "A_CHD002",
+        "content",
+        "a2",
+        Some("ROOTA001"),
+        Some(2),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "A_CHD003",
+        "content",
+        "a3",
+        Some("ROOTA001"),
+        Some(3),
+    )
+    .await;
+    soft_delete_block(&pool, "ROOTA001", ts_a).await;
+    soft_delete_block(&pool, "A_CHD001", ts_a).await;
+    soft_delete_block(&pool, "A_CHD002", ts_a).await;
+    soft_delete_block(&pool, "A_CHD003", ts_a).await;
+
+    insert_block(&pool, "ROOTB001", "content", "b", None, None).await;
+    soft_delete_block(&pool, "ROOTB001", ts_b).await;
+
+    insert_block(&pool, "ROOTC001", "content", "c alive", None, None).await;
+
+    let counts = trash_descendant_counts(
+        &pool,
+        &[
+            "ROOTA001".to_string(),
+            "ROOTB001".to_string(),
+            "ROOTC001".to_string(),
+        ],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        counts.get("ROOTA001").copied(),
+        Some(3),
+        "ROOTA001 must report 3 descendants, got {counts:?}"
+    );
+    // Zero-descendant roots and alive blocks are omitted — callers default to 0.
+    assert!(
+        !counts.contains_key("ROOTB001"),
+        "zero-descendant root must be omitted, got {counts:?}"
+    );
+    assert!(
+        !counts.contains_key("ROOTC001"),
+        "alive block must be omitted, got {counts:?}"
+    );
+}
+
+#[tokio::test]
+async fn trash_descendant_counts_empty_input_returns_empty_map() {
+    let (pool, _dir) = test_pool().await;
+    let counts = trash_descendant_counts(&pool, &[]).await.unwrap();
+    assert!(counts.is_empty(), "empty input must return empty map");
+}
+
+#[tokio::test]
+async fn trash_descendant_counts_excludes_conflict_descendants() {
+    // Conflict copies must not inflate the descendant count — their filter
+    // matches list_trash's root filter.
+    let (pool, _dir) = test_pool().await;
+
+    let ts = "2025-10-05T00:00:00+00:00";
+    insert_block(&pool, "PAGE_X01", "page", "x", None, None).await;
+    insert_block(
+        &pool,
+        "X_CHD001",
+        "content",
+        "ok child",
+        Some("PAGE_X01"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "X_CNFL01",
+        "content",
+        "conflict child",
+        Some("PAGE_X01"),
+        Some(2),
+    )
+    .await;
+
+    soft_delete_block(&pool, "PAGE_X01", ts).await;
+    soft_delete_block(&pool, "X_CHD001", ts).await;
+    soft_delete_block(&pool, "X_CNFL01", ts).await;
+
+    sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
+        .bind("X_CNFL01")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let counts = trash_descendant_counts(&pool, &["PAGE_X01".to_string()])
+        .await
+        .unwrap();
+
+    assert_eq!(
+        counts.get("PAGE_X01").copied(),
+        Some(1),
+        "conflict descendant must not count, expected 1 got {counts:?}"
+    );
+}
+
 // ====================================================================
 // Cursor stability
 // ====================================================================

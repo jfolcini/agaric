@@ -126,6 +126,20 @@ describe('CollapsiblePanelHeader', () => {
     expect(button.className).toContain('focus-visible:outline-hidden')
   })
 
+  // UX-240: header button must allow shrinking inside a narrow flex parent so
+  // siblings like the inline filter toggle never wrap below it.
+  it('includes min-w-0 on the button to allow flex shrinking (UX-240)', () => {
+    render(
+      <CollapsiblePanelHeader isCollapsed={false} onToggle={() => {}}>
+        Header
+      </CollapsiblePanelHeader>,
+    )
+    const button = screen.getByRole('button')
+    expect(button.className).toContain('min-w-0')
+    // w-full must remain — the full-width click target is intentional.
+    expect(button.className).toContain('w-full')
+  })
+
   it('sets aria-label to "Expand …" when collapsed (UX-2)', () => {
     render(
       <CollapsiblePanelHeader isCollapsed={true} onToggle={() => {}}>

@@ -11,6 +11,9 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { isDateFormattedPage } from '../lib/date-utils'
+import { parseDate } from '../lib/parse-date'
+import { useJournalStore } from './journal'
 
 export type View =
   | 'journal'
@@ -79,6 +82,26 @@ function tabLabel(stack: PageEntry[]): string {
   return top?.title ?? ''
 }
 
+/**
+ * UX-242: parse a `YYYY-MM-DD` page title into a local-time `Date` when the
+ * title is both shape-correct (`isDateFormattedPage`) AND resolves to a valid
+ * calendar date (`parseDate` returns null for impossible dates like
+ * `2026-13-45`). Returns `null` for any other input so callers can fall
+ * through to the generic page-editor path.
+ */
+function parseDateTitleToLocalDate(title: string): Date | null {
+  if (!isDateFormattedPage(title)) return null
+  const parsed = parseDate(title)
+  if (parsed === null) return null
+  const parts = parsed.split('-')
+  if (parts.length !== 3) return null
+  const year = Number(parts[0])
+  const month = Number(parts[1])
+  const day = Number(parts[2])
+  const date = new Date(year, month - 1, day)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
 export const useNavigationStore = create<NavigationStore>()(
   persist(
     (set, get) => ({
@@ -103,6 +126,39 @@ export const useNavigationStore = create<NavigationStore>()(
       },
 
       navigateToPage: (pageId: string, title: string, blockId?: string) => {
+        // UX-242: date-titled pages (YYYY-MM-DD) belong to the Journal → Daily
+        // view, not the generic page-editor. Route them through the journal
+        // store so every call site (PageBrowser, breadcrumbs, search, tag
+        // filter, templates, graph, …) gets the correct behaviour with a
+        // single change. Date-shaped titles that resolve to invalid calendar
+        // dates (e.g. "2026-13-45") fall through to the page-editor path
+        // below so the user can still reach the page.
+        const parsedDate = parseDateTitleToLocalDate(title)
+        if (parsedDate !== null) {
+          useJournalStore.getState().navigateToDate(parsedDate, 'daily')
+          const state = get()
+          // Mirror the existing `setView` clearing behaviour when leaving
+          // page-editor (tabs / pageStack / activeTabIndex get reset).
+          // Journal view does not use pageStack at all, so we never push
+          // onto it here.
+          // TODO(UX-242): DailyView / DaySection do not currently scroll to
+          // an arbitrary child blockId on mount. A follow-up is needed to
+          // honour selectedBlockId within a day section.
+          const resetPageEditorState =
+            state.currentView === 'page-editor'
+              ? {
+                  tabs: [{ id: '0', pageStack: [], label: '' }],
+                  activeTabIndex: 0,
+                }
+              : {}
+          set({
+            currentView: 'journal',
+            selectedBlockId: blockId ?? null,
+            ...resetPageEditorState,
+          })
+          return
+        }
+
         const state = get()
         const { tabs, activeTabIndex } = state
         const activeTab = tabs[activeTabIndex]

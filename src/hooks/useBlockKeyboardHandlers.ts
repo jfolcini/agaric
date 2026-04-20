@@ -8,6 +8,22 @@ import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { announce } from '../lib/announcer'
 import type { FlatBlock } from '../lib/tree-utils'
 
+/**
+ * UX-241: scroll the block's DOM node into view after a reorder so the
+ * viewport tracks the moved block instead of jumping to the top. Wrapped
+ * in requestAnimationFrame to let React commit the new layout before we
+ * read it. Uses `block: 'nearest'` (not smooth, not center) to keep
+ * already-visible blocks in place and only pull off-screen blocks into view.
+ *
+ * Silently no-ops when the DOM node is absent (e.g. virtualised away or
+ * still being remounted by the roving editor).
+ */
+function scrollFocusedBlockIntoView(blockId: string): void {
+  requestAnimationFrame(() => {
+    document.querySelector(`[data-block-id="${blockId}"]`)?.scrollIntoView({ block: 'nearest' })
+  })
+}
+
 export interface UseBlockKeyboardHandlersParams {
   focusedBlockId: string | null
   collapsedVisible: FlatBlock[]
@@ -151,8 +167,13 @@ export function useBlockKeyboardHandlers({
     if (!focusedBlockId) return
     const content = rovingEditorRef.current.getMarkdown?.() ?? ''
     handleFlush()
-    moveUp(focusedBlockId)
-    rovingEditorRef.current.mount(focusedBlockId, content)
+    const blockId = focusedBlockId
+    moveUp(blockId)
+      .then(() => scrollFocusedBlockIntoView(blockId))
+      .catch((err: unknown) => {
+        logger.warn('useBlockKeyboardHandlers', 'moveUp failed', { blockId }, err)
+      })
+    rovingEditorRef.current.mount(blockId, content)
     announce(t('announce.blockMovedUp'))
   }, [focusedBlockId, handleFlush, moveUp, t])
 
@@ -160,8 +181,13 @@ export function useBlockKeyboardHandlers({
     if (!focusedBlockId) return
     const content = rovingEditorRef.current.getMarkdown?.() ?? ''
     handleFlush()
-    moveDown(focusedBlockId)
-    rovingEditorRef.current.mount(focusedBlockId, content)
+    const blockId = focusedBlockId
+    moveDown(blockId)
+      .then(() => scrollFocusedBlockIntoView(blockId))
+      .catch((err: unknown) => {
+        logger.warn('useBlockKeyboardHandlers', 'moveDown failed', { blockId }, err)
+      })
+    rovingEditorRef.current.mount(blockId, content)
     announce(t('announce.blockMovedDown'))
   }, [focusedBlockId, handleFlush, moveDown, t])
 
@@ -170,6 +196,10 @@ export function useBlockKeyboardHandlers({
       const content = id === focusedBlockId ? (rovingEditorRef.current.getMarkdown?.() ?? '') : null
       handleFlush()
       moveUp(id)
+        .then(() => scrollFocusedBlockIntoView(id))
+        .catch((err: unknown) => {
+          logger.warn('useBlockKeyboardHandlers', 'moveUp by id failed', { blockId: id }, err)
+        })
       if (content !== null) {
         rovingEditorRef.current.mount(id, content)
       }
@@ -182,6 +212,10 @@ export function useBlockKeyboardHandlers({
       const content = id === focusedBlockId ? (rovingEditorRef.current.getMarkdown?.() ?? '') : null
       handleFlush()
       moveDown(id)
+        .then(() => scrollFocusedBlockIntoView(id))
+        .catch((err: unknown) => {
+          logger.warn('useBlockKeyboardHandlers', 'moveDown by id failed', { blockId: id }, err)
+        })
       if (content !== null) {
         rovingEditorRef.current.mount(id, content)
       }

@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { announce } from '../../lib/announcer'
 import type { FlatBlock } from '../../lib/tree-utils'
 import { useBlockKeyboardHandlers } from '../useBlockKeyboardHandlers'
@@ -15,6 +15,14 @@ vi.mock('../../editor/markdown-serializer', () => ({
 }))
 vi.mock('../../editor/types', () => ({
   pmEndOfFirstBlock: vi.fn(() => 1),
+}))
+vi.mock('@/lib/logger', () => ({
+  logger: {
+    warn: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    debug: vi.fn(),
+  },
 }))
 
 const mockedAnnounce = vi.mocked(announce)
@@ -339,6 +347,138 @@ describe('useBlockKeyboardHandlers handleMoveUpById/DownById', () => {
 
     expect(params.handleFlush).toHaveBeenCalled()
     expect(params.moveDown).toHaveBeenCalledWith('A')
+  })
+})
+
+// ── UX-241: scrollIntoView after keyboard move ───────────────────────────
+
+describe('useBlockKeyboardHandlers UX-241 scrollIntoView', () => {
+  let scrollSpy: ReturnType<typeof vi.spyOn>
+  let blockEl: HTMLDivElement
+
+  beforeEach(() => {
+    scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+    blockEl = document.createElement('div')
+    blockEl.setAttribute('data-block-id', 'B')
+    document.body.appendChild(blockEl)
+  })
+
+  afterEach(() => {
+    scrollSpy.mockRestore()
+    if (blockEl.parentNode) blockEl.parentNode.removeChild(blockEl)
+  })
+
+  it('scrolls the moved block into view after handleMoveUp resolves', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      result.current.handleMoveUp()
+      // Flush the moveUp promise chain so .then(() => scrollFocusedBlockIntoView) fires.
+      await Promise.resolve()
+    })
+
+    // The rAF callback runs asynchronously; wait for scrollIntoView to be invoked.
+    await vi.waitFor(() => {
+      expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest' })
+    })
+  })
+
+  it('scrolls the moved block into view after handleMoveDown resolves', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      result.current.handleMoveDown()
+      await Promise.resolve()
+    })
+
+    await vi.waitFor(() => {
+      expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest' })
+    })
+  })
+
+  it('scrolls the moved block into view after handleMoveUpById resolves', async () => {
+    // Create a second block element for the id-addressed path.
+    const otherEl = document.createElement('div')
+    otherEl.setAttribute('data-block-id', 'C')
+    document.body.appendChild(otherEl)
+
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      result.current.handleMoveUpById('C')
+      await Promise.resolve()
+    })
+
+    await vi.waitFor(() => {
+      expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest' })
+    })
+
+    if (otherEl.parentNode) otherEl.parentNode.removeChild(otherEl)
+  })
+
+  it('scrolls the moved block into view after handleMoveDownById resolves', async () => {
+    const otherEl = document.createElement('div')
+    otherEl.setAttribute('data-block-id', 'A')
+    document.body.appendChild(otherEl)
+
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      result.current.handleMoveDownById('A')
+      await Promise.resolve()
+    })
+
+    await vi.waitFor(() => {
+      expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest' })
+    })
+
+    if (otherEl.parentNode) otherEl.parentNode.removeChild(otherEl)
+  })
+
+  it('does NOT scroll when moveUp rejects', async () => {
+    const moveUp = vi.fn(async () => {
+      throw new Error('move failed')
+    })
+    const params = makeDefaultParams({ moveUp })
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      result.current.handleMoveUp()
+      // Flush both the rejection and the chained .catch microtask.
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // Give rAF a chance to fire — it should not be scheduled because .catch ran.
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve())
+    })
+
+    expect(scrollSpy).not.toHaveBeenCalled()
+  })
+
+  it('does not crash when the DOM node is missing (block virtualised away)', async () => {
+    // Remove the pre-seeded element so querySelector returns null.
+    if (blockEl.parentNode) blockEl.parentNode.removeChild(blockEl)
+
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      result.current.handleMoveUp()
+      await Promise.resolve()
+    })
+
+    // Let rAF fire — scrollIntoView should be no-op'd by `?.`.
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve())
+    })
+
+    expect(scrollSpy).not.toHaveBeenCalled()
   })
 })
 

@@ -178,6 +178,7 @@ async fn apply_op_tx(conn: &mut sqlx::SqliteConnection, record: &OpRecord) -> Re
                 crate::descendants_cte_purge!(),
                 "DELETE FROM block_tag_inherited \
                  WHERE block_id IN (SELECT id FROM descendants) \
+                    OR tag_id IN (SELECT id FROM descendants) \
                     OR inherited_from IN (SELECT id FROM descendants)",
             ))
             .bind(block_id)

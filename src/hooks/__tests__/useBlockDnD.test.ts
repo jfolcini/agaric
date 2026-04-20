@@ -46,6 +46,15 @@ vi.mock('../use-mobile', () => ({
   useIsMobile: vi.fn(() => false),
 }))
 
+vi.mock('@/lib/logger', () => ({
+  logger: {
+    warn: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    debug: vi.fn(),
+  },
+}))
+
 // ── Imports ──────────────────────────────────────────────────────────────
 
 import type { FlatBlock, Projection } from '../../lib/tree-utils'
@@ -915,6 +924,174 @@ describe('useBlockDnD', () => {
         'A',
       )
       expect(params.moveToParent).toHaveBeenCalledWith('A', null, 5)
+    })
+  })
+
+  // ── 14. UX-241: focus restore after drag ─────────────────────────────
+
+  describe('handleDragEnd (UX-241 focus restore)', () => {
+    it('restores focus on the dragged block after a successful moveToParent', async () => {
+      const blocks = [
+        makeFlatBlock('A', 0, null, 0),
+        makeFlatBlock('B', 0, null, 1),
+        makeFlatBlock('C', 0, null, 2),
+      ]
+      const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
+
+      const projection: Projection = { depth: 1, parentId: 'A', maxDepth: 1, minDepth: 0 }
+      mockedGetProjection.mockReturnValue(projection)
+      mockedComputePosition.mockReturnValue(0)
+
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      await act(async () => {
+        result.current.handleDragStart(makeDragStartEvent('B') as never)
+      })
+
+      await act(async () => {
+        result.current.handleDragEnd(makeDragEndEvent('B', 'C') as never)
+        // Flush the microtask queue so the .then(() => setFocused(blockId))
+        // chained on moveToParent has a chance to fire.
+        await Promise.resolve()
+      })
+
+      expect(params.moveToParent).toHaveBeenCalledWith('B', 'A', 0)
+      expect(params.setFocused).toHaveBeenCalledWith('B')
+    })
+
+    it('restores focus on the dragged block after a successful same-level reorder', async () => {
+      const blocks = [
+        makeFlatBlock('A', 0, null, 0),
+        makeFlatBlock('B', 0, null, 1),
+        makeFlatBlock('C', 0, null, 2),
+      ]
+      const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
+
+      // No projection → falls through to same-level reorder branch.
+      mockedGetProjection.mockReturnValue(null as unknown as Projection)
+
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      await act(async () => {
+        result.current.handleDragStart(makeDragStartEvent('A') as never)
+      })
+
+      await act(async () => {
+        result.current.handleDragEnd(makeDragEndEvent('A', 'C') as never)
+        await Promise.resolve()
+      })
+
+      expect(params.reorder).toHaveBeenCalledWith('A', 2)
+      expect(params.setFocused).toHaveBeenCalledWith('A')
+    })
+
+    it('does NOT restore focus when moveToParent rejects', async () => {
+      const blocks = [
+        makeFlatBlock('A', 0, null, 0),
+        makeFlatBlock('B', 0, null, 1),
+        makeFlatBlock('C', 0, null, 2),
+      ]
+      const moveToParent = vi.fn(async () => {
+        throw new Error('move failed')
+      })
+      const params = makeDefaultParams({ blocks, collapsedVisible: blocks, moveToParent })
+
+      const projection: Projection = { depth: 1, parentId: 'A', maxDepth: 1, minDepth: 0 }
+      mockedGetProjection.mockReturnValue(projection)
+      mockedComputePosition.mockReturnValue(0)
+
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      await act(async () => {
+        result.current.handleDragStart(makeDragStartEvent('B') as never)
+      })
+
+      await act(async () => {
+        result.current.handleDragEnd(makeDragEndEvent('B', 'C') as never)
+        // Let the rejected promise propagate through .catch so setFocused
+        // is NOT scheduled.
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(params.moveToParent).toHaveBeenCalled()
+      // drag-start had rovingEditor.activeBlockId === null, so setFocused
+      // was never called with null during drag-start.  Post-drop, .catch
+      // fires instead of .then, so setFocused should not have been called
+      // with the block id.
+      expect(params.setFocused).not.toHaveBeenCalledWith('B')
+    })
+
+    it('does NOT restore focus when reorder rejects', async () => {
+      const blocks = [
+        makeFlatBlock('A', 0, null, 0),
+        makeFlatBlock('B', 0, null, 1),
+        makeFlatBlock('C', 0, null, 2),
+      ]
+      const reorder = vi.fn(async () => {
+        throw new Error('reorder failed')
+      })
+      const params = makeDefaultParams({ blocks, collapsedVisible: blocks, reorder })
+
+      mockedGetProjection.mockReturnValue(null as unknown as Projection)
+
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      await act(async () => {
+        result.current.handleDragStart(makeDragStartEvent('A') as never)
+      })
+
+      await act(async () => {
+        result.current.handleDragEnd(makeDragEndEvent('A', 'C') as never)
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(params.reorder).toHaveBeenCalledWith('A', 2)
+      expect(params.setFocused).not.toHaveBeenCalledWith('A')
+    })
+
+    it('does NOT restore focus when the drop is cancelled (no over target)', async () => {
+      const params = makeDefaultParams()
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      await act(async () => {
+        result.current.handleDragStart(makeDragStartEvent('B') as never)
+      })
+
+      await act(async () => {
+        result.current.handleDragEnd(makeDragEndEvent('B', null) as never)
+        await Promise.resolve()
+      })
+
+      expect(params.moveToParent).not.toHaveBeenCalled()
+      expect(params.reorder).not.toHaveBeenCalled()
+      expect(params.setFocused).not.toHaveBeenCalledWith('B')
+    })
+
+    it('does NOT restore focus when dropping on the same block with no depth/parent change', async () => {
+      const blocks = [makeFlatBlock('A', 0, null, 0), makeFlatBlock('B', 0, null, 1)]
+      const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
+
+      // Projection matches current depth/parent exactly, and the drag ends on
+      // itself — no move should happen and no focus restore either.
+      const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
+      mockedGetProjection.mockReturnValue(projection)
+
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      await act(async () => {
+        result.current.handleDragStart(makeDragStartEvent('A') as never)
+      })
+
+      await act(async () => {
+        result.current.handleDragEnd(makeDragEndEvent('A', 'A') as never)
+        await Promise.resolve()
+      })
+
+      expect(params.moveToParent).not.toHaveBeenCalled()
+      expect(params.reorder).not.toHaveBeenCalled()
+      expect(params.setFocused).not.toHaveBeenCalledWith('A')
     })
   })
 })

@@ -20,6 +20,7 @@ import {
 } from '@dnd-kit/core'
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { type RefObject, useCallback, useMemo, useRef, useState } from 'react'
+import { logger } from '@/lib/logger'
 import { INDENT_WIDTH } from '../components/SortableBlock'
 import {
   computePosition,
@@ -159,7 +160,20 @@ export function useBlockDnD({
             ? visibleItems.length
             : visibleItems.findIndex((b) => b.id === over.id)
           const newPosition = computePosition(visibleItems, projected.parentId, overIndex, blockId)
+          // UX-241: restore focus on the dragged block after the move commits so
+          // the EditableBlock `isFocused` effect re-fires `scrollIntoView` and
+          // the viewport tracks the moved block instead of jumping to the top.
+          // Only restore on success — if moveToParent rejects, leave focus cleared.
           moveToParent(blockId, projected.parentId, newPosition)
+            .then(() => setFocused(blockId))
+            .catch((err: unknown) => {
+              logger.warn(
+                'useBlockDnD',
+                'moveToParent failed after drag — leaving focus cleared',
+                { blockId },
+                err,
+              )
+            })
           return
         }
       }
@@ -168,11 +182,22 @@ export function useBlockDnD({
       if (active.id !== over.id) {
         const overIndex = blocks.findIndex((b) => b.id === over.id)
         if (overIndex >= 0) {
+          // UX-241: restore focus on the dragged block after the reorder commits.
+          // See moveToParent branch above for rationale.
           reorder(blockId, overIndex)
+            .then(() => setFocused(blockId))
+            .catch((err: unknown) => {
+              logger.warn(
+                'useBlockDnD',
+                'reorder failed after drag — leaving focus cleared',
+                { blockId },
+                err,
+              )
+            })
         }
       }
     },
-    [blocks, rootParentId, projected, visibleItems, moveToParent, reorder],
+    [blocks, rootParentId, projected, visibleItems, moveToParent, reorder, setFocused],
   )
 
   const handleDragCancel = useCallback(() => {

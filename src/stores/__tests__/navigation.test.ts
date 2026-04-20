@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { useJournalStore } from '../journal'
 import { resetTabIdCounter, selectPageStack, useNavigationStore } from '../navigation'
 
 /** Helper to reset the store to a clean initial state. */
@@ -9,6 +10,13 @@ function resetStore() {
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
     selectedBlockId: null,
+  })
+  // Reset journal store so date-routing tests start from a known baseline.
+  useJournalStore.setState({
+    mode: 'daily',
+    currentDate: new Date(2026, 0, 1),
+    scrollToDate: null,
+    scrollToPanel: null,
   })
 }
 
@@ -146,6 +154,75 @@ describe('useNavigationStore', () => {
 
       const state = useNavigationStore.getState()
       expect(state.tabs[state.activeTabIndex]?.label).toBe('My Page')
+    })
+
+    // ---------------------------------------------------------------------
+    // UX-242: date-titled pages route to Journal → Daily instead of editor
+    // ---------------------------------------------------------------------
+    it('navigateToPage with YYYY-MM-DD title routes to journal daily', () => {
+      useNavigationStore.getState().navigateToPage('DATE_PAGE', '2026-04-20')
+
+      const navState = useNavigationStore.getState()
+      const journalState = useJournalStore.getState()
+
+      expect(navState.currentView).toBe('journal')
+      expect(journalState.mode).toBe('daily')
+      expect(journalState.currentDate.getFullYear()).toBe(2026)
+      expect(journalState.currentDate.getMonth()).toBe(3) // April = 3 (0-based)
+      expect(journalState.currentDate.getDate()).toBe(20)
+    })
+
+    it('navigateToPage with YYYY-MM-DD title does NOT push onto pageStack', () => {
+      useNavigationStore.getState().navigateToPage('DATE_PAGE', '2026-04-20')
+
+      const state = useNavigationStore.getState()
+      expect(selectPageStack(state)).toEqual([])
+      expect(state.tabs).toHaveLength(1)
+      expect(state.tabs[0]?.pageStack).toEqual([])
+    })
+
+    it('navigateToPage with invalid date-shaped title (2026-13-45) falls back to page-editor', () => {
+      useNavigationStore.getState().navigateToPage('PX', '2026-13-45')
+
+      const state = useNavigationStore.getState()
+      expect(state.currentView).toBe('page-editor')
+      expect(selectPageStack(state)).toEqual([{ pageId: 'PX', title: '2026-13-45' }])
+    })
+
+    it('navigateToPage with blockId on a date-titled page preserves selectedBlockId', () => {
+      useNavigationStore.getState().navigateToPage('DATE_PAGE', '2026-04-20', 'BLOCK_42')
+
+      const state = useNavigationStore.getState()
+      expect(state.currentView).toBe('journal')
+      expect(state.selectedBlockId).toBe('BLOCK_42')
+    })
+
+    it('navigateToPage with non-date title preserves existing page-editor behaviour', () => {
+      useNavigationStore.getState().navigateToPage('P1', 'Not A Date')
+
+      const state = useNavigationStore.getState()
+      expect(state.currentView).toBe('page-editor')
+      expect(selectPageStack(state)).toEqual([{ pageId: 'P1', title: 'Not A Date' }])
+      // Journal store should remain untouched from its test-reset baseline.
+      const journalState = useJournalStore.getState()
+      expect(journalState.currentDate.getFullYear()).toBe(2026)
+      expect(journalState.currentDate.getMonth()).toBe(0)
+      expect(journalState.currentDate.getDate()).toBe(1)
+    })
+
+    it('navigateToPage to a date title from page-editor clears the existing pageStack', () => {
+      // Start on a regular page so we're in page-editor with a populated stack.
+      useNavigationStore.getState().navigateToPage('P1', 'Regular Page')
+      expect(useNavigationStore.getState().currentView).toBe('page-editor')
+      expect(selectPageStack(useNavigationStore.getState())).toHaveLength(1)
+
+      useNavigationStore.getState().navigateToPage('DATE_PAGE', '2026-04-20')
+
+      const state = useNavigationStore.getState()
+      expect(state.currentView).toBe('journal')
+      expect(state.tabs).toHaveLength(1)
+      expect(selectPageStack(state)).toEqual([])
+      expect(state.activeTabIndex).toBe(0)
     })
   })
 

@@ -69,6 +69,7 @@ function mockListAndResolve(items: ReturnType<typeof makeBlock>[], hasMore = fal
   mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
     if (cmd === 'list_blocks') return page
     if (cmd === 'batch_resolve') return []
+    if (cmd === 'trash_descendant_counts') return {}
     return undefined
   })
   return page
@@ -1239,5 +1240,127 @@ describe('TrashView', () => {
     const toolbar = screen.getByRole('toolbar')
     expect(within(toolbar).getByRole('button', { name: /^Restore selected$/i })).toBeInTheDocument()
     expect(within(toolbar).getByRole('button', { name: /^Purge selected$/i })).toBeInTheDocument()
+  })
+
+  // ── UX-243: descendant-count badge ──────────────────────────────
+
+  it('fetches descendant counts for every visible trash root', async () => {
+    const block1 = makeBlock('R1', 'root with kids', '2025-01-15T00:00:00Z')
+    const block2 = makeBlock('R2', 'lonely root', '2025-01-14T00:00:00Z')
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_blocks')
+        return { items: [block1, block2], next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'trash_descendant_counts') {
+        expect(args).toEqual({ rootIds: ['R1', 'R2'] })
+        return { R1: 3 }
+      }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('root with kids')
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('trash_descendant_counts', {
+        rootIds: ['R1', 'R2'],
+      })
+    })
+  })
+
+  it('renders +N blocks badge only on roots with cascade-deleted descendants', async () => {
+    const blockWithKids = makeBlock('R1', 'root with kids', '2025-01-15T00:00:00Z')
+    const lonelyBlock = makeBlock('R2', 'lonely root', '2025-01-14T00:00:00Z')
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks')
+        return {
+          items: [blockWithKids, lonelyBlock],
+          next_cursor: null,
+          has_more: false,
+        }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'trash_descendant_counts') return { R1: 3 }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('root with kids')
+
+    // Exactly one badge rendered — for R1 (count 3), not R2 (not in map).
+    const badges = await screen.findAllByTestId('trash-item-batch-count')
+    expect(badges).toHaveLength(1)
+    expect(badges[0]).toHaveTextContent('+3 blocks')
+  })
+
+  it('renders singular "+1 block" for roots with exactly one descendant', async () => {
+    const single = makeBlock('R1', 'root + 1', '2025-01-15T00:00:00Z')
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: [single], next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'trash_descendant_counts') return { R1: 1 }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    const badge = await screen.findByTestId('trash-item-batch-count')
+    expect(badge).toHaveTextContent('+1 block')
+  })
+
+  it('renders no batch-count badge when counts returns empty map', async () => {
+    const block = makeBlock('R1', 'root', '2025-01-15T00:00:00Z')
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'trash_descendant_counts') return {}
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('root')
+    expect(screen.queryByTestId('trash-item-batch-count')).not.toBeInTheDocument()
+  })
+
+  it('per-row restore fires with the root id when badge is visible', async () => {
+    const user = userEvent.setup()
+    const block = makeBlock('R1', 'root with kids', '2025-01-15T00:00:00Z')
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'trash_descendant_counts') return { R1: 5 }
+      if (cmd === 'restore_block') return { block_id: 'R1', restored_count: 6 }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    // Badge is rendered; action target is still the root id.
+    await screen.findByTestId('trash-item-batch-count')
+    await user.click(screen.getByTestId('trash-restore-btn'))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('restore_block', {
+        blockId: 'R1',
+        deletedAtRef: '2025-01-15T00:00:00Z',
+      })
+    })
+  })
+
+  it('logs warning and keeps list usable when count fetch fails', async () => {
+    const block = makeBlock('R1', 'root', '2025-01-15T00:00:00Z')
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_blocks') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'trash_descendant_counts') throw new Error('DB unavailable')
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    // List still renders, no badge.
+    await screen.findByText('root')
+    expect(screen.queryByTestId('trash-item-batch-count')).not.toBeInTheDocument()
   })
 })

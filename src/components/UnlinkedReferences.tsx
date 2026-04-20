@@ -287,7 +287,7 @@ export function UnlinkedReferences({
   return (
     <section className="unlinked-references" aria-label={t('unlinkedRefs.panelLabel')}>
       {/* Main header — collapsible, collapsed by default, with inline filter toggle */}
-      <div className="flex items-center gap-1">
+      <div className="flex flex-nowrap items-center gap-1 min-w-0">
         <CollapsiblePanelHeader
           isCollapsed={collapsed}
           onToggle={toggleCollapsed}

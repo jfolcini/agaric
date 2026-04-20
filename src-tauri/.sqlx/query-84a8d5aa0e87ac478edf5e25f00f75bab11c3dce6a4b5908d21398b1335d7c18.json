@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM block_tag_inherited WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL) OR tag_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL) OR inherited_from IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "84a8d5aa0e87ac478edf5e25f00f75bab11c3dce6a4b5908d21398b1335d7c18"
+}

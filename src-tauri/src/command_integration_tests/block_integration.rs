@@ -1253,6 +1253,104 @@ async fn purge_block_removes_tags_properties_attachments_links() {
     assert!(exists.is_none(), "blocks row must be purged");
 }
 
+// BUG-46 regression: `purge_block_inner` previously only cleaned
+// `block_tag_inherited` rows whose `block_id` or `inherited_from` columns
+// pointed into the descendant set, leaving rows whose `tag_id` column
+// referenced the purged tag — which violates the FK when the tag row is
+// then removed. Reuse the PURGE_* fixture style: leave PURGE_TAG
+// soft-deleted on its own, seed a `block_tag_inherited` row keyed on
+// PURGE_TAG (with alive block/ancestor), and confirm the single-block
+// purge commits cleanly and wipes those orphan rows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_block_inner_succeeds_when_tag_still_inherited_by_alive_blocks() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Alive page + alive child + alive tag (standalone). Only the tag
+    // gets soft-deleted.
+    insert_block(
+        &pool,
+        "PURGE_TAG_ANC",
+        "page",
+        "alive ancestor",
+        None,
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "PURGE_TAG_BLK",
+        "content",
+        "alive inheriting block",
+        Some("PURGE_TAG_ANC"),
+        Some(1),
+    )
+    .await;
+    insert_block(&pool, "PURGE_TAG", "tag", "purge-tag", None, None).await;
+
+    // Materialized inheritance row: alive block inherits PURGE_TAG from
+    // the alive ancestor — `tag_id` is the only column that references
+    // PURGE_TAG.
+    sqlx::query(
+        "INSERT INTO block_tag_inherited (block_id, tag_id, inherited_from) VALUES (?, ?, ?)",
+    )
+    .bind("PURGE_TAG_BLK")
+    .bind("PURGE_TAG")
+    .bind("PURGE_TAG_ANC")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Soft-delete only the tag.
+    let (_ts, cnt) = soft_delete::cascade_soft_delete(&pool, "PURGE_TAG")
+        .await
+        .unwrap();
+    assert_eq!(cnt, 1, "only the tag should be soft-deleted");
+
+    // Purge just the tag. Before the fix this hit FK error 787 because
+    // the inheritance row above still referenced PURGE_TAG.tag_id while
+    // the CTE-driven DELETE only matched block_id / inherited_from.
+    let resp = purge_block_inner(&pool, DEV, &mat, "PURGE_TAG".into())
+        .await
+        .unwrap();
+    assert_eq!(resp.purged_count, 1, "only the tag must be purged");
+    assert_eq!(resp.block_id, "PURGE_TAG");
+
+    // Alive blocks remain.
+    let anc = get_block_inner(&pool, "PURGE_TAG_ANC".into())
+        .await
+        .unwrap();
+    assert!(anc.deleted_at.is_none(), "PURGE_TAG_ANC must remain alive");
+    let blk = get_block_inner(&pool, "PURGE_TAG_BLK".into())
+        .await
+        .unwrap();
+    assert!(blk.deleted_at.is_none(), "PURGE_TAG_BLK must remain alive");
+
+    // Zero rows reference PURGE_TAG in any column of block_tag_inherited.
+    let refs: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_tag_inherited \
+         WHERE block_id = ? OR tag_id = ? OR inherited_from = ?",
+    )
+    .bind("PURGE_TAG")
+    .bind("PURGE_TAG")
+    .bind("PURGE_TAG")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        refs, 0,
+        "no block_tag_inherited row may reference the purged tag in any column"
+    );
+
+    // The tag's blocks row is physically gone.
+    let exists: Option<String> = sqlx::query_scalar("SELECT id FROM blocks WHERE id = ?")
+        .bind("PURGE_TAG")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(exists.is_none(), "PURGE_TAG blocks row must be purged");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn purge_block_writes_op_log_entry() {
     let (pool, _dir) = test_pool().await;

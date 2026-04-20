@@ -215,6 +215,11 @@ export const commands = {
 	restoreAllDeleted: () => typedError<BulkTrashResponse, AppErrorSchema>(__TAURI_INVOKE("restore_all_deleted")),
 	// Tauri command: permanently purge all soft-deleted blocks. Delegates to [`purge_all_deleted_inner`].
 	purgeAllDeleted: () => typedError<BulkTrashResponse, AppErrorSchema>(__TAURI_INVOKE("purge_all_deleted")),
+	/**
+	 *  Tauri command: batch-count cascade-deleted descendants per trash root.
+	 *  Delegates to [`trash_descendant_counts_inner`].
+	 */
+	trashDescendantCounts: (rootIds: string[]) => typedError<{ [key in string]: number }, AppErrorSchema>(__TAURI_INVOKE("trash_descendant_counts", { rootIds })),
 	fetchLinkMetadata: (url: string) => typedError<LinkMetadata, AppErrorSchema>(__TAURI_INVOKE("fetch_link_metadata", { url })),
 	getLinkMetadata: (url: string) => typedError<{
 	url: string,

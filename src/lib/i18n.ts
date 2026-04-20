@@ -1150,10 +1150,12 @@ const resources = {
       'trash.batchPurgeDescription':
         'This action cannot be undone. {{count}} blocks will be permanently deleted.',
       'trash.regionLabel': 'Trash',
-      'trash.filterPlaceholder': 'Filter deleted items...',
+      'trash.filterPlaceholder': 'Filter deleted items (root content)...',
       'trash.showingCount': 'Showing {{filtered}} of {{total}} deleted items',
       'trash.noMatchMessage': 'No matching deleted items',
       'trash.clearFilter': 'Clear filter',
+      'trash.itemsInBatch_one': '+{{count}} block',
+      'trash.itemsInBatch_other': '+{{count}} blocks',
 
       // Device management
       'device.title': 'Device Management',

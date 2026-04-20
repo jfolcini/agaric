@@ -105,6 +105,18 @@ export function purgeAllDeleted(): Promise<BulkTrashResponse> {
   return invoke('purge_all_deleted')
 }
 
+/**
+ * Batch-count cascade-deleted descendants per trash root.
+ *
+ * Given a list of trash-root IDs (as returned by `listBlocks({ showDeleted: true })`),
+ * returns a map of `root_id -> descendant_count`. Descendants are blocks sharing
+ * the root's `deleted_at` timestamp, excluding the root itself and conflict copies.
+ * Roots with zero descendants are omitted — treat missing keys as `0`.
+ */
+export function trashDescendantCounts(rootIds: string[]): Promise<Record<string, number>> {
+  return invoke('trash_descendant_counts', { rootIds })
+}
+
 /** List blocks with optional filters and cursor-based pagination. */
 export function listBlocks(params?: {
   parentId?: string | undefined

@@ -1281,4 +1281,44 @@ describe('LinkedReferences', () => {
     expect(headerEl).toBeInTheDocument()
     expect(headerEl).not.toHaveClass('flex-1')
   })
+
+  // ---------------------------------------------------------------------------
+  // UX-240: Filter toggle must stay inline with header on narrow viewports
+  // ---------------------------------------------------------------------------
+
+  // Conservative preventive styling: outer row is flex-nowrap with min-w-0,
+  // header button carries min-w-0, and the filter button remains shrink-0.
+  it('outer header row and children carry flex-nowrap / min-w-0 / shrink-0 (UX-240)', async () => {
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockInvokeWith(resp)
+
+    const { container } = renderLinkedReferences({ pageId: 'PAGE1' })
+
+    await screen.findByText('Page One (1)')
+
+    // Outer row wrapper is the direct parent of the CollapsiblePanelHeader
+    // button. It must be flex, nowrap, and allow its children to shrink below
+    // their intrinsic size so the filter toggle stays inline.
+    const headerButton = container.querySelector('.linked-references-header')
+    expect(headerButton).toBeInTheDocument()
+    const outerRow = headerButton?.parentElement
+    expect(outerRow).toBeInTheDocument()
+    expect(outerRow).toHaveClass('flex', 'flex-nowrap', 'items-center', 'gap-1', 'min-w-0')
+
+    // The header button itself must allow flex shrinking.
+    expect(headerButton).toHaveClass('min-w-0')
+    // But still render full-width as a click target.
+    expect(headerButton).toHaveClass('w-full')
+
+    // Filter toggle keeps shrink-0 so it never collapses to zero width.
+    const filterButton = screen.getByRole('button', { name: /show filters/i })
+    expect(filterButton).toHaveClass('shrink-0')
+  })
 })

@@ -3308,3 +3308,88 @@ async fn dispatch_purge_block_enqueues_full_cache_rebuild_plus_fts_removal() {
         "purge_block must enqueue 6 cache rebuilds + 1 RemoveFtsBlock (+ 1 flush barrier)"
     );
 }
+
+// BUG-46 regression for the materializer's `OpType::PurgeBlock` path:
+// before the fix, the DELETE FROM block_tag_inherited only matched
+// block_id / inherited_from, so rows whose `tag_id` column pointed at
+// the purged tag were left behind and triggered FK error 787 when the
+// tag row was about to be physically removed. Dispatch a PurgeBlock op
+// for a soft-deleted tag that is still inherited by alive blocks and
+// verify the handler commits cleanly.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_op_purge_block_removes_block_tag_inherited_when_block_is_tag() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Alive ancestor (page), alive child block, alive tag.
+    insert_block_direct(&pool, "M_BUG46_ANC", "page", "alive ancestor").await;
+    insert_block_direct(&pool, "M_BUG46_BLK", "content", "alive child").await;
+    insert_block_direct(&pool, "M_BUG46_TAG", "tag", "doomed tag").await;
+
+    // Inheritance row keyed on the tag via `tag_id` — the column the
+    // original fix missed. block_id + inherited_from point at alive
+    // blocks so only `tag_id` references the soft-deleted tag.
+    sqlx::query(
+        "INSERT INTO block_tag_inherited (block_id, tag_id, inherited_from) VALUES (?, ?, ?)",
+    )
+    .bind("M_BUG46_BLK")
+    .bind("M_BUG46_TAG")
+    .bind("M_BUG46_ANC")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Soft-delete the tag (leaves ancestor + child alive).
+    soft_delete_block_direct(&pool, "M_BUG46_TAG").await;
+
+    // Drive a PurgeBlock op through apply_op. Before the fix this
+    // returned an FK-constraint error because `block_tag_inherited.tag_id`
+    // still referenced M_BUG46_TAG when the core table DELETE ran.
+    let r = make_op_record(
+        &pool,
+        OpPayload::PurgeBlock(PurgeBlockPayload {
+            block_id: BlockId::test_id("M_BUG46_TAG"),
+        }),
+    )
+    .await;
+    mat.dispatch_op(&r).await.unwrap();
+    mat.flush().await.unwrap();
+
+    // Tag is physically gone.
+    let tag_exists = sqlx::query("SELECT id FROM blocks WHERE id = 'M_BUG46_TAG'")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(
+        tag_exists.is_none(),
+        "tag block must be physically removed after PurgeBlock apply_op"
+    );
+
+    // Alive ancestor + child untouched.
+    let anc_exists = sqlx::query("SELECT id FROM blocks WHERE id = 'M_BUG46_ANC'")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(anc_exists.is_some(), "alive ancestor must remain");
+    let blk_exists = sqlx::query("SELECT id FROM blocks WHERE id = 'M_BUG46_BLK'")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(blk_exists.is_some(), "alive child must remain");
+
+    // Zero rows reference M_BUG46_TAG in any column of block_tag_inherited.
+    let refs: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_tag_inherited \
+         WHERE block_id = ? OR tag_id = ? OR inherited_from = ?",
+    )
+    .bind("M_BUG46_TAG")
+    .bind("M_BUG46_TAG")
+    .bind("M_BUG46_TAG")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        refs, 0,
+        "no block_tag_inherited row may reference the purged tag in any column"
+    );
+}

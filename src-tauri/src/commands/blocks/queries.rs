@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use tracing::instrument;
 
 use super::super::*;
@@ -207,6 +209,40 @@ pub async fn batch_resolve(
     ids: Vec<String>,
 ) -> Result<Vec<ResolvedBlock>, AppError> {
     batch_resolve_inner(&pool.0, ids)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Batch-count cascade-deleted descendants per trash root.
+///
+/// Given a list of trash-root ids (as returned by `list_blocks({ show_deleted: true })`),
+/// return a map of `root_id -> descendant_count`. Descendants are blocks
+/// sharing the root's `deleted_at` timestamp, excluding the root itself and
+/// any conflict copies. Roots with zero descendants are omitted — callers
+/// should default to `0` for missing entries.
+///
+/// # Errors
+///
+/// - [`AppError::Json`] — failed to serialize `root_ids`.
+/// - [`AppError::Database`] — propagated from sqlx.
+#[instrument(skip(pool, root_ids), err)]
+pub async fn trash_descendant_counts_inner(
+    pool: &SqlitePool,
+    root_ids: Vec<String>,
+) -> Result<HashMap<String, u64>, AppError> {
+    pagination::trash_descendant_counts(pool, &root_ids).await
+}
+
+/// Tauri command: batch-count cascade-deleted descendants per trash root.
+/// Delegates to [`trash_descendant_counts_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn trash_descendant_counts(
+    pool: State<'_, ReadPool>,
+    root_ids: Vec<String>,
+) -> Result<HashMap<String, u64>, AppError> {
+    trash_descendant_counts_inner(&pool.0, root_ids)
         .await
         .map_err(sanitize_internal_error)
 }

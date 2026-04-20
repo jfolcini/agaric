@@ -57,7 +57,7 @@ pub use blocks::{
     delete_block_inner, edit_block, edit_block_inner, get_block, get_block_inner, list_blocks,
     list_blocks_inner, move_block, move_block_inner, purge_all_deleted, purge_all_deleted_inner,
     purge_block, purge_block_inner, restore_all_deleted, restore_all_deleted_inner, restore_block,
-    restore_block_inner,
+    restore_block_inner, trash_descendant_counts, trash_descendant_counts_inner,
 };
 pub use bug_report::{
     collect_bug_report_metadata, collect_bug_report_metadata_inner, read_logs_for_report,
@@ -130,6 +130,7 @@ pub use blocks::{
     __specta__fn__edit_block, __specta__fn__get_block, __specta__fn__list_blocks,
     __specta__fn__move_block, __specta__fn__purge_all_deleted, __specta__fn__purge_block,
     __specta__fn__restore_all_deleted, __specta__fn__restore_block,
+    __specta__fn__trash_descendant_counts,
 };
 #[doc(hidden)]
 pub use bug_report::{
@@ -199,6 +200,7 @@ pub use blocks::{
     __cmd__batch_resolve, __cmd__create_block, __cmd__delete_block, __cmd__edit_block,
     __cmd__get_block, __cmd__list_blocks, __cmd__move_block, __cmd__purge_all_deleted,
     __cmd__purge_block, __cmd__restore_all_deleted, __cmd__restore_block,
+    __cmd__trash_descendant_counts,
 };
 #[doc(hidden)]
 pub use bug_report::{__cmd__collect_bug_report_metadata, __cmd__read_logs_for_report};

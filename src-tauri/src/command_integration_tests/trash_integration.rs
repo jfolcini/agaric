@@ -302,3 +302,270 @@ async fn purge_all_deleted_preserves_non_deleted_blocks() {
         .unwrap();
     assert_eq!(total, 2, "only the 2 alive blocks should remain");
 }
+
+// ======================================================================
+// UX-243: roots-only trash listing + descendant counts round-trip
+// ======================================================================
+
+/// After cascade_soft_delete on a page with children, `list_blocks_inner`
+/// with `show_deleted=true` returns only the root. Restoring that root
+/// brings the descendants back too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_trash_with_cascade_deleted_page_returns_only_root_and_restores_descendants() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "UX243_PG", "page", "page with kids", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "UX243_C1",
+        "content",
+        "c1",
+        Some("UX243_PG"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "UX243_C2",
+        "content",
+        "c2",
+        Some("UX243_PG"),
+        Some(2),
+    )
+    .await;
+
+    let (_ts, count) = soft_delete::cascade_soft_delete(&pool, "UX243_PG")
+        .await
+        .unwrap();
+    assert_eq!(count, 3, "cascade must delete page + 2 children");
+
+    // Trash view returns only the root page.
+    let trash = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        Some(true),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(10),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        trash.items.len(),
+        1,
+        "only the root page must appear in trash"
+    );
+    assert_eq!(trash.items[0].id, "UX243_PG");
+
+    // Descendant counts helper reports +2 for the root.
+    let counts = trash_descendant_counts_inner(&pool, vec!["UX243_PG".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(
+        counts.get("UX243_PG").copied(),
+        Some(2),
+        "root must report 2 descendants, got {counts:?}"
+    );
+
+    // Restoring via the root brings descendants back.
+    let root = get_block_inner(&pool, "UX243_PG".into()).await.unwrap();
+    let deleted_at_ref = root
+        .deleted_at
+        .clone()
+        .expect("root has deleted_at timestamp");
+    let resp = restore_block_inner(&pool, DEV, &mat, "UX243_PG".into(), deleted_at_ref)
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.restored_count, 3,
+        "restore via root must cascade to descendants"
+    );
+
+    let pg = get_block_inner(&pool, "UX243_PG".into()).await.unwrap();
+    let c1 = get_block_inner(&pool, "UX243_C1".into()).await.unwrap();
+    let c2 = get_block_inner(&pool, "UX243_C2".into()).await.unwrap();
+    assert!(pg.deleted_at.is_none(), "page must be alive");
+    assert!(c1.deleted_at.is_none(), "child 1 must be alive");
+    assert!(c2.deleted_at.is_none(), "child 2 must be alive");
+
+    // Trash is now empty.
+    let trash2 = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        Some(true),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(10),
+    )
+    .await
+    .unwrap();
+    assert!(
+        trash2.items.is_empty(),
+        "trash must be empty after restore, got {:?}",
+        trash2.items
+    );
+}
+
+/// Purging the root via `purge_block` from the roots-only trash list
+/// removes both the root and its descendants from the blocks table.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_root_from_trash_removes_descendants() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "UX243_PP", "page", "doomed", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "UX243_D1",
+        "content",
+        "d1",
+        Some("UX243_PP"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "UX243_D2",
+        "content",
+        "d2",
+        Some("UX243_PP"),
+        Some(2),
+    )
+    .await;
+
+    soft_delete::cascade_soft_delete(&pool, "UX243_PP")
+        .await
+        .unwrap();
+
+    // Roots-only list returns just the root.
+    let trash = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        Some(true),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(10),
+    )
+    .await
+    .unwrap();
+    assert_eq!(trash.items.len(), 1);
+    assert_eq!(trash.items[0].id, "UX243_PP");
+
+    let resp = purge_block_inner(&pool, DEV, &mat, "UX243_PP".into())
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.purged_count, 3,
+        "purge via root must remove all 3 (root + 2 descendants)"
+    );
+
+    // Neither the root nor the descendants physically remain.
+    for id in ["UX243_PP", "UX243_D1", "UX243_D2"] {
+        let exists = sqlx::query_scalar!("SELECT id FROM blocks WHERE id = ?", id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!(
+            exists.is_none(),
+            "{id} must be physically removed after purge"
+        );
+    }
+}
+
+// BUG-46 regression: the bulk purge path previously left orphan
+// `block_tag_inherited` rows whose `tag_id` column pointed at a
+// soft-deleted tag, causing an FK violation (SQLITE_CONSTRAINT_FOREIGNKEY
+// / 787) when the tag was about to be physically removed. Seed a live
+// page + live child + now-deleted tag with an inheritance row keyed on
+// the deleted tag's id and confirm the purge succeeds cleanly.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_all_deleted_succeeds_when_tag_is_deleted_but_still_inherited_by_live_blocks() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Alive page P, alive tag T (child of P), alive child C (also under P).
+    insert_block(&pool, "BUG46_P", "page", "parent page", None, Some(1)).await;
+    insert_block(&pool, "BUG46_T", "tag", "my-tag", Some("BUG46_P"), None).await;
+    insert_block(
+        &pool,
+        "BUG46_C",
+        "content",
+        "child block",
+        Some("BUG46_P"),
+        Some(2),
+    )
+    .await;
+
+    // Materialized inheritance row: C inherits tag T from ancestor P.
+    // (Schema requires non-null block_id, tag_id, inherited_from; each
+    // points at a real row in `blocks`.)
+    sqlx::query(
+        "INSERT INTO block_tag_inherited (block_id, tag_id, inherited_from) VALUES (?, ?, ?)",
+    )
+    .bind("BUG46_C")
+    .bind("BUG46_T")
+    .bind("BUG46_P")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Soft-delete ONLY the tag — P and C stay alive.
+    let (_ts, cnt) = soft_delete::cascade_soft_delete(&pool, "BUG46_T")
+        .await
+        .unwrap();
+    assert_eq!(cnt, 1, "only the tag should be soft-deleted");
+
+    // Purge the trash. Before the fix this failed with FK violation 787
+    // because `block_tag_inherited.tag_id` still referenced BUG46_T while
+    // the DELETE FROM blocks tried to remove it.
+    let resp = purge_all_deleted_inner(&pool, DEV, &mat).await.unwrap();
+    assert_eq!(
+        resp.affected_count, 1,
+        "exactly one block (the tag) should be purged"
+    );
+
+    // P and C remain alive.
+    let page = get_block_inner(&pool, "BUG46_P".into()).await.unwrap();
+    assert!(page.deleted_at.is_none(), "BUG46_P must remain alive");
+    let child = get_block_inner(&pool, "BUG46_C".into()).await.unwrap();
+    assert!(child.deleted_at.is_none(), "BUG46_C must remain alive");
+
+    // Zero `block_tag_inherited` rows reference BUG46_T in any column.
+    let refs: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM block_tag_inherited \
+         WHERE block_id = ? OR tag_id = ? OR inherited_from = ?",
+        "BUG46_T",
+        "BUG46_T",
+        "BUG46_T",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        refs, 0,
+        "no block_tag_inherited row may reference the purged tag in any column"
+    );
+
+    // And the tag row is physically gone from `blocks`.
+    let exists = sqlx::query_scalar!("SELECT id FROM blocks WHERE id = ?", "BUG46_T")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(exists.is_none(), "BUG46_T must be physically removed");
+}

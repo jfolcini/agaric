@@ -36,6 +36,7 @@ import {
   purgeBlock,
   restoreAllDeleted,
   restoreBlock,
+  trashDescendantCounts,
 } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
@@ -143,6 +144,33 @@ export function TrashView(): React.ReactElement {
       cancelled = true
     }
   }, [parentIds])
+
+  // ── Descendant-count badges (UX-243) ─────────────────────────────
+  // Each trash row is a "root" of a cascade_soft_delete batch. Fetch the
+  // count of sibling descendants sharing the root's `deleted_at` so we can
+  // render "+N blocks" next to roots that hid children.
+  const [descendantCounts, setDescendantCounts] = useState<Record<string, number>>({})
+
+  const rootIds = useMemo(() => blocks.map((b) => b.id), [blocks])
+
+  useEffect(() => {
+    if (rootIds.length === 0) {
+      setDescendantCounts({})
+      return
+    }
+    let cancelled = false
+    trashDescendantCounts(rootIds)
+      .then((counts) => {
+        if (cancelled) return
+        setDescendantCounts(counts ?? {})
+      })
+      .catch((err) => {
+        logger.warn('TrashView', 'descendant count resolution failed', undefined, err)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [rootIds])
 
   // ── Keyboard shortcuts ───────────────────────────────────────────
 
@@ -469,6 +497,7 @@ export function TrashView(): React.ReactElement {
                 const isSelected = selected.has(block.id)
                 const isFocused = index === focusedIndex
                 const parentLabel = getParentLabel(block)
+                const descendantCount = descendantCounts[block.id] ?? 0
                 return (
                   <div
                     key={block.id}
@@ -509,6 +538,15 @@ export function TrashView(): React.ReactElement {
                       <Badge variant="secondary" className="trash-item-type shrink-0">
                         {block.block_type}
                       </Badge>
+                      {descendantCount > 0 && (
+                        <Badge
+                          variant="outline"
+                          className="trash-item-batch-count shrink-0"
+                          data-testid="trash-item-batch-count"
+                        >
+                          {t('trash.itemsInBatch', { count: descendantCount })}
+                        </Badge>
+                      )}
                       <div className="flex flex-col min-w-0">
                         <span className="trash-item-text text-sm truncate">
                           {block.content

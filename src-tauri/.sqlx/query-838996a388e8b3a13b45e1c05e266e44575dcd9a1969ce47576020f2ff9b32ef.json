@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) FROM block_tag_inherited WHERE block_id = ? OR tag_id = ? OR inherited_from = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "COUNT(*)",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "838996a388e8b3a13b45e1c05e266e44575dcd9a1969ce47576020f2ff9b32ef"
+}

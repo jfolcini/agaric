@@ -552,6 +552,7 @@ pub async fn purge_block_inner(
         crate::descendants_cte_purge!(),
         "DELETE FROM block_tag_inherited \
          WHERE block_id IN (SELECT id FROM descendants) \
+            OR tag_id IN (SELECT id FROM descendants) \
             OR inherited_from IN (SELECT id FROM descendants)",
     ))
     .bind(&block_id)
@@ -847,6 +848,7 @@ pub async fn purge_all_deleted_inner(
     sqlx::query!(
         "DELETE FROM block_tag_inherited \
          WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL) \
+            OR tag_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL) \
             OR inherited_from IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
     )
     .execute(&mut *tx)

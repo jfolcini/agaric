@@ -270,6 +270,8 @@ pub fn run() {
         // Bulk trash operations (B-46)
         commands::restore_all_deleted,
         commands::purge_all_deleted,
+        // Trash descendant counts (UX-243)
+        commands::trash_descendant_counts,
         // Link metadata (UX-165)
         commands::fetch_link_metadata,
         commands::get_link_metadata,
@@ -708,6 +710,8 @@ mod specta_tests {
             // Bulk trash operations (B-46)
             crate::commands::restore_all_deleted,
             crate::commands::purge_all_deleted,
+            // Trash descendant counts (UX-243)
+            crate::commands::trash_descendant_counts,
             // Link metadata (UX-165)
             crate::commands::fetch_link_metadata,
             crate::commands::get_link_metadata,

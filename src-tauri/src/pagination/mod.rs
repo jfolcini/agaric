@@ -38,7 +38,7 @@ pub use history::{list_block_history, list_page_history};
 pub use links::list_backlinks;
 pub use properties::query_by_property;
 pub use tags::list_by_tag;
-pub use trash::list_trash;
+pub use trash::{list_trash, trash_descendant_counts};
 pub use undated::list_undated_tasks;
 
 // ---------------------------------------------------------------------------
