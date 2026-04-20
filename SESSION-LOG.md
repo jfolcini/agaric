@@ -1,5 +1,70 @@
 # Session Log
 
+## Session 436 — UX-238 GraphView vertical collapse: full fix (flex-1 wrapper + Radix Viewport CSS override) + UX-239 live-investigation attempt (2026-04-20)
+
+**1 REVIEW-LATER item resolved; 1 item investigated via chrome-browser MCP and amended with reproduction-blocker notes. Open items 11 → 10.** PROMPT.md pipeline with pipelined investigation: one build subagent for UX-238 Phase 1 + one orchestrator-owned Phase 2 fix when chrome-browser MCP verification exposed that Phase 1 alone was insufficient + one orchestrator live-investigation of UX-239 that failed to reproduce on dev-seed data.
+
+### Resolved items
+
+- **UX-238** — `GraphView` vertical size collapsed because the height chain (SidebarInset → main-content `ScrollArea` → viewport → view-transition-wrapper → GraphView) broke at the wrapper, compounded by Radix's `ScrollArea.Viewport` wrapping content in an internal `<div>` with `display: table` (applied as an **inline style**) that computes its height from intrinsic content and doesn't propagate `h-full` to descendants. Phase 1 fix (build subagent): convert the wrapper to `flex h-full min-h-0 flex-col`. Chrome-browser MCP verification revealed this alone didn't work — the Graph view was still collapsed at 152 px of a 619 px available column. Phase 2 fix (orchestrator, live investigation-driven):
+  - Switched the wrapper from `h-full` → `flex-1` so it grows to fill the flex column instead of relying on a definite parent height.
+  - Added a scoped CSS rule in `src/index.css` that promotes the Radix internal wrapper to `display: flex !important; flex-direction: column !important; min-height: 100% !important` (targeted selector: `[data-slot="main-content"] > [data-slot="scroll-area-viewport"] > div:first-child` — affects only the main-content ScrollArea, not TabBar / PageOutline / PageBrowser ScrollAreas).
+  - `!important` required because Radix applies `display: table` as an inline style which outweighs ordinary CSS. `min-height: 100%` (not `height: 100%`) preserves scroll-growing behaviour: journal / editor / etc. still scroll when content exceeds the viewport.
+  - `ResizeObserver` landed in `src/hooks/useGraphSimulation.ts` (Phase 1): observes `svgRef.current`, re-posts the existing `'start'` message to the worker on resize (rebuilding the simulation around the new `forceCenter`), or gently `alpha(0.3).restart()` on the main-thread path (preserves node positions). Guards against jsdom via `typeof ResizeObserver === 'undefined'` early-return.
+  - Regression tests: `src/components/__tests__/App.test.tsx` asserts the view-transition-wrapper carries `flex flex-1 min-h-0 flex-col`. `src/hooks/__tests__/useGraphSimulation.test.ts` adds 3 tests (observer attaches, fires, disconnects on unmount).
+  - jsdom cannot verify computed heights — the real verification was live via chrome-browser MCP: graph-view goes from 152 px (broken) to 619 px (full-height) at 920 px viewport after the combined fix.
+
+### Investigated but not resolved
+
+- **UX-239** — `LinkedReferences` + `UnlinkedReferences` panels appear shifted left after journal → page-editor navigation. Live investigation via chrome-browser MCP attempted, could not reproduce: the dev-seed data has no inbound `block_links` for the test pages (Projects, Getting Started, etc.), so `LinkedReferences` / `UnlinkedReferences` both `return null` on render and there's nothing to measure horizontal position against. Navigated via `[[Projects]]` chip at both 920 px and 500 px viewport widths; `.page-editor` rendered at the correct `left / width` (265.125 / 630.875 at 920; 64 / 420 at 500 with the mobile rail reserving 48 px + 16 px viewport padding). Investigation amended into the UX-239 spec along with a "Prior investigation" section, updated "What this is NOT" (UX-238 is NOT the cause; horizontal axis is unchanged by UX-238's flex-1 / CSS-override fix), and updated structural diagram showing the layout chain post-UX-238. The "reproduce with real data" step now leads the investigation plan — the next session working UX-239 must populate backlinks (type a `[[Projects]]` link into a journal block or use a DB snapshot) before chrome-browser MCP investigation can yield meaningful results.
+
+### Files changed
+
+| Path | Change |
+|------|--------|
+| `src/App.tsx` | view-transition-wrapper now `flex flex-1 min-h-0 flex-col` (was `h-full min-h-0 flex-col` in Phase 1; `flex-1` replaces `h-full` so it grows to fill the flex column instead of resolving against a parent with no definite height) |
+| `src/index.css` | new CSS rule at end of file (23 lines + comment) promoting the Radix internal wrapper to `display: flex !important; flex-direction: column !important; min-height: 100% !important` — scoped via `[data-slot="main-content"] > [data-slot="scroll-area-viewport"] > div:first-child` |
+| `src/hooks/useGraphSimulation.ts` | `SimulationHandle` interface + ResizeObserver observing `svgRef.current`; on resize re-posts `'start'` to the worker or `alpha(0.3).restart()` on main-thread; disconnects on cleanup; early-returns when `ResizeObserver === 'undefined'` |
+| `src/components/__tests__/App.test.tsx` | new regression test asserting the wrapper has `flex flex-1 min-h-0 flex-col` (matches UX-237 class-list pattern) |
+| `src/hooks/__tests__/useGraphSimulation.test.ts` | 3 new tests: observer-on-mount, fire-triggers-restart, disconnect-on-unmount |
+| `REVIEW-LATER.md` | remove UX-238 detail section + summary row; update summary count 11 → 10; sessions 124 → 125; resolved 349+ → 350+; UX-239 amended with a "Prior investigation" block + "UX-238 is NOT the cause" note in "What this is NOT" + updated structural diagram + session-436 entry in the recent-changes fingerprint |
+| `SESSION-LOG.md` | this entry |
+
+### Verification
+
+- **chrome-browser MCP (orchestrator, live at http://localhost:5173):**
+  - Before Phase 1 landed: Graph view 152 px tall (collapsed) at 920 x 723 viewport. Wrapper 152, innerDiv 152 (display: table inline style dominates).
+  - After Phase 1 only: same 152 px — Phase 1 fix insufficient because the Radix `display: table` wrapper blocks `h-full` propagation.
+  - After manual CSS override injection test: Graph view jumps to 619 px; SVG content-box 629 x 617.
+  - After Phase 2 CSS rule landed (persisted in `src/index.css`) + `h-full → flex-1` swap on the wrapper: Graph view renders at 619 px stable; journal / editor / etc. still scroll when content is taller than the viewport (Journal measured at 754 px scrollable content in a 667 px viewport, `min-height: 100%` working correctly).
+- **Vitest (targeted):** `npx vitest run src/components/__tests__/App.test.tsx src/hooks/__tests__/useGraphSimulation.test.ts src/components/__tests__/GraphView.test.tsx` → 116/116 pass.
+- **Full prek:** see Pipeline step 5.
+
+### Pipeline
+
+1. **PLAN.** Re-read REVIEW-LATER.md; 2 actionable items (UX-238 + UX-239). Decided to serialize because UX-238's fix touches the view-transition-wrapper which is load-bearing for UX-239's hypothesis-3 (flex-math correctness). Knew before starting that UX-239 likely needed chrome-browser MCP verification to disambiguate its 6 hypotheses; planned to investigate post-UX-238 so UX-238's effect on the layout chain was already in place.
+2. **UX-238 BUILD (1 background subagent).** Applied Phase 1 fix (flex h-full min-h-0 flex-col + ResizeObserver). Subagent reported vitest 116/116 green, no worker-protocol additions needed (reused existing `'start'` message on resize).
+3. **UX-238 VERIFY + Phase 2 FIX (orchestrator).** chrome-browser MCP navigated to graph view, discovered Phase 1 alone didn't resolve the issue — graph-view was 152 px tall despite the wrapper having `h-full min-h-0 flex-col`. DOM chain walk revealed Radix's `display: table` inline style on the internal viewport wrapper was the blocker. Tested a CSS override via `document.head.appendChild(styleElement)` — graph jumped to 619 px. Persisted the override in `src/index.css` (scoped to main-content ScrollArea only); also swapped `h-full` → `flex-1` on the wrapper (h-full didn't resolve reliably against a flex parent with `min-height: 100%`). Updated `App.test.tsx` regression assertion to match the new class set. Re-verified via MCP: Graph view now 619 px, Journal still scrolls correctly at 754 px in a 667 px viewport. No review subagent run for the Phase 2 patch because (a) the change is 6 CSS lines + 1 className swap, smaller than subagent-spawn overhead, (b) the chrome-MCP evidence is stronger than a code reviewer could provide without running the app.
+4. **UX-239 INVESTIGATE (orchestrator, live).** Navigated to the Projects page at 920 px and 500 px viewports via the `[[Projects]]` chip. Measured DOM geometry: `.page-editor` correctly positioned at both widths; mobile rail correctly reserves 48 px without covering content. `.linked-references` / `.unlinked-references` did NOT render (both components `return null` when `totalCount === 0`; dev-seed DB has no backlinks on Projects). Documented the reproduction-blocker in the UX-239 spec.
+5. **MERGE + COMMIT.** `prek run --all-files` — green on all 25 hooks (first run).
+6. **LOG.** This entry + REVIEW-LATER.md summary decrement + UX-239 spec amendment.
+
+### Honest caveats
+
+- **UX-238 depends on Radix internal behaviour.** The CSS rule in `src/index.css` targets the Radix ScrollAreaPrimitive's internal `display: table` wrapper via `[data-slot="main-content"] > [data-slot="scroll-area-viewport"] > div:first-child`. If a future Radix version changes the internal wrapping strategy (e.g. removes the `display: table` div or adds another layer), this rule silently fails to match and the Graph view collapses again. The `!important` is required because Radix uses an inline style. If prek's CSS lints ever flag `!important` as forbidden, the answer is still "inline styles win" — the `!important` is structurally necessary, not gratuitous. Documented in the CSS comment block above the rule.
+- **UX-239 still unreproduced.** The fix cannot be designed without a live repro. The user reported seeing the shift on real data; the dev-seed has no backlinks. Two paths forward: (a) the user ships a DB snapshot or step-by-step repro steps; (b) a future session manually populates backlinks (`[[Projects]]` chip into a journal block, wait for materializer, navigate). Until one of those happens, any fix would be speculative and potentially make the actual bug worse.
+- **No review subagent for the Phase 2 UX-238 patch.** PROMPT.md encourages a review subagent when a human-code-review equivalent would catch issues. In this case the chrome-browser MCP verification (pre / post / during manual CSS injection) is stronger evidence than a code-review pass would produce. If a future reviewer wants to audit: the chrome MCP steps are in the Pipeline above; the CSS rule is `src/index.css:1182+`; the wrapper class is at `src/App.tsx:951-957`.
+- **jsdom doesn't compute CSS layout.** The regression tests are class-list presence only, not pixel-accurate height assertions. A future Playwright test could verify computed height at runtime, but Playwright isn't wired into CI (TEST-1d blocked on a 95 % green baseline). Filed as a watch-list item implicitly — not a new REVIEW-LATER entry.
+- **The Phase 1 / Phase 2 split was messy in-session.** The build subagent completed its work correctly per its task spec, but the task spec (written by the orchestrator) omitted Radix's `display: table` internal behaviour because I hadn't yet seen it in the DOM. Phase 2 was orchestrator-driven discovery that the spec itself was incomplete. Lesson: for layout-cascade bugs that depend on third-party primitive internals (Radix, Headless UI, etc.), the build-subagent spec should include a pre-flight "verify the fix actually works at http://localhost:5173 via chrome-browser MCP before returning" step. If the subagent had hit this, it would have reported back "Phase 1 landed but the graph is still collapsed" instead of reporting "done".
+
+### Watch-list (not filed)
+
+- **Playwright computed-height regression test for GraphView.** Would pin the Phase 2 fix to a real integration assertion instead of class-list only. Blocked on TEST-1d / full-suite-green Playwright baseline.
+- **Radix-version pin for ScrollArea primitive.** The current fix depends on Radix's `display: table` internal behaviour. A major Radix bump could silently break it. Either pin `radix-ui` harder in `package.json` or add a runtime assertion that the expected wrapper exists on mount (throw if not). Low-priority unless Radix releases break something.
+- **UX-239 needs live repro.** See Honest caveats above.
+
+---
+
 ## Session 435 — UX-237 PageBrowser + PageOutline ring-inset fix (2026-04-20)
 
 **1 REVIEW-LATER item resolved. Open items 10 → 9.** User reported the focused-row ring in the pages list was cropped. Orchestrator + 1 build subagent + 2 pipelined review subagents (tech + UX) + 1 orchestrator-driven scope extension to `PageOutline` based on the UX reviewer's follow-up finding.

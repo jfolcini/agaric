@@ -140,6 +140,25 @@ describe('App', () => {
     expect(screen.getAllByRole('button', { name: /add.*block/i }).length).toBeGreaterThanOrEqual(1)
   })
 
+  // UX-238: view-transition-wrapper must be a flex column with height
+  // propagation so the height chain (SidebarInset → ScrollArea viewport →
+  // wrapper → GraphView) resolves correctly. jsdom can't verify the
+  // computed height, so this is a class-list regression guard matching
+  // the pattern used in UX-237's PageBrowser tests.
+  it('view-transition-wrapper is a flex column with height propagation (UX-238)', async () => {
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Agaric')).toBeInTheDocument()
+    })
+
+    const wrapper = screen.getByTestId('view-transition-wrapper')
+    expect(wrapper).toHaveClass('flex')
+    expect(wrapper).toHaveClass('flex-1')
+    expect(wrapper).toHaveClass('min-h-0')
+    expect(wrapper).toHaveClass('flex-col')
+  })
+
   it('switches to Pages view', async () => {
     const user = userEvent.setup()
     render(<App />)

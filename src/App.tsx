@@ -949,9 +949,12 @@ function App() {
               data-slot="main-content"
             >
               <div
-                className={
-                  fadeVisible ? 'opacity-100 transition-opacity duration-150 ease-out' : 'opacity-0'
-                }
+                className={cn(
+                  'flex flex-1 min-h-0 flex-col',
+                  fadeVisible
+                    ? 'opacity-100 transition-opacity duration-150 ease-out'
+                    : 'opacity-0',
+                )}
                 data-testid="view-transition-wrapper"
               >
                 <ViewRouter

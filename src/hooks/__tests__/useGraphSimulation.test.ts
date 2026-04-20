@@ -139,7 +139,45 @@ class MockWorker {
   }
 }
 
+// ── MockResizeObserver ───────────────────────────────────────────────
+// Captures instances + observed targets + trigger the callback manually
+// to simulate a resize event. The global no-op stub from `test-setup.ts`
+// is overridden per-test below.
+
+type ResizeObserverCallback = (entries: ResizeObserverEntry[], observer: ResizeObserver) => void
+
+class MockResizeObserver {
+  static instances: MockResizeObserver[] = []
+  callback: ResizeObserverCallback
+  observed: Element[] = []
+  disconnected = false
+
+  constructor(callback: ResizeObserverCallback) {
+    this.callback = callback
+    MockResizeObserver.instances.push(this)
+  }
+
+  observe(target: Element): void {
+    this.observed.push(target)
+  }
+
+  unobserve(target: Element): void {
+    this.observed = this.observed.filter((el) => el !== target)
+  }
+
+  disconnect(): void {
+    this.disconnected = true
+    this.observed = []
+  }
+
+  /** Fire the callback manually — simulates a resize event. */
+  fire(): void {
+    this.callback([] as unknown as ResizeObserverEntry[], this as unknown as ResizeObserver)
+  }
+}
+
 const OriginalWorker = globalThis['Worker'] as typeof Worker | undefined
+const OriginalResizeObserver = globalThis.ResizeObserver
 
 function makeNodes(): GraphNode[] {
   return [
@@ -195,7 +233,9 @@ function Harness({ nodes, edges, onResult, navigateToPage }: HarnessProps): Reac
 beforeEach(() => {
   vi.clearAllMocks()
   MockWorker.instances = []
+  MockResizeObserver.instances = []
   vi.stubGlobal('Worker', MockWorker)
+  vi.stubGlobal('ResizeObserver', MockResizeObserver)
 })
 
 afterEach(() => {
@@ -204,6 +244,7 @@ afterEach(() => {
   } else {
     delete (globalThis as Record<string, unknown>)['Worker']
   }
+  vi.stubGlobal('ResizeObserver', OriginalResizeObserver)
 })
 
 describe('useGraphSimulation', () => {
@@ -328,5 +369,72 @@ describe('useGraphSimulation', () => {
 
     expect(worker.terminated).toBe(true)
     expect(forceSimulation).toHaveBeenCalled()
+  })
+
+  // UX-238: the simulation now observes the SVG with a ResizeObserver so
+  // centering forces re-anchor when the container resizes. Without the
+  // observer the forces stayed pinned to the initial `clientWidth /
+  // clientHeight` and nodes drifted off-center after any container
+  // resize (window resize, sidebar toggle, orientation change).
+  it('attaches a ResizeObserver to the SVG for re-anchoring on resize (UX-238)', () => {
+    render(
+      React.createElement(Harness, {
+        nodes: makeNodes(),
+        edges: makeEdges(),
+        onResult: () => {},
+      }),
+    )
+
+    expect(MockResizeObserver.instances).toHaveLength(1)
+    const observer = MockResizeObserver.instances[0] as InstanceType<typeof MockResizeObserver>
+    expect(observer.observed).toHaveLength(1)
+    const observedEl = observer.observed[0]
+    expect(observedEl).toBeDefined()
+    expect((observedEl as Element).tagName.toLowerCase()).toBe('svg')
+  })
+
+  it('re-posts start to the worker with new dimensions when resize fires (UX-238)', () => {
+    render(
+      React.createElement(Harness, {
+        nodes: makeNodes(),
+        edges: makeEdges(),
+        onResult: () => {},
+      }),
+    )
+
+    const worker = MockWorker.instances[0] as InstanceType<typeof MockWorker>
+    const initialStartCalls = worker.postMessageCalls.filter(
+      (m: { type?: string }) => m.type === 'start',
+    )
+    expect(initialStartCalls).toHaveLength(1)
+
+    const observer = MockResizeObserver.instances[0] as InstanceType<typeof MockResizeObserver>
+    const observedSvg = observer.observed[0] as SVGSVGElement
+    // Override the SVG's client dimensions so the resize callback reads new values.
+    Object.defineProperty(observedSvg, 'clientWidth', { configurable: true, value: 1200 })
+    Object.defineProperty(observedSvg, 'clientHeight', { configurable: true, value: 800 })
+
+    observer.fire()
+
+    const finalStartCalls = worker.postMessageCalls.filter(
+      (m: { type?: string }) => m.type === 'start',
+    )
+    expect(finalStartCalls).toHaveLength(2)
+    expect(finalStartCalls[1]).toMatchObject({ type: 'start', width: 1200, height: 800 })
+  })
+
+  it('disconnects the ResizeObserver on unmount (UX-238)', () => {
+    const { unmount } = render(
+      React.createElement(Harness, {
+        nodes: makeNodes(),
+        edges: makeEdges(),
+        onResult: () => {},
+      }),
+    )
+
+    const observer = MockResizeObserver.instances[0] as InstanceType<typeof MockResizeObserver>
+    expect(observer.disconnected).toBe(false)
+    unmount()
+    expect(observer.disconnected).toBe(true)
   })
 })

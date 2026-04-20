@@ -83,6 +83,19 @@ interface SimulationCtx {
   prefersReducedMotion: boolean
 }
 
+/**
+ * Handle returned from the worker/main-thread simulation runners.
+ *
+ * `cleanup` tears down the simulation (called on effect cleanup).
+ * `onResize` re-anchors the simulation's centering forces to the new
+ * canvas dimensions. Called from the `ResizeObserver` on `svgRef.current`
+ * so the graph stays centered when the view container resizes (UX-238).
+ */
+interface SimulationHandle {
+  cleanup: () => void
+  onResize: (width: number, height: number) => void
+}
+
 export interface UseGraphSimulationArgs {
   svgRef: React.RefObject<SVGSVGElement | null>
   nodes: GraphNode[]
@@ -420,7 +433,7 @@ function extractErrorCause(event: Event): unknown {
   return new Error(`worker ${event.type} event`)
 }
 
-function runWorkerSimulation(args: WorkerRunArgs): () => void {
+function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
   const { onWorkerFailed, ...ctx } = args
   const noop = (): void => {}
 
@@ -433,7 +446,7 @@ function runWorkerSimulation(args: WorkerRunArgs): () => void {
   }
 
   const worker = instantiateWorker((err) => reportFailure('construction', err))
-  if (!worker) return noop
+  if (!worker) return { cleanup: noop, onResize: noop }
 
   let tickCount = 0
   const handleMessage = (evt: MessageEvent<WorkerOutboundMessage>): void => {
@@ -464,14 +477,29 @@ function runWorkerSimulation(args: WorkerRunArgs): () => void {
   worker.addEventListener('error', handleError)
   worker.addEventListener('messageerror', handleError)
 
-  postWorkerStart(worker, ctx)
+  // Mutable dimensions so ResizeObserver re-posts can update them.
+  // We re-post `start` with new dimensions on resize (the worker
+  // protocol does not yet have a `resize` message — `start` is the
+  // documented fallback per UX-238's spec; this causes the simulation
+  // to rebuild with the new centering forces).
+  const current = { width: ctx.width, height: ctx.height }
+  postWorkerStart(worker, { ...ctx, width: current.width, height: current.height })
   ctx.node.call(createWorkerDrag(worker))
 
-  return () => {
-    worker.removeEventListener('message', handleMessage)
-    worker.removeEventListener('error', handleError)
-    worker.removeEventListener('messageerror', handleError)
-    worker.terminate()
+  return {
+    cleanup: () => {
+      worker.removeEventListener('message', handleMessage)
+      worker.removeEventListener('error', handleError)
+      worker.removeEventListener('messageerror', handleError)
+      worker.terminate()
+    },
+    onResize: (width, height) => {
+      if (failed) return
+      if (width === current.width && height === current.height) return
+      current.width = width
+      current.height = height
+      postWorkerStart(worker, { ...ctx, width, height })
+    },
   }
 }
 
@@ -512,25 +540,53 @@ function buildMainThreadSim(ctx: SimulationCtx): Simulation<GraphNode, GraphEdge
     .force('y', forceY(ctx.height / 2).strength(0.05))
 }
 
-function runMainThreadSimulation(ctx: SimulationCtx): () => void {
+function runMainThreadSimulation(ctx: SimulationCtx): SimulationHandle {
   const sim = buildMainThreadSim(ctx)
   ctx.node.call(createMainThreadDrag(sim))
+
+  const current = { width: ctx.width, height: ctx.height }
+  const applyResizeForces = (width: number, height: number): void => {
+    sim.force('center', forceCenter(width / 2, height / 2))
+    sim.force('x', forceX(width / 2).strength(0.05))
+    sim.force('y', forceY(height / 2).strength(0.05))
+  }
 
   if (ctx.prefersReducedMotion) {
     sim.alphaDecay(1)
     sim.tick(REDUCED_MOTION_TICK_LIMIT)
     ctx.applyPositions()
     sim.stop()
-    return () => {
-      sim.stop()
+    return {
+      cleanup: () => {
+        sim.stop()
+      },
+      onResize: (width, height) => {
+        if (width === current.width && height === current.height) return
+        current.width = width
+        current.height = height
+        applyResizeForces(width, height)
+        sim.alpha(0.3)
+        sim.tick(REDUCED_MOTION_TICK_LIMIT)
+        ctx.applyPositions()
+        sim.stop()
+      },
     }
   }
 
   sim.on('tick', () => {
     ctx.applyPositions()
   })
-  return () => {
-    sim.stop()
+  return {
+    cleanup: () => {
+      sim.stop()
+    },
+    onResize: (width, height) => {
+      if (width === current.width && height === current.height) return
+      current.width = width
+      current.height = height
+      applyResizeForces(width, height)
+      sim.alpha(0.3).restart()
+    },
   }
 }
 
@@ -586,12 +642,35 @@ export function useGraphSimulation({
     }
 
     const useWorker = typeof Worker !== 'undefined' && !workerFailed
-    const cleanupSim = useWorker
+    const handle = useWorker
       ? runWorkerSimulation({ ...ctx, onWorkerFailed: () => setWorkerFailed(true) })
       : runMainThreadSimulation(ctx)
 
+    // ── ResizeObserver: re-anchor centering forces on SVG resize ──
+    //
+    // UX-238: before this, the simulation read `svg.clientWidth /
+    // clientHeight` exactly once at mount. When the view container
+    // resized (window resize, sidebar toggle, orientation change), the
+    // simulation's `forceCenter` / `forceX` / `forceY` stayed anchored
+    // to the initial dimensions and nodes drifted off-center.
+    //
+    // Guarded for jsdom and older runtimes where `ResizeObserver` may
+    // not exist. The observer also fires once at `observe()` time with
+    // the current dimensions — the `onResize` handlers short-circuit
+    // when the dimensions haven't changed so that fire is a no-op.
+    let resizeObserver: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        const width = svg.clientWidth || DEFAULT_WIDTH
+        const height = svg.clientHeight || DEFAULT_HEIGHT
+        handle.onResize(width, height)
+      })
+      resizeObserver.observe(svg)
+    }
+
     return () => {
-      cleanupSim()
+      resizeObserver?.disconnect()
+      handle.cleanup()
       svg.removeEventListener('keydown', handleZoomKey)
     }
   }, [svgRef, nodes, edges, navigateToPage, workerFailed])

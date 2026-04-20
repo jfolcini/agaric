@@ -1178,3 +1178,29 @@
     scroll-behavior: auto;
   }
 }
+
+/* ── UX-238: main-content ScrollArea viewport wrapper height ──────────
+ *
+ * Radix ScrollAreaPrimitive.Viewport wraps its children in an
+ * internal `<div>` with `display: table` **as an inline style** and
+ * intrinsic (content-based) height. The inline style wins over
+ * ordinary CSS, preventing descendant elements from using `h-full` /
+ * `height: 100%` to fill the viewport's available vertical space
+ * (e.g. GraphView collapses to ~content height on first render even
+ * though the view-transition-wrapper carries `h-full min-h-0 flex-col`).
+ *
+ * Scope the fix to the `main-content` ScrollArea only: promote the
+ * Radix wrapper to a flex column that fills the viewport's height so
+ * `h-full` on the direct child (view-transition-wrapper) resolves
+ * against the visible viewport. `!important` is required to override
+ * Radix's inline `display: table`. Content taller than 100% overflows
+ * and scrolls normally — no regression for scroll-growing views.
+ *
+ * Other ScrollArea instances (TabBar horizontal, PageOutline, page
+ * browser list) are untouched by this rule.
+ */
+[data-slot="main-content"] > [data-slot="scroll-area-viewport"] > div:first-child {
+  display: flex !important;
+  flex-direction: column !important;
+  min-height: 100% !important;
+}
