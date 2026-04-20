@@ -532,3 +532,17 @@ describe('PageEditor date-page panels (B-1)', () => {
     expect(screen.queryByTestId('done-panel')).not.toBeInTheDocument()
   })
 })
+
+describe('UX-230 responsive layout', () => {
+  it('page-editor root has min-w-0 so it can shrink inside a flex parent', () => {
+    const { container } = render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    const root = container.querySelector('.page-editor') as HTMLElement | null
+    expect(root).not.toBeNull()
+    expect(root).toHaveClass('min-w-0')
+    // Preserve the existing flex-column layout so narrow-viewport behaviour
+    // doesn't accidentally change the vertical stacking of children.
+    expect(root).toHaveClass('flex')
+    expect(root).toHaveClass('flex-col')
+  })
+})

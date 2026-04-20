@@ -365,4 +365,43 @@ describe('TabBar', () => {
       expect(anyOverflowX).toBeNull()
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // UX-230 responsive layout
+  // ---------------------------------------------------------------------------
+  describe('UX-230 responsive layout', () => {
+    function setupThreeTabs() {
+      useNavigationStore.setState({
+        currentView: 'page-editor',
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+          { id: '2', pageStack: [{ pageId: 'P3', title: 'Page 3' }], label: 'Page 3' },
+        ],
+        activeTabIndex: 0,
+      })
+    }
+
+    it('tablist has min-w-0 so it can shrink inside the horizontal ScrollArea', () => {
+      setupThreeTabs()
+      render(<TabBar />)
+
+      const tablist = screen.getByRole('tablist')
+      expect(tablist).toHaveClass('min-w-0')
+    })
+
+    it('each tab uses a responsive max-width (120px mobile → 200px md+)', () => {
+      setupThreeTabs()
+      render(<TabBar />)
+
+      const tabs = screen.getAllByRole('tab')
+      expect(tabs.length).toBeGreaterThanOrEqual(3)
+      for (const tab of tabs) {
+        expect(tab).toHaveClass('max-w-[120px]')
+        expect(tab).toHaveClass('md:max-w-[200px]')
+        // truncate behaviour must be preserved so long titles stay on one line.
+        expect(tab).toHaveClass('truncate')
+      }
+    })
+  })
 })

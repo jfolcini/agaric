@@ -1,6 +1,82 @@
 # Session Log
 
-## Session 431 — MAINT-87 sqlx default-features=false (compile-graph prune) (2026-04-19)
+## Session 432 — UX-230 + UX-231 responsive-layout regression (narrow viewports) (2026-04-20)
+
+**2 REVIEW-LATER items added + resolved in the same session. Open items 11 → 13 → 11.** User reported a responsive-layout regression (lateral overflow at mid widths + sidebar vanishing below 768 px). Orchestrator filed UX-230 + UX-231 earlier in the session, then resolved both in a parallel two-subagent build + four-subagent review (technical + UX per item) + one fix subagent.
+
+### Resolved items
+
+- **UX-230** — Main content overflows horizontally at narrow viewports. Root cause: `min-w-0` missing at two levels of the flex chain between `SidebarInset` and the editor, so flex items refused to shrink below intrinsic content width. Compounded by a fixed-width block gutter (`w-[68px]`) that only collapsed at `max-sm` (<640 px) and per-tab `max-w-[200px]` that was too wide for portrait tablets. Fix: add `min-w-0` to the `.page-editor` wrapper (`PageEditor.tsx:151`), the outer `.sortable-block` wrapper (`SortableBlock.tsx:286`), and the inner swipe-content wrapper (`SortableBlock.tsx:332`); widen the gutter collapse from `max-sm` to `max-md` (matching the 768-px `useIsMobile` breakpoint); add `min-w-0` to the `TabBar` tablist (`TabBar.tsx:93`) and swap per-tab `max-w-[200px]` for responsive `max-w-[120px] md:max-w-[200px]`. Belt-and-braces `overflow-x-hidden` applied to `SidebarInset` in `sidebar.tsx:513` by the UX-231 subagent (shared file ownership to avoid parallel-write collision).
+
+- **UX-231** — Left sidebar entirely hidden below 768 px. Root cause: `Sidebar`'s mobile branch (`<Sheet>` offcanvas only) ignored `collapsible="icon"` completely, so at narrow widths the user had zero persistent access to nav items or the sync/theme/shortcuts footer. Combined with UX-230's lateral overflow, the hamburger `SidebarTrigger` could itself get pushed off-screen, making the sidebar feel "completely gone". Fix: Option 4 — when `isMobile && collapsible === 'icon'`, render BOTH a persistent 48-px icon rail (fixed left, `h-svh`, `bg-sidebar`, `border-r`, `data-collapsible="icon"` + `data-mobile-rail="true"`) AND the existing `<Sheet>` that slides over on hamburger / swipe-from-left / `Ctrl+B`. `collapsible="offcanvas"` keeps the Sheet-only legacy path for other consumers. Touch-target correctness via `[@media(pointer:coarse)]:group-data-[collapsible=icon]:size-11!` on `sidebarMenuButtonVariants`, made paint-faithful by stripping `SidebarGroup`'s horizontal padding inside the rail via `group-data-[mobile-rail=true]:px-0` (post-review fix — see "Review findings" below). `role="navigation"` + `aria-label={t('sidebar.label')}` on the rail wrapper.
+
+### Review subagent findings
+
+Two build subagents + four review subagents + one post-review fix subagent. All technical reviews ran in parallel with the second build; the post-review fix addressed the one blocking finding.
+
+- **UX-230 technical review (APPROVE, no findings).** Confirmed all 4 "Proposed fix" steps from the REVIEW-LATER spec landed exactly; step 5 (`overflow-x-hidden` on SidebarInset) was correctly delegated to the UX-231 subagent to avoid shared-file write collision. 7 assertion sites in 3 test files (233/233 vitest green), `cn()` everywhere, no new dependencies, no touch target weakened.
+- **UX-230 UX review (APPROVE with non-blocking findings).** DOM-level review (chrome-browser path skipped). Flagged two observations, neither blocking: (a) the Playwright viewport-matrix in the filed spec was not added — noted as an acceptable deferral since PROMPT.md only mandates vitest for frontend; (b) pre-existing gap: gutter buttons on coarse pointer have `min-h-[44px]` but not `min-w-[44px]` (the `.touch-target` utility in `index.css` only sets `min-height`). Filed as a pre-existing issue — not opened as a new REVIEW-LATER item in this session; if it surfaces again, a follow-up UX-* item can be filed with a concrete class-list fix.
+- **UX-231 technical review (REQUEST CHANGES, 2 blocking + 2 nitpicks).** Blocking #1: the builder's "44-px button overflows a 32-px content area, overflow-hidden clips paint only" trade-off was critiqued as brittle at minimum and user-visibly wrong at worst (cropped rail-edge on the button). Blocking #2: the comment in `sidebarMenuButtonVariants` misdescribes CSS hit-testing. Nitpick #3: rail wrapper missing `role="navigation"` / `aria-label`. Nitpick #4: no `collapsible="none"` regression test on mobile.
+- **UX-231 UX review (APPROVE WITH NOTES).** Arrived at the same trade-off observation as technical but rated it "acceptable because 13 % overflow + hidden is clever". Orchestrator sided with the technical reviewer's stricter fix because it is strictly better (no visual clipping, no CSS-spec edge case) at zero additional complexity.
+- **Post-review fix subagent (all 4 findings addressed).** Added `group-data-[mobile-rail=true]:px-0` to `SidebarGroup`'s `cn()` — Tailwind's unnamed-group-plus-data-attr variant resolves against the rail wrapper which already carries `group` + `data-mobile-rail="true"`. Rewrote the misleading comment to stop claiming "overflow-hidden preserves hit-testing". Added `role="navigation"` + `aria-label={t('sidebar.label')}` on the rail wrapper. Added the `collapsible="none"` mobile regression test. Extended the existing rail test to assert the new a11y attributes. `SidebarContent`'s `group-data-[collapsible=icon]:overflow-hidden` stays — it is still useful for clipping label-span overflow when icons are collapsed, it just isn't load-bearing for touch-target correctness anymore.
+
+### Verification
+
+- **Vitest (sidebar + UX-230 targets):** `npx vitest run src/components/__tests__/Sidebar.test.tsx src/components/ui/__tests__/sidebar.test.tsx` → **65/65 passed**. `npx vitest run src/components/__tests__/PageEditor.test.tsx src/components/__tests__/SortableBlock.test.tsx src/components/__tests__/TabBar.test.tsx` → **233/233 passed**. `npx vitest run src/__tests__/App.test.tsx` (largest `SidebarGroup` consumer in production) → **72/72 passed**.
+- **prek `run --all-files`:** green post-commit (see pipeline below).
+- **Rust:** untouched. `cargo nextest run` baseline of 2172/2172 from session 431 stands.
+- **Playwright E2E:** not run. No spec changes; the filed UX-230/UX-231 viewport matrix was not added in this session (see non-goals). Baseline 197/293 from session 430 stands.
+- **Android:** not run. Zero Android-surface changes; MAINT-83 closed in session 430.
+- **specta bindings:** no Rust type-shape changes; bindings check passes.
+
+### Pipeline
+
+1. **PLAN.** Re-read REVIEW-LATER.md after the earlier filing; confirmed UX-230 + UX-231 were the only actionable items (FEAT-4 too big, PERF-19/20/23 explicitly deferred, TEST-1d blocked on 95 % E2E baseline, PUB-* publish-prep gated). Partitioned files so the two build subagents would not collide on `src/components/ui/sidebar.tsx`: UX-230 subagent owned `PageEditor.tsx`, `SortableBlock.tsx`, `TabBar.tsx` (+ tests); UX-231 subagent owned `ui/sidebar.tsx` (including the shared `overflow-x-hidden` step 5), `Sidebar.test.tsx`, and `UX.md`.
+2. **BUILD (parallel, 2 background subagents).** Launched concurrently; UX-230 finished first (mechanical class changes, 3 source + 3 test files, 233/233 green). UX-231 refactored the mobile branch into a rail + Sheet fragment, added the 44-px `size-11!` touch-target override, added 16 assertions across 4 new describe blocks in `Sidebar.test.tsx` (63/63 green), rewrote UX.md §Mobile Sidebar. Builder pre-flagged a touch-target trade-off (the overflow-hidden-vs-44-px question) for review.
+3. **REVIEW (pipelined, 4 parallel review subagents).** Tech + UX review for UX-230 launched as soon as UX-230's build subagent reported completion, while UX-231 was still building. Tech + UX review for UX-231 launched once UX-231 finished. UX-230 came back APPROVE. UX-231 technical review came back REQUEST CHANGES with the overflow-hidden critique; UX review came back APPROVE WITH NOTES.
+4. **FIX (1 foreground subagent).** Orchestrator sided with the technical reviewer and dispatched a fix subagent covering all 4 findings. Fix landed, 65/65 Sidebar tests green, 72/72 App tests green.
+5. **MERGE.** No worktrees used — file partition held, no merge conflicts.
+6. **LOG + COMMIT.** REVIEW-LATER.md: remove UX table rows + UX section entirely (the section became empty after removing the two items); summary 13 → 11; "Previously resolved" 339+ → 341+; sessions 120 → 121. SESSION-LOG.md: this entry. Staged + prek + committed in a single commit.
+
+### Honest caveat — one reviewer's CSS-spec claim
+
+The UX-231 technical reviewer cited CSS Overflow Module Level 3 / Pointer Events Level 2 to claim `overflow: hidden` clips pointer-event dispatch, not just paint. Browser behaviour on this point is nuanced and implementation-dependent (Chromium in particular has historically NOT clipped hit-testing on an overflowing child). Orchestrator did not resolve the spec question authoritatively — the fix is correct either way because it removes the dependency entirely (no overflow, no ambiguity), and the reviewer's recommendation (strip rail padding instead) is strictly better on the UX axis too (no visible button cropping at the rail edge). Flag, not a bug in the fix.
+
+### Watch-list (not filed)
+
+- **Playwright mobile-rail coverage.** No spec change required for the product, but a `mobile-sidebar.spec.ts` (real-viewport swipe / hamburger / Sheet-overlay flow) would catch future regressions that the DOM-only vitest harness cannot. Filed as a "nice to have" in the UX reviewer's notes. Not opened as a REVIEW-LATER item.
+- **Gutter-button `min-w-[44px]` gap.** UX-230 UX reviewer noted `BlockGutterControls` buttons get `.touch-target` which only defines `min-height`, so coarse-pointer width is <44 px. Pre-existing, unrelated to UX-230. If a user surfaces it, file as UX-232.
+- **Real-device feedback on icon-only mobile rail.** UX-231 UX reviewer noted tooltips are suppressed on mobile (they would be useless on touch), so the rail relies entirely on icon recognisability. If a future session has real-device feedback that icons confuse users, add `aria-label`s to each rail button (currently only the ancestor has `aria-label`, per AGENTS.md §Frontend / §Mandatory patterns).
+
+### Non-goals / scope discipline
+
+- Did NOT add Playwright viewport-matrix specs (filed as aspirational in the UX-230 spec; PROMPT.md only requires vitest for frontend).
+- Did NOT change the `MOBILE_BREAKPOINT` (768 px stays).
+- Did NOT touch `src/App.tsx`, `src/hooks/use-mobile.ts`, or the `Ctrl+B` / swipe gesture handlers.
+- Did NOT remove the existing `<Sheet>` offcanvas — it is still the expanded-state UI on mobile.
+- Did NOT relax any 44-px touch target. Coarse-pointer `size-11!` override keeps the WCAG 2.5.8 minimum.
+- Did NOT change the sidebar width persistence (`localStorage sidebar_width`, cookie `sidebar_state`).
+- Did NOT bump any dependency or introduce new dependencies.
+- Did NOT touch Rust, SQL, `.sqlx/` cache, Android surface, or regen specta bindings.
+- Did NOT file a new REVIEW-LATER item for the pre-existing gutter-button `min-w-[44px]` gap (watch-list only).
+- Did NOT edit `AGENTS.md` (forbidden without user approval).
+
+### Changes
+
+| File | Description |
+|------|-------------|
+| `src/components/PageEditor.tsx` | UX-230: append `min-w-0` to `.page-editor` flex container (line 151). |
+| `src/components/SortableBlock.tsx` | UX-230: append `min-w-0` to outer `.sortable-block` wrapper (line 286) and inner swipe-content wrapper (line 332); widen gutter collapse from `max-sm:w-0 max-sm:overflow-hidden` to `max-md:w-0 max-md:overflow-hidden` (line 354) so the 68-px gutter disappears below 768 px instead of 640 px. |
+| `src/components/TabBar.tsx` | UX-230: append `min-w-0` to the `role="tablist"` div (line 93); change per-tab `max-w-[200px]` to responsive `max-w-[120px] md:max-w-[200px]` (line 106). |
+| `src/components/ui/sidebar.tsx` | UX-231: refactor mobile branch so that `isMobile && collapsible === 'icon'` renders BOTH a persistent 48-px icon rail (`data-mobile-rail="true"`, `data-collapsible="icon"`, `role="navigation"`, `aria-label={t('sidebar.label')}`) AND the existing Sheet offcanvas (`collapsible="offcanvas"` keeps the Sheet-only legacy path intact). Add `group-data-[mobile-rail=true]:px-0` to `SidebarGroup` so the 48-px rail isn't eaten by the default `p-2` and the 44-px button fits without overflow-hidden clipping. Add `[@media(pointer:coarse)]:group-data-[collapsible=icon]:size-11!` to `sidebarMenuButtonVariants` to enforce the 44-px WCAG Target Size minimum when collapsed. UX-230 belt-and-braces: append `overflow-x-hidden` to `SidebarInset` (line 513) so a future overflow regression fails loudly against the inset root instead of bleeding to the document. |
+| `src/components/__tests__/PageEditor.test.tsx` | UX-230: new `describe('UX-230 responsive layout')` block — 1 test asserting `.page-editor` has `min-w-0` + preserved `flex flex-col`. |
+| `src/components/__tests__/SortableBlock.test.tsx` | UX-230: new `describe('UX-230 responsive layout')` block — 3 tests (outer wrapper `min-w-0`, swipe-content `min-w-0` + preserved `w-full`, gutter `max-md:w-0 max-md:overflow-hidden` with negative assertion that `max-sm:` classes are gone). Pre-existing gutter test at line ~3955 updated from `max-sm:` → `max-md:` with a comment explaining the breakpoint widening (intent preserved, a11y/behaviour not weakened). |
+| `src/components/__tests__/TabBar.test.tsx` | UX-230: new `describe('UX-230 responsive layout')` block — 2 tests (tablist `min-w-0`, per-tab responsive `max-w-[120px] md:max-w-[200px]` + preserved `truncate`). |
+| `src/components/__tests__/Sidebar.test.tsx` | UX-231: 5 new describe blocks / tests — persistent rail + Sheet path, regression guard for `collapsible="offcanvas"` on mobile (Sheet-only), regression guard for `collapsible="none"` on mobile (neither rail nor Sheet — just the static sidebar), desktop preservation, SidebarInset `overflow-x-hidden` guard, rail a11y (`role="navigation"` + non-empty `aria-label`), `SidebarGroup` padding stripped inside the rail. `axe(container)` audit on the mobile rail path. ~16 assertions added. |
+| `UX.md` | UX-231: rewrite §Mobile Sidebar to document the persistent 48-px icon rail (always visible below 768 px), the Sheet overlay behaviour (hamburger / swipe-from-left / `Ctrl+B`), the touch-target policy (44-px via `size-11!` + padding stripped via `group-data-[mobile-rail=true]:px-0`), and the distinction from the desktop `SidebarRail` resize handle. |
+| `REVIEW-LATER.md` | Remove UX-230 + UX-231 table rows + the entire UX section (the section became empty after removal). Summary 13 → 11. "Previously resolved" 339+ → 341+. Session count 120 → 121. |
+
+
 
 **1 REVIEW-LATER item fully resolved. Open items 12 → 11.** Single-item batch. The other open items are either too big (FEAT-4, L), deliberate non-fixes (PERF-19/20/23), blocked on ≥95 % green full-suite baseline (TEST-1d; current is 197/293 ≈ 67 %), or publish-prep gated on scheduling (PUB-1/2/3/5/6/7). User chose "Routine only" scope again. Orchestrator applied the fix directly (one atomic Rust dep change, no parallel split possible) + independent review subagent.
 

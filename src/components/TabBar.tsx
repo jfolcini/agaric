@@ -90,7 +90,7 @@ export function TabBar(): React.ReactElement | null {
       <div
         role="tablist"
         aria-label={t('tabs.tabList')}
-        className="flex items-center gap-1 px-2 py-1"
+        className="flex items-center gap-1 px-2 py-1 min-w-0"
       >
         {tabs.map((tab, i) => (
           <button
@@ -103,7 +103,7 @@ export function TabBar(): React.ReactElement | null {
             tabIndex={i === activeTabIndex ? 0 : -1}
             aria-selected={i === activeTabIndex}
             className={cn(
-              'flex items-center gap-1 px-3 py-1 text-sm rounded-t-md truncate max-w-[200px] cursor-pointer select-none',
+              'flex items-center gap-1 px-3 py-1 text-sm rounded-t-md truncate max-w-[120px] md:max-w-[200px] cursor-pointer select-none',
               'focus-visible:ring-[3px] focus-visible:ring-ring/50 outline-hidden',
               i === activeTabIndex
                 ? 'bg-background border border-b-0 border-border font-medium'

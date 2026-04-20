@@ -283,7 +283,7 @@ function SortableBlockInner({
         data-block-id={blockId}
         data-testid="sortable-block"
         className={cn(
-          'sortable-block group relative flex items-center gap-1 max-sm:items-start',
+          'sortable-block group relative flex items-center gap-1 max-sm:items-start min-w-0',
           // BUG-37: suppress the iOS/Android long-press text-selection
           // magnifier / callout that otherwise competes with the 400ms
           // long-press context menu. Only applied on coarse pointers so
@@ -329,7 +329,7 @@ function SortableBlockInner({
 
         {/* ── Sliding content wrapper (swipe-to-delete) ───────────── */}
         <div
-          className="flex items-stretch gap-1 w-full max-sm:items-start max-sm:flex-wrap max-sm:gap-x-1 max-sm:gap-y-1.5"
+          className="flex items-stretch gap-1 w-full max-sm:items-start max-sm:flex-wrap max-sm:gap-x-1 max-sm:gap-y-1.5 min-w-0"
           data-testid="swipe-content"
           style={{
             transform:
@@ -351,7 +351,7 @@ function SortableBlockInner({
           <div
             className={cn(
               GUTTER_WIDTH,
-              'relative z-10 flex-shrink-0 flex items-center gap-1 justify-end max-sm:w-0 max-sm:overflow-hidden',
+              'relative z-10 flex-shrink-0 flex items-center gap-1 justify-end max-md:w-0 max-md:overflow-hidden',
             )}
           >
             <BlockGutterControls

@@ -265,9 +265,12 @@ File: `src/components/SortableBlock.tsx`
 
 File: `src/components/ui/sidebar.tsx`
 
-- **Swipe-to-open:** Left-edge swipe gesture (20px edge zone, 50px minimum distance) — Android navigation drawer pattern
-- **Component:** `<Sheet>` offcanvas component (not sidebar collapse)
-- **Rail:** Hidden on mobile (`sm:flex`)
+- **Persistent icon rail:** 48 px wide, icons only, always visible at widths `< 768 px` when `<Sidebar collapsible="icon">` is used. Tapping a nav item navigates; tapping the hamburger `SidebarTrigger` (or swiping from the left edge, or pressing `Ctrl+B`) opens the full expanded sidebar as a Sheet overlaid on the content.
+- **Touch targets:** 44 px via `[@media(pointer:coarse)]:group-data-[collapsible=icon]:size-11!` on `SidebarMenuButton`. The rail strips `SidebarGroup`'s horizontal padding (`group-data-[mobile-rail=true]:px-0`) so the full 48-px rail width is available, and the 44-px button fits without any overflow / paint-vs-hit-area trade-off.
+- **ARIA:** the rail wrapper is a semantic `<nav>` element (implicit `role="navigation"`) carrying `aria-label={t('sidebar.label')}` so assistive tech announces the landmark.
+- **Swipe-to-open:** Left-edge swipe gesture (20 px edge zone, 50 px minimum distance) — Android navigation drawer pattern.
+- **Component:** `<Sheet>` offcanvas for the expanded state; the persistent icon rail is a separate fixed-position container rendered alongside the Sheet. `<Sidebar collapsible="offcanvas">` (the shadcn default) keeps the original Sheet-only behaviour — no rail — so other consumers of the primitive are unaffected.
+- **Rail vs. `SidebarRail`:** the narrow always-on rail on mobile is not the same primitive as `SidebarRail` (the desktop resize handle, `sm:flex` — desktop-only). They solve different problems and coexist; do not conflate them.
 
 ### Mobile-Specific Layout
 

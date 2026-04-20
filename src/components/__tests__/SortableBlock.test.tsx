@@ -3949,8 +3949,11 @@ describe('SortableBlock mobile gutter hidden (UX-21)', () => {
 
     const dragHandle = screen.getByTestId('drag-handle')
     const gutterDiv = dragHandle.parentElement as HTMLElement
-    expect(gutterDiv.className).toContain('max-sm:w-0')
-    expect(gutterDiv.className).toContain('max-sm:overflow-hidden')
+    // UX-230: collapse widened from max-sm (<640px) to max-md (<768px) so
+    // the 68-px gutter no longer forces horizontal overflow on portrait
+    // tablets and narrow desktop windows.
+    expect(gutterDiv.className).toContain('max-md:w-0')
+    expect(gutterDiv.className).toContain('max-md:overflow-hidden')
   })
 
   it('outer wrapper has max-sm:items-start for vertical alignment', () => {
@@ -4201,5 +4204,67 @@ describe('responsive layout (UX-151)', () => {
 
     const wrapper = screen.getByTestId('sortable-block')
     expect(wrapper.className).not.toContain('overflow-hidden')
+  })
+})
+
+describe('UX-230 responsive layout', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+  })
+
+  it('outer sortable-block wrapper has min-w-0 so it can shrink inside a flex parent', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_UX230"
+        content="ux230"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    const wrapper = screen.getByTestId('sortable-block')
+    expect(wrapper).toHaveClass('min-w-0')
+  })
+
+  it('inner swipe-content wrapper has min-w-0 alongside w-full', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_UX230"
+        content="ux230"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    const swipeContent = screen.getByTestId('swipe-content')
+    expect(swipeContent).toHaveClass('min-w-0')
+    // w-full must stay so the content column still fills horizontally.
+    expect(swipeContent).toHaveClass('w-full')
+  })
+
+  it('gutter collapses below md (not sm), matching the mobile breakpoint', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_UX230_G"
+        content="ux230 gutter"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+        onShowHistory={vi.fn()}
+      />,
+    )
+
+    // The gutter is the parent of the drag handle, and also carries the
+    // fixed w-[68px] class from GUTTER_WIDTH.
+    const dragHandle = screen.getByTestId('drag-handle')
+    const gutter = dragHandle.parentElement as HTMLElement
+    expect(gutter.className).toContain('w-[68px]')
+    expect(gutter).toHaveClass('max-md:w-0')
+    expect(gutter).toHaveClass('max-md:overflow-hidden')
+    // The old sm-only collapse must be gone — it caused 68px overflow
+    // at 640..767px viewports.
+    expect(gutter.className).not.toContain('max-sm:w-0')
+    expect(gutter.className).not.toContain('max-sm:overflow-hidden')
   })
 })

@@ -292,7 +292,9 @@ const Sidebar = ({
   }
 
   if (isMobile) {
-    return (
+    // The expanded-state Sheet — opened via hamburger trigger, left-edge
+    // swipe, or Ctrl+B. Rendered for every `collapsible` variant on mobile.
+    const sheet = (
       <Sheet open={openMobile} onOpenChange={setOpenMobile} {...props}>
         <SheetContent
           data-sidebar="sidebar"
@@ -310,11 +312,64 @@ const Sidebar = ({
             <SheetTitle>{t('sidebar.label')}</SheetTitle>
             <SheetDescription>Displays the mobile sidebar.</SheetDescription>
           </SheetHeader>
-          <div ref={ref} className="flex h-full w-full flex-col">
-            {children}
-          </div>
+          <div className="flex h-full w-full flex-col">{children}</div>
         </SheetContent>
       </Sheet>
+    )
+
+    // UX-231: `collapsible="offcanvas"` keeps the original Sheet-only
+    // behaviour so other consumers of this shadcn primitive are unaffected.
+    if (collapsible === 'offcanvas') {
+      return sheet
+    }
+
+    // UX-231: `collapsible="icon"` on mobile renders a persistent 48-px
+    // icon rail AND the Sheet. The rail is always visible; the Sheet slides
+    // in on top when `openMobile` becomes true. The rail's ancestor carries
+    // `data-collapsible="icon"` so `SidebarMenuButton` (and every other
+    // descendant that reacts to `group-data-[collapsible=icon]`) renders as
+    // icon-only inside the rail.
+    return (
+      <>
+        <nav
+          ref={ref as React.Ref<HTMLElement>}
+          className="group peer text-sidebar-foreground"
+          data-state="collapsed"
+          data-collapsible="icon"
+          data-variant={variant}
+          data-side={side}
+          data-slot="sidebar"
+          data-mobile-rail="true"
+          aria-label={t('sidebar.label')}
+        >
+          {/* Spacer — reserves layout space so SidebarInset starts after the rail. */}
+          <div
+            data-slot="sidebar-gap"
+            className={cn(
+              'relative h-svh w-(--sidebar-width-icon) bg-transparent',
+              'group-data-[side=right]:rotate-180',
+            )}
+          />
+          {/* Fixed rail container, anchored to the viewport edge. */}
+          <div
+            data-slot="sidebar-container"
+            className={cn(
+              'fixed inset-y-0 z-10 flex h-svh w-(--sidebar-width-icon)',
+              side === 'left' ? 'left-0 border-r' : 'right-0 border-l',
+              className,
+            )}
+          >
+            <div
+              data-sidebar="sidebar"
+              data-slot="sidebar-inner"
+              className="flex h-full w-full flex-col bg-sidebar"
+            >
+              {children}
+            </div>
+          </div>
+        </nav>
+        {sheet}
+      </>
     )
   }
 
@@ -510,7 +565,11 @@ const SidebarInset = ({ ref, className, ...props }: React.ComponentProps<'main'>
       ref={ref}
       data-slot="sidebar-inset"
       className={cn(
-        'relative flex min-w-0 w-full flex-1 flex-col bg-background',
+        // UX-231 belt-and-braces: `overflow-x-hidden` stops any lateral
+        // overflow from a SidebarInset descendant (e.g., a long tab row)
+        // from bleeding to the document and pushing the app shell off the
+        // viewport. Vertical overflow is unaffected.
+        'relative flex min-w-0 w-full flex-1 flex-col overflow-x-hidden bg-background',
         'md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2',
         className,
       )}
@@ -610,7 +669,15 @@ const SidebarGroup = ({ ref, className, ...props }: React.ComponentProps<'div'>)
       ref={ref}
       data-slot="sidebar-group"
       data-sidebar="group"
-      className={cn('relative flex w-full min-w-0 flex-col p-2', className)}
+      className={cn(
+        'relative flex w-full min-w-0 flex-col p-2',
+        // UX-231: inside the mobile icon rail the 48-px rail width is
+        // reserved for 44-px touch targets, so strip horizontal padding via
+        // the ancestor `data-mobile-rail="true"` attribute (set on the
+        // unnamed-`group` rail wrapper). Vertical padding is preserved.
+        'group-data-[mobile-rail=true]:px-0',
+        className,
+      )}
       {...props}
     />
   )
@@ -707,7 +774,15 @@ const SidebarMenuItem = ({ ref, className, ...props }: React.ComponentProps<'li'
 SidebarMenuItem.displayName = 'SidebarMenuItem'
 
 const sidebarMenuButtonVariants = cva(
-  'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm outline-hidden transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[active=true]:rounded-l-none data-[active=true]:border-l-[3px] data-[active=true]:border-l-primary data-[active=true]:dark:border-l-4 data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground [&>span:last-child]:truncate [&>svg]:size-[1.2em] [&>svg]:shrink-0',
+  // UX-231: on touch / coarse-pointer devices, enforce the 44-px WCAG
+  // Target Size minimum when the sidebar is collapsed to icon-only mode via
+  // `[@media(pointer:coarse)]:group-data-[collapsible=icon]:size-11!`. The
+  // desktop default stays at `size-8` (32 px) because pointer precision is
+  // higher. Works in tandem with `SidebarGroup` stripping horizontal padding
+  // inside the mobile rail (`group-data-[mobile-rail=true]:px-0`) so the
+  // 44-px button fits fully inside the 48-px rail without any overflow /
+  // paint-vs-hit-area trade-off.
+  'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm outline-hidden transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [@media(pointer:coarse)]:group-data-[collapsible=icon]:size-11! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[active=true]:rounded-l-none data-[active=true]:border-l-[3px] data-[active=true]:border-l-primary data-[active=true]:dark:border-l-4 data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground [&>span:last-child]:truncate [&>svg]:size-[1.2em] [&>svg]:shrink-0',
   {
     variants: {
       variant: {
