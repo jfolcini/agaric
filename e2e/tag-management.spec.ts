@@ -1,4 +1,4 @@
-import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
 
 /**
  * E2E tests for tag management flows.
@@ -260,12 +260,13 @@ test.describe('Tag insertion via @ picker', () => {
     await suggestionList.locator('[data-testid="suggestion-item"]').first().click()
     await expect(editor.locator('[data-testid="tag-ref-chip"]')).toBeVisible()
 
-    // Re-focus the editor so keyboard events reach TipTap, then save via Enter
+    // Re-focus the editor so keyboard events reach TipTap, then save via Enter.
+    // The product's Enter handler moves the roving editor to a newly-created
+    // sibling below — use `saveBlock` which correctly waits for the specific
+    // block-under-edit to transition to its static render, rather than the
+    // (always-false) "no editor anywhere" assertion.
     await editor.click()
-    await page.keyboard.press('Enter')
-    await expect(
-      page.locator('[data-testid="block-editor"] [contenteditable="true"]'),
-    ).not.toBeVisible()
+    await saveBlock(page)
 
     // Verify tag chip appears in the static render
     const staticBlock = page

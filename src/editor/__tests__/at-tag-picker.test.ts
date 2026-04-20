@@ -210,6 +210,44 @@ describe('AtTagPicker input rule (T-2)', () => {
 // After picking a tag from the @ suggestion popup, the chain must end with
 // .insertContent(' ').run() so the cursor sits one space past the chip.
 
+describe('AtTagPicker suggestion plugin configuration', () => {
+  // Regression guard for TEST-1fh query-blocks failures. Typing
+  // `{{query property:context=@office}}` previously triggered the at-tag
+  // picker because `allowedPrefixes: null` let `@` fire after any character.
+  // Enter then created a `Create 'office}}'` tag instead of saving the
+  // block. Pinning the prefix set here ensures the picker only opens when
+  // `@` is preceded by whitespace (or starts a block), matching the
+  // Suggestion plugin's own default.
+  it('restricts trigger to whitespace/start-of-block prefixes', async () => {
+    let capturedOptions: Record<string, unknown> | undefined
+    vi.resetModules()
+    vi.doMock('@tiptap/suggestion', () => ({
+      Suggestion: (opts: Record<string, unknown>) => {
+        capturedOptions = opts
+        return { key: opts['pluginKey'] }
+      },
+    }))
+    const mod = await import('../extensions/at-tag-picker')
+    const ext = mod.AtTagPicker.configure({ items: () => [] })
+    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
+    ;(ext.config.addProseMirrorPlugins as Function).call({
+      editor: {} as unknown,
+      options: ext.options,
+    })
+    expect(capturedOptions).toBeDefined()
+    expect(capturedOptions?.['char']).toBe('@')
+    // Space, NBSP (ProseMirror normalises a trailing ASCII space to U+00A0
+    // when it's the last character in a paragraph), and newline are all
+    // valid prefixes that let the picker open mid-block. `\0` is appended
+    // by TipTap internally so empty/start-of-block prefixes also match.
+    expect(capturedOptions?.['allowedPrefixes']).toEqual([' ', '\u00A0', '\n'])
+    expect(capturedOptions?.['allowSpaces']).toBe(true)
+
+    vi.doUnmock('@tiptap/suggestion')
+    vi.resetModules()
+  })
+})
+
 describe('AtTagPicker suggestion command chain (UX-232)', () => {
   it('non-create path chains deleteRange → insertTagRef → insertContent(" ") → run', async () => {
     let capturedCommand:

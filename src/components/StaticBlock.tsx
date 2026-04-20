@@ -191,6 +191,36 @@ function StaticBlockInner({
     [blockId, onFocus, onSelect],
   )
 
+  // Capture-phase handler used for query blocks. QueryResult's inner
+  // subtree is densely interactive (chevron toggle, edit-pencil, result
+  // items that navigate to their parent page, PageLink badges) and those
+  // inner handlers call `stopPropagation()`. That left no reliable
+  // bubble-phase click path for "click anywhere on the query block to
+  // re-enter edit mode" — a plain `.click()` on the block-static element
+  // would always land on a result item and never reach this wrapper.
+  //
+  // Running in the capture phase lets us eagerly focus the block for any
+  // non-interactive target (result item content, empty header area, card
+  // background), while still yielding the click to explicit `<button>` /
+  // `<a>` / `role="link"` elements when those are the actual target.
+  const handleQueryBlockClickCapture = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const target = e.target as HTMLElement
+      // Let the chevron toggle, edit-query pencil, and PageLink badge
+      // handle their own clicks.
+      if (target.closest('button, a, [role="link"]')) return
+      // Otherwise treat the click as "focus this block" (or select, with
+      // modifier keys) and suppress the downstream item-level navigation
+      // that would otherwise send us away to a result's parent page.
+      e.preventDefault()
+      e.stopPropagation()
+      if ((e.ctrlKey || e.metaKey) && onSelect) onSelect(blockId, 'toggle')
+      else if (e.shiftKey && onSelect) onSelect(blockId, 'range')
+      else onFocus(blockId)
+    },
+    [blockId, onFocus, onSelect],
+  )
+
   // Detect {{query ...}} blocks and render QueryResult instead of the text
   if (content?.startsWith('{{query ') && content.endsWith('}}')) {
     const expression = content.slice(8, -2).trim()
@@ -203,7 +233,7 @@ function StaticBlockInner({
         data-testid="block-static"
         data-block-id={blockId}
         aria-label={t('block.editLabel')}
-        onClick={handleOuterClick}
+        onClickCapture={handleQueryBlockClickCapture}
         onKeyDown={handleOuterKeyDown}
       >
         <QueryResult

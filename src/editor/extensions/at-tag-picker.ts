@@ -98,7 +98,19 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
         editor: this.editor,
         pluginKey: atTagPickerPluginKey,
         char: '@',
-        allowedPrefixes: null,
+        // Only open the tag picker when `@` is preceded by whitespace or is
+        // at the start of the block. Without this guard, query expressions
+        // like `property:context=@office` or `value:@remote` would trip
+        // the picker and intercept Enter (creating a "Create 'office}}'"
+        // tag instead of saving the block).
+        //
+        // TipTap's default is `[' ']` (plain space only), but ProseMirror
+        // normalises a trailing space inside a paragraph to NBSP (`\u00A0`)
+        // — so the "type `tagged: ` then press the toolbar's Insert-tag
+        // button" flow renders as `tagged:\u00A0@` and needs NBSP accepted
+        // alongside the regular space. We include `\n` as well for the
+        // (rare) case where a hard break precedes `@`.
+        allowedPrefixes: [' ', '\u00A0', '\n'],
         allowSpaces: true,
         items: async ({ query }) => {
           try {

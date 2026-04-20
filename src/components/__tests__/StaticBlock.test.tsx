@@ -780,6 +780,46 @@ describe('StaticBlock', () => {
       }
     })
 
+    it('query-block variant: clicking a non-interactive descendant calls onFocus', async () => {
+      // The query block's inner subtree (QueryResult + QueryResultList) is
+      // densely interactive — chevron toggle, edit pencil, result items, page
+      // links — and each inner handler calls stopPropagation. Without the
+      // capture-phase handler, a plain `.click()` on the block-static element
+      // would land on a result item and never re-enter edit mode. This test
+      // pins the capture-phase path (see handleQueryBlockClickCapture).
+      const onFocus = vi.fn()
+      const user = userEvent.setup()
+      const { container } = render(
+        <StaticBlock blockId="B1" content="{{query type:tag expr:project}}" onFocus={onFocus} />,
+      )
+      const outer = container.querySelector('[data-testid="block-static"]') as HTMLDivElement | null
+      expect(outer).not.toBeNull()
+      // Click on a non-interactive descendant (the query-result card
+      // background, which renders even while results are still loading).
+      const card = outer?.querySelector('[data-testid="query-result"]') as HTMLElement | null
+      expect(card).not.toBeNull()
+      if (card) await user.click(card)
+      expect(onFocus).toHaveBeenCalledWith('B1')
+    })
+
+    it('query-block variant: clicking the chevron toggle does NOT call onFocus', async () => {
+      // The capture handler must yield the click to real <button> / <a> /
+      // [role="link"] targets so the chevron still toggles collapse (and so
+      // the edit-pencil still opens the visual builder) without also kicking
+      // the block into edit mode.
+      const onFocus = vi.fn()
+      const user = userEvent.setup()
+      const { container } = render(
+        <StaticBlock blockId="B1" content="{{query type:tag expr:project}}" onFocus={onFocus} />,
+      )
+      const chevron = container.querySelector(
+        '[data-testid="query-result"] button',
+      ) as HTMLButtonElement | null
+      expect(chevron).not.toBeNull()
+      if (chevron) await user.click(chevron)
+      expect(onFocus).not.toHaveBeenCalled()
+    })
+
     it('has no a11y violations with role="button" div (plain content)', async () => {
       const { container } = render(
         <StaticBlock blockId="B1" content="Plain content" onFocus={vi.fn()} />,

@@ -85,7 +85,7 @@ test.describe('Property picker — :: trigger', () => {
   })
 
   test('Escape dismisses the picker without inserting', async ({ page }) => {
-    await focusBlock(page)
+    const editor = await focusBlock(page)
 
     await openPropertyPicker(page)
     await expect(page.locator('[data-testid="suggestion-popup"]')).toBeVisible()

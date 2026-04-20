@@ -56,11 +56,12 @@ test.describe('Journal view modes', () => {
     // Click "Agenda" tab
     await page.getByRole('tab', { name: 'Agenda view' }).click()
 
-    // Verify the agenda view container and all three task sections are visible
+    // Agenda view renders a filter-driven task list: the container, the filter
+    // builder fieldset, and the default-filter pill (Status: TODO, DOING) the
+    // view opens with (UX-196) must all be visible.
     await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
-    await expect(page.getByRole('button', { name: 'To Do tasks' })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'In Progress tasks' })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Completed tasks' })).toBeVisible()
+    await expect(page.locator('[data-testid="agenda-filter-builder"]')).toBeVisible()
+    await expect(page.locator('[data-testid="agenda-filter-builder"] ul li').first()).toBeVisible()
   })
 })
 
@@ -406,15 +407,26 @@ test.describe('External link editing and removal', () => {
     await urlInput.fill('https://example.com')
     await urlInput.press('Enter')
 
-    // Verify link exists in editor
-    const link = page.locator('[data-testid="block-editor"] [data-testid="external-link"]')
+    // Verify link exists in editor — the TipTap ExternalLink extension
+    // emits `<a class="external-link">`; the `data-testid="external-link"`
+    // attribute only exists on the StaticBlock (RichContentRenderer) render.
+    const link = page.locator('[data-testid="block-editor"] .external-link')
     await expect(link).toBeVisible()
 
     // Wait for popover to close
     await expect(page.getByTestId('link-edit-popover')).not.toBeVisible()
 
-    // Click on the link text to ensure cursor is inside the link
+    // Click on the link text to ensure cursor is inside the link. Wait for
+    // the editor to recognise the cursor is inside the link mark — the
+    // External link toolbar button exposes this as `aria-pressed=true`
+    // (it mirrors `editor.isActive('link')`). Without this wait, the
+    // click can land on a mark boundary and Ctrl+K / the toolbar click
+    // reopens the popover in "insert" mode (no Update/Remove button).
     await link.click()
+    await expect(page.getByRole('button', { name: 'External link' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
 
     // Click link button again to re-open popover in edit mode
     await page.getByRole('button', { name: 'External link' }).click()
@@ -439,15 +451,25 @@ test.describe('External link editing and removal', () => {
     await urlInput.fill('https://example.com')
     await urlInput.press('Enter')
 
-    // Verify link exists
-    const link = page.locator('[data-testid="block-editor"] [data-testid="external-link"]')
+    // Verify link exists — same CSS class as above (TipTap emits
+    // `<a class="external-link">`; `data-testid="external-link"` is a
+    // StaticBlock-only attribute).
+    const link = page.locator('[data-testid="block-editor"] .external-link')
     await expect(link).toBeVisible()
 
     // Wait for popover to close
     await expect(page.getByTestId('link-edit-popover')).not.toBeVisible()
 
-    // Click on the link to place cursor inside
+    // Click on the link to place cursor inside, then wait for the editor
+    // to recognise the cursor is inside the link mark (External link toolbar
+    // button reports aria-pressed=true, which mirrors editor.isActive('link')).
+    // Without this wait the click can land on a mark boundary and Ctrl+K
+    // opens the popover without the Remove button.
     await link.click()
+    await expect(page.getByRole('button', { name: 'External link' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
 
     // Re-open popover in edit mode — use Ctrl+K which dispatches the custom event
     // directly on the editor DOM, keeping the popover anchored in-viewport
@@ -460,9 +482,7 @@ test.describe('External link editing and removal', () => {
     await removeBtn.dispatchEvent('click')
 
     // Verify the link is gone from the editor
-    await expect(
-      page.locator('[data-testid="block-editor"] [data-testid="external-link"]'),
-    ).not.toBeVisible()
+    await expect(page.locator('[data-testid="block-editor"] .external-link')).not.toBeVisible()
   })
 })
 

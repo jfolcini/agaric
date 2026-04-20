@@ -25,14 +25,25 @@ import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './he
 
 /**
  * Type a slash command filter inside the currently focused editor.
- * Moves to end of line, types ` /<command>`, and waits for the
- * suggestion list to appear.
+ * Moves to end of line, types ` /` + waits for the suggestion list to
+ * appear, then types the query. Splitting the keystrokes around the
+ * visibility assertion avoids a race with the slash extension's
+ * auto-execute feature: when exactly one item matches a query of
+ * length >= 3, a 200ms timer fires the command and closes the popup
+ * (see AUTO_EXEC_DELAY_MS in src/editor/extensions/slash-command.ts).
+ * Commands like /todo, /doing, /done resolve to a single match, so
+ * asserting visibility AFTER the full query is typed can miss the
+ * popup's brief life. Asserting right after `/` (empty query → base
+ * list, nothing to auto-execute) is race-free.
  */
 async function typeSlashCommand(page: import('@playwright/test').Page, command: string) {
   await page.keyboard.press('End')
-  await page.keyboard.type(` /${command}`, { delay: 30 })
+  await page.keyboard.type(' /', { delay: 30 })
   const list = page.locator('[data-testid="suggestion-list"]')
   await expect(list).toBeVisible()
+  if (command) {
+    await page.keyboard.type(command, { delay: 30 })
+  }
   return list
 }
 
@@ -61,7 +72,10 @@ test.describe('Slash menu basics', () => {
       list.locator('[data-testid="suggestion-item"]', { hasText: 'DOING' }),
     ).toBeVisible()
     await expect(list.locator('[data-testid="suggestion-item"]', { hasText: 'DONE' })).toBeVisible()
-    await expect(list.locator('[data-testid="suggestion-item"]', { hasText: 'DATE' })).toBeVisible()
+    // "DATE" alone is ambiguous — "DUE — Set due date" and "SCHEDULED — Set scheduled date"
+    // also contain the substring "date" (hasText is case-insensitive). Anchor via the
+    // picker item's id attribute so we pin the DATE base command unambiguously.
+    await expect(list.locator('#suggestion-date')).toBeVisible()
   })
 
   test('Escape closes slash menu', async ({ page }) => {

@@ -73,11 +73,14 @@ test.describe('Inner links — rendering', () => {
   test('multiple link types coexist in a single page', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
-    // Should have at least: 1 block_link chip, 2 tag_ref chips, 1 bold element
-    await expect(page.locator('[data-testid="block-link-chip"]')).toHaveCount(1)
-    const tagChips = page.locator('[data-testid="tag-ref-chip"]')
+    // Should have: 1 block_link chip, 2 tag_ref chips, 1 bold element inside the
+    // block tree. The linked-references panel below the tree also renders
+    // chips (for backlink previews) and must be excluded from these counts.
+    const blockTree = page.locator('.block-tree')
+    await expect(blockTree.locator('[data-testid="block-link-chip"]')).toHaveCount(1)
+    const tagChips = blockTree.locator('[data-testid="tag-ref-chip"]')
     expect(await tagChips.count()).toBeGreaterThanOrEqual(2)
-    await expect(page.locator('strong')).toHaveCount(1)
+    await expect(blockTree.locator('strong')).toHaveCount(1)
   })
 })
 
@@ -189,8 +192,15 @@ test.describe('Inner links — [[ picker', () => {
     const list = activeSuggestionList(page)
     await expect(list).toBeVisible()
 
-    // Should show at least Getting Started and Quick Notes
-    await expect(list.locator('[data-testid="suggestion-item"]')).toHaveCount(3) // 3 pages + daily
+    // Seed ships multiple pages (Getting Started, Quick Notes, daily, and
+    // several richer-preview pages). The picker lists them all — verify the
+    // core two are present rather than pinning an exact count.
+    await expect(
+      list.locator('[data-testid="suggestion-item"]', { hasText: 'Getting Started' }),
+    ).toBeVisible()
+    await expect(
+      list.locator('[data-testid="suggestion-item"]', { hasText: 'Quick Notes' }),
+    ).toBeVisible()
   })
 
   test('picker filters results as user types', async ({ page }) => {
@@ -292,9 +302,12 @@ test.describe('Inner links — link persistence', () => {
   test('link chip persists in static view after editor closes', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
-    // Count existing link chips before our edit
+    // Count existing link chips before our edit. Scope to .block-tree so the
+    // LinkedReferences panel's backlink-preview chips (which render "Quick Notes"
+    // as a backlink because QN_1 contains [[PAGE_GETTING_STARTED]]) are not
+    // counted. Without this scope the chipsBefore vs chipsBefore+1 delta is off.
     const chipsBefore = await page
-      .locator('[data-testid="block-link-chip"]', { hasText: 'Quick Notes' })
+      .locator('.block-tree [data-testid="block-link-chip"]', { hasText: 'Quick Notes' })
       .count()
 
     // Click a block to edit
@@ -315,9 +328,9 @@ test.describe('Inner links — link persistence', () => {
     // Press Enter to save and close editor
     await page.keyboard.press('Enter')
 
-    // Should have one MORE "Quick Notes" chip than before
+    // Should have one MORE "Quick Notes" chip than before (inside the block tree).
     await expect(
-      page.locator('[data-testid="block-link-chip"]', { hasText: 'Quick Notes' }),
+      page.locator('.block-tree [data-testid="block-link-chip"]', { hasText: 'Quick Notes' }),
     ).toHaveCount(chipsBefore + 1)
   })
 
@@ -350,23 +363,22 @@ test.describe('Inner links — Add block button position', () => {
   test('Add block button is above the detail panel', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
-    // Click a block to make the detail panel appear
+    // Click a block so the page editor is fully rendered
     await focusBlock(page)
 
     // The Add block button should exist
     const addBtn = page.getByRole('button', { name: 'Add block' })
     await expect(addBtn).toBeVisible()
 
-    // Click Backlinks tab to open the detail panel
-    await page.locator('.detail-tab-backlinks').click()
+    // The linked-references ("References") panel is always rendered at the
+    // bottom of the page editor now — it replaced the former tabbed detail
+    // panel. Both elements should be visible simultaneously.
+    const referencesPanel = page.locator('.linked-references')
+    await expect(referencesPanel).toBeVisible()
 
-    // Both should be visible
-    await expect(addBtn).toBeVisible()
-    await expect(page.locator('.detail-panel')).toBeVisible()
-
-    // Add block button should be ABOVE the detail panel in the DOM
+    // Add block button should be ABOVE the linked-references panel visually
     const addBtnBox = await addBtn.boundingBox()
-    const detailBox = await page.locator('.detail-panel').boundingBox()
+    const detailBox = await referencesPanel.boundingBox()
     if (addBtnBox && detailBox) {
       expect(addBtnBox.y).toBeLessThan(detailBox.y)
     }

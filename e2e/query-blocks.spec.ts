@@ -284,8 +284,10 @@ test.describe('Query result interactions', () => {
 
     // Wait for results to load
 
-    // The header should display the expression
-    await expect(queryResult.locator('code')).toContainText('tag:work')
+    // The header should display the expression. F-24 replaced the original
+    // `<code>{expression}</code>` with visual filter pills — the raw source is
+    // kept as the `title` attribute on the pills span for a11y + tooling.
+    await expect(queryResult.locator('[title]').first()).toHaveAttribute('title', 'tag:work')
 
     // Results should be visible initially
     await expect(queryResult.locator('[data-testid="query-result-item"]').first()).toBeVisible()

@@ -40,9 +40,9 @@ test.describe('Settings panel', () => {
     await themeTrigger.click()
 
     // Verify the three options appear
-    await expect(page.getByRole('option', { name: 'Light' })).toBeVisible()
-    await expect(page.getByRole('option', { name: 'Dark' })).toBeVisible()
-    await expect(page.getByRole('option', { name: 'System' })).toBeVisible()
+    await expect(page.getByRole('option', { name: 'Light', exact: true })).toBeVisible()
+    await expect(page.getByRole('option', { name: 'Dark', exact: true })).toBeVisible()
+    await expect(page.getByRole('option', { name: 'System', exact: true })).toBeVisible()
   })
 
   test('Keyboard settings tab renders shortcut list', async ({ page }) => {
