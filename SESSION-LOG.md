@@ -1,5 +1,65 @@
 # Session Log
 
+## Session 441 — Backlog hygiene: split FEAT-4 + TEST-1f umbrellas, compact MAINT-88 (2026-04-20)
+
+**0 REVIEW-LATER items resolved; 3 umbrellas reshaped.** Open items: 20 → 37 (net +17 from splitting two L/M-L umbrellas into independently-schedulable sub-items; no new features added, only backlog structure). Pure backlog-hygiene session per PROMPT.md — PLAN → review-with-subagents → APPLY as three separate commits. No code changes, no tests added.
+
+### What changed
+
+- **FEAT-4** (Agent access: MCP server) was one L-sized row mixing v1, v2, and v3 into a single entry. Split into umbrella + 9 sub-items following the FEAT-5a..5g precedent:
+  - `FEAT-4a` through `FEAT-4g` (v1, READY) — scheduleable now.
+  - `FEAT-4h` (v2 RW) and `FEAT-4i` (v3 mobile) — DEFERRED.
+  - Added ASCII implementation DAG to the umbrella (4a + 4b parallel → 4c → {4d, 4f} parallel → 4e → 4g).
+  - Expanded v1 tool surface 8 → 9 RO tools by adding `list_property_defs` (wraps existing `list_property_defs_inner` at `properties.rs:447` — agents need the typed property schema to sensibly use v2's `set_property`).
+  - Resized FEAT-4c from `M` to `M–L` per technical-reviewer feedback (9 tools × happy+error paths + `insta` snapshots + concurrent-client stress + FTS property test + `journal_for_date_inner` refactor ≈ 6–10 h realistic).
+  - Clarified that FEAT-4a (socket transport + stub) and FEAT-4b (`ToolRegistry` + `ActorContext`) are independent implementations living in the same module but not importing each other — they meet at FEAT-4c's integration point.
+
+- **TEST-1f** (remaining Playwright flake floor) was one 65-line row with 46 failures lumped across 8 root-cause buckets. Split into umbrella + 8 sub-items `TEST-1fa`..`TEST-1fh`, each independently shippable and scoped to its failure bucket. Also removed a 12-bucket "Closed buckets (plumbing-level, already landed)" block from the umbrella — this was a historical audit narrative of session-439 fixes, which the file's top-level `No historical references. ... Session activity is tracked separately in SESSION-LOG.md` rule explicitly forbids. Verified via grep that the content is preserved in session 439's SESSION-LOG entry.
+
+- **MAINT-88** (sqruff SQL pre-commit evaluation) was 75 lines of `sqruff` vs `sqlfluff` vs `squawk` tooling assessment + a proposed `prek.toml` snippet + a "markdown files that would need updating" enumeration — all of which could be re-derived from the codebase when / if the revisit-triggers fire. Compacted to ~20 lines matching the `PERF-19/20/23` pattern (problem + why-it's-LOW + decision + revisit-if + cost). The docs-update checklist is preserved as a one-line footnote (`prek.toml`, `.sqruff`, `BUILD.md`, `CONTRIBUTING.md`, `ARCHITECTURE.md`) so a future implementer does not forget to bump the hook count.
+
+### Pipeline
+
+1. **PLAN.** Drafted the full three-part split inline in the user-facing reply — FEAT-4 sub-items + DAG, TEST-1f buckets (with rationale for removing the "Closed buckets" block per the file's own invariants), MAINT-88 compaction (with the PERF-19/20/23 template as the target).
+2. **REVIEW.** Launched two parallel read-only review subagents (both background) with the full plan:
+   - **Technical / architectural reviewer** checked DAG correctness, sub-item sizing, tool-list completeness, deferred-item scoping. Returned **APPROVE** with two required changes (FEAT-4c → `M–L`, add `list_property_defs_inner` as 9th v1 tool) and two optional clarifications (DAG reasoning, `origin` column scope).
+   - **Format / consistency / backlog-hygiene reviewer** checked match to FEAT-5 precedent, PERF-19/20/23 compact-defer pattern, DEFERRED status labeling, summary-table arithmetic, concurrent-edit risk. Returned **APPROVE** with three non-blocking recommendations (add ASCII DAG diagram, keep the MAINT-88 docs-update checklist as a footnote, break into three commits + re-read before each edit).
+   - Applied every required change and the three non-blocking recommendations before editing.
+3. **APPLY (3 separate commits).** Per format-reviewer's recommendation, each sub-split landed as its own commit to reduce merge-conflict risk and keep each change independently reviewable. Re-read REVIEW-LATER.md immediately before each edit (per PROMPT.md line 86's concurrent-edit guidance). Smallest change first:
+   - `6407994 docs(REVIEW-LATER): compact MAINT-88 to match PERF-19/20/23 deferred pattern` — 75 lines → 20 lines; open-items count unchanged at 20.
+   - `6febc9a docs(REVIEW-LATER): split TEST-1f umbrella into TEST-1fa..TEST-1fh buckets` — removed "Closed buckets" block, added 8 sub-items; 20 → 28 open items.
+   - `c657bc7 docs(REVIEW-LATER): split FEAT-4 umbrella into FEAT-4a..FEAT-4i sub-items` — added 9 sub-items + DAG + expanded tool surface; 28 → 37 open items.
+4. **LOG.** This entry. No FEATURE-MAP update (this session added no features, changed no commands / components / hooks / stores / tables — pure backlog structure).
+
+### Files changed
+
+| Path | Change |
+|------|--------|
+| `REVIEW-LATER.md` | Three independent edits across three commits. `MAINT-88` compacted (−57 lines). `TEST-1f` split (+128 lines net: −33 "Closed buckets" + −~25 prose into sub-items, +~185 sub-item detail sections). `FEAT-4` split (+264 lines net: tool row for `list_property_defs`, DAG ASCII, clarified 4a/4b independence, 9 sub-item detail sections). Summary-table rebuilt twice (20 → 28 → 37); `Previously resolved: 356+ items across 127 sessions` unchanged (no items resolved this session). |
+| `SESSION-LOG.md` | This entry. |
+
+### Verification
+
+- `prek run --all-files` — green on all three commits (lychee passed first try on two, flaked once on MAINT-88's commit and passed on retry; same pre-existing GitHub rate-limit issue observed in session 440; confirmed unrelated to any URL in this session's diff).
+- `git log --oneline -4 main` confirms three clean commits landed sequentially.
+- Arithmetic verified twice per commit: `grep -c "^| UX-\|^| FEAT-\|^| PERF-\|^| MAINT-\|^| TEST-\|^| PUB-" REVIEW-LATER.md` matches the header `N open items.` line at every step (20 → 28 → 37).
+
+### Why this is NOT a trivial row-add
+
+- The two reviewers (tech + format) collectively flagged **nine substantive changes** to the initial draft: 2 required (FEAT-4c resize + add `list_property_defs`) + 3 non-blocking that we accepted (DAG ASCII, MAINT-88 footnote, three-commit execution) + 4 minor clarifications already incorporated. A self-reviewed rewrite would have missed at least two of those. The review step is load-bearing even for backlog-hygiene commits.
+- Removing the "Closed buckets" block from TEST-1f is the cleanest possible compliance with the file's top-level `No historical references` invariant — which was being violated across ~33 lines. A future rewrite that notices the violation but leaves the content in place on pragmatic grounds would have been a worse outcome.
+- The umbrella + sub-items pattern is load-bearing for the PROMPT.md "parallel subagents by domain" workflow: each FEAT-4a..FEAT-4g slot is now independently schedulable to a separate subagent, whereas the previous single L-sized row forced the whole of v1 into one session budget.
+
+### Honest caveats
+
+- **No code changes. No tests. No product behaviour change.** This session is pure backlog structure. Value is downstream: the next session that picks up MCP work can schedule FEAT-4a + FEAT-4b in parallel as two subagents, something that was not tractable against the monolithic FEAT-4 entry.
+- **Open-items count +17 is misleading.** It suggests the backlog grew; in fact the backlog scope is *smaller* in total work hours (MAINT-88 compacted means the item's maintenance cost is smaller; the FEAT-4 / TEST-1f splits expose internal structure without adding work). The count metric inflates when umbrellas expand. This is a known limitation of the per-row count; there is no single "total-effort" metric that captures what actually changed.
+- **Did NOT touch FEAT-5.** The FEAT-5 umbrella (Google Calendar push) is already split into FEAT-5a..5g — it was the pattern we mirrored, not an item to restructure. Left as-is.
+- **Did NOT touch PUB-* items.** All four remaining PUB items are `DEFERRED until publish target is locked in`; splitting / compacting them now would be premature.
+- **Skipped the `origin` column audit the tech reviewer mentioned.** The reviewer's check of `src-tauri/migrations/0001_initial.sql` confirmed no existing `origin` column on `op_log`, so FEAT-4h's "add `origin` column via new migration" scope is accurate. The FEAT-4 umbrella edit captures this nuance inline rather than filing a separate review.
+
+---
+
 ## Session 440 — UX-244: GraphView SVG stays at intrinsic 150 px inside a tall container (2026-04-20)
 
 **1 REVIEW-LATER item resolved.** Open items: 13 → 12. User-reported follow-up to UX-238: after UX-238 made the `.graph-view` container grow vertically, the nested `<svg>` still rendered graph nodes pinned inside the first ~150 px because bare `className="w-full h-full"` on an inline SVG does not resolve to 100 % of a block-level flex-item parent in Chromium — it falls back to the SVG's intrinsic 150 px default. Single-item batch (every other open item is deferred / blocked / L-sized).
