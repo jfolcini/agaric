@@ -380,6 +380,14 @@ test.describe('Global shortcuts', () => {
 
     const backDate = await page.locator('[data-testid="date-display"]').innerText()
 
+    // Blur any editor that stole focus from the auto-created block for the
+    // new (empty) journal page. The product's `isTypingInField()` guard in
+    // JOURNAL_SHORTCUTS correctly skips navigation when a contenteditable
+    // owns focus so Alt+← / Alt+→ keep their native word-nav semantics
+    // inside the editor. Click the header (non-focusable) to move focus
+    // back to <body> before the second shortcut fires.
+    await page.locator('header').click()
+
     // Press Alt+Right to go forward
     await page.keyboard.down('Alt')
     await page.keyboard.press('ArrowRight')
@@ -401,6 +409,12 @@ test.describe('Global shortcuts', () => {
     // Wait for the date to change from today
     await expect(page.locator('[data-testid="date-display"]')).not.toHaveText(todayDate)
 
+    // Blur any editor that stole focus from the auto-created block for the
+    // new (empty) journal page — see the matching comment in the Alt+Right
+    // test above. Without this, `isTypingInField()` short-circuits Alt+T
+    // so it keeps its native editor semantics.
+    await page.locator('header').click()
+
     // Press Alt+T to go to today
     await page.keyboard.down('Alt')
     await page.keyboard.press('t')
@@ -411,17 +425,26 @@ test.describe('Global shortcuts', () => {
   })
 
   test('? opens keyboard shortcuts panel', async ({ page }) => {
-    // Click on the header to ensure no input/textarea/contenteditable is focused
-    await page.locator('header').click()
+    // `KeyboardShortcuts` is React.lazy-loaded (App.tsx), and its global `?`
+    // keydown listener is only attached once the chunk resolves and the
+    // component mounts. Under parallel-worker load the chunk can still be
+    // in flight when the keystroke is dispatched, so we retry the press
+    // until the listener is live and the sheet opens.
+    await expect(async () => {
+      // Click on the header to ensure no input/textarea/contenteditable is focused
+      await page.locator('header').click()
 
-    // Type ? using keyboard.type which dispatches keydown with key='?'
-    await page.keyboard.type('?')
+      // Type ? using keyboard.type which dispatches keydown with key='?'
+      await page.keyboard.type('?')
 
-    // Verify the shortcuts sheet is visible (it has a data-testid="shortcuts-table")
-    await expect(page.locator('[data-testid="shortcuts-table"]')).toBeVisible()
+      // Verify the shortcuts sheet is visible (it has a data-testid="shortcuts-table")
+      await expect(page.locator('[data-testid="shortcuts-table"]')).toBeVisible({ timeout: 1000 })
+    }).toPass({ timeout: 10000 })
 
-    // Also verify the heading title (use role to avoid ambiguity with body text)
-    await expect(page.getByRole('heading', { name: 'Keyboard Shortcuts' })).toBeVisible()
+    // Also verify the sheet title (SheetTitle renders `shortcuts.title`,
+    // i.e. "Quick Reference" — not "Keyboard Shortcuts", which only appears
+    // in the Settings view).
+    await expect(page.getByRole('heading', { name: 'Quick Reference' })).toBeVisible()
   })
 })
 

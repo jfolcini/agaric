@@ -288,13 +288,18 @@ export function HistoryView(): React.ReactElement {
           {/* Filter bar */}
           <HistoryFilterBar opTypeFilter={opTypeFilter} onFilterChange={setOpTypeFilter} />
 
-          {/* Selection toolbar */}
-          <HistorySelectionToolbar
-            selectedCount={selected.size}
-            reverting={reverting}
-            onRevertClick={() => setConfirmRevert(true)}
-            onClearSelection={clearSelection}
-          />
+          {/* Selection toolbar — only render when items are selected so that
+              batch actions (revert, clear) disappear after completion. Matches
+              the ConflictList pattern and keeps the "N selected" text out of
+              the DOM when nothing is selected. */}
+          {selected.size > 0 && (
+            <HistorySelectionToolbar
+              selectedCount={selected.size}
+              reverting={reverting}
+              onRevertClick={() => setConfirmRevert(true)}
+              onClearSelection={clearSelection}
+            />
+          )}
         </div>
       </ViewHeader>
 

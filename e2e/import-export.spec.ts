@@ -31,12 +31,16 @@ async function triggerExport(page: import('@playwright/test').Page) {
 }
 
 // ===========================================================================
-// Helper: navigate to Status panel
+// Helper: navigate to Settings → Data tab (where the import/export UI lives
+// after UX-144). The import panel used to live in the Status panel but was
+// moved to Settings → Data with the lazy-loaded DataSettingsTab component.
 // ===========================================================================
 
-async function navigateToStatus(page: import('@playwright/test').Page) {
-  await page.getByRole('button', { name: 'Status', exact: true }).click()
-  await expect(page.locator('header').getByText('Status')).toBeVisible()
+async function navigateToDataSettings(page: import('@playwright/test').Page) {
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await page.getByRole('tab', { name: 'Data' }).click()
+  // DataSettingsTab is lazy-loaded (Suspense) — wait for it to mount.
+  await expect(page.locator('[data-testid="import-panel-title"]')).toBeVisible()
 }
 
 // ===========================================================================
@@ -44,7 +48,14 @@ async function navigateToStatus(page: import('@playwright/test').Page) {
 // ===========================================================================
 
 test.describe('Export page as markdown', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ context, page }) => {
+    // `handleExport` awaits `exportPageMarkdown(pageId)` before calling
+    // `navigator.clipboard.writeText(...)`. That awaited promise resolution
+    // breaks the user-activation chain from the kebab click, so Chromium
+    // rejects the clipboard write unless `clipboard-write` is granted
+    // upfront. Without it, PageHeader's catch branch fires and shows the
+    // "Export failed" toast instead of "Markdown copied to clipboard".
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'])
     await waitForBoot(page)
   })
 
@@ -96,10 +107,7 @@ test.describe('Import markdown', () => {
   })
 
   test('importing a markdown file creates blocks and shows success toast', async ({ page }) => {
-    await navigateToStatus(page)
-
-    // The import section should be visible in the Status panel
-    await expect(page.locator('[data-testid="import-panel-title"]')).toBeVisible()
+    await navigateToDataSettings(page)
 
     // Create a synthetic file and set it on the hidden file input
     const fileInput = page.locator('[data-testid="import-file-input"]')
@@ -124,7 +132,7 @@ test.describe('Import markdown', () => {
   })
 
   test('imported page appears in the page list', async ({ page }) => {
-    await navigateToStatus(page)
+    await navigateToDataSettings(page)
 
     // Import a markdown file
     const fileInput = page.locator('[data-testid="import-file-input"]')
@@ -144,7 +152,7 @@ test.describe('Import markdown', () => {
   })
 
   test('importing a file without heading uses filename as page title', async ({ page }) => {
-    await navigateToStatus(page)
+    await navigateToDataSettings(page)
 
     // Import markdown without a heading — title should come from filename
     const fileInput = page.locator('[data-testid="import-file-input"]')

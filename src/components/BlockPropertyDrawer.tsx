@@ -285,6 +285,7 @@ export function BlockPropertyDrawer({
                       (prop.value_num != null ? String(prop.value_num) : '')
                     }
                     ariaLabel={t('property.valueLabel', { key: prop.key })}
+                    testId={`property-value-input-${prop.key}`}
                     onSave={(v) => handleSave(prop.key, v, getType(prop.key))}
                     onRemove={
                       !NON_DELETABLE_PROPERTIES.has(prop.key)
@@ -320,6 +321,8 @@ export interface PropertyRowProps {
   inputType?: string
   /** Accessible label for the input element. */
   ariaLabel: string
+  /** Optional stable selector applied as `data-testid` on the value input (for E2E specs). */
+  testId?: string | undefined
   /** Called with the new value when the input loses focus or Enter is pressed. */
   onSave: (value: string) => void
   /** When provided, renders the X (remove) button. Omit or pass null/undefined to hide it. */
@@ -334,6 +337,7 @@ export function PropertyRow({
   value,
   inputType,
   ariaLabel,
+  testId,
   onSave,
   onRemove,
   removeAriaLabel,
@@ -369,6 +373,7 @@ export function PropertyRow({
           className="h-7 text-xs"
           type={isDate ? 'text' : inputType}
           aria-label={ariaLabel}
+          {...(testId !== undefined ? { 'data-testid': testId } : {})}
           {...(isDate ? { value: dateInput } : { defaultValue: value })}
           placeholder={isDate ? t('property.datePlaceholder') : undefined}
           onBlur={isDate ? handleDateBlur : (e) => onSave(e.target.value)}

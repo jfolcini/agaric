@@ -85,9 +85,13 @@ test.describe('Enter key with suggestion popup', () => {
     // The suggestion popup should close
     await expect(activeSuggestionPopup(page)).not.toBeVisible()
 
-    // A block_link chip should be inserted (not a new block)
+    // A block_link chip should be inserted (not a new block).
+    // Scope to the active editor: `block-link-chip` also appears in the
+    // block-tree sidebar (Quick Notes entry) so a root-level query hits two.
     await expect(
-      page.locator('[data-testid="block-link-chip"]', { hasText: 'Quick Notes' }),
+      page
+        .locator('[data-testid="block-editor"] [data-testid="block-link-chip"]')
+        .filter({ hasText: 'Quick Notes' }),
     ).toBeVisible()
   })
 
@@ -103,7 +107,13 @@ test.describe('Enter key with suggestion popup', () => {
     await page.keyboard.press('Enter')
 
     await expect(activeSuggestionPopup(page)).not.toBeVisible()
-    await expect(page.locator('[data-testid="tag-ref-chip"]', { hasText: 'work' })).toBeVisible()
+    // Scope to the active editor: another static block may render the same
+    // tag chip (e.g. "Try tagging blocks with #work") so a root query hits two.
+    await expect(
+      page
+        .locator('[data-testid="block-editor"] [data-testid="tag-ref-chip"]')
+        .filter({ hasText: 'work' }),
+    ).toBeVisible()
   })
 })
 
@@ -132,8 +142,12 @@ test.describe('Tab key with suggestion popup', () => {
     await page.keyboard.press('Tab')
 
     await expect(activeSuggestionPopup(page)).not.toBeVisible()
+    // Scope to the active editor: `block-link-chip` also appears in the
+    // block-tree sidebar (Quick Notes entry) so a root-level query hits two.
     await expect(
-      page.locator('[data-testid="block-link-chip"]', { hasText: 'Quick Notes' }),
+      page
+        .locator('[data-testid="block-editor"] [data-testid="block-link-chip"]')
+        .filter({ hasText: 'Quick Notes' }),
     ).toBeVisible()
   })
 

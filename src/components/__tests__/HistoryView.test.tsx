@@ -455,11 +455,12 @@ describe('HistoryView', () => {
     // Click Clear selection
     await user.click(screen.getByRole('button', { name: /Clear selection/ }))
 
-    // Toolbar stays visible but shows 0 selected with disabled buttons
+    // Toolbar is unmounted when selection becomes empty — matches
+    // ConflictList pattern so "N selected" text clears from the DOM.
     expect(screen.queryByText(t('batch.selectedCount', { count: 1 }))).not.toBeInTheDocument()
-    expect(screen.getByText(t('batch.selectedCount', { count: 0 }))).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Revert selected/ })).toBeDisabled()
-    expect(screen.getByRole('button', { name: /Clear selection/ })).toBeDisabled()
+    expect(screen.queryByText(t('batch.selectedCount', { count: 0 }))).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Revert selected/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Clear selection/ })).not.toBeInTheDocument()
   })
 
   it('escape key clears selection', async () => {
@@ -483,12 +484,12 @@ describe('HistoryView', () => {
     // Press Escape
     await user.keyboard('{Escape}')
 
-    // Selection should be cleared but toolbar stays visible
+    // Selection cleared and toolbar unmounts with it.
     expect(screen.queryByText(t('batch.selectedCount', { count: 1 }))).not.toBeInTheDocument()
-    expect(screen.getByText(t('batch.selectedCount', { count: 0 }))).toBeInTheDocument()
+    expect(screen.queryByText(t('batch.selectedCount', { count: 0 }))).not.toBeInTheDocument()
   })
 
-  it('toolbar is visible even when nothing is selected', async () => {
+  it('toolbar is hidden when nothing is selected', async () => {
     const page = {
       items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
       next_cursor: null,
@@ -500,13 +501,11 @@ describe('HistoryView', () => {
 
     await screen.findByText('item 1')
 
-    // Toolbar should be visible with 0 selected
-    expect(screen.getByText(t('batch.selectedCount', { count: 0 }))).toBeInTheDocument()
-    expect(screen.getByRole('toolbar', { name: /0 selected/ })).toBeInTheDocument()
-
-    // Buttons should be disabled
-    expect(screen.getByRole('button', { name: /Revert selected/ })).toBeDisabled()
-    expect(screen.getByRole('button', { name: /Clear selection/ })).toBeDisabled()
+    // No selection → toolbar is not rendered; batch controls absent.
+    expect(screen.queryByText(t('batch.selectedCount', { count: 0 }))).not.toBeInTheDocument()
+    expect(screen.queryByRole('toolbar', { name: /selected/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Revert selected/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Clear selection/ })).not.toBeInTheDocument()
   })
 
   it('calls list_page_history with correct params on mount', async () => {
@@ -791,6 +790,53 @@ describe('HistoryView', () => {
     const checkboxes = screen.getAllByRole('checkbox')
     expect(checkboxes[0]).toBeChecked()
     expect(checkboxes[1]).toBeChecked()
+  })
+
+  // TEST-1fg regression: after a successful batch revert, the selection
+  // toolbar (badge + Revert / Clear buttons) must unmount so that no
+  // "N selected" text remains in the DOM. Previously the toolbar was
+  // always rendered and still showed "0 selected" post-revert, which
+  // surfaced as Playwright strict-mode violations in e2e/history-revert.
+  it('unmounts selection toolbar after batch-revert resolves', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z'),
+        makeHistoryEntry(2, 'create_block', { content: 'item 2' }, '2025-01-14T10:00:00Z'),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke
+      .mockResolvedValueOnce(page) // initial load
+      .mockResolvedValueOnce([]) // revert_ops resolves successfully
+      .mockResolvedValueOnce(emptyPage) // reload after revert
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // Select both entries so batch-revert is the path under test.
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0] as HTMLElement)
+    await user.click(items[1] as HTMLElement)
+    expect(screen.getByText(t('batch.selectedCount', { count: 2 }))).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Revert selected/ })).toBeInTheDocument()
+
+    // Trigger confirmation dialog and confirm the revert.
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+
+    // After resolve: selection set is empty AND the toolbar is unmounted.
+    // Both halves of the symptom (badge text + action button) must be gone.
+    await waitFor(() => {
+      expect(screen.queryByText(t('batch.selectedCount', { count: 2 }))).not.toBeInTheDocument()
+      expect(screen.queryByText(t('batch.selectedCount', { count: 1 }))).not.toBeInTheDocument()
+      expect(screen.queryByText(t('batch.selectedCount', { count: 0 }))).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Revert selected/ })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Clear selection/ })).not.toBeInTheDocument()
+      expect(screen.queryByRole('toolbar', { name: /selected/ })).not.toBeInTheDocument()
+    })
   })
 
   // -- Focus management edge cases (#187) -------------------------------------

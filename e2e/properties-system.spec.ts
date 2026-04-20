@@ -129,13 +129,18 @@ test.describe('Property drawer', () => {
     await expect(sheet.getByText('Block Properties')).toBeVisible()
 
     // The drawer shows Input elements with defaultValues from properties
-    // context = "@office", project = "alpha"
-    const inputs = sheet.locator('input.flex-1')
-    await expect(inputs.first()).toBeVisible()
+    // context = "@office", project = "alpha".
+    // Use per-key data-testids (set in BlockPropertyDrawer) for stable
+    // selection — the raw class name was brittle and drifted when the
+    // wrapping div (not the input itself) owned `flex-1`.
+    const contextInput = sheet.locator('input[data-testid="property-value-input-context"]')
+    const projectInput = sheet.locator('input[data-testid="property-value-input-project"]')
+    await expect(contextInput).toBeVisible()
+    await expect(projectInput).toBeVisible()
 
     // Verify input values match seed data
-    await expect(inputs.first()).toHaveValue('@office')
-    await expect(inputs.nth(1)).toHaveValue('alpha')
+    await expect(contextInput).toHaveValue('@office')
+    await expect(projectInput).toHaveValue('alpha')
   })
 })
 
@@ -177,13 +182,17 @@ test.describe('Set property via drawer', () => {
     // Select "context" definition
     await popover.getByText('context').click()
 
-    // An input field should appear for the value (inside the drawer)
-    const valueInput = sheet.locator('input[placeholder="context"]')
+    // An input field should appear for the newly-added property value.
+    // Target the data-testid (set in BlockPropertyDrawer) rather than a
+    // placeholder that was never rendered for text-type properties.
+    const valueInput = sheet.locator('input[data-testid="property-value-input-context"]')
     await expect(valueInput).toBeVisible()
     await valueInput.fill('@home')
 
-    // Click Save to apply (Save button lives in the drawer row)
-    await sheet.getByRole('button', { name: 'Save', exact: true }).click()
+    // Commit the value. The drawer has no dedicated Save button — pressing
+    // Enter triggers the input's onKeyDown→blur handler in PropertyRow,
+    // which calls onSave and persists via setProperty.
+    await valueInput.press('Enter')
 
     // The "No properties set" message should disappear
     await expect(sheet.getByText('No properties set')).not.toBeVisible()

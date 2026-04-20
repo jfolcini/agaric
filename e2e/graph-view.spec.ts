@@ -59,8 +59,13 @@ test.describe('Graph view', () => {
     const nodeGroup = page.locator('[data-testid="graph-view"] svg g.node').first()
     await expect(nodeGroup).toBeVisible()
 
-    // Click the node group (the hit-area circle handles the pointer event)
-    await nodeGroup.click()
+    // Click the hit-area circle (44px target, `pointer-events: all`) rather than
+    // the `<g class="node">` group. The group's bounding-box center falls on the
+    // label text (drawn at `dx=10, dy=4` with `pointer-events: none`), so a
+    // default-centered click there passes through to the `<svg>`. The hit-area
+    // circle is centered at the node origin, so its bbox center is hittable.
+    const hitArea = nodeGroup.locator('circle.hit-area')
+    await hitArea.click()
 
     // After clicking, the app navigates to the page editor — page title should be visible
     await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
