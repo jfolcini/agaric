@@ -519,6 +519,44 @@ describe('GraphView', () => {
     expect(svg).toHaveAttribute('tabindex', '0')
   })
 
+  // UX-244: bare `h-full` on an inline SVG does not resolve against a
+  // block-level flex-item parent in Chromium — it falls back to the SVG's
+  // 150 px intrinsic height, which left graph nodes clustered in the top
+  // 150 px of a much taller container. `absolute inset-0` positions the
+  // SVG inside the `.graph-view` (relative) ancestor so it fills the full
+  // available height regardless of the percentage-height resolution quirk.
+  // Class-list regression — do not weaken.
+  it('SVG is absolutely positioned to fill the relative parent (UX-244)', async () => {
+    const pagesResponse = {
+      items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+      next_cursor: null,
+      has_more: false,
+    }
+
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_blocks') return Promise.resolve(pagesResponse)
+      if (cmd === 'list_page_links') return Promise.resolve([])
+      if (cmd === 'query_by_property') return Promise.resolve(emptyPage)
+      if (cmd === 'query_by_tags') return Promise.resolve(emptyPage)
+      return Promise.resolve(null)
+    })
+
+    render(<GraphView />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+    })
+
+    const container = screen.getByTestId('graph-view')
+    expect(container).toHaveClass('relative')
+
+    const svg = screen.getByRole('img', { name: 'Page Relationships' })
+    expect(svg).toHaveClass('absolute')
+    expect(svg).toHaveClass('inset-0')
+    expect(svg).toHaveClass('h-full')
+    expect(svg).toHaveClass('w-full')
+  })
+
   describe('data fetch edge cases', () => {
     it('refetches when cache is stale', async () => {
       const pagesResponse = {

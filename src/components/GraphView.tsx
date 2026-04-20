@@ -193,7 +193,23 @@ export function GraphView(): React.ReactElement {
             : t('graph.truncatedFilterHint', { count: nodes.length })}
         </Badge>
       )}
-      <svg ref={svgRef} className="w-full h-full" role="img" aria-label={t('graph.title')} />
+      {/*
+       * UX-244: `position: absolute; inset: 0` is required for the SVG to fill
+       * the `.graph-view` (relative) container. Bare `h-full` on an inline SVG
+       * does NOT resolve against a block-level flex-item parent in Chromium —
+       * it falls back to the SVG's intrinsic 150 px default height, which was
+       * the symptom (nodes clustered in the top 150 px of an 800 px container).
+       * All other children of `.graph-view` are already absolutely positioned
+       * (filter bar, truncated badge, zoom buttons); this keeps every child in
+       * the same layout model and stacks via source order (SVG first → z-0,
+       * overlays after → above).
+       */}
+      <svg
+        ref={svgRef}
+        className="absolute inset-0 h-full w-full"
+        role="img"
+        aria-label={t('graph.title')}
+      />
       <div className="absolute bottom-3 right-3 flex flex-col gap-1">
         <Button variant="outline" size="icon" onClick={zoomIn} aria-label={t('graph.zoomIn')}>
           <Plus className="h-4 w-4" />

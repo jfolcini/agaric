@@ -1,5 +1,94 @@
 # Session Log
 
+## Session 440 — UX-244: GraphView SVG stays at intrinsic 150 px inside a tall container (2026-04-20)
+
+**1 REVIEW-LATER item resolved.** Open items: 13 → 12. User-reported follow-up to UX-238: after UX-238 made the `.graph-view` container grow vertically, the nested `<svg>` still rendered graph nodes pinned inside the first ~150 px because bare `className="w-full h-full"` on an inline SVG does not resolve to 100 % of a block-level flex-item parent in Chromium — it falls back to the SVG's intrinsic 150 px default. Single-item batch (every other open item is deferred / blocked / L-sized).
+
+### Chrome-browser MCP reproduction (before the fix)
+
+At viewport `1440 × 900`, dev-seed data, Graph view:
+
+- `.graph-view` container: `position: relative`, `height: 796 px` — correct.
+- `<svg>`: computed `position: static`, `height: 150 px`, `width: 1148.88 px` — wrong. `h-full` did not resolve; browser used the SVG's intrinsic default height.
+- 12 nodes rendered with y-coords between −18 and +137 in SVG space — entire graph clustered in the top 150 px band of what should have been an 800 px canvas.
+- User's original report: *"the graph is still limited to the first 50 or so pixels vertically"* — matches.
+
+This eliminates hypothesis 1 (initial-measurement race against a transient-small `clientHeight`) and hypothesis 3 (`ResizeObserver` firing once then never) from the REVIEW-LATER spec. Hypothesis 2 ("the SVG is not actually `h-full` at layout time") was the real one: an inline SVG as a child of a block-level flex-item parent with CSS `height: 100 %` falls back to the SVG's intrinsic height rather than resolving the percentage against the parent's used height. This is a long-standing SVG-in-HTML layout quirk, not a d3-force / simulation / ResizeObserver bug.
+
+### Fix (one className change + one regression test)
+
+`src/components/GraphView.tsx` — the SVG className changed from `"w-full h-full"` to `"absolute inset-0 h-full w-full"`. The `.graph-view` container was already `position: relative` for the filter bar, truncated badge, and zoom column (all already absolutely positioned with `top-2 left-2 right-2 z-10` / `bottom-2 left-2 z-10` / `bottom-3 right-3`), so the SVG becoming `absolute inset-0` fits the existing layout model and keeps all four children in the same absolute-positioned model. Z-stacking preserved by source order + existing z-index:
+
+| Child | Position | z-index | Paint order |
+|-------|----------|---------|-------------|
+| Filter bar | `absolute top-2 left-2 right-2 z-10` | 10 | top |
+| Truncated badge (conditional) | `absolute bottom-2 left-2 z-10` | 10 | top |
+| SVG (UX-244 change) | `absolute inset-0 h-full w-full` | auto | bottom |
+| Zoom button column | `absolute bottom-3 right-3` | auto | above SVG (later in source) |
+
+A 10-line explanatory comment was added above the SVG documenting the Chromium quirk + why `absolute inset-0` is required, so the next session does not "simplify" back to bare `h-full`.
+
+`src/components/__tests__/GraphView.test.tsx` — one new class-list regression test (`SVG is absolutely positioned to fill the relative parent (UX-244)`) added right after the existing `SVG has tabindex for keyboard focus` test. Asserts `.graph-view` has class `relative` and the SVG has `absolute`, `inset-0`, `h-full`, `w-full`. Cannot pass if the fix is silently reverted.
+
+### Chrome-browser MCP verification (after the fix)
+
+At `1440 × 900`:
+
+- `.graph-view` container: `height: 796 px` (unchanged, UX-238's fix untouched).
+- `<svg>`: `position: absolute`, `inset: 0`, computed `height: 794 px` (container minus 2 px border) — correct.
+- 12 nodes centered around y ≈ 381 (center of 794 px SVG). Cluster spread is ~156 px — this is the natural d3-force steady-state for 12 sparse-edge nodes with `charge = −100`, `collide = 20`, `link distance = 60`, X/Y centering `strength = 0.05`; not an additional bug.
+
+At `500 × 800` (narrow rail layout):
+
+- `.graph-view`: `712 px` tall, SVG fills at `710 px`.
+- Nodes centered around y ≈ 330. No horizontal overflow into the mobile rail; zoom buttons at bottom-right remain tappable (44 px target via the Button `size="icon"` default).
+
+No new console errors (only the pre-existing `[tauri-mock] Unhandled command: plugin:event|listen` warnings from the mock IPC layer, which are unrelated).
+
+### Files changed
+
+| Path | Change |
+|------|--------|
+| `src/components/GraphView.tsx` | SVG className `w-full h-full` → `absolute inset-0 h-full w-full`; 10-line explanatory comment added above the element documenting the Chromium SVG-percentage-height quirk + the layout-model rationale (SVG joins the existing `position: absolute` family of children). No other change in the file. |
+| `src/components/__tests__/GraphView.test.tsx` | New class-list regression test `SVG is absolutely positioned to fill the relative parent (UX-244)` right after `SVG has tabindex for keyboard focus`. 7-line leading comment explaining the regression the test guards against. |
+| `REVIEW-LATER.md` | UX-244 summary-table row + detail section removed. Open-items count 13 → 12. Previously-resolved line `355+ items across 126 sessions` → `356+ items across 127 sessions`. |
+| `SESSION-LOG.md` | This entry. |
+
+### Verification
+
+- `cd /home/javier/dev/org-mode-for-the-rest-of-us && npx vitest run src/components/__tests__/GraphView.test.tsx src/hooks/__tests__/useGraphSimulation.test.ts` → **44 / 44 passed** (33 existing + 1 new in `GraphView.test.tsx`, 10 existing in `useGraphSimulation.test.ts`). Duration 2.04 s.
+- `prek run --all-files` run at commit time.
+- Chrome-browser MCP manual verification at 1440 × 900 and 500 × 800 (see measurements above + `/tmp/ux-244-after.png` and `/tmp/ux-244-narrow.png` screenshots attached to the review subagent's run).
+- Rust (`cargo nextest run`) NOT run — no Rust files touched; the fix is a single className change on the frontend plus a test addition.
+- `cargo sqlx prepare` NOT required — no SQL touched.
+- `cargo test -- specta_tests --ignored` NOT required — no Rust types touched.
+
+### Pipeline
+
+1. **PLAN.** Re-read REVIEW-LATER.md; of the 13 open items, 1 was immediately actionable (UX-244, filed in the preceding turn), 8 were `Decision: Defer` or BLOCKED ON USER INPUT (UX-239, PERF-19 / 20 / 23, PUB-2 / 3 / 5 / 7), and 4 were not a good single-session fit (FEAT-4 is L-sized multi-session, MAINT-88 is an evaluation question not a fix, TEST-1d is blocked on TEST-1f, TEST-1f is M–L requiring a dedicated session). Accepted single-item batch. Parallel subagents inapplicable — investigation must precede code changes; the fix is in one file.
+2. **REPRODUCE.** Started `npm run dev`, opened `http://localhost:5173` in chrome-browser MCP, navigated to Graph. Measured container + SVG + node y-coords. Reproduced exactly as the user described (graph pinned to top 150 px of 800 px container). Eliminated hypotheses 1 and 3; confirmed hypothesis 2. Tested the two candidate fixes (`absolute inset-0` vs. parent `flex flex-col` + child `flex-1 min-h-0`) live via `evaluate_script` inline style patches — both restored the SVG to 794 px; chose `absolute inset-0` because it fits the existing `.graph-view` layout model (all other children already absolute) with the smallest class-list diff.
+3. **BUILD.** Applied the className change + explanatory comment. Added the class-list regression test.
+4. **TEST.** `vitest run` on the two affected test files → 44 / 44 passed. Verified visually via chrome-browser MCP HMR + reload at 1440 × 900 and 500 × 800.
+5. **REVIEW.** Two read-only review subagents launched in parallel (both background): `subagent_explore` technical reviewer + `subagent_explore` UX reviewer. Both returned **APPROVE** with only non-blocking nits (optional extra `role="img"` / `aria-label` assertions in the new test; optional extra line in the component comment — neither required). The UX reviewer specifically verified stacking-context preservation, consistency with the `absolute inset-0` pattern used elsewhere in the codebase, and no conflict with the UX-238 CSS rule in `src/index.css`.
+6. **MERGE.** No worktrees used (single file, investigation + fix inherently sequential).
+7. **COMMIT.** Staged all changes + `prek run --all-files` (runs at the orchestrator level; no subagent ran any linters). `git commit` with an explanatory message.
+8. **LOG.** This entry + REVIEW-LATER.md removal + summary-count decrement.
+
+### Honest caveats
+
+- **FEATURE-MAP.md not updated.** The fix restores a visual capability that the Graph view was *supposed to* have (fill the container vertically); it does not add or remove any user-facing feature. The existing FEATURE-MAP entry under `1. Views → Graph` already describes the intended behaviour, and updating it would only add session-historical noise, which AGENTS.md + REVIEW-LATER.md invariants explicitly discourage. PROMPT.md's `FEATURE-MAP` requirement is scoped to "new commands, components, hooks, stores, database tables, or other user-facing features"; a CSS bug fix to an existing component does not match.
+- **Secondary hypothesis about weak re-heat (`sim.alpha(0.3).restart()`) after `ResizeObserver` fires was NOT addressed in this commit.** When the SVG is correctly sized from mount, the simulation runs once with the right dimensions and the re-heat path is never hit for the reported bug. If the user resizes the browser window after opening the Graph view, the nodes will shift their centroid to the new center but the cluster's vertical extent stays put — because `alpha(0.3)` is weak relative to a converged layout. That's a separate, lower-severity concern (resize-after-mount, not mount-time) and was never part of the user's original bug report; filing a new REVIEW-LATER item for it would be premature without a user complaint. Left as a latent issue that will resurface if someone reports "graph doesn't re-spread on window resize", at which point it can be filed fresh.
+- **d3-force cluster-density is unchanged.** The fix does not modify any force parameters (charge, collide, link distance, centering strength). With 12 nodes and a 794 px canvas, the natural steady-state cluster is ~156 px tall — this is how d3-force settles with these specific physics constants, not a bug. If the user eventually asks "why doesn't the graph spread out to fill the canvas", that is a force-tuning question (stronger repulsion, weaker centering) orthogonal to UX-244.
+- **Only two viewport widths verified manually** (1440 × 900 and 500 × 800). Did not re-verify at 390 / 640 / 768 / 1024 px because the root cause (SVG percentage-height quirk) is viewport-independent — a class-list regression test covers the structural guarantee, and the two widths spanned both the full-sidebar (≥ 768) and mobile-rail (≤ 640) layout regimes. If the fix somehow regresses at an intermediate width, it would be a different bug.
+- **Worker-path re-heat was not audited.** The fix is a pure CSS change, so the worker vs. main-thread `SimulationHandle.onResize` branches behave identically before and after. The worker's `postWorkerStart` on resize is unchanged; it already receives fresh dimensions and rebuilds the simulation.
+
+### Watch-list (not filed)
+
+- **`sim.alpha(0.3).restart()` is too weak to re-spread a converged d3-force cluster when the viewport genuinely changes size.** Not filed because it requires a user report to prioritise — the mount-time case (the one the user actually complained about) is fully resolved by the UX-244 fix above.
+- **d3-force tuning for sparse-edge graphs.** At 12 nodes with sparse inter-page links, the cluster is tight. If future user feedback asks for a more spread-out layout, consider bumping `forceManyBody().strength(-100)` to `−200` / `−300`, lowering the `forceX` / `forceY` strength from `0.05` to `0.02`, or increasing the `forceLink().distance(60)` to `100`. Not filed — speculative.
+
+---
+
 ## Session 439 — TEST-1f partial: close the Playwright plumbing-level flake buckets (134 → 46 failures) (2026-04-20)
 
 **0 REVIEW-LATER items resolved; TEST-1f advanced substantially.** Open items remain at 11. PROMPT.md single-item-batch pipeline: establish baseline → categorise by symptom → close plumbing-level buckets → re-measure → update spec with new baseline and remaining buckets.
