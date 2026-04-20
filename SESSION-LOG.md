@@ -1,5 +1,71 @@
 # Session Log
 
+## Session 438 — UX-239 third reproduction attempt: backlink injected into mock, still not reproduced → BLOCKED ON USER INPUT (2026-04-20)
+
+**0 items resolved. 1 item investigated and re-classified to BLOCKED ON USER INPUT.** Open items remain at 11. PROMPT.md pipeline with a single-item investigation batch; no build / review subagents (pure chrome-MCP investigation followed by a spec amendment). Subsequent commits should not re-open UX-239 without a concrete reproduction artefact from the user.
+
+### Context: why a single-item batch
+
+The 11 open items in REVIEW-LATER.md decompose as:
+- **8 explicitly deferred / blocked:** PERF-19 / PERF-20 / PERF-23 (deliberate non-fixes with recorded `Decision: Defer`), PUB-2 / PUB-3 / PUB-5 / PUB-7 (gated on publish target / user legal clearance), TEST-1d (gated on TEST-1f reaching ≥95 % green).
+- **1 L-sized multi-session:** FEAT-4 (MCP server) — Phase 1 alone is 2-3 focused sessions per its own spec; explicitly awaiting scheduling.
+- **1 M-L iterative:** TEST-1f (Playwright flake floor of ≈134 / 293); hostile to a single-batch treatment because the investigation plan is spec-by-spec bucket-audit.
+- **1 actionable via chrome-MCP investigation:** UX-239.
+
+The PROMPT.md "3-6 related items per batch" framing does not fit the current sparse state. Picking UX-239 as a single-item investigation-first batch was the highest-leverage action because (a) reproduction is the explicit blocker per the spec, (b) session 437 gave us a concrete reproduction blocker to resolve (dev-seed has no backlinks — we can inject some), and (c) two prior sessions had already failed to reproduce, so either reproducing it or definitively ruling out the reproducing hypotheses is progress.
+
+### Investigated items
+
+- **UX-239** (re-classified to BLOCKED ON USER INPUT). Third chrome-MCP reproduction attempt. Did NOT reproduce. Specification amended with the new investigation's findings (elimination of all 6 hypotheses by direct measurement) and a "user input needed" request list.
+
+### Investigation steps
+
+1. Started the Vite dev server (`npm run dev`) — `http://localhost:5173` — which uses the browser `tauri-mock` IPC at `src/lib/tauri-mock/index.ts` (mockIPC wired in `main.tsx` when `window.__TAURI_INTERNALS__` is absent — in this Chromium runtime it IS present so the mock is wired in its dev-preview mode).
+2. Confirmed via `window.__TAURI_INTERNALS__` that the Tauri mock IPC is active (the mock internally uses `@tauri-apps/api/mocks`' `mockIPC()` to expose its dispatch handlers at `__TAURI_INTERNALS__.invoke`). This is the same surface the real Tauri runtime provides, which is why the frontend behaves identically.
+3. Observed that the dev-seed Projects page has NO inbound `[[...]]` backlinks — `invoke('list_backlinks_grouped', { blockId: PAGE_PROJECTS })` returns `total_count: 0`. This matches the session-437 finding.
+4. Injected a real block-level backlink via `invoke('edit_block', { blockId: BLOCK_DAILY_1, toText: 'Morning. See [[PAGE_PROJECTS_ID]].' })`. Re-verified `list_backlinks_grouped` now returns `total_count: 1` with the daily block as the backlink source.
+5. Executed the exact reproduction flow from the UX-239 spec: click `span.block-link-chip` in the journal view, which is the inline `[[Projects]]` chip rendered by the materialiser-updated block content. This navigates from `currentView: 'journal'` → `currentView: 'page-editor'` targeting the Projects page, which now has 1 `LinkedReferences` group.
+6. Measured `getBoundingClientRect()` for `.page-editor`, `.page-editor > :first-child` (PageHeader), `.linked-references`, `[data-slot="sidebar-container"]`, and `[data-slot="sidebar-inset"]` at every target viewport width from the spec: 390 × 844 (mobile rail), 640 × 800 (mobile rail boundary), 768 × 800 (full sidebar emerges), 1024 × 768 (desktop baseline), 1440 × 900 (wide desktop).
+7. At every tested viewport width, `.linked-references` left edge and width exactly match `.page-editor > :first-child` (PageHeader). No horizontal shift. No sidebar covering the panel left edge. The UX-238 flex-column wrapper + Radix `display: table` CSS override does not introduce a horizontal regression.
+8. Took screenshots at 1024 px and 390 px for visual confirmation. Both screenshots show the References panel rendering inline with the page header / Add block button / block tree column — matching the expected (non-buggy) layout.
+9. Concluded that the third investigation cannot reproduce, documented the elimination of all 6 hypotheses listed in the spec by direct measurement, and amended the spec with a "blocked on user input" status requesting (a) a symptom screenshot, (b) the reproducing viewport width, (c) the user's OS / browser / accessibility-zoom settings, (d) whether the symptom reproduces in `npm run dev` or only in the installed AppImage, and (e) a DOM `outerHTML` snapshot from the user's reproducing session.
+
+### Files changed
+
+| Path | Change |
+|------|--------|
+| `REVIEW-LATER.md` | UX-239 detail section amended — added a "Session 438 investigation" block with the measurement table (5 viewport widths, all aligned), explicit hypothesis elimination, and a "Before any further code investigation, the user should provide …" checklist. Status changed to `BLOCKED ON USER INPUT`. Summary table row updated to include the blocked status. Note: an existing "Prior investigation" block + hypothesis list + do-not-do guidance from session 437 was left in place untouched for continuity. No items removed, no section-count decrement. |
+| `SESSION-LOG.md` | this entry. |
+
+### Verification
+
+- **Direct chrome-MCP measurement** at 390 / 640 / 768 / 1024 / 1440 px — captured in the amended spec as a markdown table with `getBoundingClientRect()` values for `.page-editor`, `.page-editor > :first-child`, `.linked-references`, sidebar-container, and sidebar-inset.
+- **Visual screenshots** at 1024 × 768 and 390 × 844 — both show the References panel correctly aligned with the page-editor column. Saved to `/tmp/` during investigation, not committed.
+- **Documentation-only commit** — no code changes, no test runs needed. `prek run --all-files` is still required to satisfy markdown / lint hooks.
+
+### Pipeline
+
+1. **PLAN.** Inventoried REVIEW-LATER.md; of 11 open items, 8 are deferred and 2 are too-large-for-a-batch; UX-239 is the only single-session-tractable item. Decided on single-item investigation batch.
+2. **INVESTIGATE (orchestrator, live chrome-MCP).** Populated a real backlink via the mock IPC, ran the exact journal → page-editor reproduction flow, measured layout at 5 viewport widths. Took 2 screenshots. All measurements aligned; no shift. No code change proposed — any fix would be speculative without a concrete reproduction.
+3. **AMEND (orchestrator, REVIEW-LATER.md).** Added "Session 438 investigation" block to UX-239 spec with measurement table + hypothesis elimination + user-input checklist. Marked status BLOCKED ON USER INPUT. Existing "Prior investigation" block from session 437 preserved unchanged.
+4. **COMMIT.** `prek run --all-files` on the 2-file change (REVIEW-LATER.md + SESSION-LOG.md). Single conventional-commits message explaining the investigation outcome and the user-input request.
+
+### Honest caveats
+
+- **Three investigation sessions now.** Sessions 436 / 437 / 438 have all attempted reproduction (different vectors: dev-seed only / dev-seed only / dev-seed + injected backlink). None have reproduced. The right next step is NOT a fourth code-reading investigation but a direct information request to the user. Marking this as BLOCKED is honest; leaving it as "S–M, actionable" when we've tried three times and produced no fix would misrepresent the cost.
+- **Mock-IPC is not byte-compatible with the real Tauri runtime.** The session 438 reproduction used `tauri-mock` rather than `cargo tauri dev`. It's possible (low likelihood, but possible) that the real Tauri runtime in the user's AppImage resolves CSS or layout differently — e.g., GTK WebView vs Blink, different `window.devicePixelRatio`, different viewport handling on Linux Wayland vs X11, different fontconfig metrics that affect intrinsic widths. If the user confirms the symptom only reproduces in the AppImage, the next session should reproduce under `cargo tauri dev` against a real DB snapshot.
+- **I did NOT try `cargo tauri dev` in this session.** The Tauri dev build takes ~60s cold-compile + requires a Rust toolchain + requires a real `notes.db`. Opportunity cost is high for a third repro attempt when the first two also failed. If the user confirms environment-specificity, that's the obvious next step.
+- **I did NOT ask the user before amending the spec.** The session began with `follow PROMPT.md`, which is a standing directive to pick the best batch and execute the PLAN → BUILD → REVIEW → MERGE → COMMIT → LOG pipeline autonomously. Pausing mid-session to ask "should I keep looking?" would have been lower-value than completing the investigation and then filing a clear information request in the spec. If the user wants a different workflow (e.g., ask first, investigate later), they can redirect in the next session.
+- **`npm run dev` was killed cleanly.** No orphaned Vite / node process. No `.sqlx/` touched. No `cargo` anything invoked. No test-suite changes.
+- **The spec amendment is long** — ~50 added lines in REVIEW-LATER.md. This is because the previous session-437 amendment was also long and set a precedent for thorough documentation. Keeping the trail of attempted-and-failed repros is valuable so the next session doesn't unknowingly redo our work.
+
+### Watch-list (not filed)
+
+- **UX-239 under `cargo tauri dev`** — if the user confirms environment-specificity, the next session should reproduce under real Tauri with a DB snapshot from the user.
+- **Dev-mode "populate some backlinks" dev-seed option** — could add an option to `tauri-mock/seed.ts` to inject a standard set of backlinks (e.g., a `PAGE_PROJECTS` with 2 inbound refs from daily + meetings) so future UX investigations of backlink-rendering layout don't need to hand-inject. Not filed as a REVIEW-LATER — low priority, only matters if we hit another backlink-layout bug.
+
+---
+
 ## Session 437 — Batch fix: BUG-46 + UX-240 + UX-241 + UX-242 + UX-243 (2026-04-20)
 
 **5 REVIEW-LATER items resolved. Open items 16 → 11.** PROMPT.md pipeline with 5 parallel build subagents (one per item, each in its own worktree) + 5 pipelined review subagents (technical only — 4 of 5 are frontend changes with design-system class additions, backend-only BUG-46 has no UX surface). All reviews returned APPROVE with no issues.
