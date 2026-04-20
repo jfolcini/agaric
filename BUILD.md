@@ -80,10 +80,10 @@ On top of the base prerequisites:
 - **Android SDK** with platform tools and build tools
 - **Android NDK v27**
 - **JDK 17** (for Gradle)
-- **Rust Android targets**:
+- **Rust Android targets** (64-bit only — 32-bit `armv7` / `i686` are not supported):
 
   ```bash
-  rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+  rustup target add aarch64-linux-android x86_64-linux-android
   ```
 
 Environment variables (add to `~/.bashrc` or equivalent):
@@ -357,6 +357,7 @@ adb logcat -s RustStdoutStderr:V
 | Target SDK | 36 |
 | NDK | 27 |
 | Java / Kotlin target | 17 |
+| Supported ABIs | `arm64-v8a` (aarch64) on device, `x86_64` on emulator — 32-bit `armeabi-v7a` / `x86` dropped |
 | Debug APK size | ~400 MB (unstripped symbols) |
 | Release APK size | ~24 MB (R8 minified) |
 | ProGuard | Configured and verified working |

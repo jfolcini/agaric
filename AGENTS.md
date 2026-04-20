@@ -249,6 +249,7 @@ Baseline performance at 100K blocks (established by benchmarks):
 - **Release APK:** ~24 MB (vs ~400 MB debug). ProGuard/R8 minification works — keep rules verified.
 - **Generated project:** `src-tauri/gen/android/`
 - **Min SDK:** 30 (Android 11, Sep 2020), **Target SDK:** 36, **NDK:** 27, **Java/Kotlin target:** 17
+- **Architectures:** 64-bit only — `aarch64` (release, physical devices) and `x86_64` (emulator smoke tests). 32-bit `armv7-linux-androideabi` and `i686-linux-android` Rust targets are **not** supported; do not re-add them to BUILD.md, CI, or `scripts/patch-android-build.sh`.
 - **Emulator AVD:** `spike_test` (x86_64, API 34) — start with `emulator -avd spike_test -gpu host &`
 - **DB path:** `/data/data/com.agaric.app/notes.db` (via `app.path().app_data_dir()`)
 - **Known issues:** See REVIEW-LATER.md for open items (deferred by design).
