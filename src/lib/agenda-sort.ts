@@ -12,17 +12,17 @@ function effectiveDate(block: BlockRow): string {
   return block.due_date ?? block.scheduled_date ?? '9999-12-31'
 }
 
-/** State sort rank: DOING=0, TODO=1, CANCELLED=2, DONE=3, null/other=4. */
+/** State sort rank: DOING=0, TODO=1, DONE=2, CANCELLED=3, null/other=4. */
 function stateRank(state: string | null): number {
   if (state === 'DOING') return 0
   if (state === 'TODO') return 1
-  if (state === 'CANCELLED') return 2
-  if (state === 'DONE') return 3
+  if (state === 'DONE') return 2
+  if (state === 'CANCELLED') return 3
   return 4
 }
 
 /**
- * Sort agenda blocks using the key chain: date ASC → state (DOING > TODO > DONE > null) → priority (1 > 2 > 3 > null).
+ * Sort agenda blocks using the key chain: date ASC → state (DOING > TODO > DONE > CANCELLED > null) → priority (1 > 2 > 3 > null).
  * Pure function, does not mutate input.
  */
 export function sortAgendaBlocks(blocks: BlockRow[]): BlockRow[] {
@@ -32,7 +32,7 @@ export function sortAgendaBlocks(blocks: BlockRow[]): BlockRow[] {
     const dateB = effectiveDate(b)
     if (dateA !== dateB) return dateA < dateB ? -1 : 1
 
-    // 2. State: DOING > TODO > DONE > null
+    // 2. State: DOING > TODO > DONE > CANCELLED > null
     const stateA = stateRank(a.todo_state)
     const stateB = stateRank(b.todo_state)
     if (stateA !== stateB) return stateA - stateB
@@ -179,15 +179,15 @@ export function groupByPriority(blocks: BlockRow[]): AgendaGroup[] {
 }
 
 /**
- * Group blocks by todo state. Returns groups in order: DOING, TODO, CANCELLED, DONE, No state.
+ * Group blocks by todo state. Returns groups in order: DOING, TODO, DONE, CANCELLED, No state.
  * Within each group, blocks are sorted by date ASC then priority.
  */
 export function groupByState(blocks: BlockRow[]): AgendaGroup[] {
   const buckets = new Map<string, BlockRow[]>([
     ['DOING', []],
     ['TODO', []],
-    ['CANCELLED', []],
     ['DONE', []],
+    ['CANCELLED', []],
     ['No state', []],
   ])
 
@@ -197,10 +197,10 @@ export function groupByState(blocks: BlockRow[]): AgendaGroup[] {
         ? 'DOING'
         : block.todo_state === 'TODO'
           ? 'TODO'
-          : block.todo_state === 'CANCELLED'
-            ? 'CANCELLED'
-            : block.todo_state === 'DONE'
-              ? 'DONE'
+          : block.todo_state === 'DONE'
+            ? 'DONE'
+            : block.todo_state === 'CANCELLED'
+              ? 'CANCELLED'
               : 'No state'
     buckets.get(key)?.push(block)
   }
@@ -249,7 +249,7 @@ export function sortByPriority(blocks: BlockRow[]): BlockRow[] {
     const dateB = effectiveDate(b)
     if (dateA !== dateB) return dateA < dateB ? -1 : 1
 
-    // 3. State: DOING > TODO > DONE > null
+    // 3. State: DOING > TODO > DONE > CANCELLED > null
     const stateA = stateRank(a.todo_state)
     const stateB = stateRank(b.todo_state)
     return stateA - stateB
@@ -257,12 +257,12 @@ export function sortByPriority(blocks: BlockRow[]): BlockRow[] {
 }
 
 /**
- * Sort agenda blocks using the key chain: state (DOING>TODO>DONE>null) → date ASC → priority.
+ * Sort agenda blocks using the key chain: state (DOING>TODO>DONE>CANCELLED>null) → date ASC → priority.
  * Pure function, does not mutate input.
  */
 export function sortByState(blocks: BlockRow[]): BlockRow[] {
   return [...blocks].sort((a, b) => {
-    // 1. State: DOING > TODO > DONE > null
+    // 1. State: DOING > TODO > DONE > CANCELLED > null
     const stateA = stateRank(a.todo_state)
     const stateB = stateRank(b.todo_state)
     if (stateA !== stateB) return stateA - stateB
@@ -282,7 +282,7 @@ export function sortByState(blocks: BlockRow[]): BlockRow[] {
 /**
  * Group blocks by page_id. Returns groups in alphabetical order by page title,
  * with "No page" group at the end.
- * Within each group, blocks are sorted by state (DOING > TODO > DONE > null),
+ * Within each group, blocks are sorted by state (DOING > TODO > DONE > CANCELLED > null),
  * then priority, then date.
  */
 export function groupByPage(blocks: BlockRow[], pageTitles: Map<string, string>): AgendaGroup[] {

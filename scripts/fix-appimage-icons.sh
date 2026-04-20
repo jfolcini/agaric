@@ -10,12 +10,45 @@
 # Usage:
 #   ./scripts/fix-appimage-icons.sh
 #   ./scripts/fix-appimage-icons.sh path/to/Agaric.AppDir
+#   ./scripts/fix-appimage-icons.sh --strict            # fail if repack tool missing
+#   FIX_APPIMAGE_STRICT=1 ./scripts/fix-appimage-icons.sh
+#
+# Strict mode (either --strict or FIX_APPIMAGE_STRICT=1) causes the script to
+# exit 1 if linuxdeploy-plugin-appimage is not available, instead of warning
+# and continuing. The release workflow (.github/workflows/release.yml) enables
+# strict mode so a missing repack tool blocks the release; local dev contributors
+# keep the default warn-and-continue behaviour.
 set -euo pipefail
+
+STRICT_MODE="${FIX_APPIMAGE_STRICT:-0}"
+
+# Parse flags while preserving the optional positional AppDir argument.
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --strict)
+      STRICT_MODE=1
+      shift
+      ;;
+    --)
+      shift
+      while [[ $# -gt 0 ]]; do
+        POSITIONAL+=("$1")
+        shift
+      done
+      break
+      ;;
+    *)
+      POSITIONAL+=("$1")
+      shift
+      ;;
+  esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-APPDIR="${1:-$PROJECT_ROOT/src-tauri/target/release/bundle/appimage/Agaric.AppDir}"
+APPDIR="${POSITIONAL[0]:-$PROJECT_ROOT/src-tauri/target/release/bundle/appimage/Agaric.AppDir}"
 
 if [ ! -d "$APPDIR" ]; then
   echo "ERROR: AppDir not found at $APPDIR"
@@ -52,6 +85,13 @@ if [ -f "$APPIMAGE_TOOL" ]; then
   ARCH=x86_64 OUTPUT="$APPIMAGE_OUT" "$APPIMAGE_TOOL" --appdir "$(basename "$APPDIR")" 2>&1
   echo "AppImage repacked: $APPIMAGE_OUT"
 else
+  if [ "$STRICT_MODE" = "1" ]; then
+    echo "ERROR: linuxdeploy-plugin-appimage not found at $APPIMAGE_TOOL (strict mode)" >&2
+    echo "Install the tool first (either via 'cargo tauri build' which caches it," >&2
+    echo "or by downloading a tagged release from" >&2
+    echo "https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases into \$HOME/.cache/tauri/)." >&2
+    exit 1
+  fi
   echo "WARNING: linuxdeploy-plugin-appimage not found at $APPIMAGE_TOOL"
   echo "AppDir symlinks are fixed but the .AppImage was NOT repacked."
   echo "Run 'cargo tauri build' once to download the tool, then re-run this script."

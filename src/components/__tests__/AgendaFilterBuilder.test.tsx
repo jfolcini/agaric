@@ -423,14 +423,14 @@ describe('AgendaFilterBuilder', () => {
   // 19. getTaskStates returns the fixed locked cycle (UX-202)
   // -----------------------------------------------------------------------
   describe('getTaskStates', () => {
-    it('returns the locked fixed cycle TODO/DOING/CANCELLED/DONE', () => {
-      expect(getTaskStates()).toEqual(['TODO', 'DOING', 'CANCELLED', 'DONE'])
+    it('returns the locked fixed cycle TODO/DOING/DONE/CANCELLED (UX-234)', () => {
+      expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE', 'CANCELLED'])
     })
 
     it('ignores legacy localStorage values (UX-202)', () => {
       localStorage.setItem('task_cycle', JSON.stringify([null, 'TODO', 'DOING', 'DONE', 'WAITING']))
       try {
-        expect(getTaskStates()).toEqual(['TODO', 'DOING', 'CANCELLED', 'DONE'])
+        expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE', 'CANCELLED'])
       } finally {
         localStorage.removeItem('task_cycle')
       }

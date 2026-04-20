@@ -241,6 +241,10 @@ cargo tauri build
 | `.rpm` | `Agaric-0.1.0-1.x86_64.rpm` | ~9 MB |
 | `.AppImage` | `Agaric_0.1.0_amd64.AppImage` | ~79 MB |
 
+#### AppImage icon fix
+
+Tauri 2's AppImage bundler emits a `.DirIcon` symlink pointing at an absolute path inside the build machine's file tree (broken on every other machine) and a root `agaric.png` that resolves to the 16×16 icon (silently ignored by Ubuntu 24's file manager and dock). The repo ships `scripts/fix-appimage-icons.sh` which replaces `.DirIcon` with a relative symlink to the 512×512 `Agaric.png` and relinks the root `agaric.png` to the 256×256 hicolor icon, then repacks the AppImage via `linuxdeploy-plugin-appimage.AppImage` (cached at `~/.cache/tauri/` by `cargo tauri build`). Run `bash scripts/fix-appimage-icons.sh` after `cargo tauri build` when distributing an AppImage locally; CI (`.github/workflows/ci.yml`) and the release workflow (`.github/workflows/release.yml`) already invoke it, and the release path sets `FIX_APPIMAGE_STRICT=1` so a missing `linuxdeploy-plugin-appimage` fails the release instead of silently shipping the un-repacked bundle.
+
 ### Windows
 
 ```bash

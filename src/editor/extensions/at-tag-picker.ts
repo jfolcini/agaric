@@ -114,13 +114,19 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
             extensionOptions
               .onCreate(item.label)
               .then((newId) => {
-                editor.chain().focus().deleteRange(range).insertTagRef(newId).run()
+                editor
+                  .chain()
+                  .focus()
+                  .deleteRange(range)
+                  .insertTagRef(newId)
+                  .insertContent(' ')
+                  .run()
               })
               .catch((err) => {
                 logger.error('AtTagPicker', 'Failed to create tag', undefined, err)
               })
           } else {
-            editor.chain().focus().deleteRange(range).insertTagRef(item.id).run()
+            editor.chain().focus().deleteRange(range).insertTagRef(item.id).insertContent(' ').run()
           }
         },
         render: () => createSuggestionRenderer('Tags', atTagPickerPluginKey),

@@ -13,10 +13,10 @@ export type AgendaFilterDimension =
 
 /**
  * Fixed TODO states (UX-202). The cycle is locked to
- * `none -> TODO -> DOING -> CANCELLED -> DONE -> none`; this array exposes
- * the non-null members for filter dimension `choices`.
+ * `none -> TODO -> DOING -> DONE -> CANCELLED -> none` (UX-234); this array
+ * exposes the non-null members for filter dimension `choices`.
  */
-export const TASK_STATES: readonly string[] = ['TODO', 'DOING', 'CANCELLED', 'DONE']
+export const TASK_STATES: readonly string[] = ['TODO', 'DOING', 'DONE', 'CANCELLED']
 
 /**
  * Backwards-compatible accessor. Historically this read from localStorage;

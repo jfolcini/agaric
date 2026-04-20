@@ -417,7 +417,7 @@ describe('PropertyDefinitionsList', () => {
   describe('locked options for todo_state (UX-201a)', () => {
     it('does NOT render the Edit options button for todo_state', async () => {
       mockedInvoke.mockResolvedValueOnce([
-        makePropDef('todo_state', 'select', '["TODO","DOING","CANCELLED","DONE"]'),
+        makePropDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]'),
         makePropDef('priority', 'select', '["1","2","3"]'),
         makePropDef('effort', 'select', '["15m","30m","1h"]'),
       ])
@@ -434,7 +434,7 @@ describe('PropertyDefinitionsList', () => {
 
     it('renders a locked indicator for todo_state with accessible tooltip copy', async () => {
       mockedInvoke.mockResolvedValueOnce([
-        makePropDef('todo_state', 'select', '["TODO","DOING","CANCELLED","DONE"]'),
+        makePropDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]'),
       ])
 
       render(<PropertyDefinitionsList />)
@@ -454,7 +454,7 @@ describe('PropertyDefinitionsList', () => {
 
     it('renders without a11y violations when todo_state is locked', async () => {
       mockedInvoke.mockResolvedValueOnce([
-        makePropDef('todo_state', 'select', '["TODO","DOING","CANCELLED","DONE"]'),
+        makePropDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]'),
         makePropDef('priority', 'select', '["1","2","3"]'),
       ])
 

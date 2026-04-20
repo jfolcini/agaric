@@ -78,3 +78,110 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: --target ${{ matrix.target }}
+
+      # UX-233: Tauri 2's AppImage bundler emits a .DirIcon symlink with an
+      # absolute path into the build machine's file tree (broken on every other
+      # machine) and points the AppDir-root agaric.png at the 16×16 icon
+      # (ignored by Ubuntu 24's file manager/dock). tauri-action@v0 has already
+      # uploaded the broken AppImage as a draft release asset at this point; we
+      # repair the AppDir symlinks, repack the AppImage with
+      # linuxdeploy-plugin-appimage, and then replace the asset on the draft
+      # release via `gh release upload --clobber`.
+      #
+      # tauri-action runs `cargo tauri build` internally, which downloads
+      # linuxdeploy-plugin-appimage to ~/.cache/tauri/, so the tool is already
+      # present when the fix script runs. FIX_APPIMAGE_STRICT=1 makes the
+      # script fail (rather than warn-and-continue) if the tool is missing, so
+      # a broken upstream cache blocks the release instead of silently shipping
+      # the un-repacked AppImage.
+      - name: Snapshot pre-fix AppImage size
+        if: matrix.platform == 'ubuntu-24.04'
+        id: prefix_size
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          appimages=(src-tauri/target/release/bundle/appimage/Agaric_*_amd64.AppImage)
+          if [ ${#appimages[@]} -eq 0 ]; then
+            echo "ERROR: No pre-fix Agaric_*_amd64.AppImage found in src-tauri/target/release/bundle/appimage/" >&2
+            exit 1
+          fi
+          size=$(stat -c %s "${appimages[0]}")
+          echo "Pre-fix AppImage: ${appimages[0]} ($size bytes)"
+          echo "size=$size" >> "$GITHUB_OUTPUT"
+          echo "path=${appimages[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Fix AppImage icon symlinks and repack
+        if: matrix.platform == 'ubuntu-24.04'
+        env:
+          FIX_APPIMAGE_STRICT: '1'
+        run: bash scripts/fix-appimage-icons.sh
+
+      - name: Verify repacked AppImage
+        if: matrix.platform == 'ubuntu-24.04'
+        env:
+          PRE_FIX_SIZE: ${{ steps.prefix_size.outputs.size }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APPDIR="src-tauri/target/release/bundle/appimage/Agaric.AppDir"
+
+          # 1. .DirIcon must be a relative symlink to Agaric.png.
+          if [ ! -L "$APPDIR/.DirIcon" ]; then
+            echo "ERROR: $APPDIR/.DirIcon is not a symlink" >&2
+            exit 1
+          fi
+          link_target="$(readlink "$APPDIR/.DirIcon")"
+          if [ "$link_target" != "Agaric.png" ]; then
+            echo "ERROR: .DirIcon points to '$link_target', expected 'Agaric.png' (relative)" >&2
+            exit 1
+          fi
+          echo "OK: .DirIcon → Agaric.png"
+
+          # 2. agaric.png at AppDir root must exist (follow the symlink).
+          if [ ! -f "$APPDIR/agaric.png" ]; then
+            echo "ERROR: $APPDIR/agaric.png does not resolve to a regular file" >&2
+            exit 1
+          fi
+
+          # 3. agaric.png must be at least 128×128 (128 / 256 / 512 accepted).
+          info="$(file "$APPDIR/agaric.png")"
+          echo "agaric.png: $info"
+          if ! echo "$info" | grep -Eq '(128 x 128|256 x 256|512 x 512)'; then
+            echo "ERROR: agaric.png is not ≥128×128 (got: $info)" >&2
+            exit 1
+          fi
+          echo "OK: agaric.png is WM-friendly size"
+
+          # 4. The repacked AppImage must exist and be at least as large as the
+          # pre-fix one (a repack smaller than the original almost always means
+          # linuxdeploy-plugin-appimage silently produced a stub).
+          shopt -s nullglob
+          appimages=(src-tauri/target/release/bundle/appimage/Agaric_*_amd64.AppImage)
+          if [ ${#appimages[@]} -eq 0 ]; then
+            echo "ERROR: No repacked Agaric_*_amd64.AppImage found" >&2
+            exit 1
+          fi
+          post_size=$(stat -c %s "${appimages[0]}")
+          echo "Post-fix AppImage: ${appimages[0]} ($post_size bytes, pre-fix was $PRE_FIX_SIZE bytes)"
+          if [ "$post_size" -lt "$PRE_FIX_SIZE" ]; then
+            echo "ERROR: repacked AppImage ($post_size bytes) is smaller than pre-fix ($PRE_FIX_SIZE bytes)" >&2
+            exit 1
+          fi
+          echo "OK: repacked AppImage ≥ pre-fix size"
+
+      - name: Replace AppImage on draft release with repacked build
+        if: matrix.platform == 'ubuntu-24.04'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          appimages=(src-tauri/target/release/bundle/appimage/Agaric_*_amd64.AppImage)
+          if [ ${#appimages[@]} -eq 0 ]; then
+            echo "ERROR: No repacked AppImage to upload" >&2
+            exit 1
+          fi
+          echo "Uploading (clobber) ${appimages[0]} to release ${GITHUB_REF_NAME}"
+          gh release upload "${GITHUB_REF_NAME}" "${appimages[0]}" --clobber

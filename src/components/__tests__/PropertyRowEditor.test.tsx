@@ -876,7 +876,7 @@ describe('PropertyRowEditor ref picker', () => {
         <PropertyRowEditor
           blockId="BLOCK_1"
           prop={makeProp('todo_state', { value_text: 'TODO' })}
-          def={makeDef('todo_state', 'select', '["TODO","DOING","CANCELLED","DONE"]')}
+          def={makeDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')}
           onSave={vi.fn()}
         />,
       )
@@ -891,7 +891,7 @@ describe('PropertyRowEditor ref picker', () => {
         <PropertyRowEditor
           blockId="BLOCK_1"
           prop={makeProp('todo_state', { value_text: 'TODO' })}
-          def={makeDef('todo_state', 'select', '["TODO","DOING","CANCELLED","DONE"]')}
+          def={makeDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')}
           onSave={vi.fn()}
         />,
       )
@@ -920,7 +920,7 @@ describe('PropertyRowEditor ref picker', () => {
         <PropertyRowEditor
           blockId="BLOCK_1"
           prop={makeProp('todo_state', { value_text: 'TODO' })}
-          def={makeDef('todo_state', 'select', '["TODO","DOING","CANCELLED","DONE"]')}
+          def={makeDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')}
           onSave={vi.fn()}
         />,
       )

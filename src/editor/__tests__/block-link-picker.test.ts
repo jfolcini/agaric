@@ -2,7 +2,12 @@
  * Tests for the BlockLinkPicker extension.
  */
 
-import { describe, expect, it, vi } from 'vitest'
+import { Editor } from '@tiptap/core'
+import Document from '@tiptap/extension-document'
+import Paragraph from '@tiptap/extension-paragraph'
+import Text from '@tiptap/extension-text'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { BlockLink } from '../extensions/block-link'
 import { BlockLinkPicker } from '../extensions/block-link-picker'
 
 /** Helper: create a chainProxy mock that tracks deleteRange and insertContentAt calls. */
@@ -414,5 +419,249 @@ describe('resolveBlockLinkFromSelection command', () => {
     expect(insertContentAtCalls).toEqual([
       { pos: 0, content: { type: 'block_link', attrs: { id: 'ALIAS_ID' } } },
     ])
+  })
+})
+
+// ── Suggestion plugin `command` — UX-232 trailing-space behaviour ────────
+//
+// After the user picks an item from the [[ suggestion popup, the chain must
+// be: deleteRange(range) → insertBlockLink(id) → insertContent(' ') → run().
+// The trailing space keeps the cursor on the same visual line, separated
+// from the chip by exactly one character.
+
+describe('BlockLinkPicker suggestion command chain (UX-232)', () => {
+  it('captured command invokes the correct chain (mock @tiptap/suggestion)', async () => {
+    // Re-import with a mocked @tiptap/suggestion so we can capture the
+    // `command` option that BlockLinkPicker passes to Suggestion(...).
+    let capturedCommand:
+      | ((ctx: { editor: unknown; range: { from: number; to: number }; props: unknown }) => void)
+      | undefined
+    vi.resetModules()
+    vi.doMock('@tiptap/suggestion', () => ({
+      Suggestion: (opts: Record<string, unknown>) => {
+        capturedCommand = opts['command'] as typeof capturedCommand
+        return { key: opts['pluginKey'] }
+      },
+    }))
+    const mod = await import('../extensions/block-link-picker')
+    const ext = mod.BlockLinkPicker.configure({ items: () => [] })
+    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
+    ;(ext.config.addProseMirrorPlugins as Function).call({
+      editor: {} as unknown,
+      options: ext.options,
+    })
+    expect(capturedCommand).toBeDefined()
+
+    const calls: string[] = []
+    const chainProxy: Record<string, unknown> = {
+      focus: () => {
+        calls.push('focus')
+        return chainProxy
+      },
+      deleteRange: (r: { from: number; to: number }) => {
+        calls.push(`deleteRange:${r.from}-${r.to}`)
+        return chainProxy
+      },
+      insertBlockLink: (id: string) => {
+        calls.push(`insertBlockLink:${id}`)
+        return chainProxy
+      },
+      insertContent: (c: unknown) => {
+        calls.push(`insertContent:${JSON.stringify(c)}`)
+        return chainProxy
+      },
+      run: () => {
+        calls.push('run')
+        return true
+      },
+    }
+    const mockEditor = { chain: () => chainProxy }
+
+    capturedCommand?.({
+      editor: mockEditor,
+      range: { from: 1, to: 3 },
+      props: { id: 'ULID_PICK', label: 'Pick Me', isCreate: false },
+    })
+
+    expect(calls).toEqual([
+      'focus',
+      'deleteRange:1-3',
+      'insertBlockLink:ULID_PICK',
+      'insertContent:" "',
+      'run',
+    ])
+
+    vi.doUnmock('@tiptap/suggestion')
+    vi.resetModules()
+  })
+
+  it('isCreate path invokes insertContent(" ") after onCreate resolves', async () => {
+    let capturedCommand:
+      | ((ctx: { editor: unknown; range: { from: number; to: number }; props: unknown }) => void)
+      | undefined
+    vi.resetModules()
+    vi.doMock('@tiptap/suggestion', () => ({
+      Suggestion: (opts: Record<string, unknown>) => {
+        capturedCommand = opts['command'] as typeof capturedCommand
+        return { key: opts['pluginKey'] }
+      },
+    }))
+    const mod = await import('../extensions/block-link-picker')
+    const onCreate = vi.fn().mockResolvedValue('CREATED_ULID')
+    const ext = mod.BlockLinkPicker.configure({ items: () => [], onCreate })
+    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
+    ;(ext.config.addProseMirrorPlugins as Function).call({
+      editor: {} as unknown,
+      options: ext.options,
+    })
+
+    const calls: string[] = []
+    const chainProxy: Record<string, unknown> = {
+      focus: () => {
+        calls.push('focus')
+        return chainProxy
+      },
+      deleteRange: (r: { from: number; to: number }) => {
+        calls.push(`deleteRange:${r.from}-${r.to}`)
+        return chainProxy
+      },
+      insertBlockLink: (id: string) => {
+        calls.push(`insertBlockLink:${id}`)
+        return chainProxy
+      },
+      insertContent: (c: unknown) => {
+        calls.push(`insertContent:${JSON.stringify(c)}`)
+        return chainProxy
+      },
+      run: () => {
+        calls.push('run')
+        return true
+      },
+    }
+    const mockEditor = { chain: () => chainProxy }
+
+    capturedCommand?.({
+      editor: mockEditor,
+      range: { from: 5, to: 10 },
+      props: { id: 'PLACEHOLDER', label: 'Create me', isCreate: true },
+    })
+
+    await vi.waitFor(() => expect(onCreate).toHaveBeenCalled())
+    await vi.waitFor(() => expect(calls).toContain('run'))
+
+    expect(calls).toEqual([
+      'focus',
+      'deleteRange:5-10',
+      'insertBlockLink:CREATED_ULID',
+      'insertContent:" "',
+      'run',
+    ])
+
+    vi.doUnmock('@tiptap/suggestion')
+    vi.resetModules()
+  })
+})
+
+// ── Integration: real editor doc state after the picker chain (UX-232) ──
+//
+// These tests drive the exact chain that block-link-picker.command runs
+// through a real TipTap Editor (BlockLink + Document + Paragraph + Text,
+// no Suggestion plugin needed) and assert on the resulting doc shape:
+//   - the chip is followed by a single ' ' text node
+//   - selection.from === doc.content.size (cursor at paragraph end)
+//   - doc has exactly one paragraph (no stray hard_break / paragraph split)
+
+describe('BlockLinkPicker real-editor chain result (UX-232)', () => {
+  let editor: Editor | undefined
+
+  afterEach(() => {
+    editor?.destroy()
+    editor = undefined
+  })
+
+  function buildEditor(initialText: string): Editor {
+    return new Editor({
+      element: document.createElement('div'),
+      extensions: [
+        Document,
+        Paragraph,
+        Text,
+        BlockLink.configure({ resolveTitle: (id) => `Title:${id}` }),
+      ],
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: initialText ? [{ type: 'text', text: initialText }] : [],
+          },
+        ],
+      },
+    })
+  }
+
+  it('inserts block_link chip followed by a single space; cursor at end', () => {
+    editor = buildEditor('[[foo')
+    // `[[foo` occupies positions 1..6 inside the paragraph (0 is the
+    // paragraph start token). The suggestion range on selection is this
+    // span — mirror the real command's chain.
+    editor.chain().focus().deleteRange({ from: 1, to: 6 }).insertBlockLink('ULID_OK').run()
+    // Apply the trailing space the UX-232 fix appends:
+    editor.chain().focus().insertContent(' ').run()
+
+    const doc = editor.state.doc
+    // Exactly one paragraph — no paragraph split or hard_break leaked in.
+    expect(doc.childCount).toBe(1)
+    const paragraph = doc.child(0)
+    expect(paragraph.type.name).toBe('paragraph')
+
+    // Paragraph children: [block_link, text(' ')] — exact count.
+    expect(paragraph.childCount).toBe(2)
+    expect(paragraph.child(0).type.name).toBe('block_link')
+    expect(paragraph.child(0).attrs['id']).toBe('ULID_OK')
+    expect(paragraph.child(1).type.name).toBe('text')
+    expect(paragraph.child(1).text).toBe(' ')
+
+    // No hard_break anywhere in the doc.
+    let hardBreakCount = 0
+    doc.descendants((n) => {
+      if (n.type.name === 'hard_break') hardBreakCount += 1
+    })
+    expect(hardBreakCount).toBe(0)
+
+    // Cursor sits at the end of the paragraph content (right after the
+    // inserted space), not on a new line/block. In ProseMirror terms:
+    //   - $from.parent is the paragraph
+    //   - $from.parentOffset equals paragraph.content.size
+    //   - selection.from === doc.content.size - 1 (doc.content.size
+    //     counts the paragraph's closing token, so end-of-paragraph is
+    //     one less).
+    const $from = editor.state.selection.$from
+    expect($from.parent.type.name).toBe('paragraph')
+    expect($from.parentOffset).toBe(paragraph.content.size)
+    expect(editor.state.selection.from).toBe(doc.content.size - 1)
+    expect(editor.state.selection.empty).toBe(true)
+  })
+
+  it('full suggestion-command chain (deleteRange + insertBlockLink + insertContent(" ")) — single atomic run()', () => {
+    editor = buildEditor('[[bar')
+    editor
+      .chain()
+      .focus()
+      .deleteRange({ from: 1, to: 6 })
+      .insertBlockLink('ULID_BAR')
+      .insertContent(' ')
+      .run()
+
+    const doc = editor.state.doc
+    expect(doc.childCount).toBe(1)
+    const paragraph = doc.child(0)
+    expect(paragraph.childCount).toBe(2)
+    expect(paragraph.child(0).type.name).toBe('block_link')
+    expect(paragraph.child(1).text).toBe(' ')
+    const $from = editor.state.selection.$from
+    expect($from.parent.type.name).toBe('paragraph')
+    expect($from.parentOffset).toBe(paragraph.content.size)
+    expect(editor.state.selection.from).toBe(doc.content.size - 1)
   })
 })

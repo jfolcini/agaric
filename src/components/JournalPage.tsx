@@ -19,6 +19,7 @@ import {
   format,
   isAfter,
   isBefore,
+  isSameDay,
   subDays,
   subMonths,
   subWeeks,
@@ -336,6 +337,13 @@ export function GlobalDateControls(): React.ReactElement {
 
   const isAgendaActive = currentView === 'journal' && mode === 'agenda'
 
+  // UX-236: hide the Today button when already on today's daily journal — the
+  // click would be a no-op. Only applies to daily mode inside the journal view;
+  // weekly/monthly still benefit from a scroll-to-today, and non-journal views
+  // should keep the jump-in affordance.
+  const todayButtonHidden =
+    currentView === 'journal' && mode === 'daily' && isSameDay(currentDate, new Date())
+
   function handleSelectDate(day: Date) {
     setView('journal')
     navigateToDate(day, 'daily')
@@ -358,18 +366,26 @@ export function GlobalDateControls(): React.ReactElement {
 
   return (
     <div className="flex items-center gap-1">
-      <Button variant="outline" size="xs" onClick={handleToday} aria-label={t('journal.goToToday')}>
-        {t('journal.today')}
-      </Button>
-      <Button
-        variant={isAgendaActive ? 'secondary' : 'outline'}
-        size="xs"
-        onClick={handleAgenda}
-        aria-label={t('journal.goToAgenda')}
-        aria-current={isAgendaActive ? 'page' : undefined}
-      >
-        {t('journal.agenda')}
-      </Button>
+      {!todayButtonHidden && (
+        <Button
+          variant="outline"
+          size="xs"
+          onClick={handleToday}
+          aria-label={t('journal.goToToday')}
+        >
+          {t('journal.today')}
+        </Button>
+      )}
+      {!isAgendaActive && (
+        <Button
+          variant="outline"
+          size="xs"
+          onClick={handleAgenda}
+          aria-label={t('journal.goToAgenda')}
+        >
+          {t('journal.agenda')}
+        </Button>
+      )}
       <div className="relative">
         <Button
           variant="ghost"
@@ -478,6 +494,11 @@ export function JournalControls(): React.ReactElement {
           : t('journal.nextMonth'),
   }
 
+  // UX-236: hide the Today button when already on today's daily journal.
+  // JournalControls only renders inside `currentView === 'journal'`, so the
+  // view-level leg of the expression used in GlobalDateControls collapses here.
+  const todayButtonHidden = mode === 'daily' && isSameDay(currentDate, new Date())
+
   return (
     <div className="flex flex-1 items-center gap-2 flex-wrap" data-testid="journal-header">
       {/* Mode switcher */}
@@ -517,39 +538,48 @@ export function JournalControls(): React.ReactElement {
 
       <div className="flex-1" />
 
-      {/* Date navigation — hidden in agenda mode (no date context) */}
-      {mode !== 'agenda' && (
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={navLabels.prev}
-            onClick={goPrev}
-            disabled={!canGoPrev}
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <span
-            className="min-w-[100px] sm:min-w-[140px] text-center text-sm font-medium"
-            data-testid="date-display"
-          >
-            {getDateDisplay()}
-          </span>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={navLabels.next}
-            onClick={goNext}
-            disabled={!canGoNext}
-          >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
+      {/* Date navigation — prev/next/date-display hidden in agenda mode (no
+          date context), but Today + Agenda + calendar stay visible so the
+          user can jump back into dated views (UX-235). */}
+      <div className="flex items-center gap-1">
+        {mode !== 'agenda' && (
+          <>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label={navLabels.prev}
+              onClick={goPrev}
+              disabled={!canGoPrev}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <span
+              className="min-w-[100px] sm:min-w-[140px] text-center text-sm font-medium"
+              data-testid="date-display"
+            >
+              {getDateDisplay()}
+            </span>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label={navLabels.next}
+              onClick={goNext}
+              disabled={!canGoNext}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </>
+        )}
+        {!todayButtonHidden && (
           <Button
             variant="outline"
             size="xs"
             onClick={() => {
               const today = new Date()
-              if (mode === 'weekly' || mode === 'monthly') {
+              if (mode === 'agenda') {
+                setMode('daily')
+                setCurrentDate(today)
+              } else if (mode === 'weekly' || mode === 'monthly') {
                 goToDateAndScroll(today, formatDate(today))
               } else {
                 setCurrentDate(today)
@@ -559,39 +589,51 @@ export function JournalControls(): React.ReactElement {
           >
             {t('journal.today')}
           </Button>
-          <div className="relative">
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label={t('journal.openCalendar')}
-              onClick={() => setCalendarOpen((o) => !o)}
-            >
-              <CalendarIcon className="h-4 w-4" />
-            </Button>
-            {calendarOpen && (
-              <JournalCalendarDropdown
-                currentDate={currentDate}
-                highlightedDays={highlightedDays}
-                onSelectDate={(day) => {
-                  navigateToDate(day, 'daily')
+        )}
+        {mode !== 'agenda' && (
+          <Button
+            variant="outline"
+            size="xs"
+            onClick={() => {
+              navigateToDate(new Date(), 'agenda')
+            }}
+            aria-label={t('journal.goToAgenda')}
+          >
+            {t('journal.agenda')}
+          </Button>
+        )}
+        <div className="relative">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t('journal.openCalendar')}
+            onClick={() => setCalendarOpen((o) => !o)}
+          >
+            <CalendarIcon className="h-4 w-4" />
+          </Button>
+          {calendarOpen && (
+            <JournalCalendarDropdown
+              currentDate={currentDate}
+              highlightedDays={highlightedDays}
+              onSelectDate={(day) => {
+                navigateToDate(day, 'daily')
+                setCalendarOpen(false)
+              }}
+              onSelectWeek={(dates) => {
+                if (dates.length > 0) {
+                  navigateToDate(dates[0] as Date, 'weekly')
                   setCalendarOpen(false)
-                }}
-                onSelectWeek={(dates) => {
-                  if (dates.length > 0) {
-                    navigateToDate(dates[0] as Date, 'weekly')
-                    setCalendarOpen(false)
-                  }
-                }}
-                onSelectMonth={(month) => {
-                  navigateToDate(month, 'monthly')
-                  setCalendarOpen(false)
-                }}
-                onClose={() => setCalendarOpen(false)}
-              />
-            )}
-          </div>
+                }
+              }}
+              onSelectMonth={(month) => {
+                navigateToDate(month, 'monthly')
+                setCalendarOpen(false)
+              }}
+              onClose={() => setCalendarOpen(false)}
+            />
+          )}
         </div>
-      )}
+      </div>
 
       {/* Agenda mode: show title in place of date nav */}
       {mode === 'agenda' && (

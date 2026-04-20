@@ -100,7 +100,7 @@ describe('GlobalDateControls', () => {
     expect(diff).toBeLessThan(5000)
   })
 
-  it('Agenda button has aria-current="page" when on agenda view', () => {
+  it('Agenda button is hidden (not in DOM) when on journal agenda view (UX-236)', () => {
     useNavigationStore.setState({
       currentView: 'journal',
       tabs: [{ id: '0', pageStack: [], label: '' }],
@@ -116,8 +116,9 @@ describe('GlobalDateControls', () => {
 
     render(<GlobalDateControls />)
 
-    const agendaBtn = screen.getByRole('button', { name: /go to agenda/i })
-    expect(agendaBtn).toHaveAttribute('aria-current', 'page')
+    // UX-236: the Agenda button is removed from the DOM (not just restyled)
+    // when it would be a no-op.
+    expect(screen.queryByRole('button', { name: /go to agenda/i })).not.toBeInTheDocument()
   })
 
   it('Agenda button does NOT have aria-current when not on agenda view', () => {

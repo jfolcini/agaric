@@ -198,7 +198,13 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
             extensionOptions
               .onCreate(item.label)
               .then((newId) => {
-                editor.chain().focus().deleteRange(range).insertBlockLink(newId).run()
+                editor
+                  .chain()
+                  .focus()
+                  .deleteRange(range)
+                  .insertBlockLink(newId)
+                  .insertContent(' ')
+                  .run()
               })
               .catch((err) => {
                 logger.error(
@@ -209,7 +215,13 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
                 )
               })
           } else {
-            editor.chain().focus().deleteRange(range).insertBlockLink(item.id).run()
+            editor
+              .chain()
+              .focus()
+              .deleteRange(range)
+              .insertBlockLink(item.id)
+              .insertContent(' ')
+              .run()
           }
         },
         render: () => createSuggestionRenderer('Block links', blockLinkPickerPluginKey),

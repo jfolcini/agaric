@@ -1679,7 +1679,7 @@ architectural changes were required.
 
 | Command | Purpose |
 |---------|---------|
-| `set_todo_state` | Set todo state (null/TODO/DOING/CANCELLED/DONE — locked cycle per UX-201a). Recurrence support on done transition: creates sibling with shifted dates, sets `repeat-origin` ref to original block. |
+| `set_todo_state` | Set todo state (null/TODO/DOING/DONE/CANCELLED — locked cycle per UX-201a, reordered by UX-234). Recurrence support on done transition: creates sibling with shifted dates, sets `repeat-origin` ref to original block. |
 | `set_priority` | Set priority. Default levels are `'1' / '2' / '3'`; user-configurable via the `priority` property definition's `options` JSON (UX-201b). `null` clears the priority. |
 | `set_due_date` | Set due date (YYYY-MM-DD or null). |
 | `set_scheduled_date` | Set scheduled date (YYYY-MM-DD or null). |

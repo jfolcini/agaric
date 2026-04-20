@@ -68,7 +68,7 @@ describe('sortAgendaBlocks', () => {
     expect(sorted[1]?.id).toBe('B1')
   })
 
-  it('within same date, sorts DOING > TODO > CANCELLED > DONE > null (UX-202)', () => {
+  it('within same date, sorts DOING > TODO > DONE > CANCELLED > null (UX-202/UX-234)', () => {
     const blocks = [
       makeBlock({ id: 'done', due_date: '2025-06-15', todo_state: 'DONE' }),
       makeBlock({ id: 'todo', due_date: '2025-06-15', todo_state: 'TODO' }),
@@ -77,7 +77,7 @@ describe('sortAgendaBlocks', () => {
       makeBlock({ id: 'none', due_date: '2025-06-15', todo_state: null }),
     ]
     const sorted = sortAgendaBlocks(blocks)
-    expect(sorted.map((b) => b.id)).toEqual(['doing', 'todo', 'cancelled', 'done', 'none'])
+    expect(sorted.map((b) => b.id)).toEqual(['doing', 'todo', 'done', 'cancelled', 'none'])
   })
 
   it('within same date and state, sorts by priority 1 > 2 > 3 > null', () => {
@@ -205,7 +205,7 @@ describe('groupByPriority', () => {
 })
 
 describe('groupByState', () => {
-  it('groups blocks by todo state (UX-202: includes CANCELLED)', () => {
+  it('groups blocks by todo state (UX-202/UX-234: DOING, TODO, DONE, CANCELLED, No state)', () => {
     const blocks = [
       makeBlock({ id: 'doing', todo_state: 'DOING' }),
       makeBlock({ id: 'todo', todo_state: 'TODO' }),
@@ -214,11 +214,11 @@ describe('groupByState', () => {
       makeBlock({ id: 'none', todo_state: null }),
     ]
     const groups = groupByState(blocks)
-    expect(groups.map((g) => g.label)).toEqual(['DOING', 'TODO', 'CANCELLED', 'DONE', 'No state'])
+    expect(groups.map((g) => g.label)).toEqual(['DOING', 'TODO', 'DONE', 'CANCELLED', 'No state'])
     expect(groups[0]?.blocks[0]?.id).toBe('doing')
     expect(groups[1]?.blocks[0]?.id).toBe('todo')
-    expect(groups[2]?.blocks[0]?.id).toBe('cancelled')
-    expect(groups[3]?.blocks[0]?.id).toBe('done')
+    expect(groups[2]?.blocks[0]?.id).toBe('done')
+    expect(groups[3]?.blocks[0]?.id).toBe('cancelled')
     expect(groups[4]?.blocks[0]?.id).toBe('none')
   })
 

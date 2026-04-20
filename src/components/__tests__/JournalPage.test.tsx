@@ -19,7 +19,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { addDays, addMonths, endOfWeek, format, startOfWeek, subDays } from 'date-fns'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { emptyPage, makeDailyPage } from '../../__tests__/fixtures'
 
@@ -131,7 +131,14 @@ vi.mock('../journal/MonthlyDayCell', () => ({
 
 import { useBlockStore } from '../../stores/blocks'
 import { useJournalStore } from '../../stores/journal'
-import { JournalControls, JournalPage, MAX_JOURNAL_DATE, MIN_JOURNAL_DATE } from '../JournalPage'
+import { useNavigationStore } from '../../stores/navigation'
+import {
+  GlobalDateControls,
+  JournalControls,
+  JournalPage,
+  MAX_JOURNAL_DATE,
+  MIN_JOURNAL_DATE,
+} from '../JournalPage'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -1504,7 +1511,7 @@ describe('JournalPage', () => {
       })
     })
 
-    it('hides date navigation in agenda mode', async () => {
+    it('hides prev/next arrows in agenda mode but keeps Today + calendar visible (UX-235)', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValue(emptyPage)
 
@@ -1517,10 +1524,13 @@ describe('JournalPage', () => {
       const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
       await user.click(agendaTab)
 
-      // Date navigation buttons should not be present
+      // Prev/next arrows are hidden (no date context)
       expect(screen.queryByRole('button', { name: /previous day/i })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /next day/i })).not.toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: /go to today/i })).not.toBeInTheDocument()
+
+      // Today button and calendar trigger remain accessible (UX-235)
+      expect(screen.getByRole('button', { name: /go to today/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /open calendar picker/i })).toBeInTheDocument()
     })
 
     it('displays "Tasks" in the date-display area', async () => {
@@ -2950,6 +2960,398 @@ describe('JournalPage', () => {
 
       // Falls through to emptyPage for unknown commands.
       expect(await impl('something_else')).toBe(emptyPage)
+    })
+  })
+
+  // ── UX-235: agenda-mode date controls (Today + calendar) ─────────────
+  describe('JournalControls agenda-mode date controls (UX-235)', () => {
+    // Fixed system time so "today" is deterministic: Mon, April 20, 2026.
+    // Only fake `Date` (not timers) so userEvent's internal setTimeouts run
+    // normally — faking all timers would deadlock async user.click() here.
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2026-04-20T12:00:00'))
+      useJournalStore.setState({ mode: 'agenda', currentDate: new Date('2026-04-20T12:00:00') })
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('renders Today button in agenda mode', () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+      renderJournal()
+      expect(screen.getByRole('button', { name: /go to today/i })).toBeInTheDocument()
+    })
+
+    it('renders calendar trigger in agenda mode', () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+      renderJournal()
+      expect(screen.getByRole('button', { name: /open calendar picker/i })).toBeInTheDocument()
+    })
+
+    it('hides prev/next arrows and the formatted date display in agenda mode', () => {
+      // Set a non-today currentDate so the agenda-mode branch is exercised.
+      useJournalStore.setState({ mode: 'agenda', currentDate: new Date('2026-03-15T12:00:00') })
+      mockedInvoke.mockResolvedValue(emptyPage)
+      renderJournal()
+
+      expect(screen.queryByRole('button', { name: /previous day/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /next day/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /previous week/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /previous month/i })).not.toBeInTheDocument()
+
+      // The only element with data-testid="date-display" in agenda mode is the
+      // "Tasks" label — the formatted date display span is gated by
+      // `mode !== 'agenda'`.
+      const dateDisplay = screen.getByTestId('date-display')
+      expect(dateDisplay).toHaveTextContent('Tasks')
+      expect(dateDisplay).not.toHaveTextContent(/2026|March|Mar/)
+    })
+
+    it('keeps the "Tasks" label in agenda mode', () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+      renderJournal()
+      expect(screen.getByTestId('date-display')).toHaveTextContent('Tasks')
+    })
+
+    it('clicking Today in agenda mode switches to daily on today', async () => {
+      // Start agenda mode on a non-today date so the mode switch is observable.
+      useJournalStore.setState({ mode: 'agenda', currentDate: new Date('2026-03-15T12:00:00') })
+      mockedInvoke.mockResolvedValue(emptyPage)
+      const user = userEvent.setup()
+
+      renderJournal()
+      await user.click(screen.getByRole('button', { name: /go to today/i }))
+
+      expect(useJournalStore.getState().mode).toBe('daily')
+      expect(format(useJournalStore.getState().currentDate, 'yyyy-MM-dd')).toBe('2026-04-20')
+    })
+
+    it('calendar date pick in agenda mode switches to daily on the picked date', async () => {
+      useJournalStore.setState({ mode: 'agenda', currentDate: new Date('2026-04-20T12:00:00') })
+      mockedInvoke.mockResolvedValue(emptyPage)
+      const user = userEvent.setup()
+
+      renderJournal()
+
+      // Open the calendar dropdown
+      await user.click(screen.getByRole('button', { name: /open calendar picker/i }))
+      await waitFor(() => {
+        expect(screen.getByRole('grid')).toBeInTheDocument()
+      })
+
+      // react-day-picker renders each day as a button inside a gridcell.
+      // Pick a known day in the current month (April 2026). We pick the
+      // 15th to avoid colliding with the "today" cell (the 20th).
+      const gridcells = screen.getAllByRole('gridcell')
+      const day15Cell = gridcells.find((c) => c.textContent?.trim() === '15')
+      expect(day15Cell).toBeDefined()
+      const day15Button = day15Cell?.querySelector('button') as HTMLButtonElement
+      expect(day15Button).toBeTruthy()
+      await user.click(day15Button)
+
+      expect(useJournalStore.getState().mode).toBe('daily')
+      expect(format(useJournalStore.getState().currentDate, 'yyyy-MM-dd')).toBe('2026-04-15')
+    })
+  })
+
+  // ── UX-236: redundant header buttons hidden when they are no-ops ─────
+  describe('redundant header buttons (UX-236)', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2026-04-20T12:00:00'))
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    describe('GlobalDateControls', () => {
+      beforeEach(() => {
+        mockedInvoke.mockResolvedValue(emptyPage)
+      })
+
+      it('hides Today when on journal view + daily mode + today', () => {
+        useNavigationStore.setState({
+          currentView: 'journal',
+          tabs: [{ id: '0', pageStack: [], label: '' }],
+          activeTabIndex: 0,
+          selectedBlockId: null,
+        })
+        useJournalStore.setState({
+          mode: 'daily',
+          currentDate: new Date('2026-04-20T12:00:00'),
+          scrollToDate: null,
+          scrollToPanel: null,
+        })
+
+        render(<GlobalDateControls />)
+
+        expect(screen.queryByRole('button', { name: /go to today/i })).not.toBeInTheDocument()
+      })
+
+      it('shows Today when on journal view + daily mode + non-today date', () => {
+        useNavigationStore.setState({
+          currentView: 'journal',
+          tabs: [{ id: '0', pageStack: [], label: '' }],
+          activeTabIndex: 0,
+          selectedBlockId: null,
+        })
+        useJournalStore.setState({
+          mode: 'daily',
+          currentDate: new Date('2026-04-19T12:00:00'),
+          scrollToDate: null,
+          scrollToPanel: null,
+        })
+
+        render(<GlobalDateControls />)
+
+        expect(screen.getByRole('button', { name: /go to today/i })).toBeInTheDocument()
+      })
+
+      it('hides Agenda when on journal view + agenda mode', () => {
+        useNavigationStore.setState({
+          currentView: 'journal',
+          tabs: [{ id: '0', pageStack: [], label: '' }],
+          activeTabIndex: 0,
+          selectedBlockId: null,
+        })
+        useJournalStore.setState({
+          mode: 'agenda',
+          currentDate: new Date('2026-04-20T12:00:00'),
+          scrollToDate: null,
+          scrollToPanel: null,
+        })
+
+        render(<GlobalDateControls />)
+
+        expect(screen.queryByRole('button', { name: /go to agenda/i })).not.toBeInTheDocument()
+      })
+
+      it('shows Agenda when not on journal view', () => {
+        useNavigationStore.setState({
+          currentView: 'pages',
+          tabs: [{ id: '0', pageStack: [], label: '' }],
+          activeTabIndex: 0,
+          selectedBlockId: null,
+        })
+        useJournalStore.setState({
+          mode: 'agenda',
+          currentDate: new Date('2026-04-20T12:00:00'),
+          scrollToDate: null,
+          scrollToPanel: null,
+        })
+
+        render(<GlobalDateControls />)
+
+        expect(screen.getByRole('button', { name: /go to agenda/i })).toBeInTheDocument()
+      })
+
+      it('renders Today, Agenda, Calendar in that DOM order when all three are visible', () => {
+        useNavigationStore.setState({
+          currentView: 'pages',
+          tabs: [{ id: '0', pageStack: [], label: '' }],
+          activeTabIndex: 0,
+          selectedBlockId: null,
+        })
+        useJournalStore.setState({
+          mode: 'daily',
+          currentDate: new Date('2026-04-19T12:00:00'),
+          scrollToDate: null,
+          scrollToPanel: null,
+        })
+
+        render(<GlobalDateControls />)
+
+        const todayBtn = screen.getByRole('button', { name: /go to today/i })
+        const agendaBtn = screen.getByRole('button', { name: /go to agenda/i })
+        const calBtn = screen.getByRole('button', { name: /open calendar picker/i })
+
+        expect(
+          todayBtn.compareDocumentPosition(agendaBtn) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy()
+        expect(
+          agendaBtn.compareDocumentPosition(calBtn) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy()
+      })
+    })
+
+    describe('JournalControls', () => {
+      it('hides Today when mode=daily on today', () => {
+        useJournalStore.setState({
+          mode: 'daily',
+          currentDate: new Date('2026-04-20T12:00:00'),
+          scrollToDate: null,
+          scrollToPanel: null,
+        })
+        mockedInvoke.mockResolvedValue(emptyPage)
+        renderJournal()
+
+        expect(screen.queryByRole('button', { name: /go to today/i })).not.toBeInTheDocument()
+      })
+
+      it('shows Today when mode=daily on non-today date', () => {
+        useJournalStore.setState({
+          mode: 'daily',
+          currentDate: new Date('2026-04-19T12:00:00'),
+          scrollToDate: null,
+          scrollToPanel: null,
+        })
+        mockedInvoke.mockResolvedValue(emptyPage)
+        renderJournal()
+
+        expect(screen.getByRole('button', { name: /go to today/i })).toBeInTheDocument()
+      })
+
+      it('shows Today in weekly mode even when the week contains today', () => {
+        useJournalStore.setState({
+          mode: 'weekly',
+          currentDate: new Date('2026-04-20T12:00:00'),
+          scrollToDate: null,
+          scrollToPanel: null,
+        })
+        mockedInvoke.mockResolvedValue(emptyPage)
+        renderJournal()
+
+        expect(screen.getByRole('button', { name: /go to today/i })).toBeInTheDocument()
+      })
+
+      it('shows Today in monthly mode even when the month contains today', () => {
+        useJournalStore.setState({
+          mode: 'monthly',
+          currentDate: new Date('2026-04-20T12:00:00'),
+          scrollToDate: null,
+          scrollToPanel: null,
+        })
+        mockedInvoke.mockResolvedValue(emptyPage)
+        renderJournal()
+
+        expect(screen.getByRole('button', { name: /go to today/i })).toBeInTheDocument()
+      })
+
+      it('hides Agenda button in agenda mode but keeps Today + calendar visible', () => {
+        useJournalStore.setState({
+          mode: 'agenda',
+          currentDate: new Date('2026-04-20T12:00:00'),
+          scrollToDate: null,
+          scrollToPanel: null,
+        })
+        mockedInvoke.mockResolvedValue(emptyPage)
+        renderJournal()
+
+        expect(screen.queryByRole('button', { name: /go to agenda/i })).not.toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /go to today/i })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /open calendar picker/i })).toBeInTheDocument()
+      })
+
+      it('shows Agenda button in daily mode', () => {
+        useJournalStore.setState({
+          mode: 'daily',
+          currentDate: new Date('2026-04-19T12:00:00'),
+          scrollToDate: null,
+          scrollToPanel: null,
+        })
+        mockedInvoke.mockResolvedValue(emptyPage)
+        renderJournal()
+
+        expect(screen.getByRole('button', { name: /go to agenda/i })).toBeInTheDocument()
+      })
+
+      it('shows Agenda button in weekly mode', () => {
+        useJournalStore.setState({
+          mode: 'weekly',
+          currentDate: new Date('2026-04-20T12:00:00'),
+          scrollToDate: null,
+          scrollToPanel: null,
+        })
+        mockedInvoke.mockResolvedValue(emptyPage)
+        renderJournal()
+
+        expect(screen.getByRole('button', { name: /go to agenda/i })).toBeInTheDocument()
+      })
+
+      it('shows Agenda button in monthly mode', () => {
+        useJournalStore.setState({
+          mode: 'monthly',
+          currentDate: new Date('2026-04-20T12:00:00'),
+          scrollToDate: null,
+          scrollToPanel: null,
+        })
+        mockedInvoke.mockResolvedValue(emptyPage)
+        renderJournal()
+
+        expect(screen.getByRole('button', { name: /go to agenda/i })).toBeInTheDocument()
+      })
+
+      it('clicking Agenda calls navigateToDate(today, "agenda")', async () => {
+        useJournalStore.setState({
+          mode: 'daily',
+          currentDate: new Date('2026-04-19T12:00:00'),
+          scrollToDate: null,
+          scrollToPanel: null,
+        })
+        mockedInvoke.mockResolvedValue(emptyPage)
+        const user = userEvent.setup()
+
+        renderJournal()
+        await user.click(screen.getByRole('button', { name: /go to agenda/i }))
+
+        expect(useJournalStore.getState().mode).toBe('agenda')
+        expect(format(useJournalStore.getState().currentDate, 'yyyy-MM-dd')).toBe('2026-04-20')
+      })
+
+      it('mode-switcher Agenda tab remains rendered in daily mode', () => {
+        useJournalStore.setState({
+          mode: 'daily',
+          currentDate: new Date('2026-04-19T12:00:00'),
+          scrollToDate: null,
+          scrollToPanel: null,
+        })
+        mockedInvoke.mockResolvedValue(emptyPage)
+        renderJournal()
+
+        expect(screen.getByRole('tab', { name: /agenda view/i })).toBeInTheDocument()
+      })
+
+      it('mode-switcher Agenda tab remains rendered in agenda mode', () => {
+        useJournalStore.setState({
+          mode: 'agenda',
+          currentDate: new Date('2026-04-20T12:00:00'),
+          scrollToDate: null,
+          scrollToPanel: null,
+        })
+        mockedInvoke.mockResolvedValue(emptyPage)
+        renderJournal()
+
+        expect(screen.getByRole('tab', { name: /agenda view/i })).toBeInTheDocument()
+      })
+
+      it('mode-switcher Agenda tab remains rendered in weekly mode', () => {
+        useJournalStore.setState({
+          mode: 'weekly',
+          currentDate: new Date('2026-04-20T12:00:00'),
+          scrollToDate: null,
+          scrollToPanel: null,
+        })
+        mockedInvoke.mockResolvedValue(emptyPage)
+        renderJournal()
+
+        expect(screen.getByRole('tab', { name: /agenda view/i })).toBeInTheDocument()
+      })
+
+      it('mode-switcher Agenda tab remains rendered in monthly mode', () => {
+        useJournalStore.setState({
+          mode: 'monthly',
+          currentDate: new Date('2026-04-20T12:00:00'),
+          scrollToDate: null,
+          scrollToPanel: null,
+        })
+        mockedInvoke.mockResolvedValue(emptyPage)
+        renderJournal()
+
+        expect(screen.getByRole('tab', { name: /agenda view/i })).toBeInTheDocument()
+      })
     })
   })
 })

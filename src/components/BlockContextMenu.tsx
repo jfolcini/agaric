@@ -82,7 +82,9 @@ function getTodoLabel(todoState: string | null | undefined, t: (key: string) => 
     case 'DOING':
       return t('contextMenu.doingToDone')
     case 'DONE':
-      return t('contextMenu.doneToClear')
+      return t('contextMenu.doneToCancelled')
+    case 'CANCELLED':
+      return t('contextMenu.cancelledToClear')
     default:
       return t('contextMenu.setTodo')
   }

@@ -22,7 +22,7 @@ The default view — one page per day, created automatically.
 - Floating calendar picker for jumping to any date, with per-source colored dots (blue=page, orange=due, green=scheduled, purple=property) rendered as real DOM `<span>` elements (5px diameter, flex row, only active sources, `ring-1 ring-background` outline for contrast on highlighted days) via react-day-picker DayButton component, replacing previous box-shadow CSS hack. Month navigation arrows flank the month name (prev left, next right) via absolute-positioned nav with `justify-between` (UX-156, UX-157)
 - **Configurable week start** (UX-82): useWeekStart hook (localStorage). Applied to BlockDatePicker, JournalCalendarDropdown, date-utils. `useWeekStart.ts`, `date-utils.ts`.
 - **Color dot legend**: inline legend below calendar showing Page/Due/Scheduled/Property color dots with flex-wrap for narrow viewports (UX-57)
-- **Global date controls**: Today button and date picker available in all views (non-journal views navigate to journal first)
+- **Global date controls**: Today button, Agenda button, and date picker available in all views (non-journal views navigate to journal first). `Today` is hidden when already on today's daily journal; `Agenda` is hidden when already in agenda mode (UX-236). In agenda mode, `Today` and the calendar picker remain visible and switch back to `daily` on today / the picked date (UX-235).
 - Days with content are highlighted
 - **Today highlight**: 8% accent background + 2px left accent border on today's section (UX-55)
 - Template support: auto-populates structure on new journal pages
@@ -192,7 +192,7 @@ Markdown-based WYSIWYG editing:
 
 ### Task Management
 
-- **Ctrl+Enter**: cycle task state (TODO → DOING → CANCELLED → DONE → none)
+- **Ctrl+Enter**: cycle task state (TODO → DOING → DONE → CANCELLED → none)
 - **Task state animation**: smooth opacity + text-decoration-color transition (200ms) on DONE strikethrough (UX-51)
 - **Ctrl+Shift+1/2/3**: set priority level (color-coded badges)
 - Due date and scheduled date (via slash commands or property panel)
@@ -222,7 +222,7 @@ Type `/` in the editor to access the command palette. Commands are grouped by ca
 
 | Category | Commands |
 |----------|----------|
-| **Tasks** | TODO, DOING, CANCELLED, DONE, PRIORITY 1/2/3 |
+| **Tasks** | TODO, DOING, DONE, CANCELLED, PRIORITY 1/2/3 |
 | **Dates** | DATE, DUE, SCHEDULED |
 | **References** | LINK, TAG |
 | **Structure** | Heading 1–6, CODE, QUOTE, TABLE |
@@ -250,7 +250,7 @@ Type `/` in the editor to access the command palette. Commands are grouped by ca
 | | Backspace (at start) | Merge with previous |
 | **Organization** | Ctrl+Shift+Right/Left | Indent / dedent |
 | | Ctrl+Shift+Up/Down | Move block up/down |
-| **Task** | Ctrl+Enter | Cycle TODO/DOING/CANCELLED/DONE/none (locked cycle — UX-201a) |
+| **Task** | Ctrl+Enter | Cycle TODO/DOING/DONE/CANCELLED/none (locked cycle — UX-201a, reordered by UX-234) |
 | | Ctrl+Shift+1/2/3 | Set priority (user-configurable levels, default 1/2/3 — UX-201b) |
 | | Ctrl+Shift+D | Open date picker |
 | | Ctrl+Shift+P | Show block properties drawer |
@@ -321,7 +321,7 @@ Backend property commands (`set_property`, `set_todo_state`, `set_due_date`, `se
 
 ### Default View
 
-Shows all tasks (both dated and undated), grouped by page (FEAT-1). Default group: page (alphabetical, "No page" at end). Default sort: state (DOING > TODO > CANCELLED > DONE), then priority, then date. Undated tasks (todo_state set but no due/scheduled date) are included via `listUndatedTasks` and merged with dated results.
+Shows all tasks (both dated and undated), grouped by page (FEAT-1). Default group: page (alphabetical, "No page" at end). Default sort: state (DOING > TODO > DONE > CANCELLED), then priority, then date. Undated tasks (todo_state set but no due/scheduled date) are included via `listUndatedTasks` and merged with dated results.
 
 ### Filtering
 
@@ -441,7 +441,7 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **PeerListItem** (`src/components/PeerListItem.tsx`): Peer card component with sync/rename/unpair actions. Shows device name, peer ID, connection status, last sync time, and ops sent/received. Extracted from DeviceManagement (R-16). Used by DeviceManagement.
 - **DeadlineWarningSection** (`src/components/DeadlineWarningSection.tsx`): Deadline warning days setting. Input for configuring days-before-due warning threshold, persisted to localStorage. Extracted from PropertiesView (R-17). Used by PropertiesView.
 - **DataSettingsTab** (`src/components/DataSettingsTab.tsx`): Data management tab in Settings with Import (multi-file Markdown import) and Export All (ZIP download of all pages). Consolidates import from StatusPanel and export from PageBrowser into Settings → Data tab. Used by SettingsView.
-- **PropertyDefinitionsList** (`src/components/PropertyDefinitionsList.tsx`): Property definitions CRUD with search, filter, inline editing, and delete confirmation. Search input has search icon with clear button. Tooltip on action buttons. Empty filter state when search matches nothing. **Locked `todo_state.options`** (UX-201a): the `todo_state` property's options are fixed to the `TODO / DOING / CANCELLED / DONE` cycle and cannot be reconfigured from the UI — the options editor is gated off for `key === 'todo_state'` in both `PropertyDefinitionsList` and `PropertyRowEditor`. Priority options remain editable (UX-201b). Extracted from PropertiesView (R-17). Used by PropertiesView.
+- **PropertyDefinitionsList** (`src/components/PropertyDefinitionsList.tsx`): Property definitions CRUD with search, filter, inline editing, and delete confirmation. Search input has search icon with clear button. Tooltip on action buttons. Empty filter state when search matches nothing. **Locked `todo_state.options`** (UX-201a): the `todo_state` property's options are fixed to the `TODO / DOING / DONE / CANCELLED` cycle (reordered by UX-234) and cannot be reconfigured from the UI — the options editor is gated off for `key === 'todo_state'` in both `PropertyDefinitionsList` and `PropertyRowEditor`. Priority options remain editable (UX-201b). Extracted from PropertiesView (R-17). Used by PropertiesView.
 - **ResultCard** (`src/components/ResultCard.tsx`): Block result card button with rich content display via `renderRichContent()` — inline `#[ULID]` and `[[ULID]]` tokens rendered as resolved pills. Badge for page/tag types, optional spinner, optional children slot, `highlightText` prop accepted for API compat. CSS `line-clamp-2` truncation. Used by SearchPanel, TagFilterPanel.
 - **PageLink** (`src/components/PageLink.tsx`): Inline clickable page name (`<span role="link">`) that navigates via `navigateToPage`. Handles click/Enter/Space with stopPropagation. Uses `<span>` to allow nesting inside `<button>` containers. Used by CollapsibleGroupList, DonePanel, AgendaResults, DuePanel, SearchPanel, QueryResult.
 - **PropertyRow** (`src/components/BlockPropertyDrawer.tsx`): Extracted sub-component for property rows with badge+input+remove layout. Supports optional icon, date/text input types.

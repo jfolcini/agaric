@@ -199,7 +199,8 @@ const resources = {
       'contextMenu.blockActions': 'Block actions',
       'contextMenu.todoToDoing': 'TODO → DOING',
       'contextMenu.doingToDone': 'DOING → DONE',
-      'contextMenu.doneToClear': 'DONE → Clear',
+      'contextMenu.doneToCancelled': 'DONE → CANCELLED',
+      'contextMenu.cancelledToClear': 'CANCELLED → Clear',
       'contextMenu.setTodo': 'Set as TODO',
       'contextMenu.priority1To2': 'Priority 1 → 2',
       'contextMenu.priority2To3': 'Priority 2 → 3',
@@ -709,7 +710,7 @@ const resources = {
       'propertiesView.noFilterResults': 'No properties match your search',
       'propertiesView.optionsLocked': 'Locked',
       'propertiesView.optionsLockedTooltip':
-        'The TODO state cycle is fixed at TODO → DOING → CANCELLED → DONE. Options cannot be edited.',
+        'The TODO state cycle is fixed at TODO → DOING → DONE → CANCELLED. Options cannot be edited.',
       'properties.deleteDefinition': 'Delete property {{key}}',
 
       // Task states (aria-labels)
@@ -772,7 +773,7 @@ const resources = {
       'keyboard.mergeWithPrevious': 'Merge with previous',
       'keyboard.indentBlock': 'Indent block',
       'keyboard.dedentBlock': 'Dedent block',
-      'keyboard.cycleTaskState': 'Cycle task state (TODO → DOING → CANCELLED → DONE → none)',
+      'keyboard.cycleTaskState': 'Cycle task state (TODO → DOING → DONE → CANCELLED → none)',
       'keyboard.collapseExpandChildren': 'Collapse / expand children',
       'keyboard.insertOrEditLink': 'Insert or edit external link',
       'keyboard.toggleCodeBlock': 'Toggle code block',

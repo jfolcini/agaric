@@ -3,7 +3,7 @@
  *
  * Manages:
  * - getTodoState callback (reads from block store)
- * - handleToggleTodo callback (cycles through TODO/DOING/DONE/none)
+ * - handleToggleTodo callback (cycles through TODO/DOING/DONE/CANCELLED/none)
  * - handleTogglePriority callback (cycles through 1/2/3/none)
  *
  * Uses thin commands (set_todo_state / set_priority) instead of the generic
@@ -21,13 +21,15 @@ import { usePageBlockStoreApi } from '../stores/page-blocks'
 import { useUndoStore } from '../stores/undo'
 
 /**
- * Locked task state cycle (UX-202): none -> TODO -> DOING -> CANCELLED -> DONE -> none.
+ * Locked task state cycle (UX-202): none -> TODO -> DOING -> DONE -> CANCELLED -> none.
  *
  * This cycle is intentionally fixed — users cannot add or remove states.
- * CANCELLED sits between DOING and DONE so Ctrl+Enter on an in-progress
- * task can mark it cancelled without first passing through "done".
+ * DONE sits immediately after DOING because finishing is the overwhelmingly
+ * common terminal state; CANCELLED lives at the end of the cycle as the
+ * "abandoned" escape hatch. UX-234 reverses an earlier ordering that put
+ * CANCELLED before DONE.
  */
-const TASK_CYCLE: readonly (string | null)[] = [null, 'TODO', 'DOING', 'CANCELLED', 'DONE']
+const TASK_CYCLE: readonly (string | null)[] = [null, 'TODO', 'DOING', 'DONE', 'CANCELLED']
 
 /** Display labels for screen reader announcements. */
 const STATE_LABELS: Record<string, string> = {
@@ -54,7 +56,7 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
     [pageStore],
   )
 
-  /** Cycle through task states: none -> TODO -> DOING -> DONE -> none. */
+  /** Cycle through task states: none -> TODO -> DOING -> DONE -> CANCELLED -> none. */
   const handleToggleTodo = useCallback(
     async (blockId: string) => {
       const current = pageStore.getState().blocks.find((b) => b.id === blockId)?.todo_state ?? null

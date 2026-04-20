@@ -49,7 +49,7 @@ export const BlockRefPicker = Extension.create<BlockRefPickerOptions>({
         },
         command: ({ editor, range, props }) => {
           const item = props as PickerItem
-          editor.chain().focus().deleteRange(range).insertBlockRef(item.id).run()
+          editor.chain().focus().deleteRange(range).insertBlockRef(item.id).insertContent(' ').run()
         },
         render: () => createSuggestionRenderer('Block references', blockRefPickerPluginKey),
       }),

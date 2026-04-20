@@ -190,9 +190,14 @@ describe('BlockContextMenu', () => {
     expect(screen.getByText(t('contextMenu.doingToDone'))).toBeInTheDocument()
   })
 
-  it('shows "DONE → Clear" when todoState is DONE', () => {
+  it('shows "DONE → CANCELLED" when todoState is DONE', () => {
     renderMenu({ todoState: 'DONE' })
-    expect(screen.getByText(t('contextMenu.doneToClear'))).toBeInTheDocument()
+    expect(screen.getByText(t('contextMenu.doneToCancelled'))).toBeInTheDocument()
+  })
+
+  it('shows "CANCELLED → Clear" when todoState is CANCELLED', () => {
+    renderMenu({ todoState: 'CANCELLED' })
+    expect(screen.getByText(t('contextMenu.cancelledToClear'))).toBeInTheDocument()
   })
 
   it('shows "Priority 1 → 2" when priority is 1', () => {

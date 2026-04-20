@@ -1,5 +1,102 @@
 # Session Log
 
+## Session 433 — UX-232 + UX-233 + UX-234 + UX-235 + UX-236 batch resolution (2026-04-20)
+
+**5 REVIEW-LATER items resolved in one session. Open items 16 → 11.** Orchestrator ran PROMPT.md's PLAN→BUILD→REVIEW→MERGE→COMMIT loop with 4 parallel build subagents + 7 pipelined review subagents (3 tech + 3 UX + 1 post-review for the context-menu bug the UX reviewer caught on UX-234). Orchestrator owned UX.md/FEATURE-MAP.md/ARCHITECTURE.md doc updates + the BlockContextMenu pre-existing-bug fix + the missed BlockTree cycle-order test assertions.
+
+### Resolved items
+
+- **UX-232** — `[[` / `@` / `((` picker cursor drops to a new visual line after selection. Root cause: the `command` chains in `block-link-picker.ts`, `at-tag-picker.ts`, and `block-ref-picker.ts` inserted the chip atomic-inline node without a trailing separator, so any subsequent keystroke visually sticks to the chip's right edge (what the user read as "new line" at narrow widths is the inline-flex chip pushing the next inline content over the line-box budget). Fix: append `.insertContent(' ')` after `.insertBlockLink(id)` / `.insertBlockRef(id)` / `.insertTagRef(id)` in every `command` branch (both the non-create path and the `isCreate && onCreate` path for link + tag pickers). Input-rule paths (`[[text]]` / `((text))` / `#[text]` closing brackets) were out of scope per the task's non-goals — UX reviewer flagged the resulting popup-vs-input-rule inconsistency but the scope stands; if user feedback surfaces confusion, file a follow-up UX item. 52 new/updated tests (both mock-chain assertions via dynamic `vi.doMock` + real-Editor integration tests walking `doc.descendants` to confirm `hardBreakCount === 0` and `selection.from === doc.content.size - 1`).
+
+- **UX-233** — AppImage icon broken on Ubuntu 24 because the release workflow bypassed `scripts/fix-appimage-icons.sh`. Fix: added a strict-mode toggle (`FIX_APPIMAGE_STRICT=1` env var and `--strict` flag) to the repair script that flips the "linuxdeploy-plugin-appimage missing" warn-and-continue branch into a fail-loud `exit 1`. Added four Linux-only steps to `.github/workflows/release.yml` after the `tauri-apps/tauri-action@v0` build: (1) snapshot pre-fix size, (2) run the fix script in strict mode, (3) verify `.DirIcon` is a relative symlink to `Agaric.png`, `agaric.png` resolves to a real file at ≥128×128, and the repacked AppImage is ≥ pre-fix size (any failure fails the job), (4) `gh release upload "$GITHUB_REF_NAME" Agaric_*_amd64.AppImage --clobber` to replace the broken asset on the draft release. Release-workflow chose the `gh release upload --clobber` strategy over splitting `tauri-action@v0` phases because the action has no documented skip-upload knob and migrating away was a non-goal. Core repair logic (relative `.DirIcon` + 256×256 `agaric.png` relink) unchanged. BUILD.md Linux section gained a short "AppImage icon fix" subsection. No Tauri 2 upstream patch, no icon-file changes.
+
+- **UX-234** — Task state cycle swapped from `null → TODO → DOING → CANCELLED → DONE → null` to `null → TODO → DOING → DONE → CANCELLED → null`. User also approved mirroring the flip in `src/lib/agenda-sort.ts`'s `stateRank`, so agenda sort/grouping now renders `DOING > TODO > DONE > CANCELLED` (was `DOING > TODO > CANCELLED > DONE`). Changes: `TASK_CYCLE` in `useBlockProperties.ts`, `TASK_STATES` in `filter-dimension-metadata.ts`, `stateRank` + `groupByState` bucket order in `agenda-sort.ts`, cycle comment in `property-save-utils.ts`, two i18n strings (`propertiesView.optionsLockedTooltip`, `keyboard.cycleTaskState`), new additive migration `0031_reorder_todo_state_options.sql` (idempotent UPDATE on the locked `todo_state.options` JSON, migration 0029 untouched per append-only invariant), UX.md + FEATURE-MAP.md + ARCHITECTURE.md cross-references updated by the orchestrator, and test-fixture + cycle-walk assertion updates across `useBlockProperties.test.ts`, `PropertyRowEditor.test.tsx`, `PropertyDefinitionsList.test.tsx`, `AgendaFilterBuilder.test.tsx`, `filter-dimension-metadata.test.ts`, `agenda-sort.test.ts`, and (orchestrator-fixed post-review) the cycle-order assertions in `BlockTree.test.tsx`. Pre-existing BlockContextMenu bug (missing `CANCELLED` case in `getTodoLabel`) exposed by the new cycle order was fixed inline: added `case 'CANCELLED'`, renamed i18n key `contextMenu.doneToClear` → `contextMenu.doneToCancelled`, added `contextMenu.cancelledToClear`, added two new BlockContextMenu test assertions. No `.sqlx/` regeneration (migration is raw SQL with no `query!` macros).
+
+- **UX-235** — Journal agenda mode restored `Today` button and calendar date picker (both were hidden wholesale with prev/next + date-display). `src/components/JournalPage.tsx`: narrowed the `mode !== 'agenda'` guard in `JournalControls` to wrap ONLY prev/next arrows + the date-display span, so `Today` and the calendar trigger now render in every mode. Extended `Today`'s click handler with an `if (mode === 'agenda') { setMode('daily'); setCurrentDate(today) }` branch and the calendar date-select callback with an equivalent agenda-mode branch (matches `GlobalDateControls.handleSelectDate`). The "Tasks" label span stays where it was. Added 6 regression tests covering all new behaviours.
+
+- **UX-236** — Header `Today` / `Agenda` buttons hide when redundant; `Agenda` button added to `JournalControls`. Added `todayButtonHidden` helper (`isSameDay(currentDate, new Date())` guard) in both `GlobalDateControls` and `JournalControls`; `Today` now wrapped in `{!todayButtonHidden && ...}` in both components. Removed `aria-current`/`variant`-toggle branching on `Agenda` in `GlobalDateControls` and wrapped the whole button in `{!isAgendaActive && ...}`. Added a new `Agenda` button to `JournalControls` between `Today` and the calendar picker (`variant="outline"`, `size="xs"`, `aria-label={t('journal.goToAgenda')}`, click calls `navigateToDate(new Date(), 'agenda')` without `setView('journal')`), guarded by `{mode !== 'agenda' && ...}`. The mode-switcher `Agenda` tab stays everywhere. 18 new assertions across both components (exact-DOM-presence, click-handler spy, DOM-order, fake-timer `{ toFake: ['Date'] }` for "today" determinism without breaking userEvent's setTimeout chain).
+
+### Files changed (summary)
+
+| Path | Change |
+|------|--------|
+| `src/editor/extensions/block-link-picker.ts` | `.insertContent(' ')` after `insertBlockLink` in both branches (UX-232) |
+| `src/editor/extensions/block-ref-picker.ts` | `.insertContent(' ')` after `insertBlockRef` (UX-232) |
+| `src/editor/extensions/at-tag-picker.ts` | `.insertContent(' ')` after `insertTagRef` in both branches (UX-232) |
+| `src/editor/__tests__/block-link-picker.test.ts` | 4 new assertions (UX-232) |
+| `src/editor/__tests__/block-ref-picker.test.ts` | 2 new + chainProxy `insertContent` mock (UX-232) |
+| `src/editor/__tests__/at-tag-picker.test.ts` | 4 new assertions (UX-232) |
+| `.github/workflows/release.yml` | +107 lines: snapshot size, run fix script in strict mode, verify, `gh release upload --clobber` (UX-233) |
+| `scripts/fix-appimage-icons.sh` | `FIX_APPIMAGE_STRICT=1` / `--strict` strict-mode gating (UX-233) |
+| `BUILD.md` | "AppImage icon fix" Linux subsection (UX-233) |
+| `src/hooks/useBlockProperties.ts` | `TASK_CYCLE` swap + comment rewrite (UX-234) |
+| `src/lib/filter-dimension-metadata.ts` | `TASK_STATES` swap (UX-234) |
+| `src/lib/agenda-sort.ts` | `stateRank` + `groupByState` order flip (UX-234) |
+| `src/lib/property-save-utils.ts` | cycle comment update (UX-234) |
+| `src/lib/i18n.ts` | two tooltip/keyboard strings + rename `doneToClear` → `doneToCancelled` + add `cancelledToClear` (UX-234 + BlockContextMenu pre-existing fix) |
+| `src-tauri/migrations/0031_reorder_todo_state_options.sql` | new additive migration (UX-234) |
+| `src/components/BlockContextMenu.tsx` | add `case 'CANCELLED'` to `getTodoLabel` (pre-existing bug surfaced by UX-234) |
+| `src/components/__tests__/BlockContextMenu.test.tsx` | rename `DONE → Clear` test to `DONE → CANCELLED`, add `CANCELLED → Clear` test (UX-234 + fix) |
+| `src/components/__tests__/PropertyRowEditor.test.tsx` | fixture swap (UX-234) |
+| `src/components/__tests__/PropertyDefinitionsList.test.tsx` | fixture swap (UX-234) |
+| `src/components/__tests__/AgendaFilterBuilder.test.tsx` | assertion order update (UX-234) |
+| `src/lib/__tests__/filter-dimension-metadata.test.ts` | TASK_STATES assertions (UX-234) |
+| `src/hooks/__tests__/useBlockProperties.test.ts` | 3 cycle tests reordered + full-cycle-walk test (UX-234) |
+| `src/lib/__tests__/agenda-sort.test.ts` | sort + groupByState assertion flip (UX-234) |
+| `src/components/__tests__/BlockTree.test.tsx` | orchestrator-fixed: `DONE → CANCELLED`, `CANCELLED → none`, announce "Cancelled" vs "none" (UX-234 missed refs) |
+| `src/components/JournalPage.tsx` | guard narrow, agenda-mode Today/calendar handlers, Agenda button in JournalControls, `todayButtonHidden` helper (UX-235 + UX-236) |
+| `src/components/__tests__/JournalPage.test.tsx` | 6 UX-235 + 18 UX-236 assertions (fake-timer `toFake: ['Date']` pattern) |
+| `src/components/__tests__/GlobalDateControls.test.tsx` | rewrite the old `aria-current="page"` agenda-active test for DOM-removal semantics (UX-236) |
+| `UX.md` | cycle-order references updated (lines 75, 302, 340) (UX-234) |
+| `FEATURE-MAP.md` | cycle-order references (195, 225, 253, 324, 444) + global-date-controls visibility rules description (UX-234 + UX-235 + UX-236) |
+| `ARCHITECTURE.md` | `set_todo_state` cycle-order note (line 1682) (UX-234) |
+
+### Review subagent findings
+
+Four build subagents (UX-232 + UX-233 + UX-234 + UX-235/236 combined) launched as background parallel subagents. Reviews were pipelined — each build's review subagent fired as soon as that build reported done; in the middle of the session three builds + three reviews were concurrent.
+
+- **UX-232 technical review — APPROVE.** All five command-chain sites correctly append `.insertContent(' ')`; input-rule paths untouched as specified; dynamic `vi.doMock` + `vi.resetModules()` pattern correctly captures the real `command` fn rather than a hand-rolled mock; `doc.descendants` walk confirms `hardBreakCount === 0`; 52/52 editor picker tests green.
+- **UX-232 UX review — APPROVE WITH NOTES.** Flagged the popup-vs-input-rule consistency (picker path now inserts space; `[[text]]` closing-bracket input rule still does not). Orchestrator decision: respect the UX-232 non-goal that explicitly forbids touching input rules; do not expand scope mid-flight. The inconsistency is observable but consistent with the task's explicit boundary. If user feedback confirms confusion, the follow-up can be filed as a new UX-* item.
+- **UX-233 technical review — APPROVE.** Script strict-mode works (`FIX_APPIMAGE_STRICT=1` and `--strict` both activate fail-loud; AppDir-missing check still fires first; positional AppDir arg preserved; `bash -n` clean; YAML syntax clean); release.yml correctly sequences snapshot → fix → verify → clobber-upload with proper `set -euo pipefail`, `shopt -s nullglob`, and exact-string symlink comparison. Relies on `tauri-action@v0`'s internal `cargo tauri build` caching `linuxdeploy-plugin-appimage.AppImage` at `~/.cache/tauri/` — documented in workflow comments; strict-mode will fail the job if cache is missing instead of shipping a broken AppImage. Cannot exercise end-to-end without a disposable-tag dry-run; noted as a follow-up verification step.
+- **UX-234 technical review — REQUEST CHANGES (docs).** Correctly flagged that UX.md / FEATURE-MAP.md / ARCHITECTURE.md cross-references were still on the old order. These were orchestrator-owned per the build subagent's task spec (to avoid C↔D cross-file collision on doc files). Orchestrator resolved all 7 missed references during the review pipeline. The reviewer's code-side findings were all ✓ (cycle array correct, stateRank flipped correctly, migration idempotent, `.sqlx/` cache unchanged, no drive-by changes, exact-count assertions).
+- **UX-234 UX review — REQUEST CHANGES (BlockContextMenu).** Caught a pre-existing bug from UX-202 (when CANCELLED was introduced): `BlockContextMenu.tsx`'s `getTodoLabel()` had no `case 'CANCELLED'`, so a right-click on a CANCELLED task rendered "Set as TODO" instead of "CANCELLED → Clear". UX-234's cycle reorder made CANCELLED now the natural "last state before clear" position, making the bug more visible to users who reach it via Ctrl+Enter. Orchestrator fixed inline (5 files, 3-line switch addition, key rename + key add, 2 new test assertions; `npx vitest run BlockContextMenu.test.tsx` → 53/53).
+- **UX-235 + UX-236 technical review — APPROVE.** All guards placed correctly (the `mode !== 'agenda'` fragment was narrowed to prev/next+date-display only; `Today` and calendar are siblings); `todayButtonHidden` helper correctly uses `isSameDay` from `date-fns`; the new `Agenda` button in `JournalControls` is correctly placed and uses `navigateToDate(today, 'agenda')` without `setView('journal')`; mode-switcher Agenda tab retained; fake-timer pattern `{ toFake: ['Date'] }` correctly applied; 124+15+27+72 tests green across JournalPage / GlobalDateControls / JournalCalendarDropdown / App.
+- **UX-235 + UX-236 UX review — APPROVE.** Button order consistent (Today → Agenda → Calendar) across both `GlobalDateControls` and `JournalControls`; DOM-removal semantics (vs disabled-state) match the REVIEW-LATER explicit requirement; mobile parity OK via `gap-1` flex-wrap + `[@media(pointer:coarse)]:h-11` on buttons; a11y maintained (`aria-label` on all three buttons via existing i18n keys). Flagged the button-vs-tab `Agenda` redundancy in `JournalControls` as intentional per spec; recommended acceptance with a possible future consolidation pass if user feedback surfaces confusion. Orchestrator accepted as intentional.
+
+### Verification
+
+- **Vitest (full suite):** `npx vitest run` → **294/295 files, 7401/7402 tests passing.** One failure in `BacklinkFilterBuilder.test.tsx` on the `selects a tag from popover` assertion — pre-existing parallel-suite flake (the test file comments explicitly acknowledge the full-suite race against Radix's `onPointerDown → setTimeout → setState` chain). Confirmed by re-running the file in isolation: `npx vitest run src/components/__tests__/BacklinkFilterBuilder.test.tsx` → 65/65 green. Not introduced by this session.
+- **cargo nextest:** `cd src-tauri && cargo nextest run` → **2172/2172 passing, 1 skipped.** Migration `0031_reorder_todo_state_options.sql` runs cleanly on every fresh test DB (the harness re-runs migrations on every `test_pool()` call).
+- **prek:** run post-merge (see Pipeline below).
+- **Playwright E2E:** not run. Baseline from session 430 stands (197/293). Zero editor-host / sync / backend changes in this session — the product paths Playwright exercises are untouched apart from the very surface-level `insertContent(' ')` extension of the picker chain, which has no Playwright coverage.
+- **Android:** not run. Zero Android-surface changes.
+- **specta bindings:** no Rust type-shape changes; `ts_bindings_up_to_date` pre-commit test will pass.
+- **`.sqlx/` cache:** untouched — migration 0031 is raw SQL with no new `query!` macros. Confirmed by `git status .sqlx/` showing no changes.
+
+### Pipeline
+
+1. **PLAN.** Re-read REVIEW-LATER.md. Batched the five recently-filed UX items (UX-232–UX-236) as the natural unit — same domain, clean file-boundary split, all S-cost, all user-visible bugs. Confirmed with user on three open questions: agenda-sort mirrors the cycle flip (YES), UX-232 appends a trailing space (YES), UX-235 uses the recommended defaults (YES).
+2. **BUILD (4 parallel background subagents).** Launched: (a) UX-232 on `src/editor/extensions/` + tests; (b) UX-233 on `.github/workflows/release.yml` + `scripts/fix-appimage-icons.sh` + BUILD.md; (c) UX-234 on property/migration/i18n/agenda-sort + tests (docs to orchestrator); (d) UX-235+UX-236 on `JournalPage.tsx` + tests (docs to orchestrator). File partitions non-overlapping, so no worktrees needed. The only shared files (UX.md / FEATURE-MAP.md / ARCHITECTURE.md) were explicitly reserved for the orchestrator to avoid C↔D write collisions.
+3. **REVIEW (pipelined).** As each build finished, launched a tech review + a UX review (where user-facing). Up to 5 active subagents concurrently during peak. UX-232 tech APPROVE; UX-232 UX APPROVE WITH NOTES (input-rule consistency — accepted as out-of-scope). UX-233 tech APPROVE (no UX reviewer needed — CI/release only). UX-234 tech REQUEST CHANGES (docs, which were orchestrator-owned by design); UX-234 UX REQUEST CHANGES (pre-existing BlockContextMenu bug, fixed inline by orchestrator). UX-235+UX-236 tech APPROVE; UX-235+UX-236 UX APPROVE.
+4. **FIX (orchestrator).** Three orchestrator-owned changes layered on top of the build-subagent output: (i) UX.md/FEATURE-MAP.md/ARCHITECTURE.md cross-reference updates for all five items; (ii) BlockContextMenu `case 'CANCELLED'` + i18n key rename/add + 2 new test assertions; (iii) BlockTree.test.tsx cycle-order assertions (the test spec pattern `cycles from DONE to none (clears state)` was not caught by the UX-234 build subagent's grep because the tests don't mention the cycle arrow `CANCELLED → DONE`; it named the test after the semantics `cycles from DONE to none` which no longer holds).
+5. **MERGE.** No worktrees used — file partition held throughout. `git status` clean merge.
+6. **COMMIT.** See next step.
+7. **LOG.** This entry + REVIEW-LATER.md summary decrement 16 → 11 + sessions 121 → 122 + previously-resolved 341+ → 346+.
+
+### Honest caveats
+
+- **UX-232 picker input-rule consistency.** The popup-vs-input-rule asymmetry noted by the UX reviewer is real but out-of-scope per REVIEW-LATER's explicit non-goal. If a user surfaces confusion, the follow-up fix is a 4-line addition of `.insertContent(' ')` to the input-rule `.chain()` in `block-link-picker.ts:146,156` and `at-tag-picker.ts:64,74`. Filing it here as a watch-list item, not a formal REVIEW-LATER entry, because the item is already decided-and-descoped.
+- **UX-233 release-workflow end-to-end.** Only static lint + strict-mode local run were exercised. The `gh release upload --clobber` + `tauri-action@v0` interaction has not been exercised against a real tag push. Before the next real release, run the workflow against a disposable tag (e.g., `v0.0.0-icon-test`) to confirm the four added steps behave as designed. If `linuxdeploy-plugin-appimage` is not cached by `tauri-action` in release mode, add an explicit curl+chmod step before the fix script and pin a linuxdeploy release tag (fallback plan already scoped in the original REVIEW-LATER spec).
+- **Playwright flake floor** (from session 430) continues to mask TEST-1 drift but is orthogonal to this session's changes.
+
+### Watch-list (not filed)
+
+- **Picker input-rule consistency.** Noted above. 4-line fix available; user feedback gated.
+- **Release-workflow disposable-tag dry-run.** Required before next real release tag.
+- **BlockContextMenu bug history.** The `getTodoLabel` switch was introduced before CANCELLED shipped (UX-202) and was never updated when CANCELLED arrived. UX-234's cycle reorder made it newly visible. Lesson: when a new state is added to a switch statement's domain, grep for all consumers and audit their `default:` branches. No formal REVIEW-LATER item — the bug is resolved.
+
+---
+
 ## Session 432 — UX-230 + UX-231 responsive-layout regression (narrow viewports) (2026-04-20)
 
 **2 REVIEW-LATER items added + resolved in the same session. Open items 11 → 13 → 11.** User reported a responsive-layout regression (lateral overflow at mid widths + sidebar vanishing below 768 px). Orchestrator filed UX-230 + UX-231 earlier in the session, then resolved both in a parallel two-subagent build + four-subagent review (technical + UX per item) + one fix subagent.

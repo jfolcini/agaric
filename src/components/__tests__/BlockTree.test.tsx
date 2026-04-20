@@ -1110,7 +1110,7 @@ describe('BlockTree task cycling', () => {
     })
   })
 
-  it('cycles from DONE to none (clears state)', async () => {
+  it('cycles from DONE to CANCELLED', async () => {
     const user = userEvent.setup()
     const tree = [makeBlock({ id: 'A', content: 'Block', todo_state: 'DONE' })]
 
@@ -1121,6 +1121,29 @@ describe('BlockTree task cycling', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'DONE')
+    })
+
+    await user.click(screen.getByTestId('todo-toggle-A'))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state', {
+        blockId: 'A',
+        state: 'CANCELLED',
+      })
+    })
+  })
+
+  it('cycles from CANCELLED to none (clears state)', async () => {
+    const user = userEvent.setup()
+    const tree = [makeBlock({ id: 'A', content: 'Block', todo_state: 'CANCELLED' })]
+
+    pageStore.setState({ blocks: tree, loading: false })
+    mockedInvoke.mockResolvedValue(null)
+
+    renderBlockTree()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'CANCELLED')
     })
 
     await user.click(screen.getByTestId('todo-toggle-A'))
@@ -3298,7 +3321,7 @@ describe('BlockTree aria-live announcements', () => {
     })
   })
 
-  it('announces "Task state: none" when cycling from DONE to none', async () => {
+  it('announces "Task state: Cancelled" when cycling from DONE to CANCELLED', async () => {
     const user = userEvent.setup()
     const tree = [makeBlock({ id: 'A', content: 'Task block', todo_state: 'DONE' })]
 
@@ -3309,6 +3332,26 @@ describe('BlockTree aria-live announcements', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'DONE')
+    })
+
+    await user.click(screen.getByTestId('todo-toggle-A'))
+
+    await waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('Task state: Cancelled')
+    })
+  })
+
+  it('announces "Task state: none" when cycling from CANCELLED to none', async () => {
+    const user = userEvent.setup()
+    const tree = [makeBlock({ id: 'A', content: 'Task block', todo_state: 'CANCELLED' })]
+
+    pageStore.setState({ blocks: tree, loading: false })
+    mockedInvoke.mockResolvedValue(null)
+
+    renderBlockTree()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'CANCELLED')
     })
 
     await user.click(screen.getByTestId('todo-toggle-A'))

@@ -72,7 +72,7 @@ Priority badges use semantic tokens (NOT hardcoded Tailwind colors). Use `priori
 
 File: `src/components/BlockInlineControls.tsx` (`TASK_CHECKBOX_STYLES`)
 
-Task checkboxes use semantic tokens (`task-todo`, `task-doing`, `task-cancelled`, `task-done`) — never hardcoded Tailwind colors. The cycle is locked to `none → TODO → DOING → CANCELLED → DONE → none` (UX-201a).
+Task checkboxes use semantic tokens (`task-todo`, `task-doing`, `task-cancelled`, `task-done`) — never hardcoded Tailwind colors. The cycle is locked to `none → TODO → DOING → DONE → CANCELLED → none` (UX-201a, reordered by UX-234).
 
 | State | Visual |
 |-------|--------|
@@ -299,7 +299,7 @@ File: `src/editor/use-block-keyboard.ts`
 | Ctrl+Shift+Left | Dedent block | — |
 | Ctrl+Shift+Up | Move block up among siblings | — |
 | Ctrl+Shift+Down | Move block down among siblings | — |
-| Ctrl+Enter | Cycle task state (TODO → DOING → CANCELLED → DONE → none) | — |
+| Ctrl+Enter | Cycle task state (TODO → DOING → DONE → CANCELLED → none) | — |
 | Ctrl+. | Toggle collapse/expand children | Block has children |
 
 ### Formatting Shortcuts
@@ -337,7 +337,7 @@ File: `src/components/BlockTree.tsx` (`handleSlashCommand`)
 
 | Command | Effect |
 |---------|--------|
-| `/TODO` / `/DOING` / `/CANCELLED` / `/DONE` | Set task state (locked cycle — UX-201a) |
+| `/TODO` / `/DOING` / `/CANCELLED` / `/DONE` | Set task state (locked cycle — UX-201a, reordered by UX-234) |
 | `/date` / `/schedule` | Set scheduled date via picker |
 | `/due` | Set due date via picker |
 | `/priority-high` / `-medium` / `-low` | Set priority (default levels 1/2/3, user-configurable via property definitions — UX-201b) |

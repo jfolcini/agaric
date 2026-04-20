@@ -23,14 +23,14 @@ describe('filter-dimension-metadata', () => {
   // TASK_STATES / getTaskStates (UX-202: fixed cycle, localStorage removed)
   // -----------------------------------------------------------------------
   describe('getTaskStates', () => {
-    it('returns the locked fixed cycle TODO/DOING/CANCELLED/DONE', () => {
-      expect(getTaskStates()).toEqual(['TODO', 'DOING', 'CANCELLED', 'DONE'])
+    it('returns the locked fixed cycle TODO/DOING/DONE/CANCELLED (UX-234)', () => {
+      expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE', 'CANCELLED'])
     })
 
     it('ignores legacy localStorage values', () => {
       localStorage.setItem('task_cycle', JSON.stringify([null, 'TODO', 'WAITING', 'DONE']))
       try {
-        expect(getTaskStates()).toEqual(['TODO', 'DOING', 'CANCELLED', 'DONE'])
+        expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE', 'CANCELLED'])
       } finally {
         localStorage.removeItem('task_cycle')
       }
@@ -64,7 +64,7 @@ describe('filter-dimension-metadata', () => {
       const meta = DIMENSION_OPTIONS.status
       expect(typeof meta.choices).toBe('function')
       const choices = (meta.choices as () => string[])()
-      expect(choices).toEqual(['TODO', 'DOING', 'CANCELLED', 'DONE'])
+      expect(choices).toEqual(['TODO', 'DOING', 'DONE', 'CANCELLED'])
     })
 
     it('priority choices is a function returning the active levels (UX-201b)', () => {
