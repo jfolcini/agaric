@@ -17,7 +17,7 @@ import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { CardButton } from '@/components/ui/card-button'
-import { Input } from '@/components/ui/input'
+import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
@@ -344,7 +344,7 @@ export function SearchPanel(): React.ReactElement {
           role="search"
           className="search-panel-header flex flex-col sm:flex-row sm:items-center gap-2"
         >
-          <Input
+          <SearchInput
             ref={searchInputRef}
             value={query}
             onChange={handleInputChange}

@@ -18,9 +18,9 @@ import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { PageTreeItem } from '@/components/PageTreeItem'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { SearchInput } from '@/components/ui/search-input'
 import {
   Select,
   SelectContent,
@@ -318,7 +318,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
             <Label htmlFor="new-page-name" className="sr-only">
               {t('pageBrowser.createPageInputLabel')}
             </Label>
-            <Input
+            <SearchInput
               ref={newPageInputRef}
               id="new-page-name"
               value={newPageName}
@@ -340,7 +340,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                   className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
                   aria-hidden="true"
                 />
-                <Input
+                <SearchInput
                   value={filterText}
                   onChange={(e) => setFilterText(e.target.value)}
                   placeholder={t('pageBrowser.searchPlaceholder')}

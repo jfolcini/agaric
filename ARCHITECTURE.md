@@ -38,20 +38,21 @@ Anytype, faster than Logseq.
 
 ## 1. Technology Stack
 
-| Layer | Choice | Why |
-|-------|--------|-----|
-| Desktop shell | Tauri 2.0 | Lightweight native wrapper. Ships a WebView, not a bundled browser. |
-| Frontend | React 19 + Vite | Locked by TipTap and shadcn/ui ecosystem. Components accept `ref` as a regular prop (no `forwardRef`). |
-| Editor | TipTap (ProseMirror) | WYSIWYG inline nodes for token chips. See [Editor Architecture](#7-editor-architecture). |
-| UI library | shadcn/ui + Tailwind | Copy-paste components, no lock-in. Noto Sans in font stack. `rtl:` variants for future i18n. |
-| Linting/formatting | Biome | Replaces ESLint + Prettier. Non-negotiable from day one — retrofitting means a whole-repo reformat. |
-| Database | SQLite via sqlx | Async, compile-time query validation. WAL mode for concurrent readers. |
-| State management | Zustand | Lightweight stores with explicit state enums for boot and editor lifecycle. |
-| Async runtime | Tokio | Powers the materializer queues and all async Tauri command handlers. |
-| DnD | @dnd-kit | Tree-aware drag-and-drop with depth projection for indent/reparent. |
-| Positioning | @floating-ui/dom | Popup/menu positioning with flip/shift. Replaced manual coordinate math. |
+| Layer              | Choice               | Why                                                                                                    |
+| ------------------ | -------------------- | ------------------------------------------------------------------------------------------------------ |
+| Desktop shell      | Tauri 2.0            | Lightweight native wrapper. Ships a WebView, not a bundled browser.                                    |
+| Frontend           | React 19 + Vite      | Locked by TipTap and shadcn/ui ecosystem. Components accept `ref` as a regular prop (no `forwardRef`). |
+| Editor             | TipTap (ProseMirror) | WYSIWYG inline nodes for token chips. See [Editor Architecture](#7-editor-architecture).               |
+| UI library         | shadcn/ui + Tailwind | Copy-paste components, no lock-in. Noto Sans in font stack. `rtl:` variants for future i18n.           |
+| Linting/formatting | Biome                | Replaces ESLint + Prettier. Non-negotiable from day one — retrofitting means a whole-repo reformat.    |
+| Database           | SQLite via sqlx      | Async, compile-time query validation. WAL mode for concurrent readers.                                 |
+| State management   | Zustand              | Lightweight stores with explicit state enums for boot and editor lifecycle.                            |
+| Async runtime      | Tokio                | Powers the materializer queues and all async Tauri command handlers.                                   |
+| DnD                | @dnd-kit             | Tree-aware drag-and-drop with depth projection for indent/reparent.                                    |
+| Positioning        | @floating-ui/dom     | Popup/menu positioning with flip/shift. Replaced manual coordinate math.                               |
 
 **Rejected alternatives:**
+
 - **Electron:** Too heavy for a notes app.
 - **Flutter/Capacitor:** Wrong ecosystem for TipTap + shadcn.
 - **CodeMirror 6:** Source-visible editor model. ProseMirror inline nodes are the correct model for WYSIWYG token chips — CodeMirror's `atomicRanges` have known cursor boundary bugs.
@@ -60,28 +61,28 @@ Anytype, faster than Logseq.
 
 ### Rust Libraries
 
-| Crate | Purpose |
-|-------|---------|
-| sqlx 0.8 + sqlx-cli | Async SQLite, compile-time query validation, migrations |
-| blake3 | Op log hash chaining (content-addressable, deterministic) |
-| diffy | Line-level three-way text merge for conflict resolution |
-| similar | Word-level diff for `compute_edit_diff` display |
-| zstd | Snapshot compression (level 3) |
-| ciborium | CBOR serialisation for `log_snapshots.data` |
-| thiserror + tracing | Error handling and structured logging |
-| tracing-appender | Daily-rolling log file output alongside stderr |
-| specta + tauri-specta | Auto-generated TypeScript bindings from Rust types |
-| FxHashMap (rustc-hash) | Fast hash maps on materializer hot paths |
-| ulid + uuid | ULID generation for all IDs; UUID v4 for device identity |
-| chrono | Timestamps (RFC 3339 with millisecond precision) |
-| regex | FTS query tokenization, import parsing, content matching |
-| mdns-sd | mDNS service discovery for local WiFi sync |
-| tokio-tungstenite + rustls | TLS WebSocket transport for sync |
-| rcgen | Self-signed ECDSA P-256 certificate generation |
-| x509-parser | Certificate CN verification for sync peer validation |
-| hkdf + sha2 | HKDF-SHA256 key derivation for pairing |
-| chacha20poly1305 | AEAD encryption for pairing messages |
-| qrcode | QR code SVG generation for pairing |
+| Crate                      | Purpose                                                   |
+| -------------------------- | --------------------------------------------------------- |
+| sqlx 0.8 + sqlx-cli        | Async SQLite, compile-time query validation, migrations   |
+| blake3                     | Op log hash chaining (content-addressable, deterministic) |
+| diffy                      | Line-level three-way text merge for conflict resolution   |
+| similar                    | Word-level diff for `compute_edit_diff` display           |
+| zstd                       | Snapshot compression (level 3)                            |
+| ciborium                   | CBOR serialisation for `log_snapshots.data`               |
+| thiserror + tracing        | Error handling and structured logging                     |
+| tracing-appender           | Daily-rolling log file output alongside stderr            |
+| specta + tauri-specta      | Auto-generated TypeScript bindings from Rust types        |
+| FxHashMap (rustc-hash)     | Fast hash maps on materializer hot paths                  |
+| ulid + uuid                | ULID generation for all IDs; UUID v4 for device identity  |
+| chrono                     | Timestamps (RFC 3339 with millisecond precision)          |
+| regex                      | FTS query tokenization, import parsing, content matching  |
+| mdns-sd                    | mDNS service discovery for local WiFi sync                |
+| tokio-tungstenite + rustls | TLS WebSocket transport for sync                          |
+| rcgen                      | Self-signed ECDSA P-256 certificate generation            |
+| x509-parser                | Certificate CN verification for sync peer validation      |
+| hkdf + sha2                | HKDF-SHA256 key derivation for pairing                    |
+| chacha20poly1305           | AEAD encryption for pairing messages                      |
+| qrcode                     | QR code SVG generation for pairing                        |
 
 ---
 
@@ -93,11 +94,11 @@ Tags, pages, and content are all rows in the `blocks` table, distinguished by `b
 are no separate tags or pages tables. This unified model means tags and pages travel through the
 op log identically to content blocks — same creation, deletion, properties, and metadata.
 
-| `block_type` | `parent_id` | `position` | `content` |
-|---|---|---|---|
-| `content` | any block or null | integer (1-based) | Markdown text with `#[ULID]` and `[[ULID]]` tokens |
-| `tag` | always null | always null | canonical name (e.g. `work/meeting`) |
-| `page` | any block or null | integer (1-based) | page title |
+| `block_type` | `parent_id`       | `position`        | `content`                                          |
+| ------------ | ----------------- | ----------------- | -------------------------------------------------- |
+| `content`    | any block or null | integer (1-based) | Markdown text with `#[ULID]` and `[[ULID]]` tokens |
+| `tag`        | always null       | always null       | canonical name (e.g. `work/meeting`)               |
+| `page`       | any block or null | integer (1-based) | page title                                         |
 
 ### Block tree
 
@@ -114,6 +115,7 @@ counts.
 
 All inter-block references in content use ULIDs, never human names. Human names are resolved at
 render time by TipTap decorations reading from `tags_cache` and `pages_cache`. This means:
+
 - Renaming a tag or page propagates everywhere instantly — no content migration needed.
 - `blocks.content` is always valid UTF-8 text with opaque tokens.
 
@@ -185,6 +187,7 @@ common ancestor content. User sees both and chooses. On resolution: chosen conte
 SQLite in WAL mode. Database file at `~/.local/share/com.agaric.app/notes.db`.
 
 **Pool architecture:**
+
 - **Write pool:** 2 connections (`max_connections(2)`) — SQLite WAL mode serialises writers at
   the engine level; the second connection allows a queued writer to wait behind the first
   without blocking the caller.
@@ -193,6 +196,7 @@ SQLite in WAL mode. Database file at `~/.local/share/com.agaric.app/notes.db`.
   read pool.
 
 **Pragmas (every connection):**
+
 - `PRAGMA foreign_keys = ON` — enforced on every connection, always.
 - `PRAGMA journal_mode = WAL` — concurrent readers, single serialised writer.
 - `PRAGMA synchronous = NORMAL` — balanced durability/performance.
@@ -212,7 +216,7 @@ recovery (3), drafts (2), PRAGMAs (1), and misc (3 in soft_delete, peer_refs, me
 
 **Core tables:**
 
-```
+```text
 blocks              — id (ULID PK), block_type, content, parent_id, position,
                       deleted_at, is_conflict, conflict_source, conflict_type,
                       todo_state, priority, due_date, scheduled_date, page_id
@@ -227,7 +231,7 @@ block_tag_inherited — (block_id, tag_id, inherited_from) — materialized tag 
 
 **Op log tables:**
 
-```
+```text
 op_log              — (device_id, seq) composite PK, parent_seqs (JSON), hash (blake3),
                       op_type, payload (JSON), created_at
 block_drafts        — block_id PK, content, updated_at — mutable scratch space for autosave
@@ -239,7 +243,7 @@ peer_refs           — peer_id PK, last_hash, last_sent_hash, synced_at, reset_
 
 **Performance caches:**
 
-```
+```text
 tags_cache          — tag_id PK, name, usage_count, updated_at
 pages_cache         — page_id PK, title, updated_at
 agenda_cache        — (date, block_id) composite PK, source
@@ -268,7 +272,7 @@ invariant.
 
 ### Composite primary key
 
-```
+```sql
 PRIMARY KEY (device_id, seq)
 ```
 
@@ -287,7 +291,8 @@ hash.
 ### Hash chain
 
 Every op is hashed with blake3:
-```
+
+```text
 blake3(device_id || seq || parent_seqs_canonical || op_type || payload_canonical)
 ```
 
@@ -299,6 +304,7 @@ blake3(device_id || seq || parent_seqs_canonical || op_type || payload_canonical
 ### Causal tracking
 
 `parent_seqs` is a JSON array of `[device_id, seq]` pairs stored from Phase 1:
+
 - **Linear (current):** null for genesis, single-entry array pointing to the previous local op.
 - **DAG (sync):** merge ops carry multiple entries, one per causal parent at the merge point. No
   schema migration required — the column already accepts multi-entry arrays.
@@ -307,20 +313,20 @@ blake3(device_id || seq || parent_seqs_canonical || op_type || payload_canonical
 
 12 op types with exhaustive `match` — no catch-all arms:
 
-| Op type | Trigger | Key payload fields |
-|---------|---------|-------------------|
-| `create_block` | Block creation | block_id, block_type, parent_id, position, content |
-| `edit_block` | Blur/flush | block_id, to_text, prev_edit (causal link) |
-| `delete_block` | User delete | block_id, cascade: true (always) |
-| `restore_block` | Restore from Trash | block_id, deleted_at_ref |
-| `purge_block` | Permanent delete | block_id |
-| `move_block` | Indent/dedent/DnD | block_id, new_parent_id, new_position |
-| `add_tag` | Apply tag | block_id, tag_id |
-| `remove_tag` | Remove tag | block_id, tag_id |
-| `set_property` | Set typed property | block_id, key, value_text/num/date/ref (exactly one non-null) |
-| `delete_property` | Remove property | block_id, key |
-| `add_attachment` | Attach file | attachment_id, block_id, mime_type, filename, size_bytes, fs_path |
-| `delete_attachment` | Remove attachment | attachment_id |
+| Op type             | Trigger            | Key payload fields                                                |
+| ------------------- | ------------------ | ----------------------------------------------------------------- |
+| `create_block`      | Block creation     | block_id, block_type, parent_id, position, content                |
+| `edit_block`        | Blur/flush         | block_id, to_text, prev_edit (causal link)                        |
+| `delete_block`      | User delete        | block_id, cascade: true (always)                                  |
+| `restore_block`     | Restore from Trash | block_id, deleted_at_ref                                          |
+| `purge_block`       | Permanent delete   | block_id                                                          |
+| `move_block`        | Indent/dedent/DnD  | block_id, new_parent_id, new_position                             |
+| `add_tag`           | Apply tag          | block_id, tag_id                                                  |
+| `remove_tag`        | Remove tag         | block_id, tag_id                                                  |
+| `set_property`      | Set typed property | block_id, key, value_text/num/date/ref (exactly one non-null)     |
+| `delete_property`   | Remove property    | block_id, key                                                     |
+| `add_attachment`    | Attach file        | attachment_id, block_id, mime_type, filename, size_bytes, fs_path |
+| `delete_attachment` | Remove attachment  | attachment_id                                                     |
 
 **`edit_block.prev_edit`:** Pointer to the `(device_id, seq)` of the prior edit this one is based
 on. Forms a per-block edit chain (DAG) embedded in the global op log, used for LCA computation
@@ -386,6 +392,7 @@ is silent drop (appropriate for caches that will rebuild on the next cycle). Pan
 task via spawned sub-tasks.
 
 **Retry behaviour:**
+
 - **Foreground:** single retry after 100ms backoff for transient errors. Panics and barrier tasks
   are never retried. `fg_errors` only incremented if both attempts fail.
 - **Background:** up to 2 retries with exponential backoff (50ms, 100ms). Barrier tasks skip
@@ -404,14 +411,14 @@ tasks deduplicated by enum discriminant. `ApplyOp` and barrier tasks are never d
 
 ### Caches maintained
 
-| Cache | Rebuild trigger |
-|-------|----------------|
-| `tags_cache` | create/delete/restore tag block, add/remove tag |
-| `pages_cache` | create/delete/restore/edit page block |
-| `agenda_cache` | set/delete property (value_date), set due/scheduled date, add/remove tag (date pattern) |
-| `block_links` | edit_block — regex parse `[[ULID]]`, diff against prior index |
-| `block_tag_inherited` | create/move/delete/restore/purge block, add/remove tag |
-| `page_id` (denormalized column) | create/move/delete/restore/purge block — nearest page ancestor |
+| Cache                           | Rebuild trigger                                                                         |
+| ------------------------------- | --------------------------------------------------------------------------------------- |
+| `tags_cache`                    | create/delete/restore tag block, add/remove tag                                         |
+| `pages_cache`                   | create/delete/restore/edit page block                                                   |
+| `agenda_cache`                  | set/delete property (value_date), set due/scheduled date, add/remove tag (date pattern) |
+| `block_links`                   | edit_block — regex parse `[[ULID]]`, diff against prior index                           |
+| `block_tag_inherited`           | create/move/delete/restore/purge block, add/remove tag                                  |
+| `page_id` (denormalized column) | create/move/delete/restore/purge block — nearest page ancestor                          |
 
 Invalidation is **event-driven**, not TTL-based. Each command calls `dispatch_background()` which
 enqueues the relevant cache-rebuild tasks. There are no staleness timestamp checks — caches are
@@ -459,7 +466,7 @@ uses `LIMIT 1 OFFSET N` for undo-depth navigation (not a list query).
 token extensions. The format is plain text — diffed directly by `diffy`, stored as-is in SQLite,
 human-readable in any text tool.
 
-```
+```text
 block_content  := (block_element | span)*
 block_element  := heading | code_block | blockquote | table | ordered_list | horizontal_rule
 heading        := '#'{1,6} ' ' span+              -- # H1 through ###### H6
@@ -486,6 +493,7 @@ ULID           := [0-9A-Z]{26}                     -- Crockford base32, exactly 
 ```
 
 **Constraints:**
+
 - Every `\n` is a block split boundary (auto-split on blur), except inside fenced code blocks
   and headings, which remain single blocks.
 - No `\n\n` paragraph breaks. The block tree is the structural separator.
@@ -502,27 +510,32 @@ dependencies. Converts between ProseMirror document nodes and the storage format
 
 **Serialize (ProseMirror → Markdown):**
 
-| Node/mark | Output |
-|-----------|--------|
-| `text` | raw text (escape `*`, `` ` ``, `#[`, `[[` when literal) |
-| `bold` mark | `**...**` |
-| `italic` mark | `*...*` |
-| `code` mark | `` `...` `` |
-| `heading` node | `# ` through `###### ` prefix (levels 1–6) |
-| `codeBlock` node | ` ``` language\n...\n``` ` |
-| `tag_ref` node | `#[{id}]` |
-| `block_link` node | `[[{id}]]` |
-| `block_ref` node | `(({id}))` |
-| `link` mark | `[text](url)` |
-| `orderedList` node | `1. item\n2. item\n...` |
-| `horizontalRule` node | `---` |
-| `hardBreak` | `\n` (triggers auto-split) |
-| `blockquote` node | `> ` prefix per line. Nested content serialized recursively. |
-| `table` node | Pipe-delimited rows: header row + `|---|` separator + data rows. Cells contain inline content. |
-| unknown node | stripped with warning |
+<!-- markdownlint-disable MD038 -->
+
+| Node/mark             | Output                                                                                           |
+| --------------------- | ------------------------------------------------------------------------------------------------ |
+| `text`                | raw text (escape `*`, `` ` ``, `#[`, `[[` when literal)                                          |
+| `bold` mark           | `**...**`                                                                                        |
+| `italic` mark         | `*...*`                                                                                          |
+| `code` mark           | `` `...` ``                                                                                      |
+| `heading` node        | `# ` through `###### ` prefix (levels 1–6)                                                       |
+| `codeBlock` node      | ` ``` language\n...\n``` `                                                                       |
+| `tag_ref` node        | `#[{id}]`                                                                                        |
+| `block_link` node     | `[[{id}]]`                                                                                       |
+| `block_ref` node      | `(({id}))`                                                                                       |
+| `link` mark           | `[text](url)`                                                                                    |
+| `orderedList` node    | `1. item\n2. item\n...`                                                                          |
+| `horizontalRule` node | `---`                                                                                            |
+| `hardBreak`           | `\n` (triggers auto-split)                                                                       |
+| `blockquote` node     | `> ` prefix per line. Nested content serialized recursively.                                     |
+| `table` node          | Pipe-delimited rows: header row + `\|---\|` separator + data rows. Cells contain inline content. |
+| unknown node          | stripped with warning                                                                            |
+
+<!-- markdownlint-enable MD038 -->
 
 **Parse (Markdown → ProseMirror):** Hand-rolled recursive descent parser. Regex for token ID only.
 Mark stack with unclosed-mark revert (becomes plain text, never errors). Blockquotes detected by
+<!-- markdownlint-disable-next-line MD038 -->
 `> ` prefix on consecutive lines — content parsed recursively. Tables detected by consecutive
 `|`-prefixed lines; `|---|` separator rows are consumed but not emitted as content nodes. Node
 types: `BlockquoteNode`, `TableNode`, `TableRowNode`, `TableHeaderNode`, `TableCellNode`.
@@ -537,6 +550,7 @@ owned, trivially testable.
 ### FTS5 strip pass
 
 Before inserting into the FTS5 index, the materializer strips Markdown syntax:
+
 - Remove `**`, `*`, `` ` ``, `~~`, `==` delimiters.
 - Replace `#[ULID]` → resolved tag name (enables tag-name search).
 - Replace `[[ULID]]` → resolved page title.
@@ -561,6 +575,7 @@ There is exactly **one TipTap editor instance** at any time. It is mounted into 
 on focus and unmounted on blur. All non-focused blocks render as plain static `<div>` elements.
 
 **Lifecycle:**
+
 1. User clicks/arrows into a block → if another block was focused, flush its pending edits first
    (auto-mount flush). Mount TipTap, parse Markdown → `setContent`, focus editor.
 2. User blurs → serialize ProseMirror → Markdown string. If changed, flush `edit_block` op.
@@ -572,20 +587,20 @@ overhead elsewhere.
 
 ### TipTap extensions
 
-| Extension | Type | Purpose |
-|-----------|------|---------|
-| TagRef | inline node (atom) | `#[ULID]` rendered as chip with resolved tag name |
-| BlockLink | inline node (atom) | `[[ULID]]` rendered as chip with resolved page title |
-| ExternalLink | mark extension | `[text](url)` with autolink and paste detection |
-| AtTagPicker | suggestion | `@` triggers fuzzy search of `tags_cache` → inserts `tag_ref` node |
-| BlockLinkPicker | suggestion | `[[` triggers fuzzy search of `pages_cache` → inserts `block_link` node, "Create new" option. Also `addInputRules()` with `/\[\[([^\]]+)\]\]$/` regex for inline `[[text]]` → page link conversion. `allowSpaces: true`. |
-| BlockRefPicker | suggestion | `(())` triggers block reference search → inserts `block_ref` node. `allowSpaces: true`. |
-| PropertyPicker | suggestion | Triggers property value selection for typed properties. |
-| SlashCommand | suggestion | `/` triggers 60+ commands: TODO, DOING, DONE, DATE, DUE, SCHEDULED, LINK, TAG, CODE, EFFORT (6 presets), ASSIGNEE (2 presets), LOCATION (4 presets), REPEAT (11 variants), REPEAT-END (5 variants), TEMPLATE, QUOTE, TABLE, QUERY, CALLOUT (5 types) + PRIORITY 1/2/3 + H1-H6 |
-| CheckboxInputRule | input rule | `- [ ]` / `- [x]` → TODO/DONE state |
-| CodeBlockLowlight | node | Fenced code blocks with syntax highlighting |
-| Blockquote | node | `@tiptap/extension-blockquote`. `> ` prefixed block content. |
-| Table + TableRow + TableHeader + TableCell | node (4 extensions) | `@tiptap/extension-table` family. Pipe-delimited table editing (`resizable: false`). |
+| Extension                                  | Type                | Purpose                                                                                                                                                                                                                                                                       |
+| ------------------------------------------ | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TagRef                                     | inline node (atom)  | `#[ULID]` rendered as chip with resolved tag name                                                                                                                                                                                                                             |
+| BlockLink                                  | inline node (atom)  | `[[ULID]]` rendered as chip with resolved page title                                                                                                                                                                                                                          |
+| ExternalLink                               | mark extension      | `[text](url)` with autolink and paste detection                                                                                                                                                                                                                               |
+| AtTagPicker                                | suggestion          | `@` triggers fuzzy search of `tags_cache` → inserts `tag_ref` node                                                                                                                                                                                                            |
+| BlockLinkPicker                            | suggestion          | `[[` triggers fuzzy search of `pages_cache` → inserts `block_link` node, "Create new" option. Also `addInputRules()` with `/\[\[([^\]]+)\]\]$/` regex for inline `[[text]]` → page link conversion. `allowSpaces: true`.                                                      |
+| BlockRefPicker                             | suggestion          | `(())` triggers block reference search → inserts `block_ref` node. `allowSpaces: true`.                                                                                                                                                                                       |
+| PropertyPicker                             | suggestion          | Triggers property value selection for typed properties.                                                                                                                                                                                                                       |
+| SlashCommand                               | suggestion          | `/` triggers 60+ commands: TODO, DOING, DONE, DATE, DUE, SCHEDULED, LINK, TAG, CODE, EFFORT (6 presets), ASSIGNEE (2 presets), LOCATION (4 presets), REPEAT (11 variants), REPEAT-END (5 variants), TEMPLATE, QUOTE, TABLE, QUERY, CALLOUT (5 types) + PRIORITY 1/2/3 + H1-H6 |
+| CheckboxInputRule                          | input rule          | `- [ ]` / `- [x]` → TODO/DONE state                                                                                                                                                                                                                                           |
+| CodeBlockLowlight                          | node                | Fenced code blocks with syntax highlighting                                                                                                                                                                                                                                   |
+| Blockquote                                 | node                | `@tiptap/extension-blockquote`. `>` prefixed block content.                                                                                                                                                                                                                   |
+| Table + TableRow + TableHeader + TableCell | node (4 extensions) | `@tiptap/extension-table` family. Pipe-delimited table editing (`resizable: false`).                                                                                                                                                                                          |
 
 Pickers intercept keystrokes and open autocomplete popups. On selection, they insert the
 appropriate inline node with ULID. The raw ULID is never visible to the user.
@@ -599,21 +614,21 @@ the reference. This avoids the need to delete-and-retype when correcting a tag o
 
 `useBlockKeyboard` hook — pure handler function attached to the TipTap editor DOM:
 
-| Key | Condition | Action |
-|-----|-----------|--------|
-| ArrowUp/Left | cursor at position 0 | Flush, focus previous block (cursor to end) |
-| ArrowDown/Right | cursor at end | Flush, focus next block (cursor to start) |
-| ArrowUp/Down | suggestion popup visible | Suppressed — popup handles navigation |
-| Enter | suggestion popup visible | Passed through to suggestion plugin |
-| Tab | suggestion popup visible | Selects highlighted suggestion item |
-| Escape | suggestion popup visible | Dismisses popup (keeps editor focused) |
-| Enter | — | Save block and close editor |
-| Backspace | block empty | Delete block, focus previous |
-| Backspace | cursor at start, non-empty | Merge with previous block |
-| Tab | — | Flush, indent (change parent) |
-| Shift+Tab | — | Flush, dedent |
-| Escape | — | Cancel editing, discard changes |
-| Ctrl+Enter | — | Cycle task state (TODO → DOING → DONE → none) |
+| Key             | Condition                  | Action                                        |
+| --------------- | -------------------------- | --------------------------------------------- |
+| ArrowUp/Left    | cursor at position 0       | Flush, focus previous block (cursor to end)   |
+| ArrowDown/Right | cursor at end              | Flush, focus next block (cursor to start)     |
+| ArrowUp/Down    | suggestion popup visible   | Suppressed — popup handles navigation         |
+| Enter           | suggestion popup visible   | Passed through to suggestion plugin           |
+| Tab             | suggestion popup visible   | Selects highlighted suggestion item           |
+| Escape          | suggestion popup visible   | Dismisses popup (keeps editor focused)        |
+| Enter           | —                          | Save block and close editor                   |
+| Backspace       | block empty                | Delete block, focus previous                  |
+| Backspace       | cursor at start, non-empty | Merge with previous block                     |
+| Tab             | —                          | Flush, indent (change parent)                 |
+| Shift+Tab       | —                          | Flush, dedent                                 |
+| Escape          | —                          | Cancel editing, discard changes               |
+| Ctrl+Enter      | —                          | Cycle task state (TODO → DOING → DONE → none) |
 
 **Suggestion popup passthrough:** The block keyboard handler's event listener uses capture phase
 on `parentElement` to fire before ProseMirror. When a suggestion popup (`.suggestion-popup`) is
@@ -628,6 +643,7 @@ mutations from fast key repeats. Error recovery on `createBelow` failure re-moun
 ### Auto-split on blur
 
 When the serialized Markdown string contains `\n`, the block is automatically decomposed:
+
 1. First segment → `edit_block` on the current block (retains tags, properties).
 2. Each subsequent segment → `create_block` below, in order (created clean).
 3. `block_links` for all segments re-derived by the materializer.
@@ -644,11 +660,13 @@ Two-tier model: TipTap handles within-session undo, the backend handles cross-fl
 undo/redo via operation reversal.
 
 **Tier 1 — In-session (TipTap history):**
+
 - Ctrl+Z/Ctrl+Y inside the active editor instance (native ProseMirror history).
 - On mount of the next block: `clearHistory()` called, preventing undo from crossing block
   boundaries. On blur/flush: op written to op log.
 
 **Tier 2 — Page-level (op reversal):**
+
 - Ctrl+Z/Ctrl+Y when focus is outside contentEditable (intercepted by `useUndoShortcuts`).
 - Backend computes the inverse of the Nth most recent op on the page via `reverse.rs`.
 - Reverse op is appended to the op log as a new op (the log remains append-only).
@@ -658,19 +676,19 @@ undo/redo via operation reversal.
 
 **Operation reversal (`reverse.rs`):**
 
-| Original op | Reverse |
-|-------------|---------|
-| `create_block` | `delete_block` |
-| `edit_block` | `edit_block` with prior text (from op log) |
-| `delete_block` | `restore_block` |
-| `move_block` | `move_block` to prior parent/position (from op log) |
-| `add_tag` | `remove_tag` |
-| `remove_tag` | `add_tag` |
-| `set_property` | `set_property` with prior values, or `delete_property` if first set |
-| `delete_property` | `set_property` with prior values |
-| `add_attachment` | `delete_attachment` |
-| `restore_block` | `delete_block` |
-| `purge_block` | **non-reversible** |
+| Original op         | Reverse                                                                                                                      |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `create_block`      | `delete_block`                                                                                                               |
+| `edit_block`        | `edit_block` with prior text (from op log)                                                                                   |
+| `delete_block`      | `restore_block`                                                                                                              |
+| `move_block`        | `move_block` to prior parent/position (from op log)                                                                          |
+| `add_tag`           | `remove_tag`                                                                                                                 |
+| `remove_tag`        | `add_tag`                                                                                                                    |
+| `set_property`      | `set_property` with prior values, or `delete_property` if first set                                                          |
+| `delete_property`   | `set_property` with prior values                                                                                             |
+| `add_attachment`    | `delete_attachment`                                                                                                          |
+| `restore_block`     | `delete_block`                                                                                                               |
+| `purge_block`       | **non-reversible**                                                                                                           |
 | `delete_attachment` | **conditionally reversible** — `add_attachment` with original metadata if the op exists in the log; non-reversible otherwise |
 
 Prior-state lookups use the op log exclusively (not the materialised `blocks` table), ensuring
@@ -723,16 +741,16 @@ with month-end clamping.
 
 ### State management — Zustand stores
 
-| Store | Purpose | Key state |
-|-------|---------|-----------|
-| `useBootStore` | App initialization state machine | booting → recovering → ready \| error |
-| `useBlockStore` | Global focus/selection (singleton) | focusedBlockId, selectedBlockIds[], pendingFocusId, setFocused, toggleSelected, rangeSelect(id, visibleIds), selectAll(visibleIds), setSelected, clearSelected, consumePendingFocus |
-| `PageBlockStore` | Per-page block tree CRUD (per-instance via context) | blocks[], rootParentId, loading, load(), createBelow, edit, remove, splitBlock, reorder, moveToParent, indent, dedent, moveUp, moveDown |
-| `useNavigationStore` | Page routing and view state | currentView (View union: 13 views incl. templates, settings, graph, page-editor), pageStack[], selectedBlockId, navigateToPage, goBack, replacePage |
-| `useJournalStore` | Journal mode and date selection | mode (daily/weekly/monthly/agenda), currentDate, scrollToDate, scrollToPanel (JournalPanel: due/references/done), navigateToDate, goToDateAndScroll, goToDateAndPanel |
-| `useResolveStore` | Centralized ULID → title cache | cache Map, pagesList[], version counter, resolveTitle, resolveStatus |
-| `useUndoStore` | Page-level undo/redo state | pages Map (per-page: undoDepth, redoStack OpRef[], redoGroupSizes). Op grouping via isWithinUndoGroup (200ms window). undo, redo, canRedo, onNewAction, clearPage |
-| `useSyncStore` | Peer-to-peer sync lifecycle | state (idle/discovering/pairing/syncing/error/offline), error, peers[], lastSyncedAt, opsReceived/opsSent |
+| Store                | Purpose                                             | Key state                                                                                                                                                                           |
+| -------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `useBootStore`       | App initialization state machine                    | booting → recovering → ready \| error                                                                                                                                               |
+| `useBlockStore`      | Global focus/selection (singleton)                  | focusedBlockId, selectedBlockIds[], pendingFocusId, setFocused, toggleSelected, rangeSelect(id, visibleIds), selectAll(visibleIds), setSelected, clearSelected, consumePendingFocus |
+| `PageBlockStore`     | Per-page block tree CRUD (per-instance via context) | blocks[], rootParentId, loading, load(), createBelow, edit, remove, splitBlock, reorder, moveToParent, indent, dedent, moveUp, moveDown                                             |
+| `useNavigationStore` | Page routing and view state                         | currentView (View union: 13 views incl. templates, settings, graph, page-editor), pageStack[], selectedBlockId, navigateToPage, goBack, replacePage                                 |
+| `useJournalStore`    | Journal mode and date selection                     | mode (daily/weekly/monthly/agenda), currentDate, scrollToDate, scrollToPanel (JournalPanel: due/references/done), navigateToDate, goToDateAndScroll, goToDateAndPanel               |
+| `useResolveStore`    | Centralized ULID → title cache                      | cache Map, pagesList[], version counter, resolveTitle, resolveStatus                                                                                                                |
+| `useUndoStore`       | Page-level undo/redo state                          | pages Map (per-page: undoDepth, redoStack OpRef[], redoGroupSizes). Op grouping via isWithinUndoGroup (200ms window). undo, redo, canRedo, onNewAction, clearPage                   |
+| `useSyncStore`       | Peer-to-peer sync lifecycle                         | state (idle/discovering/pairing/syncing/error/offline), error, peers[], lastSyncedAt, opsReceived/opsSent                                                                           |
 
 **Per-page block store pattern (R-18):** Each `<BlockTree>` gets its own `PageBlockStore` instance via `<PageBlockStoreProvider pageId={...}>`. The provider creates a store with `createPageBlockStore(pageId)`, registers it in the module-level `pageBlockRegistry` (Map<pageId, StoreApi>), and unregisters on unmount. Global hooks (`useSyncEvents`, `useUndoShortcuts`) use the registry to reload pages without provider context. The global `useBlockStore` holds only focus/selection state since only one block can be focused at a time across all pages. Per-page mutation actions that affect focus (e.g., `remove`) call into the global store — one-directional dependency.
 
@@ -742,7 +760,7 @@ no duplicate `listBlocks` calls.
 
 ### Component hierarchy
 
-```
+```text
 App
 ├── BootGate                       — blocks UI during boot/recovery
 ├── Sidebar                        — Journal, Pages, Tags, Trash, History, Status, Conflicts nav
@@ -820,12 +838,12 @@ App
 
 Four modes, each rendering day sections with their own BlockTree:
 
-| Mode | Layout |
-|------|--------|
-| Daily | Single day, prev/next navigation, Today button |
-| Weekly | Mon–Sun grid, each day as a section |
+| Mode    | Layout                                                        |
+| ------- | ------------------------------------------------------------- |
+| Daily   | Single day, prev/next navigation, Today button                |
+| Weekly  | Mon–Sun grid, each day as a section                           |
 | Monthly | Stacked day sections with calendar grid header (content dots) |
-| Agenda | TODO/DOING/DONE panels, paginated, collapsible |
+| Agenda  | TODO/DOING/DONE panels, paginated, collapsible                |
 
 Features: floating date picker (react-day-picker), keyboard shortcuts (Alt+Left/Right for
 prev/next, Alt+T for today), scroll-to-date support.
@@ -867,6 +885,7 @@ and restores via `rAF` on view change. Position `0` is used for first-visit view
 ### CSS utility classes
 
 `index.css` provides shared Tailwind `@utility` classes:
+
 - `focus-ring` — `ring-2 ring-ring ring-offset-1` on `:focus-visible`
 - `focus-outline` — `outline-2 outline-ring` on `:focus-visible`
 - `touch-target` — `min-height: 44px` on `@media (pointer: coarse)`
@@ -878,6 +897,7 @@ status/priority colors use these tokens — no hardcoded Tailwind colors for sem
 ### Drag and drop
 
 @dnd-kit with tree-aware projection:
+
 - Horizontal drag offset determines indent level (depth projection).
 - Drop indicator shows target position and depth.
 - `SortableBlock` wraps `EditableBlock` with `useSortable()`.
@@ -893,50 +913,50 @@ Tauri 2's requirement for explicit `null` (not `undefined`) on `Option<T>` param
 BlockTree's concerns are decomposed into focused hooks. Additional hooks extracted from
 component decompositions provide reusable logic across multiple views.
 
-| Hook | Purpose |
-|------|---------|
-| `useBlockDnD` | DnD state, handlers, and tree-aware depth projection |
-| `useBlockResolve` | ULID → title resolution, tag/page search, page creation |
-| `useBlockProperties` | Property state, TODO/priority cycling |
-| `useBlockTags` | Load/add/remove/create tags for a block |
-| `useBlockKeyboardHandlers` | Block-level keyboard handling (Enter, Backspace, Tab, arrow keys, shortcuts) |
-| `useBlockSlashCommands` | Slash command registration and execution |
-| `useBlockDatePicker` | Date picker state for due/scheduled dates |
-| `useBlockMultiSelect` | Multi-block selection gestures (Ctrl+Click, Shift+Click, Ctrl+A) |
-| `useBlockTouchLongPress` | Touch long-press for mobile block context menu |
-| `useBlockAttachments` | Attachment CRUD for a block |
-| `useBlockNavigation` | Block click + keyboard navigation (shared across panels) |
-| `useBlockCollapse` | Block tree collapse/expand state persistence |
-| `useBlockZoom` | Focus-mode zoom into a block subtree |
-| `useBlockSwipeActions` | Swipe gestures for mobile block actions |
-| `useBlockTreeKeyboardShortcuts` | 7 keyboard shortcuts extracted from BlockTree |
-| `useBlockTreeEventListeners` | 8 block event listeners extracted from BlockTree |
-| `useRovingEditor` | TipTap instance management (mount/unmount/serialize) |
-| `useUndoShortcuts` | Global Ctrl+Z / Ctrl+Y (outside editor contentEditable) |
-| `useViewportObserver` | IntersectionObserver for off-screen block placeholders |
-| `useScrollRestore` | Save/restore scroll position per view (passive listener, rAF restore) |
-| `useIsMobile` | Responsive breakpoint detection for mobile layout (\<768px) |
-| `usePaginatedQuery` | Cursor-based pagination with stale response detection and auto-refetch |
-| `usePollingQuery` | Fixed-interval polling with optional refetch-on-focus |
-| `useDebouncedCallback` | Generic debounce hook replacing manual `useRef<timeout>` patterns |
-| `useListKeyboardNavigation` | Arrow/vim key navigation for lists (wrap/clamp modes, Home/End) |
-| `useJournalAutoCreate` | Auto-create today's journal page on mount |
-| `usePageDelete` | Page deletion with confirmation state |
-| `useAgendaPreferences` | localStorage-persisted sort/group preferences |
-| `useBacklinkResolution` | TTL cache for ULID/tag resolution, batch resolve |
-| `useSyncWithTimeout` | Promise.race timeout pattern with cancelSync |
-| `useBatchCounts` | Batch agenda count fetching (per-date, per-source) |
-| `useHistoryDiffToggle` | Expanded keys + diff cache + loading state for history views |
-| `useDuePanelData` | DuePanel data fetching (3 queries, 12 state variables, pagination) |
-| `useDraftAutosave` | Draft content autosave with version counter race condition guard |
-| `useDateInput` | Date input parsing → preview → blur-save pattern |
-| `usePropertySave` | Property save/delete with toast + logging |
-| `useQueryExecution` | Query dispatching, pagination, page title resolution |
-| `useQuerySorting` | Sort state + compareValues for query results |
-| `useWeekStart` | Configurable week start day (localStorage-persisted) |
-| `useAutoScrollOnDrag` | Auto-scroll during DnD operations |
-| `useItemCount` | Item count tracking for list views |
-| `useTheme` | Theme cycling (auto/dark/light) |
+| Hook                            | Purpose                                                                      |
+| ------------------------------- | ---------------------------------------------------------------------------- |
+| `useBlockDnD`                   | DnD state, handlers, and tree-aware depth projection                         |
+| `useBlockResolve`               | ULID → title resolution, tag/page search, page creation                      |
+| `useBlockProperties`            | Property state, TODO/priority cycling                                        |
+| `useBlockTags`                  | Load/add/remove/create tags for a block                                      |
+| `useBlockKeyboardHandlers`      | Block-level keyboard handling (Enter, Backspace, Tab, arrow keys, shortcuts) |
+| `useBlockSlashCommands`         | Slash command registration and execution                                     |
+| `useBlockDatePicker`            | Date picker state for due/scheduled dates                                    |
+| `useBlockMultiSelect`           | Multi-block selection gestures (Ctrl+Click, Shift+Click, Ctrl+A)             |
+| `useBlockTouchLongPress`        | Touch long-press for mobile block context menu                               |
+| `useBlockAttachments`           | Attachment CRUD for a block                                                  |
+| `useBlockNavigation`            | Block click + keyboard navigation (shared across panels)                     |
+| `useBlockCollapse`              | Block tree collapse/expand state persistence                                 |
+| `useBlockZoom`                  | Focus-mode zoom into a block subtree                                         |
+| `useBlockSwipeActions`          | Swipe gestures for mobile block actions                                      |
+| `useBlockTreeKeyboardShortcuts` | 7 keyboard shortcuts extracted from BlockTree                                |
+| `useBlockTreeEventListeners`    | 8 block event listeners extracted from BlockTree                             |
+| `useRovingEditor`               | TipTap instance management (mount/unmount/serialize)                         |
+| `useUndoShortcuts`              | Global Ctrl+Z / Ctrl+Y (outside editor contentEditable)                      |
+| `useViewportObserver`           | IntersectionObserver for off-screen block placeholders                       |
+| `useScrollRestore`              | Save/restore scroll position per view (passive listener, rAF restore)        |
+| `useIsMobile`                   | Responsive breakpoint detection for mobile layout (\<768px)                  |
+| `usePaginatedQuery`             | Cursor-based pagination with stale response detection and auto-refetch       |
+| `usePollingQuery`               | Fixed-interval polling with optional refetch-on-focus                        |
+| `useDebouncedCallback`          | Generic debounce hook replacing manual `useRef<timeout>` patterns            |
+| `useListKeyboardNavigation`     | Arrow/vim key navigation for lists (wrap/clamp modes, Home/End)              |
+| `useJournalAutoCreate`          | Auto-create today's journal page on mount                                    |
+| `usePageDelete`                 | Page deletion with confirmation state                                        |
+| `useAgendaPreferences`          | localStorage-persisted sort/group preferences                                |
+| `useBacklinkResolution`         | TTL cache for ULID/tag resolution, batch resolve                             |
+| `useSyncWithTimeout`            | Promise.race timeout pattern with cancelSync                                 |
+| `useBatchCounts`                | Batch agenda count fetching (per-date, per-source)                           |
+| `useHistoryDiffToggle`          | Expanded keys + diff cache + loading state for history views                 |
+| `useDuePanelData`               | DuePanel data fetching (3 queries, 12 state variables, pagination)           |
+| `useDraftAutosave`              | Draft content autosave with version counter race condition guard             |
+| `useDateInput`                  | Date input parsing → preview → blur-save pattern                             |
+| `usePropertySave`               | Property save/delete with toast + logging                                    |
+| `useQueryExecution`             | Query dispatching, pagination, page title resolution                         |
+| `useQuerySorting`               | Sort state + compareValues for query results                                 |
+| `useWeekStart`                  | Configurable week start day (localStorage-persisted)                         |
+| `useAutoScrollOnDrag`           | Auto-scroll during DnD operations                                            |
+| `useItemCount`                  | Item count tracking for list views                                           |
+| `useTheme`                      | Theme cycling (auto/dark/light)                                              |
 
 Sync hooks (`useSyncTrigger`, `useSyncEvents`, `useOnlineStatus`) are documented in
 [§18 Frontend sync integration](#18-sync--networking).
@@ -1080,7 +1100,7 @@ Complexity: O(chain depth). No graph library required.
 
 zstd-compressed CBOR encoding of all materialised table rows at the compaction point.
 
-```
+```text
 SnapshotData {
   schema_version:     u32,
   snapshot_device_id: String,
@@ -1141,6 +1161,7 @@ Purged blocks are absent from subsequent snapshots.
 Boot recovery runs **before** the materializer is created, before any user-visible UI.
 
 **Sequence:**
+
 1. Delete `log_snapshots` rows with `status = 'pending'` (incomplete snapshots).
 2. Walk `block_drafts` table.
 3. For each draft:
@@ -1164,6 +1185,7 @@ generated to `src/lib/bindings.ts`. A pre-commit test (`ts_bindings_up_to_date`)
 committed bindings diverge from the Rust types.
 
 Regenerate after Rust type changes:
+
 ```bash
 cd src-tauri && cargo test -- specta_tests --ignored
 ```
@@ -1185,21 +1207,22 @@ CI doesn't need a live database. `cargo sqlx prepare --check` is a CI gate.
 
 ### Testing layers
 
-| Layer | Tool | Scope |
-|-------|------|-------|
-| Rust unit tests | cargo nextest | Inline `#[cfg(test)] mod tests` in every module (~2,130 tests) |
-| Rust integration | cargo nextest | Pipeline tests, API contract tests |
-| Rust snapshots | insta (25 YAML snapshots) | Op payload serialization, command responses, backlink queries, pagination |
-| Frontend unit | Vitest (jsdom) | Pure functions, store logic, hooks (~7,300 tests across 292 files) |
-| Frontend component | Vitest + @testing-library/react | Render, interaction, a11y (vitest-axe) |
-| Frontend property | Vitest + fast-check | Markdown serializer fuzzing, round-trip stability |
-| Frontend typecheck | `vitest typecheck` | Compile-time type validation (enabled via `tsconfig.app.json`) |
-| E2E | Playwright (Chromium, 26 spec files) | Smoke, editor lifecycle, links, keyboard, Markdown syntax, slash commands, toolbar, tags, undo/redo, conflicts, history, error scenarios, sync UI, graph view, templates, properties, queries, import/export, features coverage, suggestion keyboard |
-| Benchmarks | Criterion (24 bench files) | Agenda, aliases, attachments, backlinks, cache, commands, compaction, drafts, export, FTS, graph, hash, import, merge, move/reorder, op log, pagination, properties, property defs, snapshot, soft delete, sync, tag query, undo/redo (manual only) |
+| Layer              | Tool                                 | Scope                                                                                                                                                                                                                                                |
+| ------------------ | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rust unit tests    | cargo nextest                        | Inline `#[cfg(test)] mod tests` in every module (~2,130 tests)                                                                                                                                                                                       |
+| Rust integration   | cargo nextest                        | Pipeline tests, API contract tests                                                                                                                                                                                                                   |
+| Rust snapshots     | insta (25 YAML snapshots)            | Op payload serialization, command responses, backlink queries, pagination                                                                                                                                                                            |
+| Frontend unit      | Vitest (jsdom)                       | Pure functions, store logic, hooks (~7,300 tests across 292 files)                                                                                                                                                                                   |
+| Frontend component | Vitest + @testing-library/react      | Render, interaction, a11y (vitest-axe)                                                                                                                                                                                                               |
+| Frontend property  | Vitest + fast-check                  | Markdown serializer fuzzing, round-trip stability                                                                                                                                                                                                    |
+| Frontend typecheck | `vitest typecheck`                   | Compile-time type validation (enabled via `tsconfig.app.json`)                                                                                                                                                                                       |
+| E2E                | Playwright (Chromium, 26 spec files) | Smoke, editor lifecycle, links, keyboard, Markdown syntax, slash commands, toolbar, tags, undo/redo, conflicts, history, error scenarios, sync UI, graph view, templates, properties, queries, import/export, features coverage, suggestion keyboard |
+| Benchmarks         | Criterion (24 bench files)           | Agenda, aliases, attachments, backlinks, cache, commands, compaction, drafts, export, FTS, graph, hash, import, merge, move/reorder, op log, pagination, properties, property defs, snapshot, soft delete, sync, tag query, undo/redo (manual only)  |
 
 ### Pre-commit hooks (prek)
 
 File-type-aware hooks — Rust hooks skip when no `.rs` files are staged, and vice versa:
+
 - **Builtin:** trailing whitespace, EOF fixer, YAML/TOML/JSON validation, merge conflict detection, large file blocking
 - **Frontend:** Biome check, TypeScript (`tsc --noEmit`), Vitest
 - **Security:** npm audit, license-checker, depcheck
@@ -1306,19 +1329,19 @@ results. Excludes soft-deleted and conflict blocks.
 **Server-side compound filtering:** `query_backlinks_filtered` accepts a composable filter
 expression tree (`BacklinkFilter` enum) pushed to SQL:
 
-| Filter | Description |
-|--------|-------------|
-| `PropertyText` | Text property comparison (Eq, Neq, Lt, Gt, Lte, Gte) |
-| `PropertyNum` | Numeric property comparison |
-| `PropertyDate` | Date property comparison |
-| `PropertyIsSet` | Property key exists |
-| `PropertyIsEmpty` | Property key absent |
-| `HasTag` | Block tagged with specific tag_id |
-| `HasTagPrefix` | Block tagged with any tag matching prefix |
-| `Contains` | FTS5 full-text search within backlinks |
-| `CreatedInRange` | ULID timestamp range (ISO 8601) |
-| `BlockType` | Filter by block_type |
-| `And` / `Or` / `Not` | Boolean composition |
+| Filter               | Description                                          |
+| -------------------- | ---------------------------------------------------- |
+| `PropertyText`       | Text property comparison (Eq, Neq, Lt, Gt, Lte, Gte) |
+| `PropertyNum`        | Numeric property comparison                          |
+| `PropertyDate`       | Date property comparison                             |
+| `PropertyIsSet`      | Property key exists                                  |
+| `PropertyIsEmpty`    | Property key absent                                  |
+| `HasTag`             | Block tagged with specific tag_id                    |
+| `HasTagPrefix`       | Block tagged with any tag matching prefix            |
+| `Contains`           | FTS5 full-text search within backlinks               |
+| `CreatedInRange`     | ULID timestamp range (ISO 8601)                      |
+| `BlockType`          | Filter by block_type                                 |
+| `And` / `Or` / `Not` | Boolean composition                                  |
 
 **Sorting:** `BacklinkSort` supports `Created`, `PropertyText`, `PropertyNum`, and `PropertyDate`
 with ascending/descending direction. Default: `Created { Asc }`.
@@ -1348,6 +1371,7 @@ content is stored as plain text in the op log (no special op type).
 `{{query type:backlinks expr:<ULID>}}`. The `/query` slash command inserts the template.
 
 **`QueryResult` component** (`src/components/QueryResult.tsx`):
+
 - `parseQueryExpression()` extracts `type` and `expr`/`key`/`value` from the expression string.
 - Fetches results via existing query APIs: `queryByTags` (tag queries), `queryByProperty`
   (property queries), `listBlocks` (backlinks queries).
@@ -1365,6 +1389,7 @@ Android support via Tauri 2's mobile target. The generated Android project lives
 identical UI.
 
 **Build targets:**
+
 - `x86_64` — emulator (AVD `spike_test`, API 34)
 - `aarch64` — physical ARM64 devices
 
@@ -1383,6 +1408,7 @@ rules.
 ### Headless testing
 
 AI agents and CI can interact with the Android app entirely via ADB — no display needed:
+
 - `adb exec-out screencap -p` for screenshots
 - `adb shell input tap/text/swipe` for interaction
 - `adb logcat -s RustStdoutStderr:V` for Rust logs
@@ -1397,14 +1423,14 @@ transport via TLS WebSocket, protocol via op streaming with three-way merge.
 
 ### Rust crates
 
-| Crate | Purpose |
-|-------|---------|
-| mdns-sd | mDNS service announcement and browsing (`_agaric._tcp.local.`) |
-| tokio-tungstenite | Async WebSocket (server + client) |
-| rustls + rcgen | TLS with self-signed ECDSA P-256 certificates |
-| hkdf + sha2 | HKDF-SHA256 session key derivation from passphrase |
-| chacha20poly1305 | ChaCha20-Poly1305 AEAD for pairing message encryption |
-| qrcode | QR code SVG generation for pairing |
+| Crate             | Purpose                                                        |
+| ----------------- | -------------------------------------------------------------- |
+| mdns-sd           | mDNS service announcement and browsing (`_agaric._tcp.local.`) |
+| tokio-tungstenite | Async WebSocket (server + client)                              |
+| rustls + rcgen    | TLS with self-signed ECDSA P-256 certificates                  |
+| hkdf + sha2       | HKDF-SHA256 session key derivation from passphrase             |
+| chacha20poly1305  | ChaCha20-Poly1305 AEAD for pairing message encryption          |
+| qrcode            | QR code SVG generation for pairing                             |
 
 ### Discovery
 
@@ -1439,6 +1465,7 @@ SAN: localhost/127.0.0.1). `SyncServer` binds to a random port, accepts TLS+WebS
 `send_binary`, `recv_binary`, and `peer_cert_hash()` methods.
 
 **Security hardening:**
+
 - **CN verification:** `PinningCertVerifier` validates that peer certificates have
   `CN=agaric-{device_id}` format via x509-parser. Non-matching CN is rejected.
 - **Self-device guard:** Both mDNS discovery and `handle_incoming_sync()` reject sync attempts
@@ -1452,7 +1479,7 @@ SAN: localhost/127.0.0.1). `SyncServer` binds to a random port, accepts TLS+WebS
 
 `SyncOrchestrator` is a state machine (`SyncState` enum) that drives the sync flow:
 
-```
+```text
 Idle → ExchangingHeads → StreamingOps → ApplyingOps → Merging → TransferringFiles → Complete
                                                                                   ↘ ResetRequired
                                                                                   ↘ Failed
@@ -1470,25 +1497,26 @@ Idle → ExchangingHeads → StreamingOps → ApplyingOps → Merging → Transf
    `(device_id, seq)` via `INSERT OR IGNORE` (duplicate delivery is idempotent).
 5. **Merge:** `merge_diverged_blocks()` handles four conflict types:
 
-| Conflict | Resolution |
-|----------|------------|
+| Conflict              | Resolution                                                                                           |
+| --------------------- | ---------------------------------------------------------------------------------------------------- |
 | Concurrent text edits | `diffy::merge` via `merge::merge_block`. Non-overlapping → clean merge. Overlapping → conflict copy. |
-| Property conflicts | LWW on `created_at` with `device_id` tiebreaker via `merge::resolve_property_conflict`. |
-| Move conflicts | LWW on `created_at`. Block moved into deleted subtree → reparent to root. |
-| Delete + edit | Edit wins. Block resurrected via synthetic `restore_block` op before applying `edit_block`. |
+| Property conflicts    | LWW on `created_at` with `device_id` tiebreaker via `merge::resolve_property_conflict`.              |
+| Move conflicts        | LWW on `created_at`. Block moved into deleted subtree → reparent to root.                            |
+| Delete + edit         | Edit wins. Block resurrected via synthetic `restore_block` op before applying `edit_block`.          |
 
+<!-- markdownlint-disable-next-line MD029 -->
 6. **Complete:** `complete_sync()` updates `peer_refs` atomically.
 
 ### `peer_refs` maintenance
 
-| Column | Updated when | Value |
-|--------|-------------|-------|
-| `last_hash` | Successful sync | Hash of the last op *received* from this peer |
-| `last_sent_hash` | Successful sync | Hash of the last op *sent* to this peer |
-| `synced_at` | Successful sync | Wall-clock timestamp, updated atomically with hashes |
-| `reset_count` | RESET_REQUIRED completes | Incremented by 1 |
-| `last_reset_at` | RESET_REQUIRED completes | Current timestamp |
-| `last_address` | Successful sync or manual `set_peer_address` | `host:port` string for direct connection when mDNS unavailable |
+| Column           | Updated when                                 | Value                                                          |
+| ---------------- | -------------------------------------------- | -------------------------------------------------------------- |
+| `last_hash`      | Successful sync                              | Hash of the last op *received* from this peer                  |
+| `last_sent_hash` | Successful sync                              | Hash of the last op *sent* to this peer                        |
+| `synced_at`      | Successful sync                              | Wall-clock timestamp, updated atomically with hashes           |
+| `reset_count`    | RESET_REQUIRED completes                     | Incremented by 1                                               |
+| `last_reset_at`  | RESET_REQUIRED completes                     | Current timestamp                                              |
+| `last_address`   | Successful sync or manual `set_peer_address` | `host:port` string for direct connection when mDNS unavailable |
 
 On sync failure (connection lost mid-stream): `peer_refs` is **not** updated. Next sync restarts
 from `last_hash`. Duplicate delivery is safe due to `INSERT OR IGNORE` on the composite PK.
@@ -1499,12 +1527,14 @@ from `last_hash`. Duplicate delivery is safe due to `INSERT OR IGNORE` on the co
 sync building blocks into an always-on sync service.
 
 **Lifecycle:**
+
 1. Starts TLS WebSocket server on random port via `SyncServer::start()`
 2. Announces device via mDNS (`MdnsService::announce()`)
 3. Starts mDNS browse and enters main loop
 4. Managed as Tauri state; shuts down cleanly on app exit
 
 **Main loop** (`tokio::select!` with three branches):
+
 - **mDNS discovery** (500ms poll): drains `browse_rx.try_recv()`, updates `HashMap<String, DiscoveredPeer>`, triggers immediate sync for newly discovered paired peers
 - **Change-triggered sync**: `SyncScheduler::wait_for_debounced_change()` wakes the daemon when local ops are materialized (3s debounce window)
 - **Periodic resync**: `SyncScheduler::peers_due_for_resync()` identifies stale peers (>60s since last sync)
@@ -1514,6 +1544,7 @@ When mDNS discovery does not find a peer, the daemon falls back to the `last_add
 with the peer's current address.
 
 **`try_sync_with_peer()`:** Runs a single initiator-side sync session:
+
 1. Checks `SyncScheduler::may_retry()` (exponential backoff gate)
 2. Acquires per-peer mutex via `try_lock_peer()` (prevents concurrent syncs)
 3. Looks up `cert_hash` from `peer_refs` for TLS certificate pinning
@@ -1526,27 +1557,27 @@ with the peer's current address.
 
 `sync_scheduler.rs` — manages per-peer backoff, debounced change notifications, and resync timing.
 
-| Function | Purpose |
-|----------|---------|
-| `try_lock_peer(id)` | Per-peer mutex (RAII guard). Only one sync session per peer at a time. |
-| `may_retry(id)` | Returns false if peer is in backoff period |
-| `record_failure(id)` | Doubles backoff: 1s → 2s → 4s → ... → 60s max |
-| `record_success(id)` | Clears backoff entirely |
-| `notify_change()` | Signals a local op was materialized |
-| `wait_for_debounced_change()` | Blocks until notifications stop for `debounce_window` (3s) |
-| `peers_due_for_resync(peers)` | Filters peers whose `synced_at` is older than `resync_interval` (60s) |
+| Function                      | Purpose                                                                |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| `try_lock_peer(id)`           | Per-peer mutex (RAII guard). Only one sync session per peer at a time. |
+| `may_retry(id)`               | Returns false if peer is in backoff period                             |
+| `record_failure(id)`          | Doubles backoff: 1s → 2s → 4s → ... → 60s max                          |
+| `record_success(id)`          | Clears backoff entirely                                                |
+| `notify_change()`             | Signals a local op was materialized                                    |
+| `wait_for_debounced_change()` | Blocks until notifications stop for `debounce_window` (3s)             |
+| `peers_due_for_resync(peers)` | Filters peers whose `synced_at` is older than `resync_interval` (60s)  |
 
 ### Tauri sync commands
 
 Six commands registered in the invoke handler (`commands.rs` + `lib.rs`):
 
-| Command | Backend function | Purpose |
-|---------|-----------------|---------|
-| `start_pairing` | `start_pairing_inner()` | Generate passphrase + QR SVG, store `PairingSession` in managed state |
-| `confirm_pairing` | `confirm_pairing_inner()` | Derive key from passphrase, upsert `peer_ref`, clear session |
-| `cancel_pairing` | `cancel_pairing_inner()` | Clear pairing session |
-| `start_sync` | `start_sync_inner()` | Check backoff, acquire lock, notify daemon via `scheduler.notify_change()` |
-| `cancel_sync` | `cancel_sync_inner()` | Set cancel flag (checked in sync message loop) |
+| Command            | Backend function           | Purpose                                                                                    |
+| ------------------ | -------------------------- | ------------------------------------------------------------------------------------------ |
+| `start_pairing`    | `start_pairing_inner()`    | Generate passphrase + QR SVG, store `PairingSession` in managed state                      |
+| `confirm_pairing`  | `confirm_pairing_inner()`  | Derive key from passphrase, upsert `peer_ref`, clear session                               |
+| `cancel_pairing`   | `cancel_pairing_inner()`   | Clear pairing session                                                                      |
+| `start_sync`       | `start_sync_inner()`       | Check backoff, acquire lock, notify daemon via `scheduler.notify_change()`                 |
+| `cancel_sync`      | `cancel_sync_inner()`      | Set cancel flag (checked in sync message loop)                                             |
 | `set_peer_address` | `set_peer_address_inner()` | Store a manual `host:port` address for a peer in `peer_refs.last_address` (migration 0017) |
 
 Managed state: `PairingState(Mutex<Option<PairingSession>>)`, `Arc<SyncScheduler>`.
@@ -1554,12 +1585,12 @@ TypeScript bindings auto-generated via specta (`PairingInfo`, `SyncSessionInfo` 
 
 ### Frontend sync integration
 
-| Hook/Component | Purpose |
-|----------------|---------|
-| `useSyncTrigger` | Recursive setTimeout with exponential backoff (60s→600s max). Syncs on mount (2s delay) + periodic. Checks `navigator.onLine` before attempting — sets `useSyncStore` to `'offline'` state when offline. Triggers immediate sync on `window.online` event. |
-| `useSyncEvents` | Listens to `sync:progress`, `sync:complete`, `sync:error` Tauri events. Updates `useSyncStore`. Shows toast on completion/failure. Checks for conflicts after sync. |
-| `useOnlineStatus` | `useSyncExternalStore` hook tracking `navigator.onLine` with event listeners. |
-| Sidebar Sync button | Shows `WifiOff` + "Offline" when offline. Tooltip: "Syncing..." during active sync. |
+| Hook/Component      | Purpose                                                                                                                                                                                                                                                    |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `useSyncTrigger`    | Recursive setTimeout with exponential backoff (60s→600s max). Syncs on mount (2s delay) + periodic. Checks `navigator.onLine` before attempting — sets `useSyncStore` to `'offline'` state when offline. Triggers immediate sync on `window.online` event. |
+| `useSyncEvents`     | Listens to `sync:progress`, `sync:complete`, `sync:error` Tauri events. Updates `useSyncStore`. Shows toast on completion/failure. Checks for conflicts after sync.                                                                                        |
+| `useOnlineStatus`   | `useSyncExternalStore` hook tracking `navigator.onLine` with event listeners.                                                                                                                                                                              |
+| Sidebar Sync button | Shows `WifiOff` + "Offline" when offline. Tooltip: "Syncing..." during active sync.                                                                                                                                                                        |
 
 ### Batch sync performance
 
@@ -1588,6 +1619,7 @@ indefinite hangs during large op transfers.
 See [REVIEW-LATER.md](REVIEW-LATER.md) for full details on all planned items.
 
 **Recently completed** (formerly on this roadmap):
+
 - Templates system with dynamic variables (#639) — `template-utils.ts`, `/template` slash command
 - Scheduling semantics — overdue, hide-before, warning period (#641) — AgendaFilterBuilder presets
 - Repeating tasks — `.+` and `++` modes, end conditions (`repeat-until`), projected agenda (#644)
@@ -1626,110 +1658,110 @@ architectural changes were required.
 
 ### Block Operations (9)
 
-| Command | Purpose |
-|---------|---------|
-| `create_block` | Create block (content/tag/page). Max content: 256KB. Max depth: 20. |
-| `edit_block` | Edit content. IMMEDIATE tx for TOCTOU safety. prev_edit for conflict detection. |
-| `delete_block` | Soft-delete + cascade descendants via recursive CTE. |
-| `restore_block` | Un-delete with deleted_at_ref as optimistic concurrency guard. |
-| `purge_block` | Physical delete + all related rows. Non-reversible. Deferred FK checks. |
-| `move_block` | Reparent. Cycle detection via ancestor-walking CTE. Depth validation. |
-| `list_blocks` | Paginated list with exclusive filters (parent, type, tag, deleted, agenda). |
-| `get_block` | Fetch single block including soft-deleted. |
-| `batch_resolve` | Batch metadata lookup via json_each(). Silent omit for missing. |
+| Command         | Purpose                                                                         |
+| --------------- | ------------------------------------------------------------------------------- |
+| `create_block`  | Create block (content/tag/page). Max content: 256KB. Max depth: 20.             |
+| `edit_block`    | Edit content. IMMEDIATE tx for TOCTOU safety. prev_edit for conflict detection. |
+| `delete_block`  | Soft-delete + cascade descendants via recursive CTE.                            |
+| `restore_block` | Un-delete with deleted_at_ref as optimistic concurrency guard.                  |
+| `purge_block`   | Physical delete + all related rows. Non-reversible. Deferred FK checks.         |
+| `move_block`    | Reparent. Cycle detection via ancestor-walking CTE. Depth validation.           |
+| `list_blocks`   | Paginated list with exclusive filters (parent, type, tag, deleted, agenda).     |
+| `get_block`     | Fetch single block including soft-deleted.                                      |
+| `batch_resolve` | Batch metadata lookup via json_each(). Silent omit for missing.                 |
 
 ### Tag Operations (4)
 
-| Command | Purpose |
-|---------|---------|
-| `add_tag` | Associate tag with block. Validates tag type and no duplicate. |
-| `remove_tag` | Dissociate tag. |
-| `list_tags_by_prefix` | Case-insensitive prefix search on tags_cache. |
-| `list_tags_for_block` | Get all tag IDs for a block. |
+| Command               | Purpose                                                        |
+| --------------------- | -------------------------------------------------------------- |
+| `add_tag`             | Associate tag with block. Validates tag type and no duplicate. |
+| `remove_tag`          | Dissociate tag.                                                |
+| `list_tags_by_prefix` | Case-insensitive prefix search on tags_cache.                  |
+| `list_tags_for_block` | Get all tag IDs for a block.                                   |
 
 ### Query Operations (9)
 
-| Command | Purpose |
-|---------|---------|
-| `search_blocks` | FTS5 full-text search with cursor pagination. |
-| `query_by_tags` | Boolean tag query (AND/OR). TagExpr from IDs + prefixes. |
-| `query_by_property` | Filter blocks by property key/value. |
-| `query_backlinks_filtered` | Advanced backlink query with 17 filter types + sort. |
-| `list_backlinks_grouped` | Backlinks grouped by source page. |
-| `list_unlinked_references` | Blocks mentioning a page but not linked. |
-| `get_backlinks` | Simple backlink list. |
-| `list_projected_agenda` | Compute virtual future occurrences for repeating tasks within a date range. |
-| `list_undated_tasks` | Paginated list of blocks with todo_state but no due_date or scheduled_date. |
+| Command                    | Purpose                                                                     |
+| -------------------------- | --------------------------------------------------------------------------- |
+| `search_blocks`            | FTS5 full-text search with cursor pagination.                               |
+| `query_by_tags`            | Boolean tag query (AND/OR). TagExpr from IDs + prefixes.                    |
+| `query_by_property`        | Filter blocks by property key/value.                                        |
+| `query_backlinks_filtered` | Advanced backlink query with 17 filter types + sort.                        |
+| `list_backlinks_grouped`   | Backlinks grouped by source page.                                           |
+| `list_unlinked_references` | Blocks mentioning a page but not linked.                                    |
+| `get_backlinks`            | Simple backlink list.                                                       |
+| `list_projected_agenda`    | Compute virtual future occurrences for repeating tasks within a date range. |
+| `list_undated_tasks`       | Paginated list of blocks with todo_state but no due_date or scheduled_date. |
 
 ### Property Operations (9)
 
-| Command | Purpose |
-|---------|---------|
-| `set_property` | Upsert property. Key format: alphanum + hyphens/underscores, 1-64 chars. |
-| `delete_property` | Remove property by key. |
-| `get_properties` | Fetch all properties for a block. |
-| `get_batch_properties` | Batch fetch for multiple blocks via json_each(). |
-| `list_property_keys` | List all distinct property keys in use. |
-| `create_property_def` | Create schema definition (text/number/date/select). |
-| `list_property_defs` | List all property definitions. |
-| `update_property_def_options` | Update select-type options. |
-| `delete_property_def` | Delete property definition. |
+| Command                       | Purpose                                                                  |
+| ----------------------------- | ------------------------------------------------------------------------ |
+| `set_property`                | Upsert property. Key format: alphanum + hyphens/underscores, 1-64 chars. |
+| `delete_property`             | Remove property by key.                                                  |
+| `get_properties`              | Fetch all properties for a block.                                        |
+| `get_batch_properties`        | Batch fetch for multiple blocks via json_each().                         |
+| `list_property_keys`          | List all distinct property keys in use.                                  |
+| `create_property_def`         | Create schema definition (text/number/date/select).                      |
+| `list_property_defs`          | List all property definitions.                                           |
+| `update_property_def_options` | Update select-type options.                                              |
+| `delete_property_def`         | Delete property definition.                                              |
 
 ### Fixed-Column Properties (4)
 
-| Command | Purpose |
-|---------|---------|
-| `set_todo_state` | Set todo state (null/TODO/DOING/DONE/CANCELLED — locked cycle per UX-201a, reordered by UX-234). Recurrence support on done transition: creates sibling with shifted dates, sets `repeat-origin` ref to original block. |
-| `set_priority` | Set priority. Default levels are `'1' / '2' / '3'`; user-configurable via the `priority` property definition's `options` JSON (UX-201b). `null` clears the priority. |
-| `set_due_date` | Set due date (YYYY-MM-DD or null). |
-| `set_scheduled_date` | Set scheduled date (YYYY-MM-DD or null). |
+| Command              | Purpose                                                                                                                                                                                                                 |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `set_todo_state`     | Set todo state (null/TODO/DOING/DONE/CANCELLED — locked cycle per UX-201a, reordered by UX-234). Recurrence support on done transition: creates sibling with shifted dates, sets `repeat-origin` ref to original block. |
+| `set_priority`       | Set priority. Default levels are `'1' / '2' / '3'`; user-configurable via the `priority` property definition's `options` JSON (UX-201b). `null` clears the priority.                                                    |
+| `set_due_date`       | Set due date (YYYY-MM-DD or null).                                                                                                                                                                                      |
+| `set_scheduled_date` | Set scheduled date (YYYY-MM-DD or null).                                                                                                                                                                                |
 
 ### History & Undo/Redo (7)
 
-| Command | Purpose |
-|---------|---------|
-| `get_block_history` | List op_log entries for a block. |
-| `list_page_history` | Ops affecting page + descendants. Optional op_type filter. |
-| `undo_page_op` | Undo N-th most recent op. Computes reverse, appends, applies. |
-| `redo_page_op` | Redo previously undone op. |
-| `revert_ops` | Batch revert multiple ops. |
-| `compute_edit_diff` | Word-level diff (word_diff.rs) for edit_block ops. |
+| Command              | Purpose                                                                                                                                  |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_block_history`  | List op_log entries for a block.                                                                                                         |
+| `list_page_history`  | Ops affecting page + descendants. Optional op_type filter.                                                                               |
+| `undo_page_op`       | Undo N-th most recent op. Computes reverse, appends, applies.                                                                            |
+| `redo_page_op`       | Redo previously undone op.                                                                                                               |
+| `revert_ops`         | Batch revert multiple ops.                                                                                                               |
+| `compute_edit_diff`  | Word-level diff (word_diff.rs) for edit_block ops.                                                                                       |
 | `restore_page_to_op` | Revert page to state at a given op. Recursive CTE for nested blocks, non-reversible ops skipped. Page-scoped + global (`__all__`) modes. |
 
 ### Sync & Pairing (5 + 6 peer management)
 
-| Command | Purpose |
-|---------|---------|
-| `start_pairing` | Generate passphrase + QR SVG, store session. |
-| `confirm_pairing` | Validate passphrase, store peer_ref + cert_hash. |
-| `cancel_pairing` | Clear pairing session. |
-| `start_sync` | Trigger sync via daemon. Checks backoff, acquires peer lock. |
-| `cancel_sync` | Set cancel flag (checked in message loop). |
-| `get_device_id` | Return persistent device UUID. |
-| `list_peer_refs` | List all paired peers. |
-| `get_peer_ref` | Fetch single peer. |
-| `delete_peer_ref` | Unpair a peer. |
-| `update_peer_name` | Set human-readable peer name. |
-| `set_peer_address` | Set manual sync address for a peer. |
+| Command            | Purpose                                                      |
+| ------------------ | ------------------------------------------------------------ |
+| `start_pairing`    | Generate passphrase + QR SVG, store session.                 |
+| `confirm_pairing`  | Validate passphrase, store peer_ref + cert_hash.             |
+| `cancel_pairing`   | Clear pairing session.                                       |
+| `start_sync`       | Trigger sync via daemon. Checks backoff, acquires peer lock. |
+| `cancel_sync`      | Set cancel flag (checked in message loop).                   |
+| `get_device_id`    | Return persistent device UUID.                               |
+| `list_peer_refs`   | List all paired peers.                                       |
+| `get_peer_ref`     | Fetch single peer.                                           |
+| `delete_peer_ref`  | Unpair a peer.                                               |
+| `update_peer_name` | Set human-readable peer name.                                |
+| `set_peer_address` | Set manual sync address for a peer.                          |
 
 ### Batch, Export & System (14)
 
-| Command | Purpose |
-|---------|---------|
-| `count_agenda_batch` | Count agenda items per date (batch). |
-| `count_agenda_batch_by_source` | Count agenda items per date grouped by source (page/due/scheduled/property). |
-| `count_backlinks_batch` | Count backlinks per page (batch). |
-| `set_page_aliases` | Replace page's aliases. |
-| `get_page_aliases` | List aliases for a page. |
-| `resolve_page_by_alias` | Look up page by alias (case-insensitive). |
-| `export_page_markdown` | Export as Markdown with resolved `#[ULID]` and `[[ULID]]` + YAML frontmatter. |
-| `get_status` | Materializer queue metrics. |
-| `get_conflicts` | List conflict-copy blocks. |
-| `import_markdown` | Import Logseq/Markdown file as page + blocks. |
-| `list_page_links` | Page-to-page edges (for graph view). 3 JOINs with DISTINCT dedup. |
-| `get_compaction_status` | Op log stats (total ops, oldest, retention window). |
-| `compact_op_log_cmd` | Create snapshot + purge old ops. `BEGIN IMMEDIATE` transaction. |
-| `log_frontend` | Write frontend log entry to Rust tracing (dual-write IPC bridge). |
+| Command                        | Purpose                                                                       |
+| ------------------------------ | ----------------------------------------------------------------------------- |
+| `count_agenda_batch`           | Count agenda items per date (batch).                                          |
+| `count_agenda_batch_by_source` | Count agenda items per date grouped by source (page/due/scheduled/property).  |
+| `count_backlinks_batch`        | Count backlinks per page (batch).                                             |
+| `set_page_aliases`             | Replace page's aliases.                                                       |
+| `get_page_aliases`             | List aliases for a page.                                                      |
+| `resolve_page_by_alias`        | Look up page by alias (case-insensitive).                                     |
+| `export_page_markdown`         | Export as Markdown with resolved `#[ULID]` and `[[ULID]]` + YAML frontmatter. |
+| `get_status`                   | Materializer queue metrics.                                                   |
+| `get_conflicts`                | List conflict-copy blocks.                                                    |
+| `import_markdown`              | Import Logseq/Markdown file as page + blocks.                                 |
+| `list_page_links`              | Page-to-page edges (for graph view). 3 JOINs with DISTINCT dedup.             |
+| `get_compaction_status`        | Op log stats (total ops, oldest, retention window).                           |
+| `compact_op_log_cmd`           | Create snapshot + purge old ops. `BEGIN IMMEDIATE` transaction.               |
+| `log_frontend`                 | Write frontend log entry to Rust tracing (dual-write IPC bridge).             |
 
 ---
 
@@ -1744,19 +1776,19 @@ architectural changes were required.
 Benchmark-driven analysis at 100K blocks. All measurements via Criterion on
 SQLite WAL mode with 2-writer + 4-reader pool.
 
-| Operation | 100 | 1K | 10K | 100K | Verdict |
-|-----------|-----|-----|------|------|---------|
-| get_block (PK lookup) | 23µs | 23µs | 23µs | 23µs | Excellent — O(1) |
-| get_properties | 23µs | 23µs | 23µs | 23µs | Excellent — O(1) |
-| list_blocks (paginated) | 222µs | 284µs | 982µs | 11.8ms | Good — cursor pagination |
-| count_agenda_batch (7 dates) | 42µs | 108µs | 1.3ms | ~13ms | Good — linear |
-| export_page_markdown (2K blocks) | — | — | — | 1.4ms | Good — per-page |
-| batch_resolve (json_each) | — | — | — | <1ms | Excellent — single query |
-| count_backlinks_batch (10 pages) | 78µs | 628µs | 6.2ms | ~62ms | Concerning at scale |
-| list_page_links (graph) | 0.8ms | 7ms | 128ms | ~1.3s | Problem — superlinear (3 JOINs) |
-| list_projected_agenda | 0.6ms | 6.2ms | 62ms | ~620ms | Problem — O(n×m) in-memory |
-| create_block | — | — | — | 36ms | Marginal — per-keypress budget |
-| compact_op_log | — | — | — | 393ms @ 100K ops | Acceptable — maintenance only |
+| Operation                        | 100   | 1K    | 10K   | 100K             | Verdict                         |
+| -------------------------------- | ----- | ----- | ----- | ---------------- | ------------------------------- |
+| get_block (PK lookup)            | 23µs  | 23µs  | 23µs  | 23µs             | Excellent — O(1)                |
+| get_properties                   | 23µs  | 23µs  | 23µs  | 23µs             | Excellent — O(1)                |
+| list_blocks (paginated)          | 222µs | 284µs | 982µs | 11.8ms           | Good — cursor pagination        |
+| count_agenda_batch (7 dates)     | 42µs  | 108µs | 1.3ms | ~13ms            | Good — linear                   |
+| export_page_markdown (2K blocks) | —     | —     | —     | 1.4ms            | Good — per-page                 |
+| batch_resolve (json_each)        | —     | —     | —     | <1ms             | Excellent — single query        |
+| count_backlinks_batch (10 pages) | 78µs  | 628µs | 6.2ms | ~62ms            | Concerning at scale             |
+| list_page_links (graph)          | 0.8ms | 7ms   | 128ms | ~1.3s            | Problem — superlinear (3 JOINs) |
+| list_projected_agenda            | 0.6ms | 6.2ms | 62ms  | ~620ms           | Problem — O(n×m) in-memory      |
+| create_block                     | —     | —     | —     | 36ms             | Marginal — per-keypress budget  |
+| compact_op_log                   | —     | —     | —     | 393ms @ 100K ops | Acceptable — maintenance only   |
 
 **Design budget:** PK lookups and paginated reads stay O(1) or O(log n) — the app remains
 responsive for typical use (<10K blocks). Graph and projected-agenda queries are the known
@@ -1829,6 +1861,7 @@ empirically validated through bugs found, fixes applied, and alternatives reject
   `block_properties` rows. This eliminates N+1 queries for agenda/filter operations.
 
 ### Sync
+
 - **Idempotent guards on merge operations.** Compare current state with winner before creating
   new ops. Without this, merge queries match all historical ops causing infinite re-resolution.
   All three conflict types (edit_block, set_property, move_block) have idempotency guards.

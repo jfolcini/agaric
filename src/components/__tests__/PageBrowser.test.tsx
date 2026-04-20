@@ -1588,4 +1588,109 @@ describe('PageBrowser', () => {
       expect(screen.getByRole('button', { name: /New Page/i })).toBeInTheDocument()
     })
   })
+
+  // ====================================================================
+  // UX-246 — SearchInput clear-button coverage
+  // ====================================================================
+
+  describe('SearchInput clear button (UX-246)', () => {
+    it('new-page input shows clear button when non-empty and clearing resets name + disables submit', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+      render(<PageBrowser />)
+
+      await waitFor(() => {
+        expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
+      })
+
+      const input = screen.getByPlaceholderText('New page name...') as HTMLInputElement
+      const submitBtn = screen.getByRole('button', { name: /New Page/i })
+      expect(submitBtn).toBeDisabled()
+      expect(screen.queryByTestId('search-input-clear')).not.toBeInTheDocument()
+
+      await user.type(input, 'Draft Page')
+      expect(input.value).toBe('Draft Page')
+      // Validation wiring still works — submit is enabled now.
+      expect(submitBtn).toBeEnabled()
+
+      const clearBtn = screen.getByTestId('search-input-clear')
+      expect(clearBtn).toBeInTheDocument()
+
+      await user.click(clearBtn)
+      expect(input.value).toBe('')
+      expect(screen.queryByTestId('search-input-clear')).not.toBeInTheDocument()
+      // Validation wiring still works — submit is disabled again after clear.
+      expect(submitBtn).toBeDisabled()
+    })
+
+    it('filter-search input shows clear button when non-empty and clearing restores full list', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Meeting notes' }),
+          makePage({ id: 'P2', content: 'Shopping list' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('Meeting notes')
+
+      const searchInput = screen.getByPlaceholderText('Search pages...') as HTMLInputElement
+      expect(screen.queryByTestId('search-input-clear')).not.toBeInTheDocument()
+
+      await user.type(searchInput, 'Meeting')
+      expect(searchInput.value).toBe('Meeting')
+      // Filter applied — non-matching page hidden.
+      expect(screen.queryByTitle('Shopping list')).not.toBeInTheDocument()
+
+      const clearBtn = screen.getByTestId('search-input-clear')
+      expect(clearBtn).toBeInTheDocument()
+
+      await user.click(clearBtn)
+      expect(searchInput.value).toBe('')
+      expect(screen.queryByTestId('search-input-clear')).not.toBeInTheDocument()
+      // Filter cleared — both pages are visible again.
+      expect(screen.getByText('Meeting notes')).toBeInTheDocument()
+      expect(screen.getByText('Shopping list')).toBeInTheDocument()
+    })
+
+    it('has no a11y violations when a clear button is visible on the filter input', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage({ id: 'P1', content: 'Meeting notes' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Meeting notes')
+
+      const searchInput = screen.getByPlaceholderText('Search pages...')
+      await user.type(searchInput, 'Meet')
+      expect(screen.getByTestId('search-input-clear')).toBeInTheDocument()
+
+      // Scope the a11y audit to the SearchInput wrapper containing the
+      // visible clear button. The surrounding page-list uses `role="option"`
+      // rows containing nested buttons (star / select / delete) which
+      // pre-dates this migration and is orthogonal to the SearchInput
+      // clear-button affordance under test here. axe cold-load under
+      // parallel-worker contention benefits from the waitFor + larger
+      // per-test timeout (see AGENTS.md).
+      const clearBtn = screen.getByTestId('search-input-clear')
+      const searchWrapper = clearBtn.closest('[data-slot="search-input"]') as HTMLElement | null
+      expect(searchWrapper).not.toBeNull()
+
+      await waitFor(
+        async () => {
+          const results = await axe(searchWrapper as HTMLElement)
+          expect(results).toHaveNoViolations()
+        },
+        { timeout: 5000 },
+      )
+    }, 10000)
+  })
 })

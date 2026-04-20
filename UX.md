@@ -5,7 +5,7 @@ Reference for building UI in this project. Pair with `AGENTS.md` (§ Frontend De
 ## Overview
 
 | Concern | Approach |
-|---------|----------|
+| ------- | -------- |
 | Component library | shadcn/ui (copy-paste, no lock-in) |
 | Styling | Tailwind CSS v4 + OKLCH custom properties |
 | Icons | Lucide (consistent 24px stroke set) |
@@ -27,7 +27,7 @@ All colors are defined as CSS custom properties in OKLCH. Light and dark themes 
 **Base tokens:**
 
 | Token | Light | Dark | Usage |
-|-------|-------|------|-------|
+| ------- | ------- | ------ | ------- |
 | `--background` | white | dark blue-gray | Page background |
 | `--foreground` | dark blue-gray | off-white | Body text |
 | `--primary` | warm orange | same | Links, active states, primary actions |
@@ -41,7 +41,7 @@ All colors are defined as CSS custom properties in OKLCH. Light and dark themes 
 **Semantic tokens** (prefer these over raw colors — full list in `src/index.css`):
 
 | Category | Tokens (each usually with `-foreground` pair) | Usage |
-|----------|-----------------------------------------------|-------|
+| ---------- | ----------------------------------------------- | ------- |
 | Status | `--status-active`, `--status-done`, `--status-pending` | List items / row state |
 | Task | `--task-doing`, `--task-done`, `--task-custom` | TODO-state checkbox fills |
 | Priority | `--priority-urgent`, `--priority-high`, `--priority-normal`, `--priority-foreground` | Priority badges (see below) |
@@ -63,7 +63,7 @@ Priority badges use semantic tokens (NOT hardcoded Tailwind colors). Use `priori
 **Levels are user-configurable** (UX-201b): the `priority` property definition's `options` JSON drives the active cycle. The defaults below are what ships in the seed database; users can reconfigure via Properties → `priority`. The `priorityColor()` utility and `PriorityBadge` variants key off `priorityRank()` (active levels first in order, unknown last), so custom levels inherit a sensible colour without code changes.
 
 | Priority | Token class | Semantic token | Colorblind-safe cue |
-|----------|-------------|-----------------|---------------------|
+| ---------- | ------------- | ----------------- | --------------------- |
 | 1 (Urgent / A) | `bg-priority-urgent text-priority-foreground` | `--priority-urgent` | (add ring in contexts where higher emphasis needed) |
 | 2 (High / B) | `bg-priority-high text-priority-foreground` | `--priority-high` | — |
 | 3 (Normal / C) | `bg-priority-normal text-priority-foreground` | `--priority-normal` | (add dashed border in contexts where lower emphasis needed) |
@@ -75,7 +75,7 @@ File: `src/components/BlockInlineControls.tsx` (`TASK_CHECKBOX_STYLES`)
 Task checkboxes use semantic tokens (`task-todo`, `task-doing`, `task-cancelled`, `task-done`) — never hardcoded Tailwind colors. The cycle is locked to `none → TODO → DOING → DONE → CANCELLED → none` (UX-201a, reordered by UX-234).
 
 | State | Visual |
-|-------|--------|
+| ------- | -------- |
 | TODO | Empty square — `border-2 border-muted-foreground` |
 | DOING | Blue dot — `border-task-doing bg-task-doing/20` + inner dot in `bg-task-doing` |
 | CANCELLED | Muted X — `border-task-cancelled bg-task-cancelled/20` + `X` glyph in `text-task-cancelled` (block gets `line-through opacity-50`) |
@@ -88,7 +88,7 @@ File: `src/index.css`
 Semantic tokens for callout blocks (tip, error, note) — replaces hardcoded Tailwind colors in `StaticBlock.tsx` CALLOUT_CONFIG. Both light and dark themes use OKLCH values.
 
 | Token | Usage |
-|-------|-------|
+| ------- | ------- |
 | `--alert-tip` / `--alert-tip-foreground` / `--alert-tip-border` | Tip callout (green) |
 | `--alert-error` / `--alert-error-foreground` / `--alert-error-border` | Error callout (red) |
 | `--alert-note` / `--alert-note-foreground` / `--alert-note-border` | Note callout (blue) |
@@ -101,7 +101,7 @@ File: `src/index.css`
 System-level typography tokens with paired `@utility` classes for font-size + line-height:
 
 | Token | Size | Line-height | Utility |
-|-------|------|-------------|---------|
+| ------- | ------ | ------------- | --------- |
 | `--text-xs` | 0.75rem | 1.5 (`--leading-normal`) | `text-scale-xs` |
 | `--text-sm` | 0.875rem | 1.5 (`--leading-normal`) | `text-scale-sm` |
 | `--text-base` | 1rem | 1.5 (`--leading-normal`) | `text-scale-base` |
@@ -119,7 +119,7 @@ File: `src/index.css`
 Standardized duration and easing tokens with `@utility` classes and `prefers-reduced-motion` override:
 
 | Token | Value | Utility |
-|-------|-------|---------|
+| ------- | ------- | --------- |
 | `--duration-fast` | 100ms | `duration-fast` |
 | `--duration-normal` | 150ms | `duration-normal` |
 | `--duration-moderate` | 200ms | `duration-moderate` |
@@ -136,7 +136,7 @@ All durations are set to `0ms` when `prefers-reduced-motion: reduce` is active.
 ### Border Radius
 
 | Token | Value | Tailwind |
-|-------|-------|----------|
+| ------- | ------- | ---------- |
 | `--radius` (base) | `0.625rem` (10px) | — |
 | `--radius-sm` | 6px | `rounded-sm` |
 | `--radius-md` | 8px | `rounded-md` |
@@ -172,7 +172,7 @@ File: `src/components/BlockTree.tsx`
 ### Component Padding
 
 | Area | Padding |
-|------|---------|
+| ------ | --------- |
 | ProseMirror content | `px-3 py-1.5` (12px H, 6px V) |
 | Code blocks | `px-3 py-2` (12px H, 8px V) |
 | Inline code | `px-1 py-0.5` (4px H, 2px V) |
@@ -187,7 +187,7 @@ File: `src/components/BlockTree.tsx`
 File: `src/components/ui/sidebar.tsx`
 
 | Property | Value |
-|----------|-------|
+| ---------- | ------- |
 | Default width | `150px` (`SIDEBAR_WIDTH_DEFAULT`) |
 | Minimum width | `120px` (`SIDEBAR_WIDTH_MIN`) |
 | Mobile width | `min(18rem, 85vw)` — caps at 85% viewport |
@@ -208,7 +208,7 @@ File: `src/components/ui/button.tsx` (button variants), `src/components/Sortable
 **Agent guidance:** Every new interactive element needs a `@media(pointer: coarse)` size override. Check `button.tsx` variants for the pattern. If adding inline controls (like the gutter icons in `SortableBlock`), add explicit `min-h-[44px] min-w-[44px]` on coarse pointer.
 
 | Component | Desktop | Touch (coarse pointer) |
-|-----------|---------|------------------------|
+| ----------- | --------- | ------------------------ |
 | Button (default) | `h-9` (36px) | `h-11` (44px) |
 | Button (xs) | `h-6` (24px) | `h-10` (40px) |
 | Button (sm) | `h-8` (32px) | `h-10` (40px) |
@@ -248,7 +248,7 @@ File: `src/components/ui/button.tsx` (button variants), `src/components/Sortable
 File: `src/hooks/useBlockDnD.ts`
 
 | Context | Sensor | Configuration |
-|---------|--------|---------------|
+| --------- | -------- | --------------- |
 | Desktop | PointerSensor | `distance: 8` (8px before activation) |
 | Mobile | PointerSensor | `delay: 250, tolerance: 5` (250ms hold, 5px wiggle room) |
 | Keyboard | KeyboardSensor | `sortableKeyboardCoordinates` |
@@ -275,7 +275,7 @@ File: `src/components/ui/sidebar.tsx`
 ### Mobile-Specific Layout
 
 | Pattern | Implementation |
-|---------|---------------|
+| --------- | --------------- |
 | Date picker | Desktop: centered at 1/3 height. Mobile (`max-[479px]`): full-width with padding, 70vh max height, scrollable |
 | Calendar popup | `max-[479px]` responsive breakpoint with scroll |
 | Sidebar width | `min(18rem, 85vw)` clamping |
@@ -287,7 +287,7 @@ File: `src/components/ui/sidebar.tsx`
 File: `src/editor/use-block-keyboard.ts`
 
 | Shortcut | Action | Condition |
-|----------|--------|-----------|
+| ---------- | -------- | ----------- |
 | Arrow Up / Left | Focus previous block | Cursor at position 0 |
 | Arrow Down / Right | Focus next block | Cursor at end |
 | Enter | Save and close editor | — |
@@ -309,7 +309,7 @@ Files: `src/editor/use-roving-editor.ts` (priority + heading shortcuts), TipTap 
 These shortcuts fire when a block editor has focus. The text-formatting ones (Ctrl+B/I/E/K and Ctrl+Shift+C/X/H) are TipTap defaults; the priority, heading, and date shortcuts are wired via `src/lib/keyboard-config.ts`.
 
 | Shortcut | Action |
-|----------|--------|
+| ---------- | -------- |
 | Ctrl+B | Bold (in editor) — **note:** global `Ctrl+B` toggles the sidebar when no editor is focused |
 | Ctrl+I | Italic |
 | Ctrl+E | Inline code |
@@ -326,7 +326,7 @@ These shortcuts fire when a block editor has focus. The text-formatting ones (Ct
 ### Picker Triggers
 
 | Trigger | Opens |
-|---------|-------|
+| --------- | ------- |
 | `@` | Tag picker (fuzzy search tags) |
 | `[[` | Block link picker (fuzzy search pages) |
 | `/` | Slash command menu (see full list below) |
@@ -336,7 +336,7 @@ These shortcuts fire when a block editor has focus. The text-formatting ones (Ct
 File: `src/components/BlockTree.tsx` (`handleSlashCommand`)
 
 | Command | Effect |
-|---------|--------|
+| --------- | -------- |
 | `/TODO` / `/DOING` / `/CANCELLED` / `/DONE` | Set task state (locked cycle — UX-201a, reordered by UX-234) |
 | `/date` / `/schedule` | Set scheduled date via picker |
 | `/due` | Set due date via picker |
@@ -365,7 +365,7 @@ File: `src/components/BlockTree.tsx` (`handleSlashCommand`)
 File: `src/App.tsx` (global keydown handler), `src/components/ui/sidebar.tsx` (Ctrl+B)
 
 | Shortcut | Action |
-|----------|--------|
+| ---------- | -------- |
 | Ctrl+F | Focus search |
 | Ctrl+N | Create new page |
 | Ctrl+B | Toggle sidebar (when no editor is focused — inside a focused editor, `Ctrl+B` is Bold) |
@@ -384,7 +384,7 @@ File: `src/App.tsx` (global keydown handler), `src/components/ui/sidebar.tsx` (C
 File: `src/components/KeyboardShortcuts.tsx`
 
 | Shortcut | Action |
-|----------|--------|
+| ---------- | -------- |
 | Space | Toggle selection |
 | Shift+Click | Range select |
 | Ctrl+A | Select all |
@@ -398,7 +398,7 @@ File: `src/components/KeyboardShortcuts.tsx`
 File: `src/editor/SuggestionList.tsx`
 
 | Key | Action |
-|-----|--------|
+| ----- | -------- |
 | Arrow Down | Next item (wraps to start) |
 | Arrow Up | Previous item (wraps to end) |
 | Enter | Select current item |
@@ -411,7 +411,7 @@ Selected items auto-scroll into view via `scrollIntoView({ block: 'nearest' })`.
 File: `src/components/BlockContextMenu.tsx`
 
 | Key | Action |
-|-----|--------|
+| ----- | -------- |
 | Arrow Down | Next item (circular) |
 | Arrow Up | Previous item (circular) |
 | Home | First item |
@@ -439,55 +439,66 @@ Tab cycles within the dialog. Shift+Tab at the first element wraps to the last. 
 Every custom interactive component (buttons, inputs, menus, dialogs) must have proper ARIA attributes. Here are the established patterns:
 
 **Editor** (`src/editor/use-roving-editor.ts`):
+
 ```jsx
 role="textbox" aria-multiline="true" aria-label="Block editor"
 ```
 
 **Toolbar** (`src/components/FormattingToolbar.tsx`):
+
 ```jsx
 role="toolbar" aria-label="Formatting" aria-controls={`editor-${blockId}`}
 ```
+
 Toggle buttons use `aria-pressed={isActive}` with `bg-accent` styling when active.
 
 **Collapse toggle** (`src/components/SortableBlock.tsx`):
+
 ```jsx
 aria-label={isCollapsed ? 'Expand children' : 'Collapse children'}
 aria-expanded={!isCollapsed}
 ```
 
 **Task checkbox** (`src/components/SortableBlock.tsx`):
+
 ```jsx
 aria-label={todoState ? `Task: ${todoState}. Click to cycle.` : 'Set as TODO'}
 ```
 
 **Context menu** (`src/components/BlockContextMenu.tsx`):
+
 ```jsx
 <div role="menu" aria-label="Block actions">
   <button role="menuitem" tabIndex={idx === focusedIndex ? 0 : -1}>
 ```
 
 **Suggestion list** (`src/editor/SuggestionList.tsx`):
+
 ```jsx
 <div role="listbox" aria-label={label ?? 'Suggestions'}>
   <button role="option" aria-selected={index === selectedIndex}>
 ```
 
 **Dialogs/modals** (`src/components/BlockTree.tsx`):
+
 ```jsx
 role="dialog" aria-modal="true" aria-label="Date picker"
 ```
 
 **Loading states** (`src/components/BlockTree.tsx`):
+
 ```jsx
 role="status" aria-label="Loading blocks" aria-busy="true"
 ```
 
 **Inline validation** (`src/components/LinkEditPopover.tsx`):
+
 ```jsx
 <p className="text-xs text-destructive" role="alert">{error}</p>
 ```
 
 **Form groups:**
+
 ```jsx
 <fieldset> with onKeyDown handlers + keyboard hint text
 <label htmlFor="..."> for every input
@@ -499,6 +510,7 @@ aria-describedby for supplementary instructions
 File: `src/lib/announcer.ts`
 
 Singleton `aria-live` announcer:
+
 - `aria-live="polite"`, `aria-atomic="true"`, `role="status"`
 - Visually hidden (off-screen clip)
 - Double-RAF pattern: clear text, then set new text via `requestAnimationFrame`
@@ -511,6 +523,7 @@ announce('Task marked as DONE')
 ```
 
 **Announce on:**
+
 - Block deletion ("Block deleted")
 - Focus navigation (prev/next block)
 - Task state toggle ("Task marked as DONE")
@@ -521,7 +534,7 @@ announce('Task marked as DONE')
 ### Focus Management
 
 | Scenario | Behavior |
-|----------|----------|
+| ---------- | ---------- |
 | Block focus | `scrollIntoView({ block: 'nearest' })` via `requestAnimationFrame` |
 | Editor blur | Check if focus moved to suggestion popup, toolbar, or Radix popovers — if so, keep editor mounted |
 | Modal close | Restore focus to trigger element (`triggerRef.current.focus()`) |
@@ -567,7 +580,7 @@ If focus moves outside all blur boundaries, the editor unmounts: serialize → c
 File: `src/index.css`
 
 | Media query | Effect |
-|-------------|--------|
+| ------------- | -------- |
 | `prefers-color-scheme: dark` | Dark theme via `.dark` class |
 | `prefers-reduced-motion: reduce` | `animation-duration: 0.01ms`, `transition-duration: 0.01ms`, `scroll-behavior: auto` |
 | `prefers-contrast: more` | `border-color: oklch(0.7 0 0)`, `outline: 3px solid currentColor` with `2px` offset |
@@ -589,6 +602,7 @@ data-slot="skeleton"              // Skeleton loading placeholder
 ```
 
 **Convention:**
+
 - `data-slot="component-name"` — for shadcn/ui wrapper components (used for both styling and test queries)
 - `data-testid="descriptive-name"` — for test-only queries (not styling)
 - Never style using `data-testid`. Use `data-slot` for styling hooks.
@@ -615,7 +629,7 @@ All CSS animations are automatically disabled. Custom JS-driven animations (e.g.
 ### Standard Animation Patterns
 
 | Component | Enter | Exit | Duration |
-|-----------|-------|------|----------|
+| ----------- | ------- | ------ | ---------- |
 | AlertDialog overlay | `fade-in-0` | `fade-out-0` | 200ms |
 | AlertDialog content | `fade-in-0 zoom-in-95` | `fade-out-0 zoom-out-95` | 200ms |
 | Sheet overlay | `fade-in-0` | `fade-out-0` | 300ms close / 500ms open |
@@ -627,7 +641,7 @@ All CSS animations are automatically disabled. Custom JS-driven animations (e.g.
 ### Micro-Interactions
 
 | Element | Interaction | Effect |
-|---------|-------------|--------|
+| --------- | ------------- | -------- |
 | Buttons | Click/tap | `active:scale-95` (slight press-in) |
 | Chevron | Expand/collapse | `transition-transform` with `rotate-90` |
 | Sidebar collapse | Toggle | `transition-transform` with `rotate-180` |
@@ -639,6 +653,7 @@ All CSS animations are automatically disabled. Custom JS-driven animations (e.g.
 ### Active/Hover States
 
 Enabled interactive elements should have both `:hover` and `:active` counterparts:
+
 - Tag chips: `hover:bg-accent/80` + `:active` equivalent
 - Block link chips: `hover:bg-primary/20` + `:active` equivalent
 - External links: `hover:decoration-primary` + `:active` equivalent
@@ -651,7 +666,7 @@ Enabled interactive elements should have both `:hover` and `:active` counterpart
 Three levels of visual importance, consistently applied:
 
 | Level | Variant | Usage |
-|-------|---------|-------|
+| ------- | --------- | ------- |
 | Primary action | `variant="outline" size="sm"` | Create, Save, Apply |
 | Utility | `variant="ghost" size="xs"` | Secondary controls, toggles |
 | Hover-reveal | `variant="ghost" size="icon-xs"` | Delete, close, inline actions |
@@ -667,7 +682,7 @@ Destructive buttons use `variant="destructive"` — reserved for purge, permanen
 Each user action has exactly one icon. Do not deviate.
 
 | Action | Icon | Notes |
-|--------|------|-------|
+| -------- | ------ | ------- |
 | Delete / trash | `Trash2` | Permanent-feeling removal (blocks, pages, tags, attachments, properties definitions) |
 | Remove / close / dismiss / clear | `X` | Lightweight removal: close tabs, dismiss errors, remove chips/filters/aliases/tags, clear search, discard conflicts |
 | Add / create / new | `Plus` | New page, new block, add tag, add filter, add property, add option |
@@ -698,7 +713,7 @@ Icons inherit their size from the button's `[&_svg]:size-[1.2em]` rule when insi
 When explicit sizing is needed, use these conventions:
 
 | Context | Size class | When |
-|---------|------------|------|
+| --------- | ------------ | ------ |
 | Inline/compact (property editor, filter pills, breadcrumbs) | `h-3 w-3` | Icons inside `size="xs"` or `size="icon-xs"` buttons, or inline text |
 | Toolbar / action buttons | `h-3.5 w-3.5` | Icons inside `size="sm"` or `size="icon-sm"` buttons, context menu items |
 | Headers / standalone | `h-4 w-4` | Search input prefixes, page header icons, gutter controls, status icons, card title icons |
@@ -735,6 +750,7 @@ Not every button needs an icon. Follow these rules:
 File: `src/components/FormattingToolbar.tsx`
 
 Floating toolbar above the active editor with formatting buttons grouped by `<Separator>`:
+
 1. **Text formatting:** Bold, Italic, Code
 2. **Links & references:** External link, Page link, Tag, Code block
 3. **Metadata:** Priority 1/2/3, Date
@@ -751,7 +767,7 @@ Toolbar button groups are defined as config arrays in `src/lib/toolbar-config.ts
 Key reusable components. Check these before building something new:
 
 | Component | File | Purpose |
-|-----------|------|---------|
+| ----------- | ------ | --------- |
 | `FilterPill` | `ui/filter-pill.tsx` | Badge with X remove button, 44px touch targets. Used by FilterPillRow, TagFilterPanel |
 | `SearchablePopover<T>` | `SearchablePopover.tsx` | Generic popover with search, loading, empty state. Replaces duplicate picker patterns |
 | `StatusIcon` | `ui/status-icon.tsx` | Task state icon (DONE/DOING/TODO) with optional showDone. Used by AgendaResults, UnfinishedTasks |
@@ -788,6 +804,7 @@ Force-directed page relationship graph using d3-force. Key UX patterns:
 File: `src/lib/keyboard-config.ts`, `src/components/KeyboardSettingsTab.tsx`
 
 All 40 shortcuts are configurable via Settings → Keyboard tab:
+
 - `DEFAULT_SHORTCUTS` defines all shortcuts with category/key metadata
 - `localStorage` persistence via `getCustomOverrides()`/`setCustomShortcut()`
 - Conflict detection: `findConflicts()` shows which shortcuts share a key combo
@@ -809,6 +826,7 @@ Sonner toasts are themed via CSS custom properties that map to the design token 
 ```
 
 Usage:
+
 ```ts
 import { toast } from 'sonner'
 toast.error('Failed to load pages')  // Error — red styling
@@ -893,7 +911,7 @@ File: `src/components/BlockContextMenu.tsx`
 ### Inline Tokens
 
 | Token | Storage | Render | Interaction |
-|-------|---------|--------|-------------|
+| ------- | --------- | -------- | ------------- |
 | Tag ref | `#[ULID]` | Chip with resolved tag name, `bg-accent` | Click navigates to tag |
 | Block link | `[[ULID]]` | Chip with resolved page title, `bg-primary/10` | Click navigates to page |
 | External link | Markdown `[text](url)` | Underlined `text-primary`, `↗` icon (decorative, `aria-hidden`), SR text "(opens in new tab)" | Click opens URL |
@@ -921,6 +939,7 @@ t('agenda.overdue')              // "Overdue"
 ```
 
 **Rules:**
+
 - Never hard-code user-visible strings. Use `t('namespace.key')`.
 - Keys are namespaced by component/feature: `pageBrowser.*`, `agenda.*`, `conflict.*`, `property.*`, `search.*`, `sidebar.*`, `editor.*`, `toolbar.*`, `slash.*`, `block.*`, etc.
 - Toast messages, ARIA labels, empty state text, button labels, placeholders — all go through i18n.
@@ -930,17 +949,17 @@ t('agenda.overdue')              // "Overdue"
 
 **Agent guidance:** This is a non-negotiable requirement. Every user-visible string — including toast messages, ARIA labels, button text, placeholders, empty state copy, error messages, and `announce()` calls — must use `t('key')`. Hard-coded strings will be caught in review.
 
-
 ## Two-Tier Undo/Redo Model
 
 The app has two independent undo systems operating at different scopes:
 
 | Tier | Scope | Mechanism | Trigger | Boundary |
-|------|-------|-----------|---------|----------|
+| ------ | ------- | ----------- | --------- | ---------- |
 | **In-editor** | Current block, current edit session | TipTap/ProseMirror history plugin | Ctrl+Z / Ctrl+Y inside editor | Cleared on mount via `state.reconfigure()`. Only covers typing/formatting since last focus. |
 | **Page-level** | All ops on current page | Op log reverse system (`reverse.rs` computes inverse ops) | Ctrl+Z / Ctrl+Y outside editor, or undo/redo buttons in PageHeader (touch) | Per-page stack in `useUndoStore`. Cleared on page navigation. |
 
 **How they interact:**
+
 - When the editor is focused, Ctrl+Z triggers ProseMirror undo (in-editor tier).
 - When the editor is blurred, Ctrl+Z triggers `useUndoStore.undo()` (page-level tier).
 - `useUndoShortcuts.ts` also handles Ctrl+Shift+Z as alternative redo.
@@ -957,7 +976,7 @@ File: `src/stores/blocks.ts` (selection state), `src/components/BlockTree.tsx` (
 ### Selection Mechanics
 
 | Action | Effect |
-|--------|--------|
+| -------- | -------- |
 | Ctrl+Click | Toggle individual block selection |
 | Shift+Click | Range select from last-selected to clicked block |
 | Ctrl+A | Select all visible blocks |
@@ -969,7 +988,7 @@ Selection state lives in `useBlockStore.selectedBlockIds` (Set). Selection is or
 
 Sticky floating toolbar appears when `selectedBlockIds.size > 0`:
 
-```
+```text
 ┌─────────────────────────────────────────────────────┐
 │ {N} selected  │ TODO │ DOING │ DONE │ Delete │  ✕  │
 └─────────────────────────────────────────────────────┘
@@ -1010,13 +1029,14 @@ Applied to: `edit()`, `remove()`, `setTodoState()`, `setPriority()`, and batch o
 Several features use Radix `<Sheet>` as a slide-in panel:
 
 | Sheet | File | Side | Trigger |
-|-------|------|------|---------|
+| ------- | ------ | ------ | --------- |
 | History | `HistorySheet.tsx` | Right | Gutter clock icon / context menu "History" |
 | Block properties | `BlockPropertyDrawer.tsx` | Right | Toolbar button / context menu "Properties" |
 | Keyboard shortcuts | `KeyboardShortcuts.tsx` | Right | Press `?` globally |
 | Mobile sidebar | `sidebar.tsx` | Left | Swipe from left edge / hamburger button |
 
 **Conventions:**
+
 - Sheets render content only when the trigger state is truthy (e.g., `blockId` for History).
 - Close restores focus to the trigger element.
 - Sheet content supports keyboard navigation and has proper ARIA labeling.
@@ -1030,12 +1050,13 @@ File: `src/components/ConflictList.tsx`
 Sync conflicts are displayed in the Conflicts sidebar view with rich, type-specific rendering:
 
 | Conflict Type | Rendering |
-|---------------|-----------|
+| --------------- | ----------- |
 | Text | Side-by-side "Current:" / "Incoming:" with `renderRichContent()` |
 | Property | Field-by-field diffs with blue badges |
 | Move | Parent/position changes with purple badges |
 
 **Interactions:**
+
 - **Keep** (accept current): success toast with "Undo" action (6s duration) — restores via `restoreBlock` + `editBlock`.
 - **Discard** (accept incoming): success toast with "Undo" action (6s duration) — restores via `restoreBlock`.
 - **Batch actions:** Checkbox per item, sticky toolbar with "Select all" / "Keep all" / "Discard all". Batch confirmation via AlertDialog.
@@ -1049,12 +1070,13 @@ File: `src/components/QueryResult.tsx`
 
 Blocks can contain query expressions that render live results:
 
-```
+```text
 {{query: #tag1 AND #tag2}}
 {{query: property:key=value}}
 ```
 
 `parseQueryExpression()` parses the expression. `QueryResult` component fetches via `queryByTags`/`queryByProperty`/`listBlocks`. Renders a collapsible panel with:
+
 - Todo state badges, priority badges, page breadcrumbs
 - Click-to-navigate to source block
 - Loading / error / empty states
@@ -1065,6 +1087,7 @@ Blocks can contain query expressions that render live results:
 File: `src/components/BlockTree.tsx`
 
 Context menu "Zoom in" focuses the view on a single block and its descendants:
+
 - Block tree filters to descendants only.
 - Breadcrumb trail shows: `Home > Page Title > Parent Block > Current Block`.
 - "Home" resets zoom to full page.
@@ -1077,7 +1100,7 @@ File: `src/components/PageHeader.tsx`
 Page-level actions that don't warrant dedicated buttons go in a Popover-based kebab menu (MoreVertical icon):
 
 | Action | Behavior |
-|--------|----------|
+| -------- | ---------- |
 | Save as template / Remove template | Toggles page-is-template property |
 | Set journal template / Remove | Toggles journal-template property |
 | Export Markdown | Copies page content to clipboard, success toast |
@@ -1092,6 +1115,7 @@ Page-level actions that don't warrant dedicated buttons go in a Popover-based ke
 File: `src/components/DuePanel.tsx`
 
 Shows blocks with due dates for a given date:
+
 - **Overdue section** (red, `destructive/5`): blocks with `due_date < today` and not DONE. Only shown when viewing today.
 - **Upcoming section** (amber): blocks due within N days (configurable via `DeadlineWarningSection`, 0-90, localStorage). Default 0 (disabled).
 - **Hide-before-scheduled toggle**: localStorage-persisted toggle hides blocks with `scheduled_date > today`. Default OFF.
@@ -1128,7 +1152,7 @@ File: `src/lib/template-utils.ts`
 `expandTemplateVariables()` replaces placeholders on template insertion:
 
 | Variable | Expansion |
-|----------|-----------|
+| ---------- | ----------- |
 | `<% today %>` | Current date (YYYY-MM-DD) |
 | `<% time %>` | Current time (HH:MM) |
 | `<% datetime %>` | Date + time |
@@ -1144,6 +1168,7 @@ File: `src/lib/template-utils.ts`
 File: `src/components/BlockPropertyDrawer.tsx`
 
 Sheet component for editing block properties:
+
 - Loads properties + definitions on open.
 - Inline editing: `<Input>` with blur-to-save (no explicit Save button).
 - Delete per property with confirmation.
@@ -1163,7 +1188,7 @@ File: `src/components/StatusPanel.tsx` (UI), `src-tauri/src/import.rs` (parser)
 Extended toast patterns beyond basic success/error:
 
 | Pattern | Example | Duration |
-|---------|---------|----------|
+| --------- | --------- | ---------- |
 | **Undo action** | `toast.success('Resolved', { action: { label: 'Undo', onClick: revert } })` | 6s |
 | **Retry action** | `toast.error('Partial failure', { action: { label: 'Retry', onClick: retry } })` | 5s |
 | **Warning** | `toast.warning('Multiple journal templates found')` | default |
@@ -1180,7 +1205,7 @@ File: `src/editor/use-roving-editor.ts`
 One TipTap instance at all times. Non-focused blocks render as static divs via `StaticBlock` (`src/components/StaticBlock.tsx`).
 
 | Phase | What happens |
-|-------|-------------|
+| ------- | ------------- |
 | Mount (focus) | Parse markdown → `replaceDocSilently()` (with `addToHistory: false`) → clear undo history via `state.reconfigure()` → focus |
 | Edit | ProseMirror handles input, formatting, keyboard shortcuts |
 | Blur | Serialize → compare via `computeContentDelta()` → flush if dirty → clear doc silently → unmount |
@@ -1192,6 +1217,7 @@ One TipTap instance at all times. Non-focused blocks render as static divs via `
 File: `src/components/StaticBlock.tsx`
 
 Non-focused blocks render as plain divs using `renderRichContent()`:
+
 - `tag_ref` nodes → `<span className="tag-ref-chip">` (or `tag-ref-deleted` if deleted)
 - `block_link` nodes → `<span className="block-link-chip">` (clickable, navigates on click)
 - Text with marks → `<strong>`, `<em>`, `<code>` wrappers
@@ -1203,6 +1229,7 @@ Non-focused blocks render as plain divs using `renderRichContent()`:
 ### Block Splitting
 
 When content contains `\n` after serialization:
+
 1. First line → `edit_block` (updates original)
 2. Subsequent lines → `create_block` (new blocks below)
 
@@ -1231,7 +1258,7 @@ File: `src/index.css` (dark mode syntax colors)
 Syntax highlighting via lowlight with OKLCH-based colors:
 
 | Element | Color |
-|---------|-------|
+| --------- | ------- |
 | Keywords | Red `#f47067` |
 | Functions | Purple `#dcbdfb` |
 | Numbers/Attributes | Blue `#6cb6ff` |
@@ -1258,7 +1285,7 @@ Managed by `useNavigationStore` (Zustand). Tracks current view and page stack.
 **View types:** `journal`, `search`, `pages`, `tags`, `settings`, `trash`, `status`, `conflicts`, `history`, `templates`, `graph`, `page-editor`
 
 | Method | Behavior |
-|--------|----------|
+| -------- | ---------- |
 | `setView(view)` | Switch sidebar view, clear stack when leaving `page-editor` |
 | `navigateToPage(pageId, title, blockId?)` | Push page onto stack, switch to `page-editor` |
 | `goBack()` | Pop stack, switch to `pages` if empty |
@@ -1274,7 +1301,7 @@ Managed by `useNavigationStore` (Zustand). Tracks current view and page stack.
 ### State Indicators
 
 | Indicator | Visual |
-|-----------|--------|
+| ----------- | -------- |
 | Sync status | Colored dot in Status view: idle=green (`emerald-500`), syncing/discovering/pairing=amber (`amber-500`), error=red (`destructive`), offline=gray (`slate-400`) |
 | Conflict count | Badge on sidebar item |
 | Filter count | Badge on filter button |

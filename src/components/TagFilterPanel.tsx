@@ -14,7 +14,7 @@ import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
-import { Input } from '@/components/ui/input'
+import { SearchInput } from '@/components/ui/search-input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
@@ -249,7 +249,7 @@ export function TagFilterPanel(): React.ReactElement {
 
       {/* Prefix search */}
       <div className="flex items-center gap-2">
-        <Input
+        <SearchInput
           value={prefix}
           onChange={handlePrefixChange}
           onKeyDown={(e) => {

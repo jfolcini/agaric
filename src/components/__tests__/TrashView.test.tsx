@@ -946,6 +946,54 @@ describe('TrashView', () => {
     expect(input).toHaveValue('')
   })
 
+  // UX-246: SearchInput clear (✕) button on the filter input itself
+  // (distinct from the empty-state `trash-clear-filter-btn`).
+  it('SearchInput clear (✕) button resets filter and list', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([
+      makeBlock('B1', 'apple pie', '2025-01-15T00:00:00Z'),
+      makeBlock('B2', 'banana split', '2025-01-14T00:00:00Z'),
+    ])
+
+    const { container } = render(<TrashView />)
+
+    await screen.findByText('apple pie')
+    const input = screen.getByTestId('trash-filter-input') as HTMLInputElement
+
+    // No clear button while empty
+    expect(container.querySelector('[data-testid="search-input-clear"]')).toBeNull()
+
+    await user.type(input, 'apple')
+
+    await waitFor(() => {
+      expect(screen.queryByText('banana split')).not.toBeInTheDocument()
+    })
+
+    const clearButton = container.querySelector(
+      '[data-testid="search-input-clear"]',
+    ) as HTMLButtonElement | null
+    expect(clearButton).not.toBeNull()
+
+    // a11y on the filtered state including the visible clear button.
+    // The existing TrashView a11y tests disable `nested-interactive` because
+    // trash item rows are role="option" with nested interactive controls —
+    // unrelated to the SearchInput clear button.
+    const axeResults = await axe(container, {
+      rules: { 'nested-interactive': { enabled: false } },
+    })
+    expect(axeResults).toHaveNoViolations()
+
+    await user.click(clearButton as HTMLButtonElement)
+
+    // Filter is cleared: both items visible, input empty, ✕ button gone
+    await waitFor(() => {
+      expect(input.value).toBe('')
+      expect(screen.getByText('apple pie')).toBeInTheDocument()
+      expect(screen.getByText('banana split')).toBeInTheDocument()
+      expect(container.querySelector('[data-testid="search-input-clear"]')).toBeNull()
+    })
+  })
+
   it('filtered count shows correctly', async () => {
     const user = userEvent.setup()
     mockListAndResolve([

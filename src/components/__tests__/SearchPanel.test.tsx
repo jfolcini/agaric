@@ -297,6 +297,58 @@ describe('SearchPanel', () => {
     })
   })
 
+  // UX-246: SearchInput clear (✕) button appears when the field has content
+  // and clearing it resets the input value (and in turn the results).
+  it('shows clear button when typing and resets on click', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce({
+      items: [makeSearchResult()],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const { container } = render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder')) as HTMLInputElement
+
+    // Clear button is absent while the field is empty
+    expect(container.querySelector('[data-testid="search-input-clear"]')).toBeNull()
+
+    // Type without submitting: the clear button appears as soon as value is non-empty
+    fireEvent.change(input, { target: { value: 'hello' } })
+    expect(input.value).toBe('hello')
+
+    const clearButton = container.querySelector(
+      '[data-testid="search-input-clear"]',
+    ) as HTMLButtonElement | null
+    expect(clearButton).not.toBeNull()
+
+    // a11y: the input + clear-button combination has no violations (pre-results state)
+    const axeResults = await axe(container)
+    expect(axeResults).toHaveNoViolations()
+
+    // Now submit to populate results, then click the clear button
+    typeAndSubmit(input, 'test')
+
+    await waitFor(() => {
+      expect(screen.getByText(textContent('test content'))).toBeInTheDocument()
+    })
+
+    const clearButtonAfterSearch = container.querySelector(
+      '[data-testid="search-input-clear"]',
+    ) as HTMLButtonElement | null
+    expect(clearButtonAfterSearch).not.toBeNull()
+
+    await user.click(clearButtonAfterSearch as HTMLButtonElement)
+
+    // Query + results reset, clear button disappears
+    await waitFor(() => {
+      expect(input.value).toBe('')
+      expect(screen.queryByText(textContent('test content'))).not.toBeInTheDocument()
+      expect(container.querySelector('[data-testid="search-input-clear"]')).toBeNull()
+    })
+  })
+
   it('shows CJK notice for CJK input', () => {
     render(<SearchPanel />)
 

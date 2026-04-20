@@ -846,6 +846,47 @@ describe('TagFilterPanel', () => {
     expect(findTagSpan(/work \(5\)/)).toBeNull()
   })
 
+  // -----------------------------------------------------------------------
+  // UX-246: SearchInput clear (✕) button clears the prefix search
+  // -----------------------------------------------------------------------
+  it('SearchInput clear button clears prefix and hides matching tags', async () => {
+    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+
+    const { container } = render(<TagFilterPanel />)
+
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder')) as HTMLInputElement
+
+    // No clear button while the field is empty
+    expect(container.querySelector('[data-testid="search-input-clear"]')).toBeNull()
+
+    await typeAndWaitForTags(input, 'work')
+
+    // Matching tags rendered
+    expect(findTagSpan(/work \(5\)/)).toBeInTheDocument()
+
+    // Clear button now rendered
+    const clearButton = container.querySelector(
+      '[data-testid="search-input-clear"]',
+    ) as HTMLButtonElement | null
+    expect(clearButton).not.toBeNull()
+
+    // a11y — rule that affects unrelated results list is disabled in the
+    // existing a11y test above; mirror that here.
+    const axeResults = await axe(container, {
+      rules: { 'nested-interactive': { enabled: false } },
+    })
+    expect(axeResults).toHaveNoViolations()
+
+    await user.click(clearButton as HTMLButtonElement)
+
+    // Prefix is cleared and the matching-tags list is gone.
+    await waitFor(() => {
+      expect(input.value).toBe('')
+      expect(findTagSpan(/work \(5\)/)).toBeNull()
+      expect(container.querySelector('[data-testid="search-input-clear"]')).toBeNull()
+    })
+  })
+
   it('has no a11y violations with search results visible', async () => {
     vi.useRealTimers()
     mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])

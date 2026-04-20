@@ -14,7 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { SearchInput } from '@/components/ui/search-input'
 import {
   Select,
   SelectContent,
@@ -407,7 +407,7 @@ function AddFilterRow({
       )}
 
       {category === 'contains' && (
-        <Input
+        <SearchInput
           className="h-7 w-40 text-xs [@media(pointer:coarse)]:w-full"
           placeholder={t('backlink.searchTextPlaceholder')}
           value={containsQuery}
@@ -432,7 +432,7 @@ function AddFilterRow({
               </SelectContent>
             </Select>
           ) : (
-            <Input
+            <SearchInput
               className="h-7 w-24 text-xs [@media(pointer:coarse)]:w-full"
               placeholder={t('backlink.keyPlaceholder')}
               value={propKey}
@@ -466,7 +466,7 @@ function AddFilterRow({
               <SelectItem value="date">{t('backlink.dateType')}</SelectItem>
             </SelectContent>
           </Select>
-          <Input
+          <SearchInput
             className="h-7 w-24 text-xs [@media(pointer:coarse)]:w-full"
             placeholder={t('backlink.valuePlaceholder')}
             value={propValue}
@@ -478,7 +478,7 @@ function AddFilterRow({
 
       {category === 'date' && (
         <>
-          <Input
+          <SearchInput
             type="date"
             className="h-7 w-36 text-xs [@media(pointer:coarse)]:w-full"
             value={dateAfter}
@@ -486,7 +486,7 @@ function AddFilterRow({
             aria-label={t('backlink.dateAfterLabel')}
           />
           <span className="text-xs text-muted-foreground">{t('backlink.dateTo')}</span>
-          <Input
+          <SearchInput
             type="date"
             className="h-7 w-36 text-xs [@media(pointer:coarse)]:w-full"
             value={dateBefore}
@@ -511,7 +511,7 @@ function AddFilterRow({
             </SelectContent>
           </Select>
         ) : (
-          <Input
+          <SearchInput
             className="h-7 w-24 text-xs [@media(pointer:coarse)]:w-full"
             placeholder={t('backlink.keyPlaceholder')}
             value={propSetKey}
@@ -535,7 +535,7 @@ function AddFilterRow({
             </SelectContent>
           </Select>
         ) : (
-          <Input
+          <SearchInput
             className="h-7 w-24 text-xs [@media(pointer:coarse)]:w-full"
             placeholder={t('backlink.keyPlaceholder')}
             value={propEmptyKey}
@@ -571,7 +571,7 @@ function AddFilterRow({
       )}
 
       {category === 'tag-prefix' && (
-        <Input
+        <SearchInput
           className="h-7 w-40 text-xs [@media(pointer:coarse)]:w-full"
           placeholder={t('backlink.tagPrefixPlaceholder')}
           value={prefixValue}

@@ -1137,4 +1137,106 @@ describe('BacklinkFilterBuilder', () => {
       expect(screen.getByRole('button', { name: 'Select tag' })).toBeInTheDocument()
     })
   })
+
+  // ====================================================================
+  // UX-246 — SearchInput clear-button coverage across filter categories
+  // ====================================================================
+
+  describe('SearchInput clear button (UX-246)', () => {
+    it('shows clear button in the Contains filter when value is non-empty and clears it', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'contains')
+
+      const input = screen.getByLabelText('Contains text') as HTMLInputElement
+      expect(screen.queryByTestId('search-input-clear')).not.toBeInTheDocument()
+
+      await user.type(input, 'needle')
+      expect(input.value).toBe('needle')
+
+      const clearBtn = screen.getByTestId('search-input-clear')
+      expect(clearBtn).toBeInTheDocument()
+
+      await user.click(clearBtn)
+      expect(input.value).toBe('')
+      expect(screen.queryByTestId('search-input-clear')).not.toBeInTheDocument()
+    })
+
+    it('shows clear button on the Property value input and clears it', async () => {
+      const user = userEvent.setup()
+      renderBuilder({ propertyKeys: ['todo', 'priority', 'due'] })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
+
+      const valueInput = screen.getByLabelText('Property value') as HTMLInputElement
+      expect(screen.queryByTestId('search-input-clear')).not.toBeInTheDocument()
+
+      await user.type(valueInput, 'tomorrow')
+      expect(valueInput.value).toBe('tomorrow')
+
+      const clearBtn = screen.getByTestId('search-input-clear')
+      await user.click(clearBtn)
+      expect(valueInput.value).toBe('')
+      expect(screen.queryByTestId('search-input-clear')).not.toBeInTheDocument()
+    })
+
+    it('shows clear button on the freeform Property key input when propertyKeys is empty', async () => {
+      const user = userEvent.setup()
+      renderBuilder({ propertyKeys: [] })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
+
+      const keyInput = screen.getByLabelText('Property key') as HTMLInputElement
+      await user.type(keyInput, 'custom_key')
+
+      const clearBtn = screen.getByTestId('search-input-clear')
+      expect(clearBtn).toBeInTheDocument()
+
+      await user.click(clearBtn)
+      expect(keyInput.value).toBe('')
+    })
+
+    it('shows clear button on the Tag prefix input and clears it', async () => {
+      const user = userEvent.setup()
+      renderBuilder()
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'tag-prefix')
+
+      const prefixInput = screen.getByLabelText('Tag prefix') as HTMLInputElement
+      await user.type(prefixInput, 'work')
+
+      const clearBtn = screen.getByTestId('search-input-clear')
+      expect(clearBtn).toBeInTheDocument()
+
+      await user.click(clearBtn)
+      expect(prefixInput.value).toBe('')
+      expect(screen.queryByTestId('search-input-clear')).not.toBeInTheDocument()
+    })
+
+    it('has no a11y violations when a clear button is visible', async () => {
+      const user = userEvent.setup()
+      const { container } = renderBuilder()
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'contains')
+      await user.type(screen.getByLabelText('Contains text'), 'hello')
+
+      // The clear button must be present for this assertion to be meaningful.
+      expect(screen.getByTestId('search-input-clear')).toBeInTheDocument()
+
+      await waitFor(
+        async () => {
+          const results = await axe(container)
+          expect(results).toHaveNoViolations()
+        },
+        { timeout: 5000 },
+      )
+    })
+  })
 })

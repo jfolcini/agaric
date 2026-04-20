@@ -1,5 +1,91 @@
 # Session Log
 
+## Session 446 — UX-246 + MAINT-90 (final): 5 parallel subagents, both M-sized items fully closed (2026-04-20)
+
+**2 REVIEW-LATER items fully resolved.** Open items: 29 → 27. Closed UX-246 (13 bare `<Input>` → `<SearchInput>` migrations across 5 components) and the remaining 3-file slice of MAINT-90 (UX.md 253, ARCHITECTURE.md 192, COMPARISON.md 170 — 615 total markdownlint violations → 0). 5 parallel build subagents on the main tree. 5 pipelined read-only technical reviews — 4 APPROVE, 1 REQUEST-CHANGES (ARCHITECTURE.md, 2 findings) handled by orchestrator. One atomic commit.
+
+### What changed
+
+**UX-246 — SearchInput primitive adoption (13 call sites across 5 components):**
+
+Split into two subagents by overlap-free component boundaries. Both halves migrated `<Input>` → `<SearchInput>` preserving all existing props (`value`, `onChange`, `placeholder`, `aria-label`, `ref`, `autoFocus`, `className`, `onKeyDown`, `id`, `data-testid`, `maxLength`, `type="date"`), per-consumer validation (PageBrowser new-page slug check), and layout (`.pl-8` for search-icon offset).
+
+- **Subagent 1 (3 single-site components):** `SearchPanel.tsx:347`, `TagFilterPanel.tsx:252`, `TrashView.tsx:392`. +3 vitest tests (one per file): empty → no clear button; type → clear visible; click clear → value+list reset + `axe(container)` no new violations. Test count 152 → 155.
+- **Subagent 2 (10 sites in 2 components):** `BacklinkFilterBuilder.tsx:410,435,469,481,489,514,538,574` (8 filter categories incl. 2 `type="date"` inputs and a `maxLength={100}` tag-prefix) + `PageBrowser.tsx:321,343` (new-page creation with ref/id/validation + filter-search with `pl-8`). +5 test cases for Backlink (per-category coverage) and +3 for PageBrowser. Test count 131 → 139.
+
+**MAINT-90 — markdownlint cleanup (3 large docs, parallel per-file):**
+
+All 3 remaining ignored docs cleaned and de-ignored. Each subagent ran `npx markdownlint-cli2 --fix` then hand-fixed the residuals (mostly MD060 via Python scripts that only touched separator rows, not data rows).
+
+- **UX.md (253 → 0):** Rules fixed: MD031 (12, auto), MD032 (16, auto), MD012 (1, auto), MD040 (2 hand: `text` on batch-toolbar wireframe + inline-query DSL example), MD060 (222 via script). 117 lines changed (+73/−49).
+- **ARCHITECTURE.md (192 → 0):** Rules fixed: MD022/MD031/MD032 (29+2 auto), MD029 (1 auto — but orchestrator **reverted this** — see below), MD038 (5 auto — 3 partially reverted with `markdownlint-disable` comments per reviewer findings), MD056 (1 hand: escaped-pipe inside code span), MD060 (148 via script), MD040 (9 hand: 1 `sql`, 8 `text`). 381/357 lines changed.
+- **COMPARISON.md (170 → 0):** Rules fixed: MD034 (16 auto: bare URLs wrapped in `<...>`), MD032 (3 auto), MD036 (1 hand: emphasis scope change on totals line), MD060 (150 via script). 77 lines changed (+41/−41 = 6 net).
+
+**Orchestrator REQUEST-CHANGES handling (ARCHITECTURE.md):**
+
+Reviewer flagged 2 issues — both genuine drift from the auto-fix passes:
+
+1. **MD029 enumeration renumber broke the Sync Protocol Flow.** The numbered list at lines 1487-1502 was split by a merge-resolution table; after the table, `6. **Complete:**` was auto-fixed to `1. **Complete:**`, resetting the sequence. Orchestrator reverted to `6.` and added `<!-- markdownlint-disable-next-line MD029 -->` to keep markdownlint green.
+2. **MD038 code-span trailing-space loss (3 cases).** Auto-fix stripped the trailing space inside code spans: `` `# ` through `###### ` `` → `` `#` through `######` ``, and `` `> ` `` (×2, blockquote marker) → `` `>` ``. The trailing space is **syntactically required** per the doc's EBNF grammar (`heading := '#'{1,6} ' ' span+`, `blockquote := ('> ' span+ '\n')+`). Orchestrator reverted all 3 auto-fixes and wrapped the affected region with `<!-- markdownlint-disable MD038 --> … <!-- markdownlint-enable MD038 -->` (the Serialize table) + a `<!-- markdownlint-disable-next-line MD038 -->` on the prose line.
+
+Both fixes verified: `npx markdownlint-cli2 ARCHITECTURE.md` → zero errors after orchestrator reverts.
+
+### Files changed
+
+| Path | Change |
+|------|--------|
+| `src/components/SearchPanel.tsx` | `<Input>` → `<SearchInput>` (line 347). Import swap. |
+| `src/components/TagFilterPanel.tsx` | `<Input>` → `<SearchInput>` (line 252). Import swap. |
+| `src/components/TrashView.tsx` | `<Input>` → `<SearchInput>` (line 392). Import swap (removed `Input` entirely — no residual usage). |
+| `src/components/BacklinkFilterBuilder.tsx` | 8× `<Input>` → `<SearchInput>` across 6 filter categories. Import swap. |
+| `src/components/PageBrowser.tsx` | 2× `<Input>` → `<SearchInput>` (new-page + filter). Import swap (alphabetical). |
+| `src/components/__tests__/SearchPanel.test.tsx` | +1 test (`56 → 57`). |
+| `src/components/__tests__/TagFilterPanel.test.tsx` | +1 test (`35 → 36`). |
+| `src/components/__tests__/TrashView.test.tsx` | +1 test (`61 → 62`). |
+| `src/components/__tests__/BacklinkFilterBuilder.test.tsx` | +5 tests (`65 → 70`). |
+| `src/components/__tests__/PageBrowser.test.tsx` | +3 tests (`66 → 69`). |
+| `UX.md` | 117 lines (+73/−49): 29 MD022/MD031/MD032 auto + 1 MD012 + 2 MD040 hand + 222 MD060 via script. |
+| `ARCHITECTURE.md` | 381/357 lines: 27 MD022/MD032 auto + 2 MD031 + 1 MD038 (3 auto-fixes later reverted) + 1 MD056 hand (pipe escape) + 148 MD060 via script + 9 MD040 hand + 1 MD029 disabled. |
+| `COMPARISON.md` | 77 lines (+41/−41): 16 MD034 auto + 3 MD032 auto + 1 MD036 hand + 150 MD060 via script. |
+| `.markdownlint-cli2.jsonc` | Removed 3 entries from `ignores` array (`UX.md`, `ARCHITECTURE.md`, `COMPARISON.md`). Final `ignores` retains the 10 intentional entries. |
+| `REVIEW-LATER.md` | Removed UX-246 + MAINT-90 rows/details. Summary count 29 → 27; previously-resolved 370+ → 372+, 131 → 132 sessions. |
+| `SESSION-LOG.md` | This entry. |
+
+15 source/doc files + 2 state files in the commit.
+
+### Pipeline
+
+1. **PLAN.** After session 445, UX-246 (M, 13 sites, parallelisable into 2 subagents per REVIEW-LATER note) and MAINT-90 (S-M, 3 remaining docs, parallelisable one-per-file) were the two remaining non-deferred/non-blocked actionable items. Together they naturally split into 5 non-overlapping subagents — a full 5-way parallel batch.
+2. **BUILD (5 parallel subagents on main tree).** All 5 launched simultaneously as background subagents. Each prompt pinned the working directory, exact files to change, explicit "do NOT touch sibling subagent's scope" boundaries, verification commands (`npx vitest run <files>` or `npx markdownlint-cli2 <file>`). The 3 MAINT-90 subagents each edited `.markdownlint-cli2.jsonc` in parallel — `edit` tool's old-string matching correctly serialized the 3 orthogonal line removals (each subagent's old-string remained unique and valid after the others' edits).
+3. **REVIEW (5 read-only reviewers, pipelined).** Launched as each build completed. 4 APPROVE (UX-246a, UX-246b, MAINT-90 COMPARISON.md, MAINT-90 UX.md). 1 REQUEST-CHANGES (MAINT-90 ARCHITECTURE.md) handled by orchestrator (both findings fixed + re-verified with `npx markdownlint-cli2`).
+4. **MERGE.** No worktrees → no merge step.
+5. **ORCHESTRATOR FIXES (per REQUEST-CHANGES on ARCHITECTURE.md).**
+   - Reverted `1. **Complete:**` → `6. **Complete:**` + `<!-- markdownlint-disable-next-line MD029 -->` guard.
+   - Reverted 3 MD038 code-span trailing-space auto-fixes (serialize table heading-marker row, serialize table blockquote-marker row, parse-prose blockquote detection). Wrapped the Serialize table with `<!-- markdownlint-disable MD038 --> … <!-- markdownlint-enable MD038 -->`; added `<!-- markdownlint-disable-next-line MD038 -->` to the affected prose line.
+6. **VERIFY.** Post-orchestrator-fix:
+   - `npx markdownlint-cli2 ARCHITECTURE.md` → 0 errors.
+   - `npx vitest run <5 UX-246 test files>` → 294 tests passed across 5 files.
+7. **COMMIT.** Single atomic commit. `prek run --all-files` gate.
+8. **LOG.** This entry.
+
+### Verification
+
+- **Vitest UX-246 (5 test files):** 294 tests green (`57 + 36 + 62 + 70 + 69`).
+- **markdownlint per-doc:** UX.md / ARCHITECTURE.md / COMPARISON.md each report 0 errors.
+- **markdownlint full-repo scope:** per `prek run --all-files` output (all 25 hooks pass), no previously-ignored-now-surfaced violations elsewhere.
+- **Zero heading-text changes** across all 3 docs. Spot-check: `git diff UX.md ARCHITECTURE.md COMPARISON.md | grep -E "^[+-]#[^|]"` is empty.
+- **Cross-ref audit:** zero `{UX,ARCHITECTURE,COMPARISON}.md#anchor` references exist in the repo — no anchor breakage possible.
+- **Final `.markdownlint-cli2.jsonc` ignores:** 10 entries (SESSION-LOG.md, node_modules/**, dist/**, src-tauri/target/**, src-tauri/gen/**, AGENTS.md, **/AGENTS.md, PROMPT.md, REVIEW-LATER.md, FEATURE-MAP.md) — all intentional.
+
+### Caveats
+
+- **ARCHITECTURE.md MD038 semantic-preservation reverts.** Per the reviewer's finding, 3 auto-fixes stripped trailing spaces from code spans documenting markdown syntax markers (`# ` for headings, `> ` for blockquotes). The trailing space is syntactically required (documented in the doc's own EBNF grammar). Rather than accept the lint-fix's semantic drift, the orchestrator reverted and disabled MD038 for those specific locations via inline HTML comments. Net outcome: documentation accuracy preserved, markdownlint stays green.
+- **ARCHITECTURE.md MD029 enumeration revert.** Auto-fix mis-numbered step 6 as step 1 after an interrupting table. Fixed by reverting to `6.` with MD029 disabled for that single line. The alternative (converting step 6 into a separate list or merging it back into the original sequence) would have reorganized the Sync Protocol Flow section, which is out of scope for a lint cleanup.
+- **Cross-ref safety verified.** No `.md#anchor` references point into any of the 3 cleaned docs (pre-session grep). All `.md` citations point to the whole file or to prose section names, which are preserved by the "no heading text change" invariant the subagents maintained.
+- **PageBrowser a11y audit scoped intentionally.** UX-246b subagent scoped the axe audit to `[data-slot="search-input"]` because the page-row DOM has pre-existing `nested-interactive` violations (role="option" with nested buttons) orthogonal to SearchInput. This is consistent with how the file's other a11y tests handle the same limitation.
+
+---
+
 ## Session 445 — 5-item batch: UX-245, BUG-47, MAINT-89, TEST-39, MAINT-90 (sync-notes slice) (2026-04-20)
 
 **4 REVIEW-LATER items fully resolved + 1 partial (MAINT-90).** Open items: 33 → 29. One coherent batch across five domains: CSS-utility + component test (UX-245), Zustand store race fix + test (BUG-47), 5-file doc edit (MAINT-89), e2e helper relocation (TEST-39), and the `docs/SYNC-PLATFORM-NOTES.md` slice of MAINT-90. 5 parallel build subagents on the main tree (no overlapping files → no worktrees). 5 pipelined read-only technical reviews — all APPROVE, zero REQUEST-CHANGES. One atomic commit.
