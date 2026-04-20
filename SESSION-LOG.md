@@ -1,5 +1,79 @@
 # Session Log
 
+## Session 435 — UX-237 PageBrowser + PageOutline ring-inset fix (2026-04-20)
+
+**1 REVIEW-LATER item resolved. Open items 10 → 9.** User reported the focused-row ring in the pages list was cropped. Orchestrator + 1 build subagent + 2 pipelined review subagents (tech + UX) + 1 orchestrator-driven scope extension to `PageOutline` based on the UX reviewer's follow-up finding.
+
+### Resolved items
+
+- **UX-237** — Focused-row / focus-visible rings in `PageBrowser` and the heading buttons in `PageOutline` were cropped on the left/right edges by their respective `ScrollArea`'s `overflow-hidden`. Both components render full-width (or near-full-width) content inside a `ScrollArea.Viewport` whose own `overflow` clips any `box-shadow`-based outset ring that paints beyond the element's border box. Fix: add Tailwind's `ring-inset` / `focus-visible:ring-inset` to each affected class set so the ring is drawn via `box-shadow: inset …` inside the element's content box — never clipped, no layout change, no breathing-room requirement on ancestors. Five sites touched across two files. 3 new regression tests + 1 extended existing test (78/78 targeted tests green).
+
+### Files changed
+
+| Path | Change |
+|------|--------|
+| `src/components/PageBrowser.tsx` | 4 class-string edits — row highlight (line 484) + inner page-item button (line 514) + starred-toggle Button className (line 500) + delete Button className (line 539) |
+| `src/components/PageOutline.tsx` | 1 class-string edit — heading button focus ring (line 94) |
+| `src/components/__tests__/PageBrowser.test.tsx` | 1 extended test + 2 new regression tests (UX-237 focused-row + UX-237 star/delete buttons) |
+| `src/components/__tests__/PageOutline.test.tsx` | 1 new regression test (UX-237 heading buttons) |
+| `REVIEW-LATER.md` | remove UX-237 table row + detail section; summary 10 → 9 + `124 sessions`, `349+ resolved` |
+| `SESSION-LOG.md` | this entry |
+
+### Audit table (subagent, orchestrator-verified)
+
+| # | Site | Overflow-clipped? | Fix applied? | Rationale |
+|---|------|-------------------|--------------|-----------|
+| 1 | `PageBrowser.tsx:484` (focused row) | YES | YES | Row is `w-full` directly in an internal `ScrollArea` at line 415 with no `viewportClassName` padding; viewport edge is 0 px from the row edge. |
+| 2 | `PageBrowser.tsx:500` (starred-toggle Button) | YES | YES | Flush against row left edge; Button-CVA `focus-visible:ring-[3px]` paints outside the button box and into the clipped viewport margin. |
+| 3 | `PageBrowser.tsx:514` (inner page-item button) | YES | YES | Same as (1) — the inner button's own `focus-visible:ring-[3px]` is also cropped. |
+| 4 | `PageBrowser.tsx:539` (delete Button) | YES | YES | Flush against row right edge; same mechanism as (2). |
+| 5 | `PageOutline.tsx:94` (heading button) | YES | YES | Added after UX-review follow-up. Heading button is `w-full` inside a `<ScrollArea className="flex-1 px-4 pb-4">` — the `px-4` sits on `ScrollArea.Root`, not the Viewport, so the 3-px focus-visible ring is cropped by `Viewport`'s own `overflow: scroll`. Root padding only pushes the Viewport inward from the Root edge; it does not create breathing room inside the Viewport. Level-1 headings (the first `<li>`) have `paddingLeft: 0`, so the button is flush against the Viewport's left edge — ring cropped. Applied the same `ring-inset` fix as PageBrowser. |
+| 6 | `TrashView.tsx:484` | NO | No | Main-content `ScrollArea` at `App.tsx:948` has `viewportClassName="p-4 md:p-6 …"` — 16–24 px breathing room, far more than 2–3 px ring overflow. |
+| 7 | `UnlinkedReferences.tsx:31` | NO | No | Same main-content `ScrollArea` — padded viewport. |
+| 8 | `BlockListItem.tsx:140` | NO | No | Used in `DuePanel` / `DonePanel` / `AgendaResults` / `journal/UnfinishedTasks`; all four callers are inside the padded main-content `ScrollArea`. |
+| 9 | `TagFilterPanel.tsx:392, 459` | NO | No | No internal `ScrollArea`; padded main-content viewport. |
+| 10 | `HistoryListItem.tsx:226` | NO | No | `HistoryView` has no internal overflow container; padded main-content viewport. |
+| 11 | `PageTreeItem.tsx:93, 142` | NO | No | Inline action buttons with depth-indent padding and `px-2` parent padding; 3-px ring has padding breathing room. |
+
+**Heuristic:** site needs fix iff the focused element's nearest overflow ancestor sits within ring-thickness (2–3 px) of the element's edge. The app-shell main-content `ScrollArea` uses `viewportClassName="p-4 md:p-6 …"` which is 16–24 px of breathing room — more than enough. Only `PageBrowser`'s internal `ScrollArea` (no viewportClassName) and `PageOutline`'s internal `ScrollArea` (padding on Root, not Viewport) produce 0 px breathing room and trigger the bug.
+
+### Verification
+
+- **Targeted vitest:** `npx vitest run src/components/__tests__/PageBrowser.test.tsx src/components/__tests__/PageOutline.test.tsx` → **78/78 passing** (PageBrowser 66/66 + PageOutline 12/12). All 4 new/extended regression tests pass and would have failed before the fix.
+- **No type / ref / structure change.** All five source-file edits are pure Tailwind class-literal additions. TypeScript type-check is a no-op.
+- **No other components touched.** `src/components/ui/button.tsx` (CVA base) unchanged — intentional. Some button contexts (form inputs, dialog buttons) need outset rings; `ring-inset` is a local per-site override, not a global token change.
+- **No sqlx / specta / Rust impact.** Frontend-only change.
+- **Full-suite vitest + prek:** see Pipeline step 6 below.
+
+### Review subagent findings
+
+- **Technical review — APPROVE** (1 scope-finding flagged as blocking; orchestrator-handled per the subagent's instruction boundary). All 8 code-level findings were ✓: ring-inset class-string correctness at each of the 4 PageBrowser sites, scope compliance (no CVA / ScrollArea / docs changes), main-content `ScrollArea` padding confirmed at `App.tsx:948` (`viewportClassName="p-4 md:p-6 …"`), 3 new regression tests with exact-class assertions that would have failed before the fix, Tailwind-v4 compat confirmed (no `--tw-ring-*` overrides in `src/index.css`), a11y contrast preserved, behavioural risk nil (ring-inset only flips the shadow mode; hover / active states untouched), Button CVA base still outset. The "blocking" finding was that the builder had not removed the UX-237 row from `REVIEW-LATER.md` — but the build subagent's task spec explicitly told it orchestrator handles that file, so the reviewer was flagging a process-boundary that the orchestrator then closed in this commit.
+- **UX review — APPROVE WITH FOLLOW-UP.** Confirmed visual correctness: ring-inset paints inside the row/button content box with no overlap against functional elements (icons + titles have enough `px-*` / `gap-*` breathing room); ring color `ring-ring/50` retained, no contrast regression; screen-reader `aria-selected` unchanged; mobile parity maintained; all 3 "Do NOT" items from REVIEW-LATER respected (overflow-hidden kept, ring not moved to inner child, no margin added, no background-only replacement). Flagged one follow-up: **`PageOutline.tsx:94` has the same mechanism**. Orchestrator verified by reading `PageOutline.tsx:81` (`<ScrollArea className="flex-1 px-4 pb-4">`) — `px-4` is on the Root, not the Viewport, so level-1 heading buttons (`w-full`, `paddingLeft: 0` on their parent `<li>`) are flush against the Viewport's left edge; their 3-px focus-visible ring is cropped identically. Applied the same `ring-inset` fix + a regression test in this same batch. No new REVIEW-LATER item — extending the scope in place was the cheaper + cleaner option (1-line fix + 1 test, same root cause, same review evidence).
+
+### Pipeline
+
+1. **PLAN.** Re-read REVIEW-LATER.md. UX-237 was the only freshly-actionable item; other open items are all DEFERRED (publish-target cluster), deliberate non-fixes (PERF-19/20/23), blocked (TEST-1d), or too large (FEAT-4). Decided to extend the item's implicit audit recommendation ("consider grep-ing") into a real audit of the 7 sites that use the same `ring-2 ring-ring/50` pattern.
+2. **BUILD (1 background subagent).** Single subagent did the audit + applied the fix to PageBrowser (4 sites) + added 3 regression tests. The audit concluded only PageBrowser was actually cropped (other sites inherit the padded main-content ScrollArea).
+3. **REVIEW (2 pipelined background subagents).** Tech reviewer: APPROVE (with the orchestrator-boundary process note). UX reviewer: APPROVE with a follow-up finding that PageOutline has a separate internal ScrollArea that the build subagent's heuristic missed — `px-4` on the ScrollArea Root does not produce breathing room inside the Viewport.
+4. **FIX (orchestrator).** Applied the same `ring-inset` fix to `PageOutline.tsx:94` + added a regression test. 1-line change + 1 new `it(...)` block. 78/78 tests green (PageBrowser 66 + PageOutline 12).
+5. **MERGE.** No worktrees used — 4 files changed across one session, 0 conflicts.
+6. **COMMIT.** See next step.
+7. **LOG.** This entry + REVIEW-LATER.md summary update (10 → 9, sessions 123 → 124, resolved 348+ → 349+).
+
+### Honest caveats
+
+- **Not manually verified in-browser.** The UX reviewer's visual-verification stage (chrome-browser / chrome-devtools MCP screenshots at http://localhost:5173) was not run in this session — the environment path was not set up. The fix is DOM-provable (the class-list assertions would have failed before the fix, confirming the intent is plumbed), and the `ring-inset` behaviour is a well-documented Tailwind utility. If a visual regression surfaces later (unexpected ring-overlap on an icon at some viewport width), the fallback is option 2 from the REVIEW-LATER spec (horizontal padding on the virtualizer scroll content).
+- **PageTreeItem not touched.** The builder's audit marked it NO and the UX reviewer agreed. If a manual inspection later shows clipping on the inline create-under / action buttons inside a deeply-indented page tree, apply the same `ring-inset` fix there — no new REVIEW-LATER item needed; the pattern is obvious.
+- **No broader grep audit run.** The UX reviewer recommended a wider sweep (`ring-2|ring-[3px]` inside any container with `ScrollArea` / `overflow-*` / `max-h-*`). The build subagent's audit covered 7 primary sites (matching `ring-2 ring-ring/*`) plus the 4 PageBrowser inner-button focus rings + PageOutline. That's the bounded set of the known-pattern callers; anything else not matching those patterns wasn't a reported user issue. Not filing a broader-audit follow-up — if a new clipping is reported, fix it in place using the same reasoning.
+- **Button CVA unchanged.** Decision sticks: a global `ring-inset` in the Button CVA base would change every button's focus appearance across the whole app, including outside constrained ScrollArea contexts where the outset halo is the design intent. Keeping the fix local means per-site overrides only where the clipping actually happens.
+
+### Watch-list (not filed)
+
+- **Broader grep audit for focus-ring clipping.** If a future session adds another virtualized list or an overflow-clipped panel with full-width items, check for the same `ring-inset` need at that time. No standing audit debt.
+- **Manual visual verification.** Optional; if a UX report surfaces that the inset ring looks weaker than expected, revisit the fix-direction options (option 2: horizontal padding on virtualizer content; option 3: custom `.page-browser-row--focused` box-shadow class).
+
+---
+
 ## Session 434 — PUB-1 + PUB-6 + partial PUB-7: GPL-3.0 license, CoC, CONTRIBUTING (2026-04-20)
 
 **2 REVIEW-LATER items resolved, 1 partially-resolved + re-scoped. Open items 11 → 9.** Orchestrator-only session (no subagents): the DECIDED PUB bundle was mostly verbatim-text drops + 3-line config edits, cleaner done directly than parcelled to a subagent. User confirmed two scope decisions ahead of implementation: (a) no SPDX headers in source files — rely on LICENSE + `license` fields in `package.json` / `Cargo.toml`; (b) defer `SECURITY.md` alongside the publish-target cluster (PUB-5). Remaining `PUB-*` items are all DEFERRED now.

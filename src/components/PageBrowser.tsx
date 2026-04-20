@@ -481,7 +481,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                   tabIndex={-1}
                   className={cn(
                     'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50',
-                    focusedIndex === index && 'ring-2 ring-ring/50 bg-accent/30',
+                    focusedIndex === index && 'ring-2 ring-inset ring-ring/50 bg-accent/30',
                   )}
                   style={{
                     position: 'absolute',
@@ -497,7 +497,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                     aria-label={
                       isStarred(page.id) ? t('pageBrowser.unstarPage') : t('pageBrowser.starPage')
                     }
-                    className="star-toggle shrink-0 h-6 w-6 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-star data-[starred=true]:opacity-100 data-[starred=true]:text-star"
+                    className="star-toggle shrink-0 h-6 w-6 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 focus-visible:ring-inset transition-opacity text-muted-foreground hover:text-star data-[starred=true]:opacity-100 data-[starred=true]:text-star"
                     data-starred={isStarred(page.id)}
                     onClick={(e) => {
                       e.stopPropagation()
@@ -511,7 +511,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                   </Button>
                   <button
                     type="button"
-                    className="page-browser-item flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+                    className="page-browser-item flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50 focus-visible:outline-hidden"
                     onClick={() =>
                       onPageSelect?.(page.id, page.content ?? t('pageBrowser.untitled'))
                     }
@@ -536,7 +536,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                     variant="ghost"
                     size="icon-xs"
                     aria-label={t('pageBrowser.deleteButton')}
-                    className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
+                    className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target focus-visible:opacity-100 focus-visible:ring-inset transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
                     disabled={deletingId === page.id}
                     onClick={(e) => {
                       e.stopPropagation()

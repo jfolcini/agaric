@@ -573,6 +573,52 @@ describe('PageBrowser', () => {
     expect(pageBtn.className).toContain('focus-visible:ring-[3px]')
     expect(pageBtn.className).toContain('focus-visible:ring-ring/50')
     expect(pageBtn.className).toContain('focus-visible:outline-hidden')
+    // UX-237: focus ring must be inset so the inner ScrollArea's
+    // `overflow-hidden` does not clip its left/right legs.
+    expect(pageBtn).toHaveClass('focus-visible:ring-inset')
+  })
+
+  it('UX-237: focused row highlight uses ring-inset to avoid ScrollArea clipping', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      items: [makePage({ id: 'P1', content: 'Inset Page' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<PageBrowser />)
+
+    await screen.findByText('Inset Page')
+
+    // focusedIndex defaults to 0, so the first (and only) virtualized row
+    // renders selected with the keyboard-navigation highlight classes.
+    // `data-page-item` scopes away the native <option> elements in the
+    // sort <select> which share role="option".
+    const focusedRow = document.querySelector(
+      '[data-page-item][aria-selected="true"]',
+    ) as HTMLElement | null
+    expect(focusedRow).not.toBeNull()
+    expect(focusedRow).toHaveClass('ring-2')
+    expect(focusedRow).toHaveClass('ring-inset')
+    expect(focusedRow).toHaveClass('ring-ring/50')
+    expect(focusedRow).toHaveClass('bg-accent/30')
+  })
+
+  it('UX-237: star-toggle and delete buttons have ring-inset focus rings', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      items: [makePage({ id: 'P1', content: 'Inset Buttons Page' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<PageBrowser />)
+
+    await screen.findByText('Inset Buttons Page')
+
+    const pageRow = screen.getByText('Inset Buttons Page').closest('.group') as HTMLElement
+    const starBtn = within(pageRow).getByRole('button', { name: /star page/i })
+    const deleteBtn = findTrashButton(pageRow)
+    expect(starBtn).toHaveClass('focus-visible:ring-inset')
+    expect(deleteBtn).toHaveClass('focus-visible:ring-inset')
   })
 
   it('delete button is disabled while deletion is in progress', async () => {
