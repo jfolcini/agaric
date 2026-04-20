@@ -1,5 +1,72 @@
 # Session Log
 
+## Session 434 — PUB-1 + PUB-6 + partial PUB-7: GPL-3.0 license, CoC, CONTRIBUTING (2026-04-20)
+
+**2 REVIEW-LATER items resolved, 1 partially-resolved + re-scoped. Open items 11 → 9.** Orchestrator-only session (no subagents): the DECIDED PUB bundle was mostly verbatim-text drops + 3-line config edits, cleaner done directly than parcelled to a subagent. User confirmed two scope decisions ahead of implementation: (a) no SPDX headers in source files — rely on LICENSE + `license` fields in `package.json` / `Cargo.toml`; (b) defer `SECURITY.md` alongside the publish-target cluster (PUB-5). Remaining `PUB-*` items are all DEFERRED now.
+
+### Resolved items
+
+- **PUB-1** — Licence chosen and landed: **GPL-3.0-or-later**. Verbatim `LICENSE` file fetched from `https://www.gnu.org/licenses/gpl-3.0.txt` (canonical source, 674 lines, sha256 `3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986`). `license` field added to both `package.json` (`"license": "GPL-3.0-or-later"`) and `src-tauri/Cargo.toml` (`license = "GPL-3.0-or-later"`). License-checker allowlists in `prek.toml` and `.github/workflows/ci.yml` re-verified — no changes needed (both already `--excludePackages 'agaric@0.1.0'`, and all 87 of the project's runtime npm deps continue to match `MIT / ISC / Apache-2.0 / BSD-*/ MPL-2.0 / MIT-0 / CC0-1.0 / Python-2.0 / BlueOak-1.0.0 / CC-BY-3.0 / CC-BY-4.0 / 0BSD / Unlicense`, which are all GPL-3.0-compatible for a GPL-3.0-licensed work). `cargo deny`'s allowed Rust licenses list in `src-tauri/deny.toml` is likewise unchanged; `[licenses.private] ignore = true` means our own `publish = false` crate's `license = "GPL-3.0-or-later"` is not cross-checked against the allowlist. DCO/CLA decision deferred to the first outside-contribution request (documented in `CONTRIBUTING.md`). No SPDX headers per user decision — consistent with many GPL-3 projects; contributors may add per-file headers on new code if they want.
+
+- **PUB-6** — `README.md:167-169` footer rewritten from "Private project — not yet licensed for distribution" to "Agaric is free software released under the GNU General Public License, version 3 or later. See [LICENSE](LICENSE) for the full terms." (exact paragraph specified in the REVIEW-LATER spec, with `LICENSE` as a Markdown link). Landed in the same commit as PUB-1 per the decision note.
+
+- **PUB-7 (partial)** — 3 of the 4 files shipped: `LICENSE` (via PUB-1), `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`. `SECURITY.md` is scoped out of this batch and the PUB-7 entry in REVIEW-LATER.md is narrowed in place to just the remaining SECURITY.md work (status flipped DECIDED → DEFERRED, new blocker: publish-target/timing cluster with PUB-5).
+  - `CONTRIBUTING.md` (~70 lines): points at `AGENTS.md` (invariants + conventions), `BUILD.md` (build toolchain), `FEATURE-MAP.md` and `ARCHITECTURE.md` (feature tour); documents the `prek run --all-files` gate + coupled-dependency-stack rule + the `cargo sqlx prepare -- --lib` and `cargo test -- specta_tests --ignored` regeneration commands that must ride in the same commit as the SQL / Rust-type change; explicit DCO stance (not currently required; will be added later if needed); forward-references `PROMPT.md` for maintainers running subagent pipelines but does not require contributors to replicate that workflow. Opens a `GitHub Discussions` / `[WIP]` draft PR channel for questions so future contributors see the answers in public.
+  - `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1 verbatim): fetched from the upstream source repo (`https://raw.githubusercontent.com/EthicalSource/contributor_covenant/release/content/version/2/1/code_of_conduct.md`), stripped the 5-line TOML front-matter (`version`, `aliases`, `reportingPlaceholder`), and replaced the `[INSERT CONTACT METHOD]` placeholder in the Enforcement section with "via a private channel. Contact details will be published in `SECURITY.md` before the first public release." This keeps the CoC shippable today while forward-referencing the SECURITY.md work that has not landed yet.
+
+### Re-scoped items
+
+- **PUB-7** (formerly "Missing standard open-source repo files: LICENSE, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT") is now narrowed in place to **"Missing `SECURITY.md` — private-disclosure contact pending publish target"**. Status flipped DECIDED → DEFERRED; re-bundles with PUB-5 (publish target/timing). When PUB-5 unblocks, the SECURITY.md work is ~30 min: pick a private-disclosure channel, write 3 paragraphs (contact + threat-model restatement + scope), and update the `CODE_OF_CONDUCT.md` Enforcement pointer to resolve cleanly (it currently forward-references the not-yet-shipped SECURITY.md). No user action required until PUB-5 is ready to unblock.
+
+### Files changed (summary)
+
+| Path | Change |
+|------|--------|
+| `LICENSE` | **new** — verbatim GPL-3.0 text, 674 lines, fetched from `gnu.org/licenses/gpl-3.0.txt` |
+| `CODE_OF_CONDUCT.md` | **new** — Contributor Covenant 2.1 verbatim, front-matter stripped, enforcement contact deferred to SECURITY.md |
+| `CONTRIBUTING.md` | **new** — ~70 lines pointing at AGENTS.md / BUILD.md / FEATURE-MAP.md / ARCHITECTURE.md + `prek` gate + coupled-dep rule + DCO stance |
+| `README.md` | license footer rewritten to the GPL-3.0-or-later paragraph with LICENSE link (PUB-6) |
+| `package.json` | `"license": "GPL-3.0-or-later"` added below `"version"` (PUB-1) |
+| `src-tauri/Cargo.toml` | `license = "GPL-3.0-or-later"` added inside `[package]` (PUB-1) |
+| `REVIEW-LATER.md` | remove PUB-1 + PUB-6 entirely; narrow PUB-7 in place to SECURITY.md + DEFERRED; preamble now says all remaining PUB items are DEFERRED; summary 11 → 9 + `123 sessions`, `348+ resolved` |
+| `SESSION-LOG.md` | this entry |
+
+### Verification
+
+- **prek `run --all-files`:** all 25 hooks green on the first run. `license-checker` hook explicitly verified the allowlist is still compatible (npm side). `cargo deny` hook explicitly verified the Rust side (private crate ignored per `[licenses.private] ignore = true`).
+- **No test-suite changes in this batch.** vitest / nextest baselines from session 433 stand (7401/7402 + 2172/2172).
+- **Manual spot-checks:**
+  - `wc -l LICENSE` → 674 (matches upstream verbatim-length).
+  - `sha256sum LICENSE` → `3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986`.
+  - `jq '.license' package.json` → `"GPL-3.0-or-later"`.
+  - `grep '^license' src-tauri/Cargo.toml` → `license = "GPL-3.0-or-later"`.
+  - `grep '^## License' README.md` + following paragraph confirms the new footer text.
+
+### Pipeline
+
+1. **PLAN.** Re-read REVIEW-LATER.md; enumerated actionable items. Only PUB-1 + PUB-6 + PUB-7 were DECIDED and bundle-ready; all remaining items were DEFERRED (publish-target gated or user-only) or explicitly deferred-non-fixes (PERF-19/20/23) or blocked (TEST-1d requires a 95% Playwright baseline) or too large for a single batch (FEAT-4 is L-cost). Confirmed with user: (a) skip SPDX source-file headers; (b) defer SECURITY.md alongside PUB-5.
+2. **BUILD.** Orchestrator-only — no subagents. The work was 2 file fetches + 3 file creations + 3 file edits + 1 config-review. Smaller than the subagent-spawn overhead. GPL-3.0 text came from `gnu.org` via `curl -sSf` (canonical source; 674 lines preserved byte-for-byte vs. the reformatted-for-display webfetch). Contributor Covenant 2.1 came from the EthicalSource release repo; front-matter stripped and the enforcement `[INSERT CONTACT METHOD]` placeholder replaced with a deferred-contact statement pointing at `SECURITY.md`.
+3. **REVIEW.** Self-review via prek (25 hooks) and manual spot-checks of the fetched-text artefacts. No separate review subagent — the risk surface is all verbatim text + 1-line config additions + a well-specified README paragraph, none of which is subagent-worthy under PROMPT.md's cost model. The checks that a reviewer would run (license-checker compatibility, file existence, sha256 of LICENSE, paragraph match on README) were run directly.
+4. **MERGE.** No worktrees used — 7 files changed, 0 conflicts.
+5. **COMMIT.** Single commit landing all three items per the bundled-decision note in PUB-6.
+6. **LOG.** This entry + REVIEW-LATER.md summary update + narrow PUB-7 in place.
+
+### Honest caveats
+
+- **Contributor Covenant enforcement contact is forward-referenced, not resolved.** The `CODE_OF_CONDUCT.md` Enforcement section says "Contact details will be published in `SECURITY.md` before the first public release." That pointer resolves to a file that does not yet exist. Acceptable pre-public-release — there's no community yet to enforce against — but must be resolved in the PUB-7/PUB-5 follow-up session before the first public release. Any PR that proposes shipping a public release without resolving this pointer should be rejected.
+- **No DCO / CLA tooling is in place.** `CONTRIBUTING.md` documents the "not currently required" stance. If the first substantial outside contribution lands, revisit: either add a `signed-off-by` pre-commit check + update CONTRIBUTING, or stand up a CLA bot. No action needed until the trigger fires.
+- **GPL-3.0 compatibility was sanity-checked at the allowlist level only**, not re-audited across all 87 runtime npm deps' actual SPDX identifiers. The allowlist + existing green `license-checker` run provides a strong signal. If a future dep bump introduces a GPL-3-incompatible dep (e.g., an LGPL-3-only transitive that can't be relinked, or a proprietary shim), the `license-checker` hook will fail at pre-commit and the commit will be rejected before landing — no standing audit debt.
+- **No SPDX headers on source files.** Per user decision. If a future auditor asks for per-file attribution, the answer is LICENSE + package metadata. Adding SPDX headers later is a mechanical `sed -i '1i\// SPDX-License-Identifier: GPL-3.0-or-later'` pass and doesn't invalidate any prior commit — purely additive.
+- **Employer IP clearance (PUB-3) remains user-only and unresolved.** Agents must not push / change repo visibility / publish a public release until the user explicitly states "PUB-3 is cleared" per that item's "Not an agent task" clause.
+
+### Watch-list (not filed)
+
+- **`SECURITY.md` contact channel.** When PUB-5 unblocks, pick between: personal email / Matrix handle / GitHub Security Advisories-only. Current CoC forward-reference assumes the file will exist at publish time; missing it breaks a documented link.
+- **Re-audit GPL compatibility on next major dep bump.** The allowlist gate catches common incompatibilities but not every edge (e.g., a dual-licensed dep advertising only one branch at SPDX time). If a major Rust or JS stack bump lands, spot-check the diff of `license-checker` output and `cargo deny` output.
+- **SPDX headers.** Pre-decided out of scope. If a contributor asks for them, 10-minute mechanical pass.
+
+---
+
 ## Session 433 — UX-232 + UX-233 + UX-234 + UX-235 + UX-236 batch resolution (2026-04-20)
 
 **5 REVIEW-LATER items resolved in one session. Open items 16 → 11.** Orchestrator ran PROMPT.md's PLAN→BUILD→REVIEW→MERGE→COMMIT loop with 4 parallel build subagents + 7 pipelined review subagents (3 tech + 3 UX + 1 post-review for the context-menu bug the UX reviewer caught on UX-234). Orchestrator owned UX.md/FEATURE-MAP.md/ARCHITECTURE.md doc updates + the BlockContextMenu pre-existing-bug fix + the missed BlockTree cycle-order test assertions.

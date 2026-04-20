@@ -166,4 +166,4 @@ SQLite database stored at the platform's app data directory. WAL mode with forei
 
 ## License
 
-Private project — not yet licensed for distribution.
+Agaric is free software released under the GNU General Public License, version 3 or later. See [LICENSE](LICENSE) for the full terms.
