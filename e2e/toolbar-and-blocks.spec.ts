@@ -1,4 +1,13 @@
-import { dragBlock, expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
+import {
+  dragBlock,
+  expect,
+  focusBlock,
+  openPage,
+  saveBlock,
+  selectEditorRange,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E tests for toolbar buttons and block interactions.
@@ -61,9 +70,8 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
     await page.keyboard.press('Control+a')
     await editor.type('bold test')
 
-    // Select "bold" (4 chars from the start)
-    await page.keyboard.press('Home')
-    for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowRight')
+    // Select "bold" — chars 0..4
+    await selectEditorRange(page, 0, 4)
 
     // Apply bold via toolbar
     await page.getByRole('button', { name: 'Bold' }).click()
@@ -89,9 +97,8 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
     await page.keyboard.press('Control+a')
     await editor.type('italic test')
 
-    // Select "italic" (6 chars)
-    await page.keyboard.press('Home')
-    for (let i = 0; i < 6; i++) await page.keyboard.press('Shift+ArrowRight')
+    // Select "italic" — chars 0..6
+    await selectEditorRange(page, 0, 6)
 
     await page.getByRole('button', { name: 'Italic' }).click()
 
@@ -116,10 +123,8 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
     await page.keyboard.press('Control+a')
     await editor.type('some code here')
 
-    // Select "code" (4 chars, starting at position 5)
-    await page.keyboard.press('Home')
-    for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight')
-    for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowRight')
+    // Select "code" — chars 5..9 ("some " is 5 chars)
+    await selectEditorRange(page, 5, 9)
 
     // Apply inline code
     await page.getByRole('button', { name: 'Code', exact: true }).click()
@@ -149,23 +154,33 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
     await openPage(page, 'Getting Started')
     const editor = await focusBlock(page)
 
-    // Toggle code block
-    await page.getByRole('button', { name: 'Code block' }).click()
-    await expect(page.getByRole('button', { name: 'Code block' })).toHaveAttribute(
+    // First, clear the existing block content while it is still a plain
+    // paragraph — easier to reason about than selecting across a code
+    // block boundary.
+    await page.keyboard.press('Control+a')
+    await page.keyboard.press('Delete')
+
+    // Toggle code block via Ctrl+Shift+C (toolbar no longer has a plain
+    // "Code block" button — only a "Code block language" picker.
+    // Ctrl+Shift+C is the bound shortcut, see keyboard-config.ts).
+    await page.keyboard.press('Control+Shift+KeyC')
+    await expect(page.getByRole('button', { name: 'Code block language' })).toHaveAttribute(
       'aria-pressed',
       'true',
     )
 
-    // Type code content
-    await page.keyboard.press('Control+a')
+    // Type code content into the (now-empty) code block
     await editor.type('const x = 42')
 
-    // Save and verify static render has <pre>
-    await saveBlock(page)
+    // Save by blurring the editor (click the app header — idempotent,
+    // non-focusable element). Enter within a code block inserts a
+    // newline, not a save, so we can't use the standard saveBlock helper.
+    await page.locator('header').first().click()
     const staticBlock = page
       .locator('[data-testid="sortable-block"]')
       .first()
       .locator('[data-testid="block-static"]')
+    await expect(staticBlock).toBeVisible()
     await expect(staticBlock.locator('pre')).toBeVisible()
     await expect(staticBlock.locator('pre')).toContainText('const x = 42')
   })
@@ -240,17 +255,24 @@ test.describe('Link buttons', () => {
     await urlInput.fill('https://example.com')
     await urlInput.press('Enter')
 
-    // Verify link appears in editor
-    await expect(
-      page.locator('[data-testid="block-editor"] [data-testid="external-link"]'),
-    ).toBeVisible()
+    // Verify link appears in editor. During edit mode the TipTap
+    // ExternalLink extension emits `<a class="external-link">` without a
+    // testid — the testid is only added by RichContentRenderer /
+    // StaticBlock. Scope via the CSS class inside the block-editor.
+    await expect(page.locator('[data-testid="block-editor"] a.external-link')).toBeVisible()
 
-    // Save and verify static render has the external link
-    await saveBlock(page)
+    // Save by blurring the editor (click the app header — idempotent,
+    // non-focusable element). Pressing Enter here would split the
+    // paragraph inside the link mark instead of flushing the block
+    // (the cursor lives at end-of-link = end-of-paragraph after Enter
+    // in the popover, and closing the popover may leave focus on the
+    // trigger button, bypassing the block-level Enter handler).
+    await page.locator('header').first().click()
     const staticBlock = page
       .locator('[data-testid="sortable-block"]')
       .first()
       .locator('[data-testid="block-static"]')
+    await expect(staticBlock).toBeVisible()
     await expect(staticBlock.locator('[data-testid="external-link"]')).toBeVisible()
   })
 
@@ -334,19 +356,26 @@ test.describe('Link buttons', () => {
 })
 
 // ===========================================================================
-// 4. Priority buttons
+// 4. Priority shortcuts
 // ===========================================================================
 
-test.describe('Priority buttons', () => {
+test.describe('Priority shortcuts', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
 
-  test('Priority 1 button sets high priority, saves, and persists', async ({ page }) => {
+  // The toolbar no longer exposes three separate "Priority 1/2/3" buttons —
+  // it has a single "Cycle priority" button (see `FormattingToolbar.tsx`).
+  // Direct priority selection is available via the keyboard shortcuts
+  // Ctrl+Shift+1 / Ctrl+Shift+2 / Ctrl+Shift+3 (see keyboard-config.ts
+  // and `PriorityShortcuts` in `use-roving-editor.ts`). The tests below
+  // exercise those shortcut paths.
+
+  test('Ctrl+Shift+1 sets high priority, saves, and persists', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
 
-    await page.getByRole('button', { name: 'Priority 1 (high)' }).click()
+    await page.keyboard.press('Control+Shift+Digit1')
 
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     const badge = firstBlock.locator('[data-testid="priority-badge"]')
@@ -360,11 +389,11 @@ test.describe('Priority buttons', () => {
     await expect(firstBlock.locator('[data-testid="priority-badge"]')).toHaveText('P1')
   })
 
-  test('Priority 2 button sets medium priority, saves, and persists', async ({ page }) => {
+  test('Ctrl+Shift+2 sets medium priority, saves, and persists', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
 
-    await page.getByRole('button', { name: 'Priority 2 (medium)' }).click()
+    await page.keyboard.press('Control+Shift+Digit2')
 
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     const badge = firstBlock.locator('[data-testid="priority-badge"]')
@@ -377,11 +406,11 @@ test.describe('Priority buttons', () => {
     await expect(firstBlock.locator('[data-testid="priority-badge"]')).toHaveText('P2')
   })
 
-  test('Priority 3 button sets low priority, saves, and persists', async ({ page }) => {
+  test('Ctrl+Shift+3 sets low priority, saves, and persists', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
 
-    await page.getByRole('button', { name: 'Priority 3 (low)' }).click()
+    await page.keyboard.press('Control+Shift+Digit3')
 
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     const badge = firstBlock.locator('[data-testid="priority-badge"]')
@@ -485,9 +514,14 @@ test.describe('Block interactions', () => {
     const blocks = page.locator('[data-testid="sortable-block"]')
     await expect(blocks).toHaveCount(2)
 
-    // Capture original order
-    const firstText = await blocks.nth(0).locator('[data-testid="block-static"]').innerText()
-    const secondText = await blocks.nth(1).locator('[data-testid="block-static"]').innerText()
+    // Capture original order by data-block-id (stable regardless of edit/
+    // static mode — innerText() of block-static reflects mark-stripped
+    // text, and after a drop the new-index-0 block can briefly open in
+    // edit mode, which hides block-static and masks the assertion).
+    const firstId = await blocks.nth(0).getAttribute('data-block-id')
+    const secondId = await blocks.nth(1).getAttribute('data-block-id')
+    expect(firstId).toBeTruthy()
+    expect(secondId).toBeTruthy()
 
     // Drag second block to first position
     const source = blocks.nth(1).locator('[data-testid="drag-handle"]')
@@ -500,13 +534,9 @@ test.describe('Block interactions', () => {
     // Perform drag using shared helper (handles dnd-kit PointerSensor delay)
     await dragBlock(page, source, target)
 
-    // Verify order swapped
-    await expect(blocks.nth(0).locator('[data-testid="block-static"]')).toHaveText(secondText, {
-      timeout: 5000,
-    })
-    await expect(blocks.nth(1).locator('[data-testid="block-static"]')).toHaveText(firstText, {
-      timeout: 5000,
-    })
+    // Verify order swapped by data-block-id
+    await expect(blocks.nth(0)).toHaveAttribute('data-block-id', secondId ?? '', { timeout: 5000 })
+    await expect(blocks.nth(1)).toHaveAttribute('data-block-id', firstId ?? '', { timeout: 5000 })
   })
 
   test('context menu appears on right-click', async ({ page }) => {

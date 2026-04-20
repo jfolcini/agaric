@@ -151,6 +151,77 @@ describe('createRefsAndBlocks', () => {
     const labels = buttons.map((b) => b.label)
     expect(labels).toEqual(['toolbar.internalLink', 'toolbar.insertTag', 'toolbar.blockquote'])
   })
+
+  // Regression coverage for the "Insert tag" button: the AtTagPicker
+  // extension requires `@` to be preceded by whitespace / NBSP / newline
+  // (or be at the start of a block) to open the picker. If the button
+  // inserts a bare `@` in the middle of a word, the picker silently no-ops
+  // and the user sees an orphan `@` glyph instead of the suggestion popup.
+  // See `src/editor/extensions/at-tag-picker.ts :: allowedPrefixes`.
+  describe('insertTag button', () => {
+    function makeTagEditor(opts: { from: number; prevChar: string }) {
+      return {
+        chain: mockChain,
+        state: {
+          selection: { from: opts.from },
+          doc: {
+            textBetween: (_f: number, _t: number) => opts.prevChar,
+          },
+        },
+      } as never
+    }
+
+    it('inserts a bare "@" when the cursor is at the start of the block', () => {
+      const editor = makeTagEditor({ from: 0, prevChar: '' })
+      const [, insertTag] = createRefsAndBlocks(editor)
+      insertTag?.action()
+      // Find the most recent insertContent call
+      const focusResult = mockFocus.mock.results[mockFocus.mock.results.length - 1]?.value as {
+        insertContent: ReturnType<typeof vi.fn>
+      }
+      expect(focusResult.insertContent).toHaveBeenCalledWith('@')
+    })
+
+    it('inserts a bare "@" when the previous char is a space', () => {
+      const editor = makeTagEditor({ from: 5, prevChar: ' ' })
+      const [, insertTag] = createRefsAndBlocks(editor)
+      insertTag?.action()
+      const focusResult = mockFocus.mock.results[mockFocus.mock.results.length - 1]?.value as {
+        insertContent: ReturnType<typeof vi.fn>
+      }
+      expect(focusResult.insertContent).toHaveBeenCalledWith('@')
+    })
+
+    it('inserts a bare "@" when the previous char is NBSP', () => {
+      const editor = makeTagEditor({ from: 5, prevChar: '\u00A0' })
+      const [, insertTag] = createRefsAndBlocks(editor)
+      insertTag?.action()
+      const focusResult = mockFocus.mock.results[mockFocus.mock.results.length - 1]?.value as {
+        insertContent: ReturnType<typeof vi.fn>
+      }
+      expect(focusResult.insertContent).toHaveBeenCalledWith('@')
+    })
+
+    it('inserts a bare "@" when the previous char is a newline', () => {
+      const editor = makeTagEditor({ from: 5, prevChar: '\n' })
+      const [, insertTag] = createRefsAndBlocks(editor)
+      insertTag?.action()
+      const focusResult = mockFocus.mock.results[mockFocus.mock.results.length - 1]?.value as {
+        insertContent: ReturnType<typeof vi.fn>
+      }
+      expect(focusResult.insertContent).toHaveBeenCalledWith('@')
+    })
+
+    it('prepends a space when the previous char is a letter (so the picker opens)', () => {
+      const editor = makeTagEditor({ from: 5, prevChar: 'x' })
+      const [, insertTag] = createRefsAndBlocks(editor)
+      insertTag?.action()
+      const focusResult = mockFocus.mock.results[mockFocus.mock.results.length - 1]?.value as {
+        insertContent: ReturnType<typeof vi.fn>
+      }
+      expect(focusResult.insertContent).toHaveBeenCalledWith(' @')
+    })
+  })
 })
 
 // ── createStructureButtons ──────────────────────────────────────────────

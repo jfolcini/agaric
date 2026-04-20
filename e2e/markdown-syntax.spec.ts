@@ -1,4 +1,12 @@
-import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
+import {
+  expect,
+  focusBlock,
+  openPage,
+  saveBlock,
+  selectEditorRange,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E tests for markdown syntax rendering.
@@ -142,9 +150,8 @@ test.describe('Keyboard shortcut formatting', () => {
     await page.keyboard.press('Control+a')
     await page.keyboard.type('hello world')
 
-    // Select "world" (5 chars from the end)
-    await page.keyboard.press('End')
-    for (let i = 0; i < 5; i++) await page.keyboard.press('Shift+ArrowLeft')
+    // Select "world" — chars 6..11 ("hello " prefix is 6 chars)
+    await selectEditorRange(page, 6, 11)
 
     // Apply bold via keyboard shortcut
     await page.keyboard.press('Control+b')
@@ -169,9 +176,8 @@ test.describe('Keyboard shortcut formatting', () => {
     await page.keyboard.press('Control+a')
     await page.keyboard.type('hello world')
 
-    // Select "world"
-    await page.keyboard.press('End')
-    for (let i = 0; i < 5; i++) await page.keyboard.press('Shift+ArrowLeft')
+    // Select "world" — chars 6..11
+    await selectEditorRange(page, 6, 11)
 
     // Apply italic via keyboard shortcut
     await page.keyboard.press('Control+i')
@@ -194,10 +200,8 @@ test.describe('Keyboard shortcut formatting', () => {
     await page.keyboard.press('Control+a')
     await page.keyboard.type('run npm install now')
 
-    // Select "npm install" (11 chars, starting 4 from the beginning)
-    await page.keyboard.press('Home')
-    for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight')
-    for (let i = 0; i < 11; i++) await page.keyboard.press('Shift+ArrowRight')
+    // Select "npm install" — chars 4..15 ("run " is 4 chars)
+    await selectEditorRange(page, 4, 15)
 
     // Apply inline code via keyboard shortcut
     await page.keyboard.press('Control+e')
@@ -234,9 +238,8 @@ test.describe('Combined marks', () => {
     await page.keyboard.press('Control+a')
     await page.keyboard.type('important text')
 
-    // Select "important" (9 chars from start)
-    await page.keyboard.press('Home')
-    for (let i = 0; i < 9; i++) await page.keyboard.press('Shift+ArrowRight')
+    // Select "important" — chars 0..9
+    await selectEditorRange(page, 0, 9)
 
     // Apply both bold and italic
     await page.keyboard.press('Control+b')
@@ -261,26 +264,29 @@ test.describe('Combined marks', () => {
     await page.keyboard.press('Control+a')
     await page.keyboard.type('use the flag here')
 
-    // Select "flag" (4 chars, starting at position 8)
-    await page.keyboard.press('Home')
-    for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowRight')
-    for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowRight')
-
-    // Apply bold then code
+    // Bold and Code can't coexist on the same range (TipTap's inline code
+    // mark is schema-exclusive with every other mark), so apply them to
+    // two non-overlapping ranges and verify both end up in the saved
+    // block. "flag" (chars 8..12) gets bold; "here" (chars 13..17) gets
+    // code.
+    await selectEditorRange(page, 8, 12)
     await page.keyboard.press('Control+b')
+    await selectEditorRange(page, 13, 17)
     await page.keyboard.press('Control+e')
 
     // Verify both marks in editor
     await expect(editor.locator('strong')).toBeVisible()
+    await expect(editor.locator('strong')).toHaveText('flag')
     await expect(editor.locator('code')).toBeVisible()
+    await expect(editor.locator('code')).toHaveText('here')
 
     await saveBlock(page)
     const staticBlock = page
       .locator('[data-testid="sortable-block"]')
       .first()
       .locator('[data-testid="block-static"]')
-    await expect(staticBlock.locator('strong')).toBeVisible()
-    await expect(staticBlock.locator('code')).toBeVisible()
+    await expect(staticBlock.locator('strong')).toHaveText('flag')
+    await expect(staticBlock.locator('code')).toHaveText('here')
   })
 })
 
@@ -301,9 +307,8 @@ test.describe('Round-trip persistence', () => {
     await page.keyboard.press('Control+a')
     await page.keyboard.type('persistent bold')
 
-    // Select "bold" (4 chars from end)
-    await page.keyboard.press('End')
-    for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowLeft')
+    // Select "bold" — chars 11..15 ("persistent " is 11 chars)
+    await selectEditorRange(page, 11, 15)
     await page.keyboard.press('Control+b')
 
     // Verify bold in editor
@@ -334,9 +339,8 @@ test.describe('Round-trip persistence', () => {
     await page.keyboard.press('Control+a')
     await page.keyboard.type('persistent italic')
 
-    // Select "italic" (6 chars from end)
-    await page.keyboard.press('End')
-    for (let i = 0; i < 6; i++) await page.keyboard.press('Shift+ArrowLeft')
+    // Select "italic" — chars 11..17 ("persistent " is 11 chars)
+    await selectEditorRange(page, 11, 17)
     await page.keyboard.press('Control+i')
 
     await expect(editor.locator('em')).toHaveText('italic')
@@ -362,9 +366,8 @@ test.describe('Round-trip persistence', () => {
     await page.keyboard.press('Control+a')
     await page.keyboard.type('persistent code')
 
-    // Select "code" (4 chars from end)
-    await page.keyboard.press('End')
-    for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowLeft')
+    // Select "code" — chars 11..15 ("persistent " is 11 chars)
+    await selectEditorRange(page, 11, 15)
     await page.keyboard.press('Control+e')
 
     await expect(editor.locator('code')).toHaveText('code')

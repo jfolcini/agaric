@@ -204,3 +204,56 @@ export async function dragBlock(page: Page, source: Locator, target: Locator): P
   await page.waitForTimeout(150)
   await page.mouse.up()
 }
+
+/**
+ * Select a character range inside the currently-focused TipTap editor
+ * by directly manipulating the DOM Selection API, then dispatch a
+ * `selectionchange` event so ProseMirror picks up the new range.
+ *
+ * Prefer this over `Shift+Arrow` keypress loops. Rapid-fire
+ * `Shift+Arrow` presses drop increments on React 19 — the scheduler
+ * may still be committing the prior selection update when the next
+ * keystroke arrives, so the first (or last) press silently no-ops and
+ * the resulting selection is off by one or more characters.
+ *
+ * `from` / `to` are character offsets into the block's text content,
+ * counted from the start. Walks the visible text nodes in document
+ * order and maps offsets to the correct `(Text, offset)` pair so the
+ * helper works for blocks that contain multiple inline spans (e.g.
+ * links, inline marks).
+ */
+export async function selectEditorRange(page: Page, from: number, to: number): Promise<void> {
+  await page.evaluate(
+    ({ from, to }) => {
+      const root = document.querySelector('[data-testid="block-editor"] [contenteditable="true"]')
+      if (!root) throw new Error('selectEditorRange: focused editor not found')
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+      const textNodes: Text[] = []
+      let node: Node | null = walker.nextNode()
+      while (node !== null) {
+        textNodes.push(node as Text)
+        node = walker.nextNode()
+      }
+      if (textNodes.length === 0) throw new Error('selectEditorRange: no text nodes in editor')
+      const locate = (offset: number): [Text, number] => {
+        let acc = 0
+        for (const t of textNodes) {
+          if (acc + t.length >= offset) return [t, offset - acc]
+          acc += t.length
+        }
+        const last = textNodes[textNodes.length - 1] as Text
+        return [last, last.length]
+      }
+      const [startNode, startOff] = locate(from)
+      const [endNode, endOff] = locate(to)
+      const range = document.createRange()
+      range.setStart(startNode, startOff)
+      range.setEnd(endNode, endOff)
+      const selection = window.getSelection()
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+      document.dispatchEvent(new Event('selectionchange'))
+    },
+    { from, to },
+  )
+}

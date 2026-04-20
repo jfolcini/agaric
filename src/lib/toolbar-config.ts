@@ -151,7 +151,24 @@ export function createRefsAndBlocks(editor: Editor): ToolbarButtonConfig[] {
       icon: AtSign,
       label: 'toolbar.insertTag',
       tip: 'toolbar.tagTip',
-      action: () => editor.chain().focus().insertContent('@').run(),
+      action: () => {
+        // The AtTagPicker extension only opens the suggestion popup when
+        // `@` is preceded by whitespace or is at the start of a block
+        // (`allowedPrefixes: [' ', '\u00A0', '\n']` — see `at-tag-picker.ts`).
+        // Inserting a bare `@` mid-text would therefore type the glyph
+        // without triggering the picker, which is surprising for a button
+        // labelled "Insert tag". Prepend a space when the previous char
+        // isn't already a valid prefix so clicking the button reliably
+        // opens the picker regardless of caret position.
+        const { from } = editor.state.selection
+        const prev = from > 0 ? editor.state.doc.textBetween(from - 1, from) : ''
+        const needsSpace = prev !== '' && prev !== ' ' && prev !== '\u00A0' && prev !== '\n'
+        editor
+          .chain()
+          .focus()
+          .insertContent(needsSpace ? ' @' : '@')
+          .run()
+      },
     },
     {
       icon: Quote,
