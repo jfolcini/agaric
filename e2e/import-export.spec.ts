@@ -65,8 +65,14 @@ test.describe('Export page as markdown', () => {
 
     // Directly call the mock's export_page_markdown via page.evaluate
     // to verify the content structure without clipboard dependency
-    const markdown = await page.evaluate(async () => {
-      const { invoke } = await import('@tauri-apps/api/core')
+    const markdown = await page.evaluate(() => {
+      const invoke = (
+        window as unknown as {
+          __TAURI_INTERNALS__: {
+            invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown>
+          }
+        }
+      ).__TAURI_INTERNALS__.invoke
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE01' })
     })
 
@@ -169,8 +175,14 @@ test.describe('Export preserves block structure', () => {
     await openPage(page, 'Getting Started')
 
     // Use evaluate to get the raw markdown
-    const markdown = (await page.evaluate(async () => {
-      const { invoke } = await import('@tauri-apps/api/core')
+    const markdown = (await page.evaluate(() => {
+      const invoke = (
+        window as unknown as {
+          __TAURI_INTERNALS__: {
+            invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown>
+          }
+        }
+      ).__TAURI_INTERNALS__.invoke
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE01' })
     })) as string
 
@@ -188,8 +200,14 @@ test.describe('Export preserves block structure', () => {
 
   test('exported Daily page preserves task blocks in order', async ({ page }) => {
     // The daily page has 5 children with various todo states
-    const markdown = (await page.evaluate(async () => {
-      const { invoke } = await import('@tauri-apps/api/core')
+    const markdown = (await page.evaluate(() => {
+      const invoke = (
+        window as unknown as {
+          __TAURI_INTERNALS__: {
+            invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown>
+          }
+        }
+      ).__TAURI_INTERNALS__.invoke
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE03' })
     })) as string
 
@@ -215,8 +233,14 @@ test.describe('Export includes tags and links', () => {
   })
 
   test('exported Getting Started page contains [[link]] tokens', async ({ page }) => {
-    const markdown = (await page.evaluate(async () => {
-      const { invoke } = await import('@tauri-apps/api/core')
+    const markdown = (await page.evaluate(() => {
+      const invoke = (
+        window as unknown as {
+          __TAURI_INTERNALS__: {
+            invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown>
+          }
+        }
+      ).__TAURI_INTERNALS__.invoke
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE01' })
     })) as string
 
@@ -226,8 +250,14 @@ test.describe('Export includes tags and links', () => {
   })
 
   test('exported Getting Started page contains #[tag] tokens', async ({ page }) => {
-    const markdown = (await page.evaluate(async () => {
-      const { invoke } = await import('@tauri-apps/api/core')
+    const markdown = (await page.evaluate(() => {
+      const invoke = (
+        window as unknown as {
+          __TAURI_INTERNALS__: {
+            invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown>
+          }
+        }
+      ).__TAURI_INTERNALS__.invoke
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE01' })
     })) as string
 
@@ -237,8 +267,14 @@ test.describe('Export includes tags and links', () => {
   })
 
   test('Quick Notes export contains backlink to Getting Started', async ({ page }) => {
-    const markdown = (await page.evaluate(async () => {
-      const { invoke } = await import('@tauri-apps/api/core')
+    const markdown = (await page.evaluate(() => {
+      const invoke = (
+        window as unknown as {
+          __TAURI_INTERNALS__: {
+            invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown>
+          }
+        }
+      ).__TAURI_INTERNALS__.invoke
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE02' })
     })) as string
 
@@ -265,8 +301,14 @@ test.describe('Round-trip fidelity', () => {
       .allTextContents()
 
     // Get the exported markdown
-    const markdown = (await page.evaluate(async () => {
-      const { invoke } = await import('@tauri-apps/api/core')
+    const markdown = (await page.evaluate(() => {
+      const invoke = (
+        window as unknown as {
+          __TAURI_INTERNALS__: {
+            invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown>
+          }
+        }
+      ).__TAURI_INTERNALS__.invoke
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE02' })
     })) as string
 
@@ -284,8 +326,14 @@ test.describe('Round-trip fidelity', () => {
     // Import some markdown content
     const originalContent = '# Round Trip Test\n\n- Alpha block\n- Beta block\n- Gamma block\n'
 
-    const importResult = (await page.evaluate(async (content) => {
-      const { invoke } = await import('@tauri-apps/api/core')
+    const importResult = (await page.evaluate((content) => {
+      const invoke = (
+        window as unknown as {
+          __TAURI_INTERNALS__: {
+            invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown>
+          }
+        }
+      ).__TAURI_INTERNALS__.invoke
       return invoke('import_markdown', { content, filename: 'round-trip.md' })
     }, originalContent)) as { page_title: string; blocks_created: number }
 
@@ -294,8 +342,14 @@ test.describe('Round-trip fidelity', () => {
 
     // Now find the imported page and export it
     // We need to find the page ID by listing all pages
-    const pages = (await page.evaluate(async () => {
-      const { invoke } = await import('@tauri-apps/api/core')
+    const pages = (await page.evaluate(() => {
+      const invoke = (
+        window as unknown as {
+          __TAURI_INTERNALS__: {
+            invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown>
+          }
+        }
+      ).__TAURI_INTERNALS__.invoke
       return invoke('list_blocks', {
         blockType: 'page',
         parentId: null,
@@ -312,8 +366,14 @@ test.describe('Round-trip fidelity', () => {
     expect(importedPage).toBeTruthy()
 
     // Export the imported page
-    const exportedMd = (await page.evaluate(async (pageId) => {
-      const { invoke } = await import('@tauri-apps/api/core')
+    const exportedMd = (await page.evaluate((pageId) => {
+      const invoke = (
+        window as unknown as {
+          __TAURI_INTERNALS__: {
+            invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown>
+          }
+        }
+      ).__TAURI_INTERNALS__.invoke
       return invoke('export_page_markdown', { pageId })
     }, importedPage?.id)) as string
 
@@ -325,8 +385,14 @@ test.describe('Round-trip fidelity', () => {
   })
 
   test('export of Projects page has correct block count', async ({ page }) => {
-    const markdown = (await page.evaluate(async () => {
-      const { invoke } = await import('@tauri-apps/api/core')
+    const markdown = (await page.evaluate(() => {
+      const invoke = (
+        window as unknown as {
+          __TAURI_INTERNALS__: {
+            invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown>
+          }
+        }
+      ).__TAURI_INTERNALS__.invoke
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE04' })
     })) as string
 

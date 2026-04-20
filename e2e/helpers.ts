@@ -119,13 +119,44 @@ export async function focusBlock(page: Page, index = 0) {
   return editor
 }
 
-/** Save the current block by pressing Enter (flush content → close editor → static render). */
+/**
+ * Save the current block by pressing Enter and wait for the editor to commit.
+ *
+ * The product's Enter handler flushes the currently-edited block and moves
+ * the roving editor to a newly-created sibling below (see `handleEnterSave`
+ * in `useBlockKeyboardHandlers`). This means there is ALWAYS an editor
+ * visible after a save — just on the new sibling, not on the block that
+ * was being edited. The old `not.toBeVisible()` check for any
+ * `[contenteditable]` is therefore wrong and the pre-TEST-1f helper was
+ * effectively waiting for a timeout on every call.
+ *
+ * We identify the specific block that was being edited via its
+ * `data-block-id`, press Enter, and then wait for that exact block to
+ * show its `data-testid="block-static"` render — i.e. the editor has left
+ * that block, regardless of whether it re-mounted somewhere else.
+ *
+ * Falls back to a short fixed wait (frame flush) if we can't locate an
+ * editing block (e.g. caller already blurred the editor, or tests that
+ * don't use a TipTap editor at all).
+ */
 export async function saveBlock(page: Page) {
+  const editingBlock = page
+    .locator('[data-testid="sortable-block"]:has([data-testid="block-editor"])')
+    .first()
+  const blockId = await editingBlock.getAttribute('data-block-id').catch(() => null)
   await page.keyboard.press('Enter')
-  // Wait for the editor to disappear and static block to re-render
-  await expect(
-    page.locator('[data-testid="block-editor"] [contenteditable="true"]'),
-  ).not.toBeVisible()
+  if (blockId) {
+    await expect(
+      page.locator(
+        `[data-testid="sortable-block"][data-block-id="${blockId}"] [data-testid="block-static"]`,
+      ),
+    ).toBeVisible()
+  } else {
+    // Editor wasn't identifiable pre-save (e.g. already blurred). Give the
+    // DOM one microtask to settle and return — callers typically assert
+    // their own post-save state immediately after.
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve(null))))
+  }
 }
 
 /**

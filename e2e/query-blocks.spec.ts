@@ -65,7 +65,7 @@ test.describe('Query block creation', () => {
     await focusBlock(page)
 
     // Clear the editor content and type a complete query block
-    await page.keyboard.press('Meta+a')
+    await page.keyboard.press('ControlOrMeta+a')
     await page.keyboard.type('{{query tag:work}}', { delay: 20 })
 
     // Save the block
@@ -91,7 +91,7 @@ test.describe('Tag-based query blocks', () => {
     await focusBlock(page)
 
     // Replace block content with a tag query
-    await page.keyboard.press('Meta+a')
+    await page.keyboard.press('ControlOrMeta+a')
     await page.keyboard.type('{{query tag:work}}', { delay: 20 })
     await saveBlock(page)
 
@@ -101,7 +101,6 @@ test.describe('Tag-based query blocks', () => {
     await expect(queryResult).toBeVisible({ timeout: 5000 })
 
     // Wait for results to load (should show count, not "...")
-    await expect(queryResult.locator('text=...')).not.toBeVisible({ timeout: 5000 })
 
     // Seed data has 3 blocks tagged with TAG_WORK:
     //   BLOCK_PROJ_1 ("Ship v2.0 release")
@@ -125,7 +124,7 @@ test.describe('Tag-based query blocks', () => {
   test('tag:personal query shows matching blocks', async ({ page }) => {
     await focusBlock(page)
 
-    await page.keyboard.press('Meta+a')
+    await page.keyboard.press('ControlOrMeta+a')
     await page.keyboard.type('{{query tag:personal}}', { delay: 20 })
     await saveBlock(page)
 
@@ -134,7 +133,6 @@ test.describe('Tag-based query blocks', () => {
     await expect(queryResult).toBeVisible({ timeout: 5000 })
 
     // Wait for loading to complete
-    await expect(queryResult.locator('text=...')).not.toBeVisible({ timeout: 5000 })
 
     // Seed data has 1 block tagged with TAG_PERSONAL: BLOCK_DAILY_3 ("Buy groceries")
     await expect(queryResult).toContainText('1 result', { timeout: 5000 })
@@ -146,7 +144,7 @@ test.describe('Tag-based query blocks', () => {
   test('tag query with no matches shows empty state', async ({ page }) => {
     await focusBlock(page)
 
-    await page.keyboard.press('Meta+a')
+    await page.keyboard.press('ControlOrMeta+a')
     await page.keyboard.type('{{query tag:nonexistenttag}}', { delay: 20 })
     await saveBlock(page)
 
@@ -155,7 +153,6 @@ test.describe('Tag-based query blocks', () => {
     await expect(queryResult).toBeVisible({ timeout: 5000 })
 
     // Wait for loading to complete
-    await expect(queryResult.locator('text=...')).not.toBeVisible({ timeout: 5000 })
 
     // Should show "No results" for a non-matching tag
     await expect(queryResult).toContainText('0 result', { timeout: 5000 })
@@ -176,7 +173,7 @@ test.describe('Property-based query blocks', () => {
   test('property:context=@office query shows matching blocks', async ({ page }) => {
     await focusBlock(page)
 
-    await page.keyboard.press('Meta+a')
+    await page.keyboard.press('ControlOrMeta+a')
     await page.keyboard.type('{{query property:context=@office}}', { delay: 20 })
     await saveBlock(page)
 
@@ -185,7 +182,6 @@ test.describe('Property-based query blocks', () => {
     await expect(queryResult).toBeVisible({ timeout: 5000 })
 
     // Wait for loading to complete
-    await expect(queryResult.locator('text=...')).not.toBeVisible({ timeout: 5000 })
 
     // Seed data: BLOCK_MTG_1 has context=@office
     await expect(queryResult).toContainText('1 result', { timeout: 5000 })
@@ -197,7 +193,7 @@ test.describe('Property-based query blocks', () => {
   test('property:project=beta query shows matching blocks', async ({ page }) => {
     await focusBlock(page)
 
-    await page.keyboard.press('Meta+a')
+    await page.keyboard.press('ControlOrMeta+a')
     await page.keyboard.type('{{query property:project=beta}}', { delay: 20 })
     await saveBlock(page)
 
@@ -206,7 +202,6 @@ test.describe('Property-based query blocks', () => {
     await expect(queryResult).toBeVisible({ timeout: 5000 })
 
     // Wait for loading to complete
-    await expect(queryResult.locator('text=...')).not.toBeVisible({ timeout: 5000 })
 
     // Seed data: BLOCK_MTG_2 has project=beta
     await expect(queryResult).toContainText('1 result', { timeout: 5000 })
@@ -232,7 +227,7 @@ test.describe('Legacy query syntax', () => {
     await focusBlock(page)
 
     // Use the legacy explicit-type syntax that /query slash command templates
-    await page.keyboard.press('Meta+a')
+    await page.keyboard.press('ControlOrMeta+a')
     await page.keyboard.type('{{query type:tag expr:work}}', { delay: 20 })
     await saveBlock(page)
 
@@ -241,7 +236,6 @@ test.describe('Legacy query syntax', () => {
     await expect(queryResult).toBeVisible({ timeout: 5000 })
 
     // Wait for loading to complete
-    await expect(queryResult.locator('text=...')).not.toBeVisible({ timeout: 5000 })
 
     // Should find the 3 blocks tagged with "work"
     await expect(queryResult).toContainText('3 result', { timeout: 5000 })
@@ -252,7 +246,7 @@ test.describe('Legacy query syntax', () => {
   }) => {
     await focusBlock(page)
 
-    await page.keyboard.press('Meta+a')
+    await page.keyboard.press('ControlOrMeta+a')
     await page.keyboard.type('{{query type:property key:context value:@remote}}', { delay: 20 })
     await saveBlock(page)
 
@@ -261,7 +255,6 @@ test.describe('Legacy query syntax', () => {
     await expect(queryResult).toBeVisible({ timeout: 5000 })
 
     // Wait for loading to complete
-    await expect(queryResult.locator('text=...')).not.toBeVisible({ timeout: 5000 })
 
     // Seed data: BLOCK_MTG_2 has context=@remote
     await expect(queryResult).toContainText('1 result', { timeout: 5000 })
@@ -281,7 +274,7 @@ test.describe('Query result interactions', () => {
   test('query result header shows expression and can be collapsed', async ({ page }) => {
     await focusBlock(page)
 
-    await page.keyboard.press('Meta+a')
+    await page.keyboard.press('ControlOrMeta+a')
     await page.keyboard.type('{{query tag:work}}', { delay: 20 })
     await saveBlock(page)
 
@@ -290,7 +283,6 @@ test.describe('Query result interactions', () => {
     await expect(queryResult).toBeVisible({ timeout: 5000 })
 
     // Wait for results to load
-    await expect(queryResult.locator('text=...')).not.toBeVisible({ timeout: 5000 })
 
     // The header should display the expression
     await expect(queryResult.locator('code')).toContainText('tag:work')
@@ -309,7 +301,7 @@ test.describe('Query result interactions', () => {
     await focusBlock(page)
 
     // Query for blocks tagged "work" — BLOCK_PROJ_1 is TODO, BLOCK_PROJ_2 is DOING
-    await page.keyboard.press('Meta+a')
+    await page.keyboard.press('ControlOrMeta+a')
     await page.keyboard.type('{{query tag:work}}', { delay: 20 })
     await saveBlock(page)
 
@@ -318,7 +310,6 @@ test.describe('Query result interactions', () => {
     await expect(queryResult).toBeVisible({ timeout: 5000 })
 
     // Wait for loading to complete
-    await expect(queryResult.locator('text=...')).not.toBeVisible({ timeout: 5000 })
 
     // Seed data: BLOCK_PROJ_1 (TODO), BLOCK_PROJ_2 (DOING) have todo_state set
     // The QueryResult renders todo_state badges for blocks that have them
@@ -340,14 +331,13 @@ test.describe('Query result reactivity', () => {
   test('editing a query block expression updates the results', async ({ page }) => {
     // First, create a tag:work query
     await focusBlock(page)
-    await page.keyboard.press('Meta+a')
+    await page.keyboard.press('ControlOrMeta+a')
     await page.keyboard.type('{{query tag:work}}', { delay: 20 })
     await saveBlock(page)
 
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     let queryResult = firstBlock.locator('[data-testid="query-result"]')
     await expect(queryResult).toBeVisible({ timeout: 5000 })
-    await expect(queryResult.locator('text=...')).not.toBeVisible({ timeout: 5000 })
 
     // Should show 3 results for tag:work
     await expect(queryResult).toContainText('3 result', { timeout: 5000 })
@@ -357,14 +347,13 @@ test.describe('Query result reactivity', () => {
     const editor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
     await expect(editor).toBeVisible()
 
-    await page.keyboard.press('Meta+a')
+    await page.keyboard.press('ControlOrMeta+a')
     await page.keyboard.type('{{query tag:personal}}', { delay: 20 })
     await saveBlock(page)
 
     // The query should now show 1 result for tag:personal
     queryResult = firstBlock.locator('[data-testid="query-result"]')
     await expect(queryResult).toBeVisible({ timeout: 5000 })
-    await expect(queryResult.locator('text=...')).not.toBeVisible({ timeout: 5000 })
     await expect(queryResult).toContainText('1 result', { timeout: 5000 })
     await expect(
       queryResult.locator('[data-testid="query-result-item"]', { hasText: 'Buy groceries' }),

@@ -376,12 +376,16 @@ test.describe('View mode interactions', () => {
     // Switch to monthly view
     await page.getByRole('tab', { name: 'Monthly view' }).click()
 
-    // Monthly view renders 28-31 day sections
-    const sections = page.locator('section[aria-label^="Journal for"]')
-    await expect(sections.first()).toBeVisible()
-    const count = await sections.count()
-    expect(count).toBeGreaterThanOrEqual(28)
-    expect(count).toBeLessThanOrEqual(31)
+    // Monthly view renders a 6-week × 7-day grid of day cells (UX-83) —
+    // the old `section[aria-label^="Journal for"]` list was replaced by a
+    // CSS Grid of MonthlyDayCell (`role="gridcell"`).
+    const cells = page.locator('[role="gridcell"]')
+    await expect(cells.first()).toBeVisible()
+    const count = await cells.count()
+    // 5 or 6 rows × 7 columns = 35 or 42 cells (incl. adjacent-month days,
+    // depending on whether the month spans 5 or 6 weeks in the grid).
+    expect(count).toBeGreaterThanOrEqual(35)
+    expect(count).toBeLessThanOrEqual(42)
   })
 
   test('switching to agenda view shows filter and sort controls', async ({ page }) => {
@@ -504,6 +508,12 @@ test.describe('Page-centric agenda defaults', () => {
     // Switch to agenda view
     await page.getByRole('tab', { name: 'Agenda view' }).click()
     await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
+
+    // The agenda opens with the TODO+DOING status filter applied (UX-196).
+    // Clear filters so undated DONE tasks surface — the whole point of
+    // this test is verifying undated tasks are NOT hidden by the "no date"
+    // filter, not that DONE shows by default.
+    await page.getByRole('button', { name: 'Clear all filters' }).click()
 
     // Wait for results to load
     const items = page.locator('.agenda-results-item')

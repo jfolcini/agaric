@@ -42,11 +42,14 @@ test.describe('Journal view modes', () => {
     // Click "Month" tab
     await page.getByRole('tab', { name: 'Monthly view' }).click()
 
-    // Monthly view renders 28-31 day sections
-    const sections = page.locator('section[aria-label^="Journal for"]')
-    await expect(sections.first()).toBeVisible()
-    const count = await sections.count()
-    expect(count).toBeGreaterThanOrEqual(28)
+    // Monthly view renders a 6-week × 7-day grid of MonthlyDayCell
+    // (`role="gridcell"`) — UX-83 replaced the DaySection list with a grid.
+    const cells = page.locator('[role="gridcell"]')
+    await expect(cells.first()).toBeVisible()
+    const count = await cells.count()
+    // 5 or 6 rows × 7 columns = 35 or 42 cells depending on month layout.
+    expect(count).toBeGreaterThanOrEqual(35)
+    expect(count).toBeLessThanOrEqual(42)
   })
 
   test('switching to agenda view shows task panels', async ({ page }) => {

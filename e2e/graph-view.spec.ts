@@ -30,10 +30,10 @@ test.describe('Graph view', () => {
     await page.getByRole('button', { name: 'Graph', exact: true }).click()
 
     // Wait for the SVG to appear (loading skeleton resolves)
-    await expect(page.locator('svg')).toBeVisible()
+    await expect(page.locator('[data-testid="graph-view"] svg[role="img"]')).toBeVisible()
 
     // Each node group contains circles — verify at least one node exists
-    const nodes = page.locator('svg circle')
+    const nodes = page.locator('[data-testid="graph-view"] svg circle')
     await expect(nodes.first()).toBeVisible()
     const count = await nodes.count()
     expect(count).toBeGreaterThan(0)
@@ -41,11 +41,11 @@ test.describe('Graph view', () => {
 
   test('graph view renders edges between linked pages', async ({ page }) => {
     await page.getByRole('button', { name: 'Graph', exact: true }).click()
-    await expect(page.locator('svg')).toBeVisible()
+    await expect(page.locator('[data-testid="graph-view"] svg[role="img"]')).toBeVisible()
 
     // Seed data has [[link]] references between pages (e.g. Getting Started ↔ Quick Notes),
     // so there should be <line> elements for edges.
-    const edges = page.locator('svg line')
+    const edges = page.locator('[data-testid="graph-view"] svg line')
     await expect(edges.first()).toBeVisible()
     const edgeCount = await edges.count()
     expect(edgeCount).toBeGreaterThan(0)
@@ -53,10 +53,10 @@ test.describe('Graph view', () => {
 
   test('clicking a node navigates to that page', async ({ page }) => {
     await page.getByRole('button', { name: 'Graph', exact: true }).click()
-    await expect(page.locator('svg')).toBeVisible()
+    await expect(page.locator('[data-testid="graph-view"] svg[role="img"]')).toBeVisible()
 
     // Wait for nodes to render
-    const nodeGroup = page.locator('svg g.node').first()
+    const nodeGroup = page.locator('[data-testid="graph-view"] svg g.node').first()
     await expect(nodeGroup).toBeVisible()
 
     // Click the node group (the hit-area circle handles the pointer event)
@@ -81,10 +81,10 @@ test.describe('Graph view', () => {
     await page.getByRole('button', { name: 'Graph', exact: true }).click()
 
     // The graph should eventually render — SVG becomes visible
-    await expect(page.locator('svg')).toBeVisible()
+    await expect(page.locator('[data-testid="graph-view"] svg[role="img"]')).toBeVisible()
 
     // And it should contain node groups (seed data has pages)
-    const nodeGroups = page.locator('svg g.node')
+    const nodeGroups = page.locator('[data-testid="graph-view"] svg g.node')
     await expect(nodeGroups.first()).toBeVisible()
     const count = await nodeGroups.count()
     expect(count).toBeGreaterThanOrEqual(2) // At least 2 seed pages visible as nodes

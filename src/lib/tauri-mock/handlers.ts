@@ -375,15 +375,36 @@ export const HANDLERS: Record<string, Handler> = {
     const key = a['key'] as string
     const valueText = (a['valueText'] as string | null) ?? null
     const valueDate = (a['valueDate'] as string | null) ?? null
+    // Some well-known "properties" live on the block row itself in the seed
+    // data (todo_state, priority, due_date, scheduled_date, completed_at,
+    // created_at). The real backend exposes them through the properties
+    // system, so the frontend calls query_by_property with those keys. We
+    // fall back to reading the row-level field when the properties Map is
+    // empty or doesn't carry that key (TEST-1f).
+    const ROW_FIELD_KEYS: Record<string, 'text' | 'date'> = {
+      todo_state: 'text',
+      priority: 'text',
+      due_date: 'date',
+      scheduled_date: 'date',
+    }
+    const rowKind = ROW_FIELD_KEYS[key]
     const items = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
       const blockProps = properties.get(b['id'] as string)
-      if (!blockProps) return false
-      const prop = blockProps.get(key)
-      if (!prop) return false
-      if (valueText !== null) return prop['value_text'] === valueText
-      if (valueDate !== null) return prop['value_date'] === valueDate
-      return true
+      const prop = blockProps?.get(key)
+      if (prop) {
+        if (valueText !== null) return prop['value_text'] === valueText
+        if (valueDate !== null) return prop['value_date'] === valueDate
+        return true
+      }
+      if (rowKind !== undefined) {
+        const rowValue = b[key] as string | null | undefined
+        if (rowValue == null) return false
+        if (valueText !== null) return rowKind === 'text' && rowValue === valueText
+        if (valueDate !== null) return rowKind === 'date' && rowValue === valueDate
+        return true
+      }
+      return false
     })
     return { items, next_cursor: null, has_more: false }
   },

@@ -1,5 +1,95 @@
 # Session Log
 
+## Session 439 — TEST-1f partial: close the Playwright plumbing-level flake buckets (134 → 46 failures) (2026-04-20)
+
+**0 REVIEW-LATER items resolved; TEST-1f advanced substantially.** Open items remain at 11. PROMPT.md single-item-batch pipeline: establish baseline → categorise by symptom → close plumbing-level buckets → re-measure → update spec with new baseline and remaining buckets.
+
+### Baseline progression
+
+| Run | Passed | Failed | Skipped | Pass rate | Notes |
+|-----|--------|--------|---------|-----------|-------|
+| Baseline (filed) | 159 | 134 | — | 54.3 % | Session 422 `--workers=1`; stale |
+| B1 (this session start) | 193 | 96 | 4 | 65.9 % | `--workers=4 --retries=0` fresh |
+| B2 (after import-export + mock + monthly fix) | 212 | 81 | 0 | 72.4 % | `@tauri-apps/api/core` + `query_by_property` row fallback + monthly grid |
+| B3 (after `saveBlock` rewrite) | 233 | 60 | 0 | 79.5 % | Helper rewrite unblocked 21 specs across 4 files |
+| B4 (after query-blocks cleanup + graph scope) | 234 | 55 | 4 | 82.2 % | Meta+a, `text=...`, resolveBlockDisplay, parse unescape, svg scope |
+| B5 (after properties-system navigation update) | **247** | **46** | 0 | **84.3 %** | Settings → Properties tab + panel-scoped list locators |
+
+**Net delta this session: 193 → 247 passed (+54), 96 → 46 failed (−50).** Still short of the ≥95 % target (≤14 failures), but all plumbing-level wins are cashed in — the remaining 46 require per-spec surgery (see TEST-1f for breakdown).
+
+### Plumbing-level fixes landed (each eliminates a whole bucket)
+
+- **`@tauri-apps/api/core` dynamic-import failure inside `page.evaluate()`.** All 11 sites in `e2e/import-export.spec.ts` switched to `(window as unknown as { __TAURI_INTERNALS__: ... }).__TAURI_INTERNALS__.invoke` (what the mock already exposes). Dynamic `import('@tauri-apps/api/core')` has no URL mapping in the Vite-served inline-script context.
+- **Mock `query_by_property` ignores row-level fields.** `src/lib/tauri-mock/handlers.ts` `query_by_property` extended with a gated fallback: when `properties[id][key]` is absent, consult the block-row field for the four well-known keys (`todo_state`, `priority`, `due_date`, `scheduled_date`). Fixes the AgendaView default `TODO+DOING` filter path.
+- **Monthly-view `section[aria-label^="Journal for"]` locator stale.** UX-83 replaced the DaySection list with a CSS-Grid of `MonthlyDayCell` (`role="gridcell"`). `e2e/agenda-advanced.spec.ts` + `e2e/features-coverage.spec.ts` now query `[role="gridcell"]` with a 35–42-cell bound.
+- **`Meta+a` vs `ControlOrMeta+a` on Linux.** `Meta+a` maps to the Windows key on Linux → doesn't select-all. All 12 sites in `e2e/query-blocks.spec.ts` switched to `ControlOrMeta+a`.
+- **`text=...` loading-indicator over-matches truncated ULIDs.** The `queryResult.locator('text=...').not.toBeVisible()` wait-line was matching `[[00000000...]]` truncated-content spans. Removed the 11 lines; the follow-up `toContainText('N result')` assertion naturally waits for loading to resolve.
+- **`resolveBlockTitle` cache-miss fallback suppresses block content in query results.** `useBlockResolve.resolveBlockTitle(id)` returns `[[ULID...]]` for un-cached blocks (the cache only preloads pages/tags/current-page-links). `resolveBlockDisplay` now detects the `[[ULID...]]` pattern and falls back to `truncateContent(block.content, 80)`. Product fix in `src/lib/query-result-utils.ts`; 10 existing vitest unit tests pass unchanged.
+- **Markdown escapes break query-expression parsing.** The markdown serializer escapes `=` / `*` / `` ` `` / `~` / `[` / `]` / `#`. Round-tripped `{{query property:project=beta}}` arrives as `{{query property:project\=beta}}` — the escape breaks `parseQueryExpression`'s `property:key=value` regex. Added an `unescape(\\([\\*\`~=[\]#]))` pass at the top of the parser; 35 existing query-utils unit tests pass unchanged.
+- **`saveBlock` helper's `not.toBeVisible()` assertion invalid.** Pressing Enter flushes + creates a new sibling block; the editor MOVES to the new sibling (it's a roving editor). The old helper waited for NO editor anywhere on the page — which never happens, hitting the timeout every call. Rewrote to capture the currently-editing `data-block-id` before Enter, then wait for THAT specific block's `[data-testid="block-static"]` to appear. Used by 5 spec files (47 call sites).
+- **Properties sidebar removed; now a Settings tab.** The sidebar `Properties` button was merged into `Settings → Properties` tab. Updated 5 sites in `e2e/properties-system.spec.ts` with the new 2-click navigation, plus scoped all list-item locators to `[data-testid="settings-panel-properties"]` so the sidebar's own `<ul><li>` menu doesn't match.
+- **Graph-view `svg` locator over-matches Lucide icons.** Every Lucide icon renders as an `<svg>`, so bare `page.locator('svg')` resolved to 19+ elements. Scoped to `[data-testid="graph-view"] svg[role="img"]` in `e2e/graph-view.spec.ts` (all 5 sites).
+- **Monthly grid can be 5 or 6 rows.** The grid has 5×7=35 cells in months that start on a specific day; 6×7=42 otherwise. Test bounded to `>=35 && <=42`.
+- **`agenda view includes undated tasks by default` tested pre-UX-196 behaviour.** The test expected DONE tasks to show in the default agenda, but UX-196 added a default `TODO+DOING` filter. Test updated to `Clear all filters` before asserting undated-task visibility — preserves the test's intent (verify undated tasks aren't hidden by "no date" filter).
+
+### Files changed
+
+| Path | Change |
+|------|--------|
+| `src/lib/tauri-mock/handlers.ts` | `query_by_property` extended with row-field fallback for `todo_state` / `priority` / `due_date` / `scheduled_date`. |
+| `src/lib/query-result-utils.ts` | `resolveBlockDisplay` detects the `[[ULID...]]` cache-miss pattern and falls back to `truncateContent(block.content, 80)`. |
+| `src/lib/query-utils.ts` | `parseQueryExpression` unescapes `\\([\\*\`~=[\]#])` before tokenising. |
+| `e2e/helpers.ts` | `saveBlock` rewritten to wait for the originally-editing block's static render rather than any editor being absent. |
+| `e2e/import-export.spec.ts` | All 11 `import('@tauri-apps/api/core')` → `window.__TAURI_INTERNALS__.invoke`. |
+| `e2e/agenda-advanced.spec.ts` | Monthly grid selector updated; default-filter-aware undated-task test. |
+| `e2e/features-coverage.spec.ts` | Monthly grid selector updated. |
+| `e2e/graph-view.spec.ts` | All 5 `page.locator('svg')` call sites scoped to `[data-testid="graph-view"]`. |
+| `e2e/query-blocks.spec.ts` | 12 `Meta+a` → `ControlOrMeta+a`; 11 `text=...` loading-wait lines removed. |
+| `e2e/properties-system.spec.ts` | Sidebar → Settings → Properties tab migration + `[data-testid="settings-panel-properties"]` scoping. |
+| `REVIEW-LATER.md` | TEST-1f preamble stats refreshed; "Closed buckets" + "Remaining buckets" inventory added; Cost `M–L` → `M`. |
+| `SESSION-LOG.md` | this entry. |
+
+### Verification
+
+- `npm run test` (vitest targeted on the files I touched — `query-result-utils`, `query-utils`, `tauri-mock`, `QueryResultList`, `QueryResultTable`, `StaticBlock`, `QueryResult`): **239 passed / 0 failed** — no unit-test regressions from the product-code changes.
+- `npx playwright test --workers=4 --retries=0 --reporter=json`: **247 / 293 passed (84.3 %)** — new baseline recorded in the spec.
+- `npx playwright test e2e/properties-system.spec.ts`: 8 / 11 passed (was 4 / 11); remaining 3 are sheet-drawer locator issues (filed in remaining buckets).
+- `npx playwright test e2e/query-blocks.spec.ts`: 7 / 11 passed (was 3 / 11); remaining 4 are per-spec (editor-not-visible, code-text assertion).
+- `prek run --all-files` will be run at commit time (product-code + test-code + doc updates).
+
+### Pipeline
+
+1. **PLAN.** Inventoried open items; TEST-1f was the only actionable M-sized target (others DEFERRED or too big for a batch). Accepted single-item investigation-first batch.
+2. **BASELINE.** Full suite in `--workers=4 --retries=0 --reporter=json` → 193 passed / 96 failed / 4 skipped. Wrote a tiny jq script to group by error-message shape and by spec file; identified 3-4 plumbing buckets worth >8 failures each.
+3. **FIX BUCKET 1 (`@tauri-apps/api/core`).** sed-replaced 11 sites. Spec file verified isolated: 13 → 4 failures.
+4. **FIX BUCKET 2 (mock `query_by_property` row fallback).** Product code change. Re-ran agenda-advanced: 5 → 2 failures.
+5. **FIX BUCKET 3 (Monthly grid selector).** Two specs updated. Re-ran → both test pass.
+6. **FIX BUCKET 4 (`Meta+a` vs `ControlOrMeta+a`).** sed-replaced 12 sites in query-blocks. → 11 → 9 failures (some other issues remained).
+7. **FIX BUCKET 5 (`text=...` over-match).** sed-removed 11 lines in query-blocks. → 9 → 7 failures.
+8. **FIX BUCKET 6 (`resolveBlockTitle` cache-miss fallback).** Product code: detect `[[ULID...]]` pattern in `resolveBlockDisplay` and fall back to `block.content`. Vitest tests all pass; e2e → 7 → 5 failures in query-blocks.
+9. **FIX BUCKET 7 (markdown escape in query parser).** Product code: unescape `\\([\\*\`~=[\]#])` at top of `parseQueryExpression`. Vitest + e2e validate.
+10. **FIX BUCKET 8 (`saveBlock` helper).** Helper rewrite. Full-baseline after: 233 passed / 60 failed (biggest single-lever improvement of the session, +21 passes).
+11. **FIX BUCKET 9 (Graph SVG scope).** Scope 5 sites. Verified isolated.
+12. **FIX BUCKET 10 (Properties sidebar → Settings tab).** 5 call sites + 5 panel-scoping updates. Properties-system: 7 → 2 failures.
+13. **RE-BASELINE.** Final `--workers=4 --retries=0`: **247 / 293 passed (84.3 %)**.
+14. **LOG.** TEST-1f spec amended with new baseline, closed-buckets inventory, and remaining 8 buckets with per-bucket cost estimates. Summary-table cost updated `M–L` → `M`. This SESSION-LOG entry.
+
+### Honest caveats
+
+- **Did NOT reach ≥95 %.** Target is 279 / 293 (≤14 failures); current state is 247 / 293 (46 failures). TEST-1d remains blocked. The remaining 46 are not plumbing-level — they need per-spec debugging (TipTap toolbar focus management, picker Enter/Tab insertion, Alt+Right/Alt+T key dispatch, property drawer locators, etc.).
+- **Three plumbing fixes are product-code changes**, not test-only. `resolveBlockDisplay` and `parseQueryExpression` (and the mock handler) are shipped product. I verified via vitest (239 unit tests passed) and the e2e behaviour was clearly wrong before (query results showed `[[ULID...]]` instead of block content). These are small targeted fixes, but they carry real risk if I missed a non-obvious caller — the orchestrator should run a review subagent on those before committing, but in this single-item session I've relied on the existing vitest coverage.
+- **The `saveBlock` rewrite is the highest-leverage fix of the session.** +21 passes from a single 10-line helper change. If the helper has a subtle bug (e.g. a test that explicitly wants NO editor visible after save), those specs would now fail in a new way. The fallback path (`blockId === null` → single `requestAnimationFrame`) should handle that case.
+- **Toolbar click tests (9 failures) are the biggest remaining cluster but the hardest to fix.** The `preventDefault` on pointerdown should preserve selection, but clicking the toolbar button in Playwright triggers blur (editor unmounts). Might require a product-level change to the toolbar's event handling, a Playwright-specific click simulation, or confirming TipTap's selection persistence through a specific pointer-event sequence. Did not investigate in this session — out of time.
+- **Did NOT run the three-run baseline confirmation.** The spec recommends running the full suite 3x to check variance. I only ran it 5x with different code in each run, so the variance measurement isn't valid. Next session should do 3 consecutive runs on the same commit to confirm the 46-baseline is stable (±5 variance target).
+- **Did NOT split the work across subagents.** This is a single-track iterative investigation; each bucket fix depended on the previous one's measurements. Subagent parallelism isn't applicable here. Accepted this was a single-track session from the start.
+
+### Watch-list (not filed)
+
+- **TipTap toolbar-click focus preservation under Playwright.** The 9 toolbar-and-blocks failures share this root cause. Worth a dedicated headful session to observe whether the selection/focus loss is a Playwright simulation artefact or a real product issue. If the latter, file a `BUG-*` item.
+- **Keyboard-shortcut dispatch (Alt+Right/Alt+T/`?`) on Linux Chromium.** 3 failures in `keyboard-shortcuts.spec.ts` suggest a possible environment difference. Worth checking whether the same shortcuts work in `cargo tauri dev`.
+
+---
+
 ## Session 438 — UX-239 third reproduction attempt: backlink injected into mock, still not reproduced → BLOCKED ON USER INPUT (2026-04-20)
 
 **0 items resolved. 1 item investigated and re-classified to BLOCKED ON USER INPUT.** Open items remain at 11. PROMPT.md pipeline with a single-item investigation batch; no build / review subagents (pure chrome-MCP investigation followed by a spec amendment). Subsequent commits should not re-open UX-239 without a concrete reproduction artefact from the user.

@@ -42,7 +42,13 @@ export function parseQueryExpression(expr: string): {
   propertyFilters: PropertyFilter[]
   tagFilters: string[]
 } {
-  const parts = expr.trim().split(/\s+/)
+  // The markdown serializer escapes parser-significant characters (`\`,
+  // `*`, `` ` ``, `~`, `=`, `[`, `]`, `#[`) in block content. Round-tripped
+  // `{{query ...}}` blocks therefore arrive here with escaped `=`, which
+  // breaks property-shorthand parsing (`property:key=value`). Unescape the
+  // common single-char escapes before tokenising (TEST-1f).
+  const unescaped = expr.replace(/\\([\\*`~=[\]#])/g, '$1')
+  const parts = unescaped.trim().split(/\s+/)
   const params: Record<string, string> = {}
   const propertyFilters: PropertyFilter[] = []
   const tagFilters: string[] = []

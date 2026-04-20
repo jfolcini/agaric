@@ -241,69 +241,86 @@ test.describe('Property definitions view', () => {
 
   test('Properties sidebar shows seed property definitions', async ({ page }) => {
     // Navigate to Properties view via sidebar
+    // Properties live under Settings → Properties tab (the old sidebar
+    // Properties item was merged into Settings).
     await page
       .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Properties', exact: true })
+      .getByRole('button', { name: 'Settings', exact: true })
       .click()
+    await page.getByRole('tab', { name: 'Properties' }).click()
 
     // Should show the "Property Definitions" heading
     await expect(page.getByText('Property Definitions')).toBeVisible()
 
-    // Seed definitions: context (text) and project (select)
-    await expect(page.getByText('context')).toBeVisible()
-    await expect(page.getByText('project')).toBeVisible()
-
-    // Type badges should be visible
-    await expect(page.getByText('text')).toBeVisible()
-    await expect(page.getByText('select')).toBeVisible()
+    // Seed definitions: context (text) and project (select) — scope to
+    // the settings panel so the sidebar's own <ul><li> menu doesn't match.
+    const settingsPanel = page.locator('[data-testid="settings-panel-properties"]')
+    await expect(settingsPanel.locator('li', { hasText: 'context' })).toBeVisible()
+    await expect(settingsPanel.locator('li', { hasText: 'project' })).toBeVisible()
+    await expect(settingsPanel.locator('li', { hasText: 'context' })).toContainText('text')
+    await expect(settingsPanel.locator('li', { hasText: 'project' })).toContainText('select')
   })
 
   test('search filters property definitions by key', async ({ page }) => {
+    // Properties live under Settings → Properties tab (the old sidebar
+    // Properties item was merged into Settings).
     await page
       .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Properties', exact: true })
+      .getByRole('button', { name: 'Settings', exact: true })
       .click()
+    await page.getByRole('tab', { name: 'Properties' }).click()
     await expect(page.getByText('Property Definitions')).toBeVisible()
 
     // Type into the search input
-    const searchInput = page.getByLabel('Search properties...')
+    const settingsPanel = page.locator('[data-testid="settings-panel-properties"]')
+    const searchInput = settingsPanel.getByLabel('Search properties...')
     await searchInput.fill('proj')
 
     // Only "project" should remain visible, "context" should be filtered out
-    await expect(page.getByText('project')).toBeVisible()
+    await expect(settingsPanel.getByText('project')).toBeVisible()
 
     // The definitions list should only contain the project definition
-    const defItems = page.locator('ul > li')
+    const defItems = settingsPanel.locator('ul > li')
     await expect(defItems).toHaveCount(1)
   })
 
   test('creating a new property definition adds it to the list', async ({ page }) => {
+    // Properties live under Settings → Properties tab (the old sidebar
+    // Properties item was merged into Settings).
     await page
       .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Properties', exact: true })
+      .getByRole('button', { name: 'Settings', exact: true })
       .click()
+    await page.getByRole('tab', { name: 'Properties' }).click()
     await expect(page.getByText('Property Definitions')).toBeVisible()
 
-    // Fill in the create form
-    const keyInput = page.getByLabel('Property key')
+    // Fill in the create form (scoped to the settings panel so the sidebar's
+    // "New Page" button / other UI doesn't confuse the locator).
+    const settingsPanel = page.locator('[data-testid="settings-panel-properties"]')
+    const keyInput = settingsPanel.getByLabel('Property key')
     await keyInput.fill('status')
 
     // Select "text" type (default)
-    await page.getByRole('button', { name: 'Create' }).click()
+    await settingsPanel.getByRole('button', { name: 'Create' }).click()
 
     // New definition should appear in the list
-    await expect(page.getByText('status')).toBeVisible()
+    await expect(settingsPanel.locator('ul li', { hasText: 'status' })).toBeVisible()
   })
 
   test('deleting a property definition with confirmation removes it', async ({ page }) => {
+    // Properties live under Settings → Properties tab (the old sidebar
+    // Properties item was merged into Settings).
     await page
       .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Properties', exact: true })
+      .getByRole('button', { name: 'Settings', exact: true })
       .click()
+    await page.getByRole('tab', { name: 'Properties' }).click()
     await expect(page.getByText('Property Definitions')).toBeVisible()
 
+    const settingsPanel = page.locator('[data-testid="settings-panel-properties"]')
+
     // Hover over the "context" row and click the delete button
-    const contextRow = page.locator('ul > li', { hasText: 'context' })
+    const contextRow = settingsPanel.locator('ul > li', { hasText: 'context' })
     await expect(contextRow).toBeVisible()
     await contextRow.hover()
 
@@ -321,21 +338,25 @@ test.describe('Property definitions view', () => {
     await confirm.getByRole('button', { name: 'Delete', exact: true }).click()
 
     // "context" should no longer be in the list
-    await expect(page.locator('ul > li', { hasText: 'context' })).not.toBeVisible()
+    await expect(settingsPanel.locator('ul > li', { hasText: 'context' })).not.toBeVisible()
 
     // "project" should still be there
     await expect(page.locator('ul > li', { hasText: 'project' })).toBeVisible()
   })
 
   test('select-type property shows Edit options button', async ({ page }) => {
+    // Properties live under Settings → Properties tab (the old sidebar
+    // Properties item was merged into Settings).
     await page
       .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Properties', exact: true })
+      .getByRole('button', { name: 'Settings', exact: true })
       .click()
+    await page.getByRole('tab', { name: 'Properties' }).click()
     await expect(page.getByText('Property Definitions')).toBeVisible()
 
     // The "project" definition (type: select) should have an "Edit options" button
-    const projectRow = page.locator('ul > li', { hasText: 'project' })
+    const settingsPanel = page.locator('[data-testid="settings-panel-properties"]')
+    const projectRow = settingsPanel.locator('ul > li', { hasText: 'project' })
     await expect(projectRow).toBeVisible()
     await expect(projectRow.getByRole('button', { name: 'Edit options' })).toBeVisible()
   })
