@@ -1,5 +1,16 @@
 # Session Log
 
+## Sessions 451–452 — FEAT-4j + FEAT-5c (MAINT-91): landed directly by user (2026-04-21)
+
+**3 REVIEW-LATER items resolved.** Open items: 18 → 15. Two single-slice commits landed directly on `main` between session 450 and this entry, without individual session-log entries at the time. Backfilled here so the sequence is traceable and REVIEW-LATER stays accurate.
+
+- **Commit `1bc1c92`** — **FEAT-4j**: wrap `tools/call` result in the MCP `CallToolResult { content, isError, structuredContent? }` envelope per MCP spec. Single-file patch in `src-tauri/src/mcp/server.rs` (+375 lines including updated tests + snapshots). Unblocks real MCP client integration (Claude Desktop, Cursor, official Python SDK).
+- **Commit `13cce79`** — **FEAT-5c + MAINT-91**: `gcal_push::api` reqwest client (create/delete calendar, insert/patch/delete/get event), new `AppError::Gcal(GcalErrorKind)` sub-taxonomy on the wire (`kind="gcal"`), 10 QPS / 25 burst token bucket. reqwest rustls-feature alignment simultaneously resolves MAINT-91 — FEAT-5c drops oauth2's built-in reqwest adapter in favor of the repo's `reqwest 0.13`, eliminating the dual-copy. Error variants: `Unauthorized`, `Forbidden`, `NotFound`, `Conflict`, `RateLimited`, `ServerError`, `Network`, `Deserialize`, `Unknown`.
+
+REVIEW-LATER + this SESSION-LOG housekeeping applied in the same commit as this entry.
+
+---
+
 ## Session 450 — FEAT-4g + FEAT-5d + FEAT-5b: MCP Python smoke harness + GCal digest pure fn + OAuth/keychain coupled stack (2026-04-21)
 
 **3 REVIEW-LATER items resolved; 2 new items filed.** Open items: 20 → 18. Fourth slice of the pre-approved FEAT-4 (MCP server) umbrella + second and third slices of FEAT-5 (Google Calendar). Three parallel build subagents across three worktrees, three pipelined technical reviewers. No REQUEST-CHANGES findings on any slice — two APPROVE WITH NOTES and one APPROVE. Two follow-up REVIEW-LATER items filed during merge:
