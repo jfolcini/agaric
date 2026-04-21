@@ -1,5 +1,83 @@
 # Session Log
 
+## Session 453 — FEAT-5e + FEAT-5f: GCal connector + lease + 5 commands + Settings tab (2026-04-21)
+
+**2 REVIEW-LATER items resolved, 1 new filed.** Open items: 15 → 14. Two parallel build subagents (backend connector + lease + 5 commands vs frontend Settings tab), three pipelined reviewers (1 technical per slice + 1 UX on 5f). All three reviewers returned APPROVE WITH NOTES — no REQUEST-CHANGES blockers.
+
+**Follow-up filed:**
+
+- **FEAT-5h** (S) — wire the `DirtyEvent` producer from the materializer property-change apply path to `GcalConnectorHandle::notify_dirty`. FEAT-5e's connector has the receiver end hooked up but no producer; steady-state behavior falls back to the 15-minute reconcile ticker. The natural next slice to complete the FEAT-5 v1 "constantly updated" deliverable per the umbrella spec.
+
+### What changed
+
+**FEAT-5e — connector + lease + 5 Tauri commands:**
+
+- `src-tauri/src/gcal_push/lease.rs` (NEW, 459 lines) — `claim_lease` / `release_lease` / `read_current_lease` with `BEGIN IMMEDIATE` CAS + explicit `now: DateTime<Utc>` clock seam. Constants: `LEASE_RENEW_INTERVAL_SECS = 60`, `LEASE_EXPIRY_SECS = 180`. 9 tests.
+- `src-tauri/src/gcal_push/connector.rs` (NEW, 1881 lines) — `GcalClient` trait (implemented by `GcalApiAdapter` over FEAT-5c's `GcalApi`; `MockGcalClient` under `#[cfg(test)]`). `Clock` trait (`SystemClock` prod / `FixedClock` tests). `run_cycle()` is the testable entry point: claim lease → resolve / create calendar → per-date diff + `digest_for_date` + `blake3::hash` compare → insert / patch / delete via `GcalClient`. Retry taxonomy per FEAT-5 parent (ServerError/RateLimited/Network → exp backoff 2/4/8/16/30s×5, Unauthorized → pause + emit `gcal:reauth_required`, Forbidden/NotFound per-event → skip date, Deserialize → log+skip). `CalendarGone` recovery clears `gcal_agenda_event_map` + emits `gcal:calendar_recreated`. `force_resync()` wakes via `Notify::notify_one` (stores a permit — unlike `notify_waiters` which drops wakeups on an empty waiter queue). 16 tests covering first-connect, lease contention (2 devices → exactly 1 `create_calendar`), soft-delete, drag-drop across dates, coalescing, `CalendarGone` recovery, 401 reauth, transient 5xx isolation, midnight rollover.
+- `src-tauri/src/commands/gcal.rs` (NEW, 674 lines) — 5 Tauri commands + `inner_*` helpers: `get_gcal_status`, `force_gcal_resync`, `disconnect_gcal { delete_calendar }`, `set_gcal_window_days(n) (clamps [7, 90])`, `set_gcal_privacy_mode(mode)` (rejects anything other than `"full"` / `"minimal"` with `AppError::Validation("gcal.privacy_mode.invalid")`). `GcalStatus` + `LeaseHolder` specta-typed IPC structs. 12 tests.
+- `src-tauri/src/gcal_push/keyring_store.rs` (+62 lines) — new `GcalEvent::CalendarRecreated` and `PushDisabled` variants; `TauriGcalEventEmitter<R>` production emitter.
+- `src-tauri/src/gcal_push/mod.rs` (+2 lines), `src-tauri/src/commands/mod.rs` (+18 lines), `src-tauri/src/lib.rs` (+183 lines) — wiring: `GcalConnectorHandle` registered in managed state, connector task spawned with fallback shims so the 5 commands always resolve even when keyring/API init fails, all 5 commands registered in both `invoke_handler` and the specta builder, `tauri_plugin_oauth::init()` left from FEAT-5b in place.
+- `src/lib/bindings.ts` — specta regenerated: 5 new commands, new `GcalStatus` + `LeaseHolder` types (snake_case fields per repo convention matching `McpStatus`).
+- 5 new `.sqlx/query-*.json` entries.
+
+**FEAT-5f — Settings tab "Google Calendar (experimental)":**
+
+- `src/components/GoogleCalendarSettingsTab.tsx` (NEW, 626 lines) — 9th Settings tab between `agent` and `help`. Sections: experimental warning badge + banner, account (Connect button when disconnected / email + Disconnect when connected), window-days `Input` with 500ms-debounced persistence and `[7, 90]` client clamp, privacy-mode `Switch` toggling `full` ↔ `minimal`, status panel (last push relative timestamp, last error, lease indicator with three variants: this-device / other-device / none), actions (Force resync button with spinner + toast, Disconnect AlertDialog with three choices — Cancel / Keep calendar / Delete calendar). Only existing `ui/` primitives. Subscribes to 4 Tauri events (`gcal:reauth_required`, `gcal:push_disabled`, `gcal:keyring_unavailable`, `gcal:calendar_recreated`) → toast each one with explanatory copy.
+- `src/components/__tests__/GoogleCalendarSettingsTab.test.tsx` (NEW, 767 lines, 32 tests) — render happy path, disconnected/connected states, window clamp (5→7, 100→90, 45→45), privacy toggle + rollback on IPC rejection, force resync (exactly 1 invoke, spinner, success toast), disconnect dialog (all three buttons tested, Cancel = no-IPC), 60s status polling, each event triggers its expected toast, IPC-rejection fallback on every invoke, `axe(container)` zero violations.
+- `src/components/SettingsView.tsx` (+8), `src/components/__tests__/SettingsView.test.tsx` (+26) — 8→9 tabs + new tab routing test.
+- `src/lib/i18n.ts` (+52 lines) — 41 new `gcal.*` keys including nested `gcal.disconnect.*` sub-block.
+
+### Orchestrator fixes applied during merge
+
+- **`src/lib/bindings.ts` swap in FEAT-5f.** The 5f subagent designed its local `GcalStatus` interface with camelCase fields before FEAT-5e's specta regen had landed. After merge, swapped the local interface for `import type { GcalStatus } from '@/lib/bindings'` and bulk-renamed 82 camelCase field accesses to snake_case across the component + test file (matching `McpStatus` convention). Restored one i18n interpolation key that the bulk rename clobbered (`deviceId` in a `t('gcal.leaseOtherDevice', { deviceId })` call had been renamed to `device_id:`, leaving `{{deviceId}}` un-substituted and breaking the "Other device" lease-indicator test).
+- **`src-tauri/src/commands/gcal.rs`** — clippy `cast_possible_truncation` on `DEFAULT_WINDOW_DAYS as i32`. Switched to `i32::try_from(...).unwrap_or(30)` with a "defense in depth" comment.
+- **`src-tauri/src/gcal_push/api.rs`** — two `needless_pass_by_value` (`with_base_url`: `String → &str` + updated 2 callers; `reqwest_to_gcal_err`: `reqwest::Error → &reqwest::Error` + updated 10 callers to `.map_err(|e| reqwest_to_gcal_err(&e))`); two `cast_sign_loss` in `shift_date_forward` → `.cast_unsigned()`.
+- **`src-tauri/src/gcal_push/connector.rs`** — 4 `collapsible_match` (`if let Some(r) = X { if let Err(kind) = r { return Err(kind.into()); } }` → `if let Some(Err(kind)) = X { return Err(kind.into()); }`); 1 `cast_sign_loss` on `Days::new(i as u64)` → `.cast_unsigned()`; 1 `cast_possible_wrap` on `LEASE_EXPIRY_SECS as i64` → `.cast_signed()`.
+- **`src-tauri/src/gcal_push/lease.rs`** — 3 `cast_possible_wrap` on `LEASE_EXPIRY_SECS as i64` → `.cast_signed()`.
+- **`cargo fmt`** and **biome** auto-formatting across the touched files.
+
+### Verification
+
+- `cargo nextest run gcal_push::connector gcal_push::lease`: 25 passed. `cargo nextest run commands::gcal`: 12 passed. `cargo nextest run` (full): **2500 passed**, 0 failed, 2 skipped (was 2418 after session 450; **+82 net**).
+- `npx vitest run src/components/__tests__/GoogleCalendarSettingsTab.test.tsx`: 32 passed. `npx vitest run src/components/__tests__/SettingsView.test.tsx`: 21 passed. `npx vitest run` (full): **7510 passed** across 297 files (was 7477; **+33 net**).
+- `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`: clean. `cargo sqlx prepare --check -- --tests`: clean. `cargo test -- specta_tests --ignored` regenerated `bindings.ts` in-place (matched cherry-picked state).
+- `prek run --all-files`: all 25 hooks pass after orchestrator applied the clippy + fmt + biome fixes.
+
+### Design decisions (FEAT-5e builder)
+
+- **Clock injection via trait, not `tokio::time::pause`**. Brittle under `multi_thread` runtime and cannot drive SQL-side RFC 3339 comparators inside `claim_lease`.
+- **`GcalClient` trait** wraps concrete `GcalApi` for testability. Production: `GcalApiAdapter`. Tests: `MockGcalClient` recording call history for exact-count assertions.
+- **`Notify::notify_one` over `notify_waiters`** in `force_resync()` — stores a permit for the next waiter, avoiding the "wake before `.notified().await`" race that `notify_waiters` silently drops.
+- **`BEGIN IMMEDIATE` for lease CAS** — two-row write (`push_lease_device_id` + `push_lease_expires_at`) must be atomic. `WHERE value=''` alone would let two devices both observe the stale pre-image.
+- **Event-bus wiring deferred to FEAT-5h** — `DirtyEvent` mpsc receiver lives in the connector but has no producer in this slice.
+- **`lib.rs` spawn with fallback shims** — if keyring is unavailable (headless Linux) or `GcalApi::new()` fails (rustls build failure), the connector still spawns with stub impls so the 5 Tauri commands always resolve — they just surface errors.
+- **`json_each()` bulk page-title resolution** — single query with `is_conflict = 0` filter per AGENTS.md backend pattern 3 + invariant #9.
+
+### Design decisions (FEAT-5f builder)
+
+- **Three-choice AlertDialog pattern rendered directly** via `AlertDialog*` primitives (not extending `ConfirmDialog`, which supports only one action). Possible future extraction if this recurs.
+- **Inline `setTimeout` debounce** for window-days persistence rather than extending `useDebouncedCallback` (which was string-only and awkward for numbers). The inline implementation is ~10 lines and testable via `userEvent.click` + `setTimeout` advancement.
+- **Component size 626 lines** — just over AGENTS.md's 500-line extraction heuristic. `LeaseIndicator` is already extracted inline. Not filed as a REVIEW-LATER item — borderline, and further decomposition should wait until a third feature needs the hook pattern.
+
+### Architectural invariants respected (AGENTS.md)
+
+- Append-only op log: untouched. CQRS split: untouched (connector is standalone Tokio task, NOT a new materializer queue per AGENTS.md § Architectural Stability).
+- sqlx compile-time queries: all 5 new `query!` macros have `.sqlx/` cache entries. `cargo sqlx prepare --check -- --tests` clean.
+- `PRAGMA foreign_keys`: no new FKs (FEAT-5 parent decision).
+- Recursive-CTE invariant #9: the `json_each()` bulk page-title query filters `is_conflict = 0`.
+- `unsafe_code = "deny"` upheld.
+- No new Zustand store, no new op type, no new materializer queue, no new sync message. Only the two FEAT-5a tables (`gcal_agenda_event_map`, `gcal_settings`) are touched.
+- TS `exactOptionalPropertyTypes` + `noImplicitReturns`: no `@ts-ignore`, no `!` non-null, no `biome-ignore` without justification.
+
+### Notes for the next session
+
+- **FEAT-5h is the smallest open FEAT-5 item (S)** and completes the v1 "constantly updated" deliverable. Single materializer hook + helper extraction + integration tests.
+- **Post-FEAT-5h**, FEAT-5 v1 is shippable. FEAT-5g (Android) remains DEFERRED until explicit design-review.
+- **FEAT-4 v1 is complete** (4a–4g + 4j landed). FEAT-4h (RW server) + FEAT-4i (mobile) remain DEFERRED pending user acceptance of v1 RO UX.
+- **After FEAT-5h, remaining actionable items are all small and deferred-by-decision** (PERF-19/20/23 = deliberate non-fix, MAINT-88 = deliberate non-fix, UX-239 = blocked on user, PUB-* = blocked on publish target). The next productive batch would be FEAT-4h (MCP v2) if the user signals acceptance of the FEAT-4 v1 UX.
+
+---
+
 ## Sessions 451–452 — FEAT-4j + FEAT-5c (MAINT-91): landed directly by user (2026-04-21)
 
 **3 REVIEW-LATER items resolved.** Open items: 18 → 15. Two single-slice commits landed directly on `main` between session 450 and this entry, without individual session-log entries at the time. Backfilled here so the sequence is traceable and REVIEW-LATER stays accurate.
