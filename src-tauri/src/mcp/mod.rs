@@ -213,7 +213,12 @@ pub async fn bind_socket(pipe_path: &Path) -> Result<SocketKind, AppError> {
 /// FEAT-4a ships with a placeholder [`server::PlaceholderRegistry`] that
 /// exposes zero tools. FEAT-4b / FEAT-4c swap this for the real
 /// `ReadOnlyTools` registry via [`spawn_mcp_ro_task_with_registry`].
-pub fn spawn_mcp_ro_task(app_data_dir: &Path) {
+///
+/// `app_handle` is used to build the FEAT-4d activity emitter — every
+/// completed tool call (once FEAT-4c wires the real dispatch) will push
+/// an [`activity::ActivityEntry`] into the ring and emit an
+/// `mcp:activity` event on this handle's bus.
+pub fn spawn_mcp_ro_task<R: tauri::Runtime>(app_data_dir: &Path, app_handle: tauri::AppHandle<R>) {
     if !mcp_ro_enabled(app_data_dir) {
         tracing::info!(
             target: "mcp",
@@ -223,7 +228,8 @@ pub fn spawn_mcp_ro_task(app_data_dir: &Path) {
     }
 
     let socket_path = default_mcp_ro_socket_path(app_data_dir);
-    spawn_mcp_ro_task_with_registry(socket_path, server::PlaceholderRegistry);
+    let activity_ctx = activity::ActivityContext::from_app_handle(app_handle);
+    spawn_mcp_ro_task_with_registry(socket_path, server::PlaceholderRegistry, Some(activity_ctx));
 }
 
 /// Spawn the MCP RO task against a caller-supplied registry and socket path.
@@ -231,15 +237,23 @@ pub fn spawn_mcp_ro_task(app_data_dir: &Path) {
 /// Exposed separately so later sub-items (FEAT-4b/4c) can swap in the real
 /// `ReadOnlyTools` registry and integration tests can exercise the bind +
 /// accept + dispatch pipeline against a tempdir socket path.
-pub fn spawn_mcp_ro_task_with_registry<R>(socket_path: PathBuf, registry: R)
-where
+///
+/// `activity_ctx` is optional: production passes
+/// `Some(ActivityContext::from_app_handle(...))`; tests and headless
+/// scenarios pass `None` (and any tool dispatches fall through without
+/// emitting events).
+pub fn spawn_mcp_ro_task_with_registry<R>(
+    socket_path: PathBuf,
+    registry: R,
+    activity_ctx: Option<activity::ActivityContext>,
+) where
     R: server::ToolRegistry + Send + Sync + 'static,
 {
     let registry = std::sync::Arc::new(registry);
     tauri::async_runtime::spawn(async move {
         match bind_socket(&socket_path).await {
             Ok(socket) => {
-                if let Err(e) = server::serve(socket, registry).await {
+                if let Err(e) = server::serve(socket, registry, activity_ctx).await {
                     tracing::error!(
                         target: "mcp",
                         error = %e,
@@ -380,7 +394,7 @@ mod tests {
         tokio::spawn(async move {
             let (server_side, _) = listener.accept().await.unwrap();
             let registry = PlaceholderRegistry;
-            let _ = handle_connection(server_side, &registry).await;
+            let _ = handle_connection(server_side, &registry, None).await;
         });
 
         // Locate the built binary relative to CARGO_MANIFEST_DIR.

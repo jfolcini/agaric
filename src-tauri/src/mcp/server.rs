@@ -20,9 +20,17 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use ulid::Ulid;
 
+use super::actor::{Actor, ActorContext, ACTOR};
 use super::SocketKind;
 use crate::error::AppError;
+
+// Re-export the registry types so external callers (tests, mod.rs's
+// `spawn_mcp_ro_task` default path) that still refer to
+// `server::ToolRegistry` / `server::PlaceholderRegistry` keep compiling
+// after FEAT-4b moved the real trait into the `registry` submodule.
+pub use super::registry::{PlaceholderRegistry, ToolDescription, ToolRegistry};
 
 // ---------------------------------------------------------------------------
 // Protocol constants
@@ -48,23 +56,6 @@ pub const JSONRPC_INVALID_PARAMS: i64 = -32602;
 pub const JSONRPC_INTERNAL_ERROR: i64 = -32603;
 
 // ---------------------------------------------------------------------------
-// Tool registry placeholder
-// ---------------------------------------------------------------------------
-
-/// Marker trait for a registry of MCP tools. FEAT-4b replaces this with a
-/// real trait that carries `list_tools()` + `call_tool()` methods; FEAT-4a
-/// only needs the type parameter so the server can be generic from day one.
-pub trait ToolRegistry: Send + Sync {}
-
-/// No-op registry used until FEAT-4b lands. Exposes zero tools so
-/// `tools/list` returns `[]` and `tools/call` always yields
-/// `-32601 Method not found`.
-#[derive(Default, Debug, Clone, Copy)]
-pub struct PlaceholderRegistry;
-
-impl ToolRegistry for PlaceholderRegistry {}
-
-// ---------------------------------------------------------------------------
 // Handshake payload types
 // ---------------------------------------------------------------------------
 
@@ -79,11 +70,18 @@ pub struct ClientInfo {
 
 /// Per-connection state captured during the handshake and reused across
 /// subsequent requests on the same socket.
+///
+/// `activity_ctx` is the FEAT-4d seam: when `Some`, every completed
+/// `tools/call` dispatch pushes an [`super::activity::ActivityEntry`] into
+/// the shared ring and emits an `mcp:activity` Tauri event. The current
+/// placeholder dispatch returns `-32601` and does *not* emit — only real
+/// tool invocations (wired by FEAT-4c) should record activity.
 #[derive(Debug, Default)]
 pub struct ConnectionState {
     pub client_info: Option<ClientInfo>,
     pub protocol_version: Option<String>,
     pub initialized: bool,
+    pub activity_ctx: Option<super::activity::ActivityContext>,
 }
 
 // ---------------------------------------------------------------------------
@@ -223,34 +221,112 @@ fn handle_initialize(state: &mut ConnectionState, params: &Value) -> Result<Valu
     }))
 }
 
-fn handle_tools_list() -> Result<Value, (i64, String)> {
-    // FEAT-4c wires real tools through the registry; FEAT-4a always returns
-    // an empty list so clients can complete the handshake and discover that
-    // no tools are exposed yet.
-    Ok(json!({ "tools": [] }))
+fn handle_tools_list<R: ToolRegistry>(registry: &R) -> Result<Value, (i64, String)> {
+    let tools = registry.list_tools();
+    let serialised = serde_json::to_value(&tools).map_err(|e| {
+        (
+            JSONRPC_INTERNAL_ERROR,
+            format!("failed to serialise tool list: {e}"),
+        )
+    })?;
+    Ok(json!({ "tools": serialised }))
 }
 
-fn handle_tools_call(params: &Value) -> Result<Value, (i64, String)> {
+/// Map an [`AppError`] returned by a tool handler onto a JSON-RPC error
+/// envelope pair `(code, message)`. The message is the `AppError`'s
+/// `Display` rendering — good enough for agent-side debugging without
+/// exposing the underlying `kind` discriminant (which is a Tauri IPC
+/// concern, not an MCP one).
+fn app_error_to_jsonrpc(err: &AppError) -> (i64, String) {
+    let code = match err {
+        AppError::NotFound(_) => JSONRPC_METHOD_NOT_FOUND,
+        AppError::Validation(_) | AppError::InvalidOperation(_) => JSONRPC_INVALID_PARAMS,
+        _ => JSONRPC_INTERNAL_ERROR,
+    };
+    (code, err.to_string())
+}
+
+/// Dispatch a `tools/call` request through the registry. Constructs a
+/// fresh [`ActorContext`] from the handshake's captured `clientInfo.name`
+/// (defaulting to a synthetic `Agent { name: "unknown" }` if the client
+/// skipped the `initialize` handshake) and runs the registry call inside
+/// `ACTOR.scope(...)` so downstream command handlers can read the
+/// `current_actor()` without threading it through their signatures.
+async fn handle_tools_call<R: ToolRegistry>(
+    state: &ConnectionState,
+    params: &Value,
+    registry: &R,
+) -> Result<Value, (i64, String)> {
     let name = params
         .get("name")
         .and_then(|n| n.as_str())
-        .unwrap_or("<unknown>");
-    Err((
-        JSONRPC_METHOD_NOT_FOUND,
-        format!("Tool `{name}` not found (no tools registered in FEAT-4a)"),
-    ))
+        .ok_or_else(|| {
+            (
+                JSONRPC_INVALID_PARAMS,
+                "tools/call: missing `name` field".to_string(),
+            )
+        })?
+        .to_string();
+
+    // MCP specifies `arguments` as the argument-bag field name.
+    let args = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+
+    // Build the per-request ActorContext. The handshake guarantees a
+    // `clientInfo.name` when the client followed the protocol, but we
+    // gracefully tolerate a client that skipped `initialize` (some test
+    // harnesses do) by falling back to `Agent { name: "unknown" }`.
+    let agent_name = state
+        .client_info
+        .as_ref()
+        .map(|ci| ci.name.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+    let ctx = ActorContext {
+        actor: Actor::Agent { name: agent_name },
+        request_id: Ulid::new().to_string(),
+    };
+
+    // Two `ActorContext`s on purpose:
+    //
+    // - `scoped_ctx` is moved into `ACTOR.scope(...)` so downstream
+    //   handlers (FEAT-4d activity feed, FEAT-4h op-log `origin`) can read
+    //   it via `current_actor()` without an explicit parameter.
+    // - `call_ctx` is borrowed to the registry so impls that prefer the
+    //   explicit-parameter style do not need to touch the task-local.
+    let scoped_ctx = ctx.clone();
+    let call_ctx = ctx;
+    let result = ACTOR
+        .scope(scoped_ctx, async {
+            registry.call_tool(&name, args, &call_ctx).await
+        })
+        .await;
+
+    match result {
+        Ok(value) => Ok(value),
+        Err(err) => {
+            tracing::debug!(
+                target: "mcp",
+                tool = %name,
+                error = %err,
+                "tools/call failed",
+            );
+            Err(app_error_to_jsonrpc(&err))
+        }
+    }
 }
 
-fn dispatch<R: ToolRegistry>(
+async fn dispatch<R: ToolRegistry>(
     state: &mut ConnectionState,
     method: &str,
     params: &Value,
-    _registry: &R,
+    registry: &R,
 ) -> Result<Value, (i64, String)> {
     match method {
         "initialize" => handle_initialize(state, params),
-        "tools/list" => handle_tools_list(),
-        "tools/call" => handle_tools_call(params),
+        "tools/list" => handle_tools_list(registry),
+        "tools/call" => handle_tools_call(state, params, registry).await,
         other => Err((
             JSONRPC_METHOD_NOT_FOUND,
             format!("Method `{other}` not found"),
@@ -281,14 +357,27 @@ fn handle_notification(state: &mut ConnectionState, method: &str) {
 /// Drive a single MCP connection to completion. Reads line-delimited JSON
 /// requests from `stream`, dispatches each through `registry`, and writes
 /// line-delimited JSON responses back. Returns `Ok(())` on clean EOF.
-pub async fn handle_connection<S, R>(stream: S, registry: &R) -> Result<(), AppError>
+///
+/// `activity_ctx` is the FEAT-4d activity-emission seam. Pass `None` when
+/// no activity tracking is desired (stub binary, tests); pass
+/// `Some(ActivityContext::from_app_handle(...))` in production. When
+/// `Some`, successful tool dispatches (FEAT-4c) will emit `mcp:activity`
+/// events via the bundled emitter.
+pub async fn handle_connection<S, R>(
+    stream: S,
+    registry: &R,
+    activity_ctx: Option<super::activity::ActivityContext>,
+) -> Result<(), AppError>
 where
     S: AsyncRead + AsyncWrite + Unpin,
     R: ToolRegistry,
 {
     let (read_half, mut write_half) = tokio::io::split(stream);
     let mut reader = BufReader::new(read_half);
-    let mut state = ConnectionState::default();
+    let mut state = ConnectionState {
+        activity_ctx,
+        ..ConnectionState::default()
+    };
     let mut line = String::new();
 
     loop {
@@ -306,7 +395,7 @@ where
 
         let response = match parse_request(trimmed) {
             ParsedRequest::Ok(req) => {
-                match dispatch(&mut state, &req.method, &req.params, registry) {
+                match dispatch(&mut state, &req.method, &req.params, registry).await {
                     Ok(result) => Some(make_success(&req.id, &result)),
                     Err((code, message)) => Some(make_error(&req.id, code, message)),
                 }
@@ -334,15 +423,24 @@ where
 /// Accept connections on `socket` and spawn a per-connection task for each,
 /// driving them through [`handle_connection`]. Runs until the underlying
 /// listener errors or the task is aborted by the caller.
-pub async fn serve<R>(socket: SocketKind, registry: std::sync::Arc<R>) -> Result<(), AppError>
+///
+/// `activity_ctx` is threaded into each spawned connection task so tool
+/// dispatches can emit activity events. Pass `None` in contexts that do
+/// not care about activity (stub binary, tests); pass
+/// `Some(ActivityContext::from_app_handle(...))` in production.
+pub async fn serve<R>(
+    socket: SocketKind,
+    registry: std::sync::Arc<R>,
+    activity_ctx: Option<super::activity::ActivityContext>,
+) -> Result<(), AppError>
 where
     R: ToolRegistry + Send + Sync + 'static,
 {
     match socket {
         #[cfg(unix)]
-        SocketKind::Unix(listener) => serve_unix(listener, registry).await,
+        SocketKind::Unix(listener) => serve_unix(listener, registry, activity_ctx).await,
         #[cfg(windows)]
-        SocketKind::Pipe(server) => serve_pipe(server, registry).await,
+        SocketKind::Pipe(server) => serve_pipe(server, registry, activity_ctx).await,
     }
 }
 
@@ -350,6 +448,7 @@ where
 async fn serve_unix<R>(
     listener: tokio::net::UnixListener,
     registry: std::sync::Arc<R>,
+    activity_ctx: Option<super::activity::ActivityContext>,
 ) -> Result<(), AppError>
 where
     R: ToolRegistry + Send + Sync + 'static,
@@ -357,8 +456,9 @@ where
     loop {
         let (stream, _addr) = listener.accept().await?;
         let registry = registry.clone();
+        let activity_ctx = activity_ctx.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, registry.as_ref()).await {
+            if let Err(e) = handle_connection(stream, registry.as_ref(), activity_ctx).await {
                 tracing::warn!(target: "mcp", error = %e, "MCP connection ended with error");
             }
         });
@@ -369,6 +469,7 @@ where
 async fn serve_pipe<R>(
     mut server: tokio::net::windows::named_pipe::NamedPipeServer,
     registry: std::sync::Arc<R>,
+    activity_ctx: Option<super::activity::ActivityContext>,
 ) -> Result<(), AppError>
 where
     R: ToolRegistry + Send + Sync + 'static,
@@ -388,8 +489,9 @@ where
         server = ServerOptions::new().create(pipe_path)?;
 
         let registry = registry.clone();
+        let activity_ctx = activity_ctx.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(connected, registry.as_ref()).await {
+            if let Err(e) = handle_connection(connected, registry.as_ref(), activity_ctx).await {
                 tracing::warn!(target: "mcp", error = %e, "MCP connection ended with error");
             }
         });
@@ -414,7 +516,7 @@ mod tests {
         let accept_task = tokio::spawn(async move {
             let (server_side, _) = listener.accept().await.unwrap();
             let registry = PlaceholderRegistry;
-            let _ = handle_connection(server_side, &registry).await;
+            let _ = handle_connection(server_side, &registry, None).await;
         });
         let client = UnixStream::connect(socket_path).await.unwrap();
         (client, accept_task)
@@ -632,7 +734,7 @@ mod tests {
         let (client, server) = tokio::io::duplex(64);
         drop(client); // immediate EOF on the server side
         let registry = PlaceholderRegistry;
-        handle_connection(server, &registry)
+        handle_connection(server, &registry, None)
             .await
             .expect("clean EOF must be Ok(())");
     }
@@ -648,7 +750,7 @@ mod tests {
         let registry = Arc::new(PlaceholderRegistry);
         let serve_task = tokio::spawn({
             let registry = registry.clone();
-            async move { serve_unix(listener, registry).await }
+            async move { serve_unix(listener, registry, None).await }
         });
 
         for i in 0..3 {
@@ -727,5 +829,538 @@ mod tests {
                 ParsedRequest::Notification(n) => write!(f, "Notification({:?})", n.method),
             }
         }
+    }
+
+    // -----------------------------------------------------------------
+    // ToolRegistry integration tests (FEAT-4b)
+    //
+    // These exercise the real dispatch pipeline: the server calls
+    // `registry.list_tools()` for tools/list, and `registry.call_tool()`
+    // (wrapped in ACTOR.scope) for tools/call. The test registry captures
+    // the observed inputs so the test can assert on them after the call.
+    // -----------------------------------------------------------------
+
+    use std::sync::Mutex;
+
+    /// Scripted registry that returns a fixed tool list for `list_tools`
+    /// and records every `call_tool` invocation — including the
+    /// [`Actor`] discriminant observed inside the task-local scope —
+    /// into a shared buffer.
+    #[derive(Default)]
+    struct RecordingRegistry {
+        tools: Vec<ToolDescription>,
+        /// (tool_name, args, observed_actor_name, observed_request_id)
+        calls: Mutex<Vec<(String, Value, String, String)>>,
+        /// What `call_tool` returns. Defaults to a canned success value.
+        response: Mutex<Option<Result<Value, AppError>>>,
+    }
+
+    impl RecordingRegistry {
+        fn new(tools: Vec<ToolDescription>) -> Self {
+            Self {
+                tools,
+                calls: Mutex::new(Vec::new()),
+                response: Mutex::new(None),
+            }
+        }
+
+        fn set_response(&self, response: Result<Value, AppError>) {
+            *self.response.lock().unwrap() = Some(response);
+        }
+
+        fn calls(&self) -> Vec<(String, Value, String, String)> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl ToolRegistry for RecordingRegistry {
+        fn list_tools(&self) -> Vec<ToolDescription> {
+            self.tools.clone()
+        }
+
+        async fn call_tool(
+            &self,
+            name: &str,
+            args: Value,
+            ctx: &ActorContext,
+        ) -> Result<Value, AppError> {
+            // Observe the task-local via the canonical accessor so we
+            // prove the server wrapped the call in ACTOR.scope(...) and
+            // didn't just pass `ctx` by parameter. The parameter and the
+            // task-local must agree.
+            let actor_from_taskclocal = crate::mcp::actor::current_actor();
+            let param_name = match &ctx.actor {
+                Actor::Agent { name } => name.clone(),
+                Actor::User => "<user>".to_string(),
+            };
+            let scoped_name = match actor_from_taskclocal {
+                Actor::Agent { name } => name,
+                Actor::User => "<user-no-scope>".to_string(),
+            };
+            // The param and the task-local must agree; if not, fail
+            // loudly so the test surfaces the bug.
+            assert_eq!(
+                param_name, scoped_name,
+                "ctx.actor must match ACTOR task-local during call_tool",
+            );
+
+            self.calls.lock().unwrap().push((
+                name.to_string(),
+                args,
+                param_name,
+                ctx.request_id.clone(),
+            ));
+
+            self.response
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap_or_else(|| Ok(json!({"ok": true})))
+        }
+    }
+
+    #[cfg(unix)]
+    async fn connect_pair_with_registry<R: ToolRegistry + 'static>(
+        socket_path: &std::path::Path,
+        registry: Arc<R>,
+    ) -> (tokio::net::UnixStream, tokio::task::JoinHandle<()>) {
+        use tokio::net::{UnixListener, UnixStream};
+        let listener = UnixListener::bind(socket_path).unwrap();
+        let accept_task = tokio::spawn(async move {
+            let (server_side, _) = listener.accept().await.unwrap();
+            let _ = handle_connection(server_side, registry.as_ref(), None).await;
+        });
+        let client = UnixStream::connect(socket_path).await.unwrap();
+        (client, accept_task)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tools_list_dispatches_through_registry() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("list.sock");
+        let registry = Arc::new(RecordingRegistry::new(vec![
+            ToolDescription {
+                name: "t1".to_string(),
+                description: "first".to_string(),
+                input_schema: json!({"type": "object"}),
+            },
+            ToolDescription {
+                name: "t2".to_string(),
+                description: "second".to_string(),
+                input_schema: json!({"type": "object"}),
+            },
+        ]));
+        let (client, task) = connect_pair_with_registry(&path, registry.clone()).await;
+        let (r, mut w) = tokio::io::split(client);
+        let mut reader = BufReader::new(r);
+
+        send_line(
+            &mut w,
+            &json!({"jsonrpc": "2.0", "id": 11, "method": "tools/list"}),
+        )
+        .await;
+
+        let response = read_line(&mut reader).await;
+        assert_eq!(response["id"], 11);
+        let tools = response["result"]["tools"].as_array().expect("tools array");
+        assert_eq!(tools.len(), 2, "registry returned two tools");
+        assert_eq!(tools[0]["name"], "t1");
+        assert_eq!(tools[1]["name"], "t2");
+        // Verify camelCase `inputSchema` shipped on the wire (not
+        // `input_schema`) — matches the MCP spec.
+        assert!(
+            tools[0].get("inputSchema").is_some(),
+            "tool description must serialise with MCP-canonical `inputSchema` key",
+        );
+
+        drop(w);
+        drop(reader);
+        let _ = task.await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tools_call_scopes_actor_context_to_client_name() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("call.sock");
+        let registry = Arc::new(RecordingRegistry::new(Vec::new()));
+        let (client, task) = connect_pair_with_registry(&path, registry.clone()).await;
+        let (r, mut w) = tokio::io::split(client);
+        let mut reader = BufReader::new(r);
+
+        // Complete the handshake so the server captures clientInfo.name.
+        send_line(
+            &mut w,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "clientInfo": {"name": "my-agent", "version": "9.9"},
+                    "capabilities": {},
+                },
+            }),
+        )
+        .await;
+        let _ = read_line(&mut reader).await;
+
+        // Now issue a tools/call — the registry should observe
+        // Actor::Agent { name: "my-agent" }.
+        send_line(
+            &mut w,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "some-tool",
+                    "arguments": {"q": "hello"},
+                },
+            }),
+        )
+        .await;
+        let response = read_line(&mut reader).await;
+        assert_eq!(response["id"], 2);
+        assert_eq!(response["result"], json!({"ok": true}));
+
+        let calls = registry.calls();
+        assert_eq!(calls.len(), 1, "exactly one call_tool invocation");
+        let (name, args, actor_name, request_id) = &calls[0];
+        assert_eq!(name, "some-tool");
+        assert_eq!(args, &json!({"q": "hello"}));
+        assert_eq!(
+            actor_name, "my-agent",
+            "ACTOR scope must carry clientInfo.name into call_tool",
+        );
+        assert!(
+            !request_id.is_empty(),
+            "server must stamp a non-empty request_id",
+        );
+
+        drop(w);
+        drop(reader);
+        let _ = task.await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tools_call_without_handshake_uses_unknown_agent_name() {
+        // Some test harnesses (and our own stub binary smoke test) issue
+        // tools/* before initialize. The server must still scope an
+        // Actor::Agent with a fallback name rather than panic or leak
+        // Actor::User.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("no-handshake.sock");
+        let registry = Arc::new(RecordingRegistry::new(Vec::new()));
+        let (client, task) = connect_pair_with_registry(&path, registry.clone()).await;
+        let (r, mut w) = tokio::io::split(client);
+        let mut reader = BufReader::new(r);
+
+        send_line(
+            &mut w,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {"name": "ping", "arguments": {}},
+            }),
+        )
+        .await;
+        let response = read_line(&mut reader).await;
+        assert_eq!(response["id"], 5);
+
+        let calls = registry.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].2, "unknown",
+            "tools/call without initialize must fall back to Agent {{ name: \"unknown\" }}",
+        );
+
+        drop(w);
+        drop(reader);
+        let _ = task.await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tools_call_maps_registry_not_found_to_32601() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("nf.sock");
+        let registry = Arc::new(RecordingRegistry::new(Vec::new()));
+        registry.set_response(Err(AppError::NotFound("unknown tool `x`".into())));
+        let (client, task) = connect_pair_with_registry(&path, registry.clone()).await;
+        let (r, mut w) = tokio::io::split(client);
+        let mut reader = BufReader::new(r);
+
+        send_line(
+            &mut w,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "tools/call",
+                "params": {"name": "x", "arguments": {}},
+            }),
+        )
+        .await;
+        let response = read_line(&mut reader).await;
+        assert_eq!(response["error"]["code"], JSONRPC_METHOD_NOT_FOUND);
+        assert!(
+            response["error"]["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("unknown tool"),
+            "error message should echo the AppError::NotFound body",
+        );
+
+        drop(w);
+        drop(reader);
+        let _ = task.await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tools_call_maps_registry_validation_to_32602() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("val.sock");
+        let registry = Arc::new(RecordingRegistry::new(Vec::new()));
+        registry.set_response(Err(AppError::Validation("missing field `query`".into())));
+        let (client, task) = connect_pair_with_registry(&path, registry.clone()).await;
+        let (r, mut w) = tokio::io::split(client);
+        let mut reader = BufReader::new(r);
+
+        send_line(
+            &mut w,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "tools/call",
+                "params": {"name": "search", "arguments": {}},
+            }),
+        )
+        .await;
+        let response = read_line(&mut reader).await;
+        assert_eq!(response["error"]["code"], JSONRPC_INVALID_PARAMS);
+
+        drop(w);
+        drop(reader);
+        let _ = task.await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tools_call_with_missing_name_returns_invalid_params() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("missing-name.sock");
+        let registry = Arc::new(RecordingRegistry::new(Vec::new()));
+        let (client, task) = connect_pair_with_registry(&path, registry.clone()).await;
+        let (r, mut w) = tokio::io::split(client);
+        let mut reader = BufReader::new(r);
+
+        send_line(
+            &mut w,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 9,
+                "method": "tools/call",
+                "params": {"arguments": {}},
+            }),
+        )
+        .await;
+        let response = read_line(&mut reader).await;
+        assert_eq!(
+            response["error"]["code"], JSONRPC_INVALID_PARAMS,
+            "missing `name` field must yield -32602",
+        );
+        assert_eq!(
+            registry.calls().len(),
+            0,
+            "registry.call_tool must not be invoked when `name` is missing",
+        );
+
+        drop(w);
+        drop(reader);
+        let _ = task.await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tools_call_each_invocation_gets_fresh_request_id() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("reqid.sock");
+        let registry = Arc::new(RecordingRegistry::new(Vec::new()));
+        let (client, task) = connect_pair_with_registry(&path, registry.clone()).await;
+        let (r, mut w) = tokio::io::split(client);
+        let mut reader = BufReader::new(r);
+
+        for i in 0..3 {
+            send_line(
+                &mut w,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": 100 + i,
+                    "method": "tools/call",
+                    "params": {"name": "t", "arguments": {}},
+                }),
+            )
+            .await;
+            let _ = read_line(&mut reader).await;
+        }
+
+        let calls = registry.calls();
+        assert_eq!(calls.len(), 3);
+        let request_ids: std::collections::HashSet<&str> =
+            calls.iter().map(|c| c.3.as_str()).collect();
+        assert_eq!(
+            request_ids.len(),
+            3,
+            "each tools/call must receive a unique request_id; got {:?}",
+            calls.iter().map(|c| c.3.clone()).collect::<Vec<_>>(),
+        );
+
+        drop(w);
+        drop(reader);
+        let _ = task.await;
+    }
+
+    // -----------------------------------------------------------------
+    // FEAT-4d integration — ConnectionState carries the activity ring /
+    // emitter seam, and the `emit_tool_completion` helper is the path
+    // FEAT-4c will call after a successful `tools/call` dispatch.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn connection_state_default_has_no_activity_ctx() {
+        // FEAT-4a's existing tests pass `None` for activity; the default
+        // state must reflect that so a missing ring never panics.
+        let state = ConnectionState::default();
+        assert!(state.activity_ctx.is_none());
+    }
+
+    #[tokio::test]
+    async fn handle_connection_accepts_activity_ctx_without_emitting_on_placeholder_tools_call() {
+        // Spec invariant: the placeholder `tools/call` returns -32601 and
+        // MUST NOT record activity — only real tool invocations (FEAT-4c)
+        // should emit. Exercise the full dispatch path with an activity
+        // context attached and assert the recorder stays empty.
+        use super::super::activity::{ActivityContext, ActivityRing, RecordingEmitter};
+        use std::sync::Mutex;
+
+        let ring = Arc::new(Mutex::new(ActivityRing::new()));
+        let emitter = Arc::new(RecordingEmitter::new());
+        let ctx = ActivityContext::new(ring.clone(), emitter.clone());
+
+        let (mut client, server) = tokio::io::duplex(1024);
+        let task = tokio::spawn(async move {
+            let registry = PlaceholderRegistry;
+            handle_connection(server, &registry, Some(ctx)).await
+        });
+
+        // Drive initialize + tools/call and read each response so the
+        // handler can make forward progress before we close the stream.
+        let (cr, mut cw) = tokio::io::split(&mut client);
+        let mut reader = BufReader::new(cr);
+        send_line(
+            &mut cw,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": MCP_PROTOCOL_VERSION,
+                    "clientInfo": { "name": "test", "version": "0" },
+                }
+            }),
+        )
+        .await;
+        let _init_resp = read_line(&mut reader).await;
+
+        send_line(
+            &mut cw,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": { "name": "search", "arguments": {} },
+            }),
+        )
+        .await;
+        let tools_call_resp = read_line(&mut reader).await;
+        assert_eq!(
+            tools_call_resp["error"]["code"], JSONRPC_METHOD_NOT_FOUND,
+            "FEAT-4a placeholder still returns -32601",
+        );
+
+        // Close the client side → handler observes EOF and returns Ok(()).
+        drop(cw);
+        drop(reader);
+        drop(client);
+        task.await.unwrap().expect("handle_connection Ok");
+
+        assert_eq!(
+            emitter.len(),
+            0,
+            "placeholder -32601 must not emit activity; FEAT-4c wires the real tool dispatch",
+        );
+        assert_eq!(
+            ring.lock().unwrap().len(),
+            0,
+            "ring stays empty until a real tool is invoked",
+        );
+    }
+
+    #[test]
+    fn emit_tool_completion_via_activity_ctx_records_exactly_once() {
+        // FEAT-4c integration shape: after a successful tool dispatch,
+        // the handler will call `emit_tool_completion` with the ctx held
+        // in `ConnectionState.activity_ctx`. This test drives that path
+        // directly so the wiring is verified before FEAT-4c lands.
+        use super::super::activity::{
+            emit_tool_completion, ActivityContext, ActivityEmitter, ActivityResult, ActivityRing,
+            ActorKind, RecordingEmitter,
+        };
+        use std::sync::Mutex;
+
+        let ring = Arc::new(Mutex::new(ActivityRing::new()));
+        // Keep a typed handle for assertions; clone into a trait-object
+        // Arc for the ctx so the seam matches the production shape
+        // (`Arc<dyn ActivityEmitter>`).
+        let recorder = Arc::new(RecordingEmitter::new());
+        let emitter: Arc<dyn ActivityEmitter> = recorder.clone();
+        let ctx = ActivityContext::new(ring.clone(), emitter);
+
+        let state = ConnectionState {
+            activity_ctx: Some(ctx),
+            ..ConnectionState::default()
+        };
+        let ctx_ref = state
+            .activity_ctx
+            .as_ref()
+            .expect("activity_ctx present on state");
+
+        emit_tool_completion(
+            ctx_ref,
+            "search",
+            "searched for '…' (0 results)",
+            ActorKind::Agent,
+            Some("claude-desktop".to_string()),
+            ActivityResult::Ok,
+        );
+
+        assert_eq!(
+            ring.lock().unwrap().len(),
+            1,
+            "ring captured one entry via the server-side ctx",
+        );
+        assert_eq!(
+            recorder.len(),
+            1,
+            "exactly one `mcp:activity` emission per tool completion",
+        );
+        let entry = recorder.entries().into_iter().next().unwrap();
+        assert_eq!(entry.tool_name, "search");
+        assert_eq!(entry.actor_kind, ActorKind::Agent);
+        assert_eq!(entry.agent_name.as_deref(), Some("claude-desktop"));
     }
 }

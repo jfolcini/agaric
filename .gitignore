@@ -26,6 +26,9 @@ dist-ssr
 # Tauri
 src-tauri/target/
 src-tauri/gen/
+# Generated per-target copies of bundled external binaries (see
+# scripts/prepare-external-bins.mjs + tauri.conf.json → externalBin).
+src-tauri/binaries/
 
 # SQLx dev database (offline cache .sqlx/ is tracked)
 src-tauri/dev.db

@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npx tsc -b --noEmit && npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeDevCommand": "node ../scripts/prepare-external-bins.mjs --placeholder-only && npx tsc -b --noEmit && npm run dev",
+    "beforeBuildCommand": "node ../scripts/prepare-external-bins.mjs && npm run build"
   },
   "app": {
     "withGlobalTauri": false,
@@ -35,6 +35,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": ["binaries/agaric-mcp"],
     "icon": [
       "icons/16x16.png",
       "icons/24x24.png",

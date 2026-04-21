@@ -575,7 +575,12 @@ pub fn run() {
             // immediately. When present, it binds the default socket and
             // spawns the serve loop. A second Agaric instance detects the
             // existing socket and logs a warning without crashing.
-            mcp::spawn_mcp_ro_task(&app_data_dir);
+            //
+            // FEAT-4d — the cloned `AppHandle` is used to build the activity
+            // emitter so completed tool calls surface on the `mcp:activity`
+            // Tauri event bus (FEAT-4c wires the `tools/call` dispatch; this
+            // only threads the dependency through).
+            mcp::spawn_mcp_ro_task(&app_data_dir, app.handle().clone());
 
             Ok(())
         })

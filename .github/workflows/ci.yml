@@ -46,6 +46,13 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Prepare externalBin placeholder (FEAT-4f)
+        # Tauri's build.rs validates externalBin paths on every `cargo`
+        # invocation — clippy, nextest, deny, machete all trigger it. Create
+        # an empty placeholder early so the Rust steps can run without
+        # paying for the stub compilation yet.
+        run: node scripts/prepare-external-bins.mjs --placeholder-only
+
       - name: Biome check
         run: npx biome check .
 
@@ -109,6 +116,19 @@ jobs:
         working-directory: src-tauri
         run: cargo machete
 
+      - name: Build agaric-mcp stub binary (FEAT-4f)
+        # Smoke-check that the `agaric-mcp` sidecar still compiles on every CI
+        # run and lands at the externalBin path Tauri's bundler expects. The
+        # full desktop bundle (which ships the same binary next to the main
+        # app) is exercised in the `build` matrix below.
+        run: node scripts/prepare-external-bins.mjs
+
+      - name: Verify agaric-mcp smoke (--version)
+        run: src-tauri/target/release/agaric-mcp --version
+
+      - name: Verify externalBin artifact exists
+        run: test -x src-tauri/binaries/agaric-mcp-x86_64-unknown-linux-gnu
+
   # ---------------------------------------------------------------------------
   # Desktop build matrix — Linux (.deb, .AppImage), Windows (.msi, .nsis),
   # macOS (.dmg, .app). Ensures the app compiles and bundles on all platforms.
@@ -166,6 +186,41 @@ jobs:
       - name: Fix AppImage icon symlinks
         if: matrix.label == 'linux'
         run: bash scripts/fix-appimage-icons.sh
+
+      # ---------------------------------------------------------------------
+      # FEAT-4f — verify the `agaric-mcp` sidecar binary is staged for, and
+      # landed in, the bundled artifact on each desktop target. Missing on
+      # any platform breaks MCP clients that rely on the installed stub.
+      # ---------------------------------------------------------------------
+      - name: Verify externalBin staging (Linux)
+        if: matrix.label == 'linux'
+        run: test -x src-tauri/binaries/agaric-mcp-x86_64-unknown-linux-gnu
+
+      - name: Verify agaric-mcp inside .deb
+        if: matrix.label == 'linux'
+        run: |
+          deb=$(ls src-tauri/target/release/bundle/deb/*.deb | head -n 1)
+          echo "Inspecting $deb"
+          dpkg-deb -c "$deb" | grep -E '(^|/)agaric-mcp( |$)'
+
+      - name: Verify externalBin staging (macOS)
+        if: matrix.label == 'macos'
+        run: |
+          # The host triple on the macOS runner determines the filename.
+          triple=$(rustc -vV | awk '/^host: /{print $2}')
+          test -x "src-tauri/binaries/agaric-mcp-$triple"
+
+      - name: Verify agaric-mcp inside .app
+        if: matrix.label == 'macos'
+        run: test -x "src-tauri/target/release/bundle/macos/Agaric.app/Contents/MacOS/agaric-mcp"
+
+      - name: Verify externalBin staging (Windows)
+        if: matrix.label == 'windows'
+        shell: pwsh
+        run: |
+          $triple = (rustc -vV | Select-String '^host: ').Line.Split(' ')[1]
+          $path = "src-tauri/binaries/agaric-mcp-$triple.exe"
+          if (-not (Test-Path $path)) { throw "Missing staged binary: $path" }
 
       - name: Upload Linux bundles
         if: matrix.label == 'linux'
@@ -231,6 +286,14 @@ jobs:
 
       - name: Install npm dependencies
         run: npm ci
+
+      - name: Prepare externalBin placeholder (FEAT-4f)
+        # tauri-build validates `externalBin` paths on every cargo
+        # invocation. Android builds don't ship the sidecar (see
+        # tauri.android.conf.json override), but the host-triple
+        # placeholder must exist so `cargo tauri android init` /
+        # `build` can proceed past validation.
+        run: node scripts/prepare-external-bins.mjs --placeholder-only
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --locked

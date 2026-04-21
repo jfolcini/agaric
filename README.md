@@ -124,6 +124,21 @@ No cross-compilation — each desktop platform must be built on that platform. A
 
 Both debug and release APKs build and run successfully. Release APKs are 24 MB (vs 402 MB debug) thanks to R8/ProGuard minification. Requires Android SDK, NDK 27, and JDK 17. See [BUILD.md](BUILD.md#android-builds) for signing and emulator setup.
 
+### Using Agaric with MCP clients
+
+Agaric ships an `agaric-mcp` stub binary that MCP clients (Claude Desktop, Claude Code, Cursor, Continue, …) invoke as a stdio subprocess. The stub bridges stdio to Agaric's local MCP socket, so the client talks to the running app without any network hop.
+
+After installing Agaric, point your MCP client's `command` field at the stub:
+
+| Platform | Path |
+| -------- | ---- |
+| Linux `.deb` | `/usr/bin/agaric-mcp` |
+| Linux AppImage | `<mount>/usr/bin/agaric-mcp` (inside the extracted AppImage) |
+| macOS `.app` | `/Applications/Agaric.app/Contents/MacOS/agaric-mcp` |
+| Windows installer | `C:\Program Files\Agaric\agaric-mcp.exe` |
+
+Override the default socket path with the `--socket <path>` flag or `AGARIC_MCP_SOCKET` environment variable if your setup puts Agaric's data directory somewhere non-standard. The read-only socket is gated by a Settings → Agent access toggle (shipping with FEAT-4e).
+
 ### Project Structure
 
 ```text

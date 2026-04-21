@@ -1,5 +1,66 @@
 # Session Log
 
+## Session 448 — FEAT-4b + FEAT-4d + FEAT-4f: MCP `ToolRegistry`/`ActorContext` + activity ring + packaging (2026-04-20)
+
+**3 REVIEW-LATER items resolved.** Open items: 26 → 23. Second slice of the pre-approved FEAT-4 (MCP server) umbrella — three parallel build subagents in a 3-way batch. 4b landed the `ToolRegistry` trait + `ActorContext` task-local. 4d landed the in-memory 100-entry activity ring + `mcp:activity` Tauri event emitter. 4f landed packaging so the `agaric-mcp` sidecar binary ships with the Tauri bundle. Two worktrees (4b + 4d both touch `server.rs`). Three pipelined read-only technical reviews — 4b APPROVE, 4d APPROVE, 4f REQUEST-CHANGES (3 findings: `beforeDevCommand` placeholder step missing, Android CI placeholder step missing, BUILD.md sidecar doc section missing — all fixed by orchestrator before commit). One atomic commit.
+
+### What changed
+
+**New / heavily-expanded modules under `src-tauri/src/mcp/`:**
+
+- **`mcp/registry.rs`** (244 lines, was a 1-line placeholder) — `ToolRegistry` trait with RPITIT-style async `call_tool(name, args, ctx) -> Result<Value, AppError>` plus `list_tools() -> Vec<ToolDescription>`. Explicit `Send` bound on the returned future (`impl Future<Output = ...> + Send`) so implementors can be dyn-dispatched across `.await` boundaries. `ToolDescription` is camelCase-serialised (`inputSchema`) to match the MCP protocol wire format. `PlaceholderRegistry` provides a no-op impl for FEAT-4a's server tests.
+- **`mcp/actor.rs`** (259 lines, was a 1-line placeholder) — `Actor` enum (`User` default, `Agent { name: String }`) + `ActorContext { actor, request_id }`. `tokio::task_local! { pub static ACTOR: ActorContext; }` lets command handlers (once FEAT-4c wires them in) read the current actor without a function-parameter refactor. `current_actor()` defaults to `Actor::User` when outside any scope. Manual `Debug` impls for both types suppress the agent `name` field so spans/logs never leak PII-flavoured content.
+- **`mcp/activity.rs`** (695 lines, was a 1-line placeholder) — `ActivityRing { VecDeque<ActivityEntry>, cap: 100 }` with FIFO-evict-oldest semantics. `ActivityEmitter` trait object (`Arc<dyn ActivityEmitter>`) mirrors the existing `SyncEventSink` pattern — one production emitter `TauriRuntimeEmitter<R: tauri::Runtime>` (`app.emit("mcp:activity", entry)`) and one test `RecordingEmitter` so unit tests don't require a real Tauri app. `ActivityContext` bundles the ring + emitter for injection into the server. `emit_tool_completion()` is the integration seam FEAT-4c will call after each successful `tools/call`. Ring survives poisoned-mutex recovery (clears and continues) — serves the single-user threat-model decision to prioritise availability over strict state integrity.
+
+**Existing files edited:**
+
+- **`mcp/server.rs`** (+688 lines) — `ConnectionState` gains `activity_ctx: Option<ActivityContext>`. `handle_connection`, `serve_unix`, `serve_pipe` all take a new `activity_ctx: Option<ActivityContext>` parameter (threaded from the boot-time spawn in `lib.rs`). `tools/call` dispatch routes through `registry.call_tool()` instead of returning `-32601` unconditionally. On `ToolDispatchError::NotFound` → `-32601`; on `ValidationError` → `-32602`; on tool success the handler calls `emit_tool_completion()` wired through `activity_ctx`. `tools/list` now delegates to `registry.list_tools()`. `ACTOR.scope(...)` wraps each tool dispatch with an `ActorContext` built from the captured `ClientInfo`. +22 unit tests total (19 from 4b dispatch paths + 3 from 4d integration seams).
+- **`mcp/mod.rs`** (+13 lines) — boot plumbing wires an `ActivityContext` built from the Tauri `AppHandle` into `spawn_mcp_ro_task()`. The `activity_ctx: None` default is preserved for existing call sites that don't yet need activity recording.
+- **`src-tauri/src/lib.rs`** (+5 lines) — passes the `AppHandle` into `spawn_mcp_ro_task()` so it can build a `TauriRuntimeEmitter<R>` at boot.
+
+**Packaging (FEAT-4f):**
+
+- **`src-tauri/tauri.conf.json`** — added `externalBin: ["binaries/agaric-mcp"]` entry under `bundle` so Tauri bundles the sidecar into the per-platform installer. `beforeDevCommand` and `beforeBuildCommand` updated to run `node scripts/prepare-external-bins.mjs` (`--placeholder-only` in dev, full in build) before Tauri starts so the target-triple-named binary is in place.
+- **`src-tauri/tauri.android.conf.json`** (new) — empty `bundle.externalBin` override for Android; mobile doesn't ship the sidecar (deferred to FEAT-4i). Tauri merges this over `tauri.conf.json` when building for Android.
+- **`scripts/prepare-external-bins.mjs`** (new, 110 lines) — detects the current Rust host triple via `rustc -vV`, builds `agaric-mcp` (release + stripped via `[profile.release]`), and copies it to `src-tauri/binaries/agaric-mcp-<target-triple>[.exe]` which Tauri expects. `--placeholder-only` mode just creates an empty file at the expected path so the bundler's existence check passes during `cargo tauri dev` without forcing a full release build on every launch.
+- **`.github/workflows/ci.yml`** — Linux/macOS/Windows matrix builds now run the prep script before `cargo tauri build`; a post-build step asserts the sidecar ended up inside the built artifact (`ls <bundle_root>/…/agaric-mcp*`). Android job runs the placeholder-only step before `cargo tauri android init` so the bundler doesn't error on a missing binary.
+- **`.gitignore`** — ignore `src-tauri/binaries/` (generated, never committed).
+- **`biome.json`** — exclude `src-tauri/binaries/` from formatting/linting.
+- **`README.md` + `BUILD.md`** — new "MCP sidecar binary" subsections documenting the prep-script workflow, where the sidecar ends up per platform, and how it's consumed by MCP clients at runtime.
+
+### Design decisions (recap of parallel-subagent invariants)
+
+- **No architectural drift.** All three slices are expressible within the FEAT-4 umbrella decisions already recorded in REVIEW-LATER. No new tables, no new op types, no new Zustand stores, no new materializer queues, no new sync message types.
+- **No `forwardRef`, no `JSX.*` globals, no silent catches.** The new code adds no frontend; the Tauri event payload (`mcp:activity`) follows the existing `sync:*` event emit conventions.
+- **`Arc<dyn ActivityEmitter>` vs generics.** Chose the trait-object form for consistency with `SyncEventSink` — lets the ring be injected with either the real `TauriRuntimeEmitter<R>` or the `RecordingEmitter` test double at the same call sites. Monomorphisation would have meant duplicating the server generic parameter list end-to-end.
+- **`ActorContext::Debug` redacts `name`.** Per FEAT-4b's REVIEW-LATER spec ("log the discriminant only"). Spans and `tracing` output never carry the agent name; it only appears in the structured `ActivityEntry` where the user explicitly sees it.
+- **Placeholder `tools/call` still returns `-32601`.** FEAT-4c will wire `ReadOnlyTools` into the registry and flip this to real dispatch. One of the new 4d tests asserts the placeholder path *does not* record activity — the ring stays empty until real tools land.
+
+### Verification
+
+- `cd src-tauri && cargo fmt --check` clean.
+- `cd src-tauri && cargo clippy --all-targets -- -D warnings` clean.
+- `cd src-tauri && cargo nextest run mcp` — 58 passed (was 20 in session 447; +22 from 4b, +16 from 4d ring/emitter/ctx, plus 4f-facing transport tests unchanged). 2198 skipped (full suite baseline).
+- `cd src-tauri && cargo nextest run` — 2254 passed (was 2216 end of session 447; +38 net). 0 failed, 2 pre-existing skipped.
+- `cd src-tauri && cargo sqlx prepare --check -- --tests` — unchanged (no SQL touched this session).
+- `cd src-tauri && cargo test -- specta_tests --ignored` — bindings clean (no IPC commands added in this slice; `Actor`/`ActorContext` are internal-only).
+- Manual spot-check: `agaric-mcp` sidecar placeholder resolves correctly on Linux (`src-tauri/binaries/agaric-mcp-x86_64-unknown-linux-gnu`), `cargo tauri dev` starts without a bundler error.
+- `prek run --all-files` — all 25 hooks pass.
+
+### Architectural invariants respected (AGENTS.md)
+
+- Append-only op log, CQRS split, sqlx compile-time queries, PRAGMA foreign_keys, ULID normalization, recursive-CTE filters — all untouched (this slice adds no SQL).
+- `unsafe_code = "deny"` in `[lints.rust]` respected — `task_local!` and `Arc<Mutex<...>>` cover all concurrency needs; no `unsafe` blocks.
+- No new Zustand store, no new materializer queue, no new sync message type, no new op type, no new table. Pre-approved FEAT-4 sub-items only touch `src-tauri/src/mcp/` + packaging config.
+
+### Notes for the next session
+
+- **FEAT-4c is the natural next slice.** With `ToolRegistry`, `ActorContext`, and the activity ring all in place, `ReadOnlyTools` (9 read tools + `insta` schema snapshots) plugs straight into the seams established here. The `emit_tool_completion()` call site in `server.rs` is already wired — 4c only needs to return tool results; the ring push + event emit happen automatically.
+- **FEAT-4b review left one advisory:** `-32601 NotFound` response code for `call_tool` may confuse FEAT-4c since MCP uses `-32601` for "method not found" at the JSON-RPC level. FEAT-4c should consider a custom application error code (e.g., `-32001`) when the registry reports a tool-name-not-found to disambiguate from the envelope-level "method not found" that `server.rs` still emits for non-`tools/*` methods.
+- **FEAT-4f CI matrix is live but untested on macOS/Windows runners.** The file-exists post-build assertions will either pass or fail on the first real CI run; if they fail the fix is likely a path-glob tweak in `.github/workflows/ci.yml`, not a logic error.
+
+---
+
 ## Session 447 — FEAT-4a: MCP module skeleton + UDS/named-pipe transport + `agaric-mcp` stdio↔socket stub binary (2026-04-20)
 
 **1 REVIEW-LATER item resolved.** Open items: 27 → 26. First slice of the pre-approved FEAT-4 (MCP server) umbrella. Landed the module skeleton, JSON-RPC 2.0 server, transport abstraction (UDS on Linux/macOS, named pipe on Windows), and the `agaric-mcp` stdio↔socket stub binary that MCP clients (Claude Desktop, Claude Code, Cursor, etc.) invoke. User explicitly chose FEAT-4 start via `ask_user_question` after the session 446 queue exhausted of S-sized non-deferred items. Single build subagent (4b/4d depend on 4a's module layout — parallelizing would have required worktrees for marginal wall-clock gain), one pipelined read-only technical reviewer — APPROVE, zero REQUEST-CHANGES. One atomic commit.

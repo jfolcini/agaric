@@ -18,6 +18,24 @@ cargo tauri android build --target aarch64 --debug
 cargo tauri android build --target aarch64
 ```
 
+## `agaric-mcp` sidecar binary (FEAT-4f)
+
+Agaric ships an `agaric-mcp` stub binary alongside the main app for MCP (Model Context Protocol) clients. Tauri's build system validates the sidecar's path on every `cargo` invocation, which is a chicken-and-egg problem: the binary can't be built if its path isn't validated, and its path can't be validated if the binary doesn't exist.
+
+**Solution:** `scripts/prepare-external-bins.mjs` creates an empty placeholder at `src-tauri/binaries/agaric-mcp-<triple>` so `cargo` commands can proceed, then optionally builds the real binary and overwrites the placeholder.
+
+For local development, `tauri.conf.json`'s `beforeDevCommand` automatically runs the placeholder step; no manual action is needed for `cargo tauri dev`. The `beforeBuildCommand` for `cargo tauri build` runs the full script (placeholder + `cargo build --bin agaric-mcp --release`) so the real binary lands in the installer.
+
+If you run bare `cargo` commands (e.g., `cargo clippy`, `cargo nextest run`) without going through `cargo tauri`, create the placeholder manually once:
+
+```bash
+node scripts/prepare-external-bins.mjs --placeholder-only
+```
+
+The placeholder is gitignored (`src-tauri/binaries/`) so it doesn't pollute commits.
+
+Android builds exclude the sidecar via `tauri.android.conf.json`'s `externalBin: []` override; mobile MCP lands in FEAT-4i (deferred).
+
 ## Prerequisites
 
 ### All Platforms
