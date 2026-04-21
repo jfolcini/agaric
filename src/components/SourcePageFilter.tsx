@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { cn } from '@/lib/utils'
 
 export interface SourcePageFilterProps {
@@ -52,8 +53,8 @@ export function SourcePageFilter({
   const filteredPages = useMemo(() => {
     const sorted = [...sourcePages].sort((a, b) => b.blockCount - a.blockCount)
     if (!search.trim()) return sorted
-    const q = search.toLowerCase()
-    return sorted.filter((p) => (p.pageTitle ?? 'Untitled').toLowerCase().includes(q))
+    // UX-248 — Unicode-aware fold.
+    return sorted.filter((p) => matchesSearchFolded(p.pageTitle ?? 'Untitled', search))
   }, [sourcePages, search])
 
   const handlePageClick = useCallback(

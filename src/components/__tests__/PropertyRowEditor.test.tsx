@@ -753,6 +753,46 @@ describe('PropertyRowEditor ref picker', () => {
     })
   })
 
+  // UX-248 — Unicode-aware fold via `matchesSearchFolded`.
+  it('ref picker matches Turkish İstanbul when query is lowercase istanbul', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks')
+        return {
+          items: [
+            { id: 'P1', content: 'İstanbul trip', block_type: 'page' },
+            { id: 'P2', content: 'Ankara plans', block_type: 'page' },
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
+      return null
+    })
+
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('linked_page', { value_ref: null })}
+        def={makeDef('linked_page', 'ref')}
+        onSave={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByLabelText(t('pageProperty.valueLabel', { key: 'linked_page' })))
+
+    await waitFor(() => {
+      expect(screen.getByText('İstanbul trip')).toBeInTheDocument()
+    })
+
+    const searchInput = screen.getByLabelText(t('block.searchPages'))
+    await user.type(searchInput, 'istanbul')
+
+    await waitFor(() => {
+      expect(screen.getByText('İstanbul trip')).toBeInTheDocument()
+      expect(screen.queryByText('Ankara plans')).not.toBeInTheDocument()
+    })
+  })
+
   it('saves selected page via setProperty', async () => {
     const user = userEvent.setup()
     const onRefSaved = vi.fn()

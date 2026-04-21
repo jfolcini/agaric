@@ -265,6 +265,54 @@ describe('BlockPropertyEditor', () => {
       expect(screen.queryByText('Page Beta')).not.toBeInTheDocument()
     })
 
+    // UX-248 — Unicode-aware fold via `matchesSearchFolded`.
+    it('ref picker matches Turkish İstanbul when query is lowercase istanbul', () => {
+      const unicodePages = [
+        {
+          id: 'P1',
+          content: 'İstanbul trip',
+          block_type: 'page',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+          page_id: null,
+        },
+        {
+          id: 'P2',
+          content: 'Ankara plans',
+          block_type: 'page',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+          page_id: null,
+        },
+      ]
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'ref', value: '' },
+            isRefProp: true,
+            refPages: unicodePages,
+            refSearch: 'istanbul',
+          })}
+        />,
+      )
+      expect(screen.getByText('İstanbul trip')).toBeInTheDocument()
+      expect(screen.queryByText('Ankara plans')).not.toBeInTheDocument()
+    })
+
     it('shows no results message when filtered list is empty', () => {
       render(
         <BlockPropertyEditor

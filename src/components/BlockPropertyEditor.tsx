@@ -2,6 +2,7 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { matchesSearchFolded } from '@/lib/fold-for-search'
 import type { BlockRow } from '../lib/tauri'
 import { setProperty } from '../lib/tauri'
 import { cn } from '../lib/utils'
@@ -89,11 +90,10 @@ export function BlockPropertyEditor({
               />
               <ScrollArea className="max-h-48 flex flex-col gap-0.5">
                 {(() => {
-                  const filtered = refPages.filter((page) => {
-                    if (!refSearch) return true
-                    const title = page.content || ''
-                    return title.toLowerCase().includes(refSearch.toLowerCase())
-                  })
+                  // UX-248 — Unicode-aware fold.
+                  const filtered = refPages.filter((page) =>
+                    matchesSearchFolded(page.content || '', refSearch),
+                  )
                   if (filtered.length === 0) {
                     return (
                       <div

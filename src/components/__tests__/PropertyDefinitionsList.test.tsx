@@ -91,6 +91,25 @@ describe('PropertyDefinitionsList', () => {
     expect(screen.queryByText('Due Date')).not.toBeInTheDocument()
   })
 
+  // UX-248 — Unicode-aware fold via `matchesSearchFolded`.
+  it('search matches accented property key via diacritic fold', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce([
+      makePropDef('café-visits', 'number'),
+      makePropDef('priority', 'number'),
+    ])
+
+    render(<PropertyDefinitionsList />)
+
+    // `formatPropertyName` renders `café-visits` as `Café Visits`.
+    await screen.findByText('Café Visits')
+    const searchInput = screen.getByPlaceholderText('Search properties...')
+    await user.type(searchInput, 'cafe')
+
+    expect(screen.getByText('Café Visits')).toBeInTheDocument()
+    expect(screen.queryByText('Priority')).not.toBeInTheDocument()
+  })
+
   it('create button creates a new definition', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockResolvedValueOnce([])

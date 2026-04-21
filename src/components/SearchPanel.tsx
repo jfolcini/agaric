@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { CardButton } from '@/components/ui/card-button'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
+import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
@@ -276,10 +277,10 @@ export function SearchPanel(): React.ReactElement {
     setPageSearchLoading(true)
     listBlocks({ blockType: 'page', limit: 20 })
       .then((res) => {
+        // UX-248 — Unicode-aware fold so `İstanbul` ↔ `istanbul`
+        // etc. match consistently with PageBrowser and HighlightMatch.
         const filtered = pageSearch
-          ? res.items.filter((b) =>
-              (b.content ?? '').toLowerCase().includes(pageSearch.toLowerCase()),
-            )
+          ? res.items.filter((b) => matchesSearchFolded(b.content ?? '', pageSearch))
           : res.items
         setPageSuggestions(filtered)
       })

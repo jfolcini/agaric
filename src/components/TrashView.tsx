@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { SearchInput } from '@/components/ui/search-input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { cn } from '@/lib/utils'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
@@ -69,8 +70,8 @@ export function TrashView(): React.ReactElement {
 
   const filteredBlocks = useMemo(() => {
     if (!debouncedFilter) return blocks
-    const lower = debouncedFilter.toLowerCase()
-    return blocks.filter((b) => (b.content ?? '').toLowerCase().includes(lower))
+    // UX-248 — Unicode-aware fold (Turkish / German / accented).
+    return blocks.filter((b) => matchesSearchFolded(b.content ?? '', debouncedFilter))
   }, [blocks, debouncedFilter])
 
   const clearFilter = useCallback(() => {

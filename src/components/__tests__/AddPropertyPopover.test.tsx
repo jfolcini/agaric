@@ -83,6 +83,54 @@ describe('AddPropertyPopover', () => {
     })
   })
 
+  // UX-248 — Unicode-aware fold via `matchesSearchFolded`.
+  it('search matches accented property key via diacritic fold', async () => {
+    const user = userEvent.setup()
+    const defs = [makeDef('café-visits', 'number'), makeDef('priority', 'number')]
+    render(<AddPropertyPopover definitions={defs} onAdd={vi.fn()} open onOpenChange={vi.fn()} />)
+
+    // `formatPropertyName('café-visits')` renders as `Café Visits`.
+    await waitFor(() => {
+      expect(screen.getByText('Café Visits')).toBeInTheDocument()
+    })
+
+    await user.type(screen.getByLabelText('Search definitions'), 'cafe')
+
+    await waitFor(() => {
+      expect(screen.getByText('Café Visits')).toBeInTheDocument()
+      expect(screen.queryByText('Priority')).not.toBeInTheDocument()
+    })
+  })
+
+  // UX-248 — both the filter AND the "exists-exact-match" check must
+  // agree on Unicode equivalence, otherwise the picker shows the match
+  // and the "Create new" suggestion simultaneously when the user types
+  // a diacritic-folded form of an existing key.
+  it('does NOT show "Create new" suggestion when Unicode fold matches existing definition', async () => {
+    const user = userEvent.setup()
+    const defs = [makeDef('café-visits', 'number')]
+    render(
+      <AddPropertyPopover
+        definitions={defs}
+        onAdd={vi.fn()}
+        supportCreateDef
+        onCreateDef={vi.fn()}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    )
+
+    await user.type(screen.getByLabelText('Search definitions'), 'cafe-visits')
+
+    await waitFor(() => {
+      expect(screen.getByText('Café Visits')).toBeInTheDocument()
+    })
+    // The "Create new" prompt only appears when no existing def
+    // matches.  Fold makes `cafe-visits` match `café-visits`, so the
+    // create flow must stay hidden.
+    expect(screen.queryByRole('button', { name: /create "cafe-visits"/i })).not.toBeInTheDocument()
+  })
+
   it('calls onAdd when a definition is clicked', async () => {
     const user = userEvent.setup()
     const onAdd = vi.fn()

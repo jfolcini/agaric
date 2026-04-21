@@ -159,6 +159,30 @@ describe('SourcePageFilter', () => {
     expect(screen.queryByText('Untitled')).not.toBeInTheDocument()
   })
 
+  // UX-248 — Unicode-aware fold: Turkish / German / accented titles
+  // match their ASCII-typed queries via `matchesSearchFolded`.
+  it('search matches Turkish İstanbul when query is lowercase istanbul', async () => {
+    const user = userEvent.setup()
+    const unicodePages = [
+      { pageId: 'P1', pageTitle: 'İstanbul trip', blockCount: 5 },
+      { pageId: 'P2', pageTitle: 'Ankara', blockCount: 3 },
+    ]
+    render(
+      <SourcePageFilter
+        sourcePages={unicodePages}
+        included={[]}
+        excluded={[]}
+        onChange={onChange}
+      />,
+    )
+
+    const searchInput = screen.getByLabelText('Search source pages')
+    await user.type(searchInput, 'istanbul')
+
+    expect(screen.getByText('İstanbul trip')).toBeInTheDocument()
+    expect(screen.queryByText('Ankara')).not.toBeInTheDocument()
+  })
+
   // 7. clicking a page includes it (calls onChange)
   it('clicking a page includes it', async () => {
     const user = userEvent.setup()

@@ -47,6 +47,7 @@ import {
 } from 'lucide-react'
 import { matchSorter } from 'match-sorter'
 import type { PickerItem } from '../editor/SuggestionList'
+import { matchesSearchFolded } from './fold-for-search'
 import { listPropertyKeys } from './tauri'
 
 export const SLASH_COMMANDS: PickerItem[] = [
@@ -487,8 +488,8 @@ export function searchSlashCommands(query: string): PickerItem[] {
 export async function searchPropertyKeys(query: string): Promise<PickerItem[]> {
   try {
     const keys = await listPropertyKeys()
-    const q = query.toLowerCase()
-    const filtered = q ? keys.filter((k) => k.toLowerCase().includes(q)) : keys
+    // UX-248 — Unicode-aware fold.
+    const filtered = query ? keys.filter((k) => matchesSearchFolded(k, query)) : keys
     return filtered.map((k) => ({ id: k, label: k }))
   } catch {
     return []

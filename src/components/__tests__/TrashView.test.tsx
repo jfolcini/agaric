@@ -1056,6 +1056,27 @@ describe('TrashView', () => {
     })
   })
 
+  // UX-248 — Unicode-aware fold: trash filter matches Turkish / German
+  // / accented content via `matchesSearchFolded`.
+  it('filter matches Turkish İstanbul when query is lowercase istanbul', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve([
+      makeBlock('B1', 'İstanbul trip notes', '2025-01-15T00:00:00Z'),
+      makeBlock('B2', 'Ankara notes', '2025-01-14T00:00:00Z'),
+    ])
+
+    render(<TrashView />)
+    await screen.findByText('İstanbul trip notes')
+
+    const input = screen.getByTestId('trash-filter-input')
+    await user.type(input, 'istanbul')
+
+    await waitFor(() => {
+      expect(screen.getByText('İstanbul trip notes')).toBeInTheDocument()
+      expect(screen.queryByText('Ankara notes')).not.toBeInTheDocument()
+    })
+  })
+
   // ── Empty Trash / Restore All header buttons ───────────────────────
 
   it('renders Empty Trash and Restore All header buttons when items exist', async () => {

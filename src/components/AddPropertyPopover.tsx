@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import { formatPropertyName } from '@/lib/property-utils'
 import type { PropertyDefinition } from '../lib/tauri'
 
@@ -67,12 +68,15 @@ export function AddPropertyPopover({
     [isControlled, controlledOnOpenChange],
   )
 
-  const filteredDefs = definitions.filter(
-    (d) => !defSearch || d.key.toLowerCase().includes(defSearch.toLowerCase()),
-  )
+  // UX-248 — Unicode-aware fold.  Both the filter and the
+  // "exists-exact-match" check must agree on Unicode equivalence
+  // (`café-visits` matching `cafe`), otherwise the picker shows
+  // the matching definition AND the "Create new" suggestion at
+  // the same time.
+  const filteredDefs = definitions.filter((d) => matchesSearchFolded(d.key, defSearch))
 
   const searchMatchesExistingDef = definitions.some(
-    (d) => d.key.toLowerCase() === defSearch.trim().toLowerCase(),
+    (d) => foldForSearch(d.key) === foldForSearch(defSearch.trim()),
   )
 
   const handleAddFromDef = useCallback(

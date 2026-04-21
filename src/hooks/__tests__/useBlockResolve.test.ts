@@ -959,6 +959,42 @@ describe('searchPages — "Create new" option', () => {
     expect(createOption).toBeUndefined()
   })
 
+  // UX-248 — Unicode-aware fold so the "exact match exists" check
+  // folds Turkish / German / accented titles the same way the cache
+  // filter does above.  Without this, a page titled `İstanbul` queried
+  // as `istanbul` would (incorrectly) trigger "Create new".
+  it('does NOT append "Create new" when query exactly matches a Turkish title via fold', async () => {
+    const { result } = renderHook(() => useBlockResolve())
+
+    act(() => {
+      result.current.pagesListRef.current = [{ id: 'P1', title: 'İstanbul' }]
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('istanbul')
+    })
+
+    const createOption = items.find((i) => i.isCreate)
+    expect(createOption).toBeUndefined()
+  })
+
+  it('does NOT append "Create new" when query exactly matches a German title via fold', async () => {
+    const { result } = renderHook(() => useBlockResolve())
+
+    act(() => {
+      result.current.pagesListRef.current = [{ id: 'P1', title: 'Straße' }]
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('strasse')
+    })
+
+    const createOption = items.find((i) => i.isCreate)
+    expect(createOption).toBeUndefined()
+  })
+
   it('does NOT append "Create new" for empty query', async () => {
     const { result } = renderHook(() => useBlockResolve())
 

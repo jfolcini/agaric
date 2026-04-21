@@ -14,6 +14,7 @@ import { FileText, Hash, Tag } from 'lucide-react'
 import { matchSorter } from 'match-sorter'
 import { useCallback, useRef } from 'react'
 import type { PickerItem } from '../editor/SuggestionList'
+import { foldForSearch, matchesSearchFolded } from '../lib/fold-for-search'
 import { logger } from '../lib/logger'
 import {
   createBlock,
@@ -104,8 +105,10 @@ async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise
     return matches
   }
   const ftsIds = new Set(matches.map((m) => m.id))
+  // UX-248 — Unicode-aware fold.  `matchesSearchFolded`'s ASCII fast
+  // path keeps this hot cache-lookup cheap when the query is ASCII.
   const cacheMatches = pagesListRef.current
-    .filter((p) => p.title.toLowerCase().includes(q) && !ftsIds.has(p.id))
+    .filter((p) => matchesSearchFolded(p.title, q) && !ftsIds.has(p.id))
     .slice(0, 10)
     .map((p) => makePagePickerItem(p.id, p.title))
   return [...matches, ...cacheMatches].slice(0, 20)
@@ -157,7 +160,16 @@ function appendCreatePageOptionIfNeeded(
 ): void {
   if (q.length === 0) return
   const allSource = pagesListRef.current.length > 0 ? pagesListRef.current : matches
-  const exactMatch = allSource.some((p) => ('title' in p ? p.title : p.label).toLowerCase() === q)
+  // UX-248 — fold both sides so the "exact match exists" check folds
+  // Turkish / German / accented inputs the same way `matchesSearchFolded`
+  // does in the filter above.  Without this, a page titled `İstanbul`
+  // when queried as `istanbul` would appear as "no exact match" and the
+  // "Create new page" option would be appended, even though the page
+  // does exist.
+  const qFolded = foldForSearch(q)
+  const exactMatch = allSource.some(
+    (p) => foldForSearch('title' in p ? p.title : p.label) === qFolded,
+  )
   if (exactMatch) return
   matches.push({
     id: '__create__',
@@ -230,7 +242,10 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // an existing tag — this makes it the default selection so pressing Enter
       // auto-creates the tag (F-26).
       if (q.length > 0) {
-        const exactMatch = tags.some((t) => t.name.toLowerCase() === q)
+        // UX-248 — fold both sides so Turkish / German / accented tag
+        // names match their ASCII-typed queries the same way as pages do.
+        const qFolded = foldForSearch(q)
+        const exactMatch = tags.some((t) => foldForSearch(t.name) === qFolded)
         if (!exactMatch) {
           result.unshift({
             id: '__create__',

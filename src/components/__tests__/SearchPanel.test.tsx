@@ -1521,6 +1521,40 @@ describe('SearchPanel', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+
+    // UX-248 — Unicode-aware fold: page picker matches Turkish /
+    // German / accented content via `matchesSearchFolded`.
+    it('page picker matches Turkish İstanbul when query is lowercase istanbul', async () => {
+      const user = userEvent.setup()
+
+      // The page-picker effect refires on every `pageSearch` change, so
+      // use `mockResolvedValue` (persistent) rather than `Once` so every
+      // `listBlocks({ blockType: 'page', limit: 20 })` call resolves.
+      const pagePayload = {
+        items: [
+          makeSearchResult({ id: 'PAGE1', block_type: 'page', content: 'İstanbul trip' }),
+          makeSearchResult({ id: 'PAGE2', block_type: 'page', content: 'Ankara plans' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      }
+      mockedInvoke.mockResolvedValue(pagePayload)
+
+      render(<SearchPanel />)
+
+      await user.click(screen.getByRole('button', { name: t('search.addPage') }))
+      await waitFor(() => {
+        expect(screen.getByText('İstanbul trip')).toBeInTheDocument()
+      })
+
+      const searchInput = screen.getByPlaceholderText(t('search.searchPages'))
+      await user.type(searchInput, 'istanbul')
+
+      await waitFor(() => {
+        expect(screen.getByText('İstanbul trip')).toBeInTheDocument()
+        expect(screen.queryByText('Ankara plans')).not.toBeInTheDocument()
+      })
+    })
   })
 
   // =========================================================================

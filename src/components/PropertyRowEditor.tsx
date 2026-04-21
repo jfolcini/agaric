@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { LOCKED_PROPERTY_OPTIONS } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
@@ -197,8 +198,8 @@ export function PropertyRowEditor({
 
   const filteredRefPages = useMemo(() => {
     if (!refSearch) return refPages
-    const q = refSearch.toLowerCase()
-    return refPages.filter((p) => (p.content || '').toLowerCase().includes(q))
+    // UX-248 — Unicode-aware fold.
+    return refPages.filter((p) => matchesSearchFolded(p.content || '', refSearch))
   }, [refPages, refSearch])
 
   const handleSelectRefPage = useCallback(

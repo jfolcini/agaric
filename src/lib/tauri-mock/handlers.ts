@@ -11,6 +11,7 @@
  * diffed against the real backend's command surface in `src/lib/bindings.ts`.
  */
 
+import { matchesSearchFolded } from '../fold-for-search'
 import { applyRevertForOp } from './revert'
 import {
   attachments,
@@ -341,12 +342,16 @@ export const HANDLERS: Record<string, Handler> = {
 
   search_blocks: (args) => {
     const a = args as Record<string, unknown>
-    const query = ((a['query'] as string) ?? '').toLowerCase()
+    const query = (a['query'] as string) ?? ''
     if (!query) return { items: [], next_cursor: null, has_more: false }
+    // UX-248 — Unicode-aware fold so the mock parity-matches the real
+    // backend's FTS5 / `COLLATE NOCASE` behaviour for Turkish / German
+    // / accented inputs.  Tests that assert Unicode matching against
+    // the mock now see consistent behaviour.
     const items = [...blocks.values()].filter(
       (b) =>
         !(b['deleted_at'] as string | null) &&
-        ((b['content'] as string) ?? '').toLowerCase().includes(query),
+        matchesSearchFolded((b['content'] as string) ?? '', query),
     )
     return { items, next_cursor: null, has_more: false }
   },
@@ -638,9 +643,10 @@ export const HANDLERS: Record<string, Handler> = {
         const bt = filter['block_type'] as string
         backlinkItems = backlinkItems.filter((b) => b['block_type'] === bt)
       } else if (type === 'Contains') {
-        const query = ((filter['query'] as string) ?? '').toLowerCase()
+        const query = (filter['query'] as string) ?? ''
+        // UX-248 — Unicode-aware fold (mock / backend parity).
         backlinkItems = backlinkItems.filter((b) =>
-          ((b['content'] as string) ?? '').toLowerCase().includes(query),
+          matchesSearchFolded((b['content'] as string) ?? '', query),
         )
       } else if (type === 'PropertyText') {
         const key = filter['key'] as string
@@ -865,7 +871,7 @@ export const HANDLERS: Record<string, Handler> = {
         filtered_count: 0,
         truncated: false,
       }
-    const pageTitle = ((page['content'] as string) ?? '').toLowerCase()
+    const pageTitle = (page['content'] as string) ?? ''
     if (!pageTitle)
       return {
         groups: [],
@@ -875,14 +881,15 @@ export const HANDLERS: Record<string, Handler> = {
         filtered_count: 0,
         truncated: false,
       }
-    // Find blocks that mention the page title as text but don't have a [[link]]
+    // Find blocks that mention the page title as text but don't have a [[link]].
+    // UX-248 — Unicode-aware fold (mock / backend parity).
     const LINK_RE_UL = /\[\[([0-9A-Z]{26})\]\]/g
     const unlinked = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
       if (b['id'] === pageId) return false
       if (b['parent_id'] === pageId) return false
       const content = (b['content'] as string) ?? ''
-      if (!content.toLowerCase().includes(pageTitle)) return false
+      if (!matchesSearchFolded(content, pageTitle)) return false
       // Exclude if it already has a [[link]] to this page
       for (const m of content.matchAll(LINK_RE_UL)) {
         if (m[1] === pageId) return false

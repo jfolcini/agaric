@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { createBlock, deleteProperty, queryByProperty, setProperty } from '../lib/tauri'
 import { loadTemplatePagesWithPreview } from '../lib/template-utils'
 import { useNavigationStore } from '../stores/navigation'
@@ -103,9 +104,8 @@ export function TemplatesView(): React.ReactElement {
     useNavigationStore.getState().navigateToPage(id, content)
   }, [])
 
-  const filtered = templates.filter((tpl) =>
-    tpl.content.toLowerCase().includes(search.toLowerCase()),
-  )
+  // UX-248 — Unicode-aware fold.
+  const filtered = templates.filter((tpl) => matchesSearchFolded(tpl.content, search))
 
   return (
     <section className="space-y-4" aria-label={t('sidebar.templates')}>

@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Button } from '@/components/ui/button'
+import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { useBlockTags } from '../hooks/useBlockTags'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
@@ -354,7 +355,8 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   const appliedTags = allTags.filter((t_) => appliedTagIds.has(t_.id))
   const availableTags = allTags
     .filter((t_) => !appliedTagIds.has(t_.id))
-    .filter((t_) => !tagQuery || t_.name.toLowerCase().includes(tagQuery.toLowerCase()))
+    // UX-248 — Unicode-aware fold.
+    .filter((t_) => matchesSearchFolded(t_.name, tagQuery))
 
   const handleTagAdd = useCallback(
     async (tagId: string) => {

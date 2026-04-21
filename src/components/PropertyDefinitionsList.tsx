@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { LOCKED_PROPERTY_OPTIONS, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
@@ -143,9 +144,8 @@ export function PropertyDefinitionsList(): React.ReactElement {
     [editOptionsValue, t],
   )
 
-  const filteredDefs = definitions.filter((d) =>
-    d.key.toLowerCase().includes(searchFilter.toLowerCase()),
-  )
+  // UX-248 — Unicode-aware fold.
+  const filteredDefs = definitions.filter((d) => matchesSearchFolded(d.key, searchFilter))
 
   return (
     <div className="space-y-4">

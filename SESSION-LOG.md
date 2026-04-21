@@ -1,5 +1,78 @@
 # Session Log
 
+## Session 456 — UX-248: Roll Unicode fold into the remaining 11 `.toLowerCase().includes()` filter surfaces (2026-04-21)
+
+**1 REVIEW-LATER item resolved, 0 new filed.** Open items: 13 → 12. Mechanical sweep landing the UX-247 `matchesSearchFolded` / `foldForSearch` helpers into every remaining substring-filter surface so Turkish / German / accented matching works consistently across the app, not just in `PageBrowser` / `HighlightMatch`. One read-only technical review subagent returned REQUEST-CHANGES on a missed exact-match check inside `AddPropertyPopover` (`searchMatchesExistingDef`) — fixed in-session, with a new test to pin the fix, before commit.
+
+### What changed
+
+**Filter-surface swaps** (each replaces raw `.toLowerCase().includes(...)` / `.toLowerCase().indexOf(...)` with `matchesSearchFolded` / `foldForSearch` from `@/lib/fold-for-search`):
+
+- `src/components/SearchPanel.tsx` (+2 / -2) — page picker client-side filter (line 283).
+- `src/components/TrashView.tsx` (+2 / -2) — trash filter input (line 74).
+- `src/components/BlockPropertyEditor.tsx` (+3 / -4) — ref property picker (line 94-96).
+- `src/components/PropertyRowEditor.tsx` (+3 / -3) — ref property picker row editor (line 200-202).
+- `src/components/PropertyDefinitionsList.tsx` (+2 / -3) — property-definitions search (line 148).
+- `src/components/PageHeader.tsx` (+3 / -1) — tag picker filter (line 359).
+- `src/components/TemplatesView.tsx` (+3 / -3) — templates search (line 108).
+- `src/components/SourcePageFilter.tsx` (+3 / -2) — backlink source-page filter (line 57).
+- `src/components/AddPropertyPopover.tsx` (+7 / -3) — add-property search (line 76) AND `searchMatchesExistingDef` (line 79, added in-session after review).
+- `src/lib/slash-commands.ts` (+3 / -2) — property-key slash command (line 492).
+- `src/hooks/useBlockResolve.ts` (+16 / -4) — 3 sites: cache substring filter (line 111), `searchPages` "exact-match exists" check (line 163-172), `searchTags` "exact-match exists" check (line 247-248).  Both exact-match checks now fold both sides, matching the cache-lookup-filter behaviour.
+- `src/lib/tauri-mock/handlers.ts` (+8 / -7) — 3 sites: `search_blocks` (line 354), backlink `Contains` filter (line 649), unlinked-references page-title match (line 892).  Mock now folds on par with the component-layer filters it feeds, so vitest assertions don't drift from production behaviour.
+
+**Per-surface Unicode regression tests added** (one new `it(...)` per user-facing surface, asserting at minimum one of the Turkish / German / accented repro cases; the full fold matrix is already pinned in `fold-for-search.test.ts` from UX-247):
+
+- `src/components/__tests__/TrashView.test.tsx` — `filter matches Turkish İstanbul when query is lowercase istanbul`.
+- `src/components/__tests__/PropertyDefinitionsList.test.tsx` — `search matches accented property key via diacritic fold` (uses `café-visits` → `Café Visits` after `formatPropertyName`).
+- `src/components/__tests__/SearchPanel.test.tsx` — `page picker matches Turkish İstanbul when query is lowercase istanbul`.  Uses `mockedInvoke.mockResolvedValue(...)` (persistent) rather than `.mockResolvedValueOnce` because the picker effect refires on every query change.
+- `src/components/__tests__/TemplatesView.test.tsx` — `template search matches Turkish İstanbul when query is lowercase istanbul`.
+- `src/components/__tests__/SourcePageFilter.test.tsx` — `search matches Turkish İstanbul when query is lowercase istanbul`.
+- `src/components/__tests__/AddPropertyPopover.test.tsx` — `search matches accented property key via diacritic fold` AND the in-session review follow-up `does NOT show "Create new" suggestion when Unicode fold matches existing definition` (the test that caught the review's REQUEST-CHANGES bug).
+- `src/components/__tests__/PageHeader.test.tsx` — `tag picker search matches accented tag when query is ASCII`.  Opens the picker via the kebab-menu path because `/add tag/i` is hidden when no tags are applied (per UX-H10 tag-section visibility rule).
+- `src/components/__tests__/BlockPropertyEditor.test.tsx` — `ref picker matches Turkish İstanbul when query is lowercase istanbul`.
+- `src/components/__tests__/PropertyRowEditor.test.tsx` — `ref picker matches Turkish İstanbul when query is lowercase istanbul`.
+- `src/hooks/__tests__/useBlockResolve.test.ts` — two new tests: `does NOT append "Create new" when query exactly matches a Turkish title via fold` and `…a German title via fold`.  These pin the `foldForSearch(name) === foldForSearch(q)` branch in `appendCreatePageOptionIfNeeded`.
+
+`slash-commands.ts` and `tauri-mock/handlers.ts` have no standalone test files — their swapped filter logic is covered transitively by the component-level regression tests above (and by the 31 unit tests pinning `matchesSearchFolded`'s behaviour in `fold-for-search.test.ts`).
+
+### Review-driven follow-up fix (in-session)
+
+The read-only review subagent caught that `AddPropertyPopover.tsx:79`'s `searchMatchesExistingDef` check was still using raw `.toLowerCase()` equality while the sibling filter had been swapped to `matchesSearchFolded`.  That inconsistency meant: user types `cafe` with a `café-visits` definition loaded → the filter shows `Café Visits` in the list, AND the "Create new" button ALSO appears (because the exact-match check uses plain `.toLowerCase()` which treats `café` and `cafe` as distinct).  Fixed by folding both sides with `foldForSearch` + added a new test (`does NOT show "Create new" suggestion when Unicode fold matches existing definition`) to pin the fix.  Landed before commit.
+
+### Verification
+
+- `npx vitest run src/components/__tests__/{TrashView,PropertyDefinitionsList,SearchPanel,TemplatesView,SourcePageFilter,AddPropertyPopover,PageHeader,BlockPropertyEditor,PropertyRowEditor}.test.tsx src/hooks/__tests__/useBlockResolve.test.ts`: 418 passed (was 406 before; **+12 net** = 11 Unicode regression tests + 1 AddPropertyPopover review-fix test).
+- `npx vitest run` (full): **7559 passed** across 298 files (was 7548 after session 455; **+11 net** — counting the Unicode regressions + review-fix additions together across all test files).
+- `cargo nextest run` (full): 2547 passed, 0 failed, 2 skipped — unchanged from session 455 (no Rust code touched).
+- `cargo clippy`, `cargo sqlx prepare --check`: N/A (no Rust changes).
+- `prek run --all-files`: all 25 hooks pass.
+
+### Design decisions
+
+- **Per-surface regression tests, not one mega-test.** Each component gets exactly one Unicode case (Turkish / German / accented, chosen for reasonable coverage across surfaces).  The fold algorithm itself is pinned by 31 `fold-for-search.test.ts` unit tests — component tests only verify the **wiring**.  Keeps each test focused and fast.
+- **`searchPages` / `searchTags` exact-match checks now use `foldForSearch(lhs) === foldForSearch(rhs)` directly.**  `q` is already `.toLowerCase().trim()`d before reaching these checks, but `foldForSearch` is idempotent on ASCII lowercase and correct on non-ASCII, so the re-fold is cheap and consistent with the surrounding filter.
+- **Mock handlers folded too.**  The real backend uses SQLite `COLLATE NOCASE` (ASCII-only case folding) + FTS5 with a trigram tokenizer (Unicode substring).  The mock can't faithfully reproduce FTS5, so folding here is more Unicode-aware than the real backend.  That's a deliberate choice: tests assert the **intended** behaviour, and the real backend will catch up naturally when SQLite ICU gets wired in (out of scope for this item; the FTS5 path already handles Unicode on its own terms).
+- **`AddPropertyPopover` exact-match check promoted from `.toLowerCase() ===` to `foldForSearch(lhs) === foldForSearch(rhs)`.**  This was the review's REQUEST-CHANGES finding — missed in the initial sweep because the check is an equality (not a substring), but it needs the same Unicode-equivalence as the filter it sits next to, otherwise the "Create new" prompt pops up when the user is looking right at a matching definition.
+
+### Architectural invariants respected (AGENTS.md)
+
+- Op log append-only: untouched.
+- CQRS split: untouched (frontend-only filter wiring).
+- sqlx compile-time queries: no Rust changes.
+- TS strict settings: `exactOptionalPropertyTypes` / `noImplicitReturns` / `noNonNullAssertion` all upheld in the new code.
+- No weakening of biome strict rules, no new `biome-ignore` (the `noControlCharactersInRegex` suppression in `fold-for-search.ts` is UX-247-era, unchanged).
+- No silent `.catch(() => {})`.
+- No new shared component / hook / store — pure in-place swap to a helper that already existed.
+- Design-system compliance: no new primitives added, no CVA variants changed, no new colour classes hardcoded.
+
+### Notes for the next session
+
+- **All 13 pre-UX-248 `.toLowerCase().includes()` substring-filter surfaces now fold Unicode consistently** with `PageBrowser` / `HighlightMatch` (UX-247).  Grep `\.toLowerCase\(\)\.includes` / `\.toLowerCase\(\)\.indexOf` in `src/` confirms only the `fold-for-search.ts` ASCII fast path (`haystack.toLowerCase().indexOf(needle.toLowerCase())` inside `indexOfFolded`) + 3 documentation comments remain.  If a future filter surface is added, the default should be `matchesSearchFolded` from day one.
+- **After UX-248, remaining actionable items collapse to**: UX-239 (blocked on user repro), FEAT-4h / FEAT-5g (deferred by decision), PERF-19/20/23 and MAINT-88 (deliberate non-fixes per their individual defer notes), all PUB-* (blocked on publish target).  The next genuinely scheduleable slice is FEAT-4h (MCP v2 — RW server) once the user signals acceptance of the v1 RO UX that shipped in session 450.
+
+---
+
 ## Session 455 — UX-247 + FEAT-5i: Unicode-aware filter folding + local-command GCal `DirtyEvent` producer (2026-04-21)
 
 **2 REVIEW-LATER items resolved, 1 new filed.** Open items: 14 → 13. Two unrelated slices landed in the same batch — UX-247 (Unicode filter in PageBrowser/HighlightMatch) is a standalone frontend fix that fell out of a direct code-probe reproduction; FEAT-5i is the backend follow-up to FEAT-5h that completes the "constantly updated" semantic for on-device edits. One read-only technical review subagent returned APPROVE on FEAT-5i and APPROVE WITH NOTES on UX-247 (both optional notes addressed — alias-badge call site in the same file was also folded, and the ~11 remaining filter surfaces were filed as UX-248).

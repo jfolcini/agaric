@@ -168,6 +168,40 @@ describe('TemplatesView', () => {
     expect(screen.queryByText('Weekly Review')).not.toBeInTheDocument()
   })
 
+  // UX-248 — Unicode-aware fold: template search matches Turkish /
+  // German / accented titles via `matchesSearchFolded`.
+  it('template search matches Turkish İstanbul when query is lowercase istanbul', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'query_by_property') {
+        const params = args as { key: string }
+        if (params.key === 'template') {
+          return {
+            items: [
+              makeTemplate('T1', 'İstanbul trip template'),
+              makeTemplate('T2', 'Ankara plans'),
+            ],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        return emptyPage
+      }
+      return emptyPage
+    })
+
+    render(<TemplatesView />)
+
+    expect(await screen.findByText('İstanbul trip template')).toBeInTheDocument()
+    expect(screen.getByText('Ankara plans')).toBeInTheDocument()
+
+    const searchInput = screen.getByPlaceholderText('Search templates\u2026')
+    await user.type(searchInput, 'istanbul')
+
+    expect(screen.getByText('İstanbul trip template')).toBeInTheDocument()
+    expect(screen.queryByText('Ankara plans')).not.toBeInTheDocument()
+  })
+
   it('navigates to template on click', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {

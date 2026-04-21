@@ -305,6 +305,68 @@ describe('PageHeader tag management', () => {
     })
   })
 
+  // UX-248 — Unicode-aware fold: tag picker filter matches Turkish /
+  // German / accented tag names via `matchesSearchFolded`.
+  it('tag picker search matches accented tag when query is ASCII', async () => {
+    const user = userEvent.setup()
+    // biome-ignore lint/suspicious/noExplicitAny: test mock needs flexible arg access
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'list_blocks') {
+        return {
+          items: [
+            {
+              id: 'TAG_CAFE',
+              block_type: 'tag',
+              content: 'café',
+              parent_id: null,
+              position: null,
+              deleted_at: null,
+              is_conflict: false,
+              conflict_type: null,
+            },
+            {
+              id: 'TAG_PRIO',
+              block_type: 'tag',
+              content: 'priority',
+              parent_id: null,
+              position: null,
+              deleted_at: null,
+              is_conflict: false,
+              conflict_type: null,
+            },
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') return []
+      return null
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    // No tags applied → inline "add tag" button is hidden (per UX-H10),
+    // so open the picker via the kebab menu instead.
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText('Add tag'))
+
+    await waitFor(() => {
+      expect(screen.getByText('café')).toBeInTheDocument()
+      expect(screen.getByText('priority')).toBeInTheDocument()
+    })
+
+    const searchInput = screen.getByPlaceholderText('Search or create tag...')
+    await user.type(searchInput, 'cafe')
+
+    await waitFor(() => {
+      expect(screen.getByText('café')).toBeInTheDocument()
+      expect(screen.queryByText('priority')).not.toBeInTheDocument()
+    })
+  })
+
   it('remove tag via badge X button', async () => {
     const user = userEvent.setup()
     setupTagMock(['TAG_1'])
