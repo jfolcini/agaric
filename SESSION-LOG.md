@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 458 — MAINT-88 follow-up: document `sqruff` in BUILD.md prerequisites (2026-04-21)
+
+Single-line docs follow-up to session 457. The `sqruff` prek hook added in 457 requires `sqruff` on `PATH`, but BUILD.md didn't mention the installation step — fresh clones would fail `prek run --all-files` with `sqruff: command not found`. Per explicit user direction ("fix just [and] docs for sqruff"), adding `cargo install sqruff` to the "All Platforms" prerequisites list alongside `cargo install tauri-cli --locked`, with the failure mode spelled out so the next contributor doesn't hit the same wall.
+
+### What changed
+
+- **`BUILD.md`** — New bullet under `## Prerequisites → ### All Platforms`: `- **sqruff** (SQL linter used by the sqruff pre-commit hook…): cargo install sqruff`.
+
+### Verification
+
+- `prek run --all-files`: all 26 hooks pass (sqruff itself, trim-trailing-whitespace, markdownlint-cli2, lychee on the edited BUILD.md + SESSION-LOG.md; Rust / TS hooks no-op on doc-only change).
+
+### Notes
+
+- The open question from session 457 ("file MAINT-89 if anyone hits this") is resolved here; not filing MAINT-89.
+
+---
+
 ## Session 457 — MAINT-88: wire `sqruff` prek hook for `src-tauri/migrations/` (2026-04-21)
 
 **1 REVIEW-LATER item resolved, 0 new filed.** Open items: 14 → 13 (summary count also corrected from stale 12 to 13 — the row count had drifted from the headline number across prior sessions). MAINT-88 landed as an implementation rather than the previously-recorded `Decision: Defer`, per explicit user direction ("do MAINT-88 following PROMPT.md"). The one substantive deviation from the MAINT-88 writeup: **no `sqruff fix` pass was run over the 32 shipped migrations**. The writeup's "If ever implemented" bullet proposed a one-shot fix pass, but `sqlx::migrate!` checksums every migration file in `_sqlx_migrations` and any content mutation triggers `MigrateError::VersionMismatch` on every existing database at boot — directly contradicting the AGENTS.md append-only migrations invariant. Instead, the rule set was picked to be a strict subset that all 32 existing migrations already satisfy, so the hook is a pure style / correctness gate on *new* migrations without forcing any mutations on sealed ones.

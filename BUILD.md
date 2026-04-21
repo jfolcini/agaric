@@ -43,6 +43,7 @@ Android builds exclude the sidecar via `tauri.android.conf.json`'s `externalBin:
 - **Node.js 22+** and npm
 - **Rust** (stable toolchain) via [rustup](https://rustup.rs)
 - **Tauri CLI**: `cargo install tauri-cli --locked`
+- **sqruff** (SQL linter used by the `sqruff` pre-commit hook against `src-tauri/migrations/*.sql`): `cargo install sqruff`. Without it, `prek run --all-files` fails with `sqruff: command not found` on any commit that stages SQL or runs the full hook set.
 
 ```bash
 # Install npm dependencies
