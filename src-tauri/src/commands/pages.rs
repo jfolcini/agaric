@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use serde::Serialize;
+use specta::Type;
 use sqlx::SqlitePool;
 use tracing::instrument;
 
@@ -14,8 +16,15 @@ use crate::import;
 use crate::import::ImportResult;
 use crate::materializer::Materializer;
 use crate::op_log;
+use crate::pagination::{BlockRow, Cursor, PageRequest, PageResponse};
 
 use super::*;
+
+/// Soft cap applied to `list_pages_inner` / `get_page_inner` at the tool
+/// boundary. Callers may pass any `Option<i64>`; the value is clamped to
+/// [1, 100] before being forwarded to the underlying pagination layer.
+/// Matches the FEAT-4c tool-surface cap documented in REVIEW-LATER.
+pub const MCP_PAGE_LIMIT_CAP: i64 = 100;
 
 /// Replace the full set of aliases for a page. Returns the aliases that were
 /// actually inserted (empty/whitespace-only entries are skipped; duplicates
@@ -380,6 +389,155 @@ pub async fn list_page_links_inner(pool: &SqlitePool) -> Result<Vec<PageLink>, A
     .await?;
 
     Ok(links)
+}
+
+/// List all pages in the database with cursor pagination.
+///
+/// Returns non-deleted, non-conflict blocks with `block_type = 'page'`,
+/// ordered by `id ASC` (ULID ≈ chronological). `limit` is clamped to
+/// `[1, MCP_PAGE_LIMIT_CAP]` at this boundary; callers can still fetch
+/// all pages via the returned cursor.
+///
+/// Thin wrapper over [`pagination::list_by_type`]; used directly by the
+/// FEAT-4c MCP `list_pages` tool. Frontend code reaches for backlinks /
+/// FTS instead and does not call this.
+#[instrument(skip(pool), err)]
+pub async fn list_pages_inner(
+    pool: &SqlitePool,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    let capped = limit.map(|l| l.clamp(1, MCP_PAGE_LIMIT_CAP));
+    let page = PageRequest::new(cursor, capped)?;
+    pagination::list_by_type(pool, "page", &page).await
+}
+
+/// Response shape for [`get_page_inner`] — the page itself plus its
+/// paginated subtree of non-conflict descendants.
+///
+/// `children` is ordered `(position ASC, id ASC)` over the keyset, where
+/// the keyset walks **all** non-conflict, non-deleted blocks whose
+/// `page_id` column points at the requested page (so grandchildren /
+/// deeper descendants are included, not just direct children). This
+/// matches the FEAT-4c tool-surface definition of
+/// `list_blocks_inner(root, subtree=true)` — we denormalize via the
+/// `page_id` column the materializer maintains rather than running a
+/// recursive CTE at every call.
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct PageSubtreeResponse {
+    /// The page block itself (root of the subtree).
+    pub page: BlockRow,
+    /// Non-conflict, non-deleted descendants under `page`, ordered by
+    /// `(position, id)` and paginated by [`MCP_PAGE_LIMIT_CAP`].
+    pub children: Vec<BlockRow>,
+    /// Opaque cursor for the next page of `children`; `None` when there
+    /// are no further descendants.
+    pub next_cursor: Option<String>,
+    /// `true` when more `children` remain beyond `next_cursor`.
+    pub has_more: bool,
+}
+
+/// Fetch a page and a paginated slice of its non-conflict subtree.
+///
+/// Composes [`get_block_inner`] for the root and a `page_id`-column
+/// descendant walk for the children. Validates that the requested block
+/// exists and is actually a `page`. Returns [`AppError::NotFound`] for
+/// unknown IDs and [`AppError::Validation`] when the ID resolves to a
+/// non-page block.
+///
+/// The descendant walk intentionally uses the denormalized `page_id`
+/// column (index `idx_blocks_page_id`) rather than a recursive CTE —
+/// the materializer maintains the column on every command path, and the
+/// index makes the query O(log n + k) at any scale. Conflict copies are
+/// excluded via `is_conflict = 0` per invariant #9.
+#[instrument(skip(pool), err)]
+pub async fn get_page_inner(
+    pool: &SqlitePool,
+    page_id: &str,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageSubtreeResponse, AppError> {
+    let page = get_block_inner(pool, page_id.to_string()).await?;
+    if page.block_type != "page" {
+        return Err(AppError::Validation(format!(
+            "block '{page_id}' has block_type '{}', expected 'page'",
+            page.block_type
+        )));
+    }
+
+    let capped = limit.map(|l| l.clamp(1, MCP_PAGE_LIMIT_CAP));
+    let page_req = PageRequest::new(cursor, capped)?;
+    let fetch_limit = page_req.limit + 1;
+
+    // Keyset: `(position, id)`. `NULL_POSITION_SENTINEL` is used as the
+    // default cursor-position so positioned rows sort before NULL-position
+    // rows, matching the ordering convention in `pagination::list_children`.
+    // NOTE: `pagination::NULL_POSITION_SENTINEL` is `pub(crate)` so we hard-code
+    // its value here rather than widening visibility. `i64::MAX` is reserved
+    // for this sentinel throughout the codebase.
+    const NULL_POSITION_SENTINEL: i64 = i64::MAX;
+    let (cursor_flag, cursor_pos, cursor_id): (Option<i64>, i64, &str) =
+        match page_req.after.as_ref() {
+            Some(c) => (Some(1), c.position.unwrap_or(NULL_POSITION_SENTINEL), &c.id),
+            None => (None, 0, ""),
+        };
+
+    // Invariant #9: `is_conflict = 0` excludes conflict-copy blocks that
+    // share a `page_id` but must never appear in the user-facing subtree.
+    let rows = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id, block_type, content, parent_id, position,
+                deleted_at, is_conflict as "is_conflict: bool",
+                conflict_type, todo_state, priority, due_date, scheduled_date,
+                page_id
+         FROM blocks
+         WHERE page_id = ?1
+           AND id != ?1
+           AND is_conflict = 0
+           AND deleted_at IS NULL
+           AND (?2 IS NULL OR (
+                COALESCE(position, ?6) > ?3
+                OR (COALESCE(position, ?6) = ?3 AND id > ?4)))
+         ORDER BY COALESCE(position, ?6) ASC, id ASC
+         LIMIT ?5"#,
+        page_id,                // ?1
+        cursor_flag,            // ?2
+        cursor_pos,             // ?3
+        cursor_id,              // ?4
+        fetch_limit,            // ?5
+        NULL_POSITION_SENTINEL  // ?6
+    )
+    .fetch_all(pool)
+    .await?;
+
+    // Mirror `build_page_response` locally because `PageSubtreeResponse`
+    // is not a `PageResponse<T>` — we nest children inside the page shape.
+    let limit_usize = usize::try_from(page_req.limit).unwrap_or(usize::MAX);
+    let has_more = rows.len() > limit_usize;
+    let mut children = rows;
+    if has_more {
+        children.truncate(limit_usize);
+    }
+    let next_cursor = if has_more {
+        let last = children.last().expect("has_more implies non-empty");
+        let cur = Cursor {
+            id: last.id.clone(),
+            position: Some(last.position.unwrap_or(NULL_POSITION_SENTINEL)),
+            deleted_at: None,
+            seq: None,
+            rank: None,
+        };
+        Some(cur.encode()?)
+    } else {
+        None
+    };
+
+    Ok(PageSubtreeResponse {
+        page,
+        children,
+        next_cursor,
+        has_more,
+    })
 }
 
 /// Tauri command: set page aliases. Delegates to [`set_page_aliases_inner`].

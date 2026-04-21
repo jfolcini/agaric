@@ -1,0 +1,8 @@
+---
+source: src/mcp/tools_ro.rs
+expression: result
+---
+- name: snap-tag
+  tag_id: "[ULID]"
+  updated_at: "[TIMESTAMP]"
+  usage_count: 0

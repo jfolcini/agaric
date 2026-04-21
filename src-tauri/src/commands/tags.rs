@@ -248,6 +248,19 @@ pub async fn list_tags_by_prefix_inner(
     tag_query::list_tags_by_prefix(pool, &prefix, limit).await
 }
 
+/// List every tag in the tag cache, up to `limit` entries (default
+/// matches `list_tags_by_prefix`'s internal default). Thin wrapper over
+/// [`list_tags_by_prefix_inner`] with the empty prefix — exposed under a
+/// shorter name for the FEAT-4c MCP `list_tags` tool where "list all"
+/// is the primary use case.
+#[instrument(skip(pool), err)]
+pub async fn list_tags_inner(
+    pool: &SqlitePool,
+    limit: Option<i64>,
+) -> Result<Vec<TagCacheRow>, AppError> {
+    list_tags_by_prefix_inner(pool, String::new(), limit).await
+}
+
 /// List all tag_ids currently associated with a block.
 #[instrument(skip(pool), err)]
 pub async fn list_tags_for_block_inner(

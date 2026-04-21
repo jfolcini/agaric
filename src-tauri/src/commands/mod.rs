@@ -75,15 +75,16 @@ pub use history::{
     list_page_history_inner, redo_page_op, redo_page_op_inner, restore_page_to_op,
     restore_page_to_op_inner, revert_ops, revert_ops_inner, undo_page_op, undo_page_op_inner,
 };
-pub use journal::{navigate_journal_inner, today_journal_inner};
+pub use journal::{journal_for_date_inner, navigate_journal_inner, today_journal_inner};
 pub use link_metadata::{
     fetch_link_metadata, fetch_link_metadata_inner, get_link_metadata, get_link_metadata_inner,
 };
 pub use logging::{get_log_dir, log_frontend};
 pub use pages::{
     export_page_markdown, export_page_markdown_inner, get_page_aliases, get_page_aliases_inner,
-    import_markdown, import_markdown_inner, list_page_links, list_page_links_inner,
-    resolve_page_by_alias, resolve_page_by_alias_inner, set_page_aliases, set_page_aliases_inner,
+    get_page_inner, import_markdown, import_markdown_inner, list_page_links, list_page_links_inner,
+    list_pages_inner, resolve_page_by_alias, resolve_page_by_alias_inner, set_page_aliases,
+    set_page_aliases_inner, PageSubtreeResponse, MCP_PAGE_LIMIT_CAP,
 };
 pub use properties::{
     create_property_def, create_property_def_inner, delete_property, delete_property_def,
@@ -110,7 +111,8 @@ pub use sync_cmds::{
 };
 pub use tags::{
     add_tag, add_tag_inner, list_tags_by_prefix, list_tags_by_prefix_inner, list_tags_for_block,
-    list_tags_for_block_inner, query_by_tags, query_by_tags_inner, remove_tag, remove_tag_inner,
+    list_tags_for_block_inner, list_tags_inner, query_by_tags, query_by_tags_inner, remove_tag,
+    remove_tag_inner,
 };
 
 // specta-generated type-export fns required by `collect_commands![]` in lib.rs.

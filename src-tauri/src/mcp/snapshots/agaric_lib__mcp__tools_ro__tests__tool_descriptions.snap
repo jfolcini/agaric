@@ -1,0 +1,140 @@
+---
+source: src/mcp/tools_ro.rs
+expression: wire
+---
+- description: List all pages with cursor pagination.
+  inputSchema:
+    additionalProperties: false
+    properties:
+      cursor:
+        description: Opaque pagination cursor from a prior response.
+        type: string
+      limit:
+        description: Max pages per response (capped at 100).
+        maximum: 100
+        minimum: 1
+        type: integer
+    type: object
+  name: list_pages
+- description: Fetch a page and a paginated slice of its non-conflict subtree (grandchildren included).
+  inputSchema:
+    additionalProperties: false
+    properties:
+      cursor:
+        description: Opaque cursor for the children page.
+        type: string
+      limit:
+        description: Max children per response (capped at 100).
+        maximum: 100
+        minimum: 1
+        type: integer
+      page_id:
+        description: ULID of the page block.
+        type: string
+    required:
+      - page_id
+    type: object
+  name: get_page
+- description: Full-text search across block content (FTS5). Returns BlockRow records; content is truncated to 512 chars per result.
+  inputSchema:
+    additionalProperties: false
+    properties:
+      cursor:
+        type: string
+      limit:
+        description: Max results per response (capped at 50).
+        maximum: 50
+        minimum: 1
+        type: integer
+      parent_id:
+        description: Optional parent ULID to scope the search.
+        type: string
+      query:
+        description: FTS5 MATCH query string.
+        type: string
+      tag_ids:
+        description: Optional list of tag ULIDs to intersect the result set with.
+        items:
+          type: string
+        type: array
+    required:
+      - query
+    type: object
+  name: search
+- description: Fetch a single block by ULID. Returns the BlockRow including soft-deleted blocks.
+  inputSchema:
+    additionalProperties: false
+    properties:
+      block_id:
+        description: ULID of the block.
+        type: string
+    required:
+      - block_id
+    type: object
+  name: get_block
+- description: "List backlinks for a block, grouped by source page."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      block_id:
+        description: ULID of the target block/page.
+        type: string
+      cursor:
+        type: string
+      limit:
+        description: Max grouped results per response (capped at 100).
+        maximum: 100
+        minimum: 1
+        type: integer
+    required:
+      - block_id
+    type: object
+  name: list_backlinks
+- description: List every tag in the tag cache (no prefix filter).
+  inputSchema:
+    additionalProperties: false
+    properties:
+      limit:
+        description: Max tags returned (capped at 100).
+        maximum: 100
+        minimum: 1
+        type: integer
+    type: object
+  name: list_tags
+- description: List every property definition (typed property schema).
+  inputSchema:
+    additionalProperties: false
+    properties: {}
+    type: object
+  name: list_property_defs
+- description: Project the agenda (repeating tasks + due/scheduled blocks) for a date range.
+  inputSchema:
+    additionalProperties: false
+    properties:
+      end_date:
+        description: Inclusive YYYY-MM-DD upper bound.
+        type: string
+      limit:
+        description: Max entries per response (capped at 500).
+        maximum: 500
+        minimum: 1
+        type: integer
+      start_date:
+        description: Inclusive YYYY-MM-DD lower bound.
+        type: string
+    required:
+      - start_date
+      - end_date
+    type: object
+  name: get_agenda
+- description: "Return the journal page for a specific date, creating it if missing. Idempotent."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      date:
+        description: YYYY-MM-DD date string.
+        type: string
+    required:
+      - date
+    type: object
+  name: journal_for_date

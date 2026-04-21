@@ -1,0 +1,20 @@
+---
+source: src/mcp/tools_ro.rs
+expression: result
+---
+has_more: false
+items:
+  - block_type: page
+    conflict_type: ~
+    content: Alpha
+    deleted_at: ~
+    due_date: ~
+    id: "[ULID]"
+    is_conflict: false
+    page_id: "[ULID]"
+    parent_id: ~
+    position: 1
+    priority: ~
+    scheduled_date: ~
+    todo_state: ~
+next_cursor: "[CURSOR]"

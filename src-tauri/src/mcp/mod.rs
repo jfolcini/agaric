@@ -19,10 +19,14 @@ pub mod activity;
 pub mod actor;
 pub mod registry;
 pub mod server;
+pub mod tools_ro;
 
 use std::path::{Path, PathBuf};
 
+use sqlx::SqlitePool;
+
 use crate::error::AppError;
+use crate::materializer::Materializer;
 
 /// Marker-file name inside the application data directory. When this file
 /// exists, the MCP read-only socket is bound at startup; otherwise the task
@@ -210,15 +214,23 @@ pub async fn bind_socket(pipe_path: &Path) -> Result<SocketKind, AppError> {
 /// bound by another instance, logs at warn level and returns — the first
 /// owner keeps the socket.
 ///
-/// FEAT-4a ships with a placeholder [`server::PlaceholderRegistry`] that
-/// exposes zero tools. FEAT-4b / FEAT-4c swap this for the real
-/// `ReadOnlyTools` registry via [`spawn_mcp_ro_task_with_registry`].
+/// FEAT-4c wires the real [`tools_ro::ReadOnlyTools`] registry, replacing
+/// FEAT-4a's [`server::PlaceholderRegistry`]. The registry owns the
+/// read-pool [`SqlitePool`], the [`Materializer`] (used only by the
+/// `journal_for_date` tool for idempotent page creation), and this
+/// device's `device_id` so any op-log entries the tool creates are
+/// attributed correctly.
 ///
 /// `app_handle` is used to build the FEAT-4d activity emitter — every
-/// completed tool call (once FEAT-4c wires the real dispatch) will push
-/// an [`activity::ActivityEntry`] into the ring and emit an
-/// `mcp:activity` event on this handle's bus.
-pub fn spawn_mcp_ro_task<R: tauri::Runtime>(app_data_dir: &Path, app_handle: tauri::AppHandle<R>) {
+/// completed tool call pushes an [`activity::ActivityEntry`] into the ring
+/// and emits an `mcp:activity` event on this handle's bus.
+pub fn spawn_mcp_ro_task<R: tauri::Runtime>(
+    app_data_dir: &Path,
+    app_handle: tauri::AppHandle<R>,
+    read_pool: SqlitePool,
+    materializer: Materializer,
+    device_id: String,
+) {
     if !mcp_ro_enabled(app_data_dir) {
         tracing::info!(
             target: "mcp",
@@ -229,7 +241,8 @@ pub fn spawn_mcp_ro_task<R: tauri::Runtime>(app_data_dir: &Path, app_handle: tau
 
     let socket_path = default_mcp_ro_socket_path(app_data_dir);
     let activity_ctx = activity::ActivityContext::from_app_handle(app_handle);
-    spawn_mcp_ro_task_with_registry(socket_path, server::PlaceholderRegistry, Some(activity_ctx));
+    let registry = tools_ro::ReadOnlyTools::new(read_pool, materializer, device_id);
+    spawn_mcp_ro_task_with_registry(socket_path, registry, Some(activity_ctx));
 }
 
 /// Spawn the MCP RO task against a caller-supplied registry and socket path.

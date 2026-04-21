@@ -55,6 +55,17 @@ pub const JSONRPC_METHOD_NOT_FOUND: i64 = -32601;
 pub const JSONRPC_INVALID_PARAMS: i64 = -32602;
 pub const JSONRPC_INTERNAL_ERROR: i64 = -32603;
 
+/// Application-level "not found" code. Distinct from
+/// [`JSONRPC_METHOD_NOT_FOUND`] (−32601 — "the JSON-RPC method endpoint
+/// does not exist") — this code signals "the *resource* named by the
+/// call arguments was not found" (unknown tool name under `tools/call`,
+/// unknown block id inside a tool handler, etc.). Picked from the
+/// JSON-RPC 2.0 "server-defined" error range (−32000..=−32099) per the
+/// FEAT-4c decision. Agents that want to surface a separate UX for
+/// "you asked for something that does not exist" versus "you called an
+/// undefined method" rely on this split.
+pub const JSONRPC_RESOURCE_NOT_FOUND: i64 = -32001;
+
 // ---------------------------------------------------------------------------
 // Handshake payload types
 // ---------------------------------------------------------------------------
@@ -237,9 +248,18 @@ fn handle_tools_list<R: ToolRegistry>(registry: &R) -> Result<Value, (i64, Strin
 /// `Display` rendering — good enough for agent-side debugging without
 /// exposing the underlying `kind` discriminant (which is a Tauri IPC
 /// concern, not an MCP one).
+///
+/// Code mapping:
+/// - [`AppError::NotFound`] → [`JSONRPC_RESOURCE_NOT_FOUND`] (−32001).
+///   Kept distinct from [`JSONRPC_METHOD_NOT_FOUND`] (−32601) so agents
+///   can tell "unknown JSON-RPC method endpoint" apart from "resource
+///   (tool / block / page) not found in the call arguments".
+/// - [`AppError::Validation`] / [`AppError::InvalidOperation`] →
+///   [`JSONRPC_INVALID_PARAMS`] (−32602).
+/// - Everything else → [`JSONRPC_INTERNAL_ERROR`] (−32603).
 fn app_error_to_jsonrpc(err: &AppError) -> (i64, String) {
     let code = match err {
-        AppError::NotFound(_) => JSONRPC_METHOD_NOT_FOUND,
+        AppError::NotFound(_) => JSONRPC_RESOURCE_NOT_FOUND,
         AppError::Validation(_) | AppError::InvalidOperation(_) => JSONRPC_INVALID_PARAMS,
         _ => JSONRPC_INTERNAL_ERROR,
     };
@@ -614,7 +634,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn tools_call_returns_method_not_found() {
+    async fn tools_call_returns_resource_not_found() {
         let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join("test.sock");
         let (client, task) = connect_pair(&path).await;
@@ -632,8 +652,9 @@ mod tests {
         let response = read_line(&mut reader).await;
         assert_eq!(response["id"], 3);
         assert_eq!(
-            response["error"]["code"], JSONRPC_METHOD_NOT_FOUND,
-            "tools/call must return -32601 until FEAT-4c wires tools",
+            response["error"]["code"], JSONRPC_RESOURCE_NOT_FOUND,
+            "tools/call with an unknown tool name must map AppError::NotFound to -32001 \
+             (distinct from -32601 method-not-found)",
         );
         let msg = response["error"]["message"].as_str().unwrap_or("");
         assert!(msg.contains("search"), "error message names the tool");
@@ -1085,7 +1106,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn tools_call_maps_registry_not_found_to_32601() {
+    async fn tools_call_maps_registry_not_found_to_32001() {
         let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join("nf.sock");
         let registry = Arc::new(RecordingRegistry::new(Vec::new()));
@@ -1105,7 +1126,11 @@ mod tests {
         )
         .await;
         let response = read_line(&mut reader).await;
-        assert_eq!(response["error"]["code"], JSONRPC_METHOD_NOT_FOUND);
+        assert_eq!(
+            response["error"]["code"], JSONRPC_RESOURCE_NOT_FOUND,
+            "AppError::NotFound from a tool must surface as -32001 (resource-not-found), \
+             distinct from -32601 (method-not-found)",
+        );
         assert!(
             response["error"]["message"]
                 .as_str()
@@ -1288,8 +1313,8 @@ mod tests {
         .await;
         let tools_call_resp = read_line(&mut reader).await;
         assert_eq!(
-            tools_call_resp["error"]["code"], JSONRPC_METHOD_NOT_FOUND,
-            "FEAT-4a placeholder still returns -32601",
+            tools_call_resp["error"]["code"], JSONRPC_RESOURCE_NOT_FOUND,
+            "FEAT-4a placeholder surfaces AppError::NotFound as -32001 resource-not-found",
         );
 
         // Close the client side → handler observes EOF and returns Ok(()).

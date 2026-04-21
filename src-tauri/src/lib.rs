@@ -488,6 +488,13 @@ pub fn run() {
             let daemon_app_handle = app.handle().clone();
             let daemon_lifecycle = lifecycle.clone();
 
+            // FEAT-4c — clone the reader pool, materializer, and device_id
+            // that ReadOnlyTools needs. These must be cloned before the
+            // originals are moved into managed state below.
+            let pools_read_for_mcp = pools.read.clone();
+            let materializer_for_mcp = materializer.clone();
+            let device_id_for_mcp = device_id.clone();
+
             // Store all in Tauri managed state
             app.manage(WritePool(pools.write));
             app.manage(ReadPool(pools.read));
@@ -579,9 +586,24 @@ pub fn run() {
             //
             // FEAT-4d — the cloned `AppHandle` is used to build the activity
             // emitter so completed tool calls surface on the `mcp:activity`
-            // Tauri event bus (FEAT-4c wires the `tools/call` dispatch; this
-            // only threads the dependency through).
-            mcp::spawn_mcp_ro_task(&app_data_dir, app.handle().clone());
+            // Tauri event bus.
+            //
+            // FEAT-4c — the reader pool + materializer + device_id let the
+            // `ReadOnlyTools` registry dispatch the v1 nine-tool surface
+            // without allocating new resources. `journal_for_date` is the
+            // only tool that writes; it reuses the same materializer /
+            // device_id the frontend uses so the op-log origin stays
+            // consistent.
+            let mcp_pool = pools_read_for_mcp;
+            let mcp_materializer = materializer_for_mcp;
+            let mcp_device_id = device_id_for_mcp;
+            mcp::spawn_mcp_ro_task(
+                &app_data_dir,
+                app.handle().clone(),
+                mcp_pool,
+                mcp_materializer,
+                mcp_device_id,
+            );
 
             Ok(())
         })

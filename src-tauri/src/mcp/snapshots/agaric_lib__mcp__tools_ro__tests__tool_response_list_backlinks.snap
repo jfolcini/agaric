@@ -1,0 +1,10 @@
+---
+source: src/mcp/tools_ro.rs
+expression: result
+---
+filtered_count: 0
+groups: []
+has_more: false
+next_cursor: "[CURSOR]"
+total_count: 0
+truncated: false

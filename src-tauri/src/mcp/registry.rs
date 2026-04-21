@@ -68,7 +68,9 @@ pub trait ToolRegistry: Send + Sync + 'static {
     /// result payload on success, or an [`AppError`] that the server
     /// translates into a JSON-RPC error envelope:
     ///
-    /// - `AppError::NotFound` for unknown tool names → `-32601`.
+    /// - `AppError::NotFound` for unknown tool names / missing resources
+    ///   → `-32001` (resource-not-found; kept distinct from `-32601`
+    ///   method-not-found so agents can tell them apart).
     /// - `AppError::Validation` for bad arguments → `-32602`.
     /// - everything else → `-32603` (internal) with the `AppError`
     ///   message bubbled up.
@@ -104,7 +106,9 @@ impl ToolRegistry for PlaceholderRegistry {
         _args: Value,
         _ctx: &ActorContext,
     ) -> Result<Value, AppError> {
-        // Surface as AppError::NotFound so the server emits `-32601`.
+        // Surface as AppError::NotFound so the server emits `-32001`
+        // (resource-not-found — the tool name does not exist in this
+        // registry).
         Err(AppError::NotFound(format!(
             "Tool `{name}` not found (no tools registered in FEAT-4a/4b)"
         )))
@@ -156,7 +160,7 @@ mod tests {
                 );
             }
             other => {
-                panic!("expected AppError::NotFound (server translates to -32601), got {other:?}",)
+                panic!("expected AppError::NotFound (server translates to -32001), got {other:?}",)
             }
         }
     }

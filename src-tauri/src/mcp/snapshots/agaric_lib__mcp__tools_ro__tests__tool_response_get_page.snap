@@ -1,0 +1,34 @@
+---
+source: src/mcp/tools_ro.rs
+expression: result
+---
+children:
+  - block_type: content
+    conflict_type: ~
+    content: child
+    deleted_at: ~
+    due_date: ~
+    id: "[ULID]"
+    is_conflict: false
+    page_id: "[ULID]"
+    parent_id: "[ULID]"
+    position: 1
+    priority: ~
+    scheduled_date: ~
+    todo_state: ~
+has_more: false
+next_cursor: "[CURSOR]"
+page:
+  block_type: page
+  conflict_type: ~
+  content: Root
+  deleted_at: ~
+  due_date: ~
+  id: "[ULID]"
+  is_conflict: false
+  page_id: "[ULID]"
+  parent_id: ~
+  position: 1
+  priority: ~
+  scheduled_date: ~
+  todo_state: ~
