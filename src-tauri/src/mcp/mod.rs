@@ -363,8 +363,8 @@ pub fn spawn_mcp_ro_task_with_registry<R>(
                     lc.task_running
                         .store(true, std::sync::atomic::Ordering::Release);
                 }
-                if let Err(e) = server::serve(socket, registry, activity_ctx, lifecycle.clone())
-                    .await
+                if let Err(e) =
+                    server::serve(socket, registry, activity_ctx, lifecycle.clone()).await
                 {
                     tracing::error!(
                         target: "mcp",

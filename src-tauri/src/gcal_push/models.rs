@@ -133,12 +133,9 @@ pub async fn get_setting(
     key: GcalSettingKey,
 ) -> Result<Option<String>, AppError> {
     let key_str = key.as_str();
-    let row = sqlx::query!(
-        "SELECT value FROM gcal_settings WHERE key = ?",
-        key_str,
-    )
-    .fetch_optional(pool)
-    .await?;
+    let row = sqlx::query!("SELECT value FROM gcal_settings WHERE key = ?", key_str,)
+        .fetch_optional(pool)
+        .await?;
     Ok(row.map(|r| r.value))
 }
 
@@ -237,11 +234,9 @@ pub async fn delete_event_map_by_date(pool: &SqlitePool, date: &str) -> Result<(
 /// # Errors
 /// [`AppError::Database`] on SQL errors.
 pub async fn list_event_map_dates(pool: &SqlitePool) -> Result<Vec<String>, AppError> {
-    let rows = sqlx::query!(
-        "SELECT date FROM gcal_agenda_event_map ORDER BY date ASC"
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows = sqlx::query!("SELECT date FROM gcal_agenda_event_map ORDER BY date ASC")
+        .fetch_all(pool)
+        .await?;
     Ok(rows.into_iter().map(|r| r.date).collect())
 }
 
@@ -262,8 +257,10 @@ mod tests {
     const FIXED_DATE_B: &str = "2026-04-23";
     const FIXED_EVENT_ID: &str = "gcal_evt_abc123";
     const FIXED_EVENT_ID_B: &str = "gcal_evt_def456";
-    const FIXED_HASH: &str = "blake3_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    const FIXED_HASH_B: &str = "blake3_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const FIXED_HASH: &str =
+        "blake3_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const FIXED_HASH_B: &str =
+        "blake3_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const FIXED_TS: &str = "2026-04-22T10:30:00Z";
     const FIXED_TS_B: &str = "2026-04-23T10:30:00Z";
 
@@ -296,14 +293,16 @@ mod tests {
         let names: Vec<&str> = cols.iter().map(|c| c.1.as_str()).collect();
         assert_eq!(
             names,
-            vec!["date", "gcal_event_id", "last_pushed_hash", "last_pushed_at"],
+            vec![
+                "date",
+                "gcal_event_id",
+                "last_pushed_hash",
+                "last_pushed_at"
+            ],
             "gcal_agenda_event_map must have the 4 spec columns in order"
         );
         // date is the PK (column 0, pk flag = 1).
-        assert_eq!(
-            cols[0].5, 1,
-            "`date` must be the PRIMARY KEY column"
-        );
+        assert_eq!(cols[0].5, 1, "`date` must be the PRIMARY KEY column");
     }
 
     #[tokio::test]
@@ -431,12 +430,11 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         // Read the seeded updated_at first.
-        let before: (String,) = sqlx::query_as(
-            "SELECT updated_at FROM gcal_settings WHERE key = 'privacy_mode'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let before: (String,) =
+            sqlx::query_as("SELECT updated_at FROM gcal_settings WHERE key = 'privacy_mode'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(
             before.0, "1970-01-01T00:00:00Z",
             "seed timestamp must be the migration sentinel"
@@ -446,12 +444,11 @@ mod tests {
             .await
             .unwrap();
 
-        let after: (String,) = sqlx::query_as(
-            "SELECT updated_at FROM gcal_settings WHERE key = 'privacy_mode'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let after: (String,) =
+            sqlx::query_as("SELECT updated_at FROM gcal_settings WHERE key = 'privacy_mode'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_ne!(
             before.0, after.0,
             "updated_at must change after set_setting"
@@ -532,14 +529,16 @@ mod tests {
         upsert_event_map(&pool, &second).await.unwrap();
 
         // Still exactly one row for that date.
-        let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM gcal_agenda_event_map WHERE date = ?",
-        )
-        .bind(FIXED_DATE)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(count.0, 1, "upsert must not duplicate rows for the same date");
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM gcal_agenda_event_map WHERE date = ?")
+                .bind(FIXED_DATE)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            count.0, 1,
+            "upsert must not duplicate rows for the same date"
+        );
 
         let got = get_event_map_for_date(&pool, FIXED_DATE)
             .await

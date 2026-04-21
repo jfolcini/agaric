@@ -385,8 +385,7 @@ mod tests {
                 // Pre-register a waiter on the notify so we can observe
                 // that the disable path woke it.
                 let signal = lc.disconnect_signal.clone();
-                let waiter =
-                    tokio::spawn(async move { signal.notified().await });
+                let waiter = tokio::spawn(async move { signal.notified().await });
 
                 // Yield once so the waiter is registered before we fire.
                 tokio::task::yield_now().await;
@@ -413,8 +412,7 @@ mod tests {
             .block_on(async {
                 let lc = make_lifecycle();
                 let signal = lc.disconnect_signal.clone();
-                let waiter =
-                    tokio::spawn(async move { signal.notified().await });
+                let waiter = tokio::spawn(async move { signal.notified().await });
                 tokio::task::yield_now().await;
 
                 mcp_disconnect_all_inner(&lc);

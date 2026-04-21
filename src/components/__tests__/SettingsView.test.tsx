@@ -51,9 +51,7 @@ vi.mock('../DataSettingsTab', () => ({
 // tab panel. Mock it as an inert marker so the SettingsView tests stay
 // focused on tab routing / theme / font-size behaviour.
 vi.mock('../AgentAccessSettingsTab', () => ({
-  AgentAccessSettingsTab: () => (
-    <div data-testid="agent-access-settings-tab">Agent Access</div>
-  ),
+  AgentAccessSettingsTab: () => <div data-testid="agent-access-settings-tab">Agent Access</div>,
 }))
 
 // FEAT-5: BugReportDialog is rendered by SettingsView but its heavy internal

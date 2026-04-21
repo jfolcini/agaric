@@ -118,12 +118,7 @@ export function AgentAccessSettingsTab(): React.ReactElement {
       .catch((err) => {
         // Not in Tauri context (e.g. running under Vite dev server without
         // the tauri-mock shim) — log and keep the empty feed rendering.
-        logger.warn(
-          'AgentAccessSettingsTab',
-          'failed to subscribe to mcp:activity',
-          undefined,
-          err,
-        )
+        logger.warn('AgentAccessSettingsTab', 'failed to subscribe to mcp:activity', undefined, err)
       })
     return () => {
       cancelled = true
@@ -283,11 +278,9 @@ export function AgentAccessSettingsTab(): React.ReactElement {
           </code>
           <Button
             variant="ghost"
-            size="sm"
-            className="shrink-0 h-8 w-8 p-0"
-            onClick={() =>
-              void copyToClipboard(socketPath, 'agentAccess.socketPathCopied')
-            }
+            size="icon-sm"
+            className="shrink-0"
+            onClick={() => void copyToClipboard(socketPath, 'agentAccess.socketPathCopied')}
             aria-label={t('agentAccess.copySocketPathLabel')}
             disabled={!socketPath}
           >
@@ -304,9 +297,7 @@ export function AgentAccessSettingsTab(): React.ReactElement {
           <Button
             variant="outline"
             size="sm"
-            onClick={() =>
-              void copyToClipboard(claudeConfigJson, 'agentAccess.claudeConfigCopied')
-            }
+            onClick={() => void copyToClipboard(claudeConfigJson, 'agentAccess.claudeConfigCopied')}
           >
             {t('agentAccess.copyClaudeConfigButton')}
           </Button>
@@ -329,12 +320,15 @@ export function AgentAccessSettingsTab(): React.ReactElement {
           <EmptyState message={t('agentAccess.activityEmpty')} compact />
         ) : (
           <ScrollArea className="h-[280px] rounded-md border" data-testid="mcp-activity-feed">
-            <ul className="divide-y">
+            <ul className="divide-y" role="log" aria-label={t('agentAccess.activityLabel')}>
               {entries.map((entry, idx) => (
                 <li
-                  // Activity entries are append-only; a composite key of
-                  // (timestamp, index, toolName) is stable across renders
-                  // because `entries` is only prepended to.
+                  // Activity entries are append-only and ordered newest-first.
+                  // The backend stamps `timestamp` with microsecond precision
+                  // so collisions within the same tool are vanishingly rare;
+                  // the idx tiebreaker covers the pathological same-microsecond
+                  // case (two agents calling the same tool concurrently).
+                  // biome-ignore lint/suspicious/noArrayIndexKey: append-only ring, idx stable per-entry
                   key={`${entry.timestamp}-${idx}-${entry.toolName}`}
                   className="activity-row flex items-start gap-3 p-3 text-sm"
                   data-testid="mcp-activity-row"
