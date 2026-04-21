@@ -87,12 +87,41 @@ tracing-appender = "0.2.4"
 reqwest = "0.13.2"
 tauri-plugin-process = "2.3.1"
 
+# FEAT-5b — Google Calendar OAuth 2.0 PKCE flow + keychain token storage.
+# Coupled stack (see AGENTS.md §"Coupled Dependency Updates"): `oauth2`,
+# `keyring`, `secrecy`, `tauri-plugin-oauth`, and `async-trait` all enter
+# together.  `tauri-plugin-oauth` follows the same major as every other
+# `tauri-plugin-*` crate — bump in lockstep with the Tauri stack.
+#
+# TLS-backend feature alignment (FEAT-5 parent §"Feature-flag alignment"):
+# oauth2 v5.0 depends on `reqwest ^0.12`, while the repo pins `reqwest =
+# "0.13.2"` — cargo resolves both (oauth2 pulls its own reqwest 0.12 copy
+# for its `reqwest` feature).  We enable `rustls-tls` on oauth2 so that
+# *its* reqwest uses rustls (matching the repo's rustls-everywhere posture
+# — see `tokio-tungstenite`, `tokio-rustls`, `sqlx` on rustls).  The main
+# reqwest 0.13 slice will be realigned to rustls by FEAT-5c; see that item
+# for the plan.  The "two reqwest copies in Cargo.lock" state is expected
+# until FEAT-5c lands and/or oauth2 tracks reqwest 0.13.
+oauth2 = { version = "5", default-features = false, features = ["reqwest", "rustls-tls"] }
+# keyring v3: enable every platform's native backend in one feature list.
+# The per-platform deps (`security-framework`, `windows-sys`, `dbus-secret-service`)
+# are gated on `cfg(target_os = "...")` inside keyring's own Cargo.toml, so a
+# Linux build does not try to compile `security-framework`, and so on.
+# `crypto-rust` selects pure-Rust crypto for the Secret Service backend —
+# avoids pulling OpenSSL in the Linux build.
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+secrecy = "0.10"
+tauri-plugin-oauth = "2"
+async-trait = "0.1"
+
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["async_tokio"] }
 insta = { version = "1.47.0", features = ["yaml", "redactions"] }
 proptest = "1.11.0"
 tempfile = "3.27.0"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+# FEAT-5b — HTTP mocking for OAuth token endpoint tests.
+wiremock = "0.6"
 
 # Android-only dependencies (BUG-39: WiFi multicast lock via JNI).
 # Gated on target_os = "android" so desktop builds do not pull in

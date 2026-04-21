@@ -293,7 +293,16 @@ pub fn run() {
     #[cfg_attr(mobile, allow(unused_mut))]
     let mut tauri_builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_process::init());
+        .plugin(tauri_plugin_process::init())
+        // FEAT-5b — OAuth 2.0 PKCE loopback listener for the Agaric →
+        // Google Calendar connector (see REVIEW-LATER § FEAT-5). The
+        // plugin spawns a localhost server on demand (via
+        // `tauri-plugin-oauth`'s `start()` helper) so the OS browser can
+        // redirect back to Agaric after Google's authorization screen.
+        // Part of the Tauri plugin coupled stack per AGENTS.md §"Coupled
+        // Dependency Updates" — move in lockstep with the rest of the
+        // tauri-plugin-* crates.
+        .plugin(tauri_plugin_oauth::init());
 
     // MAINT-16: tauri-plugin-updater is desktop-only and currently not wired up
     // (empty pubkey in `tauri.conf.json`, no frontend code calls the update

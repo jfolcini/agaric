@@ -4,8 +4,9 @@
 //! This module hosts the schema/model types (FEAT-5a), OAuth (FEAT-5b),
 //! API client (FEAT-5c), pure digest formatter (FEAT-5d), connector +
 //! lease (FEAT-5e), and Tauri settings commands (FEAT-5f) as each slice
-//! lands.  FEAT-5a — the migration and sqlx row structs — is the only
-//! piece currently wired up; later slices add additional sub-modules.
+//! lands.
 
 pub mod digest;
+pub mod keyring_store;
 pub mod models;
+pub mod oauth;
