@@ -13,6 +13,76 @@ struct AppErrorSchema {
     message: String,
 }
 
+/// HTTP-layer error taxonomy for Google Calendar API calls (FEAT-5c).
+///
+/// Returned from the stateless API client in `gcal_push::api`.  Callers
+/// (FEAT-5e connector) decide per-variant whether to retry, surface a
+/// `gcal:reauth_required` event, disable push, drop a map row, etc.
+///
+/// # Redaction
+///
+/// `Display` / `Debug` impls MUST NOT embed the OAuth access token.
+/// None of the variants carry a `Token`, so the `thiserror`-derived
+/// impls satisfy this by construction.  The `api.rs` public functions
+/// use `#[tracing::instrument(skip(token), err)]` for belt-and-braces
+/// span-level non-leakage (the `Token` type's `Debug` impl already
+/// redacts via `secrecy::SecretString`).
+///
+/// # Wire format
+///
+/// Travels over Tauri IPC nested inside [`AppError::Gcal`], which
+/// serialises as `{ kind: "gcal", message: "<display string>" }`.  The
+/// frontend does not currently discriminate between sub-kinds over IPC
+/// (the display string is sufficient for the Settings toast / banner).
+/// If future UX needs distinct frontend behaviour per sub-kind, extend
+/// the manual `Serialize` impl on `AppError` to emit a structured
+/// `gcal_kind` field without relaxing the serialization contract.
+#[derive(Debug, Error, Serialize, specta::Type, Clone, PartialEq, Eq)]
+#[serde(tag = "kind", content = "message")]
+pub enum GcalErrorKind {
+    /// HTTP 401 — access token expired or revoked.  Callers refresh
+    /// via [`crate::gcal_push::oauth::fetch_with_auto_refresh`] and,
+    /// on a second 401, emit `gcal:reauth_required`.
+    #[error("unauthorized (token expired or revoked)")]
+    Unauthorized,
+
+    /// HTTP 403 — scope mismatch or calendar ACL rejection.
+    /// Callers typically disable push and surface a settings error.
+    #[error("forbidden: {0}")]
+    Forbidden(String),
+
+    /// HTTP 429 — Google's per-user / per-project quota hit.  The
+    /// `retry_after_ms` is parsed from the `Retry-After` header when
+    /// present; when absent, defaults to 1000 ms.  Callers sleep then
+    /// retry (FEAT-5e's retry taxonomy).
+    #[error("rate limited; retry after {retry_after_ms}ms")]
+    RateLimited { retry_after_ms: u64 },
+
+    /// HTTP 5xx — upstream failure.  Callers retry with backoff.
+    #[error("server error: HTTP {status}")]
+    ServerError { status: u16 },
+
+    /// HTTP 404 on a `calendars/{calendar_id}` path.  Distinct from
+    /// [`GcalErrorKind::EventGone`] because the recovery is different:
+    /// the dedicated "Agaric Agenda" calendar was deleted externally
+    /// by the user → clear all `gcal_agenda_event_map` rows and
+    /// re-create the calendar on next push cycle.
+    #[error("dedicated calendar was deleted by the user externally")]
+    CalendarGone,
+
+    /// HTTP 404 on an event path.  Returned by `delete_event` /
+    /// `patch_event` when the event row was deleted in the GCal UI.
+    /// Callers drop the map row and re-create on next push.
+    #[error("event was deleted externally")]
+    EventGone,
+
+    /// HTTP 400 (malformed body) or HTTP 409 (conflict — duplicate id,
+    /// concurrent edit).  Callers fix the request and retry; not
+    /// transient.
+    #[error("invalid request: {0}")]
+    InvalidRequest(String),
+}
+
 /// Application-level error type covering all expected failure modes.
 ///
 /// Implements `Serialize` so it can be used directly as the error type in
@@ -52,6 +122,12 @@ pub enum AppError {
 
     #[error("Non-reversible operation: {op_type} cannot be undone")]
     NonReversible { op_type: String },
+
+    /// Google Calendar API HTTP-layer error (FEAT-5c).  See
+    /// [`GcalErrorKind`] for the full taxonomy.  The `#[from]` impl
+    /// lets `api.rs` bubble `Err(GcalErrorKind::…)` through `?`.
+    #[error(transparent)]
+    Gcal(#[from] GcalErrorKind),
 }
 
 /// Tauri 2 requires command error types to implement `Serialize`.
@@ -75,6 +151,7 @@ impl Serialize for AppError {
             AppError::Snapshot(_) => "snapshot",
             AppError::Validation(_) => "validation",
             AppError::NonReversible { .. } => "non_reversible",
+            AppError::Gcal(_) => "gcal",
         };
 
         let mut state = serializer.serialize_struct("AppError", 2)?;
@@ -393,5 +470,112 @@ mod tests {
                 "String-only variant {err:?} should return None from source()"
             );
         }
+    }
+
+    // --- GcalErrorKind (FEAT-5c) ---
+
+    #[test]
+    fn gcal_error_kind_display_unauthorized() {
+        let err = GcalErrorKind::Unauthorized;
+        assert_eq!(
+            err.to_string(),
+            "unauthorized (token expired or revoked)",
+            "Unauthorized Display should not embed any token material"
+        );
+    }
+
+    #[test]
+    fn gcal_error_kind_display_forbidden_includes_reason() {
+        let err = GcalErrorKind::Forbidden("scope mismatch".into());
+        assert_eq!(err.to_string(), "forbidden: scope mismatch");
+    }
+
+    #[test]
+    fn gcal_error_kind_display_rate_limited_includes_retry_after_ms() {
+        let err = GcalErrorKind::RateLimited {
+            retry_after_ms: 5_000,
+        };
+        assert_eq!(err.to_string(), "rate limited; retry after 5000ms");
+    }
+
+    #[test]
+    fn gcal_error_kind_display_server_error_includes_status() {
+        let err = GcalErrorKind::ServerError { status: 503 };
+        assert_eq!(err.to_string(), "server error: HTTP 503");
+    }
+
+    #[test]
+    fn gcal_error_kind_display_calendar_gone() {
+        let err = GcalErrorKind::CalendarGone;
+        assert_eq!(
+            err.to_string(),
+            "dedicated calendar was deleted by the user externally"
+        );
+    }
+
+    #[test]
+    fn gcal_error_kind_display_event_gone() {
+        let err = GcalErrorKind::EventGone;
+        assert_eq!(err.to_string(), "event was deleted externally");
+    }
+
+    #[test]
+    fn gcal_error_kind_display_invalid_request() {
+        let err = GcalErrorKind::InvalidRequest("missing field 'summary'".into());
+        assert_eq!(err.to_string(), "invalid request: missing field 'summary'");
+    }
+
+    #[test]
+    fn gcal_error_kind_debug_does_not_leak_imaginary_token() {
+        // Defence-in-depth: no variant carries a token, so Debug cannot
+        // leak one.  This pins that invariant — if a future refactor
+        // adds a token-bearing variant, the test must be extended.
+        let err = GcalErrorKind::Forbidden("anything".into());
+        let debug = format!("{err:?}");
+        assert!(
+            !debug.to_lowercase().contains("bearer"),
+            "GcalErrorKind Debug must not embed anything bearer-like, got: {debug}"
+        );
+    }
+
+    #[test]
+    fn from_gcal_error_kind_produces_gcal_variant() {
+        let err: AppError = GcalErrorKind::Unauthorized.into();
+        assert!(
+            matches!(err, AppError::Gcal(GcalErrorKind::Unauthorized)),
+            "GcalErrorKind should convert to AppError::Gcal via #[from]"
+        );
+    }
+
+    #[test]
+    fn serialize_gcal_variant_has_gcal_kind() {
+        let err = AppError::Gcal(GcalErrorKind::Unauthorized);
+        let json = serde_json::to_value(&err).expect("Gcal error should serialize");
+        assert_eq!(json["kind"], "gcal", "Gcal variant kind should be 'gcal'");
+        assert_eq!(
+            json["message"], "unauthorized (token expired or revoked)",
+            "Gcal message should mirror inner Display"
+        );
+    }
+
+    #[test]
+    fn serialize_gcal_rate_limited_propagates_retry_after_in_message() {
+        let err = AppError::Gcal(GcalErrorKind::RateLimited {
+            retry_after_ms: 1_500,
+        });
+        let json = serde_json::to_value(&err).unwrap();
+        assert_eq!(json["kind"], "gcal");
+        assert_eq!(json["message"], "rate limited; retry after 1500ms");
+    }
+
+    #[test]
+    fn display_gcal_variant_is_transparent_over_inner_kind() {
+        // `#[error(transparent)]` means Gcal's Display output is the
+        // inner GcalErrorKind Display unchanged.  This keeps frontend
+        // strings stable regardless of whether a call site returns a
+        // bare GcalErrorKind or wraps it in AppError::Gcal.
+        let inner = GcalErrorKind::CalendarGone;
+        let wrapped = AppError::Gcal(inner.clone());
+        assert_eq!(wrapped.to_string(), inner.to_string());
     }
 }

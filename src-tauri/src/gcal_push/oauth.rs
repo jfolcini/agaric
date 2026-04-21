@@ -61,7 +61,7 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
-use crate::error::AppError;
+use crate::error::{AppError, GcalErrorKind};
 
 use super::keyring_store::{GcalEvent, GcalEventEmitter, TokenStore};
 use super::models::{self, GcalSettingKey};
@@ -415,8 +415,13 @@ impl OAuthClient {
     /// previous one forward.
     ///
     /// # Errors
-    /// [`AppError::Validation`] keyed `oauth.refresh_failed` or
-    /// `oauth.revoked` (for `invalid_grant` / `unauthorized_client`).
+    /// * [`AppError::Gcal(GcalErrorKind::Unauthorized)`] when Google
+    ///   returns `invalid_grant` / `unauthorized_client` — the refresh
+    ///   token has been revoked (FEAT-5c taxonomy).
+    /// * [`AppError::Validation`] keyed `oauth.refresh_failed: <err>`
+    ///   for every other failure mode (transport error, non-auth HTTP
+    ///   error, parse failure) — these remain on the flow-layer
+    ///   Validation taxonomy because they are not HTTP 401-class.
     #[tracing::instrument(skip(self, token), err)]
     pub async fn refresh_token(&self, token: &Token) -> Result<Token, AppError> {
         let client = self.build_client()?;
@@ -452,12 +457,15 @@ impl OAuthClient {
 /// If the second attempt is ALSO unauthorized, or if the refresh
 /// itself fails with a revocation error, emit
 /// [`GcalEvent::ReauthRequired`] via the supplied emitter, clear the
-/// keystore, and return `Err(AppError::Validation("oauth.reauth_required"))`.
+/// keystore, and return
+/// `Err(AppError::Gcal(GcalErrorKind::Unauthorized))` (FEAT-5c — the
+/// HTTP-layer taxonomy).
 ///
 /// # Errors
-/// * `AppError::Validation("oauth.not_connected")` — no token stored.
-/// * `AppError::Validation("oauth.reauth_required")` — second 401 or
-///   refresh failed with revocation semantics.
+/// * `AppError::Validation("oauth.not_connected")` — no token stored
+///   (pre-HTTP config-layer error, stays on Validation).
+/// * `AppError::Gcal(GcalErrorKind::Unauthorized)` — second 401 after
+///   refresh, OR refresh itself failed with revocation semantics.
 /// * Any `AppError` propagated via [`FetchError::Other`] from `op`.
 pub async fn fetch_with_auto_refresh<F, Fut, T>(
     oauth_client: &OAuthClient,
@@ -507,7 +515,7 @@ where
                         "failed to clear token store after revocation",
                     );
                 }
-                return Err(AppError::Validation("oauth.reauth_required".to_owned()));
+                return Err(AppError::Gcal(GcalErrorKind::Unauthorized));
             }
             // Transient / non-revocation refresh failure — surface verbatim.
             return Err(e);
@@ -532,7 +540,7 @@ where
                     "failed to clear token store after second 401",
                 );
             }
-            Err(AppError::Validation("oauth.reauth_required".to_owned()))
+            Err(AppError::Gcal(GcalErrorKind::Unauthorized))
         }
     }
 }
@@ -642,6 +650,20 @@ pub(crate) fn extract_email_from_id_token(id_token: &str) -> Option<String> {
 /// Map an oauth2 request error into our [`AppError`] taxonomy,
 /// distinguishing revocation errors (which trigger reauth) from
 /// transient failures (which the caller may retry later).
+///
+/// Taxonomy split (FEAT-5c):
+///
+/// * `invalid_grant` / `unauthorized_client` — the refresh token is
+///   rejected as unauthorized.  These are HTTP-layer 401-class errors
+///   and route through [`AppError::Gcal`] ([`GcalErrorKind::Unauthorized`])
+///   so downstream code (Settings UI, connector retry) can treat them
+///   uniformly with a 401 from the Calendar API itself.
+/// * Every other `oauth2::RequestTokenError` variant — transport
+///   failures, timeouts, non-auth HTTP errors — stays on
+///   [`AppError::Validation`] with the `oauth.refresh_failed:` key,
+///   which is a flow-layer diagnostic, not an HTTP status.  Callers
+///   that need to retry transient failures do so based on the
+///   validation key.
 fn classify_refresh_error(
     err: &oauth2::RequestTokenError<
         oauth2::HttpClientError<oauth2::reqwest::Error>,
@@ -652,7 +674,7 @@ fn classify_refresh_error(
     if let oauth2::RequestTokenError::ServerResponse(resp) = err {
         match resp.error() {
             B::InvalidGrant | B::UnauthorizedClient => {
-                return AppError::Validation(format!("oauth.revoked: {err}"));
+                return AppError::Gcal(GcalErrorKind::Unauthorized);
             }
             _ => {}
         }
@@ -662,8 +684,13 @@ fn classify_refresh_error(
 
 /// Does this refresh error indicate that the refresh token is
 /// permanently revoked (as opposed to a transient failure)?
+///
+/// Revocation is now signalled by [`AppError::Gcal(GcalErrorKind::Unauthorized)`]
+/// (see [`classify_refresh_error`]).  We keep the predicate so the
+/// `fetch_with_auto_refresh` wrapper logic reads naturally rather than
+/// pattern-matching inline.
 fn is_revocation_error(err: &AppError) -> bool {
-    matches!(err, AppError::Validation(m) if m.starts_with("oauth.revoked"))
+    matches!(err, AppError::Gcal(GcalErrorKind::Unauthorized))
 }
 
 // ---------------------------------------------------------------------------
@@ -1058,7 +1085,11 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn refresh_token_invalid_grant_maps_to_revoked_error() {
+    async fn refresh_token_invalid_grant_maps_to_gcal_unauthorized() {
+        // FEAT-5c: `invalid_grant` / `unauthorized_client` are HTTP-
+        // layer 401-class failures and now route through
+        // `AppError::Gcal(GcalErrorKind::Unauthorized)` instead of the
+        // old `AppError::Validation("oauth.revoked: ...")` marker.
         let mock = MockServer::start().await;
         let client = build_client(&mock).await;
 
@@ -1074,8 +1105,11 @@ mod tests {
         let stale = dummy_token("old-access", "refresh-1");
         let result = client.refresh_token(&stale).await;
         assert!(
-            matches!(result, Err(AppError::Validation(ref m)) if m.contains("oauth.revoked")),
-            "invalid_grant must map to oauth.revoked, got {result:?}"
+            matches!(
+                result,
+                Err(AppError::Gcal(GcalErrorKind::Unauthorized))
+            ),
+            "invalid_grant must map to AppError::Gcal(Unauthorized), got {result:?}"
         );
     }
 
@@ -1244,8 +1278,11 @@ mod tests {
             .await;
 
         assert!(
-            matches!(result, Err(AppError::Validation(ref m)) if m.contains("oauth.reauth_required")),
-            "second 401 must surface oauth.reauth_required, got {result:?}"
+            matches!(
+                result,
+                Err(AppError::Gcal(GcalErrorKind::Unauthorized))
+            ),
+            "second 401 must surface AppError::Gcal(Unauthorized), got {result:?}"
         );
         assert_eq!(
             recorder.events(),
@@ -1286,8 +1323,11 @@ mod tests {
             .await;
 
         assert!(
-            matches!(result, Err(AppError::Validation(ref m)) if m.contains("oauth.reauth_required")),
-            "revoked refresh token must surface oauth.reauth_required, got {result:?}"
+            matches!(
+                result,
+                Err(AppError::Gcal(GcalErrorKind::Unauthorized))
+            ),
+            "revoked refresh token must surface AppError::Gcal(Unauthorized), got {result:?}"
         );
         assert_eq!(
             recorder.events(),

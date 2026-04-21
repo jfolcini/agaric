@@ -6,6 +6,7 @@
 //! lease (FEAT-5e), and Tauri settings commands (FEAT-5f) as each slice
 //! lands.
 
+pub mod api;
 pub mod digest;
 pub mod keyring_store;
 pub mod models;
