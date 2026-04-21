@@ -1,0 +1,12 @@
+---
+source: src/gcal_push/digest.rs
+expression: got
+---
+Create:
+  summary: Agaric Agenda — Sun Apr 26
+  description: "[—] Inbox › Archive old emails\n[·] Reading List › Finish 'Designing Data-Intensive Applications'\n[ ] Personal › Grocery run\n[ ] Projects › Retro notes\n[x] Work › Standup"
+  start:
+    date: 2026-04-26
+  end:
+    date: 2026-04-26
+  transparency: transparent

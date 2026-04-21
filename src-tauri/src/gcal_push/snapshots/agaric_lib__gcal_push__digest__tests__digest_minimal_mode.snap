@@ -1,0 +1,12 @@
+---
+source: src/gcal_push/digest.rs
+expression: got
+---
+Create:
+  summary: Agaric Agenda — Sat Apr 25
+  description: ""
+  start:
+    date: 2026-04-25
+  end:
+    date: 2026-04-25
+  transparency: transparent

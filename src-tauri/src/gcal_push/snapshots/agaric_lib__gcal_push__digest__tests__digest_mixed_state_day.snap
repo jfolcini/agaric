@@ -1,0 +1,12 @@
+---
+source: src/gcal_push/digest.rs
+expression: got
+---
+Create:
+  summary: Agaric Agenda — Thu Apr 23
+  description: "[ ] Projects › Loose note\n[x] Projects › Ship v1.0\n[ ] Projects › Design review\n[—] Projects › Legacy migration\n[·] Projects › Writing spec"
+  start:
+    date: 2026-04-23
+  end:
+    date: 2026-04-23
+  transparency: transparent

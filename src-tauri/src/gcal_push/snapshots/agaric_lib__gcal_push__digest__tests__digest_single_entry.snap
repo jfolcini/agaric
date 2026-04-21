@@ -1,0 +1,12 @@
+---
+source: src/gcal_push/digest.rs
+expression: got
+---
+Create:
+  summary: Agaric Agenda — Wed Apr 22
+  description: "[ ] Projects › Review PR #42"
+  start:
+    date: 2026-04-22
+  end:
+    date: 2026-04-22
+  transparency: transparent

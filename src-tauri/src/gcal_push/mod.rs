@@ -7,4 +7,5 @@
 //! lands.  FEAT-5a — the migration and sqlx row structs — is the only
 //! piece currently wired up; later slices add additional sub-modules.
 
+pub mod digest;
 pub mod models;
