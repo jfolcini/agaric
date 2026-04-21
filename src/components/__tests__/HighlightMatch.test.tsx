@@ -72,4 +72,36 @@ describe('HighlightMatch', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  // UX-247 — Unicode-aware folding regression tests.  Plain
+  // `.toLowerCase()` fails these cases; `indexOfFolded` handles them.
+
+  it('highlights Turkish İstanbul when filter is istanbul', () => {
+    const { container } = render(<HighlightMatch text="İstanbul" filterText="istanbul" />)
+    const mark = container.querySelector('mark')
+    expect(mark).toBeInTheDocument()
+    // The slice starts at 0 and spans the user-entered needle length
+    // so the <mark> visually covers the original non-ASCII prefix.
+    expect(mark?.textContent).toBe('İstanbul')
+  })
+
+  it('highlights German Straße when filter is strasse', () => {
+    const { container } = render(<HighlightMatch text="Straße" filterText="strasse" />)
+    const mark = container.querySelector('mark')
+    expect(mark).toBeInTheDocument()
+    expect(mark?.textContent).toBe('Straße'.slice(0, 'strasse'.length))
+  })
+
+  it('highlights accented café when filter is cafe', () => {
+    const { container } = render(<HighlightMatch text="café" filterText="cafe" />)
+    const mark = container.querySelector('mark')
+    expect(mark).toBeInTheDocument()
+    expect(mark?.textContent).toBe('café')
+  })
+
+  it('renders plain text when Unicode substring does not match', () => {
+    render(<HighlightMatch text="İstanbul" filterText="ankara" />)
+    expect(screen.getByText('İstanbul')).toBeInTheDocument()
+    expect(document.querySelector('mark')).not.toBeInTheDocument()
+  })
 })

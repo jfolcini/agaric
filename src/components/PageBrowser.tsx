@@ -29,6 +29,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
+import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { buildPageTree } from '@/lib/page-tree'
 import { getRecentPages } from '@/lib/recent-pages'
@@ -207,10 +208,14 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
   const filteredPages = useMemo(() => {
     let result = pages
-    if (filterText.trim()) {
-      const lower = filterText.toLowerCase()
+    const trimmed = filterText.trim()
+    if (trimmed) {
+      // UX-247 — Unicode-aware case- / diacritic-insensitive match so
+      // Turkish (`İstanbul` ↔ `istanbul`), German (`Straße` ↔
+      // `strasse`), and accented (`café` ↔ `cafe`) titles fold
+      // together the way users expect from interactive filters.
       result = result.filter(
-        (p) => (p.content ?? '').toLowerCase().includes(lower) || p.id === aliasMatchId,
+        (p) => matchesSearchFolded(p.content ?? '', trimmed) || p.id === aliasMatchId,
       )
     }
     if (showStarredOnly) {
@@ -527,7 +532,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                       />
                       {aliasMatchId === page.id &&
                         filterText.trim() !== '' &&
-                        !(page.content ?? '').toLowerCase().includes(filterText.toLowerCase()) && (
+                        !matchesSearchFolded(page.content ?? '', filterText.trim()) && (
                           <span className="alias-badge text-xs text-muted-foreground">(alias)</span>
                         )}
                     </span>

@@ -225,6 +225,50 @@ impl Materializer {
         }
     }
 
+    /// FEAT-5i — return whether a `GcalConnectorHandle` is wired.
+    ///
+    /// Local command handlers peek this flag before taking the
+    /// pre-mutation block-date snapshot so they can short-circuit
+    /// the extra `SELECT` query when no connector is listening
+    /// (common in headless dev, tests, and installs where the
+    /// user never enabled GCal push).
+    ///
+    /// The check is a lock-free atomic load on the `OnceLock`.
+    #[must_use]
+    pub fn is_gcal_hook_active(&self) -> bool {
+        self.gcal_handle.get().is_some()
+    }
+
+    /// FEAT-5i — notify the GCal connector of a newly-applied local
+    /// op.
+    ///
+    /// Callers MUST invoke this AFTER their outer transaction has
+    /// committed so the connector only ever observes durable state.
+    /// A mid-command rollback must not fire this call.  `snapshot`
+    /// is the pre-mutation block state captured inside the same
+    /// transaction (via
+    /// [`crate::gcal_push::dirty_producer::snapshot_block`]).
+    ///
+    /// No-op when no connector handle is wired (idempotent with
+    /// [`Self::is_gcal_hook_active`]) or when the op is not
+    /// agenda-relevant (delegated to
+    /// [`crate::gcal_push::dirty_producer::compute_dirty_event`]).
+    pub fn notify_gcal_for_op(
+        &self,
+        record: &crate::op_log::OpRecord,
+        snapshot: &crate::gcal_push::dirty_producer::BlockDateSnapshot,
+    ) {
+        let Some(handle) = self.gcal_handle.get() else {
+            return;
+        };
+        let today = chrono::Local::now().date_naive();
+        if let Some(event) =
+            crate::gcal_push::dirty_producer::compute_dirty_event(record, snapshot, today)
+        {
+            handle.notify_dirty(event);
+        }
+    }
+
     /// Periodic (5 min) metrics snapshot task.
     ///
     /// PERF-24: when `lifecycle` is `Some` and `is_foreground` reads

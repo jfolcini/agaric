@@ -236,6 +236,15 @@ pub async fn edit_block_inner(
         )));
     }
 
+    // FEAT-5i — snapshot pre-mutation dates so the post-commit
+    // `notify_gcal_for_op` call can emit a `DirtyEvent` for blocks
+    // that appear on the agenda (have `due_date` / `scheduled_date`).
+    let gcal_snapshot = if materializer.is_gcal_hook_active() {
+        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &block_id).await?)
+    } else {
+        None
+    };
+
     // 2. Find prev_edit inside transaction (inlined from recovery::find_prev_edit)
     let prev_edit_row = sqlx::query!(
         "SELECT device_id, seq FROM op_log \
@@ -276,6 +285,11 @@ pub async fn edit_block_inner(
     // relevant caches are rebuilt (e.g. content blocks skip tags/pages).
     if let Err(e) = materializer.dispatch_edit_background(&op_record, &block_type) {
         tracing::warn!(error = %e, "failed to dispatch background cache task");
+    }
+
+    // FEAT-5i — notify GCal connector post-commit.
+    if let Some(snapshot) = gcal_snapshot {
+        materializer.notify_gcal_for_op(&op_record, &snapshot);
     }
 
     // 6. Return response
@@ -338,6 +352,15 @@ pub async fn delete_block_inner(
         )));
     }
 
+    // FEAT-5i — snapshot pre-delete dates so the post-commit
+    // `notify_gcal_for_op` call can emit `old_affected_dates = {...},
+    // new_affected_dates = []`.
+    let gcal_snapshot = if materializer.is_gcal_hook_active() {
+        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &block_id).await?)
+    } else {
+        None
+    };
+
     // Single timestamp for both op_log and blocks — reverse_delete_block uses
     // record.created_at as deleted_at_ref, so they must match exactly.
     let now = now_rfc3339();
@@ -369,6 +392,11 @@ pub async fn delete_block_inner(
 
     // Fire-and-forget background cache dispatch
     materializer.dispatch_background_or_warn(&op_record);
+
+    // FEAT-5i — notify GCal connector post-commit.
+    if let Some(snapshot) = gcal_snapshot {
+        materializer.notify_gcal_for_op(&op_record, &snapshot);
+    }
 
     Ok(DeleteResponse {
         block_id,
@@ -430,6 +458,17 @@ pub async fn restore_block_inner(
         }
     }
 
+    // FEAT-5i — snapshot pre-restore dates so the post-commit
+    // `notify_gcal_for_op` call can emit `old_affected_dates = [],
+    // new_affected_dates = {dates}`.  At snapshot time the block is
+    // still soft-deleted so `was_deleted = true` — `compute_dirty_event`
+    // relies on that to distinguish a real restore from a no-op.
+    let gcal_snapshot = if materializer.is_gcal_hook_active() {
+        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &block_id).await?)
+    } else {
+        None
+    };
+
     let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
         block_id: BlockId::from_trusted(&block_id),
         deleted_at_ref: deleted_at_ref.clone(),
@@ -461,6 +500,11 @@ pub async fn restore_block_inner(
 
     // Fire-and-forget background cache dispatch
     materializer.dispatch_background_or_warn(&op_record);
+
+    // FEAT-5i — notify GCal connector post-commit.
+    if let Some(snapshot) = gcal_snapshot {
+        materializer.notify_gcal_for_op(&op_record, &snapshot);
+    }
 
     Ok(RestoreResponse {
         block_id,
@@ -739,6 +783,24 @@ pub async fn restore_all_deleted_inner(
     }
 
     let now = now_rfc3339();
+    // FEAT-5i — snapshot each root's pre-restore dates inside the tx
+    // so the post-commit notifier can emit per-root `DirtyEvent`s.
+    // A single root can contain a subtree of many blocks; the
+    // connector only tracks the *root* because the agenda projection
+    // is keyed on top-level blocks.
+    let gcal_hook_active = materializer.is_gcal_hook_active();
+    let mut gcal_snapshots: Vec<Option<crate::gcal_push::dirty_producer::BlockDateSnapshot>> =
+        Vec::with_capacity(roots.len());
+    for root in &roots {
+        if gcal_hook_active {
+            gcal_snapshots.push(Some(
+                crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &root.id).await?,
+            ));
+        } else {
+            gcal_snapshots.push(None);
+        }
+    }
+
     let mut op_records = Vec::new();
     // Append one RestoreBlock op per root for sync compatibility
     for root in &roots {
@@ -772,6 +834,13 @@ pub async fn restore_all_deleted_inner(
     // Dispatch background cache tasks for each root
     for op_record in &op_records {
         materializer.dispatch_background_or_warn(op_record);
+    }
+
+    // FEAT-5i — notify GCal connector post-commit, one event per root.
+    for (op_record, snapshot) in op_records.iter().zip(gcal_snapshots.iter()) {
+        if let Some(snap) = snapshot {
+            materializer.notify_gcal_for_op(op_record, snap);
+        }
     }
 
     Ok(BulkTrashResponse {

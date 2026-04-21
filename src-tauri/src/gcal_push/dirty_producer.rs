@@ -133,7 +133,22 @@ pub async fn snapshot_for_op(
             ..Default::default()
         });
     };
+    snapshot_block(conn, &block_id).await
+}
 
+/// Read the block's agenda-relevant state by `block_id`.
+///
+/// Primitive used by both [`snapshot_for_op`] (materializer remote
+/// path) and local command handlers (FEAT-5i).  Local command
+/// handlers call this BEFORE entering `*_in_tx` — they already know
+/// the `block_id` from their arguments and have no `OpRecord` yet.
+///
+/// Returns `missing = true` when the row does not exist.  `was_deleted`
+/// is `true` iff `deleted_at IS NOT NULL` at snapshot time.
+pub async fn snapshot_block(
+    conn: &mut SqliteConnection,
+    block_id: &str,
+) -> Result<BlockDateSnapshot, AppError> {
     let row = sqlx::query!(
         r#"SELECT due_date, scheduled_date,
                   CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END as "deleted: bool"

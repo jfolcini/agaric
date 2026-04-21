@@ -1,5 +1,80 @@
 # Session Log
 
+## Session 455 — UX-247 + FEAT-5i: Unicode-aware filter folding + local-command GCal `DirtyEvent` producer (2026-04-21)
+
+**2 REVIEW-LATER items resolved, 1 new filed.** Open items: 14 → 13. Two unrelated slices landed in the same batch — UX-247 (Unicode filter in PageBrowser/HighlightMatch) is a standalone frontend fix that fell out of a direct code-probe reproduction; FEAT-5i is the backend follow-up to FEAT-5h that completes the "constantly updated" semantic for on-device edits. One read-only technical review subagent returned APPROVE on FEAT-5i and APPROVE WITH NOTES on UX-247 (both optional notes addressed — alias-badge call site in the same file was also folded, and the ~11 remaining filter surfaces were filed as UX-248).
+
+**Follow-up filed:**
+
+- **UX-248** (S) — roll Unicode-aware `matchesSearchFolded` into the remaining ~11 `.toLowerCase().includes()` filter surfaces (SearchPanel, TrashView, BlockPropertyEditor, PropertyRowEditor, PropertyDefinitionsList, PageHeader, TemplatesView, SourcePageFilter, AddPropertyPopover, slash-commands, `useBlockResolve`, `tauri-mock/handlers`). All infrastructure (`fold-for-search.ts`, 31 unit tests) already landed via UX-247 — this is a mechanical sweep + per-surface regression tests.
+
+### Slice 1 — UX-247: Unicode-aware filter folding
+
+**Problem**: `PageBrowser` filter (line 211) and `HighlightMatch` (line 18) both used plain `.toLowerCase()`. Direct JS probe reproduced 4 failing cases out of 12: Turkish `İstanbul` ↔ `istanbul` (`.toLowerCase()` of `İ` = `i` + `U+0307`, two code points, breaks `includes()`), German `Straße` ↔ `strasse` (eszett doesn't fold to `ss`), accented `café` ↔ `cafe` (accents stay). ASCII cases all pass — confirming the audited paths were correct for ASCII but blind to non-ASCII, exactly as the UX-247 spec's investigation plan (step 2, "non-ASCII fix") predicted.
+
+**What changed:**
+
+- `src/lib/fold-for-search.ts` (NEW, ~120 lines) — `foldForSearch(s)` (NFKD-decompose → strip combining diacritics `U+0300..U+036F` → lowercase → replace `ß` with `ss`), `matchesSearchFolded(haystack, needle)` (fold both sides, `.includes`), `indexOfFolded(haystack, needle)` (fold both sides, `.indexOf`, map folded-space offset back to original-string offset by scanning prefixes until fold matches so `<mark>` covers the visually-correct substring). ASCII-only input short-circuits to plain `.toLowerCase()` — zero cost on the common case.
+- `src/lib/__tests__/fold-for-search.test.ts` (NEW, 31 tests) — ASCII fast path (3), Turkish dotted I (3), German eszett (3), accent stripping (4), idempotence (1), `matchesSearchFolded` parity (3 positive + 1 empty-query + 1 negative + 3 Turkish + 3 German + 3 accent), `indexOfFolded` (6 including offset-mapping past an ASCII prefix).
+- `src/components/PageBrowser.tsx` — filter (line 211) now uses `matchesSearchFolded(p.content ?? '', trimmed)`; alias-badge visibility check (line 535, surfaced by the review subagent) swapped from raw `.toLowerCase().includes` to the same `matchesSearchFolded` so both checks in the same component stay consistent.
+- `src/components/HighlightMatch.tsx` — `indexOfFolded(text, filterText)` replaces the raw `indexOf`; `<mark>` slice bounds unchanged (the offset mapping keeps `slice(idx, idx + filterText.length)` visually correct).
+- `src/components/__tests__/HighlightMatch.test.tsx` (+4 Unicode regression tests) and `src/components/__tests__/PageBrowser.test.tsx` (+3 Unicode regression tests for Turkish/German/accented).
+
+**Design decisions**:
+
+- **NFKD + strip combining + lowercase + explicit ß→ss** over `Intl.Collator` or `String.prototype.localeCompare` because we need substring (`includes` / `indexOf`) semantics, not whole-string comparison. `Intl.Collator` only gives a 3-way compare; substring matching would require scanning every position and calling `compare` — quadratic, slow, and the folded-string approach is simpler and has identical observable behaviour for the cases we care about.
+- **Explicit ß → ss replacement** after NFKD because NFKD does not decompose ß. German users consistently expect `strasse` to match `Straße` — this is the rule Latin keyboards learn as a substitute typing pattern.
+- **ASCII fast path via `/^[\x00-\x7f]*$/`** so no extra work is done on the overwhelmingly common case. The test suite covers both paths.
+- **Index-mapping by prefix scan in `indexOfFolded`** (not by deltas) — simple O(n·m) but m is always < 1000 chars in a filter input and n < 100 for page titles. Acceptable.
+
+### Slice 2 — FEAT-5i: local-command `DirtyEvent` producer
+
+**What changed:**
+
+- `src-tauri/src/gcal_push/dirty_producer.rs` — new `pub async fn snapshot_block(conn, block_id)` as the primitive (block_id-based, no `OpRecord` required). Existing `snapshot_for_op` now delegates to it. Same SQL query — `.sqlx/` cache unchanged.
+- `src-tauri/src/materializer/coordinator.rs` — new `pub fn is_gcal_hook_active()` (lock-free `OnceLock::get().is_some()`; cheap peek used by local commands to skip the pre-op SELECT when no connector is wired) and `pub fn notify_gcal_for_op(record, snapshot)` (public delegate around `compute_dirty_event` + `notify_dirty`).
+- 7 local command call sites wired to the pre-op-snapshot-inside-tx + post-commit-notify pattern:
+  - `src-tauri/src/commands/properties.rs::set_property_inner` — covers `set_todo_state_inner` / `set_due_date_inner` / `set_scheduled_date_inner` as delegates.
+  - `src-tauri/src/commands/mod.rs::delete_property_core` — shared by `delete_property_inner` and the state-transition cleanup path in `set_todo_state_inner`.
+  - `src-tauri/src/commands/blocks/crud.rs::edit_block_inner`.
+  - `src-tauri/src/commands/blocks/crud.rs::delete_block_inner`.
+  - `src-tauri/src/commands/blocks/crud.rs::restore_block_inner`.
+  - `src-tauri/src/commands/blocks/crud.rs::restore_all_deleted_inner` — per-root snapshots collected inside tx (`Vec<Option<BlockDateSnapshot>>`), all events emitted after commit. Same deferred-notify pattern as FEAT-5h's `BatchApplyOps`.
+  - `purge_*_inner` intentionally SKIPPED — non-reversible and the preceding `DeleteBlock` already emitted `old=[dates], new=[]`.
+- `src-tauri/src/commands/tests/gcal_hook_tests.rs` (NEW, 9 integration tests) — `set_property(due_date)` exact-1 event, `set_todo_state` exact-1 (single agenda-relevant emission despite the fan-in to `completed_at`/`created_at` non-agenda keys), non-agenda-key zero events, `delete_property(due_date)`, `edit_block` with/without date, `delete_block`, `restore_block`, no-handle path.
+- `src-tauri/src/commands/tests/mod.rs` — registered the new test module.
+
+### Verification
+
+- `npx vitest run src/lib/__tests__/fold-for-search.test.ts`: 31 passed.
+- `npx vitest run src/components/__tests__/HighlightMatch.test.tsx src/components/__tests__/PageBrowser.test.tsx`: 84 passed (8 existing HighlightMatch + 4 new + 69 existing PageBrowser + 3 new).
+- `npx vitest run` (full): **7548 passed** across 298 files (was 7510 after session 454; **+38 net** = 31 fold-for-search + 4 HighlightMatch + 3 PageBrowser).
+- `cargo nextest run commands::tests::gcal_hook_tests`: 9 passed.
+- `cargo nextest run` (full): **2547 passed**, 0 failed, 2 skipped (was 2538 after session 454; **+9 net** matching the FEAT-5i integration tests).
+- `cargo clippy --all-targets -- -D warnings`: clean.
+- `cargo sqlx prepare --check -- --tests`: clean (no new queries — `snapshot_block` reuses the FEAT-5h query shape).
+- `prek run --all-files`: all 25 hooks pass.
+
+### Architectural invariants respected (AGENTS.md)
+
+- Op log append-only: untouched.
+- CQRS split: FEAT-5i notifications fire strictly post-commit (matches FEAT-5h invariant). Mid-command rollback drops all pending events because the `gcal_snapshot` `Option` is scoped to after `tx.commit().await?`.
+- sqlx compile-time queries: `snapshot_block` reuses the existing `snapshot_for_op` query; `.sqlx/` cache unchanged. No new `query!` macro invocations.
+- `PRAGMA foreign_keys`: untouched.
+- Recursive-CTE correctness: no new CTEs.
+- ULID normalization: block_id passed directly to existing query.
+- `unsafe_code = "deny"`: upheld.
+- TS strict settings: `fold-for-search.ts` uses only typed inputs/outputs, no `!`, no `@ts-ignore`, no relaxation.
+- No new op type, no new materializer queue, no new Zustand store, no new table, no new Tauri event.
+
+### Notes for the next session
+
+- **FEAT-5 v1 is now fully shipped** — both remote-op (FEAT-5h) and local-command (FEAT-5i) paths notify the connector event-driven. The 15-min reconcile is now a genuine safety net, not the primary delivery mechanism.
+- **UX-248 is the only new-this-session follow-up**, a mechanical sweep with all infrastructure already in place. Highest user impact among remaining actionable items because 4 of the 11 surfaces are top-level search features (SearchPanel, TrashView, TemplatesView, PropertyDefinitionsList).
+- **After UX-248, remaining actionable items collapse to**: UX-239 (blocked on user repro), FEAT-4h/5g (deferred by decision), PERF-19/20/23 and MAINT-88 (deliberate non-fixes), all PUB-* (blocked on publish target). Productive-agent bandwidth is fully consumed by UX-248 + eventually FEAT-4h (MCP v2) once the user signals acceptance of the v1 RO UX.
+
+---
+
 ## Session 454 — FEAT-5h: wire `DirtyEvent` producer from materializer remote-op apply path (2026-04-21)
 
 **1 REVIEW-LATER item resolved, 0 new filed.** Open items: 15 → 14. Single Rust slice — no parallel subagents (one domain, tightly coupled file boundaries). One read-only technical review subagent returned APPROVE with no notes. Completes the FEAT-5 v1 "constantly updated" deliverable: the GCal connector now wakes on every remote op that could shift the projected agenda, falling back to the 15-minute reconcile ticker only when no op fires.

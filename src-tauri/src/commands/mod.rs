@@ -555,6 +555,14 @@ async fn delete_property_core(
         )));
     }
 
+    // FEAT-5i — snapshot pre-mutation block dates so the post-commit
+    // `notify_gcal_for_op` call can compute `old_affected_dates`.
+    let gcal_snapshot = if materializer.is_gcal_hook_active() {
+        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &block_id).await?)
+    } else {
+        None
+    };
+
     // 3. Append DeleteProperty op
     let payload = OpPayload::DeleteProperty(DeletePropertyPayload {
         block_id: BlockId::from_trusted(&block_id),
@@ -608,6 +616,11 @@ async fn delete_property_core(
 
     // 5. Dispatch background cache tasks (fire-and-forget)
     materializer.dispatch_background_or_warn(&op_record);
+
+    // FEAT-5i — notify GCal connector post-commit.
+    if let Some(snapshot) = gcal_snapshot {
+        materializer.notify_gcal_for_op(&op_record, &snapshot);
+    }
 
     Ok(())
 }

@@ -38,12 +38,24 @@ pub async fn set_property_inner(
     value_ref: Option<String>,
 ) -> Result<BlockRow, AppError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // FEAT-5i — snapshot pre-mutation agenda-relevant state so the
+    // post-commit `notify_gcal_for_op` call can compute the
+    // `old_affected_dates` half of the `DirtyEvent`.  Skip the
+    // extra SELECT when no connector is wired (common in tests).
+    let gcal_snapshot = if materializer.is_gcal_hook_active() {
+        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &block_id).await?)
+    } else {
+        None
+    };
     let (block, op_record) = set_property_in_tx(
         &mut tx, device_id, block_id, &key, value_text, value_num, value_date, value_ref,
     )
     .await?;
     tx.commit().await?;
     materializer.dispatch_background_or_warn(&op_record);
+    if let Some(snapshot) = gcal_snapshot {
+        materializer.notify_gcal_for_op(&op_record, &snapshot);
+    }
     Ok(block)
 }
 

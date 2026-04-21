@@ -3,6 +3,7 @@ mod block_cmd_tests;
 mod common;
 mod compaction_cmd_tests;
 mod edge_case_tests;
+mod gcal_hook_tests;
 mod history_cmd_tests;
 mod page_cmd_tests;
 mod property_cmd_tests;

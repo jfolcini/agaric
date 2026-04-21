@@ -1112,6 +1112,73 @@ describe('PageBrowser', () => {
       expect(screen.getByTitle('Meeting Notes')).toBeInTheDocument()
     })
 
+    // UX-247 — Unicode-aware filter regression tests.  Plain
+    // `.toLowerCase().includes(...)` fails these cases; the filter
+    // now delegates to `matchesSearchFolded` in `@/lib/fold-for-search`.
+
+    it('search matches Turkish İstanbul when query is lowercase istanbul', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'İstanbul' }),
+          makePage({ id: 'P2', content: 'Ankara' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('İstanbul')
+
+      const searchInput = screen.getByPlaceholderText('Search pages...')
+      await user.type(searchInput, 'istanbul')
+
+      expect(screen.getByTitle('İstanbul')).toBeInTheDocument()
+      expect(screen.queryByText('Ankara')).not.toBeInTheDocument()
+    })
+
+    it('search matches German Straße when query is ASCII strasse', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Straße' }),
+          makePage({ id: 'P2', content: 'München' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Straße')
+
+      const searchInput = screen.getByPlaceholderText('Search pages...')
+      await user.type(searchInput, 'strasse')
+
+      expect(screen.getByTitle('Straße')).toBeInTheDocument()
+      expect(screen.queryByText('München')).not.toBeInTheDocument()
+    })
+
+    it('search matches accented café when query omits the accent', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'café meeting' }),
+          makePage({ id: 'P2', content: 'lunch' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('café meeting')
+
+      const searchInput = screen.getByPlaceholderText('Search pages...')
+      await user.type(searchInput, 'cafe')
+
+      expect(screen.getByTitle('café meeting')).toBeInTheDocument()
+      expect(screen.queryByText('lunch')).not.toBeInTheDocument()
+    })
+
     it('clearing search shows all pages again', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
