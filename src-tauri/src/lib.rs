@@ -280,6 +280,11 @@ pub fn run() {
         // Bug report (FEAT-5)
         commands::collect_bug_report_metadata,
         commands::read_logs_for_report,
+        // MCP (FEAT-4e) — Settings "Agent access" tab
+        commands::get_mcp_status,
+        commands::get_mcp_socket_path,
+        commands::mcp_set_enabled,
+        commands::mcp_disconnect_all,
     ]);
 
     // `mut` is only consumed by the `#[cfg(not(mobile))]` updater plugin
@@ -578,7 +583,7 @@ pub fn run() {
             });
 
             // FEAT-4a — MCP read-only server. Opt-in via the `mcp-ro-enabled`
-            // marker file in `app_data_dir` (FEAT-4e will wire the UI toggle).
+            // marker file in `app_data_dir` (FEAT-4e wires the UI toggle).
             // When the marker is absent, `spawn_mcp_ro_task` logs and returns
             // immediately. When present, it binds the default socket and
             // spawns the serve loop. A second Agaric instance detects the
@@ -594,6 +599,13 @@ pub fn run() {
             // only tool that writes; it reuses the same materializer /
             // device_id the frontend uses so the op-log origin stays
             // consistent.
+            //
+            // FEAT-4e — `McpLifecycle` is shared managed state so the
+            // Settings UI commands (`get_mcp_status`, `mcp_disconnect_all`,
+            // `mcp_set_enabled`) can observe the connection counter and
+            // fire the disconnect signal.
+            let mcp_lifecycle = std::sync::Arc::new(mcp::McpLifecycle::new());
+            app.manage(mcp_lifecycle.clone());
             let mcp_pool = pools_read_for_mcp;
             let mcp_materializer = materializer_for_mcp;
             let mcp_device_id = device_id_for_mcp;
@@ -603,6 +615,7 @@ pub fn run() {
                 mcp_pool,
                 mcp_materializer,
                 mcp_device_id,
+                Some((*mcp_lifecycle).clone()),
             );
 
             Ok(())
@@ -755,6 +768,11 @@ mod specta_tests {
             // Bug report (FEAT-5)
             crate::commands::collect_bug_report_metadata,
             crate::commands::read_logs_for_report,
+            // MCP (FEAT-4e) — Settings "Agent access" tab
+            crate::commands::get_mcp_status,
+            crate::commands::get_mcp_socket_path,
+            crate::commands::mcp_set_enabled,
+            crate::commands::mcp_disconnect_all,
         ])
     }
 

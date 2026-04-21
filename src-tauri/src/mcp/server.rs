@@ -23,7 +23,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader
 use ulid::Ulid;
 
 use super::actor::{Actor, ActorContext, ACTOR};
-use super::SocketKind;
+use super::{ConnectionCounterGuard, McpLifecycle, SocketKind};
 use crate::error::AppError;
 
 // Re-export the registry types so external callers (tests, mod.rs's
@@ -448,19 +448,26 @@ where
 /// dispatches can emit activity events. Pass `None` in contexts that do
 /// not care about activity (stub binary, tests); pass
 /// `Some(ActivityContext::from_app_handle(...))` in production.
+///
+/// `lifecycle` is the FEAT-4e shared state. When `Some`, each per-
+/// connection task bumps `active_connections` on entry (decrementing on
+/// drop via [`ConnectionCounterGuard`]) and `select!`s on
+/// `disconnect_signal.notified()` so the `mcp_disconnect_all` command
+/// can kick every in-flight client at once.
 pub async fn serve<R>(
     socket: SocketKind,
     registry: std::sync::Arc<R>,
     activity_ctx: Option<super::activity::ActivityContext>,
+    lifecycle: Option<McpLifecycle>,
 ) -> Result<(), AppError>
 where
     R: ToolRegistry + Send + Sync + 'static,
 {
     match socket {
         #[cfg(unix)]
-        SocketKind::Unix(listener) => serve_unix(listener, registry, activity_ctx).await,
+        SocketKind::Unix(listener) => serve_unix(listener, registry, activity_ctx, lifecycle).await,
         #[cfg(windows)]
-        SocketKind::Pipe(server) => serve_pipe(server, registry, activity_ctx).await,
+        SocketKind::Pipe(server) => serve_pipe(server, registry, activity_ctx, lifecycle).await,
     }
 }
 
@@ -469,6 +476,7 @@ async fn serve_unix<R>(
     listener: tokio::net::UnixListener,
     registry: std::sync::Arc<R>,
     activity_ctx: Option<super::activity::ActivityContext>,
+    lifecycle: Option<McpLifecycle>,
 ) -> Result<(), AppError>
 where
     R: ToolRegistry + Send + Sync + 'static,
@@ -477,10 +485,9 @@ where
         let (stream, _addr) = listener.accept().await?;
         let registry = registry.clone();
         let activity_ctx = activity_ctx.clone();
+        let lifecycle = lifecycle.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, registry.as_ref(), activity_ctx).await {
-                tracing::warn!(target: "mcp", error = %e, "MCP connection ended with error");
-            }
+            run_connection(stream, registry.as_ref(), activity_ctx, lifecycle).await;
         });
     }
 }
@@ -490,6 +497,7 @@ async fn serve_pipe<R>(
     mut server: tokio::net::windows::named_pipe::NamedPipeServer,
     registry: std::sync::Arc<R>,
     activity_ctx: Option<super::activity::ActivityContext>,
+    lifecycle: Option<McpLifecycle>,
 ) -> Result<(), AppError>
 where
     R: ToolRegistry + Send + Sync + 'static,
@@ -510,11 +518,54 @@ where
 
         let registry = registry.clone();
         let activity_ctx = activity_ctx.clone();
+        let lifecycle = lifecycle.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(connected, registry.as_ref(), activity_ctx).await {
-                tracing::warn!(target: "mcp", error = %e, "MCP connection ended with error");
-            }
+            run_connection(connected, registry.as_ref(), activity_ctx, lifecycle).await;
         });
+    }
+}
+
+/// Wrap [`handle_connection`] with the FEAT-4e lifecycle bookkeeping:
+/// increment / decrement the shared connection counter via an RAII guard
+/// and `select!` on `disconnect_signal.notified()` so a `mcp_disconnect_all`
+/// call exits the handler promptly. When `lifecycle` is `None` this is a
+/// straight passthrough.
+async fn run_connection<S, R>(
+    stream: S,
+    registry: &R,
+    activity_ctx: Option<super::activity::ActivityContext>,
+    lifecycle: Option<McpLifecycle>,
+) where
+    S: AsyncRead + AsyncWrite + Unpin,
+    R: ToolRegistry,
+{
+    // Bind the RAII counter guard to the task lifetime so panics (or the
+    // disconnect-signal branch below) still decrement the counter.
+    let _guard = lifecycle
+        .as_ref()
+        .map(|lc| ConnectionCounterGuard::new(lc.active_connections.clone()));
+
+    let fut = handle_connection(stream, registry, activity_ctx);
+
+    let result = match lifecycle.as_ref() {
+        Some(lc) => {
+            let notify = lc.disconnect_signal.clone();
+            tokio::select! {
+                r = fut => r,
+                () = async move { notify.notified().await } => {
+                    tracing::info!(
+                        target: "mcp",
+                        "MCP connection dropped: disconnect signal fired",
+                    );
+                    Ok(())
+                }
+            }
+        }
+        None => fut.await,
+    };
+
+    if let Err(e) = result {
+        tracing::warn!(target: "mcp", error = %e, "MCP connection ended with error");
     }
 }
 
@@ -771,7 +822,7 @@ mod tests {
         let registry = Arc::new(PlaceholderRegistry);
         let serve_task = tokio::spawn({
             let registry = registry.clone();
-            async move { serve_unix(listener, registry, None).await }
+            async move { serve_unix(listener, registry, None, None).await }
         });
 
         for i in 0..3 {

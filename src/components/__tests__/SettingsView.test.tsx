@@ -2,11 +2,12 @@
  * Tests for SettingsView component (F-30).
  *
  * Validates:
- *  - Renders with 6 tabs
+ *  - Renders with 8 tabs
  *  - General tab shows deadline warning section (UX-202: TaskStatesSection removed)
  *  - Properties tab shows property definitions
  *  - Appearance tab shows theme toggle
  *  - Sync tab shows device management
+ *  - Agent access tab (FEAT-4e)
  *  - Tab switching works
  *  - Theme toggle changes localStorage and document class
  *  - Font size selector updates localStorage and CSS variable
@@ -46,6 +47,15 @@ vi.mock('../DataSettingsTab', () => ({
   DataSettingsTab: () => <div data-testid="data-settings-tab">Data Settings Content</div>,
 }))
 
+// FEAT-4e: AgentAccessSettingsTab is rendered inside the "Agent access"
+// tab panel. Mock it as an inert marker so the SettingsView tests stay
+// focused on tab routing / theme / font-size behaviour.
+vi.mock('../AgentAccessSettingsTab', () => ({
+  AgentAccessSettingsTab: () => (
+    <div data-testid="agent-access-settings-tab">Agent Access</div>
+  ),
+}))
+
 // FEAT-5: BugReportDialog is rendered by SettingsView but its heavy internal
 // logic (IPC + logs) is orthogonal to the SettingsView tests here. Mock it
 // as an inert marker so the original tab tests keep their existing scope.
@@ -74,18 +84,19 @@ beforeEach(() => {
 })
 
 describe('SettingsView', () => {
-  it('renders with 7 tabs', () => {
+  it('renders with 8 tabs', () => {
     render(<SettingsView />)
 
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(7)
+    expect(tabs).toHaveLength(8)
     expect(tabs[0]).toHaveTextContent(t('settings.tabGeneral'))
     expect(tabs[1]).toHaveTextContent(t('settings.tabProperties'))
     expect(tabs[2]).toHaveTextContent(t('settings.tabAppearance'))
     expect(tabs[3]).toHaveTextContent(t('settings.tabKeyboard'))
     expect(tabs[4]).toHaveTextContent(t('settings.tabData'))
     expect(tabs[5]).toHaveTextContent(t('settings.tabSync'))
-    expect(tabs[6]).toHaveTextContent(t('settings.tabHelp'))
+    expect(tabs[6]).toHaveTextContent(t('settings.tabAgentAccess'))
+    expect(tabs[7]).toHaveTextContent(t('settings.tabHelp'))
   })
 
   it('Help tab opens the bug-report dialog on click', async () => {

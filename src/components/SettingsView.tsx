@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/select'
 import { type ThemePreference, useTheme } from '@/hooks/useTheme'
 import { cn } from '@/lib/utils'
+import { AgentAccessSettingsTab } from './AgentAccessSettingsTab'
 import { BugReportDialog } from './BugReportDialog'
 import { DeadlineWarningSection } from './DeadlineWarningSection'
 import { DeviceManagement } from './DeviceManagement'
@@ -50,7 +51,15 @@ type ThemeSelectValue =
   | 'dracula'
   | 'one-dark-pro'
 
-type SettingsTab = 'general' | 'properties' | 'appearance' | 'keyboard' | 'data' | 'sync' | 'help'
+type SettingsTab =
+  | 'general'
+  | 'properties'
+  | 'appearance'
+  | 'keyboard'
+  | 'data'
+  | 'sync'
+  | 'agent'
+  | 'help'
 
 const TAB_IDS: SettingsTab[] = [
   'general',
@@ -59,6 +68,7 @@ const TAB_IDS: SettingsTab[] = [
   'keyboard',
   'data',
   'sync',
+  'agent',
   'help',
 ]
 
@@ -69,6 +79,7 @@ const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
   keyboard: 'settings.tabKeyboard',
   data: 'settings.tabData',
   sync: 'settings.tabSync',
+  agent: 'settings.tabAgentAccess',
   help: 'settings.tabHelp',
 }
 
@@ -228,6 +239,8 @@ export function SettingsView(): React.ReactElement {
         )}
 
         {activeTab === 'sync' && <DeviceManagement />}
+
+        {activeTab === 'agent' && <AgentAccessSettingsTab />}
 
         {activeTab === 'help' && (
           <div className="space-y-4 max-w-xl">

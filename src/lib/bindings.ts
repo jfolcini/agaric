@@ -231,6 +231,24 @@ export const commands = {
 } | null, AppErrorSchema>(__TAURI_INVOKE("get_link_metadata", { url })),
 	collectBugReportMetadata: () => typedError<BugReport, AppErrorSchema>(__TAURI_INVOKE("collect_bug_report_metadata")),
 	readLogsForReport: (redact: boolean) => typedError<LogFileEntry[], AppErrorSchema>(__TAURI_INVOKE("read_logs_for_report", { redact })),
+	// Tauri command: return the current MCP RO status for the Settings tab.
+	getMcpStatus: () => typedError<McpStatus, AppErrorSchema>(__TAURI_INVOKE("get_mcp_status")),
+	// Tauri command: return the default socket path for the current platform.
+	getMcpSocketPath: () => typedError<string, AppErrorSchema>(__TAURI_INVOKE("get_mcp_socket_path")),
+	/**
+	 *  Tauri command: toggle the MCP RO enabled marker file and start / stop
+	 *  the serve task accordingly.
+	 */
+	mcpSetEnabled: (enabled: boolean) => typedError<boolean, AppErrorSchema>(__TAURI_INVOKE("mcp_set_enabled", { enabled })),
+	/**
+	 *  Tauri command: disconnect every in-flight MCP connection.
+	 *
+	 *  Returns the connection count observed immediately after firing the
+	 *  signal. Reporting a non-zero value is not an error — the signal wakes
+	 *  each connection's `select!` branch asynchronously, so `get_mcp_status`
+	 *  may briefly still observe live connections while the tasks unwind.
+	 */
+	mcpDisconnectAll: () => typedError<null, AppErrorSchema>(__TAURI_INVOKE("mcp_disconnect_all")),
 };
 
 /* Types */
@@ -411,6 +429,20 @@ export type LinkMetadata = {
 export type LogFileEntry = {
 	name: string,
 	contents: string,
+};
+
+/**
+ *  Snapshot of the MCP RO server state surfaced to the Settings tab.
+ *
+ *  `socket_path` is a display string on every platform (the Unix socket
+ *  filesystem path on Linux / macOS, the named-pipe path on Windows).
+ *  `active_connections` reports the instantaneous count from
+ *  [`McpLifecycle::connection_count`] — it is not a rolling average.
+ */
+export type McpStatus = {
+	enabled: boolean,
+	socket_path: string,
+	active_connections: number,
 };
 
 export type MoveResponse = {

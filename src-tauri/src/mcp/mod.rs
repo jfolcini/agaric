@@ -22,11 +22,91 @@ pub mod server;
 pub mod tools_ro;
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use tokio::sync::Notify;
 
 use sqlx::SqlitePool;
 
 use crate::error::AppError;
 use crate::materializer::Materializer;
+
+// ---------------------------------------------------------------------------
+// Runtime lifecycle (FEAT-4e)
+// ---------------------------------------------------------------------------
+
+/// Shared runtime handle surfaced to the FEAT-4e Tauri command layer
+/// (`mcp_disconnect_all`, `mcp_set_enabled`, `get_mcp_status`).
+///
+/// - `disconnect_signal`: notified once per `mcp_disconnect_all` call. The
+///   serve loop watches this signal in addition to its `accept()` future,
+///   and each spawned per-connection task `select!`s on it, returning
+///   early when the signal fires. Subsequent connects succeed — the
+///   signal only kicks in-flight connections, not the listener itself.
+/// - `active_connections`: incremented by each per-connection task on
+///   entry and decremented on exit via an RAII guard. `get_mcp_status`
+///   reads this for the Settings activity-feed badge.
+/// - `task_running`: set `true` while the accept loop owns the socket.
+///   `mcp_set_enabled` consults this to decide whether a re-spawn is
+///   needed after the marker file is toggled on.
+#[derive(Debug, Clone)]
+pub struct McpLifecycle {
+    pub disconnect_signal: Arc<Notify>,
+    pub active_connections: Arc<AtomicUsize>,
+    pub task_running: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl McpLifecycle {
+    pub fn new() -> Self {
+        Self {
+            disconnect_signal: Arc::new(Notify::new()),
+            active_connections: Arc::new(AtomicUsize::new(0)),
+            task_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    /// Number of currently-live MCP connections. Reported to the Settings
+    /// activity feed via `get_mcp_status`.
+    pub fn connection_count(&self) -> usize {
+        self.active_connections.load(Ordering::Acquire)
+    }
+
+    /// `true` while the accept loop owns the listener.
+    pub fn is_running(&self) -> bool {
+        self.task_running.load(Ordering::Acquire)
+    }
+
+    /// Wake every in-flight connection task so each observes the signal
+    /// via `select!` and drops its stream. Safe to call with no active
+    /// connections (no-op).
+    pub fn disconnect_all(&self) {
+        self.disconnect_signal.notify_waiters();
+    }
+}
+
+impl Default for McpLifecycle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// RAII guard used by per-connection tasks to keep
+/// [`McpLifecycle::active_connections`] balanced even when the task panics
+/// or returns an error mid-way. Dropping the guard decrements the counter.
+pub struct ConnectionCounterGuard(Arc<AtomicUsize>);
+
+impl ConnectionCounterGuard {
+    pub fn new(counter: Arc<AtomicUsize>) -> Self {
+        counter.fetch_add(1, Ordering::AcqRel);
+        Self(counter)
+    }
+}
+
+impl Drop for ConnectionCounterGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 /// Marker-file name inside the application data directory. When this file
 /// exists, the MCP read-only socket is bound at startup; otherwise the task
@@ -224,12 +304,17 @@ pub async fn bind_socket(pipe_path: &Path) -> Result<SocketKind, AppError> {
 /// `app_handle` is used to build the FEAT-4d activity emitter — every
 /// completed tool call pushes an [`activity::ActivityEntry`] into the ring
 /// and emits an `mcp:activity` event on this handle's bus.
+///
+/// `lifecycle` is the FEAT-4e managed state that surfaces connection
+/// counts and disconnect-signal plumbing to the Settings UI. Passed as
+/// `Option` so headless / test callers can elide it.
 pub fn spawn_mcp_ro_task<R: tauri::Runtime>(
     app_data_dir: &Path,
     app_handle: tauri::AppHandle<R>,
     read_pool: SqlitePool,
     materializer: Materializer,
     device_id: String,
+    lifecycle: Option<McpLifecycle>,
 ) {
     if !mcp_ro_enabled(app_data_dir) {
         tracing::info!(
@@ -242,7 +327,7 @@ pub fn spawn_mcp_ro_task<R: tauri::Runtime>(
     let socket_path = default_mcp_ro_socket_path(app_data_dir);
     let activity_ctx = activity::ActivityContext::from_app_handle(app_handle);
     let registry = tools_ro::ReadOnlyTools::new(read_pool, materializer, device_id);
-    spawn_mcp_ro_task_with_registry(socket_path, registry, Some(activity_ctx));
+    spawn_mcp_ro_task_with_registry(socket_path, registry, Some(activity_ctx), lifecycle);
 }
 
 /// Spawn the MCP RO task against a caller-supplied registry and socket path.
@@ -255,10 +340,18 @@ pub fn spawn_mcp_ro_task<R: tauri::Runtime>(
 /// `Some(ActivityContext::from_app_handle(...))`; tests and headless
 /// scenarios pass `None` (and any tool dispatches fall through without
 /// emitting events).
+///
+/// `lifecycle` is the FEAT-4e shared state that exposes the
+/// disconnect-signal and per-connection counter to the Settings UI. When
+/// `Some`, the serve loop sets `task_running = true` on entry and back to
+/// `false` on exit so `get_mcp_status` reflects the accept loop's state;
+/// each spawned per-connection task increments / decrements
+/// `active_connections` and `select!`s on the disconnect signal.
 pub fn spawn_mcp_ro_task_with_registry<R>(
     socket_path: PathBuf,
     registry: R,
     activity_ctx: Option<activity::ActivityContext>,
+    lifecycle: Option<McpLifecycle>,
 ) where
     R: server::ToolRegistry + Send + Sync + 'static,
 {
@@ -266,12 +359,22 @@ pub fn spawn_mcp_ro_task_with_registry<R>(
     tauri::async_runtime::spawn(async move {
         match bind_socket(&socket_path).await {
             Ok(socket) => {
-                if let Err(e) = server::serve(socket, registry, activity_ctx).await {
+                if let Some(ref lc) = lifecycle {
+                    lc.task_running
+                        .store(true, std::sync::atomic::Ordering::Release);
+                }
+                if let Err(e) = server::serve(socket, registry, activity_ctx, lifecycle.clone())
+                    .await
+                {
                     tracing::error!(
                         target: "mcp",
                         error = %e,
                         "MCP RO serve loop exited with error",
                     );
+                }
+                if let Some(ref lc) = lifecycle {
+                    lc.task_running
+                        .store(false, std::sync::atomic::Ordering::Release);
                 }
             }
             Err(AppError::InvalidOperation(msg)) => {

@@ -36,6 +36,7 @@ mod history;
 mod journal;
 mod link_metadata;
 mod logging;
+mod mcp;
 mod pages;
 mod properties;
 mod queries;
@@ -80,6 +81,11 @@ pub use link_metadata::{
     fetch_link_metadata, fetch_link_metadata_inner, get_link_metadata, get_link_metadata_inner,
 };
 pub use logging::{get_log_dir, log_frontend};
+pub use mcp::{
+    get_mcp_socket_path, get_mcp_socket_path_inner, get_mcp_status, get_mcp_status_inner,
+    mcp_disconnect_all, mcp_disconnect_all_inner, mcp_set_enabled, mcp_set_enabled_inner,
+    McpStatus,
+};
 pub use pages::{
     export_page_markdown, export_page_markdown_inner, get_page_aliases, get_page_aliases_inner,
     get_page_inner, import_markdown, import_markdown_inner, list_page_links, list_page_links_inner,
@@ -155,6 +161,11 @@ pub use link_metadata::{__specta__fn__fetch_link_metadata, __specta__fn__get_lin
 #[doc(hidden)]
 pub use logging::{__specta__fn__get_log_dir, __specta__fn__log_frontend};
 #[doc(hidden)]
+pub use mcp::{
+    __specta__fn__get_mcp_socket_path, __specta__fn__get_mcp_status,
+    __specta__fn__mcp_disconnect_all, __specta__fn__mcp_set_enabled,
+};
+#[doc(hidden)]
 pub use pages::{
     __specta__fn__export_page_markdown, __specta__fn__get_page_aliases,
     __specta__fn__import_markdown, __specta__fn__list_page_links,
@@ -219,6 +230,11 @@ pub use history::{
 pub use link_metadata::{__cmd__fetch_link_metadata, __cmd__get_link_metadata};
 #[doc(hidden)]
 pub use logging::{__cmd__get_log_dir, __cmd__log_frontend};
+#[doc(hidden)]
+pub use mcp::{
+    __cmd__get_mcp_socket_path, __cmd__get_mcp_status, __cmd__mcp_disconnect_all,
+    __cmd__mcp_set_enabled,
+};
 #[doc(hidden)]
 pub use pages::{
     __cmd__export_page_markdown, __cmd__get_page_aliases, __cmd__import_markdown,

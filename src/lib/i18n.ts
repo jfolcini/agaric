@@ -1894,6 +1894,48 @@ const resources = {
       'bugReport.readLogsFailed': 'Failed to read logs',
       'bugReport.buildZipFailed': 'Failed to build ZIP',
       'bugReport.reportCrashTitle': 'Report this crash',
+
+      // FEAT-4e: MCP Agent access settings tab
+      'settings.tabAgentAccess': 'Agent access',
+      'agentAccess.title': 'Agent access',
+      'agentAccess.description':
+        'Allow local agents (Claude Desktop, Cursor, Continue, Devin, …) to read from your vault over a local socket. Writes are off by default; a read-write server is coming in v2.',
+      'agentAccess.loadFailed': 'Failed to load MCP status',
+      'agentAccess.roToggleLabel': 'Read-only access',
+      'agentAccess.roToggleDescription':
+        'Expose read tools (search, get_page, list_backlinks, …) on a local socket.',
+      'agentAccess.toggleOnSuccess': 'Read-only agent access enabled',
+      'agentAccess.toggleOffSuccess': 'Read-only agent access disabled',
+      'agentAccess.toggleFailed': 'Failed to toggle agent access',
+      'agentAccess.socketPathLabel': 'Socket path',
+      'agentAccess.socketPathCopied': 'Socket path copied',
+      'agentAccess.copySocketPathLabel': 'Copy socket path',
+      'agentAccess.copyFailed': 'Failed to copy to clipboard',
+      'agentAccess.configLabel': 'Agent configuration',
+      'agentAccess.configDescription':
+        'Copy the appropriate snippet into your agent\u2019s configuration file.',
+      'agentAccess.copyClaudeConfigButton': 'Copy Claude Desktop config',
+      'agentAccess.claudeConfigCopied': 'Claude Desktop config copied',
+      'agentAccess.copyGenericConfigButton': 'Copy generic MCP config',
+      'agentAccess.genericConfigCopied': 'Generic MCP config copied',
+      'agentAccess.activityLabel': 'Recent activity',
+      'agentAccess.activityEmpty':
+        'No agent activity yet. When an agent connects, tool calls appear here.',
+      'agentAccess.killSwitchLabel': 'Connections',
+      'agentAccess.killSwitchDescriptionNone': 'No active connections.',
+      'agentAccess.killSwitchDescription_one': '1 active connection.',
+      'agentAccess.killSwitchDescription_other': '{{count}} active connections.',
+      'agentAccess.killSwitchButton': 'Disconnect all',
+      'agentAccess.disconnectSuccess': 'Disconnected all active sessions',
+      'agentAccess.disconnectFailed': 'Failed to disconnect sessions',
+      'agentAccess.confirmDisconnectTitle': 'Disconnect all sessions?',
+      'agentAccess.confirmDisconnectDescription':
+        'Every currently-connected agent will be dropped. They can reconnect immediately after.',
+      'agentAccess.confirmDisconnectAction': 'Disconnect all',
+      'agentAccess.rwToggleLabel': 'Read-write access',
+      'agentAccess.rwToggleDescription':
+        'Let agents create, edit, and tag blocks. Every write is reversible from the activity feed.',
+      'agentAccess.comingInV2': 'Coming in v2',
     },
   },
 }
