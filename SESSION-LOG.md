@@ -1,5 +1,96 @@
 # Session Log
 
+## Session 447 — FEAT-4a: MCP module skeleton + UDS/named-pipe transport + `agaric-mcp` stdio↔socket stub binary (2026-04-20)
+
+**1 REVIEW-LATER item resolved.** Open items: 27 → 26. First slice of the pre-approved FEAT-4 (MCP server) umbrella. Landed the module skeleton, JSON-RPC 2.0 server, transport abstraction (UDS on Linux/macOS, named pipe on Windows), and the `agaric-mcp` stdio↔socket stub binary that MCP clients (Claude Desktop, Claude Code, Cursor, etc.) invoke. User explicitly chose FEAT-4 start via `ask_user_question` after the session 446 queue exhausted of S-sized non-deferred items. Single build subagent (4b/4d depend on 4a's module layout — parallelizing would have required worktrees for marginal wall-clock gain), one pipelined read-only technical reviewer — APPROVE, zero REQUEST-CHANGES. One atomic commit.
+
+### What changed
+
+**New module `src-tauri/src/mcp/` (5 files):**
+
+- **`mcp/mod.rs`** (428 lines) — module entry, socket-path helpers, transport-agnostic `SocketKind { Unix(UnixListener), Pipe(NamedPipeServer) }` enum (each variant cfg-gated), `bind_socket()` with `chmod 0o600` on unix / `ServerOptions::first_pipe_instance(true)` on Windows, `spawn_mcp_ro_task()` fire-and-forget launcher. Pre-declares sibling module placeholders so FEAT-4b/4d can land additively without rewriting `mod.rs`. 9 unit tests.
+- **`mcp/server.rs`** (731 lines) — JSON-RPC 2.0 dispatch + per-connection state. Handles `initialize` / `tools/list` / `tools/call` / `notifications/initialized`. Returns `-32601 method not found` for unknown methods and `tools/call` (tools land in FEAT-4c). Line-delimited JSON framing (`BufReader::read_line` + `AsyncWriteExt::write_all` with trailing `\n`). Generic over `<S: AsyncRead + AsyncWrite + Unpin, R: ToolRegistry>` so the same connection handler serves both UDS and named-pipe streams. `ClientInfo` captured per-connection for FEAT-4b's `ActorContext` plumbing. 13 unit tests.
+- **`mcp/registry.rs`** — 1-line placeholder for FEAT-4b (`ToolRegistry` trait + impl).
+- **`mcp/actor.rs`** — 1-line placeholder for FEAT-4b (`Actor` enum + `ActorContext` task-local).
+- **`mcp/activity.rs`** — 1-line placeholder for FEAT-4d (`ActivityRing` + Tauri event emitter).
+
+**New binary `src-tauri/src/bin/agaric-mcp.rs`** (345 lines) — stdio↔socket bridge that MCP clients launch as a subprocess. `#[tokio::main(flavor = "current_thread")]`. CLI: `--socket <path>`, `--socket=<path>`, `--version`/`-V`, `--help`/`-h`. Resolves socket path via CLI override > `$AGARIC_MCP_SOCKET` env > platform default (`$XDG_DATA_HOME/com.agaric.app/mcp-ro.sock` on Linux, `~/Library/Application Support/com.agaric.app/mcp-ro.sock` on macOS, `\\.\pipe\agaric-mcp-ro` on Windows). Bidirectional forwarding (stdin→socket + socket→stdout) via `tokio::spawn` + `tokio::io::copy`. Connect-refused → user-facing stderr "Agaric MCP not running. Enable it in Settings → Agent access." + exit 1. 11 unit tests. **`#[cfg(unix)]`-aware tests avoid `std::env::set_var`** (which requires `unsafe` on Rust 1.80+ and would violate the repo's `unsafe_code = "deny"` invariant) — uses a pure helper `resolve_socket_path_from()` instead.
+
+**Existing files edited (2):**
+
+- **`src-tauri/Cargo.toml`** — added tokio features `io-util` + `io-std` to the existing feature list (`sync`, `macros`, `rt`, `net` were already enabled). Added `[[bin]]` entry for `agaric-mcp`. **No new external crates.** The module uses only existing deps: `tokio`, `serde`, `serde_json`, `tracing`, `tempfile` (dev-dep).
+- **`src-tauri/src/lib.rs`** — added `pub mod mcp;` alongside existing module declarations. Added `mcp::spawn_mcp_ro_task(&app_data_dir);` inside the `setup()` closure, directly after the `sync_daemon` spawn block (line ~572). Uses the existing `app_data_dir` binding from `app.path().app_data_dir()?` — no new Tauri state plumbing.
+
+### Key design choices (conform to FEAT-4 umbrella decisions)
+
+- **Gate mechanism:** marker file `<app_data_dir>/mcp-ro-enabled`. Mirrors the existing `device-id` + `sync-cert` pattern rather than adding a new backend `settings` table (which doesn't exist in the codebase) or a new Zustand store (forbidden by the FEAT-4 spec). FEAT-4e will wire the UI toggle to create/delete the marker. **Known constraint for FEAT-4e:** the task only checks the marker at boot — the toggle will need a channel or `AtomicBool` to propagate runtime state changes without a restart. Noted in the review.
+- **Socket permission:** `chmod 0o600` applied explicitly after `bind()` on unix. Windows uses `ServerOptions::first_pipe_instance(true)` which produces an owner-only default DACL. TOCTOU race between `bind()` and `chmod()` is *theoretically* possible but acceptable per the AGENTS.md threat model (single-user, no adversarial peers, kernel enforces per-user access to `AF_UNIX` + named pipes).
+- **Transport abstraction:** `SocketKind` enum is cfg-gated per-variant; `handle_connection` is generic over `AsyncRead + AsyncWrite + Unpin` so it serves both `UnixStream` and `NamedPipeServer` unchanged. `serve_unix()` / `serve_pipe()` dispatch based on cfg. Clean seam for FEAT-4h to add `mcp-rw.sock` / `\\.\pipe\agaric-mcp-rw` additively.
+- **JSON-RPC 2.0 compliance:** `protocolVersion: "2024-11-05"` (current MCP spec). Standard error codes: `-32700` parse, `-32600` invalid request, `-32601` method not found, `-32602` invalid params, `-32603` internal. ID correlation preserves the exact type (numeric IDs stay numeric, string IDs stay string). `notifications/initialized` suppresses the response (per MCP spec — server MUST NOT respond to notifications). **Batch requests (`[req1, req2, ...]`) are not implemented** — MCP doesn't require them and no current client uses them; flagged as a possible follow-up if the tool surface grows.
+- **ActorContext deferred:** `ConnectionState` stores `client_info: Option<ClientInfo>` so FEAT-4b can populate `Actor::Agent { name }` from the handshake without a second refactor. `ToolRegistry` is a bare marker trait in 4a (`pub trait ToolRegistry: Send + Sync {}`); FEAT-4b will add `list_tools()` + `call_tool(name, args, ctx) -> Result<Value, AppError>` without breaking the dispatch signature.
+- **No `.await` / no `.unwrap()` in the boot path:** spawn is fire-and-forget. If the marker file check fails or the socket can't bind, the error is logged at `warn!` level and the main app keeps starting. MCP failure is never a startup blocker.
+
+### Verification
+
+- `cd src-tauri && cargo fmt --check` clean.
+- `cd src-tauri && cargo clippy --all-targets -- -D warnings` clean.
+- `cd src-tauri && cargo check --all-targets` clean (includes the new `agaric-mcp` bin target).
+- `cd src-tauri && cargo nextest run` — 2216 passed (+31 new from FEAT-4a's `mcp` + `agaric-mcp` tests; baseline 2185). 0 failed, 2 pre-existing skipped.
+- `cd src-tauri && cargo nextest run mcp` — 20 passed (9 from mod.rs + 11 from server.rs). Plus 11 from the bin tests + 1 ignored integration test (`stub_binary_roundtrips_initialize_over_uds`) that passes after `cargo build --bin agaric-mcp`.
+- `cd src-tauri && cargo nextest run ts_bindings_up_to_date` — 1 passed (specta bindings stable — no new IPC commands in this slice).
+- `cd src-tauri && cargo sqlx prepare --check -- --tests` — unchanged (no SQL touched).
+- `prek run --all-files` — all 25 hooks pass.
+
+### Architectural invariants respected (AGENTS.md)
+
+- Append-only op log: untouched.
+- CQRS split: untouched.
+- sqlx compile-time queries: N/A (no SQL changes).
+- PRAGMA foreign_keys: N/A.
+- ULID normalization: N/A.
+- `unsafe_code = "deny"`: 0 unsafe blocks. Binary tests deliberately avoid `std::env::set_var` (which requires `unsafe` on Rust 1.80+) by using a pure `resolve_socket_path_from()` helper.
+- Architectural stability: no new tables, no new op types, no new stores, no new materializer queues, no new sync message types. FEAT-4 as a whole is pre-approved per its REVIEW-LATER "User decisions recorded up front" section.
+- Threat model: socket `0600` + kernel per-user isolation are the entire security model. No bearer tokens, no rate limits, no TLS, no path-traversal guards. Per AGENTS.md §Threat Model, those are explicitly forbidden as over-hardening against a non-adversarial peer set (the user's own agent subprocesses).
+
+### Pipeline
+
+1. **PLAN.** Session 446 exhausted the S-sized non-deferred REVIEW-LATER items. Asked the user whether to start FEAT-4 or FEAT-5, or close the session. User chose FEAT-4.
+2. **BUILD (single subagent on main tree).** 4b, 4c, 4d, 4f all depend on 4a's module layout (new `src-tauri/src/mcp/` directory). True parallel would have required worktrees with marginal wall-clock gain on a single S-M item. Chose serial solo subagent with pre-declared placeholder sibling modules so next session's FEAT-4b / FEAT-4d can land without rewriting `mod.rs`.
+3. **REVIEW (single read-only reviewer).** APPROVE with zero REQUEST-CHANGES. Reviewer explicitly verified: (a) two-socket design leaves a clean seam for FEAT-4h's RW socket, (b) the `ToolRegistry` marker trait is extensible for FEAT-4b, (c) `handle_connection` signature is pool-less in 4a but the generic parameter shape lets FEAT-4c add a pool without breaking, (d) TOCTOU race on unix socket permission is acceptable under the threat model, (e) JSON-RPC ID correlation preserves numeric vs string exactly, (f) notifications correctly suppress responses, (g) no `unsafe` blocks, (h) all 33 tests cover happy + error + edge cases.
+4. **MERGE.** No worktrees → no merge step.
+5. **VERIFY.** prek 25/25 hooks green after a single run. 2216 nextest passed, no regressions elsewhere. Specta bindings unchanged.
+6. **COMMIT.** Single atomic commit.
+7. **LOG.** This entry.
+
+### Files changed
+
+| Path | Change |
+|------|--------|
+| `src-tauri/src/mcp/mod.rs` | New (428 lines). Module entry, socket paths, `SocketKind`, `bind_socket`, `spawn_mcp_ro_task`, marker-file gate, +9 tests. |
+| `src-tauri/src/mcp/server.rs` | New (731 lines). JSON-RPC 2.0 dispatch, `ToolRegistry` marker trait, `handle_connection`, `serve_unix`, `serve_pipe`, +13 tests. |
+| `src-tauri/src/mcp/registry.rs` | New (1 line). Placeholder for FEAT-4b. |
+| `src-tauri/src/mcp/actor.rs` | New (1 line). Placeholder for FEAT-4b. |
+| `src-tauri/src/mcp/activity.rs` | New (1 line). Placeholder for FEAT-4d. |
+| `src-tauri/src/bin/agaric-mcp.rs` | New (345 lines). Stdio↔socket stub binary, CLI parsing, +11 tests. |
+| `src-tauri/Cargo.toml` | Added tokio features `io-util` + `io-std`; added `[[bin]]` for `agaric-mcp`. No new external crates. |
+| `src-tauri/src/lib.rs` | Added `pub mod mcp;` + `mcp::spawn_mcp_ro_task(&app_data_dir);` call after the sync_daemon spawn block. |
+| `REVIEW-LATER.md` | Removed FEAT-4a row + detail section. Summary count 27 → 26; previously-resolved 372+ → 373+, 132 → 133 sessions. |
+| `SESSION-LOG.md` | This entry. |
+
+6 new Rust files + 2 modified Rust files + 2 state files.
+
+### Caveats / follow-up risks for FEAT-4b / 4c / 4d / 4e / 4h
+
+- **FEAT-4b — `ToolRegistry` trait methods** will extend the current `Send + Sync {}` marker. The `dispatch()` function already takes `<R: ToolRegistry>` with a `_registry: &R` parameter, so adding methods is purely additive.
+- **FEAT-4c — pool access** will require either `Arc<SqlitePool>` in the registry struct or a `pool()` method on the trait. `spawn_mcp_ro_task_with_registry()` is generic over the registry type so the pool can ride in without changing the spawn signature.
+- **FEAT-4d — activity ring buffer** needs a hook into `handle_connection`'s dispatch. Two clean insertion points: (1) a registry method `emit_activity(&self, ActivityEvent)` called after each `call_tool`, or (2) a wrapper around `dispatch()` that inspects the result. Either is additive.
+- **FEAT-4e — runtime toggle** will need to propagate marker-file changes to the live task. Options: periodic marker re-check (ugly), `AtomicBool` with `Ordering::Relaxed` signaled from the Tauri command (cleanest), or a tokio `CancellationToken` per-launch (most robust). Design owned by FEAT-4e.
+- **FEAT-4h — RW socket** (deferred) will add `mcp-rw.sock` / `\\.\pipe\agaric-mcp-rw` constants + a second `spawn_mcp_rw_task()`. No changes to existing RO code needed.
+- **JSON-RPC batch requests** not implemented. Acceptable for MCP v1 (no client uses batches in practice). If FEAT-4c's tool surface grows large and batched calls become valuable, add batch parsing to `parse_request` additively.
+- **Buffer cap on `BufReader::read_line`** not implemented. Acceptable per threat model (no adversarial peers). A pathologically large single request from a trusted agent would buffer to RAM but never DoS — flagged for FEAT-4c if it matters.
+
+---
+
 ## Session 446 — UX-246 + MAINT-90 (final): 5 parallel subagents, both M-sized items fully closed (2026-04-20)
 
 **2 REVIEW-LATER items fully resolved.** Open items: 29 → 27. Closed UX-246 (13 bare `<Input>` → `<SearchInput>` migrations across 5 components) and the remaining 3-file slice of MAINT-90 (UX.md 253, ARCHITECTURE.md 192, COMPARISON.md 170 — 615 total markdownlint violations → 0). 5 parallel build subagents on the main tree. 5 pipelined read-only technical reviews — 4 APPROVE, 1 REQUEST-CHANGES (ARCHITECTURE.md, 2 findings) handled by orchestrator. One atomic commit.

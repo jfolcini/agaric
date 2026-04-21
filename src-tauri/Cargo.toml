@@ -55,7 +55,7 @@ ulid = "1.2.1"
 uuid = { version = "1.23.0", features = ["v4"] }
 blake3 = "1.8.3"
 chrono = { version = "0.4.44", features = ["serde"] }
-tokio = { version = "1", features = ["sync", "macros", "rt", "net"] }
+tokio = { version = "1", features = ["sync", "macros", "rt", "net", "io-util", "io-std"] }
 regex = "1"
 base64 = "0.22.1"
 specta = { version = "=2.0.0-rc.24", features = ["derive"] }
@@ -206,3 +206,10 @@ harness = false
 [[bench]]
 name = "property_def_bench"
 harness = false
+
+# FEAT-4a — stdio ↔ MCP socket bridge binary shipped alongside the Tauri app.
+# The main Tauri binary is `src/main.rs` (auto-detected); this extra bin is
+# a small standalone forwarder that MCP clients spawn as a stdio subprocess.
+[[bin]]
+name = "agaric-mcp"
+path = "src/bin/agaric-mcp.rs"

@@ -13,6 +13,7 @@ pub mod import;
 pub mod lifecycle;
 pub mod link_metadata;
 pub mod materializer;
+pub mod mcp;
 pub mod merge;
 pub mod op;
 pub mod op_log;
@@ -567,6 +568,14 @@ pub fn run() {
                     Err(e) => tracing::error!(error = %e, "Failed to start SyncDaemon"),
                 }
             });
+
+            // FEAT-4a — MCP read-only server. Opt-in via the `mcp-ro-enabled`
+            // marker file in `app_data_dir` (FEAT-4e will wire the UI toggle).
+            // When the marker is absent, `spawn_mcp_ro_task` logs and returns
+            // immediately. When present, it binds the default socket and
+            // spawns the serve loop. A second Agaric instance detects the
+            // existing socket and logs a warning without crashing.
+            mcp::spawn_mcp_ro_task(&app_data_dir);
 
             Ok(())
         })
