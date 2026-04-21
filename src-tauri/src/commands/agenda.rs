@@ -167,6 +167,10 @@ pub async fn list_projected_agenda_inner(
            AND pac.projected_date <= ?2
            AND b.deleted_at IS NULL
            AND b.is_conflict = 0
+           AND NOT EXISTS (
+               SELECT 1 FROM block_properties tp
+               WHERE tp.block_id = b.page_id AND tp.key = 'template'
+           )
          ORDER BY pac.projected_date ASC
          LIMIT ?3",
     )
@@ -223,6 +227,11 @@ async fn list_projected_agenda_on_the_fly(
     // has at least one date column.
     // LEFT JOINs fetch repeat-until / repeat-count / repeat-seq in the same
     // round-trip, eliminating per-block N+1 queries.
+    //
+    // Template-page filter (FEAT-5a, spec line 812): blocks whose owning
+    // page has a `template` property are excluded so template scaffolding
+    // never surfaces in agenda / Google Calendar results.  `b.page_id`
+    // is the denormalised root-page column (migration 0027).
     let rows = sqlx::query_as!(
         RepeatingBlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
@@ -242,7 +251,11 @@ async fn list_projected_agenda_on_the_fly(
            AND b.is_conflict = 0
            AND (b.todo_state IS NULL OR b.todo_state != 'DONE')
            AND bp.value_text IS NOT NULL
-           AND (b.due_date IS NOT NULL OR b.scheduled_date IS NOT NULL)"#,
+           AND (b.due_date IS NOT NULL OR b.scheduled_date IS NOT NULL)
+           AND NOT EXISTS (
+               SELECT 1 FROM block_properties tp
+               WHERE tp.block_id = b.page_id AND tp.key = 'template'
+           )"#,
     )
     .fetch_all(pool)
     .await?;

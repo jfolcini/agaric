@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT date FROM gcal_agenda_event_map ORDER BY date ASC",
+  "describe": {
+    "columns": [
+      {
+        "name": "date",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2528c2aa1f821f72e91cb72e75f64eb3bd250c89d2f780a16cc3f67f4f24d039"
+}

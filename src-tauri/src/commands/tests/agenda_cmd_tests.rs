@@ -1523,6 +1523,223 @@ async fn projected_agenda_limit_caps_results() {
 }
 
 // ======================================================================
+// Template-page filtering (FEAT-5a — spec line 812)
+// ======================================================================
+//
+// `list_projected_agenda_inner` — and by extension every downstream
+// agenda consumer, including the FEAT-5 Google Calendar push — must
+// exclude blocks whose owning page carries a `template` property so
+// template scaffolding never surfaces in agenda output.
+// These tests pin the filter in place on both branches of
+// `list_projected_agenda_inner`: the on-the-fly fallback (empty cache)
+// and the `projected_agenda_cache` read path (populated cache).
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_projected_agenda_excludes_blocks_under_template_page() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Create a page, mark it as a template, then create a repeating
+    // task nested inside it.  Both blocks go through the real command
+    // layer so `page_id` is populated correctly (migration 0027).
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Template library page".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.id.clone(),
+        "template".into(),
+        Some("true".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let task = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "Recurring template task".into(),
+        Some(page.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_due_date_inner(&pool, DEV, &mat, task.id.clone(), Some("2026-04-06".into()))
+        .await
+        .unwrap();
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        task.id.clone(),
+        "repeat".into(),
+        Some("daily".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    set_todo_state_inner(&pool, DEV, &mat, task.id.clone(), Some("TODO".into()))
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Cache path: the materializer has populated `projected_agenda_cache`
+    // for the repeating task.  With the template filter, nothing should
+    // come back.
+    let entries =
+        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-14".into(), None)
+            .await
+            .unwrap();
+    assert_eq!(
+        entries.len(),
+        0,
+        "blocks under a template page must not surface via projected_agenda_cache"
+    );
+
+    // On-the-fly path: clear the cache and re-query.  The fallback
+    // branch must apply the same filter.
+    sqlx::query("DELETE FROM projected_agenda_cache")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let entries_on_fly =
+        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-14".into(), None)
+            .await
+            .unwrap();
+    assert_eq!(
+        entries_on_fly.len(),
+        0,
+        "blocks under a template page must not surface via the on-the-fly fallback"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_projected_agenda_includes_block_after_template_property_removed() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Same setup as above: template page → repeating child task.
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Was a template".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.id.clone(),
+        "template".into(),
+        Some("true".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let task = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "Now a real task".into(),
+        Some(page.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_due_date_inner(&pool, DEV, &mat, task.id.clone(), Some("2026-04-06".into()))
+        .await
+        .unwrap();
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        task.id.clone(),
+        "repeat".into(),
+        Some("daily".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    set_todo_state_inner(&pool, DEV, &mat, task.id.clone(), Some("TODO".into()))
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Sanity: with the template property set, the task is filtered out.
+    let filtered =
+        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-10".into(), None)
+            .await
+            .unwrap();
+    assert_eq!(filtered.len(), 0);
+
+    // Remove the template property and the task must re-enter the
+    // agenda (on-the-fly path — we clear the cache to keep the test
+    // deterministic).
+    delete_property_inner(&pool, DEV, &mat, page.id.clone(), "template".into())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+    sqlx::query("DELETE FROM projected_agenda_cache")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let entries =
+        list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-10".into(), None)
+            .await
+            .unwrap();
+    assert_eq!(
+        entries.len(),
+        4,
+        "expected four daily projections (2026-04-07..2026-04-10) once template flag is cleared"
+    );
+    for entry in &entries {
+        assert_eq!(entry.block.id, task.id);
+    }
+
+    mat.shutdown();
+}
+
+// ======================================================================
 // list_undated_tasks
 // ======================================================================
 

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR REPLACE INTO gcal_agenda_event_map (date, gcal_event_id, last_pushed_hash, last_pushed_at) VALUES (?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "7dd89017aba7ae920ef5a4651b9dcd28d0b9dd92be2637e296c02f730ff8b66f"
+}

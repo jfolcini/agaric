@@ -56,6 +56,10 @@ async fn rebuild_projected_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, A
     let horizon = today + chrono::Duration::days(365);
 
     // Fetch all repeating blocks (same query as list_projected_agenda_inner).
+    // Template-page filter (FEAT-5a, spec line 812): exclude repeating
+    // blocks whose owning page carries a `template` property so they
+    // never enter the projected agenda.  `b.page_id` is the denormalised
+    // root-page column (migration 0027).
     let rows: Vec<CacheRepeatingRow> = sqlx::query_as!(
         CacheRepeatingRow,
         r#"SELECT b.id,
@@ -73,7 +77,11 @@ async fn rebuild_projected_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, A
            AND b.is_conflict = 0
            AND (b.todo_state IS NULL OR b.todo_state != 'DONE')
            AND bp.value_text IS NOT NULL
-           AND (b.due_date IS NOT NULL OR b.scheduled_date IS NOT NULL)"#,
+           AND (b.due_date IS NOT NULL OR b.scheduled_date IS NOT NULL)
+           AND NOT EXISTS (
+               SELECT 1 FROM block_properties tp
+               WHERE tp.block_id = b.page_id AND tp.key = 'template'
+           )"#,
     )
     .fetch_all(pool)
     .await?;

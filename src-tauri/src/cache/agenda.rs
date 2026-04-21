@@ -47,6 +47,14 @@ async fn rebuild_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     // Step 1: Compute desired state from the same 4 UNION ALL sources.
     // Properties appear first so they win on PK deduplication (first-wins,
     // replicating INSERT OR IGNORE semantics).
+    //
+    // Template-page filter (FEAT-5a, spec line 812): blocks whose owning
+    // page has a `template` property are excluded from the agenda so the
+    // Google Calendar push layer (and every other agenda consumer) sees
+    // "what is on the agenda" without template scaffolding.  `b.page_id`
+    // is the denormalised root-page column (migration 0027); top-level
+    // tags have `page_id IS NULL` and pass the NOT EXISTS check
+    // vacuously.
     let desired_rows: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT date, block_id, source FROM (
             SELECT bp.value_date AS date, bp.block_id, 'property:' || bp.key AS source
@@ -54,6 +62,10 @@ async fn rebuild_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
             JOIN blocks b ON b.id = bp.block_id
             WHERE bp.value_date IS NOT NULL AND b.deleted_at IS NULL
               AND b.is_conflict = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM block_properties tp
+                WHERE tp.block_id = b.page_id AND tp.key = 'template'
+              )
             UNION ALL
             SELECT SUBSTR(t.content, 6) AS date, bt.block_id, 'tag:' || bt.tag_id AS source
             FROM block_tags bt
@@ -70,18 +82,30 @@ async fn rebuild_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
               AND b.deleted_at IS NULL
               AND t.deleted_at IS NULL
               AND b.is_conflict = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM block_properties tp
+                WHERE tp.block_id = b.page_id AND tp.key = 'template'
+              )
             UNION ALL
             SELECT b.due_date AS date, b.id AS block_id, 'column:due_date' AS source
             FROM blocks b
             WHERE b.due_date IS NOT NULL
               AND b.deleted_at IS NULL
               AND b.is_conflict = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM block_properties tp
+                WHERE tp.block_id = b.page_id AND tp.key = 'template'
+              )
             UNION ALL
             SELECT b.scheduled_date AS date, b.id AS block_id, 'column:scheduled_date' AS source
             FROM blocks b
             WHERE b.scheduled_date IS NOT NULL
               AND b.deleted_at IS NULL
               AND b.is_conflict = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM block_properties tp
+                WHERE tp.block_id = b.page_id AND tp.key = 'template'
+              )
         )",
     )
     .fetch_all(&mut *tx)
@@ -206,6 +230,8 @@ async fn rebuild_agenda_cache_split_impl(
     let mut read_tx = read_pool.begin().await?;
 
     // Step 1: Compute desired state from the same 4 UNION ALL sources.
+    // Template-page filter mirrors `rebuild_agenda_cache_impl` — see the
+    // comment there for the rationale (FEAT-5a).
     let desired_rows: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT date, block_id, source FROM (
             SELECT bp.value_date AS date, bp.block_id, 'property:' || bp.key AS source
@@ -213,6 +239,10 @@ async fn rebuild_agenda_cache_split_impl(
             JOIN blocks b ON b.id = bp.block_id
             WHERE bp.value_date IS NOT NULL AND b.deleted_at IS NULL
               AND b.is_conflict = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM block_properties tp
+                WHERE tp.block_id = b.page_id AND tp.key = 'template'
+              )
             UNION ALL
             SELECT SUBSTR(t.content, 6) AS date, bt.block_id, 'tag:' || bt.tag_id AS source
             FROM block_tags bt
@@ -229,18 +259,30 @@ async fn rebuild_agenda_cache_split_impl(
               AND b.deleted_at IS NULL
               AND t.deleted_at IS NULL
               AND b.is_conflict = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM block_properties tp
+                WHERE tp.block_id = b.page_id AND tp.key = 'template'
+              )
             UNION ALL
             SELECT b.due_date AS date, b.id AS block_id, 'column:due_date' AS source
             FROM blocks b
             WHERE b.due_date IS NOT NULL
               AND b.deleted_at IS NULL
               AND b.is_conflict = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM block_properties tp
+                WHERE tp.block_id = b.page_id AND tp.key = 'template'
+              )
             UNION ALL
             SELECT b.scheduled_date AS date, b.id AS block_id, 'column:scheduled_date' AS source
             FROM blocks b
             WHERE b.scheduled_date IS NOT NULL
               AND b.deleted_at IS NULL
               AND b.is_conflict = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM block_properties tp
+                WHERE tp.block_id = b.page_id AND tp.key = 'template'
+              )
         )",
     )
     .fetch_all(&mut *read_tx)

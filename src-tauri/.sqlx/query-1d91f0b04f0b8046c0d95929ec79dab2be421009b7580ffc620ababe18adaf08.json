@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT date, gcal_event_id, last_pushed_hash, last_pushed_at FROM gcal_agenda_event_map WHERE date = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "date",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "gcal_event_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "last_pushed_hash",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "last_pushed_at",
+        "ordinal": 3,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "1d91f0b04f0b8046c0d95929ec79dab2be421009b7580ffc620ababe18adaf08"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE gcal_settings SET value = ?, updated_at = ? WHERE key = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "59105c7bafd2bc002dd42d021146a9573da6bb0754c1f396bc9947a879009b5e"
+}

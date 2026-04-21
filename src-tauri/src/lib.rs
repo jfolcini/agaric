@@ -8,6 +8,7 @@ pub mod device;
 pub mod draft;
 pub mod error;
 pub mod fts;
+pub mod gcal_push;
 pub mod hash;
 pub mod import;
 pub mod lifecycle;
