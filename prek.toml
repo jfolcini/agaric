@@ -146,6 +146,22 @@ hooks = [
     { id = "lychee", args = ["--no-progress", "--max-concurrency=8"], types = ["markdown"] },
 ]
 
+# SQL: sqruff (SQLite migrations lint — MAINT-88)
+# Scope: src-tauri/migrations/*.sql only. Inline `sqlx::query!` strings in Rust
+# are not linted (covered by sqlx compile-time validation against .sqlx/ cache).
+# Rule set picked to match all currently-shipped migrations without triggering
+# any fixes (shipped migrations are append-only per AGENTS.md invariant #1;
+# sqlx tracks their checksums in _sqlx_migrations).
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "sqruff"
+name = "sqruff"
+entry = "bash -c '. \"$HOME/.cargo/env\" && sqruff lint \"$@\"' --"
+language = "system"
+pass_filenames = true
+files = "^src-tauri/migrations/.*\\.sql$"
+
 # Rust: cargo fmt
 [[repos]]
 repo = "local"

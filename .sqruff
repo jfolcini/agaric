@@ -1,0 +1,45 @@
+# sqruff — SQL lint for src-tauri/migrations/*.sql (MAINT-88).
+#
+# Scope: SQLite DDL migrations only. Inline `sqlx::query!` strings in Rust are
+# NOT linted (default sqruff does not extract inline SQL, and sqlx compile-time
+# validation already covers correctness for those call sites).
+#
+# Migrations are APPEND-ONLY by invariant (AGENTS.md): sqlx tracks each
+# migration's checksum in `_sqlx_migrations`, and mutating a shipped file
+# triggers `MigrateError::VersionMismatch` on every existing database at boot.
+# The rule set below is deliberately a subset that all 32 currently-shipped
+# migrations already satisfy, so no `sqruff fix` pass was (or should be) run
+# over the existing files. The hook therefore acts as a style/correctness gate
+# on NEW migrations without forcing mutations on sealed ones.
+#
+# Rules enabled:
+#   LT03 — operator newline position
+#   LT04 — trailing comma enforcement
+#   LT12 — file ends with a single trailing newline
+#   LT13 — file does not start with whitespace/newlines
+#   LT15 — no runs of > 1 consecutive blank line
+#   CP01 — SQL keywords UPPER CASE
+#   CP04 — NULL / TRUE / FALSE literals UPPER CASE
+#   CP05 — datatypes (TEXT, INTEGER, REAL, BLOB, …) UPPER CASE
+#   CV05 — use `IS NULL` / `IS NOT NULL`, not `= NULL` / `!= NULL`
+#   CV06 — statements end with a semicolon
+#   CV11 — consistent CAST style
+#   ST01 — no redundant `ELSE NULL` in CASE expressions
+#
+# Deliberately OFF: the heavy semantic packs (AL*, AM*, ST05+, RF*, JJ*) and
+# LT05 (line length) — existing migrations have column-alignment comments on
+# long lines that we don't want to flag, and AL/AM/RF target SELECT shapes
+# that DDL migrations don't exercise.
+
+[sqruff]
+dialect = sqlite
+rules = LT03,LT04,LT12,LT13,LT15,CP01,CP04,CP05,CV05,CV06,CV11,ST01
+
+[sqruff:rules:capitalisation.keywords]
+capitalisation_policy = upper
+
+[sqruff:rules:capitalisation.literals]
+capitalisation_policy = upper
+
+[sqruff:rules:capitalisation.types]
+extended_capitalisation_policy = upper

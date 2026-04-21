@@ -1226,6 +1226,7 @@ File-type-aware hooks — Rust hooks skip when no `.rs` files are staged, and vi
 - **Builtin:** trailing whitespace, EOF fixer, YAML/TOML/JSON validation, merge conflict detection, large file blocking
 - **Frontend:** Biome check, TypeScript (`tsc --noEmit`), Vitest
 - **Security:** npm audit, license-checker, depcheck
+- **SQL:** sqruff (lint scoped to `src-tauri/migrations/*.sql`; SQLite dialect, layout + capitalisation rules; `sqlx` compile-time validation still covers inline `query!` macro strings)
 - **Rust:** cargo fmt, cargo clippy, cargo nextest, cargo deny, cargo machete
 
 ### CI (GitHub Actions)

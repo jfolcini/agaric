@@ -239,7 +239,7 @@ prek run --all-files
 prek run
 ```
 
-The `prek.toml` configuration runs 25 hooks: 9 builtin file checks, gitleaks secret scanning, Biome lint, TypeScript check, CSS variable guard (`no-hsl-rgb-var-wrap`), Vitest, npm audit, license-checker, depcheck, knip, markdownlint, lychee link checker, cargo fmt, clippy, nextest, deny, machete. File-type-aware — Rust hooks skip when no `.rs` files are staged.
+The `prek.toml` configuration runs 26 hooks: 9 builtin file checks, gitleaks secret scanning, Biome lint, TypeScript check, CSS variable guard (`no-hsl-rgb-var-wrap`), Vitest, npm audit, license-checker, depcheck, knip, markdownlint, lychee link checker, sqruff (SQL lint for `src-tauri/migrations/`), cargo fmt, clippy, nextest, deny, machete. File-type-aware — Rust hooks skip when no `.rs` files are staged; sqruff runs only on `src-tauri/migrations/*.sql`.
 
 ---
 

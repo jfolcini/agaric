@@ -18,12 +18,12 @@ Thanks for your interest in contributing. Agaric is a local-first block-based no
 cargo tauri dev              # Dev mode with hot reload
 npm run test                 # Vitest (frontend)
 cd src-tauri && cargo nextest run   # Rust tests
-prek run --all-files         # Full pre-commit gate (runs all 25 hooks)
+prek run --all-files         # Full pre-commit gate (runs all 26 hooks)
 ```
 
 Every change must:
 
-1. Keep `prek run --all-files` green. This runs biome, tsc, vitest, cargo fmt, cargo clippy, cargo nextest, cargo deny, license-checker, and 17 more hooks.
+1. Keep `prek run --all-files` green. This runs biome, tsc, vitest, cargo fmt, cargo clippy, cargo nextest, cargo deny, license-checker, sqruff (SQL lint), and 17 more hooks.
 2. Add tests for new or changed behaviour. Minimum bar per AGENTS.md: happy-path + error-path for exported functions; render + interaction + `axe(container)` for components.
 3. Not introduce architectural change without discussion first. The "Architectural Stability" section of AGENTS.md lists the specific guardrails (no new op types, tables, stores, or sync message types without explicit approval).
 
