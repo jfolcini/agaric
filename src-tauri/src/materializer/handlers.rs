@@ -5,6 +5,8 @@ use super::MaterializeTask;
 use crate::cache;
 use crate::error::AppError;
 use crate::fts;
+use crate::gcal_push::connector::GcalConnectorHandle;
+use crate::gcal_push::dirty_producer::{compute_dirty_event, snapshot_for_op, BlockDateSnapshot};
 use crate::op::{
     is_reserved_property_key, AddAttachmentPayload, AddTagPayload, CreateBlockPayload,
     DeleteAttachmentPayload, DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload,
@@ -14,15 +16,17 @@ use crate::op::{
 use crate::op_log::OpRecord;
 use crate::tag_inheritance;
 use sqlx::SqlitePool;
+use std::sync::OnceLock;
 
 pub(super) async fn handle_foreground_task(
     pool: &SqlitePool,
     task: &MaterializeTask,
     _metrics: &QueueMetrics,
+    gcal_handle: &OnceLock<GcalConnectorHandle>,
 ) -> Result<(), AppError> {
     match task {
         MaterializeTask::ApplyOp(record) => {
-            if let Err(e) = apply_op(pool, record).await {
+            if let Err(e) = apply_op(pool, record, gcal_handle).await {
                 tracing::warn!(
                     op_type = %record.op_type,
                     device_id = %record.device_id,
@@ -35,8 +39,16 @@ pub(super) async fn handle_foreground_task(
             Ok(())
         }
         MaterializeTask::BatchApplyOps(records) => {
+            // FEAT-5h — collect per-op pre-mutation snapshots so we
+            // can emit DirtyEvents for every op in the batch after
+            // the outer transaction commits.  Emitting during the tx
+            // would violate the "notify only on durable state"
+            // invariant — a DirtyEvent fired mid-batch and then
+            // rolled back would send the connector chasing a ghost.
             let mut tx = pool.begin().await?;
+            let mut pending_events: Vec<DeferredNotification> = Vec::new();
             for record in records {
+                let snapshot = snapshot_for_op(&mut tx, record).await?;
                 if let Err(e) = apply_op_tx(&mut tx, record).await {
                     tracing::warn!(
                         op_type = %record.op_type,
@@ -48,8 +60,15 @@ pub(super) async fn handle_foreground_task(
                     // tx is dropped here, which rolls back automatically
                     return Err(e);
                 }
+                if gcal_handle.get().is_some() {
+                    pending_events.push(DeferredNotification {
+                        record: (*record).clone(),
+                        snapshot,
+                    });
+                }
             }
             tx.commit().await?;
+            notify_gcal_for_events(gcal_handle, pending_events);
             Ok(())
         }
         MaterializeTask::Barrier(ref notify) => {
@@ -63,11 +82,48 @@ pub(super) async fn handle_foreground_task(
     }
 }
 
-pub(super) async fn apply_op(pool: &SqlitePool, record: &OpRecord) -> Result<(), AppError> {
+pub(super) async fn apply_op(
+    pool: &SqlitePool,
+    record: &OpRecord,
+    gcal_handle: &OnceLock<GcalConnectorHandle>,
+) -> Result<(), AppError> {
     let mut tx = pool.begin().await?;
+    let snapshot = snapshot_for_op(&mut tx, record).await?;
     apply_op_tx(&mut tx, record).await?;
     tx.commit().await?;
+    notify_gcal_for_events(
+        gcal_handle,
+        vec![DeferredNotification {
+            record: record.clone(),
+            snapshot,
+        }],
+    );
     Ok(())
+}
+
+/// Pair of (op record, pre-mutation snapshot) buffered for emission
+/// after a successful commit.  See the `BatchApplyOps` arm.
+struct DeferredNotification {
+    record: OpRecord,
+    snapshot: BlockDateSnapshot,
+}
+
+/// Fire [`GcalConnectorHandle::notify_dirty`] for every event in
+/// `events`.  No-op when the handle is unset (dev tests, headless
+/// environments) or when a record produces no dirty event.
+fn notify_gcal_for_events(
+    gcal_handle: &OnceLock<GcalConnectorHandle>,
+    events: Vec<DeferredNotification>,
+) {
+    let Some(handle) = gcal_handle.get() else {
+        return;
+    };
+    let today = chrono::Local::now().date_naive();
+    for DeferredNotification { record, snapshot } in events {
+        if let Some(event) = compute_dirty_event(&record, &snapshot, today) {
+            handle.notify_dirty(event);
+        }
+    }
 }
 
 /// Core apply-op logic operating on a bare [`SqliteConnection`].

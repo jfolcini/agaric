@@ -520,6 +520,12 @@ pub fn run() {
             let pools_write_for_gcal = pools.write.clone();
             let device_id_for_gcal = device_id.clone();
 
+            // FEAT-5h — clone the materializer before it moves into
+            // managed state so the later GCal connector wiring can
+            // call `materializer.set_gcal_handle`.  `Materializer` is
+            // a cheap `Arc`-based clone.
+            let materializer_for_gcal = materializer.clone();
+
             // Store all in Tauri managed state
             app.manage(WritePool(pools.write));
             app.manage(ReadPool(pools.read));
@@ -796,6 +802,13 @@ pub fn run() {
                 device_for_gcal_connector,
             );
             app.manage(connector_task.handle.clone());
+            // FEAT-5h — wire the connector handle into the
+            // materializer so the foreground queue's `apply_op`
+            // fires `DirtyEvent`s on every remote op that could
+            // shift the projected agenda.  Without this hook, the
+            // connector would only catch changes on the 15-minute
+            // reconcile tick.
+            materializer_for_gcal.set_gcal_handle(connector_task.handle.clone());
             // Keep the `ConnectorTask` alive for the lifetime of the
             // app via managed state.
             app.manage(connector_task);

@@ -1,5 +1,60 @@
 # Session Log
 
+## Session 454 — FEAT-5h: wire `DirtyEvent` producer from materializer remote-op apply path (2026-04-21)
+
+**1 REVIEW-LATER item resolved, 0 new filed.** Open items: 15 → 14. Single Rust slice — no parallel subagents (one domain, tightly coupled file boundaries). One read-only technical review subagent returned APPROVE with no notes. Completes the FEAT-5 v1 "constantly updated" deliverable: the GCal connector now wakes on every remote op that could shift the projected agenda, falling back to the 15-minute reconcile ticker only when no op fires.
+
+### What changed
+
+**FEAT-5h — `DirtyEvent` producer:**
+
+- `src-tauri/src/gcal_push/dirty_producer.rs` (NEW, 903 lines) — `BlockDateSnapshot { due_date, scheduled_date, was_deleted, missing }` + `snapshot_for_op(conn, record)` that reads pre-op state inside the same SqliteConnection the caller is about to mutate + pure `compute_dirty_event(record, prior, today) -> Option<DirtyEvent>` mapping. Whitelisted agenda-relevant keys: `due_date`, `scheduled_date`, `todo_state`, `priority`, `repeat`, `repeat-until`, `repeat-count`, `repeat_interval`, `repeat_unit`. Pre-filtering clamps dates to `[today, today + MAX_WINDOW_DAYS (90)]` — the connector re-clamps to the user's actual `gcal_settings.window_days` before pushing, so dates outside the max-window are pure waste. 32 unit tests covering every op-type × key-class combination, clamp boundaries, missing-snapshot short-circuit, and irrelevant op types.
+- `src-tauri/src/gcal_push/mod.rs` (+1 line) — registered the module.
+- `src-tauri/src/materializer/coordinator.rs` (+27 lines) — new `gcal_handle: Arc<OnceLock<GcalConnectorHandle>>` field + `pub fn set_gcal_handle(&self, handle)` setter. OnceLock semantics: idempotent, `set_gcal_handle` called a second time logs `tracing::warn!` and is a no-op. Initialised in `Materializer::build` as empty; connector wires it in after `spawn_connector` returns.
+- `src-tauri/src/materializer/consumer.rs` (+12 lines) — threaded `Arc<OnceLock<GcalConnectorHandle>>` through `run_foreground`, `process_foreground_segment` (including the parallel `JoinSet` branch), and `process_single_foreground_task`.
+- `src-tauri/src/materializer/handlers.rs` (+55 lines) — `handle_foreground_task` now takes `&OnceLock<GcalConnectorHandle>`. For `ApplyOp`: snapshot → apply_op_tx → commit → notify. For `BatchApplyOps`: per-op snapshot inside the tx, accumulate `DeferredNotification` vec, commit, THEN emit all events post-commit. Private `DeferredNotification` struct + `notify_gcal_for_events` helper keep the "notify only on durable state" invariant explicit — a mid-batch rollback drops every pending event, never sends the connector chasing a ghost.
+- `src-tauri/src/lib.rs` (+12 lines) — clone the materializer before `app.manage(materializer)` moves it into managed state (`Materializer` is a cheap `Arc`-based clone), then call `materializer_for_gcal.set_gcal_handle(connector_task.handle.clone())` after `spawn_connector`.
+- `src-tauri/src/materializer/tests.rs` (+385 lines) — existing tests updated with `empty_gcal_handle()` / `empty_gcal_handle_arc()` helpers (5-line sed-driven update across 10 call sites). New nested `gcal_hook` mod with 6 integration tests: single SetProperty(due_date) emits exactly 1 DirtyEvent with correct old/new sets; DeleteBlock emits `old=[dates], new=[]`; BatchApplyOps of 100 ops emits exactly 100 DirtyEvents (no coalescing at the producer — coalescing lives on the connector's `DirtySet`); materializer without `set_gcal_handle` called applies ops cleanly (OnceLock empty branch); second `set_gcal_handle` call is rejected with the first handle staying wired (pins OnceLock semantics); SetProperty on a non-agenda key (`assignee`) emits zero events.
+- `.sqlx/query-94783a50064f4cbe57f0e9db230d10fdb914f12cd1c7ad7210712cd6fbfe67db.json` — new sqlx cache entry for `snapshot_for_op`'s `SELECT due_date, scheduled_date, CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END as "deleted: bool"` query.
+
+### Verification
+
+- `cargo nextest run gcal_push::dirty_producer`: 32 passed.
+- `cargo nextest run materializer::tests::gcal_hook`: 6 passed.
+- `cargo nextest run materializer gcal_push` (full): 328 passed.
+- `cargo nextest run` (full): **2538 passed**, 0 failed, 2 skipped (was 2500 after session 453; **+38 net**, matching 32 unit + 6 integration additions).
+- `cargo clippy --all-targets -- -D warnings`: clean.
+- `cargo sqlx prepare --check -- --tests`: clean after regenerating the cache for the new `snapshot_for_op` query.
+- `prek run --all-files`: all 25 hooks pass after `cargo fmt` auto-formatted three call-site wraps in the new tests.
+
+### Design decisions
+
+- **OnceLock over Mutex/RwLock for the handle cell.** Set-once semantics match the lifecycle exactly (handle is wired during startup, never changed afterward). Zero lock overhead on the hot `apply_op` read path. Production `OnceLock::get()` returns `Option<&T>` — no allocation, no atomic ordering subtleties beyond the internal happens-before guarantee.
+- **Pre-op snapshot inside the same tx.** `snapshot_for_op` takes `&mut SqliteConnection` (the caller's transaction) so the read sees the pre-mutation state. Reading from a separate connection would race with the mutation and return post-op state for some ops. Reading `chrono::Local::now().date_naive()` inside the notifier — not inside the snapshot — so `today` reflects wall-clock at emit time (matters across midnight).
+- **Emit after commit, not during.** `BatchApplyOps` accumulates a `Vec<DeferredNotification>` during the transaction and emits post-commit. A mid-batch rollback drops every pending event, so the connector never chases a ghost. Matches the FEAT-5e `BEGIN IMMEDIATE` lease pattern.
+- **`compute_dirty_event` is pure + `today` injected.** No filesystem, no clock, no DB — the 32 unit tests pin every op-type × key-class combination without `tokio::test` + `test_pool`. `today` is a parameter so boundary behaviour (past / today / end-of-window / beyond) is directly testable.
+- **Clamp to MAX_WINDOW_DAYS (90), not the user's setting.** Pre-filtering at the max window means the producer doesn't need to read `gcal_settings` per op. The connector re-clamps to `window_days` before pushing, so over-emitting into the max-window costs one extra `BTreeSet` entry and zero network requests. Under-clamping (e.g. skipping a date the connector would have pushed) is the only dangerous failure mode and is structurally impossible here.
+- **No coalescing at the producer.** Each op gets its own `DirtyEvent`, including within a `BatchApplyOps`. The connector's existing `DirtySet` coalesces via `BTreeSet` union inside the debounce window, which is the right layer — coalescing at the producer would have to snapshot every block's dates then reapply each op's effect to compute a merged pre/post, doubling the query count for no practical benefit.
+- **No new op type, no new materializer queue, no new Zustand store, no new table** (AGENTS.md § Architectural Stability). Pure additive plumbing on the existing `ApplyOp` / `BatchApplyOps` apply paths.
+
+### Architectural invariants respected (AGENTS.md)
+
+- Op log append-only: untouched.
+- CQRS split: notifications fire post-materialization (post-commit), not during — preserved.
+- sqlx compile-time queries: `snapshot_for_op` uses `sqlx::query!`; `.sqlx/` cache entry regenerated and committed.
+- `PRAGMA foreign_keys`: no new FK relationships.
+- Recursive-CTE invariant #9: no new recursive CTEs.
+- ULID normalization: `block_id` extracted as a string from the JSON payload (serde-probe); passed directly to the query as a string — no new transformations.
+- `unsafe_code = "deny"` upheld; no `#[allow]`s added.
+
+### Notes for the next session
+
+- **Local command path is unchanged.** This slice hooks only the materializer's remote-op apply path per the narrow FEAT-5h spec. Local commands (`set_property_inner` et al.) already emit `block:properties-changed` Tauri events for frontend invalidation but do NOT call `GcalConnectorHandle::notify_dirty`. Local edits therefore wait up to 15 minutes (the reconcile cadence) to reach the user's Google Calendar. If the "constantly updated" semantic needs to cover on-device edits too, a follow-up slice can hook `set_property_in_tx` / `set_todo_state_inner` / `delete_property_inner` / `delete_block_inner` / `restore_block_inner` — the pre-op snapshot helper (`dirty_producer::snapshot_for_op`) and the event builder (`compute_dirty_event`) already accept a `&mut SqliteConnection` and can be reused as-is.
+- **FEAT-5 v1 is now functionally complete** for the remote-op path. FEAT-5g (Android) remains DEFERRED pending design-review.
+- **After FEAT-5h**, remaining actionable items are all small and deferred-by-decision (PERF-19/20/23 = deliberate non-fix, MAINT-88 = deliberate non-fix, UX-239 = blocked on user, PUB-* = blocked on publish target) or umbrella entries (FEAT-4h, FEAT-4i, FEAT-5g — all DEFERRED). The next productive batch would be FEAT-4h (MCP v2) if the user signals acceptance of the FEAT-4 v1 RO UX, or a UX-247 reproduction pass if the user provides a concrete failing query.
+
+---
+
 ## Session 453 — FEAT-5e + FEAT-5f: GCal connector + lease + 5 commands + Settings tab (2026-04-21)
 
 **2 REVIEW-LATER items resolved, 1 new filed.** Open items: 15 → 14. Two parallel build subagents (backend connector + lease + 5 commands vs frontend Settings tab), three pipelined reviewers (1 technical per slice + 1 UX on 5f). All three reviewers returned APPROVE WITH NOTES — no REQUEST-CHANGES blockers.

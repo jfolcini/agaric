@@ -9,6 +9,7 @@
 pub mod api;
 pub mod connector;
 pub mod digest;
+pub mod dirty_producer;
 pub mod keyring_store;
 pub mod lease;
 pub mod models;

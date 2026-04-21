@@ -7,10 +7,11 @@ use super::{
     QUEUE_PRESSURE_NUMERATOR,
 };
 use crate::error::AppError;
+use crate::gcal_push::connector::GcalConnectorHandle;
 use crate::lifecycle::LifecycleHooks;
 use sqlx::SqlitePool;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::{mpsc, Notify};
 
 #[derive(Clone)]
@@ -47,6 +48,18 @@ pub struct Materializer {
     /// REVIEW-LATER.md (now resolved) for the rationale.
     pub(super) pending_block_count_refreshes: Arc<AtomicU32>,
     pub(super) pending_block_count_refreshes_notify: Arc<Notify>,
+    /// FEAT-5h — optional handle for notifying the GCal push
+    /// connector whenever a remote op could shift the projected
+    /// agenda on an in-window date.
+    ///
+    /// `OnceLock` gives us set-once semantics without lock overhead
+    /// on the hot `apply_op` read path.  The handle is wired in
+    /// `lib.rs` after [`crate::gcal_push::connector::spawn_connector`]
+    /// because the connector needs the DB pool (which the
+    /// materializer was built with) and the materializer needs the
+    /// handle (which the connector produces) — circular construction
+    /// broken by a deferred setter.
+    pub(super) gcal_handle: Arc<OnceLock<GcalConnectorHandle>>,
 }
 
 /// RAII guard that decrements
@@ -133,11 +146,13 @@ impl Materializer {
         let block_count_cache_ready_notify = Arc::new(Notify::new());
         let pending_block_count_refreshes = Arc::new(AtomicU32::new(0));
         let pending_block_count_refreshes_notify = Arc::new(Notify::new());
+        let gcal_handle: Arc<OnceLock<GcalConnectorHandle>> = Arc::new(OnceLock::new());
         {
             let p = write_pool.clone();
             let s = shutdown_flag.clone();
             let m = metrics.clone();
-            Self::spawn_task(consumer::run_foreground(p, fg_rx, s, m));
+            let g = gcal_handle.clone();
+            Self::spawn_task(consumer::run_foreground(p, fg_rx, s, m, g));
         }
         {
             let s = shutdown_flag.clone();
@@ -191,6 +206,22 @@ impl Materializer {
             block_count_cache_ready_notify,
             pending_block_count_refreshes,
             pending_block_count_refreshes_notify,
+            gcal_handle,
+        }
+    }
+
+    /// Register the GCal push connector so remote-op applications
+    /// wake the connector immediately instead of waiting for the
+    /// 15-minute reconcile sweep.
+    ///
+    /// Called once from `lib.rs` after
+    /// [`crate::gcal_push::connector::spawn_connector`] returns.
+    /// Subsequent calls are rejected (the `OnceLock` semantics) and
+    /// logged at warn level — this is a programmer error, not a
+    /// runtime recoverable case.
+    pub fn set_gcal_handle(&self, handle: GcalConnectorHandle) {
+        if self.gcal_handle.set(handle).is_err() {
+            tracing::warn!("Materializer::set_gcal_handle called twice — ignoring later set",);
         }
     }
 

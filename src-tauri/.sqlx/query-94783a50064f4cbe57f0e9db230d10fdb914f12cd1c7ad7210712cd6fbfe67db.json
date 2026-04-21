@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT due_date, scheduled_date,\n                  CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END as \"deleted: bool\"\n             FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "due_date",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "scheduled_date",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "deleted: bool",
+        "ordinal": 2,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "94783a50064f4cbe57f0e9db230d10fdb914f12cd1c7ad7210712cd6fbfe67db"
+}

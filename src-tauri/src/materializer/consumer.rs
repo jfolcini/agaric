@@ -3,7 +3,7 @@
 use sqlx::SqlitePool;
 use std::mem;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::mpsc;
 use tracing::Instrument;
 
@@ -12,6 +12,7 @@ use super::handlers::{handle_background_task, handle_foreground_task};
 use super::metrics::QueueMetrics;
 use super::MaterializeTask;
 use super::FOREGROUND_CAPACITY;
+use crate::gcal_push::connector::GcalConnectorHandle;
 
 #[cfg(not(tarpaulin_include))]
 pub(super) fn log_consumer_result(
@@ -34,6 +35,7 @@ pub(super) async fn run_foreground(
     mut rx: mpsc::Receiver<MaterializeTask>,
     shutdown_flag: Arc<AtomicBool>,
     metrics: Arc<QueueMetrics>,
+    gcal_handle: Arc<OnceLock<GcalConnectorHandle>>,
 ) {
     loop {
         let Some(first_task) = rx.recv().await else {
@@ -56,15 +58,21 @@ pub(super) async fn run_foreground(
             for task in batch {
                 if matches!(task, MaterializeTask::Barrier(_)) {
                     if !segment.is_empty() {
-                        process_foreground_segment(&pool, mem::take(&mut segment), &metrics).await;
+                        process_foreground_segment(
+                            &pool,
+                            mem::take(&mut segment),
+                            &metrics,
+                            &gcal_handle,
+                        )
+                        .await;
                     }
-                    process_single_foreground_task(&pool, task, &metrics).await;
+                    process_single_foreground_task(&pool, task, &metrics, &gcal_handle).await;
                 } else {
                     segment.push(task);
                 }
             }
             if !segment.is_empty() {
-                process_foreground_segment(&pool, segment, &metrics).await;
+                process_foreground_segment(&pool, segment, &metrics, &gcal_handle).await;
             }
             // MAINT-24: Record "we just finished a batch" timestamp so status
             // consumers can detect stalled materializers.
@@ -96,12 +104,13 @@ async fn process_foreground_segment(
     pool: &SqlitePool,
     tasks: Vec<MaterializeTask>,
     metrics: &Arc<QueueMetrics>,
+    gcal_handle: &Arc<OnceLock<GcalConnectorHandle>>,
 ) {
     let groups = group_tasks_by_block_id(tasks);
     if groups.len() <= 1 {
         for (_block_id, group_tasks) in groups {
             for task in group_tasks {
-                process_single_foreground_task(pool, task, metrics).await;
+                process_single_foreground_task(pool, task, metrics, gcal_handle).await;
             }
         }
         return;
@@ -110,9 +119,10 @@ async fn process_foreground_segment(
     for (_block_id, group_tasks) in groups {
         let pool = pool.clone();
         let metrics = Arc::clone(metrics);
+        let gcal_handle = Arc::clone(gcal_handle);
         join_set.spawn(async move {
             for task in group_tasks {
-                process_single_foreground_task(&pool, task, &metrics).await;
+                process_single_foreground_task(&pool, task, &metrics, &gcal_handle).await;
             }
         });
     }
@@ -127,12 +137,14 @@ pub(super) async fn process_single_foreground_task(
     pool: &SqlitePool,
     task: MaterializeTask,
     metrics: &Arc<QueueMetrics>,
+    gcal_handle: &Arc<OnceLock<GcalConnectorHandle>>,
 ) {
     if matches!(&task, MaterializeTask::Barrier(_)) {
         let pool_clone = pool.clone();
         let metrics_clone = Arc::clone(metrics);
+        let gcal_clone = Arc::clone(gcal_handle);
         let result = tokio::task::spawn(async move {
-            handle_foreground_task(&pool_clone, &task, &metrics_clone).await
+            handle_foreground_task(&pool_clone, &task, &metrics_clone, &gcal_clone).await
         })
         .await;
         log_consumer_result("fg", &result);
@@ -142,8 +154,9 @@ pub(super) async fn process_single_foreground_task(
     let retry_task = task.clone();
     let pool_clone = pool.clone();
     let metrics_clone = Arc::clone(metrics);
+    let gcal_clone = Arc::clone(gcal_handle);
     let result = tokio::task::spawn(async move {
-        handle_foreground_task(&pool_clone, &task, &metrics_clone).await
+        handle_foreground_task(&pool_clone, &task, &metrics_clone, &gcal_clone).await
     })
     .await;
     match &result {
@@ -154,8 +167,10 @@ pub(super) async fn process_single_foreground_task(
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             let pool_clone2 = pool.clone();
             let metrics_clone2 = Arc::clone(metrics);
+            let gcal_clone2 = Arc::clone(gcal_handle);
             let retry_result = tokio::task::spawn(async move {
-                handle_foreground_task(&pool_clone2, &retry_task, &metrics_clone2).await
+                handle_foreground_task(&pool_clone2, &retry_task, &metrics_clone2, &gcal_clone2)
+                    .await
             })
             .await;
             log_consumer_result("fg-retry", &retry_result);
