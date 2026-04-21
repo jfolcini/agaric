@@ -1,5 +1,81 @@
 # Session Log
 
+## Session 450 — FEAT-4g + FEAT-5d + FEAT-5b: MCP Python smoke harness + GCal digest pure fn + OAuth/keychain coupled stack (2026-04-21)
+
+**3 REVIEW-LATER items resolved; 2 new items filed.** Open items: 20 → 18. Fourth slice of the pre-approved FEAT-4 (MCP server) umbrella + second and third slices of FEAT-5 (Google Calendar). Three parallel build subagents across three worktrees, three pipelined technical reviewers. No REQUEST-CHANGES findings on any slice — two APPROVE WITH NOTES and one APPROVE. Two follow-up REVIEW-LATER items filed during merge:
+
+- **FEAT-4j** — wire-compat bug surfaced by FEAT-4g's authoring: the MCP server returns raw `serde_json::Value` as the `tools/call` JSON-RPC `result` field instead of the spec-required `CallToolResult { content, isError?, structuredContent? }` envelope. Real MCP clients (Claude Desktop, Cursor, official Python SDK) will reject raw-value payloads. S-sized fix filed for the next FEAT-4 batch.
+- **MAINT-91** — `reqwest` dual-copy introduced by FEAT-5b. `oauth2 v5` pins `reqwest ^0.12`; the repo runs `reqwest = "0.13.2"`. Cargo now resolves both copies. ~2 MB binary size impact, no functional issue. Flagged to be resolved by FEAT-5c's reqwest-feature-flag work, or when oauth2 ships a 0.13-tracking release.
+
+### What changed
+
+**FEAT-4g — Python smoke harness (`scripts/mcp_smoke.py`):**
+
+- 499-line single-file Python script. PEP-723 inline deps (`mcp>=1.0`, `jsonschema>=4.20`) auto-installed via `uv run --script` shebang. Exercises every v1 MCP read tool once with representative arguments, validates each response against a schema authored against the actual `src-tauri/src/mcp/tools_ro.rs` wire shape (not the orchestrator's initial "representative" spec — the builder correctly caught the mismatch and wrote schemas against the real Rust types: `PageResponse<BlockRow> = {items, has_more, next_cursor}`, `PageSubtreeResponse = {page, children, has_more, next_cursor}`, bare `BlockRow` for `get_block`/`journal_for_date`, bare arrays for `list_tags`/`list_property_defs`/`get_agenda`).
+- Seed strategy: `list_pages({"limit": 1})` first; if empty (fresh dev DB), fall back to `journal_for_date({"date": today})` which idempotently creates today's journal page and yields a valid block id to chain into `get_page`, `get_block`, `list_backlinks`. Net result: always exactly 9 tool invocations regardless of DB state.
+- Failure-report de-duplication (same `(tool, reason)` pair collapsed) so a single missing seed id doesn't spam stderr 3 times.
+- `get_agenda` takes `start_date` + `end_date` per actual `GetAgendaArgs`, not the orchestrator-suggested `{"date": today}`.
+- Exit 0 on all-pass, exit 1 on any failure, exit 2 on argparse error.
+- `scripts/README.md` documents prerequisites, env-var override, exit codes, and explicitly notes "Not run in CI".
+- **Not wired into `prek.toml` or CI** per spec — manual harness against a live `cargo tauri dev`.
+
+**FEAT-5d — `gcal_push::digest` pure function:**
+
+- `src-tauri/src/gcal_push/digest.rs` (1164 lines NEW) — pure function `digest_for_date(date, entries, page_titles, privacy_mode) -> DigestResult` where `DigestResult::Create(Event)` when entries exist, `DigestResult::Delete` when empty. `Event.transparency = "transparent"` always; `start.date == end.date` (GCal's exclusive-end conversion is a FEAT-5c concern). Summary format `"Agaric Agenda — <Weekday> <Mon DD>"` via chrono `format("%a %b %d")`.
+- Per-entry line format (full privacy mode): `[state] <breadcrumb> › <content-prefix>  #tag1 #tag2`. State markers `[ ]` TODO / `[·]` DOING / `[x]` DONE / `[—]` CANCELLED / `[ ]` fallback for unknown/untyped. Breadcrumb truncates to 60 chars, content to 80 chars, both on char boundaries (not grapheme — `unicode-segmentation` not a direct dep yet). Breadcrumb fallback `"(unknown page)"` when `block.page_id is None` OR key missing from `page_titles`.
+- Description cap: 4096 chars. Overflow suffix `"\n… and N more in Agaric"` recomputed as N grows (digit count changes at 9 → 10 → 100).
+- Canonical sort: `(entry.source, entry.block.todo_state, entry.block.id)` — deterministic for downstream `blake3` hashing.
+- Minimal privacy mode: empty description string; summary unchanged from full mode.
+- **Tags omitted from line format** — `ProjectedAgendaEntry` / `BlockRow` currently have no tags field. Flagged to be threaded through a parallel `block_tags: &HashMap<String, Vec<String>>` parameter when FEAT-5e wires the connector.
+- 34 tests: 23 unit + 5 proptest (256 cases each) + 6 `insta` snapshots (empty / single / mixed-state / truncation / minimal / multi-page).
+
+**FEAT-5b — OAuth 2.0 PKCE + keychain TokenStore (coupled stack):**
+
+- `src-tauri/src/gcal_push/oauth.rs` (1431 lines NEW) — `OAuthClient` over the `oauth2` crate's PKCE + Authorization Code flow. Scope `https://www.googleapis.com/auth/calendar` (full, not `calendar.events` — required for `calendars.insert`). `Token { access: SecretString, refresh: SecretString, expires_at: DateTime<Utc> }` with manual `Debug` impl emitting `"***REDACTED***"`. `fetch_with_auto_refresh()` wraps arbitrary reqwest calls: one bounded refresh retry on 401, second 401 → emit `gcal:reauth_required` event + clear keyring + return `AppError::Validation("oauth.reauth_required")`.
+- Custom `GoogleExtraFields { id_token: Option<String> }` + `GoogleTokenResponse = StandardTokenResponse<GoogleExtraFields, BasicTokenType>` typestate so the ID token claim roundtrips through oauth2's typestated API without a raw HTTP adapter. ID token decoded manually (base64 + serde_json) — no full JWT library dep. Email persisted to `gcal_settings.oauth_account_email` via FEAT-5a's `set_setting`.
+- `CLIENT_ID = option_env!("AGARIC_GCAL_CLIENT_ID", "UNSET-agaric-gcal-client-id")` — dev builds succeed without the env var; release pipeline injects the real value. No hardcoded client ID in the repo.
+- `src-tauri/src/gcal_push/keyring_store.rs` (847 lines NEW) — `#[async_trait] TokenStore` trait + `KeyringTokenStore` production impl using `keyring = "3"` (Secret Service on Linux / Keychain on macOS / Credential Manager on Windows via per-platform feature flags). `KeyringBackend` seam lets tests inject a `PlatformUnavailable` stub without tearing down the developer's Secret Service daemon. `PlatformFailure` / `NoBackendFound` → emit `gcal:keyring_unavailable` event + `AppError::Validation("keyring.unavailable")`. **No plaintext fallback, ever.** `MockTokenStore` for tests.
+- **Secret-redaction regression test** (`token_debug_never_leaks_secret_material`): constructs a `Token` with literal markers `"SHOULD-NOT-APPEAR"` and asserts `format!("{:?}", token)` contains neither marker AND contains the redaction signal.
+- **Tauri plugin registered**: `tauri_plugin_oauth::init()` registered in `src-tauri/src/lib.rs` alongside the existing `tauri_plugin_shell` / `_process` plugins. Mobile cfg-gated updater path untouched.
+- **Coupled-stack crates added in one commit** per AGENTS.md § Coupled Dependency Updates:
+  - `oauth2 = "5.0"` with `features = ["reqwest", "rustls-tls"]` (rustls-tls-native-roots isn't exposed in oauth2 v5; chose `rustls-tls` for repo-wide consistency).
+  - `keyring = "3.6"` with per-platform features (`apple-native`, `windows-native`, `sync-secret-service`, `crypto-rust`) — the platform-deps are `cfg(target_os=…)`-gated in keyring's Cargo.toml so enabling all backends is cross-platform-safe.
+  - `secrecy = "0.10"`, `async-trait = "0.1"`, `tauri-plugin-oauth = "2.0"` (matches Tauri stack major).
+  - Dev: `wiremock = "0.6"` for OAuth endpoint mocking.
+- 49 new tests (33 oauth + 20 keyring_store) covering: happy-path exchange, refresh success, refresh revoked, 401-once-then-success, 401-twice-then-reauth, `oauth_account_email` persistence, URL validation (happy + 3 error paths per endpoint), Token Debug redaction, ID-token JWT claim extraction, `TokenStore` trait roundtrip via `MockTokenStore`, keyring-unavailable branch emits event + errors (no plaintext fallback).
+
+### Orchestrator fixes applied during merge
+
+- **`deny.toml`** — added `"CDLA-Permissive-2.0"` to the `[licenses].allow` list (transitive via `webpki-roots v1.0.7` → hyper-rustls → reqwest 0.12 → oauth2). OSI-equivalent permissive, no copyleft; safe to allow. Documented inline.
+- **`cargo fmt`** auto-reformatting — applied after 5b's `PoisonError::into_inner` replacement left some lines at the inconsistent indentation the committed patch missed.
+- **`cargo clippy::explicit_counter_loop`** — fixed `truncate_with_ellipsis` in `digest.rs` to use `.enumerate()` over a manual counter.
+- **`markdownlint-cli2 MD060`** — `scripts/README.md` table pipe spacing normalized to `| --- |` form.
+
+### Verification
+
+- `cargo nextest run gcal_push::digest`: 34 passed (new). `cargo nextest run gcal_push::oauth gcal_push::keyring_store`: 49 passed (new). `cargo nextest run` (full): **2418 passed**, 0 failed, 2 skipped (was 2335 after session 449; **+83 net** = +34 digest + +49 oauth/keyring).
+- `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`: clean after orchestrator's `explicit_counter_loop` fix.
+- `cargo sqlx prepare --check -- --tests`: clean. No SQL added in this batch.
+- Python smoke: `python3 -m py_compile scripts/mcp_smoke.py` + `./scripts/mcp_smoke.py --help` green.
+- `prek run --all-files`: all 25 hooks green.
+
+### Architectural invariants respected (AGENTS.md)
+
+- Append-only op log: untouched. CQRS split: untouched. sqlx compile-time queries: no new SQL. PRAGMA foreign_keys: N/A. Recursive-CTE invariant #9: N/A.
+- `unsafe_code = "deny"` upheld across all three slices.
+- No new Zustand store, no new op type, no new materializer queue, no new sync message type, no new table. Only pre-approved FEAT-5a tables used.
+- No `AppError` enum expansion; FEAT-5b reuses `AppError::Validation("oauth.*")` string keys per FEAT-5b's "pick one and be consistent" instruction; FEAT-5c will add `AppError::Gcal(GcalErrorKind)` as its scoped expansion.
+- Coupled stack discipline: all 4 FEAT-5b runtime crates + 1 async-trait + 1 wiremock dev-dep entered in one commit.
+
+### Notes for the next session
+
+- **FEAT-4j is now the smallest open FEAT-4 item** (S) and should be the next FEAT-4 batch. Fixing it is a single-file patch (`src-tauri/src/mcp/server.rs`) + snapshot regeneration + running `mcp_smoke.py` end-to-end against a live build. Landing it unblocks the FEAT-4 umbrella for its first external MCP client integration.
+- **FEAT-5c is the natural next FEAT-5 slice** and is coupled to **MAINT-91**: both concerns land in the same reqwest-feature-flag commit. FEAT-5c adds `AppError::Gcal(GcalErrorKind)` and should migrate FEAT-5b's string-keyed `oauth.*` error variants to the richer taxonomy.
+- **FEAT-5d tag handling** — when FEAT-5e wires the connector, plumb `block_tags` alongside `page_titles`. Digest function currently accepts no tags and the spec's `  #tag1 #tag2` suffix is a no-op until the connector threads the table lookup.
+- **Sidecar binary placeholder workaround** continues to surface in fresh worktrees (`node scripts/prepare-external-bins.mjs --placeholder-only`). Consider inlining the placeholder create into `build.rs` or docs-first in BUILD.md.
+
+---
+
 ## Session 449 — FEAT-4c + FEAT-4e + FEAT-5a: MCP ReadOnlyTools (9 tools) + Settings tab + GCal schema (2026-04-21)
 
 **3 REVIEW-LATER items resolved.** Open items: 23 → 20. Third slice of the pre-approved FEAT-4 (MCP server) umbrella plus the first slice of the pre-approved FEAT-5 (Google Calendar digest push) umbrella, landed in one atomic 4-commit batch. Three parallel build subagents (FEAT-4c + FEAT-4e + FEAT-5a) across three worktrees. Three pipelined technical reviewers, one UX reviewer for 4e. Two rounds of orchestrator fixes: (1) FEAT-5a redo after its first review caught that the orchestrator's task prompt had deviated from the user-approved spec schema, and (2) two UX findings applied to FEAT-4e before merge.

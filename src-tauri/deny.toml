@@ -57,6 +57,11 @@ allow = [
     "CC0-1.0",
     "Unlicense",
     "MPL-2.0",
+    # CDLA-Permissive-2.0 enters via webpki-roots (→ hyper-rustls → reqwest 0.12
+    # → oauth2 v5). It is an OSI-equivalent permissive data-commons license; no
+    # copyleft. Safe to allow for the dual-root-cert bundle this repo already
+    # ships through rustls-tls.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 exceptions = []

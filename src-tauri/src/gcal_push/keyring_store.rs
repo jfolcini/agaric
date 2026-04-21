@@ -444,16 +444,26 @@ impl Default for MockTokenStore {
 #[async_trait]
 impl TokenStore for MockTokenStore {
     async fn load(&self) -> Result<Option<Token>, AppError> {
-        Ok(self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone())
+        Ok(self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone())
     }
 
     async fn store(&self, token: &Token) -> Result<(), AppError> {
-        *self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(token.clone());
+        *self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(token.clone());
         Ok(())
     }
 
     async fn clear(&self) -> Result<(), AppError> {
-        *self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        *self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         Ok(())
     }
 }
@@ -482,16 +492,26 @@ mod tests {
 
     impl KeyringBackend for MemBackend {
         fn get(&self) -> Result<Option<String>, KeyringBackendError> {
-            Ok(self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone())
+            Ok(self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone())
         }
 
         fn set(&self, value: &str) -> Result<(), KeyringBackendError> {
-            *self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(value.to_owned());
+            *self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(value.to_owned());
             Ok(())
         }
 
         fn delete(&self) -> Result<(), KeyringBackendError> {
-            *self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+            *self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
             Ok(())
         }
     }

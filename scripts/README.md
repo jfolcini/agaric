@@ -4,7 +4,7 @@ Repo-level helper scripts. One entry per file; most are invoked
 indirectly (pre-commit hooks, `package.json` scripts, CI workflows).
 
 | Script | What it does | Invoked by |
-|--------|--------------|-----------|
+| --- | --- | --- |
 | `fix-appimage-icons.sh` | Backfill AppImage icon paths in the bundled Linux artifact. | Release tooling (manual). |
 | `patch-android-build.sh` | Tauri Android build post-processing (aarch64 + x86_64 only, 64-bit Rust targets — see AGENTS.md §Android). | Tauri CLI via `tauri.conf.json`. |
 | `prepare-external-bins.mjs` | Stage the `agaric-mcp` stub (and any future external sidecars) next to the app bundle under the per-platform suffix `tauri-cli` expects. | Tauri build hook. |
@@ -54,7 +54,7 @@ Usage help:
 ### Exit codes
 
 | Code | Meaning |
-|------|---------|
+| --- | --- |
 | 0 | All 9 tools returned schema-valid payloads. |
 | 1 | One or more tools failed — structured failure report on stderr. |
 | 2 | Argparse / usage error. |

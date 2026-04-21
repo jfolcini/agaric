@@ -333,10 +333,7 @@ fn state_marker(state: Option<&str>) -> &'static str {
 }
 
 /// Resolve the block's page title, truncating to [`BREADCRUMB_MAX_CHARS`].
-fn breadcrumb_for(
-    entry: &ProjectedAgendaEntry,
-    page_titles: &HashMap<String, String>,
-) -> String {
+fn breadcrumb_for(entry: &ProjectedAgendaEntry, page_titles: &HashMap<String, String>) -> String {
     let title = entry
         .block
         .page_id
@@ -365,16 +362,14 @@ fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
     let mut iter = s.char_indices();
     // Walk `max_chars + 1` characters; if we consume the (max_chars +
     // 1)-th, the string needs an ellipsis.
-    let mut kept = 0usize;
     let mut cut_byte = s.len();
     let mut has_more = false;
-    for (idx, _) in iter.by_ref() {
+    for (kept, (idx, _)) in iter.by_ref().enumerate() {
         if kept == max_chars {
             cut_byte = idx;
             has_more = true;
             break;
         }
-        kept += 1;
     }
     if !has_more {
         return s.to_owned();
@@ -488,7 +483,12 @@ mod tests {
 
     #[test]
     fn single_todo_due_full_emits_expected_marker_and_body() {
-        let entries = vec![entry("BLK01111111111111111111111", "Ship it", Some("TODO"), "due_date")];
+        let entries = vec![entry(
+            "BLK01111111111111111111111",
+            "Ship it",
+            Some("TODO"),
+            "due_date",
+        )];
         let got = digest_for_date(fixed_date(), &entries, &page_titles(), PrivacyMode::Full);
         assert_single_entry_summary(&got, "Wed Apr 22");
         let DigestResult::Create(e) = &got else {
@@ -559,7 +559,12 @@ mod tests {
 
     #[test]
     fn single_untyped_state_full_uses_todo_marker_fallback() {
-        let entries = vec![entry("BLK05111111111111111111111", "Loose note", None, "due_date")];
+        let entries = vec![entry(
+            "BLK05111111111111111111111",
+            "Loose note",
+            None,
+            "due_date",
+        )];
         let got = digest_for_date(fixed_date(), &entries, &page_titles(), PrivacyMode::Full);
         let DigestResult::Create(e) = got else {
             unreachable!()
@@ -595,10 +600,30 @@ mod tests {
     #[test]
     fn minimal_mode_produces_empty_description_even_with_entries() {
         let entries = vec![
-            entry("BLKA1111111111111111111111", "one", Some("TODO"), "due_date"),
-            entry("BLKA2111111111111111111111", "two", Some("DONE"), "scheduled_date"),
-            entry("BLKA3111111111111111111111", "three", Some("DOING"), "due_date"),
-            entry("BLKA4111111111111111111111", "four", Some("CANCELLED"), "due_date"),
+            entry(
+                "BLKA1111111111111111111111",
+                "one",
+                Some("TODO"),
+                "due_date",
+            ),
+            entry(
+                "BLKA2111111111111111111111",
+                "two",
+                Some("DONE"),
+                "scheduled_date",
+            ),
+            entry(
+                "BLKA3111111111111111111111",
+                "three",
+                Some("DOING"),
+                "due_date",
+            ),
+            entry(
+                "BLKA4111111111111111111111",
+                "four",
+                Some("CANCELLED"),
+                "due_date",
+            ),
             entry("BLKA5111111111111111111111", "five", None, "scheduled_date"),
         ];
         let got = digest_for_date(fixed_date(), &entries, &page_titles(), PrivacyMode::Minimal);
@@ -615,7 +640,12 @@ mod tests {
 
     #[test]
     fn missing_page_title_falls_back_to_unknown_page_label() {
-        let mut e = entry("BLKB1111111111111111111111", "orphaned", Some("TODO"), "due_date");
+        let mut e = entry(
+            "BLKB1111111111111111111111",
+            "orphaned",
+            Some("TODO"),
+            "due_date",
+        );
         e.block.page_id = Some("DOES_NOT_EXIST".to_owned());
         let got = digest_for_date(fixed_date(), &[e], &page_titles(), PrivacyMode::Full);
         let DigestResult::Create(ev) = got else {
@@ -630,7 +660,12 @@ mod tests {
 
     #[test]
     fn null_page_id_falls_back_to_unknown_page_label() {
-        let mut e = entry("BLKB2111111111111111111111", "rootless", Some("TODO"), "due_date");
+        let mut e = entry(
+            "BLKB2111111111111111111111",
+            "rootless",
+            Some("TODO"),
+            "due_date",
+        );
         e.block.page_id = None;
         let got = digest_for_date(fixed_date(), &[e], &page_titles(), PrivacyMode::Full);
         let DigestResult::Create(ev) = got else {
@@ -685,7 +720,12 @@ mod tests {
     #[test]
     fn content_over_80_chars_is_truncated_with_ellipsis() {
         let long_content = "a".repeat(200);
-        let e = entry("BLKT3111111111111111111111", &long_content, Some("TODO"), "due_date");
+        let e = entry(
+            "BLKT3111111111111111111111",
+            &long_content,
+            Some("TODO"),
+            "due_date",
+        );
         let got = digest_for_date(fixed_date(), &[e], &page_titles(), PrivacyMode::Full);
         let DigestResult::Create(ev) = got else {
             unreachable!()
@@ -725,11 +765,36 @@ mod tests {
     fn entries_are_sorted_by_source_then_state_then_id() {
         // Build out-of-order so the sort is observable.
         let entries = vec![
-            entry("BLKZZZZZZZZZZZZZZZZZZZZZZZ", "last-id", Some("TODO"), "scheduled_date"),
-            entry("BLKAAAAAAAAAAAAAAAAAAAAAAA", "first-id", Some("TODO"), "scheduled_date"),
-            entry("BLKMMMMMMMMMMMMMMMMMMMMMMM", "mid-id", Some("DOING"), "due_date"),
-            entry("BLKMMMMMMMMMMMMMMMMMMMMMMN", "after-mid", Some("DONE"), "due_date"),
-            entry("BLKMMMMMMMMMMMMMMMMMMMMMMO", "untyped-due", None, "due_date"),
+            entry(
+                "BLKZZZZZZZZZZZZZZZZZZZZZZZ",
+                "last-id",
+                Some("TODO"),
+                "scheduled_date",
+            ),
+            entry(
+                "BLKAAAAAAAAAAAAAAAAAAAAAAA",
+                "first-id",
+                Some("TODO"),
+                "scheduled_date",
+            ),
+            entry(
+                "BLKMMMMMMMMMMMMMMMMMMMMMMM",
+                "mid-id",
+                Some("DOING"),
+                "due_date",
+            ),
+            entry(
+                "BLKMMMMMMMMMMMMMMMMMMMMMMN",
+                "after-mid",
+                Some("DONE"),
+                "due_date",
+            ),
+            entry(
+                "BLKMMMMMMMMMMMMMMMMMMMMMMO",
+                "untyped-due",
+                None,
+                "due_date",
+            ),
         ];
         let got = digest_for_date(fixed_date(), &entries, &page_titles(), PrivacyMode::Full);
         let DigestResult::Create(ev) = got else {
@@ -739,13 +804,25 @@ mod tests {
         assert_eq!(lines.len(), 5, "one line per entry");
         // due_date bucket first (alphabetical vs scheduled_date).
         // Within due_date: None < Some("DOING") < Some("DONE").
-        assert!(lines[0].contains("untyped-due"), "None sorts before Some(_)");
-        assert!(lines[1].contains("mid-id"), "DOING before DONE alphabetically");
+        assert!(
+            lines[0].contains("untyped-due"),
+            "None sorts before Some(_)"
+        );
+        assert!(
+            lines[1].contains("mid-id"),
+            "DOING before DONE alphabetically"
+        );
         assert!(lines[2].contains("after-mid"), "DONE comes after DOING");
         // scheduled_date bucket second.  Both TODO, so block_id
         // tiebreaker applies: BLKAAA… before BLKZZZ….
-        assert!(lines[3].contains("first-id"), "block_id tiebreaker: AAA first");
-        assert!(lines[4].contains("last-id"), "block_id tiebreaker: ZZZ last");
+        assert!(
+            lines[3].contains("first-id"),
+            "block_id tiebreaker: AAA first"
+        );
+        assert!(
+            lines[4].contains("last-id"),
+            "block_id tiebreaker: ZZZ last"
+        );
     }
 
     // ── Description overflow ────────────────────────────────────────
@@ -806,7 +883,12 @@ mod tests {
 
     #[test]
     fn no_overflow_suffix_when_content_fits() {
-        let entries = vec![entry("BLKF1111111111111111111111", "short", Some("TODO"), "due_date")];
+        let entries = vec![entry(
+            "BLKF1111111111111111111111",
+            "short",
+            Some("TODO"),
+            "due_date",
+        )];
         let got = digest_for_date(fixed_date(), &entries, &page_titles(), PrivacyMode::Full);
         let DigestResult::Create(ev) = got else {
             unreachable!()
@@ -825,7 +907,12 @@ mod tests {
             entry("BLKD1111111111111111111111", "a", Some("TODO"), "due_date"),
             entry("BLKD2111111111111111111111", "b", Some("DOING"), "due_date"),
             entry("BLKD3111111111111111111111", "c", Some("DONE"), "due_date"),
-            entry("BLKD4111111111111111111111", "d", Some("CANCELLED"), "due_date"),
+            entry(
+                "BLKD4111111111111111111111",
+                "d",
+                Some("CANCELLED"),
+                "due_date",
+            ),
         ];
         let got = digest_for_date(fixed_date(), &entries, &page_titles(), PrivacyMode::Full);
         let DigestResult::Create(ev) = got else {
@@ -843,8 +930,18 @@ mod tests {
     #[test]
     fn same_input_produces_same_output_across_calls() {
         let entries = vec![
-            entry("BLKX1111111111111111111111", "alpha", Some("TODO"), "due_date"),
-            entry("BLKX2111111111111111111111", "beta", Some("DOING"), "scheduled_date"),
+            entry(
+                "BLKX1111111111111111111111",
+                "alpha",
+                Some("TODO"),
+                "due_date",
+            ),
+            entry(
+                "BLKX2111111111111111111111",
+                "beta",
+                Some("DOING"),
+                "scheduled_date",
+            ),
             entry("BLKX3111111111111111111111", "gamma", None, "due_date"),
         ];
         let a = digest_for_date(fixed_date(), &entries, &page_titles(), PrivacyMode::Full);
@@ -855,8 +952,18 @@ mod tests {
     #[test]
     fn permuted_input_produces_same_output() {
         let mut entries = vec![
-            entry("BLKY1111111111111111111111", "alpha", Some("TODO"), "due_date"),
-            entry("BLKY2111111111111111111111", "beta", Some("DOING"), "scheduled_date"),
+            entry(
+                "BLKY1111111111111111111111",
+                "alpha",
+                Some("TODO"),
+                "due_date",
+            ),
+            entry(
+                "BLKY2111111111111111111111",
+                "beta",
+                Some("DOING"),
+                "scheduled_date",
+            ),
             entry("BLKY3111111111111111111111", "gamma", None, "due_date"),
         ];
         let a = digest_for_date(fixed_date(), &entries, &page_titles(), PrivacyMode::Full);
@@ -909,24 +1016,26 @@ mod tests {
                     Just(Some("UNKNOWNPAGE99999999999999".to_owned())),
                 ],
             )
-                .prop_map(|(id, content, state, source, page_id)| ProjectedAgendaEntry {
-                    block: BlockRow {
-                        id,
-                        block_type: "content".to_owned(),
-                        content: Some(content),
-                        parent_id: None,
-                        position: Some(1),
-                        deleted_at: None,
-                        is_conflict: false,
-                        conflict_type: None,
-                        todo_state: state,
-                        priority: None,
-                        due_date: None,
-                        scheduled_date: None,
-                        page_id,
-                    },
-                    projected_date: DATE.to_owned(),
-                    source,
+                .prop_map(|(id, content, state, source, page_id)| {
+                    ProjectedAgendaEntry {
+                        block: BlockRow {
+                            id,
+                            block_type: "content".to_owned(),
+                            content: Some(content),
+                            parent_id: None,
+                            position: Some(1),
+                            deleted_at: None,
+                            is_conflict: false,
+                            conflict_type: None,
+                            todo_state: state,
+                            priority: None,
+                            due_date: None,
+                            scheduled_date: None,
+                            page_id,
+                        },
+                        projected_date: DATE.to_owned(),
+                        source,
+                    }
                 })
         }
 
@@ -1049,7 +1158,12 @@ mod tests {
             Some("TODO"),
             "due_date",
         )];
-        let got = digest_for_date(date("2026-04-22"), &entries, &page_titles(), PrivacyMode::Full);
+        let got = digest_for_date(
+            date("2026-04-22"),
+            &entries,
+            &page_titles(),
+            PrivacyMode::Full,
+        );
         insta::assert_yaml_snapshot!("digest_single_entry", got);
     }
 
@@ -1080,16 +1194,31 @@ mod tests {
                 Some("CANCELLED"),
                 "scheduled_date",
             ),
-            entry("BLKS25555555555555555555555", "Loose note", None, "due_date"),
+            entry(
+                "BLKS25555555555555555555555",
+                "Loose note",
+                None,
+                "due_date",
+            ),
         ];
-        let got = digest_for_date(date("2026-04-23"), &entries, &page_titles(), PrivacyMode::Full);
+        let got = digest_for_date(
+            date("2026-04-23"),
+            &entries,
+            &page_titles(),
+            PrivacyMode::Full,
+        );
         insta::assert_yaml_snapshot!("digest_mixed_state_day", got);
     }
 
     #[test]
     fn snapshot_truncation_triggering_day() {
         let entries = many_entries(200);
-        let got = digest_for_date(date("2026-04-24"), &entries, &page_titles(), PrivacyMode::Full);
+        let got = digest_for_date(
+            date("2026-04-24"),
+            &entries,
+            &page_titles(),
+            PrivacyMode::Full,
+        );
         // The snapshot pins the entire truncated body so future changes
         // to the overflow-suffix template are caught.
         insta::assert_yaml_snapshot!("digest_truncation_day", got);
@@ -1128,32 +1257,63 @@ mod tests {
     #[test]
     fn snapshot_multi_page_heavy_day() {
         let mut titles = page_titles();
-        titles.insert("PAGE03CCCCCCCCCCCCCCCCCCCC".to_owned(), "Personal".to_owned());
+        titles.insert(
+            "PAGE03CCCCCCCCCCCCCCCCCCCC".to_owned(),
+            "Personal".to_owned(),
+        );
         titles.insert("PAGE04DDDDDDDDDDDDDDDDDDDD".to_owned(), "Work".to_owned());
-        titles.insert("PAGE05EEEEEEEEEEEEEEEEEEEE".to_owned(), "Reading List".to_owned());
+        titles.insert(
+            "PAGE05EEEEEEEEEEEEEEEEEEEE".to_owned(),
+            "Reading List".to_owned(),
+        );
         let entries = vec![
             ProjectedAgendaEntry {
-                block: block("BLKS41111111111111111111111", "Grocery run", Some("TODO"), Some("PAGE03CCCCCCCCCCCCCCCCCCCC")),
+                block: block(
+                    "BLKS41111111111111111111111",
+                    "Grocery run",
+                    Some("TODO"),
+                    Some("PAGE03CCCCCCCCCCCCCCCCCCCC"),
+                ),
                 projected_date: "2026-04-26".to_owned(),
                 source: "due_date".to_owned(),
             },
             ProjectedAgendaEntry {
-                block: block("BLKS42222222222222222222222", "Standup", Some("DONE"), Some("PAGE04DDDDDDDDDDDDDDDDDDDD")),
+                block: block(
+                    "BLKS42222222222222222222222",
+                    "Standup",
+                    Some("DONE"),
+                    Some("PAGE04DDDDDDDDDDDDDDDDDDDD"),
+                ),
                 projected_date: "2026-04-26".to_owned(),
                 source: "scheduled_date".to_owned(),
             },
             ProjectedAgendaEntry {
-                block: block("BLKS43333333333333333333333", "Finish 'Designing Data-Intensive Applications'", Some("DOING"), Some("PAGE05EEEEEEEEEEEEEEEEEEEE")),
+                block: block(
+                    "BLKS43333333333333333333333",
+                    "Finish 'Designing Data-Intensive Applications'",
+                    Some("DOING"),
+                    Some("PAGE05EEEEEEEEEEEEEEEEEEEE"),
+                ),
                 projected_date: "2026-04-26".to_owned(),
                 source: "due_date".to_owned(),
             },
             ProjectedAgendaEntry {
-                block: block("BLKS44444444444444444444444", "Retro notes", None, Some(PAGE_A)),
+                block: block(
+                    "BLKS44444444444444444444444",
+                    "Retro notes",
+                    None,
+                    Some(PAGE_A),
+                ),
                 projected_date: "2026-04-26".to_owned(),
                 source: "scheduled_date".to_owned(),
             },
             ProjectedAgendaEntry {
-                block: block("BLKS45555555555555555555555", "Archive old emails", Some("CANCELLED"), Some(PAGE_B)),
+                block: block(
+                    "BLKS45555555555555555555555",
+                    "Archive old emails",
+                    Some("CANCELLED"),
+                    Some(PAGE_B),
+                ),
                 projected_date: "2026-04-26".to_owned(),
                 source: "due_date".to_owned(),
             },
