@@ -2,12 +2,13 @@
  * Tests for SettingsView component (F-30).
  *
  * Validates:
- *  - Renders with 8 tabs
+ *  - Renders with 9 tabs
  *  - General tab shows deadline warning section (UX-202: TaskStatesSection removed)
  *  - Properties tab shows property definitions
  *  - Appearance tab shows theme toggle
  *  - Sync tab shows device management
  *  - Agent access tab (FEAT-4e)
+ *  - Google Calendar tab (FEAT-5f, experimental)
  *  - Tab switching works
  *  - Theme toggle changes localStorage and document class
  *  - Font size selector updates localStorage and CSS variable
@@ -54,6 +55,16 @@ vi.mock('../AgentAccessSettingsTab', () => ({
   AgentAccessSettingsTab: () => <div data-testid="agent-access-settings-tab">Agent Access</div>,
 }))
 
+// FEAT-5f: GoogleCalendarSettingsTab is rendered inside the "Google
+// Calendar" tab panel. Mock it as an inert marker so the SettingsView
+// tests stay focused on tab routing and do not need to stub the
+// `get_gcal_status` IPC + event listeners.
+vi.mock('../GoogleCalendarSettingsTab', () => ({
+  GoogleCalendarSettingsTab: () => (
+    <div data-testid="google-calendar-settings-tab">Google Calendar</div>
+  ),
+}))
+
 // FEAT-5: BugReportDialog is rendered by SettingsView but its heavy internal
 // logic (IPC + logs) is orthogonal to the SettingsView tests here. Mock it
 // as an inert marker so the original tab tests keep their existing scope.
@@ -82,11 +93,11 @@ beforeEach(() => {
 })
 
 describe('SettingsView', () => {
-  it('renders with 8 tabs', () => {
+  it('renders with 9 tabs', () => {
     render(<SettingsView />)
 
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(8)
+    expect(tabs).toHaveLength(9)
     expect(tabs[0]).toHaveTextContent(t('settings.tabGeneral'))
     expect(tabs[1]).toHaveTextContent(t('settings.tabProperties'))
     expect(tabs[2]).toHaveTextContent(t('settings.tabAppearance'))
@@ -94,7 +105,18 @@ describe('SettingsView', () => {
     expect(tabs[4]).toHaveTextContent(t('settings.tabData'))
     expect(tabs[5]).toHaveTextContent(t('settings.tabSync'))
     expect(tabs[6]).toHaveTextContent(t('settings.tabAgentAccess'))
-    expect(tabs[7]).toHaveTextContent(t('settings.tabHelp'))
+    expect(tabs[7]).toHaveTextContent(t('settings.tabGoogleCalendar'))
+    expect(tabs[8]).toHaveTextContent(t('settings.tabHelp'))
+  })
+
+  it('Google Calendar tab renders the GoogleCalendarSettingsTab panel', async () => {
+    const user = userEvent.setup()
+    render(<SettingsView />)
+
+    const gcalTab = screen.getByRole('tab', { name: t('settings.tabGoogleCalendar') })
+    await user.click(gcalTab)
+    expect(gcalTab).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('google-calendar-settings-tab')).toBeInTheDocument()
   })
 
   it('Help tab opens the bug-report dialog on click', async () => {

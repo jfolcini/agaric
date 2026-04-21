@@ -8,6 +8,8 @@
  *  - Keyboard -- KeyboardSettingsTab
  *  - Data -- DataSettingsTab (lazy)
  *  - Sync & Devices -- DeviceManagement
+ *  - Agent access -- AgentAccessSettingsTab (FEAT-4e)
+ *  - Google Calendar -- GoogleCalendarSettingsTab (FEAT-5f, experimental)
  *  - Help -- Report a bug (FEAT-5); future home of About / updates
  */
 
@@ -28,6 +30,7 @@ import { AgentAccessSettingsTab } from './AgentAccessSettingsTab'
 import { BugReportDialog } from './BugReportDialog'
 import { DeadlineWarningSection } from './DeadlineWarningSection'
 import { DeviceManagement } from './DeviceManagement'
+import { GoogleCalendarSettingsTab } from './GoogleCalendarSettingsTab'
 import { KeyboardSettingsTab } from './KeyboardSettingsTab'
 import { LoadingSkeleton } from './LoadingSkeleton'
 import { PropertyDefinitionsList } from './PropertyDefinitionsList'
@@ -59,6 +62,7 @@ type SettingsTab =
   | 'data'
   | 'sync'
   | 'agent'
+  | 'google-calendar'
   | 'help'
 
 const TAB_IDS: SettingsTab[] = [
@@ -69,6 +73,7 @@ const TAB_IDS: SettingsTab[] = [
   'data',
   'sync',
   'agent',
+  'google-calendar',
   'help',
 ]
 
@@ -80,6 +85,7 @@ const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
   data: 'settings.tabData',
   sync: 'settings.tabSync',
   agent: 'settings.tabAgentAccess',
+  'google-calendar': 'settings.tabGoogleCalendar',
   help: 'settings.tabHelp',
 }
 
@@ -241,6 +247,8 @@ export function SettingsView(): React.ReactElement {
         {activeTab === 'sync' && <DeviceManagement />}
 
         {activeTab === 'agent' && <AgentAccessSettingsTab />}
+
+        {activeTab === 'google-calendar' && <GoogleCalendarSettingsTab />}
 
         {activeTab === 'help' && (
           <div className="space-y-4 max-w-xl">

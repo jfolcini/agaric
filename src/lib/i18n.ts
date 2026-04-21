@@ -1936,6 +1936,58 @@ const resources = {
       'agentAccess.rwToggleDescription':
         'Let agents create, edit, and tag blocks. Every write is reversible from the activity feed.',
       'agentAccess.comingInV2': 'Coming in v2',
+
+      // FEAT-5f: Google Calendar (experimental) settings tab
+      'settings.tabGoogleCalendar': 'Google Calendar',
+      'gcal.title': 'Google Calendar',
+      'gcal.experimentalBadge': 'Experimental',
+      'gcal.description':
+        'Push your daily Agaric agenda into a dedicated Google Calendar called \u201CAgaric Agenda\u201D. One all-day event per date; one-way push only.',
+      'gcal.experimentalWarning':
+        'Experimental \u2014 sends your daily agenda to Google Calendar. Currently opt-in and unsupported.',
+      'gcal.loadFailed': 'Failed to load Google Calendar status',
+      'gcal.accountLabel': 'Account',
+      'gcal.connectButton': 'Connect Google Account',
+      'gcal.connectHelp':
+        'Click to authorize Agaric to push your daily agenda to a dedicated \u201CAgaric Agenda\u201D calendar on your Google account.',
+      'gcal.connectFailed': 'Failed to start Google sign-in',
+      'gcal.pushingToCalendar': 'Pushing to calendar: Agaric Agenda',
+      'gcal.windowLabel': 'Sync days forward from today',
+      'gcal.windowHelp':
+        'Agaric will mirror the next N days of agenda entries. Range: 7\u201390 days.',
+      'gcal.windowFailed': 'Failed to save window size',
+      'gcal.privacyLabel': 'Hide agenda content (sync dates only)',
+      'gcal.privacyHelp':
+        'When on, each event title shows only the date and entry count \u2014 useful if you share this calendar publicly.',
+      'gcal.privacyUpdated': 'Privacy mode updated',
+      'gcal.privacyFailed': 'Failed to update privacy mode',
+      'gcal.statusLabel': 'Status',
+      'gcal.lastPushLabel': 'Last push',
+      'gcal.neverPushed': 'Never',
+      'gcal.leaseLabel': 'Push lease',
+      'gcal.leaseThisDevice': 'This device',
+      'gcal.leaseOtherDevice': 'Other device ({{deviceId}})',
+      'gcal.leaseNone': 'No lease held',
+      'gcal.resyncButton': 'Force full resync',
+      'gcal.resyncStarted': 'Full resync started',
+      'gcal.resyncFailed': 'Failed to start full resync',
+      'gcal.reauthRequired': 'Google sign-in expired. Reconnect to resume pushing.',
+      'gcal.pushDisabled': 'Google Calendar push has been disabled.',
+      'gcal.keyringUnavailable':
+        'Cannot access the OS keychain. Google Calendar push is disabled on this device.',
+      'gcal.calendarRecreated':
+        'The Agaric Agenda calendar was recreated on your Google account.',
+      'gcal.disconnect.openButton': 'Disconnect\u2026',
+      'gcal.disconnect.button': 'Disconnect\u2026',
+      'gcal.disconnect.title': 'Disconnect Google Calendar?',
+      'gcal.disconnect.description':
+        'Stop pushing to Google Calendar. You can either keep the \u201CAgaric Agenda\u201D calendar in your Google account, or delete it along with every pushed event.',
+      'gcal.disconnect.cancel': 'Cancel',
+      'gcal.disconnect.keepCalendar': 'Disconnect but keep calendar',
+      'gcal.disconnect.deleteCalendar': 'Disconnect and delete Agaric Agenda calendar',
+      'gcal.disconnect.successKeep': 'Disconnected. Calendar kept in your Google account.',
+      'gcal.disconnect.successWithDelete': 'Disconnected. Calendar deleted from Google.',
+      'gcal.disconnect.failed': 'Failed to disconnect Google Calendar',
     },
   },
 }
