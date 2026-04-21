@@ -1105,10 +1105,7 @@ mod tests {
         let stale = dummy_token("old-access", "refresh-1");
         let result = client.refresh_token(&stale).await;
         assert!(
-            matches!(
-                result,
-                Err(AppError::Gcal(GcalErrorKind::Unauthorized))
-            ),
+            matches!(result, Err(AppError::Gcal(GcalErrorKind::Unauthorized))),
             "invalid_grant must map to AppError::Gcal(Unauthorized), got {result:?}"
         );
     }
@@ -1278,10 +1275,7 @@ mod tests {
             .await;
 
         assert!(
-            matches!(
-                result,
-                Err(AppError::Gcal(GcalErrorKind::Unauthorized))
-            ),
+            matches!(result, Err(AppError::Gcal(GcalErrorKind::Unauthorized))),
             "second 401 must surface AppError::Gcal(Unauthorized), got {result:?}"
         );
         assert_eq!(
@@ -1323,10 +1317,7 @@ mod tests {
             .await;
 
         assert!(
-            matches!(
-                result,
-                Err(AppError::Gcal(GcalErrorKind::Unauthorized))
-            ),
+            matches!(result, Err(AppError::Gcal(GcalErrorKind::Unauthorized))),
             "revoked refresh token must surface AppError::Gcal(Unauthorized), got {result:?}"
         );
         assert_eq!(

@@ -160,9 +160,8 @@ pub use drafts::{
 };
 #[doc(hidden)]
 pub use gcal::{
-    __specta__fn__disconnect_gcal, __specta__fn__force_gcal_resync,
-    __specta__fn__get_gcal_status, __specta__fn__set_gcal_privacy_mode,
-    __specta__fn__set_gcal_window_days,
+    __specta__fn__disconnect_gcal, __specta__fn__force_gcal_resync, __specta__fn__get_gcal_status,
+    __specta__fn__set_gcal_privacy_mode, __specta__fn__set_gcal_window_days,
 };
 #[doc(hidden)]
 pub use history::{

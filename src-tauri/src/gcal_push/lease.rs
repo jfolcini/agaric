@@ -154,23 +154,15 @@ pub async fn claim_lease(
     let holder_key = GcalSettingKey::PushLeaseDeviceId.as_str();
     let expires_key = GcalSettingKey::PushLeaseExpiresAt.as_str();
 
-    let holder_row = sqlx::query!(
-        "SELECT value FROM gcal_settings WHERE key = ?",
-        holder_key,
-    )
-    .fetch_optional(&mut *tx)
-    .await?;
+    let holder_row = sqlx::query!("SELECT value FROM gcal_settings WHERE key = ?", holder_key,)
+        .fetch_optional(&mut *tx)
+        .await?;
     let current_holder = holder_row.map(|r| r.value).unwrap_or_default();
 
-    let expires_row = sqlx::query!(
-        "SELECT value FROM gcal_settings WHERE key = ?",
-        expires_key,
-    )
-    .fetch_optional(&mut *tx)
-    .await?;
-    let current_expires = expires_row
-        .map(|r| r.value)
-        .and_then(|v| parse_rfc3339(&v));
+    let expires_row = sqlx::query!("SELECT value FROM gcal_settings WHERE key = ?", expires_key,)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let current_expires = expires_row.map(|r| r.value).and_then(|v| parse_rfc3339(&v));
 
     let is_empty = current_holder.is_empty();
     let is_self = current_holder == device_id;
@@ -186,11 +178,8 @@ pub async fn claim_lease(
     // `expires_at` first, then `device_id`, so any observer that sees
     // our device_id reads a fresh (not a stale) expiry.  SQLite
     // serialises the writes within the tx.
-    let new_expiry =
-        (now + ChronoDuration::seconds(LEASE_EXPIRY_SECS as i64)).to_rfc3339_opts(
-            chrono::SecondsFormat::Millis,
-            true,
-        );
+    let new_expiry = (now + ChronoDuration::seconds(LEASE_EXPIRY_SECS.cast_signed()))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
     let updated_at = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
@@ -352,7 +341,7 @@ mod tests {
         assert!(claim_lease(&pool, DEV_A, t0()).await.unwrap());
 
         // Jump past the expiry deadline.
-        let later = t0() + ChronoDuration::seconds(LEASE_EXPIRY_SECS as i64 + 1);
+        let later = t0() + ChronoDuration::seconds(LEASE_EXPIRY_SECS.cast_signed() + 1);
         let got = claim_lease(&pool, DEV_B, later).await.unwrap();
         assert!(got, "B must seize after A's lease expired");
 
@@ -431,7 +420,10 @@ mod tests {
         assert!(state.is_held_by(DEV_A, t0()));
         assert!(!state.is_held_by(DEV_B, t0()));
         assert!(
-            !state.is_held_by(DEV_A, t0() + ChronoDuration::seconds(LEASE_EXPIRY_SECS as i64 + 1)),
+            !state.is_held_by(
+                DEV_A,
+                t0() + ChronoDuration::seconds(LEASE_EXPIRY_SECS.cast_signed() + 1)
+            ),
             "expired lease must not be held_by the original holder"
         );
     }
@@ -444,7 +436,7 @@ mod tests {
         let state = read_current_lease(&pool).await.unwrap();
         assert!(state.is_live(t0()), "lease must be live immediately");
         assert!(
-            !state.is_live(t0() + ChronoDuration::seconds(LEASE_EXPIRY_SECS as i64 + 1)),
+            !state.is_live(t0() + ChronoDuration::seconds(LEASE_EXPIRY_SECS.cast_signed() + 1)),
             "lease must not be live past expiry"
         );
     }

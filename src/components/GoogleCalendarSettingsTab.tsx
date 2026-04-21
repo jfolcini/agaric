@@ -63,12 +63,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
+import type { GcalStatus } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 import { LoadingSkeleton } from './LoadingSkeleton'
-
-import type { GcalStatus } from '@/lib/bindings'
 
 const STATUS_POLL_INTERVAL_MS = 60_000
 const WINDOW_DEBOUNCE_MS = 500
@@ -145,10 +144,7 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
     let cancelled = false
     const unlistens: Array<() => void> = []
 
-    const register = async (
-      name: string,
-      handler: () => void,
-    ): Promise<void> => {
+    const register = async (name: string, handler: () => void): Promise<void> => {
       try {
         const unlisten = await listen(name, () => {
           if (!cancelled) handler()
@@ -159,12 +155,7 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
           unlistens.push(unlisten)
         }
       } catch (err) {
-        logger.warn(
-          'GoogleCalendarSettingsTab',
-          `failed to subscribe to ${name}`,
-          undefined,
-          err,
-        )
+        logger.warn('GoogleCalendarSettingsTab', `failed to subscribe to ${name}`, undefined, err)
       }
     }
 
@@ -190,12 +181,7 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
         try {
           fn()
         } catch (err) {
-          logger.warn(
-            'GoogleCalendarSettingsTab',
-            'unlisten threw during cleanup',
-            undefined,
-            err,
-          )
+          logger.warn('GoogleCalendarSettingsTab', 'unlisten threw during cleanup', undefined, err)
         }
       }
     }
@@ -221,12 +207,7 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
       try {
         await invoke('set_gcal_window_days', { n: clamped })
       } catch (err) {
-        logger.error(
-          'GoogleCalendarSettingsTab',
-          'failed to set window days',
-          { n: clamped },
-          err,
-        )
+        logger.error('GoogleCalendarSettingsTab', 'failed to set window days', { n: clamped }, err)
         toast.error(t('gcal.windowFailed'))
         // Re-fetch the server-side value so the UI doesn't drift.
         void loadStatus()
@@ -283,12 +264,7 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
         await invoke('set_gcal_privacy_mode', { mode })
         toast.success(t('gcal.privacyUpdated'))
       } catch (err) {
-        logger.error(
-          'GoogleCalendarSettingsTab',
-          'failed to set privacy mode',
-          { mode },
-          err,
-        )
+        logger.error('GoogleCalendarSettingsTab', 'failed to set privacy mode', { mode }, err)
         setStatus(previous)
         toast.error(t('gcal.privacyFailed'))
       }
@@ -496,10 +472,7 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
             />
           </div>
           {effectiveStatus.last_error !== null && (
-            <p
-              className="text-destructive text-sm pt-1 break-words"
-              data-testid="gcal-last-error"
-            >
+            <p className="text-destructive text-sm pt-1 break-words" data-testid="gcal-last-error">
               {effectiveStatus.last_error}
             </p>
           )}

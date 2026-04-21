@@ -197,7 +197,7 @@ impl GcalApi {
     /// build (would indicate a malformed rustls setup — not expected
     /// in practice).
     pub fn new() -> Result<Self, AppError> {
-        Self::with_base_url(GOOGLE_CALENDAR_BASE_URL.to_owned())
+        Self::with_base_url(GOOGLE_CALENDAR_BASE_URL)
     }
 
     /// Construct a `GcalApi` pointing at an arbitrary base URL.
@@ -207,7 +207,7 @@ impl GcalApi {
     /// # Errors
     /// [`AppError::Validation`] if the shared HTTP client fails to
     /// build.
-    pub fn with_base_url(base_url: String) -> Result<Self, AppError> {
+    pub fn with_base_url(base_url: &str) -> Result<Self, AppError> {
         Ok(Self {
             client: shared_client()?,
             bucket: Arc::new(Mutex::new(InstantBucket::new(
@@ -255,11 +255,12 @@ impl GcalApi {
             .json(&req)
             .send()
             .await
-            .map_err(reqwest_to_gcal_err)?;
+            .map_err(|e| reqwest_to_gcal_err(&e))?;
 
         let status = resp.status();
         if status.is_success() {
-            let body: CreateCalendarResp = resp.json().await.map_err(reqwest_to_gcal_err)?;
+            let body: CreateCalendarResp =
+                resp.json().await.map_err(|e| reqwest_to_gcal_err(&e))?;
             return Ok(body.id);
         }
         Err(classify_error(status, &resp_headers(&resp), false).into())
@@ -276,11 +277,7 @@ impl GcalApi {
     /// caller's perspective (the connector maps this to `Ok(())` at
     /// its own layer).
     #[tracing::instrument(skip(self, token), err)]
-    pub async fn delete_calendar(
-        &self,
-        token: &Token,
-        calendar_id: &str,
-    ) -> Result<(), AppError> {
+    pub async fn delete_calendar(&self, token: &Token, calendar_id: &str) -> Result<(), AppError> {
         self.bucket.lock().await.take().await;
 
         let url = format!("{}/calendars/{}", self.base_url, calendar_id);
@@ -290,7 +287,7 @@ impl GcalApi {
             .bearer_auth(token.access.expose_secret())
             .send()
             .await
-            .map_err(reqwest_to_gcal_err)?;
+            .map_err(|e| reqwest_to_gcal_err(&e))?;
 
         let status = resp.status();
         if status.is_success() {
@@ -325,11 +322,11 @@ impl GcalApi {
             .json(&wire_event)
             .send()
             .await
-            .map_err(reqwest_to_gcal_err)?;
+            .map_err(|e| reqwest_to_gcal_err(&e))?;
 
         let status = resp.status();
         if status.is_success() {
-            let body: WireEventResponse = resp.json().await.map_err(reqwest_to_gcal_err)?;
+            let body: WireEventResponse = resp.json().await.map_err(|e| reqwest_to_gcal_err(&e))?;
             return body.into_event_response();
         }
         // 404 on /calendars/{id}/events targets the calendar, not a
@@ -368,11 +365,11 @@ impl GcalApi {
             .json(&wire_patch)
             .send()
             .await
-            .map_err(reqwest_to_gcal_err)?;
+            .map_err(|e| reqwest_to_gcal_err(&e))?;
 
         let status = resp.status();
         if status.is_success() {
-            let body: WireEventResponse = resp.json().await.map_err(reqwest_to_gcal_err)?;
+            let body: WireEventResponse = resp.json().await.map_err(|e| reqwest_to_gcal_err(&e))?;
             return body.into_event_response();
         }
         Err(classify_error(status, &resp_headers(&resp), /*on_event*/ true).into())
@@ -403,7 +400,7 @@ impl GcalApi {
             .bearer_auth(token.access.expose_secret())
             .send()
             .await
-            .map_err(reqwest_to_gcal_err)?;
+            .map_err(|e| reqwest_to_gcal_err(&e))?;
 
         let status = resp.status();
         if status.is_success() {
@@ -452,11 +449,11 @@ impl GcalApi {
             .bearer_auth(token.access.expose_secret())
             .send()
             .await
-            .map_err(reqwest_to_gcal_err)?;
+            .map_err(|e| reqwest_to_gcal_err(&e))?;
 
         let status = resp.status();
         if status.is_success() {
-            let body: WireEventResponse = resp.json().await.map_err(reqwest_to_gcal_err)?;
+            let body: WireEventResponse = resp.json().await.map_err(|e| reqwest_to_gcal_err(&e))?;
             return body.into_event_response().map(Some);
         }
         match classify_error(status, &resp_headers(&resp), /*on_event*/ true) {
@@ -581,11 +578,11 @@ fn shift_date_forward(date_str: &str, delta_days: i64) -> Result<String, AppErro
     let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
         .map_err(|e| AppError::Validation(format!("gcal.api.malformed_date: {date_str}: {e}")))?;
     let shifted = if delta_days >= 0 {
-        date.checked_add_days(Days::new(delta_days as u64))
+        date.checked_add_days(Days::new(delta_days.cast_unsigned()))
     } else {
         // Safe conversion: delta_days is negative, so negating gives
         // a positive value that fits in u64.
-        date.checked_sub_days(Days::new((-delta_days) as u64))
+        date.checked_sub_days(Days::new((-delta_days).cast_unsigned()))
     }
     .ok_or_else(|| {
         AppError::Validation(format!(
@@ -673,7 +670,7 @@ fn retry_after_from_headers(headers: &[(String, String)]) -> u64 {
 /// JSON-parse failures in the response body are distinctive enough to
 /// return [`AppError::Json`] via the existing `#[from]` impl, so
 /// callers can distinguish them from HTTP-layer errors if desired.
-fn reqwest_to_gcal_err(err: reqwest::Error) -> AppError {
+fn reqwest_to_gcal_err(err: &reqwest::Error) -> AppError {
     if err.is_decode() {
         AppError::Validation(format!("gcal.api.decode_failed: {err}"))
     } else {
@@ -822,7 +819,7 @@ mod tests {
     /// bucket per test so concurrent tests do not interfere with each
     /// other's rate-limiter state.
     fn make_api(base: &str) -> GcalApi {
-        GcalApi::with_base_url(base.to_owned()).expect("api construction must succeed")
+        GcalApi::with_base_url(base).expect("api construction must succeed")
     }
 
     fn make_event(date: &str) -> Event {
@@ -877,10 +874,7 @@ mod tests {
             .create_dedicated_calendar(&make_token(), "Agaric Agenda")
             .await;
         assert!(
-            matches!(
-                result,
-                Err(AppError::Gcal(GcalErrorKind::Unauthorized))
-            ),
+            matches!(result, Err(AppError::Gcal(GcalErrorKind::Unauthorized))),
             "401 must map to Unauthorized, got {result:?}"
         );
     }
@@ -1234,9 +1228,7 @@ mod tests {
                     "429 without Retry-After must fall back to default 1000 ms, got {retry_after_ms}"
                 );
             }
-            other => panic!(
-                "expected RateLimited with default retry_after_ms, got {other:?}"
-            ),
+            other => panic!("expected RateLimited with default retry_after_ms, got {other:?}"),
         }
     }
 
@@ -1380,7 +1372,7 @@ mod tests {
 
     #[test]
     fn gcal_api_debug_does_not_leak_client_internals() {
-        let api = GcalApi::with_base_url("http://example.invalid".to_owned()).unwrap();
+        let api = GcalApi::with_base_url("http://example.invalid").unwrap();
         let debug = format!("{api:?}");
         // The base URL is fine (not a secret); we just pin that
         // sensitive-looking internals do not bleed in by accident.
@@ -1408,7 +1400,10 @@ mod tests {
              got {} keys: {obj:?}",
             obj.len()
         );
-        assert_eq!(obj.get("summary").and_then(Value::as_str), Some("only summary"));
+        assert_eq!(
+            obj.get("summary").and_then(Value::as_str),
+            Some("only summary")
+        );
     }
 
     #[test]

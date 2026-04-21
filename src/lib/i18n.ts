@@ -1975,8 +1975,7 @@ const resources = {
       'gcal.pushDisabled': 'Google Calendar push has been disabled.',
       'gcal.keyringUnavailable':
         'Cannot access the OS keychain. Google Calendar push is disabled on this device.',
-      'gcal.calendarRecreated':
-        'The Agaric Agenda calendar was recreated on your Google account.',
+      'gcal.calendarRecreated': 'The Agaric Agenda calendar was recreated on your Google account.',
       'gcal.disconnect.openButton': 'Disconnect\u2026',
       'gcal.disconnect.button': 'Disconnect\u2026',
       'gcal.disconnect.title': 'Disconnect Google Calendar?',

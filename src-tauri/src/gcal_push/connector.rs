@@ -474,10 +474,7 @@ pub async fn run_cycle<C: GcalClient>(
     // failure here is returned as a HardFailure so the outer loop can
     // decide whether to retry (recoverable 5xx) or surface (403).
     let calendar_id = if settings.calendar_id.is_empty() {
-        match client
-            .create_calendar(token, DEDICATED_CALENDAR_NAME)
-            .await
-        {
+        match client.create_calendar(token, DEDICATED_CALENDAR_NAME).await {
             Ok(id) => {
                 models::set_setting(pool, GcalSettingKey::CalendarId, &id).await?;
                 id
@@ -495,11 +492,7 @@ pub async fn run_cycle<C: GcalClient>(
     // a successful push to a sibling date.  Hard failures (401 / 403 /
     // CalendarGone) are returned to the caller for the whole cycle.
     for date in dirty {
-        match push_date(
-            pool, client, emitter, token, &settings, &calendar_id, *date,
-        )
-        .await
-        {
+        match push_date(pool, client, emitter, token, &settings, &calendar_id, *date).await {
             Ok(_) => {}
             Err(DateFailure::CalendarGone) => {
                 // Whole cycle has to abort — the calendar is gone.
@@ -559,9 +552,7 @@ fn classify_cycle_failure(
             }
             GcalErrorKind::Forbidden(msg) => {
                 emitter.emit(GcalEvent::PushDisabled);
-                return Ok(CycleOutcome::HardFailure(format!(
-                    "forbidden: {msg}"
-                )));
+                return Ok(CycleOutcome::HardFailure(format!("forbidden: {msg}")));
             }
             GcalErrorKind::RateLimited { retry_after_ms } => {
                 return Ok(CycleOutcome::HardFailure(format!(
@@ -574,9 +565,7 @@ fn classify_cycle_failure(
                 )));
             }
             GcalErrorKind::InvalidRequest(msg) => {
-                return Ok(CycleOutcome::HardFailure(format!(
-                    "invalid_request: {msg}"
-                )));
+                return Ok(CycleOutcome::HardFailure(format!("invalid_request: {msg}")));
             }
             _ => {}
         }
@@ -727,9 +716,9 @@ fn classify_date_err(err: &AppError, _emitter: &Arc<dyn GcalEventEmitter>) -> Da
             }
         }
     }
-    DateFailure::Other(
-        AppError::Validation(format!("gcal.connector.unexpected_error: {err}")),
-    )
+    DateFailure::Other(AppError::Validation(format!(
+        "gcal.connector.unexpected_error: {err}"
+    )))
 }
 
 /// Recover from a `CalendarGone` response: wipe the map, reset the
@@ -811,7 +800,7 @@ fn hash_digest(digest: &DigestResult) -> Result<String, AppError> {
 /// Used by the reconcile sweep and by `force_gcal_resync`.
 pub fn fill_full_window(dirty: &mut DirtySet, today: NaiveDate, window_days: i64) {
     for i in 0..window_days.max(0) {
-        if let Some(d) = today.checked_add_days(Days::new(i as u64)) {
+        if let Some(d) = today.checked_add_days(Days::new(i.cast_unsigned())) {
             dirty.insert(d);
         }
     }
@@ -954,11 +943,25 @@ pub(crate) mod testing {
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum MockCall {
-        CreateCalendar { name: String },
-        DeleteCalendar { calendar_id: String },
-        InsertEvent { calendar_id: String, date: String },
-        PatchEvent { calendar_id: String, event_id: String, date: String },
-        DeleteEvent { calendar_id: String, event_id: String },
+        CreateCalendar {
+            name: String,
+        },
+        DeleteCalendar {
+            calendar_id: String,
+        },
+        InsertEvent {
+            calendar_id: String,
+            date: String,
+        },
+        PatchEvent {
+            calendar_id: String,
+            event_id: String,
+            date: String,
+        },
+        DeleteEvent {
+            calendar_id: String,
+            event_id: String,
+        },
     }
 
     /// Programmable error behaviour.  Every `..._result` field, if
@@ -1005,7 +1008,10 @@ pub(crate) mod testing {
                 .filter(|c| match c {
                     MockCall::InsertEvent { date: d, .. }
                     | MockCall::PatchEvent { date: d, .. } => d == &date_str,
-                    MockCall::DeleteEvent { calendar_id, event_id } => {
+                    MockCall::DeleteEvent {
+                        calendar_id,
+                        event_id,
+                    } => {
                         // Heuristic: event_ids are `evt_<seq>_<YYYY-MM-DD>`.
                         let _ = calendar_id;
                         event_id.ends_with(&date_str)
@@ -1066,10 +1072,8 @@ pub(crate) mod testing {
             state.calls.push(MockCall::CreateCalendar {
                 name: name.to_owned(),
             });
-            if let Some(r) = pop_front(&mut state.behavior.create_calendar_results) {
-                if let Err(kind) = r {
-                    return Err(kind.into());
-                }
+            if let Some(Err(kind)) = pop_front(&mut state.behavior.create_calendar_results) {
+                return Err(kind.into());
             }
             state.next_cal_seq += 1;
             let id = format!("cal_MOCK_{}", state.next_cal_seq);
@@ -1077,11 +1081,7 @@ pub(crate) mod testing {
             Ok(id)
         }
 
-        async fn delete_calendar(
-            &self,
-            _token: &Token,
-            calendar_id: &str,
-        ) -> Result<(), AppError> {
+        async fn delete_calendar(&self, _token: &Token, calendar_id: &str) -> Result<(), AppError> {
             let mut state = self.state.lock().await;
             state.calls.push(MockCall::DeleteCalendar {
                 calendar_id: calendar_id.to_owned(),
@@ -1101,10 +1101,8 @@ pub(crate) mod testing {
                 calendar_id: calendar_id.to_owned(),
                 date: event.start.date.clone(),
             });
-            if let Some(r) = pop_front(&mut state.behavior.insert_event_results) {
-                if let Err(kind) = r {
-                    return Err(kind.into());
-                }
+            if let Some(Err(kind)) = pop_front(&mut state.behavior.insert_event_results) {
+                return Err(kind.into());
             }
             state.next_evt_seq += 1;
             let id = format!("evt_{}_{}", state.next_evt_seq, event.start.date);
@@ -1132,10 +1130,8 @@ pub(crate) mod testing {
                 event_id: event_id.to_owned(),
                 date: event.start.date.clone(),
             });
-            if let Some(r) = pop_front(&mut state.behavior.patch_event_results) {
-                if let Err(kind) = r {
-                    return Err(kind.into());
-                }
+            if let Some(Err(kind)) = pop_front(&mut state.behavior.patch_event_results) {
+                return Err(kind.into());
             }
             match state.calendars.get_mut(calendar_id) {
                 Some(cal) => {
@@ -1161,10 +1157,8 @@ pub(crate) mod testing {
                 calendar_id: calendar_id.to_owned(),
                 event_id: event_id.to_owned(),
             });
-            if let Some(r) = pop_front(&mut state.behavior.delete_event_results) {
-                if let Err(kind) = r {
-                    return Err(kind.into());
-                }
+            if let Some(Err(kind)) = pop_front(&mut state.behavior.delete_event_results) {
+                return Err(kind.into());
             }
             match state.calendars.get_mut(calendar_id) {
                 Some(cal) => match cal.remove(event_id) {
@@ -1240,11 +1234,7 @@ mod tests {
     /// `blocks` / `block_properties` / `agenda_cache` (bypassing the op
     /// log) — the connector under test reads only from materialised
     /// tables so this is the minimum needed to exercise the flow.
-    async fn seed_block_due_on(
-        pool: &SqlitePool,
-        content: &str,
-        date: &str,
-    ) -> (String, String) {
+    async fn seed_block_due_on(pool: &SqlitePool, content: &str, date: &str) -> (String, String) {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let seq = NEXT.fetch_add(1, Ordering::AcqRel);
@@ -1301,12 +1291,7 @@ mod tests {
 
     /// Move a block from `old_date` to `new_date` (updates both the
     /// `blocks.due_date` column and the `projected_agenda_cache` row).
-    async fn move_block_due(
-        pool: &SqlitePool,
-        block_id: &str,
-        old_date: &str,
-        new_date: &str,
-    ) {
+    async fn move_block_due(pool: &SqlitePool, block_id: &str, old_date: &str, new_date: &str) {
         sqlx::query("UPDATE blocks SET due_date = ? WHERE id = ?")
             .bind(new_date)
             .bind(block_id)
@@ -1371,11 +1356,9 @@ mod tests {
         let token = dummy_token();
 
         let dirty: DirtySet = DirtySet::new();
-        let outcome = run_cycle(
-            &pool, &*client, &emitter, DEV_A, &clock, &token, &dirty,
-        )
-        .await
-        .unwrap();
+        let outcome = run_cycle(&pool, &*client, &emitter, DEV_A, &clock, &token, &dirty)
+            .await
+            .unwrap();
         assert_eq!(outcome, CycleOutcome::Ok);
         assert_eq!(
             client.create_calendar_call_count().await,
@@ -1386,7 +1369,9 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            persisted.as_deref().is_some_and(|s| s.starts_with("cal_MOCK_")),
+            persisted
+                .as_deref()
+                .is_some_and(|s| s.starts_with("cal_MOCK_")),
             "calendar_id must be persisted after create_calendar, got {persisted:?}"
         );
     }
@@ -1401,20 +1386,16 @@ mod tests {
         let dirty = DirtySet::new();
 
         // Device A claims the lease and creates the calendar.
-        let a = run_cycle(
-            &pool, &*client_a, &emitter_a, DEV_A, &clock, &token, &dirty,
-        )
-        .await
-        .unwrap();
+        let a = run_cycle(&pool, &*client_a, &emitter_a, DEV_A, &clock, &token, &dirty)
+            .await
+            .unwrap();
         assert_eq!(a, CycleOutcome::Ok);
         assert_eq!(client_a.create_calendar_call_count().await, 1);
 
         // Device B, same instant — lease already held → idle, no calendar call.
-        let b = run_cycle(
-            &pool, &*client_b, &emitter_b, DEV_B, &clock, &token, &dirty,
-        )
-        .await
-        .unwrap();
+        let b = run_cycle(&pool, &*client_b, &emitter_b, DEV_B, &clock, &token, &dirty)
+            .await
+            .unwrap();
         assert_eq!(b, CycleOutcome::LeaseUnavailable);
         assert_eq!(
             client_b.create_calendar_call_count().await,
@@ -1442,14 +1423,17 @@ mod tests {
 
         // Jump past lease expiry — B can now claim.
         clock.advance(ChronoDuration::seconds(
-            (lease::LEASE_EXPIRY_SECS as i64) + 1,
+            lease::LEASE_EXPIRY_SECS.cast_signed() + 1,
         ));
         let b = run_cycle(&pool, &*client_b, &emitter_b, DEV_B, &clock, &token, &dirty)
             .await
             .unwrap();
         assert_eq!(b, CycleOutcome::Ok);
         let state = lease::read_current_lease(&pool).await.unwrap();
-        assert_eq!(state.device_id, DEV_B, "B must hold the lease after seizure");
+        assert_eq!(
+            state.device_id, DEV_B,
+            "B must hold the lease after seizure"
+        );
         // Calendar already exists — B does NOT re-create it.
         assert_eq!(client_b.create_calendar_call_count().await, 0);
     }

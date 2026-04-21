@@ -679,10 +679,7 @@ mod tests {
             GcalEvent::CalendarRecreated.event_name(),
             "gcal:calendar_recreated"
         );
-        assert_eq!(
-            GcalEvent::PushDisabled.event_name(),
-            "gcal:push_disabled"
-        );
+        assert_eq!(GcalEvent::PushDisabled.event_name(), "gcal:push_disabled");
     }
 
     #[test]

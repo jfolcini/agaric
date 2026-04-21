@@ -525,9 +525,7 @@ describe('GoogleCalendarSettingsTab — disconnect dialog', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('disconnect_gcal', { deleteCalendar: true })
     })
-    expect(mockedToastSuccess).toHaveBeenCalledWith(
-      'Disconnected. Calendar deleted from Google.',
-    )
+    expect(mockedToastSuccess).toHaveBeenCalledWith('Disconnected. Calendar deleted from Google.')
   })
 
   it('clicking "keep calendar" invokes disconnect_gcal({ deleteCalendar: false })', async () => {
@@ -552,9 +550,7 @@ describe('GoogleCalendarSettingsTab — disconnect dialog', () => {
     await waitFor(() => {
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     })
-    expect(
-      mockedInvoke.mock.calls.filter((c) => c[0] === 'disconnect_gcal'),
-    ).toHaveLength(0)
+    expect(mockedInvoke.mock.calls.filter((c) => c[0] === 'disconnect_gcal')).toHaveLength(0)
   })
 
   it('logs + toasts when disconnect_gcal rejects', async () => {
@@ -598,9 +594,7 @@ describe('GoogleCalendarSettingsTab — status polling', () => {
     await vi.waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('get_gcal_status')
     })
-    const initialCount = mockedInvoke.mock.calls.filter(
-      (c) => c[0] === 'get_gcal_status',
-    ).length
+    const initialCount = mockedInvoke.mock.calls.filter((c) => c[0] === 'get_gcal_status').length
     expect(initialCount).toBeGreaterThanOrEqual(1)
 
     // Advance 60 seconds
@@ -608,9 +602,7 @@ describe('GoogleCalendarSettingsTab — status polling', () => {
       await vi.advanceTimersByTimeAsync(60_000)
     })
 
-    const afterCount = mockedInvoke.mock.calls.filter(
-      (c) => c[0] === 'get_gcal_status',
-    ).length
+    const afterCount = mockedInvoke.mock.calls.filter((c) => c[0] === 'get_gcal_status').length
     expect(afterCount).toBeGreaterThan(initialCount)
   })
 })
@@ -647,9 +639,7 @@ describe('GoogleCalendarSettingsTab — event stream', () => {
     await waitFor(() => {
       expect(eventListeners.get('gcal:push_disabled')).toBeDefined()
     })
-    const callCountBefore = mockedInvoke.mock.calls.filter(
-      (c) => c[0] === 'get_gcal_status',
-    ).length
+    const callCountBefore = mockedInvoke.mock.calls.filter((c) => c[0] === 'get_gcal_status').length
 
     act(() => {
       fireGcalEvent('gcal:push_disabled')
@@ -658,9 +648,7 @@ describe('GoogleCalendarSettingsTab — event stream', () => {
     await waitFor(() => {
       expect(mockedToastInfo).toHaveBeenCalledWith('Google Calendar push has been disabled.')
     })
-    const callCountAfter = mockedInvoke.mock.calls.filter(
-      (c) => c[0] === 'get_gcal_status',
-    ).length
+    const callCountAfter = mockedInvoke.mock.calls.filter((c) => c[0] === 'get_gcal_status').length
     expect(callCountAfter).toBeGreaterThan(callCountBefore)
   })
 

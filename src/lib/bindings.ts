@@ -194,7 +194,7 @@ export const commands = {
 	logFrontend: (level: string, module: string, message: string, stack: string | null, context: string | null, data: string | null) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("log_frontend", { level, module, message, stack, context, data })),
 	/**
 	 *  Return the path to the logs directory.
-	 * 
+	 *
 	 *  Uses [`crate::log_dir_for_app_data`] so the path returned to the
 	 *  frontend ("Open logs folder") is guaranteed to match the directory
 	 *  the tracing-appender writes to — on every platform (BUG-34).
@@ -204,7 +204,7 @@ export const commands = {
 	getCompactionStatus: () => typedError<CompactionStatus, AppErrorSchema>(__TAURI_INVOKE("get_compaction_status")),
 	/**
 	 *  Tauri command: trigger op log compaction.
-	 * 
+	 *
 	 *  The frontend is responsible for confirming with the user before calling
 	 *  this command. `retention_days` controls how far back ops are retained.
 	 */
@@ -242,7 +242,7 @@ export const commands = {
 	mcpSetEnabled: (enabled: boolean) => typedError<boolean, AppErrorSchema>(__TAURI_INVOKE("mcp_set_enabled", { enabled })),
 	/**
 	 *  Tauri command: disconnect every in-flight MCP connection.
-	 * 
+	 *
 	 *  Returns the connection count observed immediately after firing the
 	 *  signal. Reporting a non-zero value is not an error — the signal wakes
 	 *  each connection's `select!` branch asynchronously, so `get_mcp_status`
@@ -280,17 +280,17 @@ export type AttachmentRow = {
 
 /**
  *  Tagged union of filter predicates for backlink queries.
- * 
+ *
  *  Filters are combined with AND semantics at the top level.
  *  Use `And`/`Or`/`Not` variants for compound boolean logic.
  */
-export type BacklinkFilter = { type: "PropertyText"; key: string; op: CompareOp; value: string } | { type: "PropertyNum"; key: string; op: CompareOp; value: number } | { type: "PropertyDate"; key: string; op: CompareOp; value: string } | { type: "PropertyIsSet"; key: string } | { type: "PropertyIsEmpty"; key: string } | 
+export type BacklinkFilter = { type: "PropertyText"; key: string; op: CompareOp; value: string } | { type: "PropertyNum"; key: string; op: CompareOp; value: number } | { type: "PropertyDate"; key: string; op: CompareOp; value: string } | { type: "PropertyIsSet"; key: string } | { type: "PropertyIsEmpty"; key: string } |
 // Filter blocks by todo_state column (direct, no block_properties join).
-{ type: "TodoState"; state: string } | 
+{ type: "TodoState"; state: string } |
 // Filter blocks by priority column (direct, no block_properties join).
-{ type: "Priority"; level: string } | 
+{ type: "Priority"; level: string } |
 // Filter blocks by due_date column with comparison operator.
-{ type: "DueDate"; op: CompareOp; value: string } | { type: "HasTag"; tag_id: string } | { type: "HasTagPrefix"; prefix: string } | { type: "Contains"; query: string } | { type: "CreatedInRange"; after: string | null; before: string | null } | { type: "BlockType"; block_type: string } | 
+{ type: "DueDate"; op: CompareOp; value: string } | { type: "HasTag"; tag_id: string } | { type: "HasTagPrefix"; prefix: string } | { type: "Contains"; query: string } | { type: "CreatedInRange"; after: string | null; before: string | null } | { type: "BlockType"; block_type: string } |
 // Filter by source page — include/exclude blocks based on their root page ancestor.
 { type: "SourcePage"; included: string[]; excluded: string[] } | { type: "And"; filters: BacklinkFilter[] } | { type: "Or"; filters: BacklinkFilter[] } | { type: "Not"; filter: BacklinkFilter };
 
@@ -466,7 +466,7 @@ export type LogFileEntry = {
 
 /**
  *  Snapshot of the MCP RO server state surfaced to the Settings tab.
- * 
+ *
  *  `socket_path` is a display string on every platform (the Unix socket
  *  filesystem path on Linux / macOS, the named-pipe path on Windows).
  *  `active_connections` reports the instantaneous count from
@@ -499,7 +499,7 @@ export type PageLink = {
 
 /**
  *  Paginated response.
- * 
+ *
  *  `total_count` is intentionally omitted — see module docs.
  */
 export type PageResponse<T> = {
@@ -539,7 +539,7 @@ export type PeerRef = {
 
 /**
  *  A projected future occurrence of a repeating block.
- * 
+ *
  *  Not stored in the database — computed on-the-fly from repeat rules.
  */
 export type ProjectedAgendaEntry = {
@@ -703,4 +703,3 @@ async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; dat
         return { status: "error", error: e as any };
     }
 }
-

@@ -229,13 +229,16 @@ pub async fn disconnect_gcal_inner<C: GcalClient + ?Sized>(
 /// to `[MIN_WINDOW_DAYS, MAX_WINDOW_DAYS]` before persistence so the
 /// connector does not have to re-validate.
 pub async fn set_gcal_window_days_inner(pool: &SqlitePool, n: i32) -> Result<i32, AppError> {
-    let clamped = i32::try_from(
-        i64::from(n).clamp(
-            crate::gcal_push::connector::MIN_WINDOW_DAYS,
-            crate::gcal_push::connector::MAX_WINDOW_DAYS,
-        ),
-    )
-    .unwrap_or(crate::gcal_push::connector::DEFAULT_WINDOW_DAYS as i32);
+    let clamped = i32::try_from(i64::from(n).clamp(
+        crate::gcal_push::connector::MIN_WINDOW_DAYS,
+        crate::gcal_push::connector::MAX_WINDOW_DAYS,
+    ))
+    .unwrap_or_else(|_| {
+        // Unreachable: the clamp above guarantees the value is in [7, 90],
+        // which always fits in i32. Fallback to the default for defense
+        // in depth.
+        i32::try_from(crate::gcal_push::connector::DEFAULT_WINDOW_DAYS).unwrap_or(30)
+    });
     models::set_setting(pool, GcalSettingKey::WindowDays, &clamped.to_string()).await?;
     Ok(clamped)
 }
@@ -349,7 +352,9 @@ mod tests {
     use super::*;
     use crate::db::init_pool;
     use crate::gcal_push::connector::testing::{dummy_token, MockGcalClient};
-    use crate::gcal_push::keyring_store::{MockTokenStore, NoopEventEmitter, RecordingEventEmitter};
+    use crate::gcal_push::keyring_store::{
+        MockTokenStore, NoopEventEmitter, RecordingEventEmitter,
+    };
     use std::path::PathBuf;
     use tempfile::TempDir;
 
@@ -381,7 +386,9 @@ mod tests {
     async fn get_status_no_tokens_reports_disconnected() {
         let (pool, _dir) = test_pool().await;
         let store = store_with(None).await;
-        let status = get_gcal_status_inner(&pool, &store, THIS_DEVICE).await.unwrap();
+        let status = get_gcal_status_inner(&pool, &store, THIS_DEVICE)
+            .await
+            .unwrap();
         assert!(!status.connected, "no tokens → not connected");
         assert!(!status.enabled, "no tokens → not enabled");
         assert_eq!(status.account_email, None);
@@ -399,12 +406,11 @@ mod tests {
         models::set_setting(&pool, GcalSettingKey::OauthAccountEmail, "me@example.com")
             .await
             .unwrap();
-        let status = get_gcal_status_inner(&pool, &store, THIS_DEVICE).await.unwrap();
+        let status = get_gcal_status_inner(&pool, &store, THIS_DEVICE)
+            .await
+            .unwrap();
         assert!(status.connected);
-        assert_eq!(
-            status.account_email.as_deref(),
-            Some("me@example.com")
-        );
+        assert_eq!(status.account_email.as_deref(), Some("me@example.com"));
         assert_eq!(status.calendar_id, None);
         assert!(!status.push_lease.held_by_this_device);
     }
@@ -423,13 +429,12 @@ mod tests {
         let now = chrono::Utc::now();
         assert!(lease::claim_lease(&pool, THIS_DEVICE, now).await.unwrap());
 
-        let status = get_gcal_status_inner(&pool, &store, THIS_DEVICE).await.unwrap();
+        let status = get_gcal_status_inner(&pool, &store, THIS_DEVICE)
+            .await
+            .unwrap();
         assert_eq!(status.calendar_id.as_deref(), Some("cal_XYZ"));
         assert!(status.push_lease.held_by_this_device);
-        assert_eq!(
-            status.push_lease.device_id.as_deref(),
-            Some(THIS_DEVICE)
-        );
+        assert_eq!(status.push_lease.device_id.as_deref(), Some(THIS_DEVICE));
         assert!(
             status.push_lease.expires_at.is_some(),
             "lease expiry must be populated"
@@ -443,12 +448,11 @@ mod tests {
         let now = chrono::Utc::now();
         assert!(lease::claim_lease(&pool, OTHER_DEVICE, now).await.unwrap());
 
-        let status = get_gcal_status_inner(&pool, &store, THIS_DEVICE).await.unwrap();
+        let status = get_gcal_status_inner(&pool, &store, THIS_DEVICE)
+            .await
+            .unwrap();
         assert!(!status.push_lease.held_by_this_device);
-        assert_eq!(
-            status.push_lease.device_id.as_deref(),
-            Some(OTHER_DEVICE),
-        );
+        assert_eq!(status.push_lease.device_id.as_deref(), Some(OTHER_DEVICE),);
     }
 
     // ── set_gcal_window_days_inner ─────────────────────────────────
@@ -515,7 +519,9 @@ mod tests {
     #[tokio::test]
     async fn set_privacy_mode_rejects_invalid() {
         let (pool, _dir) = test_pool().await;
-        let err = set_gcal_privacy_mode_inner(&pool, "snoop").await.unwrap_err();
+        let err = set_gcal_privacy_mode_inner(&pool, "snoop")
+            .await
+            .unwrap_err();
         assert!(
             matches!(err, AppError::Validation(ref msg) if msg.contains("gcal.privacy_mode.invalid")),
             "invalid privacy mode must surface Validation(gcal.privacy_mode.invalid), got {err:?}",
@@ -572,10 +578,12 @@ mod tests {
         let deletes = state
             .calls
             .iter()
-            .filter(|c| matches!(
-                c,
-                crate::gcal_push::connector::testing::MockCall::DeleteCalendar { .. }
-            ))
+            .filter(|c| {
+                matches!(
+                    c,
+                    crate::gcal_push::connector::testing::MockCall::DeleteCalendar { .. }
+                )
+            })
             .count();
         assert_eq!(deletes, 0, "delete_calendar must not be called");
         drop(state);
@@ -618,10 +626,12 @@ mod tests {
         let deletes = state
             .calls
             .iter()
-            .filter(|c| matches!(
-                c,
-                crate::gcal_push::connector::testing::MockCall::DeleteCalendar { .. }
-            ))
+            .filter(|c| {
+                matches!(
+                    c,
+                    crate::gcal_push::connector::testing::MockCall::DeleteCalendar { .. }
+                )
+            })
             .count();
         assert_eq!(
             deletes, 1,
