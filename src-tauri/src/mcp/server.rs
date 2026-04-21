@@ -257,6 +257,23 @@ fn handle_tools_list<R: ToolRegistry>(registry: &R) -> Result<Value, (i64, Strin
 /// - [`AppError::Validation`] / [`AppError::InvalidOperation`] →
 ///   [`JSONRPC_INVALID_PARAMS`] (−32602).
 /// - Everything else → [`JSONRPC_INTERNAL_ERROR`] (−32603).
+///
+/// **FEAT-4j note.** All `AppError` variants map onto JSON-RPC error
+/// codes at the envelope level — **not** onto the `CallToolResult
+/// { isError: true }` shape. The rationale:
+///
+/// - `NotFound` / `Validation` / `InvalidOperation` are "the tool never
+///   ran" semantics: the arg parse failed, the referenced block did
+///   not exist, etc. JSON-RPC errors model this well.
+/// - `Database` / `Io` / `Channel` / etc. are infrastructure failures
+///   above the tool layer. `-32603 internal` keeps FEAT-4c's wire
+///   contract stable and preserves the existing error-code routing
+///   that clients already rely on.
+/// - The v1 read-only tools never produce a "tool ran and reported a
+///   domain-level failure" (they're all reads). FEAT-4h RW tools will
+///   use [`wrap_tool_result_error`] directly for that case — this
+///   function keeps the JSON-RPC-error path for the "tool never ran"
+///   cases.
 fn app_error_to_jsonrpc(err: &AppError) -> (i64, String) {
     let code = match err {
         AppError::NotFound(_) => JSONRPC_RESOURCE_NOT_FOUND,
@@ -264,6 +281,88 @@ fn app_error_to_jsonrpc(err: &AppError) -> (i64, String) {
         _ => JSONRPC_INTERNAL_ERROR,
     };
     (code, err.to_string())
+}
+
+/// Wrap a successful tool-call result in the MCP `CallToolResult`
+/// envelope expected by real MCP clients (Claude Desktop, Cursor, the
+/// official Python `mcp` SDK). See FEAT-4j.
+///
+/// Shape:
+/// ```json
+/// {
+///   "content": [ { "type": "text", "text": "<JSON-stringified value>" } ],
+///   "isError": false,
+///   "structuredContent": <original Value>
+/// }
+/// ```
+///
+/// Rationale:
+/// - `content` is the MCP-2024-11-05 minimum — every client can parse
+///   at least one text block.
+/// - `structuredContent` lets MCP-2025-06-18+ clients skip the
+///   text-parse path entirely and read the typed payload directly.
+/// - `isError: false` is explicit so a client that checks the flag
+///   unconditionally does not misread a missing field.
+///
+/// Pure function — unit-tested on its own so the envelope shape is
+/// locked in independently of the dispatch path.
+fn wrap_tool_result_success(value: Value) -> Value {
+    // `to_string` on any valid `serde_json::Value` cannot fail — there
+    // is no I/O and every `Value` variant is representable. Fall back
+    // to the `Debug` rendering if it somehow does (should never happen
+    // in practice).
+    let text = serde_json::to_string(&value).unwrap_or_else(|_| format!("{value:?}"));
+    // Build the envelope via an explicit `Map` so the caller's `value`
+    // is moved into `structuredContent` rather than cloned by the
+    // `json!` macro expansion. Shape is exactly equivalent to:
+    //
+    //     json!({
+    //         "content": [ { "type": "text", "text": text } ],
+    //         "isError": false,
+    //         "structuredContent": value,
+    //     })
+    let mut envelope = serde_json::Map::with_capacity(3);
+    envelope.insert(
+        "content".to_string(),
+        json!([{ "type": "text", "text": text }]),
+    );
+    envelope.insert("isError".to_string(), Value::Bool(false));
+    envelope.insert("structuredContent".to_string(), value);
+    Value::Object(envelope)
+}
+
+/// Wrap a tool-execution failure in the MCP `CallToolResult` envelope
+/// with `isError: true`. See FEAT-4j.
+///
+/// Shape:
+/// ```json
+/// { "content": [ { "type": "text", "text": "<message>" } ], "isError": true }
+/// ```
+///
+/// Note: this helper is **not** wired into the v1 dispatch path — all
+/// current `AppError` variants map onto JSON-RPC error codes via
+/// [`app_error_to_jsonrpc`], matching FEAT-4c's wire contract. The
+/// MCP spec distinguishes "tool never ran" (JSON-RPC error, including
+/// `-32001` resource-not-found and `-32602` invalid params) from
+/// "tool ran and reported a domain-level failure" (`isError: true`
+/// inside a 200-style response). The v1 read-only tools only hit the
+/// former; FEAT-4h RW tools will use this helper for the latter.
+///
+/// Kept as a module-private, unit-tested helper so the envelope shape
+/// is locked in before FEAT-4h needs it.
+//
+// `#[allow(dead_code)]` is justified: the helper's only callers today
+// live in `#[cfg(test)]` code, but it is part of the FEAT-4j wire
+// contract and must keep compiling into the release binary so FEAT-4h
+// can wire it in without reintroducing the helper there.
+#[allow(dead_code)]
+fn wrap_tool_result_error(message: &str) -> Value {
+    json!({
+        "content": [
+            { "type": "text", "text": message }
+        ],
+        "isError": true,
+    })
 }
 
 /// Dispatch a `tools/call` request through the registry. Constructs a
@@ -324,7 +423,7 @@ async fn handle_tools_call<R: ToolRegistry>(
         .await;
 
     match result {
-        Ok(value) => Ok(value),
+        Ok(value) => Ok(wrap_tool_result_success(value)),
         Err(err) => {
             tracing::debug!(
                 target: "mcp",
@@ -1095,7 +1194,28 @@ mod tests {
         .await;
         let response = read_line(&mut reader).await;
         assert_eq!(response["id"], 2);
-        assert_eq!(response["result"], json!({"ok": true}));
+        // FEAT-4j: `tools/call` success responses are wrapped in the MCP
+        // `CallToolResult` envelope. The canned `{"ok": true}` the
+        // registry returned must be reachable via `.structuredContent`
+        // and also serialised into the first text-content block.
+        assert_eq!(
+            response["result"]["structuredContent"],
+            json!({"ok": true}),
+            "raw registry value must appear under structuredContent",
+        );
+        assert_eq!(
+            response["result"]["isError"], false,
+            "successful tools/call sets isError=false explicitly",
+        );
+        let text = response["result"]["content"][0]["text"]
+            .as_str()
+            .expect("content[0].text present");
+        let parsed: Value = serde_json::from_str(text).expect("text is valid JSON");
+        assert_eq!(
+            parsed,
+            json!({"ok": true}),
+            "content[0].text must round-trip back to the raw value",
+        );
 
         let calls = registry.calls();
         assert_eq!(calls.len(), 1, "exactly one call_tool invocation");
@@ -1293,6 +1413,259 @@ mod tests {
             3,
             "each tools/call must receive a unique request_id; got {:?}",
             calls.iter().map(|c| c.3.clone()).collect::<Vec<_>>(),
+        );
+
+        drop(w);
+        drop(reader);
+        let _ = task.await;
+    }
+
+    // -----------------------------------------------------------------
+    // FEAT-4j — CallToolResult envelope wrap for tools/call
+    //
+    // Real MCP clients (Claude Desktop, Cursor, official Python `mcp`
+    // SDK) require `tools/call` success responses to be wrapped in
+    // `CallToolResult { content, isError, structuredContent? }`. Tool-
+    // execution errors use `isError: true` inside the same envelope.
+    // Protocol-level failures (method-not-found, invalid params,
+    // resource-not-found from FEAT-4c) stay as JSON-RPC error objects.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn wrap_tool_result_success_shape() {
+        // Unit-test the helper directly so the envelope is locked in
+        // independently of the dispatch path.
+        let raw = json!({ "items": [1, 2, 3], "has_more": false });
+        let wrapped = wrap_tool_result_success(raw.clone());
+
+        let content = wrapped["content"].as_array().expect("content array");
+        assert_eq!(content.len(), 1, "one content block for the text fallback");
+        assert_eq!(content[0]["type"], "text", "content[0] is a text block");
+        let text = content[0]["text"].as_str().expect("text field");
+        let parsed: Value = serde_json::from_str(text).expect("text parses as JSON");
+        assert_eq!(
+            parsed, raw,
+            "content[0].text must round-trip back to the raw value",
+        );
+        assert_eq!(
+            wrapped["isError"], false,
+            "successful calls set isError=false"
+        );
+        assert_eq!(
+            wrapped["structuredContent"], raw,
+            "structuredContent carries the raw value verbatim",
+        );
+    }
+
+    #[test]
+    fn wrap_tool_result_error_shape_has_is_error_true() {
+        // Unit-test the FEAT-4h seam: tool-execution-failure envelope.
+        // Not currently reachable via the v1 dispatch path (all errors
+        // surface as JSON-RPC errors), but the shape must be locked in.
+        let wrapped = wrap_tool_result_error("disk full while writing block XYZ");
+
+        let content = wrapped["content"].as_array().expect("content array");
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "disk full while writing block XYZ");
+        assert_eq!(wrapped["isError"], true, "error envelope sets isError=true");
+        assert!(
+            wrapped.get("structuredContent").is_none(),
+            "error envelope omits structuredContent (no typed payload to surface)",
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tools_call_success_returns_calltoolresult_envelope() {
+        // End-to-end: feed a canned success value through the dispatch
+        // and assert the MCP envelope on the wire.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("envelope-success.sock");
+        let registry = Arc::new(RecordingRegistry::new(Vec::new()));
+        let canned = json!({
+            "items": [{"id": "01ABC"}, {"id": "01DEF"}],
+            "has_more": false,
+            "total_count": 2,
+        });
+        registry.set_response(Ok(canned.clone()));
+        let (client, task) = connect_pair_with_registry(&path, registry.clone()).await;
+        let (r, mut w) = tokio::io::split(client);
+        let mut reader = BufReader::new(r);
+
+        send_line(
+            &mut w,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 50,
+                "method": "tools/call",
+                "params": {"name": "list_pages", "arguments": {}},
+            }),
+        )
+        .await;
+        let response = read_line(&mut reader).await;
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], 50);
+        assert!(
+            response.get("error").is_none(),
+            "successful tools/call must not carry a JSON-RPC error object",
+        );
+        let result = &response["result"];
+
+        // content[0] is a text block holding the JSON-stringified value.
+        let content = result["content"]
+            .as_array()
+            .expect("result.content is an array");
+        assert!(
+            !content.is_empty(),
+            "CallToolResult.content must have at least one block",
+        );
+        assert_eq!(content[0]["type"], "text");
+        assert!(
+            content[0]["text"].is_string(),
+            "content[0].text is a string",
+        );
+
+        // isError is explicitly false.
+        assert_eq!(result["isError"], false, "success sets isError=false");
+
+        // structuredContent equals the registry's raw value verbatim.
+        assert_eq!(
+            result["structuredContent"], canned,
+            "structuredContent must equal the raw tool value",
+        );
+
+        drop(w);
+        drop(reader);
+        let _ = task.await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tools_call_success_text_content_is_parseable_json() {
+        // FEAT-4j: content[0].text must parse back to JSON equal to
+        // structuredContent. This is the property that lets MCP-2024-11-05
+        // clients that never look at structuredContent still reach the
+        // typed payload.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("envelope-text-json.sock");
+        let registry = Arc::new(RecordingRegistry::new(Vec::new()));
+        let canned = json!({
+            "nested": { "a": 1, "b": ["x", "y"] },
+            "unicode": "héllo — 😀",
+        });
+        registry.set_response(Ok(canned.clone()));
+        let (client, task) = connect_pair_with_registry(&path, registry.clone()).await;
+        let (r, mut w) = tokio::io::split(client);
+        let mut reader = BufReader::new(r);
+
+        send_line(
+            &mut w,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 51,
+                "method": "tools/call",
+                "params": {"name": "anything", "arguments": {}},
+            }),
+        )
+        .await;
+        let response = read_line(&mut reader).await;
+
+        let text = response["result"]["content"][0]["text"]
+            .as_str()
+            .expect("content[0].text is a string");
+        let parsed: Value = serde_json::from_str(text).expect("text parses as JSON");
+        assert_eq!(
+            parsed, response["result"]["structuredContent"],
+            "content[0].text must parse to the same JSON as structuredContent",
+        );
+        assert_eq!(
+            parsed, canned,
+            "round-tripped text matches the original tool value (including unicode)",
+        );
+
+        drop(w);
+        drop(reader);
+        let _ = task.await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tools_call_not_found_still_returns_minus_32001_error() {
+        // FEAT-4j regression: `AppError::NotFound` must still surface as
+        // a JSON-RPC `-32001` error object (not inside a `CallToolResult
+        // { isError: true }` envelope). This preserves FEAT-4c's wire
+        // contract so clients can distinguish "the tool never ran" from
+        // "the tool ran and reported an error".
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("envelope-nf.sock");
+        let registry = Arc::new(RecordingRegistry::new(Vec::new()));
+        registry.set_response(Err(AppError::NotFound("block XYZ".into())));
+        let (client, task) = connect_pair_with_registry(&path, registry.clone()).await;
+        let (r, mut w) = tokio::io::split(client);
+        let mut reader = BufReader::new(r);
+
+        send_line(
+            &mut w,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 52,
+                "method": "tools/call",
+                "params": {"name": "get_block", "arguments": {"block_id": "XYZ"}},
+            }),
+        )
+        .await;
+        let response = read_line(&mut reader).await;
+
+        assert_eq!(
+            response["error"]["code"], JSONRPC_RESOURCE_NOT_FOUND,
+            "AppError::NotFound still maps to -32001, not wrapped in CallToolResult",
+        );
+        assert!(
+            response.get("result").is_none(),
+            "error responses must not carry a `result` field (FEAT-4j keeps the \
+             FEAT-4c split intact for protocol-level failures)",
+        );
+
+        drop(w);
+        drop(reader);
+        let _ = task.await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tools_call_validation_error_still_returns_minus_32602_error() {
+        // FEAT-4j regression: `AppError::Validation` must still surface
+        // as a JSON-RPC `-32602` error object (not inside a
+        // `CallToolResult { isError: true }` envelope).
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("envelope-val.sock");
+        let registry = Arc::new(RecordingRegistry::new(Vec::new()));
+        registry.set_response(Err(AppError::Validation("bad arg".into())));
+        let (client, task) = connect_pair_with_registry(&path, registry.clone()).await;
+        let (r, mut w) = tokio::io::split(client);
+        let mut reader = BufReader::new(r);
+
+        send_line(
+            &mut w,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 53,
+                "method": "tools/call",
+                "params": {"name": "search", "arguments": {}},
+            }),
+        )
+        .await;
+        let response = read_line(&mut reader).await;
+
+        assert_eq!(
+            response["error"]["code"], JSONRPC_INVALID_PARAMS,
+            "AppError::Validation still maps to -32602, not wrapped in CallToolResult",
+        );
+        assert!(
+            response.get("result").is_none(),
+            "error responses must not carry a `result` field",
         );
 
         drop(w);
