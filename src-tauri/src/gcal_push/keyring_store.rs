@@ -100,8 +100,9 @@ impl TokenBlob {
 
 /// Runtime events emitted by the GCal push subsystem to the Tauri
 /// frontend.  FEAT-5f (Settings tab) subscribes to surface them as UI
-/// state.  Kept deliberately small — only the events FEAT-5b actually
-/// raises are listed here; later sub-items can extend the variant set.
+/// state.  Kept deliberately small — only the events FEAT-5b / 5e
+/// actually raise are listed here; later sub-items can extend the
+/// variant set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GcalEvent {
     /// The OS keyring is unreachable — GCal push cannot persist or
@@ -113,6 +114,17 @@ pub enum GcalEvent {
     /// error).  Frontend should clear the connected-account UI and
     /// prompt the user to re-authorize.
     ReauthRequired,
+    /// The dedicated "Agaric Agenda" calendar was externally deleted
+    /// by the user; the connector has cleared every
+    /// `gcal_agenda_event_map` row and reset `calendar_id` so the
+    /// next cycle re-creates the calendar (FEAT-5e recovery path).
+    /// Frontend shows an informational toast.
+    CalendarRecreated,
+    /// The user disconnected the GCal push (or the connector
+    /// auto-disabled it after a hard failure that cannot be retried).
+    /// Frontend refreshes the Settings tab to reflect the new state
+    /// (FEAT-5e disconnect + 403 / Forbidden flow).
+    PushDisabled,
 }
 
 impl GcalEvent {
@@ -123,6 +135,8 @@ impl GcalEvent {
         match self {
             GcalEvent::KeyringUnavailable => "gcal:keyring_unavailable",
             GcalEvent::ReauthRequired => "gcal:reauth_required",
+            GcalEvent::CalendarRecreated => "gcal:calendar_recreated",
+            GcalEvent::PushDisabled => "gcal:push_disabled",
         }
     }
 }
@@ -154,6 +168,42 @@ pub struct NoopEventEmitter;
 
 impl GcalEventEmitter for NoopEventEmitter {
     fn emit(&self, _event: GcalEvent) {}
+}
+
+/// Production emitter — forwards every [`GcalEvent`] onto the Tauri
+/// event bus on its namespaced event name (e.g. `gcal:reauth_required`).
+/// Emission errors are logged at `warn` but never propagated — the
+/// connector must not stall because a listener is gone.
+pub struct TauriGcalEventEmitter<R: tauri::Runtime> {
+    handle: tauri::AppHandle<R>,
+}
+
+impl<R: tauri::Runtime> TauriGcalEventEmitter<R> {
+    /// Wrap a cloned `AppHandle` so the connector can emit without
+    /// taking a generic on its public API.
+    pub fn new(handle: tauri::AppHandle<R>) -> Self {
+        Self { handle }
+    }
+}
+
+impl<R: tauri::Runtime> std::fmt::Debug for TauriGcalEventEmitter<R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TauriGcalEventEmitter").finish()
+    }
+}
+
+impl<R: tauri::Runtime> GcalEventEmitter for TauriGcalEventEmitter<R> {
+    fn emit(&self, event: GcalEvent) {
+        use tauri::Emitter;
+        if let Err(e) = self.handle.emit(event.event_name(), ()) {
+            tracing::warn!(
+                target: "gcal",
+                event = event.event_name(),
+                error = %e,
+                "failed to emit gcal event on Tauri bus",
+            );
+        }
+    }
 }
 
 /// Test-only recorder that captures every emitted event.  Kept behind
@@ -624,6 +674,14 @@ mod tests {
         assert_eq!(
             GcalEvent::ReauthRequired.event_name(),
             "gcal:reauth_required"
+        );
+        assert_eq!(
+            GcalEvent::CalendarRecreated.event_name(),
+            "gcal:calendar_recreated"
+        );
+        assert_eq!(
+            GcalEvent::PushDisabled.event_name(),
+            "gcal:push_disabled"
         );
     }
 

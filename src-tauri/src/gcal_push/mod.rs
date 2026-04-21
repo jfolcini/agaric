@@ -7,7 +7,9 @@
 //! lands.
 
 pub mod api;
+pub mod connector;
 pub mod digest;
 pub mod keyring_store;
+pub mod lease;
 pub mod models;
 pub mod oauth;

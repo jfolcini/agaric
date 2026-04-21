@@ -194,7 +194,7 @@ export const commands = {
 	logFrontend: (level: string, module: string, message: string, stack: string | null, context: string | null, data: string | null) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("log_frontend", { level, module, message, stack, context, data })),
 	/**
 	 *  Return the path to the logs directory.
-	 *
+	 * 
 	 *  Uses [`crate::log_dir_for_app_data`] so the path returned to the
 	 *  frontend ("Open logs folder") is guaranteed to match the directory
 	 *  the tracing-appender writes to — on every platform (BUG-34).
@@ -204,7 +204,7 @@ export const commands = {
 	getCompactionStatus: () => typedError<CompactionStatus, AppErrorSchema>(__TAURI_INVOKE("get_compaction_status")),
 	/**
 	 *  Tauri command: trigger op log compaction.
-	 *
+	 * 
 	 *  The frontend is responsible for confirming with the user before calling
 	 *  this command. `retention_days` controls how far back ops are retained.
 	 */
@@ -242,13 +242,18 @@ export const commands = {
 	mcpSetEnabled: (enabled: boolean) => typedError<boolean, AppErrorSchema>(__TAURI_INVOKE("mcp_set_enabled", { enabled })),
 	/**
 	 *  Tauri command: disconnect every in-flight MCP connection.
-	 *
+	 * 
 	 *  Returns the connection count observed immediately after firing the
 	 *  signal. Reporting a non-zero value is not an error — the signal wakes
 	 *  each connection's `select!` branch asynchronously, so `get_mcp_status`
 	 *  may briefly still observe live connections while the tasks unwind.
 	 */
 	mcpDisconnectAll: () => typedError<null, AppErrorSchema>(__TAURI_INVOKE("mcp_disconnect_all")),
+	getGcalStatus: () => typedError<GcalStatus, AppErrorSchema>(__TAURI_INVOKE("get_gcal_status")),
+	forceGcalResync: () => typedError<null, AppErrorSchema>(__TAURI_INVOKE("force_gcal_resync")),
+	disconnectGcal: (deleteCalendar: boolean) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("disconnect_gcal", { deleteCalendar })),
+	setGcalWindowDays: (n: number) => typedError<number, AppErrorSchema>(__TAURI_INVOKE("set_gcal_window_days", { n })),
+	setGcalPrivacyMode: (mode: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("set_gcal_privacy_mode", { mode })),
 };
 
 /* Types */
@@ -275,17 +280,17 @@ export type AttachmentRow = {
 
 /**
  *  Tagged union of filter predicates for backlink queries.
- *
+ * 
  *  Filters are combined with AND semantics at the top level.
  *  Use `And`/`Or`/`Not` variants for compound boolean logic.
  */
-export type BacklinkFilter = { type: "PropertyText"; key: string; op: CompareOp; value: string } | { type: "PropertyNum"; key: string; op: CompareOp; value: number } | { type: "PropertyDate"; key: string; op: CompareOp; value: string } | { type: "PropertyIsSet"; key: string } | { type: "PropertyIsEmpty"; key: string } |
+export type BacklinkFilter = { type: "PropertyText"; key: string; op: CompareOp; value: string } | { type: "PropertyNum"; key: string; op: CompareOp; value: number } | { type: "PropertyDate"; key: string; op: CompareOp; value: string } | { type: "PropertyIsSet"; key: string } | { type: "PropertyIsEmpty"; key: string } | 
 // Filter blocks by todo_state column (direct, no block_properties join).
-{ type: "TodoState"; state: string } |
+{ type: "TodoState"; state: string } | 
 // Filter blocks by priority column (direct, no block_properties join).
-{ type: "Priority"; level: string } |
+{ type: "Priority"; level: string } | 
 // Filter blocks by due_date column with comparison operator.
-{ type: "DueDate"; op: CompareOp; value: string } | { type: "HasTag"; tag_id: string } | { type: "HasTagPrefix"; prefix: string } | { type: "Contains"; query: string } | { type: "CreatedInRange"; after: string | null; before: string | null } | { type: "BlockType"; block_type: string } |
+{ type: "DueDate"; op: CompareOp; value: string } | { type: "HasTag"; tag_id: string } | { type: "HasTagPrefix"; prefix: string } | { type: "Contains"; query: string } | { type: "CreatedInRange"; after: string | null; before: string | null } | { type: "BlockType"; block_type: string } | 
 // Filter by source page — include/exclude blocks based on their root page ancestor.
 { type: "SourcePage"; included: string[]; excluded: string[] } | { type: "And"; filters: BacklinkFilter[] } | { type: "Or"; filters: BacklinkFilter[] } | { type: "Not"; filter: BacklinkFilter };
 
@@ -384,6 +389,24 @@ export type Draft = {
 	updated_at: string,
 };
 
+/**
+ *  Full status snapshot for the Settings tab.  `connected` reflects
+ *  the presence of an OAuth token in the keychain; `calendar_id` is
+ *  only populated after the first push-cycle has created the
+ *  dedicated calendar.
+ */
+export type GcalStatus = {
+	enabled: boolean,
+	connected: boolean,
+	account_email: string | null,
+	calendar_id: string | null,
+	window_days: number,
+	privacy_mode: string,
+	last_push_at: string | null,
+	last_error: string | null,
+	push_lease: LeaseHolder,
+};
+
 // Response for grouped backlink queries — backlinks organized by source page.
 export type GroupedBacklinkResponse = {
 	groups: BacklinkGroup[],
@@ -416,6 +439,16 @@ export type ImportResult = {
 	warnings: string[],
 };
 
+/**
+ *  Holder metadata for the push-lease, surfaced to the Settings tab so
+ *  users can see which device is currently pushing.
+ */
+export type LeaseHolder = {
+	held_by_this_device: boolean,
+	device_id: string | null,
+	expires_at: string | null,
+};
+
 export type LinkMetadata = {
 	url: string,
 	title: string | null,
@@ -433,7 +466,7 @@ export type LogFileEntry = {
 
 /**
  *  Snapshot of the MCP RO server state surfaced to the Settings tab.
- *
+ * 
  *  `socket_path` is a display string on every platform (the Unix socket
  *  filesystem path on Linux / macOS, the named-pipe path on Windows).
  *  `active_connections` reports the instantaneous count from
@@ -466,7 +499,7 @@ export type PageLink = {
 
 /**
  *  Paginated response.
- *
+ * 
  *  `total_count` is intentionally omitted — see module docs.
  */
 export type PageResponse<T> = {
@@ -506,7 +539,7 @@ export type PeerRef = {
 
 /**
  *  A projected future occurrence of a repeating block.
- *
+ * 
  *  Not stored in the database — computed on-the-fly from repeat rules.
  */
 export type ProjectedAgendaEntry = {
@@ -670,3 +703,4 @@ async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; dat
         return { status: "error", error: e as any };
     }
 }
+

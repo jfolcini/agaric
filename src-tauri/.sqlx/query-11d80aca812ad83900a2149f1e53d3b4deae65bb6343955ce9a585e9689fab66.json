@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM gcal_agenda_event_map",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "11d80aca812ad83900a2149f1e53d3b4deae65bb6343955ce9a585e9689fab66"
+}

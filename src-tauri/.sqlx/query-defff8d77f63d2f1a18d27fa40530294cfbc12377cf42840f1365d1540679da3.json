@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT MAX(last_pushed_at) AS ts FROM gcal_agenda_event_map",
+  "describe": {
+    "columns": [
+      {
+        "name": "ts",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "defff8d77f63d2f1a18d27fa40530294cfbc12377cf42840f1365d1540679da3"
+}

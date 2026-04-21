@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id AS id, b.content AS content FROM blocks b JOIN json_each(?) j ON j.value = b.id WHERE b.is_conflict = 0",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "content",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "9b61952ce7dd41712fe0a4d38ea7c85febaf0888c7eb6b51112adf04d477d47d"
+}

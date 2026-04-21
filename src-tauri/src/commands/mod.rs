@@ -32,6 +32,7 @@ mod blocks;
 mod bug_report;
 mod compaction;
 mod drafts;
+mod gcal;
 mod history;
 mod journal;
 mod link_metadata;
@@ -70,6 +71,12 @@ pub use compaction::{
 };
 pub use drafts::{
     delete_draft, flush_draft, flush_draft_inner, list_drafts, list_drafts_inner, save_draft,
+};
+pub use gcal::{
+    disconnect_gcal, disconnect_gcal_inner, force_gcal_resync, force_gcal_resync_inner,
+    get_gcal_status, get_gcal_status_inner, set_gcal_privacy_mode, set_gcal_privacy_mode_inner,
+    set_gcal_window_days, set_gcal_window_days_inner, GcalClientState, GcalEventEmitterState,
+    GcalStatus, GcalTokenStoreState, LeaseHolder,
 };
 pub use history::{
     apply_reverse_in_tx, compute_edit_diff, compute_edit_diff_inner, list_page_history,
@@ -152,6 +159,12 @@ pub use drafts::{
     __specta__fn__save_draft,
 };
 #[doc(hidden)]
+pub use gcal::{
+    __specta__fn__disconnect_gcal, __specta__fn__force_gcal_resync,
+    __specta__fn__get_gcal_status, __specta__fn__set_gcal_privacy_mode,
+    __specta__fn__set_gcal_window_days,
+};
+#[doc(hidden)]
 pub use history::{
     __specta__fn__compute_edit_diff, __specta__fn__list_page_history, __specta__fn__redo_page_op,
     __specta__fn__restore_page_to_op, __specta__fn__revert_ops, __specta__fn__undo_page_op,
@@ -221,6 +234,11 @@ pub use bug_report::{__cmd__collect_bug_report_metadata, __cmd__read_logs_for_re
 pub use compaction::{__cmd__compact_op_log_cmd, __cmd__get_compaction_status};
 #[doc(hidden)]
 pub use drafts::{__cmd__delete_draft, __cmd__flush_draft, __cmd__list_drafts, __cmd__save_draft};
+#[doc(hidden)]
+pub use gcal::{
+    __cmd__disconnect_gcal, __cmd__force_gcal_resync, __cmd__get_gcal_status,
+    __cmd__set_gcal_privacy_mode, __cmd__set_gcal_window_days,
+};
 #[doc(hidden)]
 pub use history::{
     __cmd__compute_edit_diff, __cmd__list_page_history, __cmd__redo_page_op,

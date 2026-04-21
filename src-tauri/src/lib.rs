@@ -285,6 +285,12 @@ pub fn run() {
         commands::get_mcp_socket_path,
         commands::mcp_set_enabled,
         commands::mcp_disconnect_all,
+        // Google Calendar push (FEAT-5e) — Settings "Google Calendar" tab
+        commands::get_gcal_status,
+        commands::force_gcal_resync,
+        commands::disconnect_gcal,
+        commands::set_gcal_window_days,
+        commands::set_gcal_privacy_mode,
     ]);
 
     // `mut` is only consumed by the `#[cfg(not(mobile))]` updater plugin
@@ -509,6 +515,11 @@ pub fn run() {
             let materializer_for_mcp = materializer.clone();
             let device_id_for_mcp = device_id.clone();
 
+            // FEAT-5e — clone the write pool + device_id for the GCal
+            // connector task (see spawn block near the end of setup).
+            let pools_write_for_gcal = pools.write.clone();
+            let device_id_for_gcal = device_id.clone();
+
             // Store all in Tauri managed state
             app.manage(WritePool(pools.write));
             app.manage(ReadPool(pools.read));
@@ -626,6 +637,172 @@ pub fn run() {
                 mcp_device_id,
                 Some((*mcp_lifecycle).clone()),
             );
+
+            // FEAT-5e — Google Calendar push connector.  Spawned
+            // unconditionally so the Tauri-managed-state resolvers for
+            // the five `gcal_*` commands always find their backing
+            // state.  The task itself stays idle until the user
+            // connects a Google account (FEAT-5b) and the first
+            // `force_gcal_resync` fires — the outer loop observes no
+            // token in the keychain and falls through to the next
+            // reconcile tick without issuing HTTP.
+            //
+            // The production `GcalApi::new()` call can only fail if
+            // rustls itself fails to build; downgrade that to a
+            // managed-state `GcalClientState` with a dummy client so
+            // the commands still resolve and surface the error via
+            // `last_error` on `get_gcal_status`.
+            use gcal_push::connector::{
+                spawn_connector, GcalApiAdapter, GcalClient as GcalClientTrait,
+            };
+            use gcal_push::keyring_store::{
+                KeyringTokenStore, NoopEventEmitter, TauriGcalEventEmitter, TokenStore,
+            };
+
+            let gcal_emitter: std::sync::Arc<dyn gcal_push::keyring_store::GcalEventEmitter> =
+                std::sync::Arc::new(TauriGcalEventEmitter::new(app.handle().clone()));
+
+            // Best-effort keyring init.  A headless Linux box without
+            // Secret Service will fail here; fall back to a
+            // closed-shut `NoopTokenStore` so the rest of the wiring
+            // still lands.  The Settings UI surfaces the unavailable
+            // keychain via the `gcal:keyring_unavailable` event.
+            let gcal_token_store: std::sync::Arc<dyn TokenStore> =
+                match KeyringTokenStore::new(gcal_emitter.clone()) {
+                    Ok(store) => std::sync::Arc::new(store),
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "gcal",
+                            error = %e,
+                            "gcal keyring unavailable; TokenStore seeded with noop shim",
+                        );
+                        struct NoopTokenStore;
+                        #[async_trait::async_trait]
+                        impl TokenStore for NoopTokenStore {
+                            async fn load(
+                                &self,
+                            ) -> Result<
+                                Option<gcal_push::oauth::Token>,
+                                error::AppError,
+                            > {
+                                Ok(None)
+                            }
+                            async fn store(
+                                &self,
+                                _t: &gcal_push::oauth::Token,
+                            ) -> Result<(), error::AppError> {
+                                Err(error::AppError::Validation(
+                                    "keyring.unavailable".to_owned(),
+                                ))
+                            }
+                            async fn clear(&self) -> Result<(), error::AppError> {
+                                Ok(())
+                            }
+                        }
+                        std::sync::Arc::new(NoopTokenStore)
+                    }
+                };
+
+            // Production API adapter.  If `GcalApi::new` fails (which
+            // it effectively cannot in practice), the adapter cannot
+            // be built — surface the error and disable push.
+            let gcal_client: std::sync::Arc<dyn GcalClientTrait> =
+                match gcal_push::api::GcalApi::new() {
+                    Ok(api) => std::sync::Arc::new(GcalApiAdapter::new(api)),
+                    Err(e) => {
+                        tracing::error!(
+                            target: "gcal",
+                            error = %e,
+                            "failed to build GcalApi — push disabled",
+                        );
+                        // Use the noop emitter as the stand-in for
+                        // the client seam — every call returns an
+                        // error, which the connector surfaces as a
+                        // HardFailure.
+                        struct DeadClient;
+                        #[async_trait::async_trait]
+                        impl GcalClientTrait for DeadClient {
+                            async fn create_calendar(
+                                &self,
+                                _t: &gcal_push::oauth::Token,
+                                _n: &str,
+                            ) -> Result<String, error::AppError> {
+                                Err(error::AppError::Validation(
+                                    "gcal.api.unavailable".to_owned(),
+                                ))
+                            }
+                            async fn delete_calendar(
+                                &self,
+                                _t: &gcal_push::oauth::Token,
+                                _c: &str,
+                            ) -> Result<(), error::AppError> {
+                                Err(error::AppError::Validation(
+                                    "gcal.api.unavailable".to_owned(),
+                                ))
+                            }
+                            async fn insert_event(
+                                &self,
+                                _t: &gcal_push::oauth::Token,
+                                _c: &str,
+                                _e: &gcal_push::digest::Event,
+                            ) -> Result<String, error::AppError> {
+                                Err(error::AppError::Validation(
+                                    "gcal.api.unavailable".to_owned(),
+                                ))
+                            }
+                            async fn patch_event(
+                                &self,
+                                _t: &gcal_push::oauth::Token,
+                                _c: &str,
+                                _e: &str,
+                                _ev: &gcal_push::digest::Event,
+                            ) -> Result<(), error::AppError> {
+                                Err(error::AppError::Validation(
+                                    "gcal.api.unavailable".to_owned(),
+                                ))
+                            }
+                            async fn delete_event(
+                                &self,
+                                _t: &gcal_push::oauth::Token,
+                                _c: &str,
+                                _e: &str,
+                            ) -> Result<(), error::AppError> {
+                                Err(error::AppError::Validation(
+                                    "gcal.api.unavailable".to_owned(),
+                                ))
+                            }
+                        }
+                        std::sync::Arc::new(DeadClient)
+                    }
+                };
+
+            // Silence the unused-import warning on the
+            // `NoopEventEmitter` — the constant is used via
+            // `keyring_store::NoopEventEmitter` elsewhere; this
+            // closure just prevents a dead_code diagnostic in rare
+            // build flavors.
+            let _ = NoopEventEmitter;
+
+            // Spawn the connector task.  The handle + state trio are
+            // registered on Tauri so the five gcal commands can
+            // resolve.
+            let pool_for_gcal_connector = pools_write_for_gcal.clone();
+            let device_for_gcal_connector = device_id_for_gcal.clone();
+            let connector_task = spawn_connector(
+                pool_for_gcal_connector,
+                gcal_client.clone(),
+                gcal_token_store.clone(),
+                gcal_emitter.clone(),
+                device_for_gcal_connector,
+            );
+            app.manage(connector_task.handle.clone());
+            // Keep the `ConnectorTask` alive for the lifetime of the
+            // app via managed state.
+            app.manage(connector_task);
+
+            app.manage(commands::GcalTokenStoreState(gcal_token_store));
+            app.manage(commands::GcalEventEmitterState(gcal_emitter));
+            app.manage(commands::GcalClientState(gcal_client));
 
             Ok(())
         })
@@ -782,6 +959,12 @@ mod specta_tests {
             crate::commands::get_mcp_socket_path,
             crate::commands::mcp_set_enabled,
             crate::commands::mcp_disconnect_all,
+            // Google Calendar push (FEAT-5e) — Settings "Google Calendar" tab
+            crate::commands::get_gcal_status,
+            crate::commands::force_gcal_resync,
+            crate::commands::disconnect_gcal,
+            crate::commands::set_gcal_window_days,
+            crate::commands::set_gcal_privacy_mode,
         ])
     }
 
