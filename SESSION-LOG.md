@@ -1,5 +1,75 @@
 # Session Log
 
+## Session 449 — FEAT-4c + FEAT-4e + FEAT-5a: MCP ReadOnlyTools (9 tools) + Settings tab + GCal schema (2026-04-21)
+
+**3 REVIEW-LATER items resolved.** Open items: 23 → 20. Third slice of the pre-approved FEAT-4 (MCP server) umbrella plus the first slice of the pre-approved FEAT-5 (Google Calendar digest push) umbrella, landed in one atomic 4-commit batch. Three parallel build subagents (FEAT-4c + FEAT-4e + FEAT-5a) across three worktrees. Three pipelined technical reviewers, one UX reviewer for 4e. Two rounds of orchestrator fixes: (1) FEAT-5a redo after its first review caught that the orchestrator's task prompt had deviated from the user-approved spec schema, and (2) two UX findings applied to FEAT-4e before merge.
+
+### What changed
+
+**FEAT-4c — `ReadOnlyTools` impl + 4 new `*_inner` wrappers + 10 `insta` snapshots:**
+
+- `src-tauri/src/mcp/tools_ro.rs` (1782 lines NEW) — `ReadOnlyTools` struct holding `SqlitePool + Materializer + String (device_id)`. `impl ToolRegistry` dispatches to 9 tool handlers: `list_pages`, `get_page`, `search`, `get_block`, `list_backlinks`, `list_tags`, `list_property_defs`, `get_agenda`, `journal_for_date`. Every tool has `#[serde(deny_unknown_fields)]` arg structs + tool-boundary caps (`search` max 50 results, 512 char snippets via `.chars().take(...)` — not bytes). Each handler re-scopes `ACTOR::scope` so direct-call paths (tests, future diagnostics) observe the correct actor. 45 unit tests including 18 happy/error per-tool pairs, 10 `insta` snapshots, concurrent-client stress (8 clients × 5s loop, exact-count `assert_eq!`), `search` vs `search_blocks_inner` proptest equivalence, cursor pagination roundtrip, `journal_for_date_inner` equivalence with `navigate_journal_inner`.
+- 4 new `*_inner` wrappers:
+  - `list_pages_inner` + `get_page_inner` in `src-tauri/src/commands/pages.rs` (+158 lines). `get_page_inner` uses the materializer-maintained `page_id` denormalization column (migration 0027) for the subtree walk — single indexed range scan rather than a 100-depth CTE. Invariant #9 (`is_conflict = 0`) preserved.
+  - `list_tags_inner` in `src-tauri/src/commands/tags.rs` (+13 lines) — thin wrapper over `list_tags_by_prefix_inner("")`.
+  - `journal_for_date_inner(date: NaiveDate)` in `src-tauri/src/commands/journal.rs` — typed-date sibling; private helper `resolve_or_create_journal_page` extracted and both `today_journal_inner` + `navigate_journal_inner` delegate to it unchanged.
+- **Wire-contract change:** `AppError::NotFound` now maps to JSON-RPC `-32001` (`JSONRPC_RESOURCE_NOT_FOUND`, JSON-RPC server-defined range `-32000..-32099`), distinct from `-32601` (method-not-found at envelope level). 3 existing server tests renamed to match (`tools_call_returns_resource_not_found`, `tools_call_maps_registry_not_found_to_32001`). Trait doc + `PlaceholderRegistry` comment reflect the new mapping. Clients/agents already consuming `-32601` for "tool or resource not found" need to switch to `-32001` for resource — the envelope-level `-32601` is unchanged.
+
+**FEAT-4e — Settings tab "Agent access" + 4 MCP commands + lifecycle plumbing:**
+
+- `src/components/AgentAccessSettingsTab.tsx` (419 lines NEW) — 7 sections: RO toggle with optimistic-update + rollback-on-reject, socket-path display with 44px-touch copy button (via `size="icon-sm"` — `size-8 [@media(pointer:coarse)]:size-11`), two copy-config buttons (Claude Desktop + generic MCP), 100-entry activity feed (`role="log"` for screen readers; subscribed to Tauri `mcp:activity` event; `setEntries(prev => [new, ...prev].slice(0, 100))`), kill-switch `AlertDialog` confirmation (disabled when `active_connections === 0`), disabled-with-badge v2 placeholder. Only existing `ui/` primitives. 60-second interval re-renders relative timestamps. IPC-rejection fallback on every `invoke`, every error logged via `logger.warn` / `logger.error`.
+- `src/components/__tests__/AgentAccessSettingsTab.test.tsx` (535 lines NEW) — 18 tests: render, toggle roundtrip, rollback-on-reject, three copy variants, activity feed ordering + exact 100-cap, kill-switch flow, IPC rejection fallback, `axe(container)` a11y (zero violations).
+- `src-tauri/src/commands/mcp.rs` (439 lines NEW) — 4 Tauri commands + `inner_*` siblings: `get_mcp_status`, `get_mcp_socket_path`, `mcp_set_enabled`, `mcp_disconnect_all`. 14 unit tests.
+- `src-tauri/src/mcp/mod.rs` — new `McpLifecycle` managed state: `Arc<Notify>` disconnect signal + `AtomicUsize` active_connections counter + `AtomicBool` task_running. `ConnectionCounterGuard` RAII wrapper balances the counter even on panic/early return.
+- `src-tauri/src/mcp/server.rs` — new `run_connection` helper wraps `handle_connection` with the counter guard + a `tokio::select!` on `disconnect_signal.notified()` so in-flight connections drop cleanly when the kill switch fires.
+- `src/components/SettingsView.tsx` — new 8th tab ("Agent access") between Sync and Help. 24 new i18n keys with pluralized variants for the kill-switch description.
+- `src/lib/bindings.ts` — specta regenerated (4 new commands, `McpStatus` type).
+
+**FEAT-5a — GCal migration 0032 + gcal_push models + template-page filter (first slice of FEAT-5 umbrella):**
+
+- `src-tauri/migrations/0032_gcal_agenda.sql` (NEW) — two tables matching the REVIEW-LATER spec exactly:
+  - `gcal_agenda_event_map(date TEXT PK, gcal_event_id, last_pushed_hash, last_pushed_at)` — 4 cols, date-keyed, no index (PK suffices on ≤90 rows).
+  - `gcal_settings(key TEXT PK, value, updated_at)` — KV table. 6 seeded keys: `calendar_id` (empty), `privacy_mode='full'`, `window_days='30'`, `push_lease_device_id` (empty), `push_lease_expires_at` (empty), `oauth_account_email` (empty). All seeds with sentinel `updated_at='1970-01-01T00:00:00Z'` so the first real `set_setting` produces a distinct timestamp.
+- `src-tauri/src/gcal_push/mod.rs` + `models.rs` (NEW, 651 lines) — row structs (`GcalAgendaEventMap`, `GcalSettingRow`), `GcalSettingKey` enum (6 variants + `as_str()`), 6 async helpers (`get_setting`, `set_setting`, `get_event_map_for_date`, `upsert_event_map` via INSERT OR REPLACE, `delete_event_map_by_date` silent-on-missing, `list_event_map_dates` ordered ASC). No `specta::Type` derive — internal persistence types; FEAT-5f will build dedicated IPC DTOs. 21 inline tests.
+- **Template-page filter (FEAT-5a spec line 812 finding):** pre-existing queries DID NOT filter template pages. Filter `AND NOT EXISTS (SELECT 1 FROM block_properties tp WHERE tp.block_id = b.page_id AND tp.key = 'template')` added to **4 query sites** so FEAT-5e's push won't ship template scaffolding to GCal:
+  - `src-tauri/src/commands/agenda.rs` — cache-read path (`list_projected_agenda_inner`) + on-the-fly fallback (`list_projected_agenda_on_the_fly`).
+  - `src-tauri/src/cache/agenda.rs` — all 4 UNION sources of both `rebuild_agenda_cache_impl` and `_split_impl`.
+  - `src-tauri/src/cache/projected_agenda.rs` — `rebuild_projected_agenda_cache_impl`.
+  - Uses `b.page_id` (denormalized column from migration 0027). NULL-safe: top-level tags with `page_id IS NULL` pass vacuously.
+  - 2 regression tests in `agenda_cmd_tests.rs`: exclusion + re-inclusion after `delete_property(root, 'template')`.
+
+### Design decisions
+
+- **FEAT-5a schema discipline.** First build attempt expanded the schema (added `calendar_id`, `etag`, `content_hash` to the event-map; replaced KV settings with a normalized single-row table). Per-spec review caught the deviation and the work was reverted + redone to match the user-approved minimal schema exactly. Lesson captured: orchestrator task prompts must mirror the REVIEW-LATER spec verbatim, not propose alternatives.
+- **FEAT-4c `-32001` NotFound mapping.** Wire-contract change documented here so future agent-client implementations know the split: envelope-level method-not-found stays `-32601`, tool-level resource-not-found is `-32001`. Both are in the JSON-RPC 2.0 allowed ranges.
+- **FEAT-4c `get_page_inner` uses `page_id` column, not recursive CTE.** Materializer-maintained denormalization (migration 0027) indexed via `idx_blocks_page_id` — single range scan vs. a 100-depth recursive CTE. Preserves invariant #9 (`is_conflict = 0`).
+- **FEAT-4e lifecycle via `Arc<McpLifecycle>` managed state.** Avoids new Zustand stores, new tables, new op types. Connection counter is `AtomicUsize`; disconnect signal is `tokio::sync::Notify` (notify_waiters on fire); task-running flag is `AtomicBool` so `mcp_set_enabled(true)` knows whether to respawn.
+- **FEAT-4e UX fixes applied by orchestrator before merge:** (1) socket-path copy button switched from `size="sm"` + `h-8 w-8 p-0` overrides to `size="icon-sm"` so the 44px touch target applies on `[@media(pointer:coarse)]` per AGENTS.md mandatory patterns; (2) activity feed `<ul>` gained `role="log"` + `aria-label` so screen readers announce new tool-call entries.
+- **FEAT-5a template filter applied at 4 sites, not 1.** Justified by FEAT-5 parent spec line 646 ("agenda_cache only rows from blocks whose root page is not marked template"): applying at cache-populate AND cache-read AND on-the-fly paths avoids a stale-cache window where a page flipped to template would still surface until the next rebuild. Both branches covered by regression tests.
+
+### Verification
+
+- `cargo nextest run mcp::tools_ro`: 45 passed (new). `cargo nextest run commands::mcp`: 14 passed (new). `cargo nextest run gcal`: 21 passed (new). `cargo nextest run` (full): **2335 passed**, 0 failed, 2 skipped (was 2254 after session 448; **+81 net**).
+- `npx vitest run`: 7477 passed across 296 files (was 7459 in 295; **+18 net** in AgentAccessSettingsTab.test.tsx, +1 file). 2 pre-existing flakes in `BacklinkFilterBuilder.test.tsx` (search-tag-filter popover) pass in isolation — unrelated to this session's changes.
+- `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`: clean. `cargo sqlx prepare --check -- --tests`: clean. `cargo test -- specta_tests --ignored`: regenerated `src/lib/bindings.ts` cleanly.
+- `prek run --all-files`: all 25 hooks pass after orchestrator-applied fmt + biome fixes (bindings.ts whitespace from specta regen + `noArrayIndexKey` false-positive on the append-only activity-ring `idx` tiebreaker — suppressed with a justified `biome-ignore` comment).
+
+### Architectural invariants respected (AGENTS.md)
+
+- Append-only op log: untouched. CQRS split: untouched (FEAT-4c is read-path only; FEAT-5a adds tables with no op-log interaction). sqlx compile-time queries: 11 new `query!` / `query_as!` macros all cached. PRAGMA foreign_keys: no new FKs (FEAT-5 umbrella decision). ULID normalization: N/A. Recursive CTE invariant #9: `get_page_inner` uses `page_id` denorm; `is_conflict = 0` filter preserved in every descendant walk.
+- `unsafe_code = "deny"` upheld: no `unsafe` blocks in any of the 3 slices.
+- No new Zustand store, no new op type, no new materializer queue, no new sync message type. Only the two pre-approved tables from FEAT-5a's umbrella spec.
+- `exactOptionalPropertyTypes` / `noImplicitReturns` / `noNonNullAssertion`: no `@ts-ignore`, no `!`, no `biome-ignore` without justification.
+
+### Notes for the next session
+
+- **FEAT-4g unblocked.** Python smoke harness against the now-complete 9-tool surface. S-sized; can pair with a frontend follow-up or FEAT-5 slice.
+- **FEAT-5b is the natural next FEAT-5 slice.** OAuth 2.0 PKCE + keychain token storage. M-sized — new crate deps (`oauth2`, `keyring`, `tauri-plugin-oauth`, `secrecy`) enter as a coupled stack per AGENTS.md § Coupled Dependency Updates.
+- **MCP `list_event_map_dates` ordering**: asserted `ASC` in models.rs. FEAT-5e's prune sweep can rely on deterministic ordering for the window-tail eviction.
+- **Sidecar binary placeholder workaround**: subagents working in fresh worktrees must run `node scripts/prepare-external-bins.mjs --placeholder-only` before `cargo check` / `cargo build` because FEAT-4f's `externalBin` entry in `tauri.conf.json` demands a file at `src-tauri/binaries/agaric-mcp-<host-triple>` which is git-ignored. Documented in the script's header comment; re-surfaced here for the next parallel-worktree session.
+
+---
+
 ## Session 448 — FEAT-4b + FEAT-4d + FEAT-4f: MCP `ToolRegistry`/`ActorContext` + activity ring + packaging (2026-04-20)
 
 **3 REVIEW-LATER items resolved.** Open items: 26 → 23. Second slice of the pre-approved FEAT-4 (MCP server) umbrella — three parallel build subagents in a 3-way batch. 4b landed the `ToolRegistry` trait + `ActorContext` task-local. 4d landed the in-memory 100-entry activity ring + `mcp:activity` Tauri event emitter. 4f landed packaging so the `agaric-mcp` sidecar binary ships with the Tauri bundle. Two worktrees (4b + 4d both touch `server.rs`). Three pipelined read-only technical reviews — 4b APPROVE, 4d APPROVE, 4f REQUEST-CHANGES (3 findings: `beforeDevCommand` placeholder step missing, Android CI placeholder step missing, BUILD.md sidecar doc section missing — all fixed by orchestrator before commit). One atomic commit.
