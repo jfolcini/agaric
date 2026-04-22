@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "node ../scripts/prepare-external-bins.mjs --placeholder-only && npx tsc -b --noEmit && npm run dev",
-    "beforeBuildCommand": "node ../scripts/prepare-external-bins.mjs && npm run build"
+    "beforeDevCommand": "node scripts/prepare-external-bins.mjs --placeholder-only && npx tsc -b --noEmit && npm run dev",
+    "beforeBuildCommand": "node scripts/prepare-external-bins.mjs && npm run build"
   },
   "app": {
     "withGlobalTauri": false,
