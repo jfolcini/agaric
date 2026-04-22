@@ -138,9 +138,24 @@ pub async fn append_local_op_in_tx(
         &payload_json,
     );
 
+    // FEAT-4h slice 1: stamp the op with the initiating actor's origin tag
+    // (migration 0033). Outside an MCP `ACTOR.scope(...)` — i.e. every
+    // frontend-invoked command — `current_actor()` returns `Actor::User`,
+    // which yields `"user"` and matches the column default. Inside an MCP
+    // tool dispatch the dispatcher in `mcp::server` wraps the call in
+    // `ACTOR.scope(...)` with `Actor::Agent { name }` from the handshake;
+    // that yields `"agent:<name>"`, attributing the row in `op_log` and
+    // unblocking the activity-feed Undo + bulk-revert UX in slice 2/3.
+    //
+    // `origin` is intentionally NOT part of `compute_op_hash`'s preimage —
+    // it is local-attribution metadata, not part of the cross-device
+    // identity of the op. Two devices receiving the same logical op but
+    // tagged with different origins must still hash-match for sync.
+    let origin = crate::mcp::actor::current_actor().origin_tag();
+
     sqlx::query!(
-        "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, origin) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         device_id,
         seq,
         parent_seqs,
@@ -149,6 +164,7 @@ pub async fn append_local_op_in_tx(
         payload_json,
         created_at,
         block_id,
+        origin,
     )
     .execute(&mut **tx)
     .await?;
@@ -1232,6 +1248,250 @@ mod tests {
         assert_eq!(
             row, 1,
             "expression index on json_extract block_id should exist"
+        );
+    }
+
+    // =========================================================================
+    // FEAT-4h slice 1 — `op_log.origin` column
+    // =========================================================================
+
+    /// Migration 0033 must have applied cleanly: the `origin` column exists,
+    /// is `NOT NULL`, and has the default `'user'`.
+    #[tokio::test]
+    async fn origin_column_schema_is_as_specified_in_migration_0033() {
+        let (pool, _dir) = test_pool().await;
+        let rows = sqlx::query(
+            "SELECT name, type, \"notnull\", dflt_value FROM pragma_table_info('op_log') WHERE name = 'origin'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows.len(),
+            1,
+            "exactly one `origin` column should exist after migration 0033",
+        );
+        use sqlx::Row as _;
+        let row = &rows[0];
+        let ty: String = row.try_get("type").unwrap();
+        let notnull: i64 = row.try_get("notnull").unwrap();
+        let default: Option<String> = row.try_get("dflt_value").unwrap();
+        assert_eq!(ty, "TEXT", "origin column must be TEXT");
+        assert_eq!(notnull, 1, "origin column must be NOT NULL");
+        assert_eq!(
+            default.as_deref(),
+            Some("'user'"),
+            "origin column default must be the literal 'user'",
+        );
+    }
+
+    /// Frontend-invoked commands never enter an MCP `ACTOR.scope(...)`, so
+    /// `current_actor()` falls back to `Actor::User` and
+    /// `append_local_op_in_tx` must stamp `origin = 'user'`.
+    #[tokio::test]
+    async fn append_outside_actor_scope_stamps_origin_user() {
+        let (pool, _dir) = test_pool().await;
+        let record = append_local_op(&pool, TEST_DEVICE, make_create_payload("BLK_USER"))
+            .await
+            .unwrap();
+        let origin: String = sqlx::query_scalar!(
+            "SELECT origin FROM op_log WHERE device_id = ? AND seq = ?",
+            record.device_id,
+            record.seq,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            origin, "user",
+            "frontend / un-wrapped call must stamp origin='user'",
+        );
+    }
+
+    /// Inside an MCP `ACTOR.scope(Actor::Agent { name })` the append path
+    /// must stamp `origin = 'agent:<name>'`, wiring the
+    /// `mcp::actor::current_actor` task-local all the way through to the
+    /// DB row.
+    #[tokio::test]
+    async fn append_inside_agent_scope_stamps_origin_agent_prefix() {
+        use crate::mcp::actor::{Actor, ActorContext, ACTOR};
+        let (pool, _dir) = test_pool().await;
+
+        let ctx = ActorContext {
+            actor: Actor::Agent {
+                name: "claude-desktop".to_string(),
+            },
+            request_id: "req-slice1".to_string(),
+        };
+
+        let record = ACTOR
+            .scope(
+                ctx,
+                append_local_op(&pool, TEST_DEVICE, make_create_payload("BLK_AGENT")),
+            )
+            .await
+            .unwrap();
+
+        let origin: String = sqlx::query_scalar!(
+            "SELECT origin FROM op_log WHERE device_id = ? AND seq = ?",
+            record.device_id,
+            record.seq,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            origin, "agent:claude-desktop",
+            "agent-scope append must stamp origin='agent:<clientInfo.name>'",
+        );
+    }
+
+    /// Once the `ACTOR.scope` future resolves, subsequent appends fall back
+    /// to `origin = 'user'`. This pins the scope-boundary behaviour: agent
+    /// attribution must not leak into ops emitted by frontend code on the
+    /// same thread after an MCP handler returns.
+    #[tokio::test]
+    async fn origin_falls_back_to_user_after_agent_scope_ends() {
+        use crate::mcp::actor::{Actor, ActorContext, ACTOR};
+        let (pool, _dir) = test_pool().await;
+
+        // First op — inside the agent scope.
+        let ctx = ActorContext {
+            actor: Actor::Agent {
+                name: "agent-A".to_string(),
+            },
+            request_id: "req-a".to_string(),
+        };
+        let inside = ACTOR
+            .scope(
+                ctx,
+                append_local_op(&pool, TEST_DEVICE, make_create_payload("BLK_INSIDE")),
+            )
+            .await
+            .unwrap();
+
+        // Second op — outside the scope, same runtime.
+        let outside = append_local_op(&pool, TEST_DEVICE, make_create_payload("BLK_OUTSIDE"))
+            .await
+            .unwrap();
+
+        let inside_origin: String = sqlx::query_scalar!(
+            "SELECT origin FROM op_log WHERE device_id = ? AND seq = ?",
+            inside.device_id,
+            inside.seq,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let outside_origin: String = sqlx::query_scalar!(
+            "SELECT origin FROM op_log WHERE device_id = ? AND seq = ?",
+            outside.device_id,
+            outside.seq,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(inside_origin, "agent:agent-A");
+        assert_eq!(
+            outside_origin, "user",
+            "origin must revert to 'user' once the ACTOR.scope future completes",
+        );
+    }
+
+    /// `origin` is local-attribution metadata only — it must NOT be part of
+    /// the op's content hash. Otherwise cross-device sync would split the
+    /// same logical op into two different hash chains depending on whether
+    /// it was agent- or user-invoked at the origin device.
+    #[tokio::test]
+    async fn origin_does_not_affect_op_hash() {
+        use crate::mcp::actor::{Actor, ActorContext, ACTOR};
+        let (pool_a, _dir_a) = test_pool().await;
+        let (pool_b, _dir_b) = test_pool().await;
+
+        // Same payload, same device, same `created_at` — but different
+        // actor scope. Hashes must match because `origin` is excluded from
+        // the hash preimage.
+        let payload_a = make_create_payload("BLKHASH");
+        let payload_b = make_create_payload("BLKHASH");
+        let ts = "2025-06-01T00:00:00+00:00".to_string();
+
+        let rec_a = append_local_op_at(&pool_a, TEST_DEVICE, payload_a, ts.clone())
+            .await
+            .unwrap();
+
+        let ctx = ActorContext {
+            actor: Actor::Agent {
+                name: "hash-test-agent".to_string(),
+            },
+            request_id: "req-hash".to_string(),
+        };
+        let rec_b = ACTOR
+            .scope(ctx, append_local_op_at(&pool_b, TEST_DEVICE, payload_b, ts))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            rec_a.hash, rec_b.hash,
+            "hash must be independent of origin: same logical op on two devices \
+             with different actor scopes must sync cleanly",
+        );
+
+        // Sanity: the persisted origin does differ.
+        let origin_a: String = sqlx::query_scalar!(
+            "SELECT origin FROM op_log WHERE device_id = ? AND seq = ?",
+            rec_a.device_id,
+            rec_a.seq,
+        )
+        .fetch_one(&pool_a)
+        .await
+        .unwrap();
+        let origin_b: String = sqlx::query_scalar!(
+            "SELECT origin FROM op_log WHERE device_id = ? AND seq = ?",
+            rec_b.device_id,
+            rec_b.seq,
+        )
+        .fetch_one(&pool_b)
+        .await
+        .unwrap();
+        assert_eq!(origin_a, "user");
+        assert_eq!(origin_b, "agent:hash-test-agent");
+    }
+
+    /// Rows inserted through paths that do NOT go through
+    /// `append_local_op_in_tx` (remote ops via `dag::insert_remote_op`,
+    /// merge ops via `dag::append_merge_op`, snapshot / compaction writes)
+    /// don't include `origin` in their INSERT column list; the column
+    /// default from migration 0033 must take over. This regression-test
+    /// pins the invariant so a future refactor that adds `origin` to the
+    /// INSERT list of one path but not the others can't silently ship.
+    #[tokio::test]
+    async fn remote_op_insert_defaults_origin_to_user() {
+        use crate::dag::insert_remote_op;
+        let (pool, _dir) = test_pool().await;
+
+        // Produce a real valid op on device A, then deliver it to device B's
+        // pool as a remote op.
+        let (pool_src, _dir_src) = test_pool().await;
+        let record = append_local_op(&pool_src, "device-A", make_create_payload("BLKREM"))
+            .await
+            .unwrap();
+
+        let inserted = insert_remote_op(&pool, &record).await.unwrap();
+        assert!(inserted, "fresh remote op must insert");
+
+        let origin: String = sqlx::query_scalar!(
+            "SELECT origin FROM op_log WHERE device_id = ? AND seq = ?",
+            record.device_id,
+            record.seq,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            origin, "user",
+            "remote op inserted via dag::insert_remote_op must pick up the \
+             'user' column default from migration 0033",
         );
     }
 }

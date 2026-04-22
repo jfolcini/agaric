@@ -1,5 +1,54 @@
 # Session Log
 
+## Session 459 — FEAT-4h slice 1: op_log `origin` column + actor-scope wiring (2026-04-21)
+
+**0 REVIEW-LATER items resolved, 0 new filed** — FEAT-4h stays open (slices 2-4 remain: RW socket, `tools_rw.rs`, activity-feed Undo, bulk revert), but its summary and detail have been compacted to describe what's left rather than what was originally proposed. Open-items count unchanged at 13.
+
+Single-slice progress on a multi-session L item, per explicit user direction (PROMPT.md batch + the `ask_user_question` answer "Tackle FEAT-4h"). The infrastructure slice landed: migration 0033 adds `op_log.origin`, the `Actor::origin_tag()` helper + `crate::mcp::actor::current_actor` task-local are wired through `op_log::append_local_op_in_tx`, and 8 new tests pin the behaviour end-to-end — including two negative tests (`origin_does_not_affect_op_hash`, `remote_op_insert_defaults_origin_to_user`) that guard against the most plausible future regressions (origin leaking into the sync hash preimage, or a future refactor that adds `origin` to the RW path but forgets the sync-side default).
+
+### What changed
+
+- **`src-tauri/migrations/0033_op_log_origin_column.sql` (NEW)** — `ALTER TABLE op_log ADD COLUMN origin TEXT NOT NULL DEFAULT 'user'`. Additive, no backfill needed (the `DEFAULT 'user'` applies to every pre-migration row). sqruff clean on first pass.
+- **`src-tauri/src/mcp/actor.rs`** — New `impl Actor { pub fn origin_tag(&self) -> String }`: `User → "user"`, `Agent { name } → "agent:{name}"`. The `"agent:"` prefix is deliberate: keeps the column filterable by `LIKE 'agent:%'` and reserves the un-prefixed namespace for future origins (`"import"`, `"migration"`, …) without a schema change. Plus 4 new unit tests covering the user/agent mapping, the pathological `Agent { name: "user" }` collision case, and non-ASCII / special-char preservation (MCP `clientInfo.name` is self-reported — we do not sanitise).
+- **`src-tauri/src/op_log.rs`** — `append_local_op_in_tx` now reads `crate::mcp::actor::current_actor().origin_tag()` and adds `origin` to the 9-column INSERT. Explicit comment block above the call-site: origin is *not* part of `compute_op_hash`'s preimage — two devices observing the same logical op tagged with different origins must still hash-match for sync. Plus 4 new integration tests (migration schema assertion via `pragma_table_info`, outside-scope → `'user'`, inside-scope → `'agent:<name>'`, scope-boundary revert, hash-independence, remote-op default fallback).
+- **`src-tauri/.sqlx/query-9213…json` (NEW)** — cache entry for the 9-col INSERT. The existing 8-col INSERT entry (`query-2ae5…json`) stays — `dag::insert_remote_op` and `dag::append_merge_op` still use the 8-col shape, letting the column default take over for remote / merge / compaction / snapshot paths.
+- **`src-tauri/.sqlx/query-80157113…json` (NEW)** — cache entry for the `pragma_table_info` schema-introspection SELECT used by the new migration-round-trip test.
+- **`REVIEW-LATER.md`** — FEAT-4h summary-table row retitled to reflect remaining scope ("RW server, 6 write tools, activity-feed Undo, bulk revert. Op-log `origin` column + actor-scope wiring already landed."). Detail section compacted: "Remaining scope" replaces "Scope (when scheduled)", with explicit call-outs that the MCP dispatcher already scopes `ACTOR` so `origin='agent:<name>'` falls out automatically for the RW path, and that surfacing `origin` on `OpRecord` for the activity-feed Undo is still pending. Status flipped DEFERRED → READY to schedule. Cost L → M–L (infra foundation in place).
+
+### Verification
+
+- `cargo sqlx prepare -- --tests`: clean, produces 2 new cache entries (the 9-col INSERT + the pragma SELECT) with no stale-cache warnings.
+- `cargo nextest run op_log:: dag:: snapshot:: merge:: recovery:: reverse:: commands::compaction` (adjacent surfaces that touch op_log write paths): **241/241 passed**, 0 failed.
+- `cargo nextest run` (full): **2557 passed, 2 skipped** (same skip-count as session 456; the +8 new tests are inside the 2557 count).
+- New tests run individually: 8/8 passed (4 `Actor::origin_tag` unit + 4 `op_log` integration tests covering schema, outside-scope, inside-scope, scope revert, hash independence, remote-op default).
+
+### Design decisions
+
+- **`origin` excluded from `compute_op_hash` preimage (pinned by test).** Agent-attribution is local metadata — cross-device sync must not care whether a given op was issued by a user or an agent at its origin device. The `origin_does_not_affect_op_hash` test creates two pools, appends the same logical payload on each, and asserts hash equality despite one side being inside an `ACTOR.scope(Agent { ... })`. Catches the refactor-trap where a future dev "simplifies" hashing by including every INSERT column.
+- **Remote / merge / compaction / snapshot paths untouched, column default takes over.** The 4 non-`append_local_op_in_tx` INSERT sites (dag.rs × 2, snapshot, compaction) keep their 8-col INSERTs; `origin` defaults to `'user'` from the migration. This is the right call: none of those paths have a meaningful agent actor — `insert_remote_op` happens during sync, `append_merge_op` is a frontend-initiated merge, and snapshot/compaction are always user-initiated. The `remote_op_insert_defaults_origin_to_user` test pins this end-to-end so a future "let's unify all INSERTs" refactor can't silently ship.
+- **`OpRecord` kept at 7 fields (no `origin` read-side).** Slice 1 only writes `origin`; surfacing it on reads is deferred to slice 3 (activity-feed Undo) where the frontend actually consumes it. Adding `origin: String` to `OpRecord` now would force updating ~25 SELECT sites (13 `query_as!(OpRecord, ...)` call sites + test fixtures) for zero current consumers — premature and churn-y. Slice 3's REVIEW-LATER note makes the requirement explicit.
+- **`origin_tag()` returns `String`, not `&'static str`.** `Agent { name }` needs a heap allocation for the `agent:<name>` concatenation; making the `User` case also return `String` keeps the signature uniform and lets call sites use `.origin_tag()` without branching. The per-INSERT allocation cost is negligible compared to the INSERT itself.
+- **Placement in `actor.rs`, not `op_log.rs`.** `origin_tag()` is a property of the `Actor` enum, not of the op-log write mechanism. Keeping it next to `Actor` (and its `Debug` + PII-hygiene impls) means future readers of `actor.rs` see all actor-shape concerns in one place, and the `op_log.rs` call-site stays to one line: `let origin = current_actor().origin_tag();`.
+
+### Architectural invariants respected (AGENTS.md)
+
+- **Op log append-only**: migration is additive (`ADD COLUMN`), no mutation of existing rows. The column default handles all pre-migration rows and all non-MCP write paths without any `UPDATE`.
+- **CQRS split**: command handlers still go through `append_local_op_in_tx`; the new INSERT column is still written by the command-side writer, not by a materializer-side update.
+- **sqlx compile-time queries**: the new 9-col INSERT is a `sqlx::query!` macro; `.sqlx/` cache regenerated and committed.
+- **PRAGMA foreign_keys = ON**: unchanged; the new column is not a foreign key.
+- **Architectural stability (AGENTS.md § Architectural Stability)**: schema migration was the one AGENTS.md-flagged concern. Covered by the FEAT-4 umbrella's pre-approved architecture ("Accept the recommended answers to all 6 open questions") which explicitly names the `origin` column as part of v2.
+- **No silent `.catch(() => {})` / no `unwrap_or` that swallows errors**: the `current_actor()` fallback is `Actor::User` by design (not an error), so the `unwrap_or` semantic applies to the absence-of-scope case, not an error case.
+- **No weakening of strict settings**: no new `biome-ignore`, no `#[allow(...)]`, no `#[cfg_attr(..., allow)]`.
+
+### Notes for the next session
+
+- **Slice 2 (write tools) is now the natural next batch.** `tools_rw.rs` + the 6 write tools + second socket + marker file. Estimated 1 focused session with 2-3 parallel subagents (one per tool group + a socket / lifecycle subagent).
+- **Slice 3 (activity-feed Undo) must surface `origin` on `OpRecord`**. That's ~25 SELECT-site touches but each is mechanical. Could be done by a single subagent with `replace_all`-style edits.
+- **Slice 4 (bulk revert)** depends on slices 2 + 3 — needs the session-ULID plumbing attached to `ActorContext` first.
+- **REVIEW-LATER FEAT-4h cost reduced L → M–L**: the migration + actor-scope wiring was the single biggest schema-adjacent risk. Remaining slices are additive module work on existing scaffolding.
+
+---
+
 ## Session 458 — MAINT-88 follow-up: document `sqruff` in BUILD.md prerequisites (2026-04-21)
 
 Single-line docs follow-up to session 457. The `sqruff` prek hook added in 457 requires `sqruff` on `PATH`, but BUILD.md didn't mention the installation step — fresh clones would fail `prek run --all-files` with `sqruff: command not found`. Per explicit user direction ("fix just [and] docs for sqruff"), adding `cargo install sqruff` to the "All Platforms" prerequisites list alongside `cargo install tauri-cli --locked`, with the failure mode spelled out so the next contributor doesn't hit the same wall.

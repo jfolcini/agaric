@@ -57,6 +57,32 @@ impl fmt::Debug for Actor {
     }
 }
 
+impl Actor {
+    /// Render this actor as the string written into `op_log.origin`
+    /// (FEAT-4h v2). `Actor::User` → `"user"`, `Actor::Agent { name }`
+    /// → `"agent:<name>"`.
+    ///
+    /// Consumed by [`crate::op_log::append_local_op_in_tx`] via
+    /// [`current_actor`] + the `ACTOR` task-local. Outside an
+    /// [`ACTOR::scope`] the default `current_actor()` returns
+    /// `Actor::User`, which yields `"user"` — matching the column
+    /// default in migration 0033 so un-wrapped call sites (frontend
+    /// commands, sync merges, snapshot/compaction) are observationally
+    /// identical whether or not they go through this helper.
+    ///
+    /// The `"agent:"` prefix is deliberate: it keeps the column
+    /// filterable by a simple `LIKE 'agent:%'` query in the activity
+    /// feed and reserves the un-prefixed namespace for future
+    /// non-agent origins (e.g., `"import"`, `"migration"`) without a
+    /// schema change.
+    pub fn origin_tag(&self) -> String {
+        match self {
+            Actor::User => "user".to_string(),
+            Actor::Agent { name } => format!("agent:{name}"),
+        }
+    }
+}
+
 /// Per-request context carried through [`ACTOR`] for the lifetime of a
 /// single MCP tool call. Constructed at `tools/call` dispatch time in
 /// `server.rs` and dropped when the request completes.
@@ -222,6 +248,45 @@ mod tests {
         };
         let _b = a.clone();
         let _c = Actor::User.clone();
+    }
+
+    // -----------------------------------------------------------------------
+    // origin_tag — FEAT-4h slice 1
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn origin_tag_user_is_plain_user() {
+        assert_eq!(Actor::User.origin_tag(), "user");
+    }
+
+    #[test]
+    fn origin_tag_agent_has_agent_prefix() {
+        let a = Actor::Agent {
+            name: "claude-desktop".to_string(),
+        };
+        assert_eq!(a.origin_tag(), "agent:claude-desktop");
+    }
+
+    #[test]
+    fn origin_tag_agent_prefix_separates_from_user_namespace() {
+        // A pathological agent name matching the user tag must not collide —
+        // the `agent:` prefix is the disambiguator.
+        let a = Actor::Agent {
+            name: "user".to_string(),
+        };
+        assert_eq!(a.origin_tag(), "agent:user");
+        assert_ne!(a.origin_tag(), Actor::User.origin_tag());
+    }
+
+    #[test]
+    fn origin_tag_preserves_arbitrary_agent_name_chars() {
+        // Agent names are self-reported via MCP `clientInfo.name` — we do
+        // NOT sanitise them here. Downstream consumers (activity feed
+        // render, log scrubbing) are responsible for display escaping.
+        let a = Actor::Agent {
+            name: "weird:name with spaces/and:colons".to_string(),
+        };
+        assert_eq!(a.origin_tag(), "agent:weird:name with spaces/and:colons");
     }
 
     #[tokio::test]
