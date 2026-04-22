@@ -5,20 +5,26 @@
  * Sections (top to bottom):
  *   1. Read-only access toggle (backed by the `mcp-ro-enabled` marker
  *      file; toggling fires `mcp_set_enabled`).
- *   2. Socket path display + copy button.
- *   3. Copy-config buttons for Claude Desktop + generic MCP clients.
+ *   2. RO socket path display + copy button.
+ *   3. Copy-config buttons for Claude Desktop + generic MCP clients
+ *      (RO socket — RW config snippets are out of scope for slice 2).
  *   4. Recent activity feed (rolling 100-entry subscription to the
  *      `mcp:activity` Tauri event).
- *   5. Kill switch — disconnect every live agent connection (no-op if
- *      none are live; wrapped in an AlertDialog confirmation).
- *   6. Read-write access toggle (placeholder — disabled, "Coming in v2").
+ *   5. RO kill switch — disconnect every live RO agent connection
+ *      (no-op if none are live; wrapped in an AlertDialog confirmation).
+ *   6. Read-write access toggle (backed by the `mcp-rw-enabled` marker
+ *      file; toggling fires `mcp_rw_set_enabled`). Displays a destructive
+ *      warning badge while enabled.
+ *   7. RW socket path display + copy button.
+ *   8. RW kill switch — disconnect every live RW agent connection.
  *
- * The backend exposes three Tauri commands consumed here:
- *   - `get_mcp_status` → `{ enabled, socket_path, active_connections }`
- *   - `mcp_set_enabled(enabled)` → toggles marker file + starts/stops
- *     the serve task.
- *   - `mcp_disconnect_all` → wakes every in-flight connection so their
- *     handler drops.
+ * The backend exposes the following Tauri commands consumed here:
+ *   - `get_mcp_status` / `get_mcp_rw_status` → `{ enabled, socket_path,
+ *     active_connections }`.
+ *   - `mcp_set_enabled(enabled)` / `mcp_rw_set_enabled(enabled)` — toggle
+ *     marker file + start/stop the serve task.
+ *   - `mcp_disconnect_all` / `mcp_rw_disconnect_all` — wake every
+ *     in-flight connection so its handler drops.
  *
  * Every IPC call has an error-path fallback per AGENTS.md §Testing
  * Conventions — the component logs via `logger.warn` / `logger.error`,
@@ -52,6 +58,17 @@ interface McpStatus {
 }
 
 /**
+ * Mirrors the Rust `McpRwStatus` struct exposed by `get_mcp_rw_status`.
+ * Same shape as `McpStatus` but a distinct type so the RO / RW
+ * surfaces stay symmetric.
+ */
+interface McpRwStatus {
+  enabled: boolean
+  socket_path: string
+  active_connections: number
+}
+
+/**
  * Mirrors the Rust `ActivityEntry` struct emitted on the `mcp:activity`
  * Tauri event bus (see `src-tauri/src/mcp/activity.rs`).
  */
@@ -67,13 +84,20 @@ interface ActivityEntry {
 const MCP_ACTIVITY_EVENT = 'mcp:activity'
 const ACTIVITY_RENDER_CAP = 100
 
+/**
+ * Which socket a pending disconnect-all confirmation applies to. `null`
+ * means the confirm dialog is closed.
+ */
+type ConfirmTarget = 'ro' | 'rw' | null
+
 export function AgentAccessSettingsTab(): React.ReactElement {
   const { t } = useTranslation()
   const [status, setStatus] = useState<McpStatus | null>(null)
+  const [rwStatus, setRwStatus] = useState<McpRwStatus | null>(null)
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
   const [entries, setEntries] = useState<ActivityEntry[]>([])
-  const [confirmOpen, setConfirmOpen] = useState<boolean>(false)
+  const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget>(null)
   const [, setTick] = useState<number>(0)
 
   // Re-render every 60 s so relative-time labels in the activity feed
@@ -85,16 +109,40 @@ export function AgentAccessSettingsTab(): React.ReactElement {
   }, [])
 
   const loadStatus = useCallback(async () => {
-    try {
-      const result = await invoke<McpStatus>('get_mcp_status')
-      setStatus(result)
+    // Fetch RO and RW status in parallel. Use `allSettled` so a failure
+    // on one side does not prevent the other section from rendering —
+    // the RW backend could be absent (older Rust binary) while RO is
+    // healthy, or vice versa during a staged rollout.
+    const [roResult, rwResult] = await Promise.allSettled([
+      invoke<McpStatus>('get_mcp_status'),
+      invoke<McpRwStatus>('get_mcp_rw_status'),
+    ])
+
+    if (roResult.status === 'fulfilled') {
+      setStatus(roResult.value)
       setError(null)
-    } catch (err) {
-      logger.error('AgentAccessSettingsTab', 'failed to load MCP status', undefined, err)
+    } else {
+      logger.error(
+        'AgentAccessSettingsTab',
+        'failed to load MCP status',
+        undefined,
+        roResult.reason,
+      )
       setError(t('agentAccess.loadFailed'))
-    } finally {
-      setLoading(false)
     }
+
+    if (rwResult.status === 'fulfilled') {
+      setRwStatus(rwResult.value)
+    } else {
+      logger.error(
+        'AgentAccessSettingsTab',
+        'failed to load MCP RW status',
+        undefined,
+        rwResult.reason,
+      )
+    }
+
+    setLoading(false)
   }, [t])
 
   useEffect(() => {
@@ -154,8 +202,32 @@ export function AgentAccessSettingsTab(): React.ReactElement {
     [status, loadStatus, t],
   )
 
+  const handleToggleRw = useCallback(
+    async (nextEnabled: boolean) => {
+      const previous = rwStatus
+      setRwStatus((s) => (s === null ? s : { ...s, enabled: nextEnabled }))
+      try {
+        await invoke('mcp_rw_set_enabled', { enabled: nextEnabled })
+        toast.success(
+          nextEnabled ? t('agentAccess.rwToggleOnSuccess') : t('agentAccess.rwToggleOffSuccess'),
+        )
+        void loadStatus()
+      } catch (err) {
+        logger.error(
+          'AgentAccessSettingsTab',
+          'failed to set MCP RW enabled',
+          { enabled: nextEnabled },
+          err,
+        )
+        setRwStatus(previous)
+        toast.error(t('agentAccess.toggleFailed'))
+      }
+    },
+    [rwStatus, loadStatus, t],
+  )
+
   const handleDisconnectAll = useCallback(async () => {
-    setConfirmOpen(false)
+    setConfirmTarget(null)
     try {
       await invoke('mcp_disconnect_all')
       toast.success(t('agentAccess.disconnectSuccess'))
@@ -166,7 +238,20 @@ export function AgentAccessSettingsTab(): React.ReactElement {
     }
   }, [loadStatus, t])
 
+  const handleDisconnectAllRw = useCallback(async () => {
+    setConfirmTarget(null)
+    try {
+      await invoke('mcp_rw_disconnect_all')
+      toast.success(t('agentAccess.rwDisconnectSuccess'))
+      void loadStatus()
+    } catch (err) {
+      logger.error('AgentAccessSettingsTab', 'failed to disconnect all RW', undefined, err)
+      toast.error(t('agentAccess.rwDisconnectFailed'))
+    }
+  }, [loadStatus, t])
+
   const socketPath = status?.socket_path ?? ''
+  const rwSocketPath = rwStatus?.socket_path ?? ''
 
   // The Claude Desktop config snippet. Docs-only per the FEAT-4 decision
   // — we copy the JSON to the clipboard and let the user paste it into
@@ -226,6 +311,12 @@ export function AgentAccessSettingsTab(): React.ReactElement {
   }
 
   const effectiveStatus: McpStatus = status ?? {
+    enabled: false,
+    socket_path: '',
+    active_connections: 0,
+  }
+
+  const effectiveRwStatus: McpRwStatus = rwStatus ?? {
     enabled: false,
     socket_path: '',
     active_connections: 0,
@@ -357,7 +448,7 @@ export function AgentAccessSettingsTab(): React.ReactElement {
         )}
       </div>
 
-      {/* Kill switch */}
+      {/* RO kill switch */}
       <div className="space-y-2">
         <Label muted={false}>{t('agentAccess.killSwitchLabel')}</Label>
         <p className="text-xs text-muted-foreground">
@@ -370,7 +461,7 @@ export function AgentAccessSettingsTab(): React.ReactElement {
         <Button
           variant="destructive"
           size="sm"
-          onClick={() => setConfirmOpen(true)}
+          onClick={() => setConfirmTarget('ro')}
           disabled={effectiveStatus.active_connections === 0}
           aria-label={t('agentAccess.killSwitchButton')}
         >
@@ -378,35 +469,101 @@ export function AgentAccessSettingsTab(): React.ReactElement {
         </Button>
       </div>
 
-      {/* Read-write access toggle (placeholder for v2) */}
-      <div className="flex items-start justify-between gap-4 opacity-60">
+      {/* Read-write access toggle */}
+      <div className="flex items-start justify-between gap-4">
         <div className="flex-1">
-          <Label htmlFor="mcp-rw-toggle" muted={false}>
-            {t('agentAccess.rwToggleLabel')}
-          </Label>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Label htmlFor="mcp-rw-toggle" muted={false}>
+              {t('agentAccess.rwToggleLabel')}
+            </Label>
+            {effectiveRwStatus.enabled && (
+              <Badge variant="destructive" data-testid="mcp-rw-warning-badge">
+                {t('agentAccess.rwEnabledWarning')}
+              </Badge>
+            )}
+          </div>
           <p className="text-xs text-muted-foreground mt-1">
             {t('agentAccess.rwToggleDescription')}
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <Badge variant="secondary">{t('agentAccess.comingInV2')}</Badge>
-          <Switch
-            id="mcp-rw-toggle"
-            checked={false}
-            disabled
-            aria-label={t('agentAccess.rwToggleLabel')}
-          />
+        <Switch
+          id="mcp-rw-toggle"
+          checked={effectiveRwStatus.enabled}
+          onCheckedChange={handleToggleRw}
+          aria-label={t('agentAccess.rwToggleLabel')}
+          disabled={rwStatus === null}
+        />
+      </div>
+
+      {/* RW socket path */}
+      <div className="space-y-2">
+        <Label htmlFor="mcp-rw-socket-path" muted={false}>
+          {t('agentAccess.rwSocketPathLabel')}
+        </Label>
+        <div className="flex items-center gap-2">
+          <code
+            id="mcp-rw-socket-path"
+            className="flex-1 rounded-md border bg-muted/30 px-3 py-2 text-xs font-mono break-all"
+            data-testid="mcp-rw-socket-path"
+          >
+            {rwSocketPath || '\u00A0'}
+          </code>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="shrink-0"
+            onClick={() => void copyToClipboard(rwSocketPath, 'agentAccess.rwSocketPathCopied')}
+            aria-label={t('agentAccess.copyRwSocketPathLabel')}
+            disabled={!rwSocketPath}
+          >
+            <Copy className="h-3.5 w-3.5" />
+          </Button>
         </div>
       </div>
 
+      {/* RW kill switch */}
+      <div className="space-y-2">
+        <Label muted={false}>{t('agentAccess.rwKillSwitchLabel')}</Label>
+        <p className="text-xs text-muted-foreground">
+          {effectiveRwStatus.active_connections === 0
+            ? t('agentAccess.rwKillSwitchDescriptionNone')
+            : t('agentAccess.rwKillSwitchDescription', {
+                count: effectiveRwStatus.active_connections,
+              })}
+        </p>
+        <Button
+          variant="destructive"
+          size="sm"
+          onClick={() => setConfirmTarget('rw')}
+          disabled={effectiveRwStatus.active_connections === 0}
+          aria-label={t('agentAccess.rwKillSwitchButton')}
+        >
+          {t('agentAccess.rwKillSwitchButton')}
+        </Button>
+      </div>
+
       <ConfirmDialog
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
+        open={confirmTarget === 'ro'}
+        onOpenChange={(open) => {
+          if (!open) setConfirmTarget(null)
+        }}
         title={t('agentAccess.confirmDisconnectTitle')}
         description={t('agentAccess.confirmDisconnectDescription')}
         actionLabel={t('agentAccess.confirmDisconnectAction')}
         actionVariant="destructive"
         onAction={() => void handleDisconnectAll()}
+      />
+
+      <ConfirmDialog
+        open={confirmTarget === 'rw'}
+        onOpenChange={(open) => {
+          if (!open) setConfirmTarget(null)
+        }}
+        title={t('agentAccess.rwConfirmDisconnectTitle')}
+        description={t('agentAccess.rwConfirmDisconnectDescription')}
+        actionLabel={t('agentAccess.rwConfirmDisconnectAction')}
+        actionVariant="destructive"
+        onAction={() => void handleDisconnectAllRw()}
       />
     </div>
   )

@@ -285,6 +285,11 @@ pub fn run() {
         commands::get_mcp_socket_path,
         commands::mcp_set_enabled,
         commands::mcp_disconnect_all,
+        // MCP RW (FEAT-4h slice 2)
+        commands::get_mcp_rw_status,
+        commands::get_mcp_rw_socket_path,
+        commands::mcp_rw_set_enabled,
+        commands::mcp_rw_disconnect_all,
         // Google Calendar push (FEAT-5e) — Settings "Google Calendar" tab
         commands::get_gcal_status,
         commands::force_gcal_resync,
@@ -515,6 +520,13 @@ pub fn run() {
             let materializer_for_mcp = materializer.clone();
             let device_id_for_mcp = device_id.clone();
 
+            // FEAT-4h slice 2 — clone the writer pool, materializer, and
+            // device_id for the RW MCP server's `ReadWriteTools`. The RW
+            // registry MUST bind the writer pool (every RW tool mutates).
+            let pools_write_for_mcp_rw = pools.write.clone();
+            let materializer_for_mcp_rw = materializer.clone();
+            let device_id_for_mcp_rw = device_id.clone();
+
             // FEAT-5e — clone the write pool + device_id for the GCal
             // connector task (see spawn block near the end of setup).
             let pools_write_for_gcal = pools.write.clone();
@@ -642,6 +654,24 @@ pub fn run() {
                 mcp_materializer,
                 mcp_device_id,
                 Some((*mcp_lifecycle).clone()),
+            );
+
+            // FEAT-4h slice 2 — parallel MCP **read-write** server. Opt-in
+            // via the `mcp-rw-enabled` marker file (independent of RO).
+            // A second `McpLifecycle` is allocated so the RO and RW
+            // servers track their own connection counts and disconnect
+            // signals; the `McpRwLifecycle` newtype wrapper keeps Tauri's
+            // managed-state resolver from colliding on the shared type.
+            let mcp_rw_lifecycle_inner = std::sync::Arc::new(mcp::McpLifecycle::new());
+            let mcp_rw_lifecycle = mcp::McpRwLifecycle(mcp_rw_lifecycle_inner.clone());
+            app.manage(mcp_rw_lifecycle.clone());
+            mcp::spawn_mcp_rw_task(
+                &app_data_dir,
+                app.handle().clone(),
+                pools_write_for_mcp_rw,
+                materializer_for_mcp_rw,
+                device_id_for_mcp_rw,
+                Some((*mcp_rw_lifecycle_inner).clone()),
             );
 
             // FEAT-5e — Google Calendar push connector.  Spawned
@@ -972,6 +1002,11 @@ mod specta_tests {
             crate::commands::get_mcp_socket_path,
             crate::commands::mcp_set_enabled,
             crate::commands::mcp_disconnect_all,
+            // MCP RW (FEAT-4h slice 2)
+            crate::commands::get_mcp_rw_status,
+            crate::commands::get_mcp_rw_socket_path,
+            crate::commands::mcp_rw_set_enabled,
+            crate::commands::mcp_rw_disconnect_all,
             // Google Calendar push (FEAT-5e) — Settings "Google Calendar" tab
             crate::commands::get_gcal_status,
             crate::commands::force_gcal_resync,

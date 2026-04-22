@@ -1,0 +1,103 @@
+---
+source: src/mcp/tools_rw.rs
+assertion_line: 537
+expression: wire
+---
+- description: "Append a content block under an existing parent. The block_type is always `content` — agents cannot create pages or tags through this tool."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      content:
+        description: Markdown content for the new block.
+        type: string
+      parent_id:
+        description: ULID of the parent block (required — no orphan blocks).
+        type: string
+      position:
+        description: Optional 1-based sibling position. Defaults to append (end).
+        minimum: 1
+        type: integer
+    required:
+      - parent_id
+      - content
+    type: object
+  name: append_block
+- description: Replace the content of an existing block. Reversible via page history.
+  inputSchema:
+    additionalProperties: false
+    properties:
+      block_id:
+        description: ULID of the block to edit.
+        type: string
+      content:
+        description: New Markdown content.
+        type: string
+    required:
+      - block_id
+      - content
+    type: object
+  name: update_block_content
+- description: Set (upsert) a typed property on a block. Exactly one of value_text / value_num / value_date / value_ref must be provided.
+  inputSchema:
+    additionalProperties: false
+    properties:
+      block_id:
+        description: ULID of the target block.
+        type: string
+      key:
+        description: Property key (see list_property_defs).
+        type: string
+      value_date:
+        description: ISO-8601 date (exactly one value_* must be set).
+        type: string
+      value_num:
+        description: Numeric value (exactly one value_* must be set).
+        type: number
+      value_ref:
+        description: Block ULID reference (exactly one value_* must be set).
+        type: string
+      value_text:
+        description: Text value (exactly one value_* must be set).
+        type: string
+    required:
+      - block_id
+      - key
+    type: object
+  name: set_property
+- description: Apply an existing tag to a block. Does NOT create tags — the tag block must already exist (create tags from the UI).
+  inputSchema:
+    additionalProperties: false
+    properties:
+      block_id:
+        description: ULID of the block to tag.
+        type: string
+      tag_id:
+        description: ULID of an existing tag block.
+        type: string
+    required:
+      - block_id
+      - tag_id
+    type: object
+  name: add_tag
+- description: "Create a new top-level page with the given title. The page has no parent (pages are always top-level in Agaric's model)."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      title:
+        description: "Page title (becomes the page's content)."
+        type: string
+    required:
+      - title
+    type: object
+  name: create_page
+- description: Soft-delete a block and its descendants. Reversible via page history (agents never get the non-reversible purge path).
+  inputSchema:
+    additionalProperties: false
+    properties:
+      block_id:
+        description: ULID of the block to soft-delete.
+        type: string
+    required:
+      - block_id
+    type: object
+  name: delete_block

@@ -1899,7 +1899,7 @@ const resources = {
       'settings.tabAgentAccess': 'Agent access',
       'agentAccess.title': 'Agent access',
       'agentAccess.description':
-        'Allow local agents (Claude Desktop, Cursor, Continue, Devin, …) to read from your vault over a local socket. Writes are off by default; a read-write server is coming in v2.',
+        'Allow local agents (Claude Desktop, Cursor, Continue, Devin, …) to connect over local sockets. Two independent servers are available: a read-only socket for search / query tools, and a read-write socket for create / edit / tag / delete tools. Each toggle is off by default.',
       'agentAccess.loadFailed': 'Failed to load MCP status',
       'agentAccess.roToggleLabel': 'Read-only access',
       'agentAccess.roToggleDescription':
@@ -1934,8 +1934,25 @@ const resources = {
       'agentAccess.confirmDisconnectAction': 'Disconnect all',
       'agentAccess.rwToggleLabel': 'Read-write access',
       'agentAccess.rwToggleDescription':
-        'Let agents create, edit, and tag blocks. Every write is reversible from the activity feed.',
-      'agentAccess.comingInV2': 'Coming in v2',
+        'Let agents create, edit, tag, and delete blocks over a separate local socket. Every write is reversible from the activity feed.',
+      'agentAccess.rwToggleOnSuccess': 'Read-write agent access enabled',
+      'agentAccess.rwToggleOffSuccess': 'Read-write agent access disabled',
+      'agentAccess.rwSocketPathLabel': 'Read-write socket path',
+      'agentAccess.rwSocketPathCopied': 'Read-write socket path copied',
+      'agentAccess.copyRwSocketPathLabel': 'Copy read-write socket path',
+      'agentAccess.rwKillSwitchLabel': 'Read-write connections',
+      'agentAccess.rwKillSwitchDescriptionNone': 'No active read-write connections.',
+      'agentAccess.rwKillSwitchDescription_one': '1 active read-write connection.',
+      'agentAccess.rwKillSwitchDescription_other': '{{count}} active read-write connections.',
+      'agentAccess.rwKillSwitchButton': 'Disconnect all read-write',
+      'agentAccess.rwDisconnectSuccess': 'Disconnected all active read-write sessions',
+      'agentAccess.rwDisconnectFailed': 'Failed to disconnect read-write sessions',
+      'agentAccess.rwConfirmDisconnectTitle': 'Disconnect all read-write sessions?',
+      'agentAccess.rwConfirmDisconnectDescription':
+        'Every currently-connected read-write agent will be dropped. They can reconnect immediately after.',
+      'agentAccess.rwConfirmDisconnectAction': 'Disconnect all read-write',
+      'agentAccess.rwEnabledWarning':
+        'Agents can create, edit, and delete blocks while this is on.',
 
       // FEAT-5f: Google Calendar (experimental) settings tab
       'settings.tabGoogleCalendar': 'Google Calendar',

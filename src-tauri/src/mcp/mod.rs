@@ -20,6 +20,7 @@ pub mod actor;
 pub mod registry;
 pub mod server;
 pub mod tools_ro;
+pub mod tools_rw;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -90,6 +91,31 @@ impl Default for McpLifecycle {
     }
 }
 
+/// Newtype wrapper around an [`Arc<McpLifecycle>`] for the **read-write**
+/// MCP server (FEAT-4h slice 2).
+///
+/// Tauri's managed-state resolver keys on type, so the RO and RW servers
+/// cannot share `Arc<McpLifecycle>` as separate managed states — the
+/// resolver would collide. The newtype gives them distinct types at the
+/// type-system level without duplicating the lifecycle machinery itself.
+///
+/// Callers read the inner lifecycle transparently via `Deref`:
+///
+/// ```ignore
+/// let rw_lifecycle: McpRwLifecycle = state.inner().clone();
+/// let n = rw_lifecycle.connection_count(); // same as (*rw_lifecycle).connection_count()
+/// ```
+#[derive(Debug, Clone)]
+pub struct McpRwLifecycle(pub Arc<McpLifecycle>);
+
+impl std::ops::Deref for McpRwLifecycle {
+    type Target = McpLifecycle;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// RAII guard used by per-connection tasks to keep
 /// [`McpLifecycle::active_connections`] balanced even when the task panics
 /// or returns an error mid-way. Dropping the guard decrements the counter.
@@ -156,6 +182,42 @@ pub fn mcp_ro_enabled(app_data_dir: &Path) -> bool {
     app_data_dir.join(MCP_RO_ENABLED_MARKER).is_file()
 }
 
+/// Marker-file name for the MCP **read-write** socket (FEAT-4h slice 2).
+/// Distinct from [`MCP_RO_ENABLED_MARKER`] so the user can opt into
+/// read-only access without also opening the write socket.
+pub const MCP_RW_ENABLED_MARKER: &str = "mcp-rw-enabled";
+
+/// Default socket file-name for the MCP RW socket on unix.
+#[cfg(unix)]
+pub const MCP_RW_SOCKET_FILENAME: &str = "mcp-rw.sock";
+
+/// Default named-pipe path for the MCP RW server on Windows.
+#[cfg(windows)]
+pub const MCP_RW_PIPE_PATH: &str = r"\\.\pipe\agaric-mcp-rw";
+
+/// Resolve the default MCP read-write socket path for the given app data
+/// directory. Mirrors [`default_mcp_ro_socket_path`] for the RW surface:
+/// a sibling socket file on unix, a distinct named pipe on Windows.
+pub fn default_mcp_rw_socket_path(
+    #[cfg_attr(windows, allow(unused_variables))] app_data_dir: &Path,
+) -> PathBuf {
+    #[cfg(unix)]
+    {
+        app_data_dir.join(MCP_RW_SOCKET_FILENAME)
+    }
+    #[cfg(windows)]
+    {
+        PathBuf::from(MCP_RW_PIPE_PATH)
+    }
+}
+
+/// Return `true` when the MCP read-write socket is enabled. Parallel to
+/// [`mcp_ro_enabled`]; the two gates are independent so the Settings UI
+/// can expose RO and RW as separate toggles.
+pub fn mcp_rw_enabled(app_data_dir: &Path) -> bool {
+    app_data_dir.join(MCP_RW_ENABLED_MARKER).is_file()
+}
+
 /// Transport-agnostic listener handle. The rest of the module matches on
 /// this enum so the serve loop does not have to care whether the backing
 /// transport is a Unix-domain socket or a Windows named pipe.
@@ -195,8 +257,14 @@ impl std::fmt::Debug for SocketKind {
 /// (a second Agaric instance racing on the same app data directory), the
 /// function returns [`AppError::InvalidOperation`] so the caller can log
 /// a structured warning instead of panicking.
+///
+/// `socket_kind` is a short identifier (`"RO"` / `"RW"`) baked into the
+/// log + error-message strings so operators can tell which server failed
+/// when the marker-file gate is flipped on both paths simultaneously. The
+/// function itself is transport-agnostic — the label is purely for
+/// diagnostics.
 #[cfg(unix)]
-pub async fn bind_socket(socket_path: &Path) -> Result<SocketKind, AppError> {
+pub async fn bind_socket(socket_path: &Path, socket_kind: &str) -> Result<SocketKind, AppError> {
     use std::os::unix::fs::PermissionsExt;
     use tokio::net::{UnixListener, UnixStream};
 
@@ -207,7 +275,7 @@ pub async fn bind_socket(socket_path: &Path) -> Result<SocketKind, AppError> {
         match UnixStream::connect(socket_path).await {
             Ok(_) => {
                 return Err(AppError::InvalidOperation(format!(
-                    "MCP RO socket already bound at {}",
+                    "MCP {socket_kind} socket already bound at {}",
                     socket_path.display()
                 )));
             }
@@ -216,9 +284,10 @@ pub async fn bind_socket(socket_path: &Path) -> Result<SocketKind, AppError> {
                 if let Err(e) = std::fs::remove_file(socket_path) {
                     tracing::warn!(
                         target: "mcp",
+                        kind = socket_kind,
                         path = %socket_path.display(),
                         error = %e,
-                        "failed to remove stale MCP RO socket file",
+                        "failed to remove stale MCP socket file",
                     );
                 }
             }
@@ -241,20 +310,21 @@ pub async fn bind_socket(socket_path: &Path) -> Result<SocketKind, AppError> {
 
     tracing::info!(
         target: "mcp",
+        kind = socket_kind,
         path = %socket_path.display(),
-        "MCP RO socket bound",
+        "MCP socket bound",
     );
 
     Ok(SocketKind::Unix(listener))
 }
 
 #[cfg(windows)]
-pub async fn bind_socket(pipe_path: &Path) -> Result<SocketKind, AppError> {
+pub async fn bind_socket(pipe_path: &Path, socket_kind: &str) -> Result<SocketKind, AppError> {
     use tokio::net::windows::named_pipe::ServerOptions;
 
     let pipe_str = pipe_path.to_str().ok_or_else(|| {
         AppError::InvalidOperation(format!(
-            "MCP RO pipe path is not valid UTF-8: {}",
+            "MCP {socket_kind} pipe path is not valid UTF-8: {}",
             pipe_path.display()
         ))
     })?;
@@ -269,7 +339,7 @@ pub async fn bind_socket(pipe_path: &Path) -> Result<SocketKind, AppError> {
             // case without crashing.
             if matches!(e.raw_os_error(), Some(5) | Some(183) | Some(231)) {
                 AppError::InvalidOperation(format!(
-                    "MCP RO pipe already bound at {}",
+                    "MCP {socket_kind} pipe already bound at {}",
                     pipe_path.display()
                 ))
             } else {
@@ -279,8 +349,9 @@ pub async fn bind_socket(pipe_path: &Path) -> Result<SocketKind, AppError> {
 
     tracing::info!(
         target: "mcp",
+        kind = socket_kind,
         path = %pipe_path.display(),
-        "MCP RO named pipe created",
+        "MCP named pipe created",
     );
 
     Ok(SocketKind::Pipe(server))
@@ -357,7 +428,7 @@ pub fn spawn_mcp_ro_task_with_registry<R>(
 {
     let registry = std::sync::Arc::new(registry);
     tauri::async_runtime::spawn(async move {
-        match bind_socket(&socket_path).await {
+        match bind_socket(&socket_path, "RO").await {
             Ok(socket) => {
                 if let Some(ref lc) = lifecycle {
                     lc.task_running
@@ -378,14 +449,102 @@ pub fn spawn_mcp_ro_task_with_registry<R>(
                 }
             }
             Err(AppError::InvalidOperation(msg)) => {
-                tracing::warn!(target: "mcp", msg = %msg, "already bound");
+                tracing::warn!(target: "mcp", kind = "RO", msg = %msg, "already bound");
             }
             Err(e) => {
                 tracing::error!(
                     target: "mcp",
+                    kind = "RO",
                     error = %e,
                     path = %socket_path.display(),
-                    "failed to bind MCP RO socket",
+                    "failed to bind MCP socket",
+                );
+            }
+        }
+    });
+}
+
+/// Spawn the MCP **read-write** task onto the current Tokio runtime
+/// (FEAT-4h slice 2).
+///
+/// Mirrors [`spawn_mcp_ro_task`] but reads the RW marker
+/// ([`MCP_RW_ENABLED_MARKER`]) and builds a [`tools_rw::ReadWriteTools`]
+/// registry bound to the **writer** pool — the six RW tools all mutate.
+///
+/// When the marker is absent, logs at info level and returns. When the
+/// socket is already bound by another instance, logs at warn level and
+/// returns — the first owner keeps the socket.
+///
+/// `lifecycle` is the FEAT-4e / FEAT-4h managed state that surfaces
+/// connection counts and disconnect-signal plumbing to the Settings UI.
+/// Passed as `Option` so headless / test callers can elide it. Call sites
+/// normally wrap the lifecycle in an [`McpRwLifecycle`] newtype before
+/// handing it to Tauri's managed-state resolver.
+pub fn spawn_mcp_rw_task<R: tauri::Runtime>(
+    app_data_dir: &Path,
+    app_handle: tauri::AppHandle<R>,
+    write_pool: SqlitePool,
+    materializer: Materializer,
+    device_id: String,
+    lifecycle: Option<McpLifecycle>,
+) {
+    if !mcp_rw_enabled(app_data_dir) {
+        tracing::info!(
+            target: "mcp",
+            "MCP RW disabled ({} marker absent)", MCP_RW_ENABLED_MARKER,
+        );
+        return;
+    }
+
+    let socket_path = default_mcp_rw_socket_path(app_data_dir);
+    let activity_ctx = activity::ActivityContext::from_app_handle(app_handle);
+    let registry = tools_rw::ReadWriteTools::new(write_pool, materializer, device_id);
+    spawn_mcp_rw_task_with_registry(socket_path, registry, Some(activity_ctx), lifecycle);
+}
+
+/// Spawn the MCP RW task against a caller-supplied registry and socket
+/// path. Mirrors [`spawn_mcp_ro_task_with_registry`] — see its docs for
+/// the `activity_ctx` / `lifecycle` semantics.
+pub fn spawn_mcp_rw_task_with_registry<R>(
+    socket_path: PathBuf,
+    registry: R,
+    activity_ctx: Option<activity::ActivityContext>,
+    lifecycle: Option<McpLifecycle>,
+) where
+    R: server::ToolRegistry + Send + Sync + 'static,
+{
+    let registry = std::sync::Arc::new(registry);
+    tauri::async_runtime::spawn(async move {
+        match bind_socket(&socket_path, "RW").await {
+            Ok(socket) => {
+                if let Some(ref lc) = lifecycle {
+                    lc.task_running
+                        .store(true, std::sync::atomic::Ordering::Release);
+                }
+                if let Err(e) =
+                    server::serve(socket, registry, activity_ctx, lifecycle.clone()).await
+                {
+                    tracing::error!(
+                        target: "mcp",
+                        error = %e,
+                        "MCP RW serve loop exited with error",
+                    );
+                }
+                if let Some(ref lc) = lifecycle {
+                    lc.task_running
+                        .store(false, std::sync::atomic::Ordering::Release);
+                }
+            }
+            Err(AppError::InvalidOperation(msg)) => {
+                tracing::warn!(target: "mcp", kind = "RW", msg = %msg, "already bound");
+            }
+            Err(e) => {
+                tracing::error!(
+                    target: "mcp",
+                    kind = "RW",
+                    error = %e,
+                    path = %socket_path.display(),
+                    "failed to bind MCP socket",
                 );
             }
         }
@@ -447,13 +606,80 @@ mod tests {
         assert_eq!(path, std::path::PathBuf::from(MCP_RO_PIPE_PATH));
     }
 
+    // -----------------------------------------------------------------
+    // RW parity tests (FEAT-4h slice 2)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn mcp_rw_enabled_returns_false_when_marker_absent() {
+        let dir = TempDir::new().unwrap();
+        assert!(
+            !mcp_rw_enabled(dir.path()),
+            "expected RW gate off when marker absent",
+        );
+    }
+
+    #[test]
+    fn mcp_rw_enabled_returns_true_when_marker_present() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join(MCP_RW_ENABLED_MARKER), b"").unwrap();
+        assert!(
+            mcp_rw_enabled(dir.path()),
+            "expected RW gate on when marker present",
+        );
+    }
+
+    #[test]
+    fn mcp_rw_enabled_ignores_directory_with_marker_name() {
+        // Mirror of the RO guard: a directory at the marker path must
+        // not be mistaken for the gate.
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir(dir.path().join(MCP_RW_ENABLED_MARKER)).unwrap();
+        assert!(
+            !mcp_rw_enabled(dir.path()),
+            "directory at RW marker path must not flip the gate",
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn default_mcp_rw_socket_path_under_app_data_dir_on_unix() {
+        let dir = TempDir::new().unwrap();
+        let path = default_mcp_rw_socket_path(dir.path());
+        assert_eq!(path, dir.path().join(MCP_RW_SOCKET_FILENAME));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn default_mcp_rw_socket_path_is_named_pipe_on_windows() {
+        let dir = TempDir::new().unwrap();
+        let path = default_mcp_rw_socket_path(dir.path());
+        assert_eq!(path, std::path::PathBuf::from(MCP_RW_PIPE_PATH));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn bind_socket_ro_and_rw_can_coexist_in_same_dir() {
+        // Pins the invariant that the RO and RW sockets do not clash
+        // on the filesystem — they live side-by-side under the same
+        // app data directory.
+        let dir = TempDir::new().unwrap();
+        let ro_path = dir.path().join(MCP_RO_SOCKET_FILENAME);
+        let rw_path = dir.path().join(MCP_RW_SOCKET_FILENAME);
+        let _ro = bind_socket(&ro_path, "RO").await.expect("RO bind");
+        let _rw = bind_socket(&rw_path, "RW").await.expect("RW bind");
+        assert!(ro_path.exists(), "RO socket file exists");
+        assert!(rw_path.exists(), "RW socket file exists");
+        assert_ne!(ro_path, rw_path, "RO and RW must not share a path");
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn bind_socket_enforces_mode_0600() {
         use std::os::unix::fs::PermissionsExt;
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("mcp-ro.sock");
-        let _socket = bind_socket(&path).await.expect("bind succeeds");
+        let _socket = bind_socket(&path, "RO").await.expect("bind succeeds");
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(
             mode & 0o777,
@@ -470,7 +696,9 @@ mod tests {
         let path = dir.path().join("mcp-ro.sock");
         // Prior-run stale file — not a live listener.
         std::fs::write(&path, b"stale").unwrap();
-        let _socket = bind_socket(&path).await.expect("bind succeeds over stale");
+        let _socket = bind_socket(&path, "RO")
+            .await
+            .expect("bind succeeds over stale");
         assert!(path.exists(), "socket file exists after re-bind");
     }
 
@@ -479,8 +707,8 @@ mod tests {
     async fn bind_socket_rejects_second_live_instance() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("mcp-ro.sock");
-        let _first = bind_socket(&path).await.expect("first bind succeeds");
-        let second = bind_socket(&path).await;
+        let _first = bind_socket(&path, "RO").await.expect("first bind succeeds");
+        let second = bind_socket(&path, "RO").await;
         assert!(
             matches!(second, Err(AppError::InvalidOperation(_))),
             "second bind must return InvalidOperation, got {second:?}",

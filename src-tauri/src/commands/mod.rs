@@ -89,9 +89,11 @@ pub use link_metadata::{
 };
 pub use logging::{get_log_dir, log_frontend};
 pub use mcp::{
-    get_mcp_socket_path, get_mcp_socket_path_inner, get_mcp_status, get_mcp_status_inner,
-    mcp_disconnect_all, mcp_disconnect_all_inner, mcp_set_enabled, mcp_set_enabled_inner,
-    McpStatus,
+    get_mcp_rw_socket_path, get_mcp_rw_socket_path_inner, get_mcp_rw_status,
+    get_mcp_rw_status_inner, get_mcp_socket_path, get_mcp_socket_path_inner, get_mcp_status,
+    get_mcp_status_inner, mcp_disconnect_all, mcp_disconnect_all_inner, mcp_rw_disconnect_all,
+    mcp_rw_disconnect_all_inner, mcp_rw_set_enabled, mcp_rw_set_enabled_inner, mcp_set_enabled,
+    mcp_set_enabled_inner, McpRwStatus, McpStatus,
 };
 pub use pages::{
     export_page_markdown, export_page_markdown_inner, get_page_aliases, get_page_aliases_inner,
@@ -174,8 +176,10 @@ pub use link_metadata::{__specta__fn__fetch_link_metadata, __specta__fn__get_lin
 pub use logging::{__specta__fn__get_log_dir, __specta__fn__log_frontend};
 #[doc(hidden)]
 pub use mcp::{
+    __specta__fn__get_mcp_rw_socket_path, __specta__fn__get_mcp_rw_status,
     __specta__fn__get_mcp_socket_path, __specta__fn__get_mcp_status,
-    __specta__fn__mcp_disconnect_all, __specta__fn__mcp_set_enabled,
+    __specta__fn__mcp_disconnect_all, __specta__fn__mcp_rw_disconnect_all,
+    __specta__fn__mcp_rw_set_enabled, __specta__fn__mcp_set_enabled,
 };
 #[doc(hidden)]
 pub use pages::{
@@ -249,8 +253,9 @@ pub use link_metadata::{__cmd__fetch_link_metadata, __cmd__get_link_metadata};
 pub use logging::{__cmd__get_log_dir, __cmd__log_frontend};
 #[doc(hidden)]
 pub use mcp::{
-    __cmd__get_mcp_socket_path, __cmd__get_mcp_status, __cmd__mcp_disconnect_all,
-    __cmd__mcp_set_enabled,
+    __cmd__get_mcp_rw_socket_path, __cmd__get_mcp_rw_status, __cmd__get_mcp_socket_path,
+    __cmd__get_mcp_status, __cmd__mcp_disconnect_all, __cmd__mcp_rw_disconnect_all,
+    __cmd__mcp_rw_set_enabled, __cmd__mcp_set_enabled,
 };
 #[doc(hidden)]
 pub use pages::{

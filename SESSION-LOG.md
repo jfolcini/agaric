@@ -1,5 +1,75 @@
 # Session Log
 
+## Session 460 — FEAT-4h slice 2: MCP RW server + Settings toggle (2026-04-22)
+
+**0 REVIEW-LATER items resolved, 0 new filed.** FEAT-4h stays open — slices 3-4 (activity-feed Undo + bulk revert) are the remaining tail — but its scope is compacted again (**Cost M–L → M**, Status READY; summary-table row retitled to reflect the shrunken remaining surface). Open-items count unchanged at 13.
+
+Following the user's explicit "Tackle FEAT-4h" direction (Session 459 shipped slice 1 offline and the user said "follow PROMPT.md" to continue). Launched 2 sequential build subagents (backend → frontend, dependency-ordered via the Tauri bindings regen) pipelined with 2 review subagents (technical on backend, technical+UX on frontend). Backend review caught one P1 (`bind_socket` hardcoded "MCP RO" strings in its shared log/error path would confuse operators when called from the RW spawn site) — fixed in-session by parameterising `bind_socket(path, socket_kind)` and updating all 10 call sites. Frontend review returned APPROVE WITH NOTES; both notes filed under FEAT-4h slice 3 scope rather than as new REVIEW-LATER items.
+
+One unrelated security-advisory fix rolled into this commit to unblock `cargo deny` in the pre-commit gate: **RUSTSEC-2026-0104** (`rustls-webpki 0.103.12` — reachable panic in CRL parsing) has a drop-in patch fix via `cargo update -p rustls-webpki` → `0.103.13`, which is in the advisory's own recommendation (`>=0.103.13, <0.104.0-alpha.1`). Single-line `Cargo.lock` bump, within the existing `0.103.*` range, no manifest change required. Pre-existing advisory confirmed by stashing FEAT-4h changes and re-running `cargo deny check advisories` against the `f0105eb` tip.
+
+### What changed
+
+**Backend — RW server scaffolding + 6 write tools (sliced out into the `mcp::tools_rw` sub-module):**
+
+- **`src-tauri/src/mcp/tools_rw.rs` (NEW, 1162 lines)** — `ReadWriteTools` registry wrapping the write pool + materializer + device_id. Six tools (exact order pinned by `list_tools_advertises_six_tools` + insta snapshot): `append_block` (→ `create_block_inner`, hard-coded `block_type="content"`), `update_block_content` (→ `edit_block_inner`), `set_property` (→ `set_property_inner`, with a tool-layer "exactly one of value_text / value_num / value_date / value_ref" guard that short-circuits ahead of the backend's per-definition type validation for better error messages), `add_tag` (→ `add_tag_inner`), `create_page` (→ `create_block_inner`, hard-coded `block_type="page"`, `parent_id` forced to `None`), `delete_block` (→ `delete_block_inner`, reversible soft-delete). Every handler parses `#[serde(deny_unknown_fields)]` typed arg structs via `parse_args(tool, args)` → `AppError::Validation`. `ReadWriteTools::call_tool` wraps the dispatch in `ACTOR.scope(ctx, ...)` so `append_local_op_in_tx` picks up `current_actor().origin_tag() = "agent:<name>"` transparently — no command-handler code was touched.
+- **`src-tauri/src/mcp/snapshots/agaric_lib__mcp__tools_rw__tests__tool_descriptions_rw.snap` (NEW, 103 lines)** — insta snapshot of the 6-tool wire contract (name + description + JSON schema).
+- **`src-tauri/src/mcp/mod.rs` (+254 / −8)** — added `MCP_RW_ENABLED_MARKER`, `MCP_RW_SOCKET_FILENAME` / `MCP_RW_PIPE_PATH`, `mcp_rw_enabled()`, `default_mcp_rw_socket_path()`, `spawn_mcp_rw_task*()`, and the `McpRwLifecycle(Arc<McpLifecycle>)` newtype (with `impl Deref for McpRwLifecycle` so call-sites can still read `.connection_count()` transparently). The newtype wrapper is what lets Tauri's managed-state resolver distinguish the RO `Arc<McpLifecycle>` state from the RW one without a second lifecycle type. **P1 fix from review:** parameterised `bind_socket(socket_path, socket_kind: &str)` so the shared log / error / tracing strings now include the `kind = "RO" | "RW"` field via `tracing::warn!(target: "mcp", kind = socket_kind, …)` and the `AppError::InvalidOperation` messages carry `"MCP {socket_kind} socket already bound"` — no more "MCP RO" confusion on the RW binding path.
+- **`src-tauri/src/commands/mcp.rs` (+312 / −1)** — `McpRwStatus` struct + 4 new `*_rw_*` Tauri commands (`get_mcp_rw_status`, `get_mcp_rw_socket_path`, `mcp_rw_set_enabled`, `mcp_rw_disconnect_all`) paired with testable `*_inner` helpers. `mcp_rw_set_enabled` respawns the RW task when the marker flips true.
+- **`src-tauri/src/commands/mod.rs` (+17 / −8)** — re-exports the new RW command handlers so they're registered in the specta builder's `commands![...]` list and picked up by `cargo test -- specta_tests --ignored`.
+- **`src-tauri/src/lib.rs` (+35 / 0)** — in `setup`, allocates a separate `McpLifecycle` for RW, wraps it in `McpRwLifecycle`, calls `app.manage(mcp_rw_lifecycle.clone())`, and calls `mcp::spawn_mcp_rw_task(&app_data_dir, app.handle().clone(), write_pool.clone(), materializer_for_mcp_rw, device_id_for_mcp_rw, Some((*mcp_rw_lifecycle).clone()))`.
+
+**Frontend — Settings tab RW toggle wire-up:**
+
+- **`src/components/AgentAccessSettingsTab.tsx` (+231 / −57)** — replaced the previously-disabled "Coming in v2" RW placeholder with three live sections mirroring the RO path: RW toggle (with a destructive `Badge variant="destructive"` beside the label whenever the toggle is ON, copy from `t('agentAccess.rwEnabledWarning')`), RW socket-path display + copy button, RW kill-switch button + confirm dialog. `loadStatus` now fires both `get_mcp_status` and `get_mcp_rw_status` concurrently via `Promise.allSettled` so a failure on either side degrades gracefully — RO failure drives the section-level error banner (preserving the existing test contract), RW failure only logs + toasts (the RW shell keeps rendering in a disabled state). `confirmOpen: boolean` was refactored to `confirmTarget: 'ro' | 'rw' | null` so the existing `ConfirmDialog` component drives both flows without parallel state.
+- **`src/lib/i18n.ts` (+23 / −6)** — removed `agentAccess.comingInV2`, rewrote `agentAccess.description` + `agentAccess.rwToggleDescription` to reflect that RW is live, added 16 new keys (`agentAccess.rwToggleOnSuccess`, `agentAccess.rwToggleOffSuccess`, `agentAccess.rwSocketPathLabel`, `agentAccess.rwSocketPathCopied`, `agentAccess.copyRwSocketPathLabel`, `agentAccess.rwKillSwitchLabel`, `agentAccess.rwKillSwitchDescriptionNone`, `agentAccess.rwKillSwitchDescription_one`, `agentAccess.rwKillSwitchDescription_other`, `agentAccess.rwKillSwitchButton`, `agentAccess.rwDisconnectSuccess`, `agentAccess.rwDisconnectFailed`, `agentAccess.rwConfirmDisconnectTitle`, `agentAccess.rwConfirmDisconnectDescription`, `agentAccess.rwConfirmDisconnectAction`, `agentAccess.rwEnabledWarning`).
+- **`src/components/__tests__/AgentAccessSettingsTab.test.tsx` (+304 / −34)** — 19 → 28 tests (+9). Extended `setupInvoke` to mock all four RW commands alongside the existing RO ones. New tests cover: happy-path RW toggle on + off, optimistic-rollback on `mcp_rw_set_enabled` rejection, destructive warning badge visible iff RW is enabled, RW socket-path clipboard copy, RW kill switch disabled when no RW connections, confirm-then-disconnect fires `mcp_rw_disconnect_all` and reloads status, toast + logger on kill-switch rejection, and a load-path asymmetry test where only `get_mcp_rw_status` rejects (section still renders).
+- **`src/lib/bindings.ts`** — regenerated by `cargo test -- specta_tests --ignored`; the 4 new commands + `McpRwStatus` are exposed with the expected camelCase accessors (`getMcpRwStatus`, `getMcpRwSocketPath`, `mcpRwSetEnabled`, `mcpRwDisconnectAll`).
+
+**Unrelated security fix (rolled in to keep the pre-commit gate green):**
+
+- **`src-tauri/Cargo.lock`** — `rustls-webpki 0.103.12` → `0.103.13` via `cargo update -p rustls-webpki`. Addresses RUSTSEC-2026-0104 (CRL-parsing panic). No `Cargo.toml` change required — the advisory's own recommended range (`>=0.103.13, <0.104.0-alpha.1`) is inside the existing `0.103.*` SemVer-compatible range. Pre-existing advisory — stashing the FEAT-4h diff + running `cargo deny check advisories` against `f0105eb` reproduces the same failure.
+
+### Verification
+
+- `cargo nextest run mcp op_log commands::mcp`: **167 passed, 0 failed** after the P1 fix.
+- `cargo nextest run` (full): all green; the +46 new RW tests sit across `mcp::tools_rw::tests` (27), `mcp::tests` (6), `commands::mcp::tests` (13).
+- `npx vitest run src/components/__tests__/AgentAccessSettingsTab.test.tsx`: 28/28 passed (was 19; **+9** net).
+- `npx vitest run` (full): green via prek's vitest hook.
+- `npx tsc -b --noEmit`: clean.
+- `cargo test -- specta_tests --ignored`: produces the expected 4-command delta in `src/lib/bindings.ts` with `McpRwStatus` type; `ts_bindings_up_to_date` pre-commit test passes on first run.
+- `cargo sqlx prepare -- --tests`: clean (no new `.sqlx/` entries — all 6 write tools delegate to existing `*_inner` handlers, which keep their existing query shapes).
+- `cargo deny check advisories`: **advisories ok** after the rustls-webpki bump.
+- `prek run --all-files`: all 26 hooks pass on the final run. Biome auto-fixed 3 multi-line function-call collapses in the new test file + formatting diffs in `src/lib/bindings.ts`; `cargo fmt` auto-fixed 4 wrap-style tweaks across `mcp/mod.rs`, `mcp/tools_rw.rs`, `op_log.rs` test file, and the bindings regen.
+
+### Design decisions
+
+- **`McpRwLifecycle` newtype over a parallel `Arc<McpLifecycle>`.** Tauri's managed-state resolver keys on type, so two `Arc<McpLifecycle>` would collide — `tauri::State<'_, Arc<McpLifecycle>>` would resolve to whichever was registered last. Wrapping the RW lifecycle in a distinct `McpRwLifecycle` newtype with a `Deref` impl keeps the lifecycle type the same across the helper call-sites (`lifecycle.connection_count()`, `lifecycle.disconnect_all()`, …) while giving the resolver a non-colliding state key. Pinned by the `mcp_rw_lifecycle_newtype_deref_reaches_inner` unit test.
+- **6 tools, not 7+.** No `purge_block`, no `delete_attachment`, no snapshot/compaction — these are non-reversible per `reverse.rs` and the FEAT-4h invariant explicitly excludes them from the agent surface. Pinned by `list_tools_advertises_six_tools` + the insta snapshot.
+- **`ACTOR.scope` idempotence gives us slice 1's attribution guarantee for free.** Every `*_inner` handler we wrap already calls `op_log::append_local_op_in_tx` (slice 1's task-local reader). The MCP server dispatches `tools/call` inside `ACTOR.scope(Actor::Agent { name }, ...)`, so every op the RW tools emit lands with `origin='agent:<name>'` without any command-handler edit. Pinned end-to-end by `append_block_stamps_origin_agent_in_op_log` and `delete_block_stamps_origin_agent_in_op_log` in `tools_rw.rs::tests`.
+- **`bind_socket` parameterised, not duplicated.** The P1 from review was addressed by threading a `socket_kind: &str` argument through `bind_socket` rather than forking into `bind_socket_ro` / `bind_socket_rw`. The diff is smaller (1 arg + 5 format-string tweaks), the behaviour stays transport-agnostic, and operators reading `tracing` output now see `kind="RO"` / `kind="RW"` structured fields on every log line from the accept / bind paths.
+- **RW config-snippet buttons NOT added this slice.** The existing "Copy Claude Desktop config" + "Copy generic MCP config" buttons still emit the RO socket path. Adding RW variants is a 2-button extension but also a copy-decision about what default an agent gets pointed at — RW by default is riskier, RO by default is the safe bet. Deferred to slice 3 under the FEAT-4h "Optional UX polish" bullets so the user can decide on the default behaviour as part of reviewing the Undo UX.
+- **Shared `mcp:activity` event between RO and RW sockets, no socket-kind tag.** Both servers push into the same activity ring and emit the same Tauri event. Slice 3's Undo UX will need the socket-kind distinction (per the review's second P3 note), so filed inside FEAT-4h's remaining scope rather than as a new REVIEW-LATER item.
+
+### Architectural invariants respected (AGENTS.md)
+
+- **Op log append-only:** all 6 RW tools delegate to existing `*_inner` handlers that use `append_local_op_in_tx`. No new op types, no mutation of existing rows.
+- **CQRS split:** command-side writes flow through `materializer.dispatch_background_or_warn(&op_record)` unchanged. The RW tool layer is strictly above the CQRS seam — it never touches `blocks` / `block_tags` / `block_properties` / `op_log` directly.
+- **sqlx compile-time queries:** all queries still go through `*_inner` handlers; no new `sqlx::query!` in `tools_rw.rs`. `.sqlx/` cache unchanged.
+- **Foreign-key PRAGMA:** unchanged; no new DB connections, the write pool's existing `PRAGMA foreign_keys = ON` applies transitively.
+- **ULID uppercase normalization:** RW tools parse agent-supplied ULIDs via the same `BlockId::from_trusted` + ULID normalization paths the frontend commands use.
+- **Architectural stability (AGENTS.md § Architectural Stability):** no new tables, no new op types, no new Zustand store, no new sync message type, no new materializer queue. The FEAT-4 umbrella's pre-approved architecture explicitly covers the FEAT-4h RW surface.
+- **No weakening of strict settings:** no new `#[allow(...)]`, no new `biome-ignore`, no new `unsafe`, no `as any`, no non-null assertions.
+
+### Notes for the next session
+
+- **Slice 3 (activity-feed Undo + bulk revert) is now the natural next batch.** Expected surface: add `origin: String` to `OpRecord`; thread it through the `query_as!(OpRecord, ...)` SELECTs in `op_log.rs`; wire an "Undo" button on each agent-authored activity-feed row that calls `reverse_op_inner(op)` (existing `reverse.rs` machinery); per-connection session-ULID + `reverse_agent_session_inner(pool, session_id)` for the bulk-revert action. Estimated 1 focused session.
+- The two slice-2 P3 notes from the frontend review are folded into slice 3 scope: (1) surface RO/RW indicator on activity entries, (2) either add RW-flavoured copy-config buttons OR add a one-line hint that the RW socket requires manual config edits.
+- No new REVIEW-LATER items filed this session. RUSTSEC-2026-0104 is resolved by the lockfile bump, not deferred.
+- `sqruff` hook from MAINT-88 ran cleanly on migration `0033_op_log_origin_column.sql` (already shipped in session 459). No new migrations this slice.
+
+---
+
 ## Session 459 — FEAT-4h slice 1: op_log `origin` column + actor-scope wiring (2026-04-21)
 
 **0 REVIEW-LATER items resolved, 0 new filed** — FEAT-4h stays open (slices 2-4 remain: RW socket, `tools_rw.rs`, activity-feed Undo, bulk revert), but its summary and detail have been compacted to describe what's left rather than what was originally proposed. Open-items count unchanged at 13.

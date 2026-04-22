@@ -249,6 +249,21 @@ export const commands = {
 	 *  may briefly still observe live connections while the tasks unwind.
 	 */
 	mcpDisconnectAll: () => typedError<null, AppErrorSchema>(__TAURI_INVOKE("mcp_disconnect_all")),
+	// Tauri command: return the current MCP RW status for the Settings tab.
+	getMcpRwStatus: () => typedError<McpRwStatus, AppErrorSchema>(__TAURI_INVOKE("get_mcp_rw_status")),
+	/**
+	 *  Tauri command: return the default RW socket path for the current
+	 *  platform. Same shape as [`get_mcp_socket_path`].
+	 */
+	getMcpRwSocketPath: () => typedError<string, AppErrorSchema>(__TAURI_INVOKE("get_mcp_rw_socket_path")),
+	/**
+	 *  Tauri command: toggle the MCP RW enabled marker file and start / stop
+	 *  the RW serve task accordingly. Mirrors [`mcp_set_enabled`] but binds
+	 *  the **writer** pool into the `ReadWriteTools` registry.
+	 */
+	mcpRwSetEnabled: (enabled: boolean) => typedError<boolean, AppErrorSchema>(__TAURI_INVOKE("mcp_rw_set_enabled", { enabled })),
+	// Tauri command: disconnect every in-flight RW MCP connection.
+	mcpRwDisconnectAll: () => typedError<null, AppErrorSchema>(__TAURI_INVOKE("mcp_rw_disconnect_all")),
 	getGcalStatus: () => typedError<GcalStatus, AppErrorSchema>(__TAURI_INVOKE("get_gcal_status")),
 	forceGcalResync: () => typedError<null, AppErrorSchema>(__TAURI_INVOKE("force_gcal_resync")),
 	disconnectGcal: (deleteCalendar: boolean) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("disconnect_gcal", { deleteCalendar })),
@@ -462,6 +477,18 @@ export type LinkMetadata = {
 export type LogFileEntry = {
 	name: string,
 	contents: string,
+};
+
+/**
+ *  Snapshot of the MCP **read-write** server state surfaced to the
+ *  Settings tab. Identical fields to [`McpStatus`] but a distinct type so
+ *  the Tauri command surface stays RO / RW symmetric and the frontend
+ *  can present them as separate toggles.
+ */
+export type McpRwStatus = {
+	enabled: boolean,
+	socket_path: string,
+	active_connections: number,
 };
 
 /**

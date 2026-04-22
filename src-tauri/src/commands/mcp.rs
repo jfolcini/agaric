@@ -31,7 +31,8 @@ use specta::Type;
 
 use crate::error::AppError;
 use crate::mcp::{
-    self, default_mcp_ro_socket_path, mcp_ro_enabled, McpLifecycle, MCP_RO_ENABLED_MARKER,
+    self, default_mcp_ro_socket_path, default_mcp_rw_socket_path, mcp_ro_enabled, mcp_rw_enabled,
+    McpLifecycle, McpRwLifecycle, MCP_RO_ENABLED_MARKER, MCP_RW_ENABLED_MARKER,
 };
 
 // ---------------------------------------------------------------------------
@@ -233,6 +234,161 @@ pub async fn mcp_set_enabled(
             &app_data_dir,
             app.clone(),
             read_pool.inner().0.clone(),
+            materializer.inner().clone(),
+            device_id.inner().as_str().to_string(),
+            Some((*lc).clone()),
+        );
+    }
+
+    Ok(changed)
+}
+
+// ---------------------------------------------------------------------------
+// Read-write parallel surface (FEAT-4h slice 2)
+// ---------------------------------------------------------------------------
+
+/// Snapshot of the MCP **read-write** server state surfaced to the
+/// Settings tab. Identical fields to [`McpStatus`] but a distinct type so
+/// the Tauri command surface stays RO / RW symmetric and the frontend
+/// can present them as separate toggles.
+#[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq, Eq)]
+pub struct McpRwStatus {
+    pub enabled: bool,
+    pub socket_path: String,
+    pub active_connections: u32,
+}
+
+/// Resolve the default MCP RW socket path for `app_data_dir` and render
+/// it as a display string. See [`get_mcp_socket_path_inner`] for the RO
+/// counterpart.
+pub fn get_mcp_rw_socket_path_inner(app_data_dir: &Path) -> String {
+    default_mcp_rw_socket_path(app_data_dir)
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Compute the RW status struct from `app_data_dir` + a shared
+/// [`McpLifecycle`]. Mirrors [`get_mcp_status_inner`] but reads the RW
+/// marker file.
+pub fn get_mcp_rw_status_inner(app_data_dir: &Path, lifecycle: &McpLifecycle) -> McpRwStatus {
+    let enabled = mcp_rw_enabled(app_data_dir);
+    let socket_path = get_mcp_rw_socket_path_inner(app_data_dir);
+    let active_connections = u32::try_from(lifecycle.connection_count()).unwrap_or(u32::MAX);
+    McpRwStatus {
+        enabled,
+        socket_path,
+        active_connections,
+    }
+}
+
+/// Wake every in-flight RW MCP connection. Idempotent — see
+/// [`mcp_disconnect_all_inner`] for the RO twin.
+pub fn mcp_rw_disconnect_all_inner(lifecycle: &McpLifecycle) {
+    lifecycle.disconnect_all();
+}
+
+/// Toggle the `mcp-rw-enabled` marker file under `app_data_dir`. Same
+/// shape and semantics as [`mcp_set_enabled_inner`] but for the RW
+/// marker; the caller is responsible for re-spawning the RW task if
+/// `lifecycle.is_running()` is `false` after a fresh enable.
+pub fn mcp_rw_set_enabled_inner(
+    app_data_dir: &Path,
+    lifecycle: &McpLifecycle,
+    enabled: bool,
+) -> Result<bool, AppError> {
+    let marker_path = app_data_dir.join(MCP_RW_ENABLED_MARKER);
+    let currently_enabled = marker_path.is_file();
+
+    if enabled == currently_enabled {
+        return Ok(false);
+    }
+
+    if enabled {
+        if !app_data_dir.exists() {
+            std::fs::create_dir_all(app_data_dir)?;
+        }
+        std::fs::write(&marker_path, b"")?;
+        tracing::info!(
+            target: "mcp",
+            path = %marker_path.display(),
+            "MCP RW marker created (enabled)",
+        );
+    } else {
+        match std::fs::remove_file(&marker_path) {
+            Ok(_) => {
+                tracing::info!(
+                    target: "mcp",
+                    path = %marker_path.display(),
+                    "MCP RW marker removed (disabled)",
+                );
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Race with another toggle — idempotent.
+            }
+            Err(e) => return Err(AppError::Io(e)),
+        }
+        lifecycle.disconnect_all();
+    }
+
+    Ok(true)
+}
+
+/// Tauri command: return the current MCP RW status for the Settings tab.
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn get_mcp_rw_status(
+    app: tauri::AppHandle,
+    lifecycle: tauri::State<'_, McpRwLifecycle>,
+) -> Result<McpRwStatus, AppError> {
+    let app_data_dir = app_data_dir_from_handle(&app)?;
+    Ok(get_mcp_rw_status_inner(&app_data_dir, &lifecycle.inner().0))
+}
+
+/// Tauri command: return the default RW socket path for the current
+/// platform. Same shape as [`get_mcp_socket_path`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn get_mcp_rw_socket_path(app: tauri::AppHandle) -> Result<String, AppError> {
+    let app_data_dir = app_data_dir_from_handle(&app)?;
+    Ok(get_mcp_rw_socket_path_inner(&app_data_dir))
+}
+
+/// Tauri command: disconnect every in-flight RW MCP connection.
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn mcp_rw_disconnect_all(
+    lifecycle: tauri::State<'_, McpRwLifecycle>,
+) -> Result<(), AppError> {
+    mcp_rw_disconnect_all_inner(&lifecycle.inner().0);
+    Ok(())
+}
+
+/// Tauri command: toggle the MCP RW enabled marker file and start / stop
+/// the RW serve task accordingly. Mirrors [`mcp_set_enabled`] but binds
+/// the **writer** pool into the `ReadWriteTools` registry.
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn mcp_rw_set_enabled(
+    app: tauri::AppHandle,
+    lifecycle: tauri::State<'_, McpRwLifecycle>,
+    write_pool: tauri::State<'_, crate::db::WritePool>,
+    materializer: tauri::State<'_, crate::materializer::Materializer>,
+    device_id: tauri::State<'_, crate::device::DeviceId>,
+    enabled: bool,
+) -> Result<bool, AppError> {
+    let app_data_dir = app_data_dir_from_handle(&app)?;
+    let lc = lifecycle.inner().0.clone();
+    let changed = mcp_rw_set_enabled_inner(&app_data_dir, &lc, enabled)?;
+
+    if enabled && !lc.is_running() {
+        mcp::spawn_mcp_rw_task(
+            &app_data_dir,
+            app.clone(),
+            write_pool.inner().0.clone(),
             materializer.inner().clone(),
             device_id.inner().as_str().to_string(),
             Some((*lc).clone()),
@@ -447,5 +603,159 @@ mod tests {
             assert_eq!(lc.connection_count(), 1, "inner drop restores previous");
         }
         assert_eq!(lc.connection_count(), 0, "outer drop restores zero");
+    }
+
+    // ── RW parity tests (FEAT-4h slice 2) ────────────────────────────────
+
+    #[test]
+    fn rw_socket_path_is_non_empty() {
+        let dir = TempDir::new().unwrap();
+        let path = get_mcp_rw_socket_path_inner(dir.path());
+        assert!(!path.is_empty(), "RW socket path must be non-empty");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rw_socket_path_is_under_app_data_dir_on_unix() {
+        let dir = TempDir::new().unwrap();
+        let path = get_mcp_rw_socket_path_inner(dir.path());
+        let expected = dir.path().join("mcp-rw.sock");
+        assert_eq!(path, expected.to_string_lossy().into_owned());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rw_socket_path_is_named_pipe_on_windows() {
+        let dir = TempDir::new().unwrap();
+        let path = get_mcp_rw_socket_path_inner(dir.path());
+        assert_eq!(path, crate::mcp::MCP_RW_PIPE_PATH);
+    }
+
+    #[test]
+    fn rw_status_reports_disabled_when_marker_absent() {
+        let dir = TempDir::new().unwrap();
+        let lc = make_lifecycle();
+        let status = get_mcp_rw_status_inner(dir.path(), &lc);
+        assert!(!status.enabled, "RW must be disabled when marker absent");
+        assert_eq!(status.active_connections, 0);
+        assert!(!status.socket_path.is_empty());
+    }
+
+    #[test]
+    fn rw_status_reports_enabled_when_marker_present() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join(MCP_RW_ENABLED_MARKER), b"").unwrap();
+        let lc = make_lifecycle();
+        let status = get_mcp_rw_status_inner(dir.path(), &lc);
+        assert!(status.enabled, "RW must be enabled when marker present");
+    }
+
+    #[test]
+    fn rw_set_enabled_true_creates_marker() {
+        let dir = TempDir::new().unwrap();
+        let lc = make_lifecycle();
+        let changed = mcp_rw_set_enabled_inner(dir.path(), &lc, true).unwrap();
+        assert!(changed, "must report a state change on fresh enable");
+        assert!(
+            dir.path().join(MCP_RW_ENABLED_MARKER).is_file(),
+            "RW marker file must exist after enable",
+        );
+    }
+
+    #[test]
+    fn rw_set_enabled_false_removes_marker() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join(MCP_RW_ENABLED_MARKER), b"").unwrap();
+        let lc = make_lifecycle();
+        let changed = mcp_rw_set_enabled_inner(dir.path(), &lc, false).unwrap();
+        assert!(changed, "must report a state change on fresh disable");
+        assert!(
+            !dir.path().join(MCP_RW_ENABLED_MARKER).exists(),
+            "RW marker file must not exist after disable",
+        );
+    }
+
+    #[test]
+    fn rw_set_enabled_is_idempotent_when_already_enabled() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join(MCP_RW_ENABLED_MARKER), b"").unwrap();
+        let lc = make_lifecycle();
+        let changed = mcp_rw_set_enabled_inner(dir.path(), &lc, true).unwrap();
+        assert!(!changed);
+    }
+
+    #[test]
+    fn rw_set_enabled_is_idempotent_when_already_disabled() {
+        let dir = TempDir::new().unwrap();
+        let lc = make_lifecycle();
+        let changed = mcp_rw_set_enabled_inner(dir.path(), &lc, false).unwrap();
+        assert!(!changed);
+    }
+
+    #[test]
+    fn rw_set_enabled_false_fires_disconnect_signal() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let dir = TempDir::new().unwrap();
+                std::fs::write(dir.path().join(MCP_RW_ENABLED_MARKER), b"").unwrap();
+                let lc = make_lifecycle();
+                let signal = lc.disconnect_signal.clone();
+                let waiter = tokio::spawn(async move { signal.notified().await });
+                tokio::task::yield_now().await;
+                mcp_rw_set_enabled_inner(dir.path(), &lc, false).unwrap();
+                tokio::time::timeout(std::time::Duration::from_millis(500), waiter)
+                    .await
+                    .expect("disconnect_signal must fire on RW disable")
+                    .expect("waiter task joined cleanly");
+            });
+    }
+
+    #[test]
+    fn rw_disconnect_all_wakes_waiters() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let lc = make_lifecycle();
+                let signal = lc.disconnect_signal.clone();
+                let waiter = tokio::spawn(async move { signal.notified().await });
+                tokio::task::yield_now().await;
+                mcp_rw_disconnect_all_inner(&lc);
+                tokio::time::timeout(std::time::Duration::from_millis(500), waiter)
+                    .await
+                    .expect("RW disconnect_all must fire the notify")
+                    .expect("waiter task joined cleanly");
+            });
+    }
+
+    #[test]
+    fn rw_and_ro_markers_are_independent() {
+        // Flipping RW must not affect RO state and vice versa.
+        let dir = TempDir::new().unwrap();
+        let lc = make_lifecycle();
+
+        mcp_rw_set_enabled_inner(dir.path(), &lc, true).unwrap();
+        assert!(mcp_rw_enabled(dir.path()));
+        assert!(!mcp_ro_enabled(dir.path()), "RW enable must not flip RO");
+
+        mcp_set_enabled_inner(dir.path(), &lc, true).unwrap();
+        assert!(mcp_ro_enabled(dir.path()));
+
+        mcp_rw_set_enabled_inner(dir.path(), &lc, false).unwrap();
+        assert!(!mcp_rw_enabled(dir.path()));
+        assert!(mcp_ro_enabled(dir.path()), "RW disable must not flip RO");
+    }
+
+    #[test]
+    fn mcp_rw_lifecycle_newtype_deref_reaches_inner() {
+        // The newtype is thin: `Deref` must resolve to the wrapped
+        // `McpLifecycle`'s methods transparently.
+        let rw = McpRwLifecycle(std::sync::Arc::new(make_lifecycle()));
+        assert_eq!(rw.connection_count(), 0, "deref lookup resolves");
+        assert!(!rw.is_running(), "deref reaches is_running()");
     }
 }
