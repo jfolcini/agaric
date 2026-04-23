@@ -111,18 +111,7 @@ export const useNavigationStore = create<NavigationStore>()(
       selectedBlockId: null,
 
       setView: (view: View) => {
-        const state = get()
-        if (view !== 'page-editor' && state.currentView === 'page-editor') {
-          // Leaving page-editor — clear the stacks and tabs
-          set({
-            currentView: view,
-            tabs: [{ id: '0', pageStack: [], label: '' }],
-            activeTabIndex: 0,
-            selectedBlockId: null,
-          })
-        } else {
-          set({ currentView: view })
-        }
+        set({ currentView: view })
       },
 
       navigateToPage: (pageId: string, title: string, blockId?: string) => {
@@ -136,25 +125,14 @@ export const useNavigationStore = create<NavigationStore>()(
         const parsedDate = parseDateTitleToLocalDate(title)
         if (parsedDate !== null) {
           useJournalStore.getState().navigateToDate(parsedDate, 'daily')
-          const state = get()
-          // Mirror the existing `setView` clearing behaviour when leaving
-          // page-editor (tabs / pageStack / activeTabIndex get reset).
           // Journal view does not use pageStack at all, so we never push
-          // onto it here.
+          // onto it here. Tabs / activeTabIndex are preserved (UX-251).
           // TODO(UX-242): DailyView / DaySection do not currently scroll to
           // an arbitrary child blockId on mount. A follow-up is needed to
           // honour selectedBlockId within a day section.
-          const resetPageEditorState =
-            state.currentView === 'page-editor'
-              ? {
-                  tabs: [{ id: '0', pageStack: [], label: '' }],
-                  activeTabIndex: 0,
-                }
-              : {}
           set({
             currentView: 'journal',
             selectedBlockId: blockId ?? null,
-            ...resetPageEditorState,
           })
           return
         }

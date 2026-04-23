@@ -53,7 +53,7 @@ describe('useNavigationStore', () => {
       expect(useNavigationStore.getState().currentView).toBe('search')
     })
 
-    it('clears pageStack and tabs when switching away from page-editor', () => {
+    it('preserves pageStack and tabs when switching away from page-editor (UX-251)', () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
         tabs: [{ id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' }],
@@ -65,10 +65,10 @@ describe('useNavigationStore', () => {
 
       const state = useNavigationStore.getState()
       expect(state.currentView).toBe('pages')
-      expect(selectPageStack(state)).toEqual([])
-      expect(state.selectedBlockId).toBeNull()
+      expect(selectPageStack(state)).toEqual([{ pageId: 'P1', title: 'Page 1' }])
+      expect(state.selectedBlockId).toBe('B1')
       expect(state.tabs).toHaveLength(1)
-      expect(state.tabs[0]?.pageStack).toEqual([])
+      expect(state.tabs[0]?.pageStack).toEqual([{ pageId: 'P1', title: 'Page 1' }])
     })
 
     it('does not clear pageStack when switching between non-editor views', () => {
@@ -88,6 +88,122 @@ describe('useNavigationStore', () => {
     it('allows switching to page-editor directly', () => {
       useNavigationStore.getState().setView('page-editor')
       expect(useNavigationStore.getState().currentView).toBe('page-editor')
+    })
+
+    it('preserves tabs across every non-editor view destination (UX-251)', () => {
+      const seededTabs = [
+        {
+          id: '0',
+          pageStack: [{ pageId: 'P1', title: 'Page 1' }],
+          label: 'Page 1',
+        },
+        {
+          id: '1',
+          pageStack: [
+            { pageId: 'P2', title: 'Page 2' },
+            { pageId: 'P3', title: 'Page 3' },
+          ],
+          label: 'Page 3',
+        },
+        {
+          id: '2',
+          pageStack: [{ pageId: 'P4', title: 'Page 4' }],
+          label: 'Page 4',
+        },
+      ]
+
+      const destinations = [
+        'journal',
+        'search',
+        'pages',
+        'tags',
+        'properties',
+        'trash',
+        'status',
+        'conflicts',
+        'history',
+        'templates',
+        'settings',
+        'graph',
+      ] as const
+
+      for (const view of destinations) {
+        useNavigationStore.setState({
+          currentView: 'page-editor',
+          tabs: seededTabs.map((t) => ({ ...t, pageStack: [...t.pageStack] })),
+          activeTabIndex: 1,
+          selectedBlockId: null,
+        })
+
+        useNavigationStore.getState().setView(view)
+
+        const state = useNavigationStore.getState()
+        expect(state.currentView).toBe(view)
+        expect(state.tabs).toHaveLength(3)
+        expect(state.activeTabIndex).toBe(1)
+        for (let i = 0; i < seededTabs.length; i++) {
+          expect(state.tabs[i]?.pageStack).toEqual(seededTabs[i]?.pageStack)
+        }
+      }
+    })
+
+    it('round-trip setView(journal) -> setView(page-editor) preserves tabs identically (UX-251)', () => {
+      const seededTabs = [
+        {
+          id: '0',
+          pageStack: [{ pageId: 'P1', title: 'Page 1' }],
+          label: 'Page 1',
+        },
+        {
+          id: '1',
+          pageStack: [
+            { pageId: 'P2', title: 'Page 2' },
+            { pageId: 'P3', title: 'Page 3' },
+          ],
+          label: 'Page 3',
+        },
+        {
+          id: '2',
+          pageStack: [{ pageId: 'P4', title: 'Page 4' }],
+          label: 'Page 4',
+        },
+      ]
+
+      useNavigationStore.setState({
+        currentView: 'page-editor',
+        tabs: seededTabs.map((t) => ({ ...t, pageStack: [...t.pageStack] })),
+        activeTabIndex: 1,
+        selectedBlockId: null,
+      })
+
+      useNavigationStore.getState().setView('journal')
+      useNavigationStore.getState().setView('page-editor')
+
+      const state = useNavigationStore.getState()
+      expect(state.currentView).toBe('page-editor')
+      expect(state.activeTabIndex).toBe(1)
+      expect(state.tabs).toEqual(seededTabs)
+    })
+
+    // UX-251: pins that `setView` honours its JSDoc contract at line 56 of
+    // src/stores/navigation.ts — "DON'T clear tabs when leaving page-editor
+    // (preserve them)".
+    it('setView_preserves_tabs_when_leaving_page_editor_matching_jsdoc_contract', () => {
+      useNavigationStore.setState({
+        currentView: 'page-editor',
+        tabs: [{ id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' }],
+        activeTabIndex: 0,
+        selectedBlockId: 'B1',
+      })
+
+      useNavigationStore.getState().setView('pages')
+
+      const state = useNavigationStore.getState()
+      expect(state.currentView).toBe('pages')
+      expect(selectPageStack(state)).toEqual([{ pageId: 'P1', title: 'Page 1' }])
+      expect(state.selectedBlockId).toBe('B1')
+      expect(state.tabs).toHaveLength(1)
+      expect(state.tabs[0]?.pageStack).toEqual([{ pageId: 'P1', title: 'Page 1' }])
     })
   })
 
@@ -210,7 +326,7 @@ describe('useNavigationStore', () => {
       expect(journalState.currentDate.getDate()).toBe(1)
     })
 
-    it('navigateToPage to a date title from page-editor clears the existing pageStack', () => {
+    it('navigateToPage to a date title from page-editor preserves tabs and pageStack (UX-251)', () => {
       // Start on a regular page so we're in page-editor with a populated stack.
       useNavigationStore.getState().navigateToPage('P1', 'Regular Page')
       expect(useNavigationStore.getState().currentView).toBe('page-editor')
@@ -221,7 +337,8 @@ describe('useNavigationStore', () => {
       const state = useNavigationStore.getState()
       expect(state.currentView).toBe('journal')
       expect(state.tabs).toHaveLength(1)
-      expect(selectPageStack(state)).toEqual([])
+      expect(selectPageStack(state)).toHaveLength(1)
+      expect(selectPageStack(state)).toEqual([{ pageId: 'P1', title: 'Regular Page' }])
       expect(state.activeTabIndex).toBe(0)
     })
   })
@@ -601,17 +718,22 @@ describe('useNavigationStore', () => {
       expect(selectPageStack(useNavigationStore.getState())).toEqual([])
     })
 
-    it('setView to non-editor clears stack, then navigate rebuilds it', () => {
+    it('setView to non-editor preserves stack; navigate appends onto it (UX-251)', () => {
       const store = useNavigationStore.getState()
 
       store.navigateToPage('P1', 'Page 1')
       store.navigateToPage('P2', 'Page 2')
 
       useNavigationStore.getState().setView('journal')
-      expect(selectPageStack(useNavigationStore.getState())).toEqual([])
+      expect(selectPageStack(useNavigationStore.getState())).toEqual([
+        { pageId: 'P1', title: 'Page 1' },
+        { pageId: 'P2', title: 'Page 2' },
+      ])
 
       useNavigationStore.getState().navigateToPage('P3', 'Page 3')
       expect(selectPageStack(useNavigationStore.getState())).toEqual([
+        { pageId: 'P1', title: 'Page 1' },
+        { pageId: 'P2', title: 'Page 2' },
         { pageId: 'P3', title: 'Page 3' },
       ])
     })
