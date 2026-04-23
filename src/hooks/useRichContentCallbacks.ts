@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useRef } from 'react'
+import { useNavigationStore } from '../stores/navigation'
 import { useResolveStore } from '../stores/resolve'
 
 export interface RichContentCallbacks {
@@ -57,4 +58,37 @@ export function useRichContentCallbacks(): RichContentCallbacks {
     resolveTagName,
     resolveTagStatus,
   }
+}
+
+/**
+ * useTagClickHandler — returns a stable `(tagId: string) => void` callback that
+ * resolves the tag name via the resolve cache and routes to
+ * `navigateToPage(tagId, tagName)` on the navigation store.
+ *
+ * Every rich-content surface that wants clickable tag chips wires this hook's
+ * return value into `renderRichContent({ onTagClick })` or
+ * `TagRef.configure({ onClick })`. Matches the tag-click semantics used by
+ * `TagList` (src/App.tsx) — a single source of truth for tag navigation.
+ *
+ * The resolved name falls back to `'Tag'` when the resolve cache has no entry;
+ * the navigation store will replace the label as soon as the real title is
+ * cached.
+ */
+export function useTagClickHandler(): (tagId: string) => void {
+  // Subscribe to version so the ref stays fresh for the stable callback below.
+  useResolveStore((s) => s.version)
+  const cache = useResolveStore((s) => s.cache)
+  const navigateToPage = useNavigationStore((s) => s.navigateToPage)
+
+  const cacheRef = useRef(cache)
+  cacheRef.current = cache
+
+  return useCallback(
+    (tagId: string) => {
+      const cached = cacheRef.current.get(tagId)
+      const name = cached?.title ?? 'Tag'
+      navigateToPage(tagId, name)
+    },
+    [navigateToPage],
+  )
 }

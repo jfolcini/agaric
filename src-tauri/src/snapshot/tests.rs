@@ -2998,3 +2998,134 @@ mod proptest_tests {
         }
     }
 }
+
+// =======================================================================
+// UX-250: apply_snapshot rebuilds block_tag_refs from restored content
+// =======================================================================
+
+/// Restore a vault that contains a tag + a content block whose content
+/// carries an inline `#[ULID]` reference. `block_tag_refs` is not a
+/// snapshot table (it's purely derived), so after restore the table must
+/// be wiped and then rebuilt by the `RebuildBlockTagRefsCache` task that
+/// `apply_snapshot` enqueues. This test validates both the wipe (by
+/// pre-populating a stale row) and the rebuild (by asserting the
+/// restored row appears).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_snapshot_rebuilds_block_tag_refs_cache() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // 26-char ULID-style IDs so the inline #[ULID] regex matches.
+    let tag_id = "01HQUX250TAGAAAAAAAAAAAAAA";
+    let blk_id = "01HQUX250BLKAAAAAAAAAAAAAA";
+
+    let data = SnapshotData {
+        schema_version: SCHEMA_VERSION,
+        snapshot_device_id: "dev-ux250".to_string(),
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: "ux250-test".to_string(),
+        tables: SnapshotTables {
+            blocks: vec![
+                BlockSnapshot {
+                    id: tag_id.to_string(),
+                    block_type: "tag".to_string(),
+                    content: Some("meeting".to_string()),
+                    parent_id: None,
+                    position: Some(1),
+                    deleted_at: None,
+                    is_conflict: 0,
+                    conflict_source: None,
+                    todo_state: None,
+                    priority: None,
+                    due_date: None,
+                    scheduled_date: None,
+                },
+                BlockSnapshot {
+                    id: blk_id.to_string(),
+                    block_type: "content".to_string(),
+                    content: Some(format!("see #[{tag_id}] for notes")),
+                    parent_id: None,
+                    position: Some(2),
+                    deleted_at: None,
+                    is_conflict: 0,
+                    conflict_source: None,
+                    todo_state: None,
+                    priority: None,
+                    due_date: None,
+                    scheduled_date: None,
+                },
+            ],
+            block_tags: vec![],
+            block_properties: vec![],
+            block_links: vec![],
+            attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
+        },
+    };
+
+    // Pre-populate with a stale block_tag_refs row pointing at blocks
+    // that won't exist after restore. The restore wipes this before
+    // inserting new rows; if the wipe step were missed, this row would
+    // survive (and then violate FK once we re-populate blocks).
+    let stale_src = "01HQUX250STALESRCCCCCCCCCC";
+    let stale_tag = "01HQUX250STALETAGGGGGGGGGG";
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, is_conflict) \
+         VALUES (?, 'content', 'stale src', 0)",
+    )
+    .bind(stale_src)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, is_conflict) \
+         VALUES (?, 'tag', 'stale tag', 0)",
+    )
+    .bind(stale_tag)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)")
+        .bind(stale_src)
+        .bind(stale_tag)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar!("SELECT COUNT(*) FROM block_tag_refs")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        1,
+        "pre-condition: block_tag_refs has one stale row"
+    );
+
+    // Apply snapshot → wipes stale row (and the stale blocks), restores
+    // tag + content block, enqueues RebuildBlockTagRefsCache.
+    let encoded = encode_snapshot(&data).unwrap();
+    let _restored = apply_snapshot(&pool, &mat, &encoded).await.unwrap();
+
+    // Run the enqueued rebuild tasks.
+    mat.flush_background().await.unwrap();
+
+    // block_tag_refs must now contain exactly the restored edge
+    // (source=blk_id, tag=tag_id) — nothing else.
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT source_id, tag_id FROM block_tag_refs ORDER BY source_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows.len(),
+        1,
+        "exactly one row expected after restore + rebuild; got {rows:?}"
+    );
+    assert_eq!(
+        rows[0],
+        (blk_id.to_string(), tag_id.to_string()),
+        "restored row must point from the content block to the tag"
+    );
+
+    mat.shutdown();
+}

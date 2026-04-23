@@ -12,6 +12,7 @@ import type React from 'react'
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useBlockAttachments } from '../hooks/useBlockAttachments'
+import { useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { logger } from '../lib/logger'
 import { openUrl } from '../lib/open-url'
 import { getProperties } from '../lib/tauri'
@@ -77,13 +78,18 @@ function StaticBlockInner({
   resolveBlockStatusRef.current = resolveBlockStatus
   const resolveTagStatusRef = useRef(resolveTagStatus)
   resolveTagStatusRef.current = resolveTagStatus
+  const onTagClick = useTagClickHandler()
+  const onTagClickRef = useRef(onTagClick)
+  onTagClickRef.current = onTagClick
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: onNavigate captured via ref — see comment above
   const richContent = useMemo(
     () =>
       content
         ? renderRichContent(content, {
+            interactive: true,
             onNavigate: onNavigate ? (id: string) => onNavigateRef.current?.(id) : undefined,
+            onTagClick: (id: string) => onTagClickRef.current(id),
             resolveBlockTitle: (id) => resolveBlockTitleRef.current?.(id),
             resolveTagName: (id) => resolveTagNameRef.current?.(id),
             resolveBlockStatus: (id) => resolveBlockStatusRef.current?.(id) ?? 'active',

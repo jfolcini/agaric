@@ -10,9 +10,11 @@
  */
 
 import { act, renderHook } from '@testing-library/react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import type { Mock } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { useNavigationStore } from '../../stores/navigation'
 import { useResolveStore } from '../../stores/resolve'
-import { useRichContentCallbacks } from '../useRichContentCallbacks'
+import { useRichContentCallbacks, useTagClickHandler } from '../useRichContentCallbacks'
 
 beforeEach(() => {
   useResolveStore.setState({
@@ -109,6 +111,65 @@ describe('resolveTagStatus', () => {
   it('returns "active" for uncached tags', () => {
     const { result } = renderHook(() => useRichContentCallbacks())
     expect(result.current.resolveTagStatus('MISSING')).toBe('active')
+  })
+})
+
+// ── useTagClickHandler (UX-249) ────────────────────────────────────────
+
+describe('useTagClickHandler', () => {
+  // Intersection type so the spy satisfies both Zustand's store signature
+  // and Vitest's `expect(mock).toHaveBeenCalled…` assertions.
+  let navigateToPage: Mock & ((pageId: string, title: string, blockId?: string | undefined) => void)
+
+  beforeEach(() => {
+    // Swap navigateToPage for a spy by calling setState — this triggers
+    // Zustand subscriber notifications so hooks re-capture the new ref.
+    navigateToPage = vi.fn() as typeof navigateToPage
+    useNavigationStore.setState({
+      currentView: 'journal',
+      tabs: [{ id: '0', pageStack: [], label: '' }],
+      activeTabIndex: 0,
+      selectedBlockId: null,
+      navigateToPage,
+    })
+  })
+
+  it('calls navigateToPage with resolved tag name and id', () => {
+    useResolveStore.getState().set('TAG_X', 'project', false)
+
+    const { result } = renderHook(() => useTagClickHandler())
+    result.current('TAG_X')
+
+    expect(navigateToPage).toHaveBeenCalledTimes(1)
+    expect(navigateToPage).toHaveBeenCalledWith('TAG_X', 'project')
+  })
+
+  it('falls back to "Tag" when the resolve cache has no entry', () => {
+    const { result } = renderHook(() => useTagClickHandler())
+    result.current('UNRESOLVED')
+
+    expect(navigateToPage).toHaveBeenCalledWith('UNRESOLVED', 'Tag')
+  })
+
+  it('picks up freshly cached tag names after a store update', () => {
+    const { result } = renderHook(() => useTagClickHandler())
+    // First call without cache entry — falls back to 'Tag'.
+    result.current('LATE')
+    expect(navigateToPage).toHaveBeenLastCalledWith('LATE', 'Tag')
+
+    // Cache arrives later; hook re-renders so cacheRef stays fresh.
+    act(() => {
+      useResolveStore.getState().set('LATE', 'late-tag', false)
+    })
+    result.current('LATE')
+    expect(navigateToPage).toHaveBeenLastCalledWith('LATE', 'late-tag')
+  })
+
+  it('returns a stable callback across re-renders when nothing changes', () => {
+    const { result, rerender } = renderHook(() => useTagClickHandler())
+    const first = result.current
+    rerender()
+    expect(result.current).toBe(first)
   })
 })
 

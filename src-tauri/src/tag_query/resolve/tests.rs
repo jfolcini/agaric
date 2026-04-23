@@ -1006,3 +1006,287 @@ async fn oracle_validates_complex_boolean_expressions() {
         "oracle mismatch: OR(Prefix(beta), Tag(c))"
     );
 }
+
+// ======================================================================
+// UX-250 — inline #[ULID] tag refs (block_tag_refs) must union into
+// TagExpr::Tag / Prefix results alongside explicit block_tags.
+// ======================================================================
+
+/// Helper: insert a row directly into `block_tag_refs` to simulate the
+/// materializer having observed an inline `#[ULID]` token. Tests here
+/// deliberately bypass the full reindex pipeline to keep assertions
+/// focused on the resolver's UNION behaviour.
+async fn insert_inline_ref(pool: &SqlitePool, source_id: &str, tag_id: &str) {
+    sqlx::query("INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)")
+        .bind(source_id)
+        .bind(tag_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn resolve_tag_unions_inline_refs_into_results() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG_UN_A", "tag", "union-a").await;
+    insert_block(&pool, "BLK_UN_EX", "content", "explicit").await;
+    insert_block(&pool, "BLK_UN_IN", "content", "inline").await;
+    insert_block(&pool, "BLK_UN_OTHER", "content", "no ref").await;
+
+    // One explicit association, one inline reference.
+    insert_tag_assoc(&pool, "BLK_UN_EX", "TAG_UN_A").await;
+    insert_inline_ref(&pool, "BLK_UN_IN", "TAG_UN_A").await;
+
+    let result = resolve_expr(&pool, &TagExpr::Tag("TAG_UN_A".into()), false)
+        .await
+        .unwrap();
+
+    assert_eq!(result.len(), 2, "both explicit and inline sources matched");
+    assert!(result.contains("BLK_UN_EX"), "explicit association present");
+    assert!(result.contains("BLK_UN_IN"), "inline reference present");
+    assert!(
+        !result.contains("BLK_UN_OTHER"),
+        "unrelated block must not appear"
+    );
+}
+
+#[tokio::test]
+async fn resolve_tag_inline_only_returns_source_block() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG_IO", "tag", "inline-only-tag").await;
+    insert_block(&pool, "BLK_IO", "content", "content with inline ref").await;
+    insert_inline_ref(&pool, "BLK_IO", "TAG_IO").await;
+
+    let result = resolve_expr(&pool, &TagExpr::Tag("TAG_IO".into()), false)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.len(),
+        1,
+        "inline-only references should still surface the source block"
+    );
+    assert!(result.contains("BLK_IO"));
+}
+
+#[tokio::test]
+async fn resolve_tag_inline_ref_dedups_with_explicit() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG_DD", "tag", "dedup").await;
+    insert_block(&pool, "BLK_DD", "content", "has both").await;
+    insert_tag_assoc(&pool, "BLK_DD", "TAG_DD").await;
+    insert_inline_ref(&pool, "BLK_DD", "TAG_DD").await;
+
+    let result = resolve_expr(&pool, &TagExpr::Tag("TAG_DD".into()), false)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.len(),
+        1,
+        "block carrying both explicit AND inline ref to same tag must appear once"
+    );
+    assert!(result.contains("BLK_DD"));
+}
+
+#[tokio::test]
+async fn resolve_tag_inline_ref_excludes_deleted_source() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG_DEL", "tag", "deleted-src").await;
+    insert_block(&pool, "BLK_DEL_ALIVE", "content", "alive").await;
+    insert_block(&pool, "BLK_DEL_DEAD", "content", "deleted").await;
+    insert_inline_ref(&pool, "BLK_DEL_ALIVE", "TAG_DEL").await;
+    insert_inline_ref(&pool, "BLK_DEL_DEAD", "TAG_DEL").await;
+    soft_delete(&pool, "BLK_DEL_DEAD").await;
+
+    let result = resolve_expr(&pool, &TagExpr::Tag("TAG_DEL".into()), false)
+        .await
+        .unwrap();
+    assert_eq!(result.len(), 1, "deleted source must be filtered out");
+    assert!(result.contains("BLK_DEL_ALIVE"));
+    assert!(!result.contains("BLK_DEL_DEAD"));
+}
+
+#[tokio::test]
+async fn resolve_tag_inline_ref_excludes_conflict_source() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG_CF", "tag", "conflict-src").await;
+    insert_block(&pool, "BLK_CF_OK", "content", "ok").await;
+    insert_block(&pool, "BLK_CF_CF", "content", "conflict").await;
+    insert_inline_ref(&pool, "BLK_CF_OK", "TAG_CF").await;
+    insert_inline_ref(&pool, "BLK_CF_CF", "TAG_CF").await;
+    mark_conflict(&pool, "BLK_CF_CF").await;
+
+    let result = resolve_expr(&pool, &TagExpr::Tag("TAG_CF".into()), false)
+        .await
+        .unwrap();
+    assert_eq!(result.len(), 1, "conflict-copy source must be filtered out");
+    assert!(result.contains("BLK_CF_OK"));
+    assert!(!result.contains("BLK_CF_CF"));
+}
+
+#[tokio::test]
+async fn resolve_prefix_unions_inline_refs() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG_PR_1", "tag", "proj/alpha").await;
+    insert_block(&pool, "TAG_PR_2", "tag", "proj/beta").await;
+    insert_block(&pool, "TAG_PR_3", "tag", "personal").await;
+    insert_tag_cache(&pool, "TAG_PR_1", "proj/alpha", 1).await;
+    insert_tag_cache(&pool, "TAG_PR_2", "proj/beta", 1).await;
+    insert_tag_cache(&pool, "TAG_PR_3", "personal", 1).await;
+    insert_block(&pool, "BLK_PR_EX", "content", "explicit proj").await;
+    insert_block(&pool, "BLK_PR_IN", "content", "inline proj").await;
+    insert_block(&pool, "BLK_PR_PER", "content", "personal").await;
+    insert_tag_assoc(&pool, "BLK_PR_EX", "TAG_PR_1").await;
+    insert_inline_ref(&pool, "BLK_PR_IN", "TAG_PR_2").await;
+    insert_inline_ref(&pool, "BLK_PR_PER", "TAG_PR_3").await;
+
+    let result = resolve_expr(&pool, &TagExpr::Prefix("proj/".into()), false)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.len(),
+        2,
+        "explicit + inline matches under the prefix must both surface"
+    );
+    assert!(result.contains("BLK_PR_EX"));
+    assert!(result.contains("BLK_PR_IN"));
+    assert!(
+        !result.contains("BLK_PR_PER"),
+        "non-matching prefix must not surface"
+    );
+}
+
+#[tokio::test]
+async fn resolve_and_composes_inline_and_explicit_correctly() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG_AND_1", "tag", "and-one").await;
+    insert_block(&pool, "TAG_AND_2", "tag", "and-two").await;
+    insert_block(&pool, "BLK_AND_1", "content", "has both").await;
+    insert_block(&pool, "BLK_AND_2", "content", "only one").await;
+
+    // BLK_AND_1: explicit for TAG_AND_1, inline for TAG_AND_2 → AND match.
+    insert_tag_assoc(&pool, "BLK_AND_1", "TAG_AND_1").await;
+    insert_inline_ref(&pool, "BLK_AND_1", "TAG_AND_2").await;
+    // BLK_AND_2: explicit for TAG_AND_1 only.
+    insert_tag_assoc(&pool, "BLK_AND_2", "TAG_AND_1").await;
+
+    let expr = TagExpr::And(vec![
+        TagExpr::Tag("TAG_AND_1".into()),
+        TagExpr::Tag("TAG_AND_2".into()),
+    ]);
+    let result = resolve_expr(&pool, &expr, false).await.unwrap();
+    assert_eq!(
+        result.len(),
+        1,
+        "AND must intersect explicit + inline dimensions correctly"
+    );
+    assert!(result.contains("BLK_AND_1"));
+}
+
+#[tokio::test]
+async fn resolve_or_composes_inline_and_explicit_correctly() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG_OR_1", "tag", "or-one").await;
+    insert_block(&pool, "TAG_OR_2", "tag", "or-two").await;
+    insert_block(&pool, "BLK_OR_1", "content", "explicit tag 1").await;
+    insert_block(&pool, "BLK_OR_2", "content", "inline tag 2").await;
+    insert_block(&pool, "BLK_OR_3", "content", "nothing").await;
+    insert_tag_assoc(&pool, "BLK_OR_1", "TAG_OR_1").await;
+    insert_inline_ref(&pool, "BLK_OR_2", "TAG_OR_2").await;
+
+    let expr = TagExpr::Or(vec![
+        TagExpr::Tag("TAG_OR_1".into()),
+        TagExpr::Tag("TAG_OR_2".into()),
+    ]);
+    let result = resolve_expr(&pool, &expr, false).await.unwrap();
+    assert_eq!(result.len(), 2, "OR unions both dimensions");
+    assert!(result.contains("BLK_OR_1"));
+    assert!(result.contains("BLK_OR_2"));
+    assert!(!result.contains("BLK_OR_3"));
+}
+
+#[tokio::test]
+async fn resolve_not_over_inline_ref_excludes_source() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG_NOT_IN", "tag", "not-inline").await;
+    insert_block(&pool, "BLK_NOT_IN", "content", "inline-tagged").await;
+    insert_block(&pool, "BLK_NOT_NONE", "content", "untagged").await;
+    insert_inline_ref(&pool, "BLK_NOT_IN", "TAG_NOT_IN").await;
+
+    let result = resolve_expr(
+        &pool,
+        &TagExpr::Not(Box::new(TagExpr::Tag("TAG_NOT_IN".into()))),
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(
+        !result.contains("BLK_NOT_IN"),
+        "block carrying inline ref must be excluded by NOT"
+    );
+    assert!(
+        result.contains("BLK_NOT_NONE"),
+        "block without ref must appear in NOT result"
+    );
+}
+
+/// Regression guard: `block_tag_inherited` applies only to explicit tags.
+/// An inline reference on a parent must NOT surface its children under
+/// `include_inherited = true`.
+#[tokio::test]
+async fn resolve_tag_inherited_is_not_affected_by_inline_ref_on_parent() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG_IH_IN", "tag", "inherit-inline").await;
+    insert_block(&pool, "PAGE_IH", "page", "parent").await;
+    insert_child_block(&pool, "CHILD_IH", "content", "child", "PAGE_IH").await;
+    // Parent has only an INLINE ref — no explicit block_tags entry —
+    // so there is nothing to inherit down to the child.
+    insert_inline_ref(&pool, "PAGE_IH", "TAG_IH_IN").await;
+    crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
+
+    let result = resolve_expr(&pool, &TagExpr::Tag("TAG_IH_IN".into()), true)
+        .await
+        .unwrap();
+
+    assert!(
+        result.contains("PAGE_IH"),
+        "the page with the inline ref itself must appear"
+    );
+    assert!(
+        !result.contains("CHILD_IH"),
+        "inline refs on parent must NOT propagate to children via inheritance"
+    );
+    assert_eq!(
+        result.len(),
+        1,
+        "only the inline-referencing parent page should appear"
+    );
+}
+
+/// Regression guard: existing inheritance behaviour for EXPLICIT tags
+/// is untouched — a child inherits via `block_tag_inherited` as before.
+#[tokio::test]
+async fn resolve_tag_inherited_explicit_still_propagates() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG_IH_EX", "tag", "inherit-explicit").await;
+    insert_block(&pool, "PAGE_IH_EX", "page", "parent").await;
+    insert_child_block(&pool, "CHILD_IH_EX", "content", "child", "PAGE_IH_EX").await;
+    // Mix: inline ref on the same page (shouldn't double-count) PLUS
+    // explicit tag on the page (should inherit to child).
+    insert_tag_assoc(&pool, "PAGE_IH_EX", "TAG_IH_EX").await;
+    insert_inline_ref(&pool, "PAGE_IH_EX", "TAG_IH_EX").await;
+    crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
+
+    let result = resolve_expr(&pool, &TagExpr::Tag("TAG_IH_EX".into()), true)
+        .await
+        .unwrap();
+    assert_eq!(
+        result.len(),
+        2,
+        "page + inherited child = 2 (mixed explicit+inline on page still counts parent once)"
+    );
+    assert!(result.contains("PAGE_IH_EX"));
+    assert!(result.contains("CHILD_IH_EX"));
+}

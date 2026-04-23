@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM block_tag_refs",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "7aeaa67cd2d48ae8b6fff3861c58f25da6c70d07e7790accc6fa79b37a52dc4b"
+}

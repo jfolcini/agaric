@@ -13,7 +13,7 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { truncateId } from '@/lib/format'
-import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
+import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import type { BlockRow } from '../lib/tauri'
 import { renderRichContent } from './StaticBlock'
 
@@ -154,19 +154,23 @@ function TextConflictView({
   isExpanded,
   t,
   callbacks,
+  onTagClick,
 }: {
   block: BlockRow
   original: BlockRow | undefined
   isExpanded: boolean
   t: TFunc
   callbacks: ReturnType<typeof useRichContentCallbacks>
+  onTagClick: (id: string) => void
 }): React.ReactElement {
   const originalContent = (
     <>
       <span className="font-medium text-muted-foreground">{t('conflict.currentLabel')}</span>{' '}
       {original ? (
         original.content ? (
-          <span>{renderRichContent(original.content, { interactive: false, ...callbacks })}</span>
+          <span>
+            {renderRichContent(original.content, { interactive: true, onTagClick, ...callbacks })}
+          </span>
         ) : (
           t('conflict.emptyContent')
         )
@@ -181,7 +185,7 @@ function TextConflictView({
       <span className="font-medium">{t('conflict.incomingLabel')}</span>{' '}
       <span className="conflict-item-text">
         {block.content
-          ? renderRichContent(block.content, { interactive: false, ...callbacks })
+          ? renderRichContent(block.content, { interactive: true, onTagClick, ...callbacks })
           : t('conflict.emptyContent')}
       </span>
     </>
@@ -215,6 +219,7 @@ export function ConflictTypeRenderer({
 }: ConflictTypeRendererProps): React.ReactElement | null {
   const { t } = useTranslation()
   const callbacks = useRichContentCallbacks()
+  const onTagClick = useTagClickHandler()
 
   if (conflictType === 'Property' && original) {
     const diffs = collectPropertyDiffs(block, original)
@@ -241,6 +246,7 @@ export function ConflictTypeRenderer({
       isExpanded={isExpanded}
       t={t}
       callbacks={callbacks}
+      onTagClick={onTagClick}
     />
   )
 }

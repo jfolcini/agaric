@@ -49,6 +49,7 @@ vi.mock('../../hooks/useRichContentCallbacks', () => ({
     resolveTagName: vi.fn((id: string) => (id === 'TAG1' ? 'project' : undefined)),
     resolveTagStatus: vi.fn(() => 'active' as const),
   })),
+  useTagClickHandler: vi.fn(() => vi.fn()),
 }))
 
 function makeEntry(

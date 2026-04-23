@@ -23,6 +23,8 @@ use sqlx::SqlitePool;
 pub(crate) enum RetryKind {
     UpdateFtsBlock,
     ReindexBlockLinks,
+    /// UX-250: incremental `#[ULID]` tag-ref reindex for a single block.
+    ReindexBlockTagRefs,
 }
 
 impl RetryKind {
@@ -30,6 +32,7 @@ impl RetryKind {
         match self {
             Self::UpdateFtsBlock => "UpdateFtsBlock",
             Self::ReindexBlockLinks => "ReindexBlockLinks",
+            Self::ReindexBlockTagRefs => "ReindexBlockTagRefs",
         }
     }
 
@@ -37,6 +40,7 @@ impl RetryKind {
         match s {
             "UpdateFtsBlock" => Some(Self::UpdateFtsBlock),
             "ReindexBlockLinks" => Some(Self::ReindexBlockLinks),
+            "ReindexBlockTagRefs" => Some(Self::ReindexBlockTagRefs),
             _ => None,
         }
     }
@@ -45,6 +49,7 @@ impl RetryKind {
         match self {
             Self::UpdateFtsBlock => MaterializeTask::UpdateFtsBlock { block_id },
             Self::ReindexBlockLinks => MaterializeTask::ReindexBlockLinks { block_id },
+            Self::ReindexBlockTagRefs => MaterializeTask::ReindexBlockTagRefs { block_id },
         }
     }
 
@@ -58,6 +63,9 @@ impl RetryKind {
             }
             MaterializeTask::ReindexBlockLinks { block_id } => {
                 Some((Self::ReindexBlockLinks, block_id.clone()))
+            }
+            MaterializeTask::ReindexBlockTagRefs { block_id } => {
+                Some((Self::ReindexBlockTagRefs, block_id.clone()))
             }
             _ => None,
         }
@@ -312,11 +320,37 @@ mod tests {
             Some((RetryKind::ReindexBlockLinks, _))
         ));
 
+        let t = MaterializeTask::ReindexBlockTagRefs {
+            block_id: "B3".into(),
+        };
+        assert!(matches!(
+            RetryKind::from_task(&t),
+            Some((RetryKind::ReindexBlockTagRefs, _))
+        ));
+
         let t = MaterializeTask::RebuildTagsCache;
         assert!(RetryKind::from_task(&t).is_none());
 
         let t = MaterializeTask::RebuildFtsIndex;
         assert!(RetryKind::from_task(&t).is_none());
+
+        let t = MaterializeTask::RebuildBlockTagRefsCache;
+        assert!(
+            RetryKind::from_task(&t).is_none(),
+            "RebuildBlockTagRefsCache is a global rebuild, not a per-block task"
+        );
+    }
+
+    #[test]
+    fn retry_kind_reindex_block_tag_refs_roundtrip() {
+        let kind = RetryKind::ReindexBlockTagRefs;
+        assert_eq!(kind.as_str(), "ReindexBlockTagRefs");
+        assert_eq!(RetryKind::from_str("ReindexBlockTagRefs"), Some(kind));
+        let task = kind.to_task("BLK_RTR".into());
+        assert!(matches!(
+            task,
+            MaterializeTask::ReindexBlockTagRefs { ref block_id } if block_id == "BLK_RTR"
+        ));
     }
 
     #[tokio::test]

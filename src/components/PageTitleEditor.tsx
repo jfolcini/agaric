@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
+import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { renderRichContent } from './RichContentRenderer'
 
 export interface PageTitleEditorProps {
@@ -34,6 +34,7 @@ export function PageTitleEditor({
   const { t } = useTranslation()
   const [editing, setEditing] = useState(false)
   const richCallbacks = useRichContentCallbacks()
+  const onTagClick = useTagClickHandler()
 
   const needsRich = hasInlineTokens(title)
 
@@ -91,7 +92,10 @@ export function PageTitleEditor({
         }
       }}
     >
-      {renderRichContent(title, { interactive: false, ...richCallbacks })}
+      {/* PageTitleEditor wraps content in role="textbox"; keep chips inert
+          to avoid nested-interactive. `onTagClick` is threaded so the gate
+          can be flipped later. See UX-249. */}
+      {renderRichContent(title, { interactive: false, onTagClick, ...richCallbacks })}
     </div>
   )
 }

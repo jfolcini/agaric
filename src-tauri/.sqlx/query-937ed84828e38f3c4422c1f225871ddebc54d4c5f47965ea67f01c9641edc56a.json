@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id FROM blocks WHERE block_type = 'tag' AND deleted_at IS NULL AND is_conflict = 0",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "937ed84828e38f3c4422c1f225871ddebc54d4c5f47965ea67f01c9641edc56a"
+}

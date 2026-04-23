@@ -2720,3 +2720,572 @@ async fn agenda_cache_source_update_property_key_change() {
     .unwrap();
     assert_eq!(count, 1, "PK dedup: still exactly one row");
 }
+
+// ====================================================================
+// UX-250 — block_tag_refs (inline #[ULID] tag reference cache)
+// ====================================================================
+
+// Helper: insert a bare row into block_tag_refs for tests that want to
+// assert UNION semantics in rebuild_tags_cache / resolve_expr without
+// round-tripping through the full reindex path.
+async fn insert_tag_ref(pool: &SqlitePool, source_id: &str, tag_id: &str) {
+    sqlx::query!(
+        "INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)",
+        source_id,
+        tag_id,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+// Short helper for `#[ULID]` inline content — used throughout the
+// block_tag_refs tests.
+fn inline(tag_id: &str) -> String {
+    format!("#[{tag_id}]")
+}
+
+#[tokio::test]
+async fn reindex_block_tag_refs_zero_inline_tags() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "01HBTRBLK00000000000000SRC", "content", "plain text").await;
+    reindex_block_tag_refs(&pool, "01HBTRBLK00000000000000SRC")
+        .await
+        .unwrap();
+    assert_eq!(
+        count_rows(&pool, "block_tag_refs").await,
+        0,
+        "no inline refs in content means no rows"
+    );
+}
+
+#[tokio::test]
+async fn reindex_block_tag_refs_single_inline_tag() {
+    let (pool, _dir) = test_pool().await;
+    let tag = "01HBTRTAG000000000000000AA";
+    let src = "01HBTRBLK000000000000000AA";
+    insert_block(&pool, tag, "tag", "alpha").await;
+    insert_block(&pool, src, "content", &inline(tag)).await;
+
+    reindex_block_tag_refs(&pool, src).await.unwrap();
+
+    let rows = sqlx::query!(
+        "SELECT source_id, tag_id FROM block_tag_refs WHERE source_id = ?",
+        src
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1, "single inline ref should produce one row");
+    assert_eq!(rows[0].source_id, src);
+    assert_eq!(rows[0].tag_id, tag);
+}
+
+#[tokio::test]
+async fn reindex_block_tag_refs_many_inline_tags() {
+    let (pool, _dir) = test_pool().await;
+    let tag_a = "01HBTRTAG000000000000000BA";
+    let tag_b = "01HBTRTAG000000000000000BB";
+    let tag_c = "01HBTRTAG000000000000000BC";
+    let src = "01HBTRBLK000000000000000BM";
+    insert_block(&pool, tag_a, "tag", "a").await;
+    insert_block(&pool, tag_b, "tag", "b").await;
+    insert_block(&pool, tag_c, "tag", "c").await;
+    let content = format!(
+        "see {} and {} plus {} again {}",
+        inline(tag_a),
+        inline(tag_b),
+        inline(tag_c),
+        inline(tag_a), // duplicate — must dedup via HashSet + PK
+    );
+    insert_block(&pool, src, "content", &content).await;
+
+    reindex_block_tag_refs(&pool, src).await.unwrap();
+
+    assert_eq!(
+        count_rows(&pool, "block_tag_refs").await,
+        3,
+        "three distinct inline tags must produce exactly three rows"
+    );
+}
+
+#[tokio::test]
+async fn reindex_block_tag_refs_skips_non_tag_candidates() {
+    let (pool, _dir) = test_pool().await;
+    // A content block (not a tag) that happens to match the regex.
+    let content_id = "01HBTRCONT00000000000000AA";
+    let page_id = "01HBTRPAGE00000000000000AA";
+    let actual_tag = "01HBTRTAG000000000000000CA";
+    let src = "01HBTRBLK000000000000000CA";
+
+    insert_block(&pool, content_id, "content", "not a tag").await;
+    insert_block(&pool, page_id, "page", "a page").await;
+    insert_block(&pool, actual_tag, "tag", "real-tag").await;
+    let content = format!(
+        "{} {} {}",
+        inline(content_id),
+        inline(page_id),
+        inline(actual_tag),
+    );
+    insert_block(&pool, src, "content", &content).await;
+
+    reindex_block_tag_refs(&pool, src).await.unwrap();
+
+    let rows = sqlx::query!("SELECT tag_id FROM block_tag_refs WHERE source_id = ?", src)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.len(),
+        1,
+        "only the real tag block must be inserted; content / page candidates skipped"
+    );
+    assert_eq!(rows[0].tag_id, actual_tag);
+}
+
+#[tokio::test]
+async fn reindex_block_tag_refs_skips_dangling_target() {
+    let (pool, _dir) = test_pool().await;
+    // The `#[ULID]` points at a block that does not exist.
+    let src = "01HBTRBLK000000000000000DA";
+    let dangling = "01HBTRDANG00000000000000AA";
+    insert_block(&pool, src, "content", &inline(dangling)).await;
+
+    reindex_block_tag_refs(&pool, src).await.unwrap();
+
+    assert_eq!(
+        count_rows(&pool, "block_tag_refs").await,
+        0,
+        "dangling #[ULID] must not insert a row (target must be a tag block)"
+    );
+}
+
+#[tokio::test]
+async fn reindex_block_tag_refs_diff_adds_and_removes() {
+    let (pool, _dir) = test_pool().await;
+    let tag_a = "01HBTRTAG000000000000000EA";
+    let tag_b = "01HBTRTAG000000000000000EB";
+    let tag_c = "01HBTRTAG000000000000000EC";
+    let src = "01HBTRBLK000000000000000EE";
+    insert_block(&pool, tag_a, "tag", "a").await;
+    insert_block(&pool, tag_b, "tag", "b").await;
+    insert_block(&pool, tag_c, "tag", "c").await;
+    insert_block(
+        &pool,
+        src,
+        "content",
+        &format!("{} {}", inline(tag_a), inline(tag_b)),
+    )
+    .await;
+
+    reindex_block_tag_refs(&pool, src).await.unwrap();
+    assert_eq!(count_rows(&pool, "block_tag_refs").await, 2, "initial: A+B");
+
+    // Edit: drop B, add C.
+    let new_content = format!("{} {}", inline(tag_a), inline(tag_c));
+    sqlx::query!(
+        "UPDATE blocks SET content = ? WHERE id = ?",
+        new_content,
+        src,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    reindex_block_tag_refs(&pool, src).await.unwrap();
+
+    let rows = sqlx::query!(
+        "SELECT tag_id FROM block_tag_refs WHERE source_id = ? ORDER BY tag_id",
+        src
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2, "diff: A kept, B removed, C added");
+    assert_eq!(rows[0].tag_id, tag_a);
+    assert_eq!(rows[1].tag_id, tag_c);
+}
+
+#[tokio::test]
+async fn reindex_block_tag_refs_soft_deleted_source_clears_rows() {
+    let (pool, _dir) = test_pool().await;
+    let tag = "01HBTRTAG000000000000000FA";
+    let src = "01HBTRBLK000000000000000FA";
+    insert_block(&pool, tag, "tag", "f").await;
+    insert_block(&pool, src, "content", &inline(tag)).await;
+
+    reindex_block_tag_refs(&pool, src).await.unwrap();
+    assert_eq!(count_rows(&pool, "block_tag_refs").await, 1, "baseline");
+
+    soft_delete_block(&pool, src).await;
+    reindex_block_tag_refs(&pool, src).await.unwrap();
+
+    assert_eq!(
+        count_rows(&pool, "block_tag_refs").await,
+        0,
+        "reindex after soft-delete must clear every row for the source"
+    );
+}
+
+#[tokio::test]
+async fn reindex_block_tag_refs_skips_conflict_source() {
+    let (pool, _dir) = test_pool().await;
+    let tag = "01HBTRTAG000000000000000GA";
+    let src = "01HBTRBLK000000000000000GA";
+    insert_block(&pool, tag, "tag", "g").await;
+    insert_block(&pool, src, "content", &inline(tag)).await;
+    // Pre-seed a row so the post-reindex clear is observable.
+    insert_tag_ref(&pool, src, tag).await;
+    mark_conflict(&pool, src).await;
+
+    reindex_block_tag_refs(&pool, src).await.unwrap();
+
+    assert_eq!(
+        count_rows(&pool, "block_tag_refs").await,
+        0,
+        "reindex must treat is_conflict = 1 sources as empty (rows cleared)"
+    );
+}
+
+#[tokio::test]
+async fn reindex_block_tag_refs_noop_when_content_unchanged() {
+    let (pool, _dir) = test_pool().await;
+    let tag = "01HBTRTAG000000000000000HA";
+    let src = "01HBTRBLK000000000000000HA";
+    insert_block(&pool, tag, "tag", "h").await;
+    insert_block(&pool, src, "content", &inline(tag)).await;
+
+    reindex_block_tag_refs(&pool, src).await.unwrap();
+    reindex_block_tag_refs(&pool, src).await.unwrap();
+
+    assert_eq!(
+        count_rows(&pool, "block_tag_refs").await,
+        1,
+        "second reindex with unchanged content must be a no-op"
+    );
+}
+
+#[tokio::test]
+async fn reindex_block_tag_refs_split_mirrors_single_pool() {
+    let (pool, _dir) = test_pool().await;
+    let tag = "01HBTRTAG000000000000000IA";
+    let src = "01HBTRBLK000000000000000IA";
+    insert_block(&pool, tag, "tag", "i").await;
+    insert_block(&pool, src, "content", &inline(tag)).await;
+
+    reindex_block_tag_refs_split(&pool, &pool, src)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        count_rows(&pool, "block_tag_refs").await,
+        1,
+        "split variant must produce identical rows"
+    );
+}
+
+#[tokio::test]
+async fn rebuild_block_tag_refs_cache_empty_db() {
+    let (pool, _dir) = test_pool().await;
+    rebuild_block_tag_refs_cache(&pool).await.unwrap();
+    assert_eq!(
+        count_rows(&pool, "block_tag_refs").await,
+        0,
+        "empty DB produces empty cache"
+    );
+}
+
+#[tokio::test]
+async fn rebuild_block_tag_refs_cache_single_tag_vault() {
+    let (pool, _dir) = test_pool().await;
+    let tag = "01HBTRTAG000000000000000JA";
+    insert_block(&pool, tag, "tag", "j").await;
+    insert_block(&pool, "01HBTRBLK000000000000000JA", "content", &inline(tag)).await;
+    insert_block(&pool, "01HBTRBLK000000000000000JB", "content", &inline(tag)).await;
+    insert_block(
+        &pool,
+        "01HBTRBLK000000000000000JC",
+        "content",
+        "no inline ref here",
+    )
+    .await;
+
+    rebuild_block_tag_refs_cache(&pool).await.unwrap();
+
+    assert_eq!(
+        count_rows(&pool, "block_tag_refs").await,
+        2,
+        "two blocks reference the single tag inline"
+    );
+}
+
+#[tokio::test]
+async fn rebuild_block_tag_refs_cache_many_blocks_many_tags() {
+    let (pool, _dir) = test_pool().await;
+    let tag_a = "01HBTRTAG000000000000000KA";
+    let tag_b = "01HBTRTAG000000000000000KB";
+    insert_block(&pool, tag_a, "tag", "ka").await;
+    insert_block(&pool, tag_b, "tag", "kb").await;
+
+    // Three blocks: one refs A, one refs B, one refs both.
+    insert_block(
+        &pool,
+        "01HBTRBLK000000000000000KA",
+        "content",
+        &inline(tag_a),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01HBTRBLK000000000000000KB",
+        "content",
+        &inline(tag_b),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01HBTRBLK000000000000000KM",
+        "content",
+        &format!("{} {}", inline(tag_a), inline(tag_b)),
+    )
+    .await;
+
+    rebuild_block_tag_refs_cache(&pool).await.unwrap();
+
+    assert_eq!(
+        count_rows(&pool, "block_tag_refs").await,
+        4,
+        "2 single-ref + 1 dual-ref block = 4 rows total"
+    );
+}
+
+#[tokio::test]
+async fn rebuild_block_tag_refs_cache_large_vault_exact_count() {
+    let (pool, _dir) = test_pool().await;
+    let tag = "01HBTRTAG000000000000000LA";
+    insert_block(&pool, tag, "tag", "large").await;
+
+    // Create 150 content blocks, each referencing the tag inline. Verify
+    // exact count (tests chunked INSERT path since 150 > REBUILD_CHUNK
+    // only at 499 — but still covers the loop). IDs must be exactly
+    // 26 uppercase alphanumeric chars so the `#[ULID]` regex matches.
+    for i in 0..150u64 {
+        // "01HBTRLV" (8) + 18-digit zero-padded index = 26 chars.
+        let id = format!("01HBTRLV{i:018}");
+        assert_eq!(id.len(), 26, "generated test id must be 26 chars");
+        insert_block(&pool, &id, "content", &inline(tag)).await;
+    }
+
+    rebuild_block_tag_refs_cache(&pool).await.unwrap();
+
+    assert_eq!(
+        count_rows(&pool, "block_tag_refs").await,
+        150,
+        "every one of the 150 content blocks must produce exactly one row"
+    );
+}
+
+#[tokio::test]
+async fn rebuild_block_tag_refs_cache_excludes_deleted_and_conflict() {
+    let (pool, _dir) = test_pool().await;
+    let tag = "01HBTRTAG000000000000000MA";
+    let alive = "01HBTRBLK000000000000000MA";
+    let deleted = "01HBTRBLK000000000000000MB";
+    let conflict = "01HBTRBLK000000000000000MC";
+    insert_block(&pool, tag, "tag", "m").await;
+    insert_block(&pool, alive, "content", &inline(tag)).await;
+    insert_block(&pool, deleted, "content", &inline(tag)).await;
+    insert_block(&pool, conflict, "content", &inline(tag)).await;
+    soft_delete_block(&pool, deleted).await;
+    mark_conflict(&pool, conflict).await;
+
+    rebuild_block_tag_refs_cache(&pool).await.unwrap();
+
+    let rows = sqlx::query!("SELECT source_id FROM block_tag_refs")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.len(),
+        1,
+        "only the alive, non-conflict block should have a row"
+    );
+    assert_eq!(rows[0].source_id, alive);
+}
+
+#[tokio::test]
+async fn rebuild_block_tag_refs_cache_clears_stale_entries() {
+    let (pool, _dir) = test_pool().await;
+    let tag = "01HBTRTAG000000000000000NA";
+    let src = "01HBTRBLK000000000000000NA";
+    insert_block(&pool, tag, "tag", "n").await;
+    insert_block(&pool, src, "content", &inline(tag)).await;
+
+    rebuild_block_tag_refs_cache(&pool).await.unwrap();
+    assert_eq!(count_rows(&pool, "block_tag_refs").await, 1, "baseline");
+
+    // Overwrite content to remove the inline ref.
+    sqlx::query!(
+        "UPDATE blocks SET content = ? WHERE id = ?",
+        "no refs anymore",
+        src,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    rebuild_block_tag_refs_cache(&pool).await.unwrap();
+    assert_eq!(
+        count_rows(&pool, "block_tag_refs").await,
+        0,
+        "full rebuild must drop rows whose source no longer contains the token"
+    );
+}
+
+#[tokio::test]
+async fn rebuild_block_tag_refs_cache_split_matches_single_pool() {
+    let (pool, _dir) = test_pool().await;
+    let tag = "01HBTRTAG000000000000000OA";
+    insert_block(&pool, tag, "tag", "o").await;
+    insert_block(&pool, "01HBTRBLK000000000000000OA", "content", &inline(tag)).await;
+
+    rebuild_block_tag_refs_cache_split(&pool, &pool)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        count_rows(&pool, "block_tag_refs").await,
+        1,
+        "split variant must produce the same row count"
+    );
+}
+
+// ====================================================================
+// UX-250 — rebuild_tags_cache UNION counting
+// ====================================================================
+
+#[tokio::test]
+async fn tags_cache_union_only_explicit_block_tags() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG_ONLY_EX", "tag", "explicit-only").await;
+    insert_block(&pool, "BLK_EX1", "content", "one").await;
+    insert_block(&pool, "BLK_EX2", "content", "two").await;
+    add_tag(&pool, "BLK_EX1", "TAG_ONLY_EX").await;
+    add_tag(&pool, "BLK_EX2", "TAG_ONLY_EX").await;
+
+    rebuild_tags_cache(&pool).await.unwrap();
+
+    let row = sqlx::query!("SELECT usage_count FROM tags_cache WHERE tag_id = 'TAG_ONLY_EX'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(row.usage_count, 2, "two explicit tags → count 2");
+}
+
+#[tokio::test]
+async fn tags_cache_union_only_inline_block_tag_refs() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG_ONLY_IN", "tag", "inline-only").await;
+    insert_block(&pool, "BLK_IN1", "content", "one").await;
+    insert_block(&pool, "BLK_IN2", "content", "two").await;
+    insert_tag_ref(&pool, "BLK_IN1", "TAG_ONLY_IN").await;
+    insert_tag_ref(&pool, "BLK_IN2", "TAG_ONLY_IN").await;
+
+    rebuild_tags_cache(&pool).await.unwrap();
+
+    let row = sqlx::query!("SELECT usage_count FROM tags_cache WHERE tag_id = 'TAG_ONLY_IN'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        row.usage_count, 2,
+        "inline-only refs should count toward usage_count"
+    );
+}
+
+#[tokio::test]
+async fn tags_cache_union_mixed_same_block_counts_once() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG_MIX", "tag", "mixed").await;
+    // One block has BOTH an explicit tag AND an inline ref to the same
+    // tag. Usage must count the block once.
+    insert_block(&pool, "BLK_BOTH", "content", "both").await;
+    insert_block(&pool, "BLK_EX_ONLY", "content", "explicit only").await;
+    insert_block(&pool, "BLK_IN_ONLY", "content", "inline only").await;
+    add_tag(&pool, "BLK_BOTH", "TAG_MIX").await;
+    insert_tag_ref(&pool, "BLK_BOTH", "TAG_MIX").await;
+    add_tag(&pool, "BLK_EX_ONLY", "TAG_MIX").await;
+    insert_tag_ref(&pool, "BLK_IN_ONLY", "TAG_MIX").await;
+
+    rebuild_tags_cache(&pool).await.unwrap();
+
+    let row = sqlx::query!("SELECT usage_count FROM tags_cache WHERE tag_id = 'TAG_MIX'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        row.usage_count, 3,
+        "BLK_BOTH counted once (UNION dedups), plus BLK_EX_ONLY and BLK_IN_ONLY"
+    );
+}
+
+#[tokio::test]
+async fn tags_cache_union_excludes_deleted_inline_ref_source() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG_DEL_IN", "tag", "deleted-inline").await;
+    insert_block(&pool, "BLK_ALIVE", "content", "alive").await;
+    insert_block(&pool, "BLK_DEAD", "content", "deleted").await;
+    insert_tag_ref(&pool, "BLK_ALIVE", "TAG_DEL_IN").await;
+    insert_tag_ref(&pool, "BLK_DEAD", "TAG_DEL_IN").await;
+    soft_delete_block(&pool, "BLK_DEAD").await;
+
+    rebuild_tags_cache(&pool).await.unwrap();
+
+    let row = sqlx::query!("SELECT usage_count FROM tags_cache WHERE tag_id = 'TAG_DEL_IN'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        row.usage_count, 1,
+        "soft-deleted inline-ref source must not count toward usage"
+    );
+}
+
+#[tokio::test]
+async fn tags_cache_union_excludes_conflict_inline_ref_source() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG_CF_IN", "tag", "conflict-inline").await;
+    insert_block(&pool, "BLK_NORMAL", "content", "normal").await;
+    insert_block(&pool, "BLK_CF", "content", "conflict").await;
+    insert_tag_ref(&pool, "BLK_NORMAL", "TAG_CF_IN").await;
+    insert_tag_ref(&pool, "BLK_CF", "TAG_CF_IN").await;
+    mark_conflict(&pool, "BLK_CF").await;
+
+    rebuild_tags_cache(&pool).await.unwrap();
+
+    let row = sqlx::query!("SELECT usage_count FROM tags_cache WHERE tag_id = 'TAG_CF_IN'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        row.usage_count, 1,
+        "conflict-copy inline-ref source must not count toward usage"
+    );
+}
+
+#[tokio::test]
+async fn tags_cache_union_preserves_zero_usage_tags() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TAG_UNUSED_UN", "tag", "nobody-ref").await;
+
+    rebuild_tags_cache(&pool).await.unwrap();
+
+    let row = sqlx::query!("SELECT usage_count FROM tags_cache WHERE tag_id = 'TAG_UNUSED_UN'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        row.usage_count, 0,
+        "unused tag must still appear with count 0"
+    );
+}

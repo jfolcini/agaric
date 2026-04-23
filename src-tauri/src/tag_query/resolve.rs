@@ -17,6 +17,14 @@ pub fn resolve_expr<'a>(
 > {
     Box::pin(async move {
         match expr {
+            // UX-250: every TagExpr::Tag / Prefix branch unions inline
+            // `#[ULID]` references from `block_tag_refs` into the result
+            // set. Inline references are treated identically to explicit
+            // `block_tags` associations for tag-view counts and tag
+            // filtering. `block_tag_inherited` (materialised inheritance
+            // cache) is NOT touched — per design, inheritance applies
+            // only to explicit tags; an inline ref on a page does not
+            // propagate to child blocks.
             TagExpr::Tag(tag_id) => {
                 if include_inherited {
                     let rows = sqlx::query_scalar::<_, String>(
@@ -28,7 +36,12 @@ pub fn resolve_expr<'a>(
                          SELECT bti.block_id \
                          FROM block_tag_inherited bti \
                          JOIN blocks b ON b.id = bti.block_id \
-                         WHERE bti.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
+                         WHERE bti.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+                         UNION \
+                         SELECT btr.source_id AS block_id \
+                         FROM block_tag_refs btr \
+                         JOIN blocks b ON b.id = btr.source_id \
+                         WHERE btr.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
                     )
                     .bind(tag_id)
                     .fetch_all(pool)
@@ -38,7 +51,12 @@ pub fn resolve_expr<'a>(
                     let rows = sqlx::query_scalar!(
                         "SELECT bt.block_id FROM block_tags bt \
                          JOIN blocks b ON b.id = bt.block_id \
-                         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
+                         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+                         UNION \
+                         SELECT btr.source_id AS block_id \
+                         FROM block_tag_refs btr \
+                         JOIN blocks b ON b.id = btr.source_id \
+                         WHERE btr.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
                         tag_id
                     )
                     .fetch_all(pool)
@@ -62,6 +80,13 @@ pub fn resolve_expr<'a>(
                          JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
                          JOIN blocks b ON b.id = bti.block_id \
                          WHERE tc.name LIKE ?1 ESCAPE '\\' \
+                           AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+                         UNION \
+                         SELECT DISTINCT btr.source_id AS block_id \
+                         FROM tags_cache tc \
+                         JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+                         JOIN blocks b ON b.id = btr.source_id \
+                         WHERE tc.name LIKE ?1 ESCAPE '\\' \
                            AND b.deleted_at IS NULL AND b.is_conflict = 0",
                     )
                     .bind(&escaped)
@@ -74,6 +99,13 @@ pub fn resolve_expr<'a>(
                          FROM tags_cache tc \
                          JOIN block_tags bt ON bt.tag_id = tc.tag_id \
                          JOIN blocks b ON b.id = bt.block_id \
+                         WHERE tc.name LIKE ?1 ESCAPE '\\' \
+                           AND b.deleted_at IS NULL AND b.is_conflict = 0 \
+                         UNION \
+                         SELECT DISTINCT btr.source_id AS block_id \
+                         FROM tags_cache tc \
+                         JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+                         JOIN blocks b ON b.id = btr.source_id \
                          WHERE tc.name LIKE ?1 ESCAPE '\\' \
                            AND b.deleted_at IS NULL AND b.is_conflict = 0",
                         escaped
@@ -133,6 +165,17 @@ pub fn resolve_expr<'a>(
 
 /// CTE-based tag resolution — kept as correctness oracle for the
 /// P-4 materialized `block_tag_inherited` table.
+///
+/// UX-250 note: this oracle intentionally does NOT UNION
+/// `block_tag_refs` into the result set. It remains the oracle of the
+/// **explicit-only + inherited** semantics (i.e. what the world looked
+/// like before UX-250). The existing oracle tests never insert
+/// `block_tag_refs` rows, so they continue to produce identical results
+/// between the oracle and `resolve_expr`. New targeted tests that
+/// exercise the union behaviour assert against `resolve_expr` directly
+/// instead of through the oracle — this keeps the oracle's scope
+/// narrowly focused on the `block_tag_inherited` materialisation
+/// correctness question it was designed to answer.
 #[cfg(test)]
 pub(crate) fn resolve_expr_cte<'a>(
     pool: &'a SqlitePool,

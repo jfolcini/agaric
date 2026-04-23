@@ -31,6 +31,7 @@ vi.mock('../../hooks/useRichContentCallbacks', () => ({
     resolveTagName: vi.fn((id: string) => (id === TAG_ID ? 'project' : undefined)),
     resolveTagStatus: vi.fn(() => 'active' as const),
   })),
+  useTagClickHandler: vi.fn(() => vi.fn()),
 }))
 
 describe('ResultCard', () => {

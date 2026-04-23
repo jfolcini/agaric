@@ -66,6 +66,11 @@ pub async fn apply_snapshot(
     sqlx::query("DELETE FROM block_links")
         .execute(&mut *tx)
         .await?;
+    // UX-250: inline `#[ULID]` tag-ref cache. Purely derived — repopulated
+    // by `RebuildBlockTagRefsCache` in the rebuild task set below.
+    sqlx::query("DELETE FROM block_tag_refs")
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM block_properties")
         .execute(&mut *tx)
         .await?;
@@ -268,6 +273,13 @@ pub async fn apply_snapshot(
         ),
         ("RebuildPageIds", MaterializeTask::RebuildPageIds),
         ("RebuildFtsIndex", MaterializeTask::RebuildFtsIndex),
+        // UX-250: repopulate inline tag-ref cache scanning the restored
+        // block content. Ordering within this array does not matter —
+        // the background consumer processes each task independently.
+        (
+            "RebuildBlockTagRefsCache",
+            MaterializeTask::RebuildBlockTagRefsCache,
+        ),
     ];
     for (label, task) in rebuild_tasks {
         if let Err(e) = materializer.try_enqueue_background(task) {

@@ -14,7 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { CardButton } from '@/components/ui/card-button'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
-import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
+import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import type { BlockRow } from '../lib/tauri'
 import { renderRichContent } from './StaticBlock'
 
@@ -46,19 +46,31 @@ export function ResultCard({
 }: ResultCardProps): React.ReactElement {
   const { resolveBlockTitle, resolveBlockStatus, resolveTagName, resolveTagStatus } =
     useRichContentCallbacks()
+  const onTagClick = useTagClickHandler()
 
   const richContent = useMemo(
     () =>
       block.content
         ? renderRichContent(block.content, {
+            // ResultCard is wrapped in `<button>` (CardButton); keep chips
+            // inert to avoid nested-interactive. `onTagClick` is threaded so
+            // the gate can be flipped later. See UX-249.
             interactive: false,
+            onTagClick,
             resolveBlockTitle,
             resolveBlockStatus,
             resolveTagName,
             resolveTagStatus,
           })
         : null,
-    [block.content, resolveBlockTitle, resolveBlockStatus, resolveTagName, resolveTagStatus],
+    [
+      block.content,
+      onTagClick,
+      resolveBlockTitle,
+      resolveBlockStatus,
+      resolveTagName,
+      resolveTagStatus,
+    ],
   )
 
   return (

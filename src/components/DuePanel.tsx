@@ -19,7 +19,7 @@ import { logger } from '@/lib/logger'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useDuePanelData } from '../hooks/useDuePanelData'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
-import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
+import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import type { NavigateToPageFn } from '../lib/block-events'
 import { BlockListItem } from './BlockListItem'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
@@ -49,6 +49,7 @@ function priorityKey(p: string | null): number {
 export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.ReactElement | null {
   const { t } = useTranslation()
   const callbacks = useRichContentCallbacks()
+  const onTagClick = useTagClickHandler()
   const [collapsed, setCollapsed] = useState(false)
   const [sourceFilter, setSourceFilter] = useState<string | null>(null)
 
@@ -362,7 +363,8 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                             <span className="min-w-0 flex-1 truncate">
                               {entry.block.content
                                 ? renderRichContent(entry.block.content, {
-                                    interactive: false,
+                                    interactive: true,
+                                    onTagClick,
                                     ...callbacks,
                                   })
                                 : t('duePanel.emptyContent')}

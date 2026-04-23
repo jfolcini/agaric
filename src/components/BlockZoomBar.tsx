@@ -18,7 +18,7 @@ import { Fragment, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { BreadcrumbItem } from '../hooks/useBlockZoom'
-import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
+import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { cn } from '../lib/utils'
 import { renderRichContent } from './StaticBlock'
 
@@ -37,6 +37,7 @@ export function BlockZoomBar({
 }: BlockZoomBarProps): React.ReactElement | null {
   const { t } = useTranslation()
   const richCallbacks = useRichContentCallbacks()
+  const onTagClick = useTagClickHandler()
   const toolbarRef = useRef<HTMLDivElement | null>(null)
 
   const focusIndex = useCallback((index: number) => {
@@ -125,7 +126,16 @@ export function BlockZoomBar({
                 onClick={() => (isLast ? undefined : onNavigate(item.id))}
               >
                 {item.content
-                  ? renderRichContent(item.content, { interactive: false, ...richCallbacks })
+                  ? renderRichContent(item.content, {
+                      // Breadcrumb is wrapped in `<button>`; keep chips inert
+                      // (no nested role=link / tabIndex) to avoid
+                      // nested-interactive. `onTagClick` is still threaded so
+                      // the gate can be flipped on later without a plumbing
+                      // pass. See UX-249 for the caller-audit rationale.
+                      interactive: false,
+                      onTagClick,
+                      ...richCallbacks,
+                    })
                   : t('block.untitled')}
               </button>
             </Fragment>

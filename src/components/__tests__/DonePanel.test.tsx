@@ -62,6 +62,7 @@ vi.mock('../../hooks/useRichContentCallbacks', () => ({
     resolveTagName: vi.fn(() => undefined),
     resolveTagStatus: vi.fn(() => 'active' as const),
   })),
+  useTagClickHandler: vi.fn(() => vi.fn()),
 }))
 
 vi.mock('@/components/ui/button', () => ({

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM block_tag_refs WHERE source_id = ? AND tag_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "21828bcd6474488d36d3e54b023c15a0ce310cc9d9dc8c89df7335a20a772ace"
+}

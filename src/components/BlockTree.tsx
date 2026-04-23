@@ -37,6 +37,7 @@ import {
 import { useBlockTreeEventListeners } from '../hooks/useBlockTreeEventListeners'
 import { useBlockTreeKeyboardShortcuts } from '../hooks/useBlockTreeKeyboardShortcuts'
 import { useBlockZoom } from '../hooks/useBlockZoom'
+import { useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { useViewportObserver } from '../hooks/useViewportObserver'
 import type { NavigateToPageFn } from '../lib/block-events'
 import { processCheckboxSyntax } from '../lib/block-utils'
@@ -205,6 +206,7 @@ export function BlockTree({
 
   // ── Extracted hooks ────────────────────────────────────────────────
   const resolve = useBlockResolve()
+  const onTagClick = useTagClickHandler()
   const properties = useBlockProperties()
   const { handleToggleTodo, handleTogglePriority } = properties
 
@@ -233,6 +235,7 @@ export function BlockTree({
     resolveBlockTitle: resolve.resolveBlockTitle,
     resolveTagName: resolve.resolveTagName,
     onNavigate: (id: string) => handleNavigateRef.current(id),
+    onTagClick,
     resolveBlockStatus: resolve.resolveBlockStatus,
     resolveTagStatus: resolve.resolveTagStatus,
     searchTags: resolve.searchTags,

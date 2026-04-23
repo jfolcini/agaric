@@ -27,7 +27,7 @@ import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
+import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { formatTimestamp } from '../lib/format'
 import { getPayloadRawContent, getPropertyPayload } from '../lib/history-utils'
 import { formatPropertyName } from '../lib/property-utils'
@@ -103,6 +103,7 @@ export function HistoryItemCore({
   const rawContent = getPayloadRawContent(entry)
   const propPayload = getPropertyPayload(entry)
   const richCallbacks = useRichContentCallbacks()
+  const onTagClick = useTagClickHandler()
 
   return (
     <>
@@ -150,7 +151,8 @@ export function HistoryItemCore({
         {!propPayload && rawContent && (
           <span className="history-item-preview text-sm line-clamp-2">
             {renderRichContent(rawContent, {
-              interactive: false,
+              interactive: true,
+              onTagClick,
               ...richCallbacks,
             })}
           </span>

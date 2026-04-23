@@ -16,7 +16,7 @@ import { memo, useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
+import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { logger } from '../lib/logger'
 import { getBlock, setDueDate, setScheduledDate } from '../lib/tauri'
 import { PageLink } from './PageLink'
@@ -89,11 +89,13 @@ function BlockListItemInner({
 }: BlockListItemProps): React.ReactElement {
   const { t } = useTranslation()
   const callbacks = useRichContentCallbacks()
+  const onTagClick = useTagClickHandler()
   const [popoverOpen, setPopoverOpen] = useState(false)
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: callbacks are non-interactive and stable — only content drives the rendered output
+  // biome-ignore lint/correctness/useExhaustiveDependencies: callbacks are stable (ref-backed) — only content drives the rendered output
   const richContent = useMemo(
-    () => (content ? renderRichContent(content, { interactive: false, ...callbacks }) : null),
+    () =>
+      content ? renderRichContent(content, { interactive: true, onTagClick, ...callbacks }) : null,
     [content],
   )
 

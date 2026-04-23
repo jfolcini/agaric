@@ -380,6 +380,151 @@ describe('RichContentRenderer', () => {
     expect(chip).toHaveAttribute('tabindex', '0')
   })
 
+  // -- Tag ref click behaviour (UX-249) ---------------------------------------
+
+  describe('tag_ref click activation (UX-249)', () => {
+    it('click fires onTagClick with the tag ULID when interactive', async () => {
+      const onTagClick = vi.fn()
+      const user = userEvent.setup()
+      render(
+        renderRichContent(`#[${TAG_ID}]`, {
+          interactive: true,
+          onTagClick,
+          resolveTagName: () => '#MyTag',
+        }),
+      )
+      await user.click(screen.getByTestId('tag-ref-chip'))
+      expect(onTagClick).toHaveBeenCalledTimes(1)
+      expect(onTagClick).toHaveBeenCalledWith(TAG_ID)
+    })
+
+    it('Enter key activates onTagClick when interactive', async () => {
+      const onTagClick = vi.fn()
+      const user = userEvent.setup()
+      render(
+        renderRichContent(`#[${TAG_ID}]`, {
+          interactive: true,
+          onTagClick,
+          resolveTagName: () => '#MyTag',
+        }),
+      )
+      const chip = screen.getByTestId('tag-ref-chip')
+      chip.focus()
+      await user.keyboard('{Enter}')
+      expect(onTagClick).toHaveBeenCalledTimes(1)
+      expect(onTagClick).toHaveBeenCalledWith(TAG_ID)
+    })
+
+    it('Space key activates onTagClick when interactive', async () => {
+      const onTagClick = vi.fn()
+      const user = userEvent.setup()
+      render(
+        renderRichContent(`#[${TAG_ID}]`, {
+          interactive: true,
+          onTagClick,
+          resolveTagName: () => '#MyTag',
+        }),
+      )
+      const chip = screen.getByTestId('tag-ref-chip')
+      chip.focus()
+      await user.keyboard(' ')
+      expect(onTagClick).toHaveBeenCalledTimes(1)
+    })
+
+    it('other keys do not fire onTagClick', async () => {
+      const onTagClick = vi.fn()
+      const user = userEvent.setup()
+      render(
+        renderRichContent(`#[${TAG_ID}]`, {
+          interactive: true,
+          onTagClick,
+          resolveTagName: () => '#MyTag',
+        }),
+      )
+      const chip = screen.getByTestId('tag-ref-chip')
+      chip.focus()
+      await user.keyboard('a')
+      expect(onTagClick).not.toHaveBeenCalled()
+    })
+
+    it('clickable chip has role=link, tabIndex=0, and cursor-pointer', () => {
+      render(
+        renderRichContent(`#[${TAG_ID}]`, {
+          interactive: true,
+          onTagClick: () => {},
+          resolveTagName: () => '#Tag',
+        }),
+      )
+      const chip = screen.getByTestId('tag-ref-chip')
+      expect(chip).toHaveAttribute('role', 'link')
+      expect(chip).toHaveAttribute('tabindex', '0')
+      expect(chip.classList.contains('cursor-pointer')).toBe(true)
+    })
+
+    it('fires handler even when the tag is deleted', async () => {
+      const onTagClick = vi.fn()
+      const user = userEvent.setup()
+      render(
+        renderRichContent(`#[${TAG_ID}]`, {
+          interactive: true,
+          onTagClick,
+          resolveTagName: () => '#Dead',
+          resolveTagStatus: () => 'deleted',
+        }),
+      )
+      const chip = screen.getByTestId('tag-ref-chip')
+      expect(chip.classList.contains('tag-ref-deleted')).toBe(true)
+      await user.click(chip)
+      expect(onTagClick).toHaveBeenCalledWith(TAG_ID)
+    })
+
+    it('no handler registered without interactive=true (even with onTagClick)', async () => {
+      const onTagClick = vi.fn()
+      const user = userEvent.setup()
+      render(
+        renderRichContent(`#[${TAG_ID}]`, {
+          onTagClick,
+          resolveTagName: () => '#Tag',
+        }),
+      )
+      const chip = screen.getByTestId('tag-ref-chip')
+      expect(chip).not.toHaveAttribute('role')
+      expect(chip).not.toHaveAttribute('tabindex')
+      expect(chip.classList.contains('cursor-pointer')).toBe(false)
+      await user.click(chip)
+      expect(onTagClick).not.toHaveBeenCalled()
+    })
+
+    it('no handler registered without onTagClick (even with interactive=true)', async () => {
+      const user = userEvent.setup()
+      render(
+        renderRichContent(`#[${TAG_ID}]`, {
+          interactive: true,
+          resolveTagName: () => '#Tag',
+        }),
+      )
+      const chip = screen.getByTestId('tag-ref-chip')
+      expect(chip).not.toHaveAttribute('role')
+      // Inert interactive surface still exposes tabIndex for focus parity.
+      expect(chip).toHaveAttribute('tabindex', '0')
+      expect(chip.classList.contains('cursor-pointer')).toBe(false)
+      // Pointer click does not throw and does not fire anything observable.
+      await user.click(chip)
+    })
+
+    it('has no a11y violations for an interactive clickable chip', async () => {
+      const { container } = render(
+        renderRichContent(`#[${TAG_ID}]`, {
+          interactive: true,
+          onTagClick: () => {},
+          resolveTagName: () => '#Tag',
+        }),
+      )
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
   // -- a11y -------------------------------------------------------------------
 
   it('has no a11y violations with plain content', async () => {

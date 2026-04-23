@@ -172,6 +172,8 @@ export interface RovingEditorOptions {
   onCreateTag?: (name: string) => Promise<string>
   /** Called when user clicks a [[block link]] chip to navigate. */
   onNavigate?: (id: string) => void
+  /** Called when user clicks an #[ULID] tag chip to navigate. */
+  onTagClick?: (id: string) => void
   /** Return slash commands matching query (for / picker). */
   searchSlashCommands?: (query: string) => PickerItem[] | Promise<PickerItem[]>
   /** Execute a selected slash command. */
@@ -237,6 +239,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     onCreatePage,
     onCreateTag,
     onNavigate,
+    onTagClick,
     searchSlashCommands = () => [],
     onSlashCommand,
     onCheckbox,
@@ -258,6 +261,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   resolveBlockTitleRef.current = resolveBlockTitle
   const onNavigateRef = useRef(onNavigate)
   onNavigateRef.current = onNavigate
+  const onTagClickRef = useRef(onTagClick)
+  onTagClickRef.current = onTagClick
   const resolveBlockStatusRef = useRef(resolveBlockStatus)
   resolveBlockStatusRef.current = resolveBlockStatus
   const resolveTagStatusRef = useRef(resolveTagStatus)
@@ -304,6 +309,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       TagRef.configure({
         resolveName: (id: string) => resolveTagNameRef.current(id),
         resolveStatus: (id: string) => resolveTagStatusRef.current?.(id) ?? 'active',
+        onClick: (id: string) => onTagClickRef.current?.(id),
       }),
       BlockLink.configure({
         resolveTitle: (id: string) => resolveBlockTitleRef.current(id),

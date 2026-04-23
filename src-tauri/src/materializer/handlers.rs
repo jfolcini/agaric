@@ -533,6 +533,10 @@ pub(super) async fn handle_background_task(
             Some(rp) => cache::rebuild_tags_cache_split(pool, rp).await,
             None => cache::rebuild_tags_cache(pool).await,
         },
+        MaterializeTask::RebuildBlockTagRefsCache => match read_pool {
+            Some(rp) => cache::rebuild_block_tag_refs_cache_split(pool, rp).await,
+            None => cache::rebuild_block_tag_refs_cache(pool).await,
+        },
         MaterializeTask::RebuildPagesCache => match read_pool {
             Some(rp) => cache::rebuild_pages_cache_split(pool, rp).await,
             None => cache::rebuild_pages_cache(pool).await,
@@ -544,6 +548,10 @@ pub(super) async fn handle_background_task(
         MaterializeTask::ReindexBlockLinks { ref block_id } => match read_pool {
             Some(rp) => cache::reindex_block_links_split(pool, rp, block_id).await,
             None => cache::reindex_block_links(pool, block_id).await,
+        },
+        MaterializeTask::ReindexBlockTagRefs { ref block_id } => match read_pool {
+            Some(rp) => cache::reindex_block_tag_refs_split(pool, rp, block_id).await,
+            None => cache::reindex_block_tag_refs(pool, block_id).await,
         },
         MaterializeTask::UpdateFtsBlock { ref block_id } => match read_pool {
             Some(rp) => fts::update_fts_for_block_split(pool, rp, block_id).await,

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO tags_cache (tag_id, name, usage_count, updated_at)\n         SELECT b.id, b.content, COALESCE(t.cnt, 0), ?\n         FROM blocks b\n         LEFT JOIN (\n             SELECT tag_id, COUNT(*) AS cnt FROM (\n                 SELECT bt.tag_id, bt.block_id\n                 FROM block_tags bt\n                 JOIN blocks blk ON blk.id = bt.block_id\n                 WHERE blk.deleted_at IS NULL AND blk.is_conflict = 0\n                 UNION\n                 SELECT btr.tag_id, btr.source_id AS block_id\n                 FROM block_tag_refs btr\n                 JOIN blocks blk ON blk.id = btr.source_id\n                 WHERE blk.deleted_at IS NULL AND blk.is_conflict = 0\n             )\n             GROUP BY tag_id\n         ) t ON t.tag_id = b.id\n         WHERE b.block_type = 'tag' AND b.deleted_at IS NULL AND b.content IS NOT NULL\n           AND b.is_conflict = 0\n         ORDER BY b.id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "c1edce4aa99b1ef815a3073ff9dbf7a53b6d35ca8f3b78248a26cc83d8aed03b"
+}

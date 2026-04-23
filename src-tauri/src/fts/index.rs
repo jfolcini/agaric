@@ -157,7 +157,7 @@ pub async fn remove_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(
 /// differently). This reduces from N×3 queries to N+2 (1 batch SELECT +
 /// 1 batch DELETE + N INSERTs) inside a single transaction.
 pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
-    // Find blocks referencing this ID via block_tags (for tags)
+    // Find blocks referencing this ID via block_tags (for explicit tags)
     let tag_refs: Vec<String> =
         sqlx::query_scalar!("SELECT block_id FROM block_tags WHERE tag_id = ?", block_id)
             .fetch_all(pool)
@@ -171,11 +171,23 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
     .fetch_all(pool)
     .await?;
 
+    // UX-250: find blocks whose content contains an inline `#[ULID]`
+    // reference to this tag. Without this, a block that only references
+    // the renamed tag inline (no explicit block_tags row, no block_links
+    // row) would keep the stale resolved name in its FTS entry.
+    let inline_tag_refs: Vec<String> = sqlx::query_scalar!(
+        "SELECT source_id FROM block_tag_refs WHERE tag_id = ?",
+        block_id
+    )
+    .fetch_all(pool)
+    .await?;
+
     // Collect unique block IDs
     let mut seen = std::collections::HashSet::new();
     let unique_ids: Vec<String> = tag_refs
         .into_iter()
         .chain(link_refs)
+        .chain(inline_tag_refs)
         .filter(|bid| seen.insert(bid.clone()))
         .collect();
 

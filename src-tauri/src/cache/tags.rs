@@ -39,16 +39,35 @@ async fn rebuild_tags_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
         .execute(&mut *tx)
         .await?;
 
+    // UX-250: usage_count counts DISTINCT block_ids from the UNION of
+    // `block_tags` (explicit associations) and `block_tag_refs` (inline
+    // `#[ULID]` references in content). Both joins enforce
+    // `deleted_at IS NULL AND is_conflict = 0` on the referenced block
+    // so soft-deleted / conflict-copy blocks never contribute.
+    //
+    // UNION (not UNION ALL) collapses a block that happens to carry both
+    // an explicit tag AND an inline ref to the same tag into a single
+    // entry — the user sees one reference, not two.
+    //
+    // Tags with zero usage remain in the cache via the LEFT JOIN; the
+    // COALESCE falls back to 0.
     let res = sqlx::query!(
         "INSERT OR IGNORE INTO tags_cache (tag_id, name, usage_count, updated_at)
          SELECT b.id, b.content, COALESCE(t.cnt, 0), ?
          FROM blocks b
          LEFT JOIN (
-             SELECT bt.tag_id, COUNT(*) AS cnt
-             FROM block_tags bt
-             JOIN blocks blk ON blk.id = bt.block_id
-             WHERE blk.deleted_at IS NULL
-             GROUP BY bt.tag_id
+             SELECT tag_id, COUNT(*) AS cnt FROM (
+                 SELECT bt.tag_id, bt.block_id
+                 FROM block_tags bt
+                 JOIN blocks blk ON blk.id = bt.block_id
+                 WHERE blk.deleted_at IS NULL AND blk.is_conflict = 0
+                 UNION
+                 SELECT btr.tag_id, btr.source_id AS block_id
+                 FROM block_tag_refs btr
+                 JOIN blocks blk ON blk.id = btr.source_id
+                 WHERE blk.deleted_at IS NULL AND blk.is_conflict = 0
+             )
+             GROUP BY tag_id
          ) t ON t.tag_id = b.id
          WHERE b.block_type = 'tag' AND b.deleted_at IS NULL AND b.content IS NOT NULL
            AND b.is_conflict = 0

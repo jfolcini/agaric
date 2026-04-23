@@ -25,7 +25,7 @@ import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '../hooks/useListMultiSelect'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
-import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
+import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { formatTimestamp } from '../lib/format'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 import { logger } from '../lib/logger'
@@ -47,6 +47,7 @@ import { renderRichContent } from './StaticBlock'
 export function TrashView(): React.ReactElement {
   const { t } = useTranslation()
   const callbacks = useRichContentCallbacks()
+  const onTagClick = useTagClickHandler()
   const queryFn = useCallback(
     (cursor?: string) =>
       listBlocks({ showDeleted: true, ...(cursor != null && { cursor }), limit: 50 }),
@@ -552,7 +553,8 @@ export function TrashView(): React.ReactElement {
                         <span className="trash-item-text text-sm truncate">
                           {block.content
                             ? renderRichContent(block.content, {
-                                interactive: false,
+                                interactive: true,
+                                onTagClick,
                                 ...callbacks,
                               })
                             : t('trash.emptyContent')}

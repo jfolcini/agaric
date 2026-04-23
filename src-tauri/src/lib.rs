@@ -455,6 +455,38 @@ pub fn run() {
                 }
             }
 
+            // UX-250: Rebuild `block_tag_refs` at boot if the table is empty
+            // but there is content to scan. Migration 0034 creates the table
+            // but intentionally does not run a SQL backfill (SQLite lacks the
+            // regex support we need). This handles both the first boot after
+            // the migration ships and any future wipe-plus-restart path that
+            // leaves content blocks in place with no ref rows.
+            let btr_count: i64 = tauri::async_runtime::block_on(
+                sqlx::query_scalar("SELECT COUNT(*) FROM block_tag_refs")
+                    .fetch_one(&pools.write),
+            )
+            .unwrap_or(0);
+            if btr_count == 0 {
+                let block_count: i64 = tauri::async_runtime::block_on(
+                    sqlx::query_scalar(
+                        "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 AND content IS NOT NULL"
+                    )
+                    .fetch_one(&pools.write),
+                )
+                .unwrap_or(0);
+                if block_count > 0 {
+                    tracing::info!(
+                        blocks = block_count,
+                        "block_tag_refs empty (migration 0034 backfill) — scheduling rebuild"
+                    );
+                    if let Err(e) = materializer
+                        .try_enqueue_background(MaterializeTask::RebuildBlockTagRefsCache)
+                    {
+                        tracing::warn!(error = %e, "failed to enqueue block_tag_refs rebuild at boot");
+                    }
+                }
+            }
+
             // P-16: Populate projected agenda cache at boot so the first query
             // hits the cache rather than falling back to on-the-fly computation.
             if let Err(e) = materializer.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache) {

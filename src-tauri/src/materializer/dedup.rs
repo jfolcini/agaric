@@ -12,6 +12,7 @@ pub(super) fn hash_id(s: &str) -> u64 {
 pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
     let mut seen_d: HashSet<mem::Discriminant<MaterializeTask>> = HashSet::new();
     let mut seen_bl: HashSet<u64> = HashSet::new();
+    let mut seen_btr: HashSet<u64> = HashSet::new();
     let mut seen_fu: HashSet<u64> = HashSet::new();
     let mut seen_fr: HashSet<u64> = HashSet::new();
     let mut seen_frr: HashSet<u64> = HashSet::new();
@@ -20,6 +21,11 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
         match &task {
             MaterializeTask::ReindexBlockLinks { block_id } => {
                 if seen_bl.insert(hash_id(block_id)) {
+                    result.push(task);
+                }
+            }
+            MaterializeTask::ReindexBlockTagRefs { block_id } => {
+                if seen_btr.insert(hash_id(block_id)) {
                     result.push(task);
                 }
             }

@@ -26,16 +26,33 @@ pub enum MaterializeTask {
     RebuildTagsCache,
     RebuildPagesCache,
     RebuildAgendaCache,
-    ReindexBlockLinks { block_id: String },
-    UpdateFtsBlock { block_id: String },
-    ReindexFtsReferences { block_id: String },
-    RemoveFtsBlock { block_id: String },
+    ReindexBlockLinks {
+        block_id: String,
+    },
+    /// UX-250: incremental reindex of `block_tag_refs` for a single
+    /// block after a content mutation. Mirrors `ReindexBlockLinks`.
+    ReindexBlockTagRefs {
+        block_id: String,
+    },
+    UpdateFtsBlock {
+        block_id: String,
+    },
+    ReindexFtsReferences {
+        block_id: String,
+    },
+    RemoveFtsBlock {
+        block_id: String,
+    },
     RebuildFtsIndex,
     FtsOptimize,
     CleanupOrphanedAttachments,
     RebuildTagInheritanceCache,
     RebuildProjectedAgendaCache,
     RebuildPageIds,
+    /// UX-250: full-vault recompute of `block_tag_refs`. Fires on
+    /// delete / restore / purge and from `apply_snapshot` / boot-time
+    /// "table is empty" fallback.
+    RebuildBlockTagRefsCache,
     Barrier(Arc<tokio::sync::Notify>),
 }
 

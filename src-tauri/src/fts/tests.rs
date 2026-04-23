@@ -1945,6 +1945,90 @@ async fn reindex_fts_references_batch_50_blocks() {
     );
 }
 
+// ── UX-250: reindex_fts_references must pick up inline-only referencing blocks ──
+//
+// Before UX-250, a block whose only link to a tag was an inline
+// `#[ULID]` reference (no explicit `block_tags` row, no `block_links`
+// row) would be missed by `reindex_fts_references`. After the change,
+// `block_tag_refs` is a third source that must be unioned in.
+
+#[tokio::test]
+async fn reindex_fts_references_updates_inline_only_referencing_block() {
+    let (pool, _dir) = test_pool().await;
+
+    let tag_id = "01HQTAGINLINE0000000000001";
+    let blk_id = "01HQBLKINLINE0000000000001";
+
+    // Tag block + content block with an inline `#[ULID]` ref.
+    // Critically: NO explicit block_tags row and NO block_links row.
+    // The only path from the content block to the tag is through
+    // block_tag_refs (the UX-250 cache).
+    insert_block(&pool, tag_id, "tag", "meeting", None, Some(1)).await;
+    insert_block(
+        &pool,
+        blk_id,
+        "content",
+        &format!("notes about #[{tag_id}]"),
+        None,
+        Some(2),
+    )
+    .await;
+    sqlx::query("INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)")
+        .bind(blk_id)
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Seed the FTS index so there is an existing row to replace.
+    update_fts_for_block(&pool, blk_id).await.unwrap();
+
+    // Confirm baseline: "meeting" finds the block (via inline ref
+    // resolution during strip_for_fts).
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let before = search_fts(&pool, "meeting", &page, None, None)
+        .await
+        .unwrap();
+    assert!(
+        before.items.iter().any(|r| r.id == blk_id),
+        "baseline: 'meeting' must match the inline-ref block before rename"
+    );
+
+    // Rename the tag → FTS entry for the content block is now stale.
+    sqlx::query("UPDATE blocks SET content = 'standup' WHERE id = ?")
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Reindex references — this must pick up the inline-only block
+    // through block_tag_refs (the whole point of this test).
+    reindex_fts_references(&pool, tag_id).await.unwrap();
+
+    // "standup" must now match the block; "meeting" must not.
+    let new_results = search_fts(&pool, "standup", &page, None, None)
+        .await
+        .unwrap();
+    assert!(
+        new_results.items.iter().any(|r| r.id == blk_id),
+        "inline-only block must be reindexed so 'standup' finds it after rename"
+    );
+    let old_results = search_fts(&pool, "meeting", &page, None, None)
+        .await
+        .unwrap();
+    let stale: Vec<&str> = old_results
+        .items
+        .iter()
+        .filter(|r| r.id == blk_id)
+        .map(|r| r.id.as_str())
+        .collect();
+    assert_eq!(
+        stale.len(),
+        0,
+        "stale 'meeting' hit on the inline-ref block must not survive the reindex"
+    );
+}
+
 #[tokio::test]
 async fn rebuild_fts_index_populates_empty_table() {
     let (pool, _dir) = test_pool().await;

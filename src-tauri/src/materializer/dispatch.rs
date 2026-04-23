@@ -14,13 +14,18 @@ use tokio::sync::mpsc;
 /// `enqueue_full_cache_rebuild` has a single source of truth to iterate.
 /// Adding a new block-referencing cache should only require appending to
 /// this array — the three dispatch arms pick up the change automatically.
-pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 6] = [
+pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 7] = [
     MaterializeTask::RebuildTagsCache,
     MaterializeTask::RebuildPagesCache,
     MaterializeTask::RebuildAgendaCache,
     MaterializeTask::RebuildProjectedAgendaCache,
     MaterializeTask::RebuildTagInheritanceCache,
     MaterializeTask::RebuildPageIds,
+    // UX-250: inline `#[ULID]` references may disappear when a block
+    // (or a subtree containing referencing blocks) is deleted; the
+    // full recompute picks that up on the same queue drain as the
+    // other caches.
+    MaterializeTask::RebuildBlockTagRefsCache,
 ];
 
 impl Materializer {
@@ -115,6 +120,13 @@ impl Materializer {
                 }
                 if !hint.block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::UpdateFtsBlock {
+                        block_id: hint.block_id.clone(),
+                    })?;
+                    // UX-250: a freshly created block can already contain
+                    // inline `#[ULID]` tag refs if the creator passed
+                    // non-empty content (imports, paste, programmatic
+                    // creates). Scan for them.
+                    self.try_enqueue_background(MaterializeTask::ReindexBlockTagRefs {
                         block_id: hint.block_id,
                     })?;
                 }
@@ -130,6 +142,15 @@ impl Materializer {
                 );
                 if !hint.block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::ReindexBlockLinks {
+                        block_id: hint.block_id.clone(),
+                    })?;
+                    // UX-250: reindex inline tag refs regardless of
+                    // `block_type_hint` — every content edit may gain or
+                    // lose `#[ULID]` tokens. Tag/page blocks typically
+                    // don't contain inline refs themselves but the cost
+                    // of scanning an empty diff is negligible vs. the
+                    // correctness risk of skipping.
+                    self.try_enqueue_background(MaterializeTask::ReindexBlockTagRefs {
                         block_id: hint.block_id.clone(),
                     })?;
                 }

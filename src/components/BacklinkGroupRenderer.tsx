@@ -8,6 +8,7 @@
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
+import { useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BacklinkGroup, BlockRow } from '../lib/tauri'
 import { CollapsibleGroupList } from './CollapsibleGroupList'
@@ -37,6 +38,7 @@ export function BacklinkGroupRenderer({
   resolveTagName,
 }: BacklinkGroupRendererProps): React.ReactElement {
   const { t } = useTranslation()
+  const onTagClick = useTagClickHandler()
 
   return (
     <CollapsibleGroupList
@@ -66,6 +68,8 @@ export function BacklinkGroupRenderer({
           <span className="linked-reference-item-text text-sm flex-1 truncate">
             {block.content
               ? renderRichContent(block.content, {
+                  interactive: true,
+                  onTagClick,
                   resolveBlockTitle,
                   resolveTagName,
                   resolveBlockStatus,

@@ -46,6 +46,7 @@ vi.mock('../../hooks/useRichContentCallbacks', () => ({
     resolveTagName: vi.fn(() => undefined),
     resolveTagStatus: vi.fn(() => 'active' as const),
   })),
+  useTagClickHandler: vi.fn(() => vi.fn()),
 }))
 
 vi.mock('../../lib/announcer', () => ({
@@ -1522,11 +1523,11 @@ describe('ConflictList', () => {
     await waitFor(() => {
       expect(mockedRender).toHaveBeenCalledWith(
         '**bold** text',
-        expect.objectContaining({ interactive: false }),
+        expect.objectContaining({ interactive: true }),
       )
       expect(mockedRender).toHaveBeenCalledWith(
         '*italic* content',
-        expect.objectContaining({ interactive: false }),
+        expect.objectContaining({ interactive: true }),
       )
     })
   })

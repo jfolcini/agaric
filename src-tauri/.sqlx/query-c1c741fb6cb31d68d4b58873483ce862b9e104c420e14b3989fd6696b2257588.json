@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO block_tag_refs (source_id, tag_id) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ? AND block_type = 'tag')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "c1c741fb6cb31d68d4b58873483ce862b9e104c420e14b3989fd6696b2257588"
+}

@@ -20,6 +20,12 @@ export interface TagRefOptions {
   resolveName: (id: string) => string
   /** Check whether a referenced tag is active or deleted. */
   resolveStatus?: ((id: string) => 'active' | 'deleted') | undefined
+  /**
+   * Called when the user clicks (or activates via Enter / Space on) a tag
+   * chip inside the editor. When omitted the chip stays a plain decoration
+   * with no pointer / keyboard affordance.
+   */
+  onClick?: ((id: string) => void) | undefined
 }
 
 declare module '@tiptap/core' {
@@ -40,6 +46,7 @@ export const TagRef = Node.create<TagRefOptions>({
     return {
       resolveName: (id: string) => `#${id.slice(0, 8)}...`,
       resolveStatus: undefined,
+      onClick: undefined,
     }
   },
 
@@ -103,12 +110,45 @@ export const TagRef = Node.create<TagRefOptions>({
 
       render(currentId)
 
+      // Register click / keydown listeners ONCE in the outer closure so every
+      // NodeView `update()` (which calls `render()`) does not leak a fresh
+      // handler. The listeners read `currentId` (mutated by render) and
+      // `extension.options.onClick` (the current configured handler), so they
+      // always see the latest id and callback.
+      const clickHandler = (event: MouseEvent) => {
+        const onClick = extension.options.onClick
+        if (!onClick) return
+        event.stopPropagation()
+        onClick(currentId)
+      }
+      const keydownHandler = (event: KeyboardEvent) => {
+        const onClick = extension.options.onClick
+        if (!onClick) return
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        event.preventDefault()
+        event.stopPropagation()
+        onClick(currentId)
+      }
+      dom.addEventListener('click', clickHandler)
+      dom.addEventListener('keydown', keydownHandler)
+
+      // Only expose keyboard affordances when an onClick is wired — without
+      // it the chip stays a plain decoration.
+      if (extension.options.onClick) {
+        dom.setAttribute('role', 'link')
+        dom.setAttribute('tabindex', '0')
+      }
+
       return {
         dom,
         update(updatedNode) {
           if (updatedNode.type.name !== 'tag_ref') return false
           render(updatedNode.attrs['id'] as string)
           return true
+        },
+        destroy() {
+          dom.removeEventListener('click', clickHandler)
+          dom.removeEventListener('keydown', keydownHandler)
         },
       }
     }

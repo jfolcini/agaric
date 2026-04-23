@@ -38,6 +38,7 @@ vi.mock('../../hooks/useRichContentCallbacks', () => ({
     resolveTagName: vi.fn(() => undefined),
     resolveTagStatus: vi.fn(() => 'active' as const),
   })),
+  useTagClickHandler: vi.fn(() => vi.fn()),
 }))
 
 const mockedInvoke = vi.mocked(invoke)
