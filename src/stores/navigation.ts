@@ -14,6 +14,7 @@ import { persist } from 'zustand/middleware'
 import { isDateFormattedPage } from '../lib/date-utils'
 import { parseDate } from '../lib/parse-date'
 import { useJournalStore } from './journal'
+import { useRecentPagesStore } from './recent-pages'
 
 export type View =
   | 'journal'
@@ -67,7 +68,11 @@ interface NavigationStore {
   openInNewTab: (pageId: string, title: string) => void
   /** Close a tab by index. If last tab closed, switch to 'pages' view. */
   closeTab: (tabIndex: number) => void
-  /** Switch to a different tab by index. */
+  /**
+   * Switch to a different tab by index. When invoked from a non-`page-editor`
+   * view, also flips `currentView` back to `page-editor` so the user actually
+   * sees the tab's page content (FEAT-7 — shell-level TabBar hoist).
+   */
   switchTab: (tabIndex: number) => void
 }
 
@@ -115,6 +120,13 @@ export const useNavigationStore = create<NavigationStore>()(
       },
 
       navigateToPage: (pageId: string, title: string, blockId?: string) => {
+        // FEAT-9: record every navigateToPage call as a recent-visit. The
+        // store dedups by pageId, so repeated visits stay MRU-correct. Note
+        // that we record the visit BEFORE the date-routed branch short-
+        // circuits into Journal — date-titled pages (YYYY-MM-DD) are page
+        // visits too.
+        useRecentPagesStore.getState().recordVisit({ pageId, title })
+
         // UX-242: date-titled pages (YYYY-MM-DD) belong to the Journal → Daily
         // view, not the generic page-editor. Route them through the journal
         // store so every call site (PageBrowser, breadcrumbs, search, tag
@@ -279,10 +291,30 @@ export const useNavigationStore = create<NavigationStore>()(
       },
 
       switchTab: (tabIndex: number) => {
+        // FEAT-7: TabBar is hoisted to the app shell and visible from any view
+        // (journal, pages, search, …). Clicking a tab from a non-editor view
+        // must flip `currentView` back to `page-editor` so the user actually
+        // sees the tab's page content. When already in `page-editor` the
+        // same-tab branch stays a pure no-op (preserves existing semantics).
         const state = get()
         if (tabIndex < 0 || tabIndex >= state.tabs.length) return
-        if (tabIndex === state.activeTabIndex) return
+        const inEditor = state.currentView === 'page-editor'
+        const sameTab = tabIndex === state.activeTabIndex
+        if (sameTab && inEditor) return
+        if (sameTab) {
+          // Cross-view click on the already-active tab: just flip the view.
+          set({ currentView: 'page-editor' })
+          return
+        }
+        if (inEditor) {
+          set({
+            activeTabIndex: tabIndex,
+            selectedBlockId: null,
+          })
+          return
+        }
         set({
+          currentView: 'page-editor',
           activeTabIndex: tabIndex,
           selectedBlockId: null,
         })

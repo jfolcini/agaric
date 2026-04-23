@@ -1718,8 +1718,14 @@ const resources = {
       'mermaid.error': 'Diagram error',
       'mermaid.label': 'Mermaid diagram',
 
+      // FEAT-9: Recent-pages strip (desktop-only)
+      'recent.ariaLabel': 'Recently visited pages',
+      'recent.untitled': 'Untitled',
+
       // F-36: Editor tabs
       'tabs.close': 'Close tab',
+      'tabs.closeTab': 'Close tab: {{label}}',
+      'tabs.openInNewTabEmpty': 'No page to open in a new tab',
       'tabs.openInNewTab': 'Open in new tab',
       'tabs.untitled': 'Untitled',
       'tabs.tabList': 'Editor tabs',
@@ -1735,6 +1741,7 @@ const resources = {
       'keyboard.previousTab': 'Switch to previous tab',
       'keyboard.closeTabOnFocus': 'Close focused tab',
       'keyboard.condition.tabFocused': 'When a tab is focused',
+      'keyboard.condition.desktopOnly': 'Desktop only',
 
       // Keyboard shortcuts — editor formatting
       'keyboard.category.editorFormatting': 'Editor Formatting',

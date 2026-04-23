@@ -362,34 +362,37 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     condition: 'keyboard.condition.inPageEditor',
   },
 
-  // Tabs
+  // Tabs — after FEAT-7 the TabBar is shell-wide on desktop, so the
+  // tab-management shortcuts apply everywhere, not just inside the editor.
+  // The `desktopOnly` condition matches the runtime `useIsMobile() === false`
+  // gate in App.tsx.
   {
     id: 'openInNewTab',
     keys: 'Ctrl + T',
     category: 'keyboard.category.tabs',
     description: 'keyboard.openInNewTab',
-    condition: 'keyboard.condition.inEditor',
+    condition: 'keyboard.condition.desktopOnly',
   },
   {
     id: 'closeActiveTab',
     keys: 'Ctrl + W',
     category: 'keyboard.category.tabs',
     description: 'keyboard.closeActiveTab',
-    condition: 'keyboard.condition.inEditor',
+    condition: 'keyboard.condition.desktopOnly',
   },
   {
     id: 'nextTab',
     keys: 'Ctrl + Tab',
     category: 'keyboard.category.tabs',
     description: 'keyboard.nextTab',
-    condition: 'keyboard.condition.inEditor',
+    condition: 'keyboard.condition.desktopOnly',
   },
   {
     id: 'previousTab',
     keys: 'Ctrl + Shift + Tab',
     category: 'keyboard.category.tabs',
     description: 'keyboard.previousTab',
-    condition: 'keyboard.condition.inEditor',
+    condition: 'keyboard.condition.desktopOnly',
   },
   {
     id: 'closeTabOnFocus',

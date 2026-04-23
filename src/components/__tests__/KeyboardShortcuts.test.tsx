@@ -103,8 +103,12 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getByText('[[')).toBeInTheDocument()
     expect(screen.getAllByText('Escape').length).toBeGreaterThanOrEqual(1)
 
-    // Verify conditions are rendered separately from keys
-    expect(screen.getAllByText(t('keyboard.condition.inEditor')).length).toBe(8)
+    // Verify conditions are rendered separately from keys. FEAT-7 moved the
+    // 4 tab shortcuts (openInNewTab, closeActiveTab, nextTab, previousTab)
+    // from the `inEditor` condition to `desktopOnly` so they fire shell-wide
+    // on desktop. inEditor count dropped 8 → 4; desktopOnly count is now 4.
+    expect(screen.getAllByText(t('keyboard.condition.inEditor')).length).toBe(4)
+    expect(screen.getAllByText(t('keyboard.condition.desktopOnly')).length).toBe(4)
     expect(screen.getByText(t('keyboard.condition.atStart'))).toBeInTheDocument()
     expect(screen.getByText(t('keyboard.condition.atEnd'))).toBeInTheDocument()
   })
@@ -244,11 +248,15 @@ describe('KeyboardShortcuts', () => {
       expect(text).not.toContain(t('keyboard.condition.atEnd'))
       expect(text).not.toContain(t('keyboard.condition.onEmptyBlock'))
       expect(text).not.toContain(t('keyboard.condition.inEditor'))
+      expect(text).not.toContain(t('keyboard.condition.desktopOnly'))
     }
 
     expect(screen.getByText(t('keyboard.condition.atStart'))).toBeInTheDocument()
     expect(screen.getByText(t('keyboard.condition.atEnd'))).toBeInTheDocument()
-    expect(screen.getAllByText(t('keyboard.condition.inEditor'))).toHaveLength(8)
+    // FEAT-7: inEditor 8 → 4, desktopOnly 0 → 4 (see "shows all shortcut
+    // entries" above for the rationale).
+    expect(screen.getAllByText(t('keyboard.condition.inEditor'))).toHaveLength(4)
+    expect(screen.getAllByText(t('keyboard.condition.desktopOnly'))).toHaveLength(4)
   })
 
   it('shows customized shortcuts when localStorage has overrides', () => {

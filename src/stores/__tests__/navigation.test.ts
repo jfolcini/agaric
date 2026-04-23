@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useJournalStore } from '../journal'
 import { resetTabIdCounter, selectPageStack, useNavigationStore } from '../navigation'
+import { useRecentPagesStore } from '../recent-pages'
 
 /** Helper to reset the store to a clean initial state. */
 function resetStore() {
@@ -18,6 +19,8 @@ function resetStore() {
     scrollToDate: null,
     scrollToPanel: null,
   })
+  // Reset recent-pages store so FEAT-9 hook tests start from an empty MRU.
+  useRecentPagesStore.setState({ recentPages: [] })
 }
 
 describe('useNavigationStore', () => {
@@ -681,6 +684,62 @@ describe('useNavigationStore', () => {
 
       expect(useNavigationStore.getState().selectedBlockId).toBeNull()
     })
+
+    // FEAT-7 scope item 3: TabBar is hoisted to the app shell so a click on
+    // any tab from a non-editor view must also flip `currentView` back to
+    // 'page-editor' — otherwise the user clicks a tab and nothing visible
+    // changes because the editor is not rendered.
+    it('FEAT-7: switching tabs from a non-editor view flips currentView to page-editor', () => {
+      useNavigationStore.setState({
+        currentView: 'journal',
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+          { id: '2', pageStack: [{ pageId: 'P3', title: 'Page 3' }], label: 'Page 3' },
+        ],
+        activeTabIndex: 0,
+        selectedBlockId: null,
+      })
+
+      useNavigationStore.getState().switchTab(2)
+
+      const state = useNavigationStore.getState()
+      expect(state.activeTabIndex).toBe(2)
+      expect(state.currentView).toBe('page-editor')
+    })
+
+    it('FEAT-7: switching tabs from page-editor leaves currentView unchanged', () => {
+      useNavigationStore.getState().navigateToPage('P1', 'Page 1')
+      useNavigationStore.getState().openInNewTab('P2', 'Page 2')
+      expect(useNavigationStore.getState().currentView).toBe('page-editor')
+
+      useNavigationStore.getState().switchTab(0)
+
+      const state = useNavigationStore.getState()
+      expect(state.activeTabIndex).toBe(0)
+      expect(state.currentView).toBe('page-editor')
+    })
+
+    // FEAT-7: clicking the already-active tab while on a non-editor view is
+    // NOT a no-op — it should flip back to the editor. (The pure "active
+    // tab in editor" no-op branch is still covered above.)
+    it('FEAT-7: clicking the active tab from a non-editor view flips currentView to page-editor', () => {
+      useNavigationStore.setState({
+        currentView: 'journal',
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+        ],
+        activeTabIndex: 1,
+        selectedBlockId: null,
+      })
+
+      useNavigationStore.getState().switchTab(1)
+
+      const state = useNavigationStore.getState()
+      expect(state.activeTabIndex).toBe(1)
+      expect(state.currentView).toBe('page-editor')
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -904,6 +963,83 @@ describe('useNavigationStore', () => {
       expect(state.tabs).toHaveLength(3)
       const newTabId = Number.parseInt(state.tabs[2]?.id ?? '0', 10)
       expect(newTabId).toBeGreaterThanOrEqual(6)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // FEAT-9: navigateToPage → useRecentPagesStore.recordVisit integration
+  // ---------------------------------------------------------------------------
+  describe('FEAT-9 recentPages recordVisit hook', () => {
+    beforeEach(() => {
+      useRecentPagesStore.setState({ recentPages: [] })
+    })
+
+    it('navigateToPage calls recordVisit with pageId and title', () => {
+      const recordVisitSpy = vi.spyOn(useRecentPagesStore.getState(), 'recordVisit')
+
+      useNavigationStore.getState().navigateToPage('A', 'Alpha')
+
+      expect(recordVisitSpy).toHaveBeenCalledTimes(1)
+      expect(recordVisitSpy).toHaveBeenCalledWith({ pageId: 'A', title: 'Alpha' })
+
+      recordVisitSpy.mockRestore()
+    })
+
+    it('setView does NOT call recordVisit', () => {
+      const recordVisitSpy = vi.spyOn(useRecentPagesStore.getState(), 'recordVisit')
+
+      useNavigationStore.getState().setView('journal')
+      useNavigationStore.getState().setView('pages')
+      useNavigationStore.getState().setView('tags')
+
+      expect(recordVisitSpy).not.toHaveBeenCalled()
+
+      recordVisitSpy.mockRestore()
+    })
+
+    it('goBack does NOT call recordVisit', () => {
+      useNavigationStore.setState({
+        currentView: 'page-editor',
+        tabs: [
+          {
+            id: '0',
+            pageStack: [
+              { pageId: 'P1', title: 'Page 1' },
+              { pageId: 'P2', title: 'Page 2' },
+            ],
+            label: 'Page 2',
+          },
+        ],
+        activeTabIndex: 0,
+      })
+
+      const recordVisitSpy = vi.spyOn(useRecentPagesStore.getState(), 'recordVisit')
+
+      useNavigationStore.getState().goBack()
+
+      expect(recordVisitSpy).not.toHaveBeenCalled()
+
+      recordVisitSpy.mockRestore()
+    })
+
+    it('date-routed branch still records the visit (date pages are page visits)', () => {
+      const recordVisitSpy = vi.spyOn(useRecentPagesStore.getState(), 'recordVisit')
+
+      useNavigationStore.getState().navigateToPage('DATE_PAGE', '2026-04-20')
+
+      expect(recordVisitSpy).toHaveBeenCalledTimes(1)
+      expect(recordVisitSpy).toHaveBeenCalledWith({
+        pageId: 'DATE_PAGE',
+        title: '2026-04-20',
+      })
+
+      // Assert the store actually received the visit (not just that the spy
+      // was called — belt and braces).
+      const { recentPages } = useRecentPagesStore.getState()
+      expect(recentPages).toHaveLength(1)
+      expect(recentPages[0]).toEqual({ pageId: 'DATE_PAGE', title: '2026-04-20' })
+
+      recordVisitSpy.mockRestore()
     })
   })
 })

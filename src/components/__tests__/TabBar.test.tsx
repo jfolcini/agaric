@@ -1,10 +1,21 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '../../lib/i18n'
 import { resetTabIdCounter, selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { TabBar } from '../TabBar'
+
+// `useIsMobile` is mocked so each test can pin the viewport-state boolean
+// without juggling `window.innerWidth` or matchMedia. The default (false)
+// matches the existing tests that assume desktop rendering.
+vi.mock('../../hooks/use-mobile', () => ({
+  useIsMobile: vi.fn(() => false),
+}))
+
+import { useIsMobile } from '../../hooks/use-mobile'
+
+const mockedUseIsMobile = vi.mocked(useIsMobile)
 
 /** Helper to reset the store to a clean initial state. */
 function resetStore() {
@@ -20,6 +31,7 @@ function resetStore() {
 describe('TabBar', () => {
   beforeEach(() => {
     resetStore()
+    mockedUseIsMobile.mockReturnValue(false)
   })
 
   // ---------------------------------------------------------------------------
@@ -404,4 +416,200 @@ describe('TabBar', () => {
       }
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // FEAT-7 shell-level hoist
+  // ---------------------------------------------------------------------------
+  describe('FEAT-7 shell-level hoist', () => {
+    function setupThreeTabs(currentView: 'page-editor' | 'journal' | 'pages' = 'page-editor') {
+      useNavigationStore.setState({
+        currentView,
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+          { id: '2', pageStack: [{ pageId: 'P3', title: 'Page 3' }], label: 'Page 3' },
+        ],
+        activeTabIndex: 0,
+      })
+    }
+
+    it('renders when tabs.length > 1 regardless of currentView (journal)', () => {
+      setupThreeTabs('journal')
+      render(<TabBar />)
+
+      expect(screen.getByRole('tablist')).toBeInTheDocument()
+    })
+
+    it('renders when tabs.length > 1 regardless of currentView (pages)', () => {
+      setupThreeTabs('pages')
+      render(<TabBar />)
+
+      expect(screen.getByRole('tablist')).toBeInTheDocument()
+    })
+
+    it('single-tab autohide still applies in a non-editor view', () => {
+      useNavigationStore.setState({
+        currentView: 'journal',
+        tabs: [{ id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' }],
+        activeTabIndex: 0,
+      })
+      render(<TabBar />)
+
+      expect(screen.queryByRole('tablist')).toBeNull()
+    })
+
+    it('mobile viewport hides the bar entirely even with many tabs', () => {
+      mockedUseIsMobile.mockReturnValue(true)
+      useNavigationStore.setState({
+        currentView: 'page-editor',
+        tabs: Array.from({ length: 5 }, (_, i) => ({
+          id: String(i),
+          pageStack: [{ pageId: `P${i}`, title: `Page ${i}` }],
+          label: `Page ${i}`,
+        })),
+        activeTabIndex: 0,
+      })
+
+      render(<TabBar />)
+
+      expect(screen.queryByRole('tablist')).toBeNull()
+    })
+
+    it('active tab uses filled/focused tokens while currentView === "page-editor"', () => {
+      setupThreeTabs('page-editor')
+      render(<TabBar />)
+
+      const tabs = screen.getAllByRole('tab')
+      const active = tabs[0] as HTMLElement
+      expect(active).toHaveClass('bg-background')
+      expect(active).toHaveClass('border')
+      expect(active).toHaveClass('font-medium')
+    })
+
+    it('active tab uses muted/outlined sidebar-accent tokens while currentView !== "page-editor"', () => {
+      setupThreeTabs('journal')
+      render(<TabBar />)
+
+      const tabs = screen.getAllByRole('tab')
+      const active = tabs[0] as HTMLElement
+      expect(active).toHaveClass('bg-sidebar-accent')
+      expect(active).toHaveClass('text-sidebar-accent-foreground')
+      expect(active).not.toHaveClass('bg-background')
+    })
+
+    it('clicking a non-active tab from a non-editor view switches tab and flips to page-editor', async () => {
+      setupThreeTabs('journal')
+      const user = userEvent.setup()
+      render(<TabBar />)
+
+      await user.click(screen.getByText('Page 2'))
+
+      const state = useNavigationStore.getState()
+      expect(state.activeTabIndex).toBe(1)
+      expect(state.currentView).toBe('page-editor')
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // FEAT-8 active-tab dropdown switcher
+  // ---------------------------------------------------------------------------
+  describe('FEAT-8 active-tab dropdown switcher', () => {
+    function setupThreeTabs(activeTabIndex = 1) {
+      useNavigationStore.setState({
+        currentView: 'page-editor',
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+          { id: '2', pageStack: [{ pageId: 'P3', title: 'Page 3' }], label: 'Page 3' },
+        ],
+        activeTabIndex,
+      })
+    }
+
+    it('clicking the active tab opens a dropdown listing every tab with the active one checked', async () => {
+      setupThreeTabs(1)
+      const user = userEvent.setup()
+      render(<TabBar />)
+
+      // Click the active tab's label — the active tab is at index 1 ("Page 2").
+      await user.click(screen.getByText('Page 2'))
+
+      const menu = await screen.findByRole('menu')
+      expect(menu).toBeInTheDocument()
+
+      const items = within(menu).getAllByRole('menuitemradio')
+      expect(items).toHaveLength(3)
+      expect(items[0]).toHaveAttribute('aria-checked', 'false')
+      expect(items[1]).toHaveAttribute('aria-checked', 'true')
+      expect(items[2]).toHaveAttribute('aria-checked', 'false')
+    })
+
+    it('clicking a dropdown item switches tabs and closes the menu', async () => {
+      setupThreeTabs(1)
+      const user = userEvent.setup()
+      render(<TabBar />)
+
+      await user.click(screen.getByText('Page 2'))
+      const menu = await screen.findByRole('menu')
+      const items = within(menu).getAllByRole('menuitemradio')
+
+      // Pick the 3rd row (index 2 → "Page 3").
+      await user.click(items[2] as HTMLElement)
+
+      expect(useNavigationStore.getState().activeTabIndex).toBe(2)
+      // Menu has dismissed.
+      await waitForMenuClosed()
+    })
+
+    it('clicking the close icon inside a dropdown row closes that tab but keeps the menu open', async () => {
+      setupThreeTabs(1)
+      const user = userEvent.setup()
+      render(<TabBar />)
+
+      await user.click(screen.getByText('Page 2'))
+      await screen.findByRole('menu')
+
+      // Popover content is portaled — search document-wide, not just the
+      // render container (Radix mounts the portal on document.body).
+      const closeButtons = document.querySelectorAll('[data-tab-dropdown-close]')
+      expect(closeButtons.length).toBe(3)
+      await user.click(closeButtons[1] as HTMLElement)
+
+      // closeTab(1) removed "Page 2" — 2 tabs remain, menu is still present,
+      // and the remaining rows are re-rendered.
+      const state = useNavigationStore.getState()
+      expect(state.tabs).toHaveLength(2)
+      expect(state.tabs.map((t) => t.label)).toEqual(['Page 1', 'Page 3'])
+      expect(screen.getByRole('menu')).toBeInTheDocument()
+    })
+
+    it('clicking the active tab from a non-editor view does not open the dropdown (flips view instead)', async () => {
+      useNavigationStore.setState({
+        currentView: 'journal',
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+        ],
+        activeTabIndex: 0,
+      })
+      const user = userEvent.setup()
+      render(<TabBar />)
+
+      await user.click(screen.getByText('Page 1'))
+
+      expect(screen.queryByRole('menu')).toBeNull()
+      expect(useNavigationStore.getState().currentView).toBe('page-editor')
+    })
+  })
 })
+
+/**
+ * Waits for the popover menu to disappear. Radix unmounts the portal via a
+ * post-close effect so `queryByRole` can flicker — this helper polls.
+ */
+async function waitForMenuClosed(): Promise<void> {
+  const { waitFor } = await import('@testing-library/react')
+  await waitFor(() => {
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+}

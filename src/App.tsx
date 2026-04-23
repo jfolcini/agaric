@@ -26,6 +26,7 @@ import { BootGate } from './components/BootGate'
 import { FeatureErrorBoundary } from './components/FeatureErrorBoundary'
 import { GlobalDateControls, JournalControls, JournalPage } from './components/JournalPage'
 import { LoadingSkeleton } from './components/LoadingSkeleton'
+import { RecentPagesStrip } from './components/RecentPagesStrip'
 import { TabBar } from './components/TabBar'
 import { ScrollArea } from './components/ui/scroll-area'
 import {
@@ -47,6 +48,7 @@ import {
 } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
 import { ViewHeaderOutletProvider, ViewHeaderOutletSlot } from './components/ViewHeaderOutlet'
+import { useIsMobile } from './hooks/use-mobile'
 import { useItemCount } from './hooks/useItemCount'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
 import { usePrimaryFocusRegistry } from './hooks/usePrimaryFocus'
@@ -466,19 +468,16 @@ function ViewRouter({
     case 'page-editor':
       if (!activePage) return null
       return (
-        <>
-          <TabBar />
-          <FeatureErrorBoundary name="PageEditor">
-            <Suspense fallback={<ViewFallback />}>
-              <PageEditor
-                pageId={activePage.pageId}
-                title={activePage.title}
-                onBack={onBack}
-                onNavigateToPage={onPageSelect}
-              />
-            </Suspense>
-          </FeatureErrorBoundary>
-        </>
+        <FeatureErrorBoundary name="PageEditor">
+          <Suspense fallback={<ViewFallback />}>
+            <PageEditor
+              pageId={activePage.pageId}
+              title={activePage.title}
+              onBack={onBack}
+              onNavigateToPage={onPageSelect}
+            />
+          </Suspense>
+        </FeatureErrorBoundary>
       )
     default:
       return null
@@ -501,6 +500,7 @@ function App() {
   const lastSyncedAt = useSyncStore((s) => s.lastSyncedAt)
   const { syncing, syncAll } = useSyncTrigger()
   const isOnline = useOnlineStatus()
+  const isMobile = useIsMobile()
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const mainContentRef = useRef<HTMLDivElement | null>(null)
 
@@ -718,20 +718,39 @@ function App() {
   // Routed through matchesShortcutBinding so users can rebind (BUG-18).
   // Dispatches through TAB_SHORTCUTS so the handler stays well under the
   // cognitive-complexity budget (MAINT-54).
+  //
+  // FEAT-7: the TabBar is now shell-wide on desktop, so these shortcuts fire
+  // from any view (not just page-editor). We still short-circuit on mobile
+  // because the TabBar itself is hidden there and the shortcuts have no
+  // meaningful UI affordance.
   useEffect(() => {
     function handleTabShortcuts(e: KeyboardEvent) {
+      if (isMobile) return
       const state = useNavigationStore.getState()
-      if (state.currentView !== 'page-editor') return
 
       const shortcut = TAB_SHORTCUTS.find((s) => matchesShortcutBinding(e, s.binding))
       if (!shortcut) return
 
       e.preventDefault()
+
+      // FEAT-7 follow-up: Ctrl+T in a fresh tab (empty pageStack) would
+      // silently do nothing. Surface a toast so the user gets feedback
+      // instead of a silent failure. The other tab shortcuts (close,
+      // next, previous) are well-defined regardless of stack state.
+      if (shortcut.binding === 'openInNewTab') {
+        const activeTab = state.tabs[state.activeTabIndex]
+        const top = activeTab?.pageStack[activeTab.pageStack.length - 1]
+        if (!top) {
+          toast.error(t('tabs.openInNewTabEmpty'))
+          return
+        }
+      }
+
       shortcut.run(state)
     }
     window.addEventListener('keydown', handleTabShortcuts)
     return () => window.removeEventListener('keydown', handleTabShortcuts)
-  }, [])
+  }, [isMobile, t])
 
   const handleNewPage = useCallback(async () => {
     try {
@@ -928,6 +947,21 @@ function App() {
                 </>
               )}
             </header>
+            {/*
+             * FEAT-7: TabBar is hoisted out of the page-editor view router
+             * case and rendered at shell level so tabs stay visible across
+             * every sidebar destination (journal, pages, search, …). The
+             * autohide guard on `tabs.length <= 1` and the desktop-only
+             * mobile gate live inside the component itself.
+             */}
+            <TabBar />
+            {/*
+             * FEAT-9: desktop-only "Recently visited" chip strip, mounted
+             * between the hoisted TabBar above and the ViewHeaderOutletSlot
+             * below. Responsive grid auto-fits chips; auto-hides on mobile
+             * and when the visible list is empty.
+             */}
+            <RecentPagesStrip />
             {/*
              * UX-198: view-level sticky headers didn't stick because the
              * nearest scroll ancestor was the <ScrollArea> viewport below,

@@ -16,6 +16,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { App } from '../../App'
+import { useIsMobile } from '../../hooks/use-mobile'
 import { announce } from '../../lib/announcer'
 import { t } from '../../lib/i18n'
 import { logger } from '../../lib/logger'
@@ -24,7 +25,14 @@ import { __resetPriorityLevelsForTests, getPriorityLevels } from '../../lib/prio
 import { useBootStore } from '../../stores/boot'
 import { useJournalStore } from '../../stores/journal'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
+import { useRecentPagesStore } from '../../stores/recent-pages'
 import { useSyncStore } from '../../stores/sync'
+
+// FEAT-9: controllable mobile mock so we can flip the breakpoint per-test
+// without fiddling with window.innerWidth + matchMedia polyfills.
+vi.mock('../../hooks/use-mobile', () => ({
+  useIsMobile: vi.fn(() => false),
+}))
 
 vi.mock('../../lib/announcer', () => ({
   announce: vi.fn(),
@@ -60,11 +68,16 @@ vi.mock('../../hooks/useSyncTrigger', () => ({
 }))
 
 const mockedInvoke = vi.mocked(invoke)
+const mockedUseIsMobile = vi.mocked(useIsMobile)
 
 const emptyPage = { items: [], next_cursor: null, has_more: false }
 
 beforeEach(() => {
   vi.clearAllMocks()
+
+  // FEAT-9: desktop-by-default so the TabBar + RecentPagesStrip render the
+  // same way they do in the app. Individual tests flip this via mockedUseIsMobile.
+  mockedUseIsMobile.mockReturnValue(false)
 
   // Start with boot already completed so BootGate renders children immediately.
   // This avoids the async boot cycle on every test — boot logic is tested in boot.test.ts.
@@ -77,6 +90,9 @@ beforeEach(() => {
     activeTabIndex: 0,
     selectedBlockId: null,
   })
+
+  // FEAT-9: reset the recent-pages MRU so RecentPagesStrip tests are isolated.
+  useRecentPagesStore.setState({ recentPages: [] })
 
   // Reset the sync store so lastSyncedAt is null.
   useSyncStore.getState().reset()
@@ -1481,6 +1497,225 @@ describe('App', () => {
       const cls = main?.getAttribute('class') ?? ''
       expect(cls).toContain('env(safe-area-inset-bottom)')
       expect(cls).toContain('pb-[calc(1rem+env(safe-area-inset-bottom))]')
+    })
+  })
+
+  // FEAT-7: TabBar is now mounted at the app-shell level, so multi-tab state
+  // makes the tablist visible across every sidebar destination — not just
+  // inside page-editor.
+  describe('FEAT-7 shell-level TabBar hoist', () => {
+    const shellViews: Array<Exclude<import('../../stores/navigation').View, 'properties'>> = [
+      'journal',
+      'pages',
+      'tags',
+      'search',
+      'graph',
+      'trash',
+      'status',
+      'conflicts',
+      'history',
+      'templates',
+      'settings',
+    ]
+
+    for (const view of shellViews) {
+      it(`TabBar is visible at shell level while currentView === "${view}"`, async () => {
+        useNavigationStore.setState({
+          currentView: view,
+          tabs: [
+            { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+            { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+            { id: '2', pageStack: [{ pageId: 'P3', title: 'Page 3' }], label: 'Page 3' },
+          ],
+          activeTabIndex: 0,
+          selectedBlockId: null,
+        })
+
+        render(<App />)
+
+        await waitFor(() => {
+          expect(screen.getByText('Agaric')).toBeInTheDocument()
+        })
+
+        const tablist = screen.getByRole('tablist', { name: t('tabs.tabList') })
+        expect(tablist).toBeInTheDocument()
+        expect(within(tablist).getAllByRole('tab')).toHaveLength(3)
+      })
+    }
+
+    it('TabBar is visible at shell level while currentView === "page-editor"', async () => {
+      useNavigationStore.setState({
+        currentView: 'page-editor',
+        tabs: [
+          {
+            id: '0',
+            pageStack: [{ pageId: 'PAGE_1', title: 'Page One' }],
+            label: 'Page One',
+          },
+          {
+            id: '1',
+            pageStack: [{ pageId: 'PAGE_2', title: 'Page Two' }],
+            label: 'Page Two',
+          },
+        ],
+        activeTabIndex: 0,
+        selectedBlockId: null,
+      })
+
+      render(<App />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      const tablist = screen.getByRole('tablist', { name: t('tabs.tabList') })
+      expect(tablist).toBeInTheDocument()
+    })
+
+    // FEAT-7 UX follow-up (session 467): before this fix, pressing Ctrl+T
+    // from a fresh tab with an empty pageStack silently did nothing. The
+    // handler now surfaces a toast so the user gets explicit feedback.
+    it('Ctrl+T with an empty pageStack toasts "No page to open in a new tab"', async () => {
+      const mockedToastError = vi.mocked(toast.error)
+      useNavigationStore.setState({
+        currentView: 'journal',
+        tabs: [{ id: '0', pageStack: [], label: '' }],
+        activeTabIndex: 0,
+        selectedBlockId: null,
+      })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      fireEvent.keyDown(window, { key: 't', ctrlKey: true })
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(t('tabs.openInNewTabEmpty'))
+      })
+    })
+
+    it('Ctrl+T with a populated pageStack calls openInNewTab (no toast)', async () => {
+      const mockedToastError = vi.mocked(toast.error)
+      useNavigationStore.setState({
+        currentView: 'journal',
+        tabs: [
+          {
+            id: '0',
+            pageStack: [{ pageId: 'PAGE_A', title: 'Page A' }],
+            label: 'Page A',
+          },
+        ],
+        activeTabIndex: 0,
+        selectedBlockId: null,
+      })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      fireEvent.keyDown(window, { key: 't', ctrlKey: true })
+
+      await waitFor(() => {
+        // A new tab was opened (original + new = 2).
+        expect(useNavigationStore.getState().tabs).toHaveLength(2)
+      })
+      expect(mockedToastError).not.toHaveBeenCalledWith(t('tabs.openInNewTabEmpty'))
+    })
+  })
+
+  // FEAT-9: the RecentPagesStrip mounts between the hoisted TabBar and the
+  // ViewHeaderOutletSlot. Auto-hidden on mobile and when the visible list
+  // (minus the currently-open page) is empty.
+  describe('FEAT-9 recent-pages strip', () => {
+    it('mounts between TabBar and ViewHeaderOutletSlot in the shell', async () => {
+      // Seed two recent pages and render from a non-editor view so the
+      // currently-open page filter doesn't hide every chip.
+      useRecentPagesStore.setState({
+        recentPages: [
+          { pageId: 'A', title: 'Alpha' },
+          { pageId: 'B', title: 'Bravo' },
+        ],
+      })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      const strip = screen.getByTestId('recent-pages-strip')
+      expect(strip).toBeInTheDocument()
+
+      // DOM-tree ordering: TabBar is not rendered with 1 tab, but the strip
+      // must still be a descendant of the SidebarInset and appear BEFORE the
+      // view-header outlet so it sits above the scroll area.
+      const outlet = screen.getByTestId('view-header-outlet')
+      const position = strip.compareDocumentPosition(outlet)
+      expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    })
+
+    it('mounts after TabBar when both are visible', async () => {
+      useNavigationStore.setState({
+        currentView: 'page-editor',
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'A', title: 'Alpha' }], label: 'Alpha' },
+          { id: '1', pageStack: [{ pageId: 'B', title: 'Bravo' }], label: 'Bravo' },
+        ],
+        activeTabIndex: 0,
+        selectedBlockId: null,
+      })
+      useRecentPagesStore.setState({
+        recentPages: [
+          { pageId: 'C', title: 'Charlie' },
+          { pageId: 'D', title: 'Delta' },
+        ],
+      })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      const tablist = screen.getByRole('tablist', { name: t('tabs.tabList') })
+      const strip = screen.getByTestId('recent-pages-strip')
+      const outlet = screen.getByTestId('view-header-outlet')
+
+      // TabBar → RecentPagesStrip → ViewHeaderOutletSlot document order.
+      const tablistToStrip = tablist.compareDocumentPosition(strip)
+      expect(tablistToStrip & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      const stripToOutlet = strip.compareDocumentPosition(outlet)
+      expect(stripToOutlet & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    })
+
+    it('is hidden on mobile', async () => {
+      mockedUseIsMobile.mockReturnValue(true)
+
+      useRecentPagesStore.setState({
+        recentPages: [
+          { pageId: 'A', title: 'Alpha' },
+          { pageId: 'B', title: 'Bravo' },
+        ],
+      })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      expect(screen.queryByTestId('recent-pages-strip')).toBeNull()
+    })
+
+    it('is hidden when recentPages is empty', async () => {
+      useRecentPagesStore.setState({ recentPages: [] })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      expect(screen.queryByTestId('recent-pages-strip')).toBeNull()
     })
   })
 

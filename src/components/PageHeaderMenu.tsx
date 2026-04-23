@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/utils'
 import { getShortcutKeys } from '../lib/keyboard-config'
 
@@ -54,6 +55,10 @@ export function PageHeaderMenu({
   onOpenInNewTab,
 }: PageHeaderMenuProps) {
   const { t } = useTranslation()
+  // FEAT-7 item 7: hide the "Open in new tab" affordance on mobile — the
+  // hoisted TabBar is itself desktop-only, so the item would otherwise be
+  // semantically misleading (the new tab is invisible on mobile).
+  const isMobile = useIsMobile()
 
   return (
     <div className="flex items-center gap-1">
@@ -115,7 +120,7 @@ export function PageHeaderMenu({
           className="w-56 p-1 max-w-[calc(100vw-2rem)]"
           aria-label={t('pageHeader.pageActions')}
         >
-          {onOpenInNewTab != null && (
+          {onOpenInNewTab != null && !isMobile && (
             <>
               <button
                 type="button"
