@@ -144,6 +144,7 @@ export function TabBar(): React.ReactElement | null {
           {tabs.map((tab, i) => {
             const isActive = i === activeTabIndex
             const showDropdownHint = isActive && currentView === 'page-editor'
+            const displayTitle = tab.label || t('tabs.untitled')
             const button = (
               <button
                 key={tab.id}
@@ -156,17 +157,34 @@ export function TabBar(): React.ReactElement | null {
                 aria-selected={isActive}
                 aria-haspopup={showDropdownHint ? 'menu' : undefined}
                 aria-expanded={showDropdownHint ? dropdownOpen : undefined}
+                // UX-255: when the active tab doubles as the dropdown trigger
+                // (`currentView === 'page-editor'`), supply an `aria-label`
+                // hinting that Enter/Space opens a tab switcher. Radix already
+                // wires `aria-haspopup`/`aria-expanded`; the label complements
+                // them. Inactive tabs fall back to their visible text content.
+                aria-label={
+                  showDropdownHint ? t('tabs.switchTabsHint', { title: displayTitle }) : undefined
+                }
                 className={cn(
-                  'flex items-center gap-1 px-3 py-1 text-sm rounded-t-md truncate max-w-[120px] md:max-w-[200px] cursor-pointer select-none',
+                  // UX-254: `group` enables `group-hover:` on the chevron so
+                  // hovering the active tab intensifies the dropdown hint.
+                  'group flex items-center gap-1 px-3 py-1 text-sm rounded-t-md truncate max-w-[120px] md:max-w-[200px] cursor-pointer select-none',
                   'focus-visible:ring-[3px] focus-visible:ring-ring/50 outline-hidden',
                   tabClassName(i),
                 )}
                 onClick={(e) => handleTabClick(i, e)}
                 onKeyDown={(e) => handleTabKeyDown(i, e)}
               >
-                <span className="truncate">{tab.label || t('tabs.untitled')}</span>
+                <span className="truncate">{displayTitle}</span>
                 {showDropdownHint && (
-                  <ChevronDown className="size-3 opacity-50 ml-1" aria-hidden="true" />
+                  // UX-254: chevron is the only visual affordance for the
+                  // active-tab dropdown. Bump base opacity (50 → 70) and
+                  // intensify on hover via `group-hover` so first-time users
+                  // can see the hint without guessing.
+                  <ChevronDown
+                    className="size-3 opacity-70 group-hover:opacity-100 ml-1"
+                    aria-hidden="true"
+                  />
                 )}
                 <span
                   data-tab-close=""

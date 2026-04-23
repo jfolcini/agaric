@@ -1729,6 +1729,7 @@ const resources = {
       'tabs.openInNewTab': 'Open in new tab',
       'tabs.untitled': 'Untitled',
       'tabs.tabList': 'Editor tabs',
+      'tabs.switchTabsHint': 'Switch tabs: {{title}}',
       'tabs.closeActiveTab': 'Close active tab',
       'tabs.nextTab': 'Next tab',
       'tabs.previousTab': 'Previous tab',

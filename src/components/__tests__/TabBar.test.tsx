@@ -601,6 +601,152 @@ describe('TabBar', () => {
       expect(useNavigationStore.getState().currentView).toBe('page-editor')
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // UX-254 chevron visual polish (discoverability of active-tab dropdown)
+  // ---------------------------------------------------------------------------
+  describe('UX-254 chevron visual polish', () => {
+    function setupActiveInEditor() {
+      useNavigationStore.setState({
+        currentView: 'page-editor',
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+        ],
+        activeTabIndex: 0,
+      })
+    }
+
+    it('chevron on the active tab uses opacity-70 base + group-hover:opacity-100 reveal', () => {
+      setupActiveInEditor()
+      const { container } = render(<TabBar />)
+
+      // Scope to the active tab (index 0) and find the single ChevronDown icon
+      // rendered alongside the title span. lucide renders as an <svg>.
+      const tabs = screen.getAllByRole('tab')
+      const activeTab = tabs[0] as HTMLElement
+      const chevron = activeTab.querySelector('svg.lucide-chevron-down')
+      expect(chevron).not.toBeNull()
+      const className = chevron?.getAttribute('class') ?? ''
+      // Both the bumped base opacity and the hover-reveal must be pinned so a
+      // later refactor can't silently revert the discoverability fix. jsdom
+      // does not exercise :hover state — we only assert the class is present.
+      expect(className).toContain('opacity-70')
+      expect(className).toContain('group-hover:opacity-100')
+      // size-3 is deliberately preserved per the REVIEW-LATER entry.
+      expect(className).toContain('size-3')
+
+      // Sanity: the tablist-container-scoped query returns exactly one chevron
+      // (only the active tab renders it).
+      expect(container.querySelectorAll('svg.lucide-chevron-down')).toHaveLength(1)
+    })
+
+    it('the active tab (in page-editor view) has the `group` class so group-hover on the chevron resolves', () => {
+      setupActiveInEditor()
+      render(<TabBar />)
+
+      const tabs = screen.getAllByRole('tab')
+      // Active tab must carry `group` — without it the chevron's
+      // `group-hover:` utility is a no-op.
+      expect(tabs[0]).toHaveClass('group')
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // UX-255 active-tab dropdown trigger aria-label
+  // ---------------------------------------------------------------------------
+  describe('UX-255 active-tab dropdown trigger aria-label', () => {
+    it('active tab in page-editor view has aria-label hinting the tab switcher', () => {
+      useNavigationStore.setState({
+        currentView: 'page-editor',
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+        ],
+        activeTabIndex: 1,
+      })
+
+      render(<TabBar />)
+
+      const tabs = screen.getAllByRole('tab')
+      const activeTab = tabs[1] as HTMLElement
+      expect(activeTab.getAttribute('aria-label')).toBe(
+        t('tabs.switchTabsHint', { title: 'Page 2' }),
+      )
+    })
+
+    it('active tab aria-label falls back to "Untitled" title for empty labels', () => {
+      useNavigationStore.setState({
+        currentView: 'page-editor',
+        tabs: [
+          { id: '0', pageStack: [], label: '' },
+          { id: '1', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+        ],
+        activeTabIndex: 0,
+      })
+
+      render(<TabBar />)
+
+      const tabs = screen.getAllByRole('tab')
+      const activeTab = tabs[0] as HTMLElement
+      expect(activeTab.getAttribute('aria-label')).toBe(
+        t('tabs.switchTabsHint', { title: t('tabs.untitled') }),
+      )
+    })
+
+    it('inactive tabs do not set aria-label (accessible name falls back to visible text)', () => {
+      useNavigationStore.setState({
+        currentView: 'page-editor',
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+        ],
+        activeTabIndex: 1,
+      })
+
+      render(<TabBar />)
+
+      const tabs = screen.getAllByRole('tab')
+      const inactiveTab = tabs[0] as HTMLElement
+      expect(inactiveTab.getAttribute('aria-label')).toBeNull()
+    })
+
+    it('active tab in a non-editor view (journal) does not set aria-label', () => {
+      useNavigationStore.setState({
+        currentView: 'journal',
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+        ],
+        activeTabIndex: 0,
+      })
+
+      render(<TabBar />)
+
+      const tabs = screen.getAllByRole('tab')
+      const activeTab = tabs[0] as HTMLElement
+      // No Popover wiring in non-editor views → no aria-label either.
+      expect(activeTab.getAttribute('aria-label')).toBeNull()
+    })
+
+    it('Radix aria-haspopup and aria-expanded are preserved on the active tab in page-editor', () => {
+      useNavigationStore.setState({
+        currentView: 'page-editor',
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+        ],
+        activeTabIndex: 0,
+      })
+
+      render(<TabBar />)
+
+      const tabs = screen.getAllByRole('tab')
+      const activeTab = tabs[0] as HTMLElement
+      expect(activeTab).toHaveAttribute('aria-haspopup', 'menu')
+      expect(activeTab).toHaveAttribute('aria-expanded', 'false')
+    })
+  })
 })
 
 /**

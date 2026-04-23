@@ -227,4 +227,175 @@ describe('RecentPagesStrip', () => {
       { timeout: 5000 },
     )
   })
+
+  // ---------------------------------------------------------------------------
+  // keyboard navigation (UX-256)
+  // ---------------------------------------------------------------------------
+  describe('keyboard navigation (UX-256)', () => {
+    // Helper: recordVisit is MRU — the newest visit is at index 0. Using a
+    // stable seeder so the rendered chip order is predictable across tests.
+    // After seeding A, B, C the store holds [C, B, A]; the strip renders
+    // them in that order.
+    function seedThreeChips() {
+      const { recordVisit } = useRecentPagesStore.getState()
+      recordVisit({ pageId: 'A', title: 'Alpha' })
+      recordVisit({ pageId: 'B', title: 'Bravo' })
+      recordVisit({ pageId: 'C', title: 'Charlie' })
+    }
+
+    it('ArrowRight on the first chip moves focus to the second chip', async () => {
+      const user = userEvent.setup()
+      seedThreeChips()
+
+      render(<RecentPagesStrip />)
+      const strip = screen.getByTestId('recent-pages-strip')
+      const chips = within(strip).getAllByRole('button')
+      expect(chips).toHaveLength(3)
+
+      // Tab lands on the chip with tabIndex=0 — the focused one (idx 0 on mount).
+      await user.tab()
+      expect(document.activeElement).toBe(chips[0])
+
+      await user.keyboard('{ArrowRight}')
+      expect(document.activeElement).toBe(chips[1])
+    })
+
+    it('ArrowRight on the last chip wraps to the first', async () => {
+      const user = userEvent.setup()
+      seedThreeChips()
+
+      render(<RecentPagesStrip />)
+      const strip = screen.getByTestId('recent-pages-strip')
+      const chips = within(strip).getAllByRole('button')
+
+      // Advance focus to the last chip via successive ArrowRight presses.
+      await user.tab()
+      await user.keyboard('{ArrowRight}{ArrowRight}')
+      expect(document.activeElement).toBe(chips[2])
+
+      await user.keyboard('{ArrowRight}')
+      expect(document.activeElement).toBe(chips[0])
+    })
+
+    it('ArrowLeft mirrors ArrowRight in reverse (wraps at the start)', async () => {
+      const user = userEvent.setup()
+      seedThreeChips()
+
+      render(<RecentPagesStrip />)
+      const strip = screen.getByTestId('recent-pages-strip')
+      const chips = within(strip).getAllByRole('button')
+
+      // Focus the middle chip first.
+      await user.tab()
+      await user.keyboard('{ArrowRight}')
+      expect(document.activeElement).toBe(chips[1])
+
+      await user.keyboard('{ArrowLeft}')
+      expect(document.activeElement).toBe(chips[0])
+
+      // Wrap: ArrowLeft on the first chip jumps to the last.
+      await user.keyboard('{ArrowLeft}')
+      expect(document.activeElement).toBe(chips[2])
+    })
+
+    it('Enter on a focused chip calls navigateToPage with the right pageRef', async () => {
+      const user = userEvent.setup()
+      const navigateSpy = vi.fn()
+      useNavigationStore.setState({ navigateToPage: navigateSpy })
+
+      const { recordVisit } = useRecentPagesStore.getState()
+      // MRU order after: [Bravo, Alpha] — chip 0 is Bravo, chip 1 is Alpha.
+      recordVisit({ pageId: 'A', title: 'Alpha' })
+      recordVisit({ pageId: 'B', title: 'Bravo' })
+
+      render(<RecentPagesStrip />)
+      const strip = screen.getByTestId('recent-pages-strip')
+      const chips = within(strip).getAllByRole('button')
+
+      await user.tab()
+      expect(document.activeElement).toBe(chips[0])
+      await user.keyboard('{ArrowRight}')
+      expect(document.activeElement).toBe(chips[1])
+
+      await user.keyboard('{Enter}')
+
+      expect(navigateSpy).toHaveBeenCalledTimes(1)
+      expect(navigateSpy).toHaveBeenCalledWith('A', 'Alpha')
+    })
+
+    // `useListKeyboardNavigation` treats Enter and Space identically as
+    // activation keys (hook source line 159). This parity test pins the
+    // Space path so a future refactor that narrows the match to Enter-only
+    // doesn't silently break Space activation.
+    it('Space on a focused chip calls navigateToPage with the right pageRef', async () => {
+      const user = userEvent.setup()
+      const navigateSpy = vi.fn()
+      useNavigationStore.setState({ navigateToPage: navigateSpy })
+
+      const { recordVisit } = useRecentPagesStore.getState()
+      recordVisit({ pageId: 'A', title: 'Alpha' })
+      recordVisit({ pageId: 'B', title: 'Bravo' })
+
+      render(<RecentPagesStrip />)
+      const strip = screen.getByTestId('recent-pages-strip')
+      const chips = within(strip).getAllByRole('button')
+
+      await user.tab()
+      expect(document.activeElement).toBe(chips[0])
+      await user.keyboard('{ArrowRight}')
+      expect(document.activeElement).toBe(chips[1])
+
+      await user.keyboard(' ')
+
+      expect(navigateSpy).toHaveBeenCalledTimes(1)
+      expect(navigateSpy).toHaveBeenCalledWith('A', 'Alpha')
+    })
+
+    it('uses roving tabindex — exactly one chip is in the Tab sequence', () => {
+      seedThreeChips()
+      render(<RecentPagesStrip />)
+
+      const strip = screen.getByTestId('recent-pages-strip')
+      const chips = within(strip).getAllByRole('button')
+      expect(chips).toHaveLength(3)
+
+      const tabIndexes = chips.map((c) => c.getAttribute('tabindex'))
+      // Exactly one chip tabIndex=0, the rest -1.
+      const focusable = tabIndexes.filter((t) => t === '0')
+      const unfocusable = tabIndexes.filter((t) => t === '-1')
+      expect(focusable).toHaveLength(1)
+      expect(unfocusable).toHaveLength(2)
+    })
+
+    it('ArrowUp / ArrowDown are no-ops inside the horizontal chip strip', async () => {
+      const user = userEvent.setup()
+      seedThreeChips()
+
+      render(<RecentPagesStrip />)
+      const strip = screen.getByTestId('recent-pages-strip')
+      const chips = within(strip).getAllByRole('button')
+
+      await user.tab()
+      expect(document.activeElement).toBe(chips[0])
+
+      await user.keyboard('{ArrowDown}')
+      expect(document.activeElement).toBe(chips[0])
+
+      await user.keyboard('{ArrowUp}')
+      expect(document.activeElement).toBe(chips[0])
+    })
+
+    it('has no a11y violations with keyboard navigation wired up', async () => {
+      seedThreeChips()
+      const { container } = render(<RecentPagesStrip />)
+
+      await waitFor(
+        async () => {
+          const results = await axe(container)
+          expect(results).toHaveNoViolations()
+        },
+        { timeout: 5000 },
+      )
+    })
+  })
 })

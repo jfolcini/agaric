@@ -16,6 +16,16 @@
  * - Ctrl/Cmd+click or middle-click → `openInNewTab` (matches block/page-link
  *   convention).
  *
+ * Keyboard semantics (UX-256):
+ * - Roving tabindex across the chip row — Tab lands on the focused chip,
+ *   ArrowLeft/ArrowRight traverse (wrapping), Enter/Space activates via
+ *   `navigateToPage` (same as plain click; modifier-click is the only path
+ *   to `openInNewTab`).
+ * - Powered by the shared `useListKeyboardNavigation` hook; DOM focus is
+ *   moved imperatively in a `useEffect` so screen readers announce each
+ *   chip as the user traverses. Focus only moves when the strip already
+ *   owns focus — avoids stealing focus on mount / re-render.
+ *
  * Auto-hidden when:
  * - `useIsMobile()` is true (desktop-only affordance).
  * - The visible list is empty (no visits yet, or the only visit *is* the
@@ -23,11 +33,12 @@
  */
 
 import type React from 'react'
-import { useCallback } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useIsMobile } from '../hooks/use-mobile'
+import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { useNavigationStore } from '../stores/navigation'
 import { type PageRef, useRecentPagesStore } from '../stores/recent-pages'
 
@@ -51,6 +62,37 @@ export function RecentPagesStrip(): React.ReactElement | null {
 
   const visible = recentPages.filter((p) => p.pageId !== activePageId)
 
+  // UX-256: arrow-key traversal across the chip row using the shared hook.
+  // The hook must be called unconditionally (rules of hooks) and BEFORE the
+  // mobile / empty-state early returns below. When `visible.length === 0`
+  // the hook's own `handleKeyDown` early-returns (itemCount === 0 guard),
+  // so the wiring is safe even when the strip doesn't render.
+  const { focusedIndex, handleKeyDown } = useListKeyboardNavigation({
+    itemCount: visible.length,
+    horizontal: true,
+    wrap: true,
+    onSelect: (index) => {
+      const ref = visible[index]
+      if (ref != null) {
+        navigateToPage(ref.pageId, ref.title)
+      }
+    },
+  })
+
+  // Imperative focus management so screen readers announce the newly-focused
+  // chip after arrow-key traversal. Only move DOM focus when focus is already
+  // inside the strip — avoids stealing focus on mount and on itemCount-driven
+  // resets of `focusedIndex` to 0 (e.g., when a visit is recorded elsewhere).
+  const buttonRefs = useRef(new Map<number, HTMLButtonElement | null>())
+
+  useEffect(() => {
+    const activeEl = document.activeElement
+    const isInsideStrip = Array.from(buttonRefs.current.values()).some((btn) => btn === activeEl)
+    if (!isInsideStrip) return
+    const target = buttonRefs.current.get(focusedIndex)
+    if (target != null) target.focus()
+  }, [focusedIndex])
+
   const handleClick = useCallback(
     (ref: PageRef, e: React.MouseEvent) => {
       if (e.ctrlKey || e.metaKey || e.button === 1) {
@@ -73,6 +115,14 @@ export function RecentPagesStrip(): React.ReactElement | null {
       aria-label={t('recent.ariaLabel')}
       className="border-b border-border/40 bg-background px-4 md:px-6 py-1.5"
       data-testid="recent-pages-strip"
+      onKeyDown={(e) => {
+        // The hook returns true when the key was consumed (arrow keys,
+        // Enter, Space). `preventDefault` stops the browser from scrolling
+        // on Arrow keys and from triggering a surrounding form's default
+        // on Enter. ArrowUp/ArrowDown fall through untouched because the
+        // hook is in `horizontal` mode — they only bind Left/Right.
+        if (handleKeyDown(e)) e.preventDefault()
+      }}
     >
       {/*
        * Responsive grid: `auto-fit` packs chips at their natural min/max
@@ -89,11 +139,20 @@ export function RecentPagesStrip(): React.ReactElement | null {
         className="grid gap-2"
         style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 180px))' }}
       >
-        {visible.map((ref) => {
+        {visible.map((ref, idx) => {
           const displayTitle = ref.title || t('recent.untitled')
           return (
             <Button
               key={ref.pageId}
+              ref={(el) => {
+                // Track the live DOM node per index so the focus-management
+                // effect can `.focus()` the currently-focused chip. The map
+                // is rebuilt each render (inline ref callback); stale indices
+                // are cleared on unmount via the null-branch.
+                if (el != null) buttonRefs.current.set(idx, el)
+                else buttonRefs.current.delete(idx)
+              }}
+              tabIndex={idx === focusedIndex ? 0 : -1}
               variant="ghost"
               size="sm"
               className={cn(
