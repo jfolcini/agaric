@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "d4d40ab9816b3d79f5ffa22c71f8187514157eb4bfec2fc7cf59a6ee2bada70d"
+}

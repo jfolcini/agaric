@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) VALUES (?, 'page', ?, NULL, 1, ?, 0)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "97f2f441b3ee29162954b06aa4c26e8fcd2ec449f0246783e7a39b502620e7cc"
+}

@@ -1077,12 +1077,13 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn list_property_defs_happy_path() {
         let (tools, _mat, _dir) = mk_tools().await;
-        // A fresh DB ships with 17 built-in property definitions seeded
+        // A fresh DB ships with 19 built-in property definitions seeded
         // by migrations (todo_state, priority, due_date, scheduled_date,
         // created_at, completed_at, effort, location, status, url,
-        // assignee, the four repeat-* keys, and a handful of legacy
-        // aliases). The exact count is snapshot-locked; the assertion
-        // just pins the non-empty behaviour.
+        // assignee, the four repeat-* keys, a handful of legacy aliases,
+        // plus `space` + `is_space` from migration 0035). The exact count
+        // is snapshot-locked; the assertion just pins the non-empty
+        // behaviour.
         let result = tools
             .call_tool("list_property_defs", json!({}), &test_ctx())
             .await
@@ -1090,7 +1091,7 @@ mod tests {
         let arr = result.as_array().expect("defs array");
         assert_eq!(
             arr.len(),
-            17,
+            19,
             "fresh DB ships the seeded property definitions; \
              update this count (and the snapshot) together if migrations change",
         );

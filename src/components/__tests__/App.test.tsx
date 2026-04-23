@@ -26,6 +26,7 @@ import { useBootStore } from '../../stores/boot'
 import { useJournalStore } from '../../stores/journal'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { useRecentPagesStore } from '../../stores/recent-pages'
+import { useSpaceStore } from '../../stores/space'
 import { useSyncStore } from '../../stores/sync'
 
 // FEAT-9: controllable mobile mock so we can flip the breakpoint per-test
@@ -94,6 +95,14 @@ beforeEach(() => {
   // FEAT-9: reset the recent-pages MRU so RecentPagesStrip tests are isolated.
   useRecentPagesStore.setState({ recentPages: [] })
 
+  // FEAT-3 Phase 1: reset the space store so SpaceSwitcher renders
+  // deterministic state regardless of test ordering.
+  useSpaceStore.setState({
+    currentSpaceId: null,
+    availableSpaces: [],
+    isReady: false,
+  })
+
   // Reset the sync store so lastSyncedAt is null.
   useSyncStore.getState().reset()
 
@@ -109,7 +118,14 @@ beforeEach(() => {
 
   // Default mock: all invoke calls return an empty page response.
   // This covers: boot store's list_blocks, JournalPage, PageBrowser, TagList, TrashView.
-  mockedInvoke.mockResolvedValue(emptyPage)
+  //
+  // FEAT-3 Phase 1 — `list_spaces` returns a flat `SpaceRow[]` rather
+  // than the paginated `{items,next_cursor,has_more}` shape, so dispatch
+  // by command name. Every other command keeps the empty-page default.
+  mockedInvoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'list_spaces') return []
+    return emptyPage
+  })
 })
 
 /** Helper to find the sidebar element and scope queries within it. */
@@ -125,7 +141,7 @@ describe('App', () => {
 
     // Wait for boot to complete and UI to render
     await waitFor(() => {
-      expect(screen.getByText('Agaric')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
     // Sidebar should have all 6 nav items
@@ -142,7 +158,7 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('Agaric')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
   })
 
@@ -165,7 +181,7 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('Agaric')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
     const wrapper = screen.getByTestId('view-transition-wrapper')
@@ -181,7 +197,7 @@ describe('App', () => {
 
     // Wait for boot
     await waitFor(() => {
-      expect(screen.getByText('Agaric')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
     // Click Pages in sidebar
@@ -199,7 +215,7 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('Agaric')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
     // Click Tags in sidebar
@@ -218,7 +234,7 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('Agaric')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
     // Click Trash in sidebar
@@ -250,7 +266,7 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('Agaric')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
     // Click Status in sidebar
@@ -268,7 +284,7 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('Agaric')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
     // Click Conflicts in sidebar
@@ -286,7 +302,7 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('Agaric')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
     const sidebar = getSidebar()
@@ -319,7 +335,7 @@ describe('App', () => {
     const user = userEvent.setup()
     render(<App />)
     await waitFor(() => {
-      expect(screen.getByText('Agaric')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
     const sidebar = getSidebar()
     const journalBtn = sidebar
@@ -361,7 +377,7 @@ describe('App', () => {
 
     // Wait for boot
     await waitFor(() => {
-      expect(screen.getByText('Agaric')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
     // The header should NOT show the page title (it's shown in PageEditor itself)
@@ -374,7 +390,7 @@ describe('App', () => {
 
     // Wait for boot
     await waitFor(() => {
-      expect(screen.getByText('Agaric')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
     // Fire Ctrl+F on window
@@ -405,7 +421,7 @@ describe('App', () => {
 
     // Wait for boot
     await waitFor(() => {
-      expect(screen.getByText('Agaric')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
     // Fire Ctrl+N on window
@@ -434,7 +450,7 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('Agaric')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
     fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
@@ -448,7 +464,7 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('Agaric')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
     fireEvent.keyDown(window, { key: 'c', altKey: true })
@@ -462,7 +478,7 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('Agaric')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
     fireEvent.keyDown(window, { key: 'c', altKey: true })
@@ -476,7 +492,7 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('Agaric')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
     useNavigationStore.setState({ currentView: 'journal' })
@@ -498,7 +514,7 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('Agaric')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
     useNavigationStore.setState({ currentView: 'journal' })
@@ -526,7 +542,7 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('Agaric')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
     fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
@@ -545,7 +561,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       fireEvent.keyDown(document, { key: 'ArrowLeft', altKey: true })
@@ -563,7 +579,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       fireEvent.keyDown(document, { key: 'ArrowRight', altKey: true })
@@ -581,7 +597,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       fireEvent.keyDown(document, { key: 'ArrowLeft', altKey: true })
@@ -599,7 +615,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       fireEvent.keyDown(document, { key: 'ArrowRight', altKey: true })
@@ -617,7 +633,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       fireEvent.keyDown(document, { key: 'ArrowLeft', altKey: true })
@@ -635,7 +651,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       fireEvent.keyDown(document, { key: 'ArrowRight', altKey: true })
@@ -653,7 +669,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       const beforePress = new Date()
@@ -674,7 +690,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       fireEvent.keyDown(document, { key: 'T', altKey: true })
@@ -696,7 +712,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       fireEvent.keyDown(document, { key: 'ArrowLeft', altKey: true })
@@ -728,7 +744,7 @@ describe('App', () => {
       )
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       // Old Ctrl+F does NOT fire
@@ -765,7 +781,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       // Old Ctrl+N does NOT fire create_block
@@ -796,7 +812,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       // Old Alt+T does NOT fire
@@ -824,7 +840,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       // Old Alt+← does NOT fire
@@ -844,7 +860,7 @@ describe('App', () => {
     it('default bindings still fire when no custom overrides are set', async () => {
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       // Ctrl+F switches to search
@@ -887,7 +903,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       await waitFor(() => {
@@ -899,7 +915,7 @@ describe('App', () => {
       // Default mock already returns emptyPage for all commands
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       // Give the hook time to resolve
@@ -922,7 +938,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       // Initially no conflict badge
@@ -982,7 +998,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       await waitFor(() => {
@@ -993,7 +1009,7 @@ describe('App', () => {
     it('hides trash badge when no deleted items', async () => {
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       await waitFor(() => {
@@ -1008,7 +1024,7 @@ describe('App', () => {
     it('renders theme toggle button in sidebar footer', async () => {
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       const sidebar = getSidebar()
@@ -1019,7 +1035,7 @@ describe('App', () => {
       const user = userEvent.setup()
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       const sidebar = getSidebar()
@@ -1037,7 +1053,7 @@ describe('App', () => {
     it('shows "Never synced" when lastSyncedAt is null', async () => {
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       expect(screen.getByTestId('last-synced')).toHaveTextContent(t('sidebar.lastSyncedNever'))
@@ -1047,7 +1063,7 @@ describe('App', () => {
       useSyncStore.setState({ lastSyncedAt: new Date().toISOString() })
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       expect(screen.getByTestId('last-synced')).toHaveTextContent(/Last synced/)
@@ -1125,7 +1141,7 @@ describe('App', () => {
     it('pressing "?" opens the shortcuts panel', async () => {
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       fireEvent.keyDown(document, { key: '?' })
@@ -1138,7 +1154,7 @@ describe('App', () => {
     it('shortcuts panel shows shortcut categories', async () => {
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       fireEvent.keyDown(document, { key: '?' })
@@ -1161,7 +1177,7 @@ describe('App', () => {
       const user = userEvent.setup()
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       const sidebar = getSidebar()
@@ -1179,7 +1195,7 @@ describe('App', () => {
     it('Escape on window dispatches agaric:closeAllOverlays event', async () => {
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       const spy = vi.fn()
@@ -1195,7 +1211,7 @@ describe('App', () => {
     it('Escape announces "Overlays closed"', async () => {
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       fireEvent.keyDown(window, { key: 'Escape' })
@@ -1208,7 +1224,7 @@ describe('App', () => {
     it('Escape inside an <input> does NOT dispatch the event', async () => {
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       const spy = vi.fn()
@@ -1228,7 +1244,7 @@ describe('App', () => {
     it('Escape inside a <textarea> does NOT dispatch the event', async () => {
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       const spy = vi.fn()
@@ -1248,7 +1264,7 @@ describe('App', () => {
     it('Escape inside a [contenteditable] element does NOT dispatch the event', async () => {
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       const spy = vi.fn()
@@ -1269,7 +1285,7 @@ describe('App', () => {
     it('Escape closes the shortcuts sheet when it is open', async () => {
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       // Open the sheet
@@ -1290,7 +1306,7 @@ describe('App', () => {
     it('plain "a" key does NOT dispatch closeAllOverlays', async () => {
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       const spy = vi.fn()
@@ -1336,7 +1352,7 @@ describe('App', () => {
       render(<App />)
 
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
@@ -1362,7 +1378,7 @@ describe('App', () => {
       render(<App />)
 
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       const sidebar = getSidebar()
@@ -1389,7 +1405,7 @@ describe('App', () => {
 
       // App should still render normally
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       await waitFor(() => {
@@ -1417,7 +1433,7 @@ describe('App', () => {
 
       // App should still render normally
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       await waitFor(() => {
@@ -1437,7 +1453,7 @@ describe('App', () => {
     it('renders a skip-to-main link', async () => {
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
       const skipLink = screen.getByText(t('accessibility.skipToMain'))
       expect(skipLink).toBeInTheDocument()
@@ -1448,7 +1464,7 @@ describe('App', () => {
     it('skip link is sr-only by default', async () => {
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
       const skipLink = screen.getByText(t('accessibility.skipToMain'))
       expect(skipLink).toHaveClass('sr-only')
@@ -1457,7 +1473,7 @@ describe('App', () => {
     it('main content has id="main-content"', async () => {
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
       const main = document.getElementById('main-content')
       expect(main).toBeInTheDocument()
@@ -1471,7 +1487,7 @@ describe('App', () => {
     it('main content scroller is a ScrollArea viewport (UX-226)', async () => {
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
       const main = document.getElementById('main-content')
       expect(main).toBeInTheDocument()
@@ -1487,7 +1503,7 @@ describe('App', () => {
     it('main content viewport applies env(safe-area-inset-bottom) padding (UX-225)', async () => {
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
       const main = document.getElementById('main-content')
       expect(main).toBeInTheDocument()
@@ -1534,7 +1550,7 @@ describe('App', () => {
         render(<App />)
 
         await waitFor(() => {
-          expect(screen.getByText('Agaric')).toBeInTheDocument()
+          expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
         })
 
         const tablist = screen.getByRole('tablist', { name: t('tabs.tabList') })
@@ -1565,7 +1581,7 @@ describe('App', () => {
       render(<App />)
 
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       const tablist = screen.getByRole('tablist', { name: t('tabs.tabList') })
@@ -1586,7 +1602,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       fireEvent.keyDown(window, { key: 't', ctrlKey: true })
@@ -1613,7 +1629,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       fireEvent.keyDown(window, { key: 't', ctrlKey: true })
@@ -1642,7 +1658,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       const strip = screen.getByTestId('recent-pages-strip')
@@ -1675,7 +1691,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       const tablist = screen.getByRole('tablist', { name: t('tabs.tabList') })
@@ -1701,7 +1717,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       expect(screen.queryByTestId('recent-pages-strip')).toBeNull()
@@ -1712,7 +1728,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       expect(screen.queryByTestId('recent-pages-strip')).toBeNull()
@@ -1728,7 +1744,7 @@ describe('App', () => {
     it('renders the view-header outlet above the main scroll area', async () => {
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       const outlet = screen.getByTestId('view-header-outlet')
@@ -1783,7 +1799,7 @@ describe('App', () => {
 
       render(<App />)
       await waitFor(() => {
-        expect(screen.getByText('Agaric')).toBeInTheDocument()
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
       expect(getPriorityLevels()).toEqual(['1', '2', '3'])
     })

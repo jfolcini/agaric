@@ -269,6 +269,8 @@ export const commands = {
 	disconnectGcal: (deleteCalendar: boolean) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("disconnect_gcal", { deleteCalendar })),
 	setGcalWindowDays: (n: number) => typedError<number, AppErrorSchema>(__TAURI_INVOKE("set_gcal_window_days", { n })),
 	setGcalPrivacyMode: (mode: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("set_gcal_privacy_mode", { mode })),
+	// Tauri command: list every space. Delegates to [`list_spaces_inner`].
+	listSpaces: () => typedError<SpaceRow[], AppErrorSchema>(__TAURI_INVOKE("list_spaces")),
 };
 
 /* Types */
@@ -625,6 +627,15 @@ export type RestoreToOpResult = {
 
 // Sort direction.
 export type SortDir = "Asc" | "Desc";
+
+/**
+ *  A space row returned by [`list_spaces_inner`] — just the pieces the
+ *  frontend needs to render the switcher (ULID + display name).
+ */
+export type SpaceRow = {
+	id: string,
+	name: string,
+};
 
 /**
  *  Snapshot of materializer + sync observability fields exposed to the

@@ -26,6 +26,7 @@ pub mod recurrence;
 pub mod reverse;
 pub mod snapshot;
 pub mod soft_delete;
+pub mod spaces;
 pub mod sql_utils;
 pub mod sync_cert;
 pub mod sync_daemon;
@@ -296,6 +297,8 @@ pub fn run() {
         commands::disconnect_gcal,
         commands::set_gcal_window_days,
         commands::set_gcal_privacy_mode,
+        // Spaces (FEAT-3 Phase 1)
+        commands::list_spaces,
     ]);
 
     // `mut` is only consumed by the `#[cfg(not(mobile))]` updater plugin
@@ -491,6 +494,19 @@ pub fn run() {
             // hits the cache rather than falling back to on-the-fly computation.
             if let Err(e) = materializer.try_enqueue_background(MaterializeTask::RebuildProjectedAgendaCache) {
                 tracing::warn!(error = %e, "failed to enqueue projected agenda cache rebuild at boot");
+            }
+
+            // FEAT-3 Phase 1: seed the two default spaces (Personal + Work) and
+            // migrate every pre-existing page into Personal. Idempotent across
+            // boots via an internal fast-path check. Failure is boot-fatal:
+            // the app's "every page belongs to a space" invariant cannot be
+            // honoured without this step completing.
+            if let Err(e) = tauri::async_runtime::block_on(spaces::bootstrap_spaces(
+                &pools.write,
+                &device_id,
+            )) {
+                tracing::error!(error = %e, "failed to bootstrap spaces — aborting boot");
+                return Err(Box::new(e));
             }
 
             // FEAT-1: Rebuild page_id column at boot to ensure consistency.
@@ -1045,6 +1061,8 @@ mod specta_tests {
             crate::commands::disconnect_gcal,
             crate::commands::set_gcal_window_days,
             crate::commands::set_gcal_privacy_mode,
+            // Spaces (FEAT-3 Phase 1)
+            crate::commands::list_spaces,
         ])
     }
 

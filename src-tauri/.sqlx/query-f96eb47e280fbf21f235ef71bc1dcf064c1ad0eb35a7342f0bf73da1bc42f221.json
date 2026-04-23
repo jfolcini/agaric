@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id as \"id!: String\", COALESCE(b.content, '') as \"name!: String\"\n           FROM blocks b\n           INNER JOIN block_properties p\n               ON p.block_id = b.id\n              AND p.key = 'is_space'\n              AND p.value_text = 'true'\n           WHERE b.deleted_at IS NULL\n             AND b.is_conflict = 0\n           ORDER BY COALESCE(b.content, '') ASC, b.id ASC",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name!: String",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "f96eb47e280fbf21f235ef71bc1dcf064c1ad0eb35a7342f0bf73da1bc42f221"
+}

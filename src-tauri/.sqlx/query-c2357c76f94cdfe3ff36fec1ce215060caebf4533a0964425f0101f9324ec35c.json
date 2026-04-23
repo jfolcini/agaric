@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) as \"n!: i64\" FROM blocks b\n           WHERE b.id IN (?, ?)\n             AND b.deleted_at IS NULL\n             AND b.is_conflict = 0\n             AND EXISTS (\n                 SELECT 1 FROM block_properties p\n                 WHERE p.block_id = b.id\n                   AND p.key = 'is_space'\n                   AND p.value_text = 'true'\n             )",
+  "describe": {
+    "columns": [
+      {
+        "name": "n!: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c2357c76f94cdfe3ff36fec1ce215060caebf4533a0964425f0101f9324ec35c"
+}

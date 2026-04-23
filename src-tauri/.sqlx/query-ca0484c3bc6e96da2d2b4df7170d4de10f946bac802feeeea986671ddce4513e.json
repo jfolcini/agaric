@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) VALUES (?, 'page', ?, NULL, 1, ?, 0)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "ca0484c3bc6e96da2d2b4df7170d4de10f946bac802feeeea986671ddce4513e"
+}

@@ -41,6 +41,7 @@ mod mcp;
 mod pages;
 mod properties;
 mod queries;
+mod spaces;
 mod sync_cmds;
 mod tags;
 
@@ -117,6 +118,7 @@ pub use queries::{
     query_backlinks_filtered, query_backlinks_filtered_inner, query_by_property,
     query_by_property_inner, search_blocks, search_blocks_inner,
 };
+pub use spaces::{list_spaces, list_spaces_inner, SpaceRow};
 pub use sync_cmds::{
     cancel_pairing, cancel_pairing_inner, cancel_sync, cancel_sync_inner, confirm_pairing,
     confirm_pairing_inner, delete_peer_ref, delete_peer_ref_inner, get_device_id,
@@ -204,6 +206,8 @@ pub use queries::{
     __specta__fn__query_by_property, __specta__fn__search_blocks,
 };
 #[doc(hidden)]
+pub use spaces::__specta__fn__list_spaces;
+#[doc(hidden)]
 pub use sync_cmds::{
     __specta__fn__cancel_pairing, __specta__fn__cancel_sync, __specta__fn__confirm_pairing,
     __specta__fn__delete_peer_ref, __specta__fn__get_device_id, __specta__fn__get_peer_ref,
@@ -275,6 +279,8 @@ pub use queries::{
     __cmd__list_backlinks_grouped, __cmd__list_unlinked_references,
     __cmd__query_backlinks_filtered, __cmd__query_by_property, __cmd__search_blocks,
 };
+#[doc(hidden)]
+pub use spaces::__cmd__list_spaces;
 #[doc(hidden)]
 pub use sync_cmds::{
     __cmd__cancel_pairing, __cmd__cancel_sync, __cmd__confirm_pairing, __cmd__delete_peer_ref,

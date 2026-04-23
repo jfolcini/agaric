@@ -27,6 +27,7 @@ import { FeatureErrorBoundary } from './components/FeatureErrorBoundary'
 import { GlobalDateControls, JournalControls, JournalPage } from './components/JournalPage'
 import { LoadingSkeleton } from './components/LoadingSkeleton'
 import { RecentPagesStrip } from './components/RecentPagesStrip'
+import { SpaceSwitcher } from './components/SpaceSwitcher'
 import { TabBar } from './components/TabBar'
 import { ScrollArea } from './components/ui/scroll-area'
 import {
@@ -815,11 +816,16 @@ function App() {
       <SidebarProvider>
         <Sidebar collapsible="icon">
           <SidebarHeader className="p-4 pb-2">
-            <div className="flex h-7 items-center gap-2 group-data-[collapsible=icon]:justify-center">
-              <img src="/agaric.svg" alt="Agaric" className="h-6 w-6 shrink-0" />
-              <span className="text-base font-semibold leading-none tracking-tight group-data-[collapsible=icon]:hidden">
-                Agaric
-              </span>
+            {/*
+             * FEAT-3 Phase 1: replace static branding with the
+             * SpaceSwitcher. The switcher occupies the same vertical
+             * footprint so downstream sidebar height math stays valid.
+             * It is hidden when the sidebar collapses to icon mode to
+             * preserve the compact rail layout (the switcher
+             * re-appears on expand).
+             */}
+            <div className="group-data-[collapsible=icon]:hidden">
+              <SpaceSwitcher />
             </div>
           </SidebarHeader>
           <SidebarContent>

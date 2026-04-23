@@ -42,6 +42,11 @@ const resources = {
       'sidebar.syncTooltip': 'Sync all devices',
       'sidebar.syncing': 'Syncing...',
 
+      // Spaces (FEAT-3)
+      'space.switch': 'Switch space',
+      'space.manage': 'Manage spaces…',
+      'space.manageComingSoon': 'Coming in Phase 6',
+
       // Empty states
       'empty.noBlocks': 'No blocks yet. Click + Add block below to start writing.',
       'empty.noPages': 'No pages yet. Create one to get started.',

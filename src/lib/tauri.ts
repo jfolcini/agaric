@@ -20,6 +20,7 @@ export type {
   PurgeResponse,
   RestoreResponse,
   SortDir,
+  SpaceRow,
   StatusInfo,
   TagCacheRow,
   TagResponse,
@@ -41,6 +42,7 @@ import type {
   PropertyDefinition,
   PurgeResponse,
   RestoreResponse,
+  SpaceRow,
   StatusInfo,
   TagCacheRow,
   TagResponse,
@@ -912,4 +914,16 @@ export function collectBugReportMetadata(): Promise<BugReport> {
  */
 export function readLogsForReport(redact: boolean): Promise<LogFileEntry[]> {
   return invoke('read_logs_for_report', { redact })
+}
+
+// ---------------------------------------------------------------------------
+// Spaces (FEAT-3 Phase 1)
+// ---------------------------------------------------------------------------
+
+/**
+ * List every space (id + display name) alphabetical by name. Used by the
+ * sidebar `SpaceSwitcher` + the Zustand `useSpaceStore`.
+ */
+export function listSpaces(): Promise<SpaceRow[]> {
+  return invoke<SpaceRow[]>('list_spaces')
 }

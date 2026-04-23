@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT 1 as \"v: i32\" FROM block_properties\n           WHERE block_id = ? AND key = 'is_space' AND value_text = 'true'",
+  "describe": {
+    "columns": [
+      {
+        "name": "v: i32",
+        "ordinal": 0,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "2d3aab9e0d05f3b7d09d38d0a8cfd73046e4fd1ed59cb90ad45a0347f183aec8"
+}
