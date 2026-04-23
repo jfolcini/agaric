@@ -1,5 +1,40 @@
 # Session Log
 
+## Session 462 — UX-251 resolved: preserve tabs + pageStack across view changes (2026-04-23)
+
+**1 REVIEW-LATER item resolved (UX-251), 0 new filed.** Open-items count 19 → 18. Surgical Zustand-store behavioural fix that aligns `useNavigationStore.setView` with its own JSDoc contract. No structural change: no new tables, no new op types, no new stores, no new materializer queue, no new sync message type. Frontend-only, single commit (`d24d9d5`).
+
+### What changed
+
+- **`src/stores/navigation.ts` (−26, +6 net)** — `setView` collapsed to a single non-destructive `set({ currentView: view })`. `navigateToPage`'s date-routed branch now only flips `currentView` + `selectedBlockId`; the inline `resetPageEditorState` computation (which used to rebuild `tabs` to a single empty entry and zero `activeTabIndex` when leaving `page-editor`) is gone, along with the mirroring-comment block. `goBack`'s last-tab reset is untouched — semantically different (an explicit user action, not a side-effect of view change) per the UX-251 entry's "Do not" list.
+- **`src/stores/__tests__/navigation.test.ts` (+138 net)** — 3 pre-existing destructive-behaviour assertions flipped (they used to pin `tabs.length === 1` after `setView('journal')`; they now pin `tabs.length === 3`, `activeTabIndex` unchanged, `pageStack` of every tab intact). 3 new tests added: a cross-view matrix asserting tab preservation across all 12 non-editor `setView` destinations (`journal`, `pages`, `agenda`, `tags`, `search`, `graph`, `sync`, `settings`, `conflicts`, `trash`, `history`, plus `page-editor` round-trip for the identity case), a `navigateToPage`-to-a-date-titled-page test that pins the journal-routed branch preserves `tabs.length === 3` + `activeTabIndex`, and an explicit JSDoc-contract alignment test named `setView_preserves_tabs_when_leaving_page_editor_matching_jsdoc_contract`.
+- **`REVIEW-LATER.md`** (this session) — UX-251 removed (table row + detail section). `## Summary` count updated 19 → 18. Navigation-cluster sequencing preamble re-cast without UX-251 (heading, intro paragraph, recommended sequence renumbered 1-4, "What does NOT get redone" bullet rewritten to describe the invariant generically, cross-cluster hard-dependencies list with the `FEAT-7 → UX-251` edge removed). FEAT-7 detail pruned: user-visible-symptom parenthetical stripped of the UX-251 qualifier, `**Hard dependency:**` paragraph removed entirely, `Land this without UX-251` item removed from the `**Do not:**` list, `**Cost:**` line no longer mentions the UX-251 store delta, `**Status:**` no longer lists UX-251 as a blocker (sign-off on the inactive-in-non-editor-view visual direction is still required).
+
+### Verification
+
+- `npx vitest run src/stores/__tests__/navigation.test.ts`: green (assertion-flip + new cross-view matrix) — run at commit time by the prek vitest hook.
+- `prek run --all-files`: all hooks green on the final push.
+- No Rust, SQLx, specta, or sync-protocol surface touched — no `cargo nextest run`, no `cargo sqlx prepare`, no `cargo test -- specta_tests --ignored` required. Frontend-only.
+
+### Design decisions
+
+- **`goBack`'s last-tab reset left alone.** When the user explicitly navigates back from the root of their only tab, the existing behaviour (rebuild `tabs: [{ id, pageStack: [], label: '' }]` and flip to `pages` view) is an intentional user-initiated action, not a side-effect of `setView`. Touching it would widen the diff and risk changing navigation behaviour the UX-251 entry explicitly scoped out.
+- **JSDoc left verbatim.** Line 56's `/** Switch sidebar view. DON'T clear tabs when leaving page-editor (preserve them). */` was aspirational; it is now the truth. No text change needed.
+- **Precondition for FEAT-7 unlocked.** FEAT-7 (hoist `<TabBar />` to the app shell) is the natural follow-up — per the navigation-cluster sequencing plan in `REVIEW-LATER.md`, it requires user sign-off on the inactive-in-non-editor-view visual direction before implementation starts. No structural change in that item either.
+
+### Architectural invariants respected (AGENTS.md)
+
+- **Architectural stability:** no new tables, no new op types, no new Zustand store, no new materializer queue, no new sync message type. The `persist` middleware already serialises `tabs` / `activeTabIndex` / per-tab `pageStack`, so after this fix multi-tab state also outlives app restarts across view changes — which is what UX-117 originally promised.
+- **No weakening of strict settings:** no new `biome-ignore`, no new `@ts-ignore`, no non-null assertions, no `as any`. Existing `exactOptionalPropertyTypes` / `noImplicitReturns` / `useExplicitLengthCheck` constraints are preserved.
+- **`useBlockStore` / `usePageBlockStore` / `useJournalStore` untouched.** The bug is confined to the two `set(...)` calls inside `useNavigationStore.setView` + `navigateToPage`'s date-routed branch; no other store was involved, no selector was weakened.
+
+### Notes for the next session
+
+- **FEAT-7 is the natural next step** once the user signs off on the inactive-in-non-editor-view visual direction (per the FEAT-7 `**Status:**` line in `REVIEW-LATER.md`). All hard dependencies from outside the cluster are clear: tabs now survive view changes, so a hoisted TabBar will have real data to reflect in every view.
+- **Mobile policy reminder (session-461 decisions, restated in FEAT-7 scope #7):** no TabBar on mobile at all, `openInNewTab` redirects to `navigateToPage` on mobile, `tabs: Tab[]` state persists across a desktop → mobile → desktop resize, `useIsMobile()` is the single detector.
+
+---
+
 ## Session 461 — File UX-249 + UX-250 + UX-251 + FEAT-3 (re-file) + FEAT-7 + FEAT-8 + FEAT-9 + navigation-cluster plan (2026-04-22)
 
 **7 new / re-filed REVIEW-LATER items + 1 cross-item sequencing preamble, 0 resolved.** Open-items count 12 → 19. All entries are user-surfaced bugs / feature requests fleshed out from repository evidence; none were implemented. No code changes. No tests run. No dependency bumps. Documentation-only session.
