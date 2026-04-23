@@ -1,5 +1,78 @@
 # Session Log
 
+## Session 464 — FEAT-4h slice 4 per-session bulk-revert (closes FEAT-4h) + UX-252 filed (2026-04-23)
+
+**1 REVIEW-LATER item resolved (FEAT-4h), 1 new filed (UX-252).** Open-items count unchanged at 18. FEAT-4h (MCP v2 umbrella) fully closed — its table row + detail section removed, and the FEAT-4 umbrella Status line updated to note v2 complete. A second commit was NOT needed for docs — the slice 4 implementation was found already staged at session start (from a prior agent pass that never committed); orchestrator reviewed, ran prek, committed code as `0157192`, then landed bookkeeping separately.
+
+Flow this session was telescoped:
+
+1. `git status` at session start surfaced unstaged edits across `AgentAccessSettingsTab.tsx` + its test file + `i18n.ts` matching the FEAT-4h slice 4 spec from the REVIEW-LATER entry. Implementation was well-structured (derived-data memos, confirm-dialog snapshot semantics, per-session in-flight tracking, proper i18next `_one`/`_other` pluralization).
+2. `npx vitest run src/components/__tests__/AgentAccessSettingsTab.test.tsx`: 47/47 passed (was 37 at session 463 close; +10 new tests).
+3. `prek run --all-files`: one biome formatter round (auto-fixed in 2 files) then all 26 hooks green.
+4. Fresh-eyes subagent review (`subagent_explore` — READ-ONLY, per PROMPT.md §"No self-reviews"): APPROVE WITH NOTES, zero P1. One P2 flagged (double-revert UX — user can re-click Undo / Revert-session after success and hit unexpected backend toggle behaviour). P2 filed as UX-252 (inherits from slice 3's identical path, affects both slices, fix scope is purely-frontend).
+5. Commit `0157192 feat(mcp): FEAT-4h slice 4` with full prek pass.
+6. Docs session (this entry + REVIEW-LATER updates) as a follow-up commit.
+
+### What changed
+
+**Frontend — FEAT-4h slice 4 session-grouped bulk revert (commit `0157192`):**
+
+- **`src/components/AgentAccessSettingsTab.tsx` (+268 / −54)** — two new `useMemo`s derive per-session data from the existing `entries` state without mutating it: `undoableBySession: Map<sessionId, OpRef[]>` filters to `actorKind === 'agent' && result.kind === 'ok' && opRef != null` entries, and `firstSeenIdxBySession: Map<sessionId, number>` tracks which activity row should carry the session header (in newest-first iteration order, so the header always lands at the top of the group as the user scrolls). Two new state slots — `pendingSessionRevert: { sessionId, ops } | null` for the confirm-dialog payload and `revertingSessions: Set<string>` keyed by `sessionId` for per-session in-flight tracking — drive the interaction flow. Three new callbacks: `handleRevertSessionClick(sessionId)` takes a snapshot of that session's opRefs at click time and opens the confirm dialog with the exact count the user saw; `confirmRevertSession()` fires `revertOps({ ops })` with the snapshot, mirrors `handleUndo`'s success / `isNonReversibleError` / generic error paths via pluralized toasts; the confirm dialog reuses the existing `ConfirmDialog` primitive (`actionVariant="destructive"` — undo-can't-be-undone is the whole point). Session header renders as a `<li>` inside the existing `<ul>` visible **only** on the first-seen (most-recent) entry of each session **and only** when `sessionOps.length >= 2` (one-op sessions fall through to slice 3's per-entry Undo — no redundant session control). Button shows `Undo2` icon + "Revert session" text on desktop, collapses to a spinner while in-flight with `aria-busy` + `disabled` set in concert.
+- **`src/lib/i18n.ts` (+17)** — 11 new keys under `agentAccess.revertSession.*`: `button`, `confirmTitle`, `confirmAction`, `failed`, `nonReversible` (single-form); `buttonAriaLabel_one`/`_other`, `confirmDescription_one`/`_other`, `success_one`/`_other` (i18next pluralized). Namespace matches slice 3's `agentAccess.undoAgentOp.*`.
+- **`src/components/__tests__/AgentAccessSettingsTab.test.tsx` (+489 / −6)** — 10 new tests under a new `describe('... revert session')` block. Coverage:
+  1. Header renders on first-seen when session has ≥ 2 undoable ops.
+  2. Header HIDDEN when session has only 1 undoable op (slice 3's per-entry Undo still applies).
+  3. Header HIDDEN on non-first-seen entries of the same session.
+  4. Separate headers for two interleaved sessions (two different sessionIds in the same feed).
+  5. User-authored and failed entries are excluded from the undoable count.
+  6. Click opens confirm dialog with the correct `count`.
+  7. Confirming invokes `revert_ops` with every undoable `opRef` of that session, in newest-first iteration order.
+  8. Cancelling the confirm dialog does NOT invoke `revert_ops`.
+  9. `NonReversible`-specific toast fires when `revert_ops` rejects with `{ kind: 'non_reversible' }` (wire-shape from `src-tauri/src/error.rs:153`).
+  10. Axe clean on a session-grouped feed (2 sessions with headers + mixed agent/user/ok/err entries).
+
+**Bookkeeping — REVIEW-LATER.md:**
+
+- Removed FEAT-4h table-row entry + the full FEAT-4h detail section (28 lines).
+- Updated FEAT-4 umbrella Status line to note all three v2 slices (1-2, 3, 4) shipped.
+- Added UX-252 table-row + a detailed entry under the UX section documenting the double-revert UX issue that slice 3 + slice 4 inherit, with three fix-shape options (preferred: local `revertedOpKeys: Set<string>` state; fallback: refresh-from-backend; accept-as-is: backend-idempotent), a test plan, and a do-not list (no cross-session sync, no reuse of the existing in-flight markers, don't hide the reverted agent entry).
+
+### Verification
+
+- `npx vitest run src/components/__tests__/AgentAccessSettingsTab.test.tsx`: **47/47 passed** (+10 new).
+- `prek run --all-files`: all 26 hooks green on the final run.
+- `cargo nextest run`: not re-run this session — no Rust change.
+- `cargo sqlx prepare -- --tests`: not re-run this session — no SQL change.
+- `cargo test -- specta_tests --ignored`: not re-run this session — no IPC-surface change.
+
+### Design decisions
+
+- **No `OpRecord.origin` surfacing and no `reverse_agent_session_inner` backend command.** Both were listed in the compacted FEAT-4h entry as "optional polish". The shipped v1 is strictly frontend — reuses the existing `revert_ops` IPC (which already wraps `revert_ops_inner` with atomic multi-op transactions). Adding a backend session-based query would require either embedding a session ULID into the `origin` column text (a format change that needs its own decision) or adding a new column (schema change requiring user sign-off per AGENTS.md §"Architectural Stability"). Neither is needed for v1.
+- **Snapshot-at-click for the confirm dialog.** `handleRevertSessionClick` copies `undoableBySession.get(sessionId)` into `pendingSessionRevert.ops` at click time; `confirmRevertSession` reads from `target.ops`, NOT re-queries the memo. If the activity ring rolls over between click and confirmation — or if new tool calls arrive — the user still reverts exactly what the count in the dialog promised.
+- **Header gate at `sessionOps.length >= 2`.** Single-op sessions show no header; the per-entry Undo button from slice 3 is sufficient. Keeps the UI minimal chrome-wise and avoids the degenerate case of a "Revert session (1 action)" affordance that's semantically identical to the per-entry button.
+- **Session header rendered as a `<li>` inside the existing `<ul>`.** Semantically a mild stretch (a `listitem` acting as a section header for subsequent `listitem`s) but axe-clean on the v1 scope. Alternative — a nested `<ul>` per session or a `<section>` / `<div>` wrapper — would require structural refactor of the feed. Deferred until a concrete a11y complaint lands.
+- **i18next pluralization via `_one` / `_other` suffixes, `count` parameter.** Matches the standard i18next convention; future locales can override with their own pluralization rules (e.g. Polish needs `_few` / `_many`) without a component-level change.
+
+### Architectural invariants respected (AGENTS.md)
+
+- Op log append-only + CQRS split untouched — frontend-only change; reuses the existing `revert_ops` command + `revert_ops_inner` backend handler shipped in F-08.
+- No new tables, op types, Zustand stores, materializer queues, or sync message types.
+- No `#[allow]`, `biome-ignore`, `@ts-ignore`, non-null assertions, or weakened strict settings.
+- `exactOptionalPropertyTypes` / `noImplicitReturns` / `useExplicitLengthCheck` / `useAwait` all satisfied.
+- Radix UI + `cn()` + semantic tokens (`bg-muted/30`, `text-muted-foreground`, `border-b`) — no hardcoded Tailwind colors.
+
+### Review summary (REVIEW-C, fresh-eyes `subagent_explore`)
+
+APPROVE WITH NOTES. Zero P1/P2 blockers in the code — all critical correctness checks passed (memo dependencies, iteration order, snapshot semantics, in-flight state cleanup in `finally`, error-handling parity with slice 3, `isNonReversibleError` reuse, i18next pluralization). The **one** P2 raised was a UX inheritance from slice 3 (double-revert after success) which I chose to file as UX-252 rather than bolt onto slice 4's diff — the fix shape is cross-slice and deserves its own scoped session. P3s: explicit in-flight test for the session-level button (the equivalent exists for the per-entry button; parity test is nice-to-have), and the 100-entry ring cap edge case is already covered by an existing test.
+
+### Notes for the next session
+
+- **FEAT-4 umbrella is 100% v2 complete** — no open slices. v3 (FEAT-4i — Mobile) stays DEFERRED per its own entry. Future MCP work lands as separate REVIEW-LATER items, not under FEAT-4h.
+- **UX-252 is the natural pickup** if the double-revert UX annoys you in practice — it's an S-cost pure-frontend change (one new `Set<string>` state + two memo filters + two new tests). Alternatively it can sit on the backlog; the backend handles double-undo safely for every reversible op type, so this is a UX-polish issue, not a correctness bug.
+- **Per-tool privacy-safe activity summaries** still carry a TODO at `handle_tools_call` in `src-tauri/src/mcp/server.rs` — slice 3's follow-up. Separate from UX-252 and from FEAT-4h (which is closed).
+
+---
+
 ## Session 463 — FEAT-4c emission wiring + FEAT-4h slice 3 activity-feed Undo (2026-04-23)
 
 **FEAT-4h partially progressed (slice 3 shipped, slice 4 remains), 0 new REVIEW-LATER items filed.** Open-items count unchanged at 18; FEAT-4h's summary-table row recast (`Cost M → S`) and detail section compacted to describe only slice 4. Four parallel subagents (2 build + 2 review) pipelined; two rounds of orchestrator fixes (one frontend a11y polish + one round of `prek` auto-fixes for clippy/fmt/biome formatting). Single commit `3551423`.
