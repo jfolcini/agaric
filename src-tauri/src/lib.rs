@@ -297,8 +297,9 @@ pub fn run() {
         commands::disconnect_gcal,
         commands::set_gcal_window_days,
         commands::set_gcal_privacy_mode,
-        // Spaces (FEAT-3 Phase 1)
+        // Spaces (FEAT-3 Phase 1 + Phase 2)
         commands::list_spaces,
+        commands::create_page_in_space,
     ]);
 
     // `mut` is only consumed by the `#[cfg(not(mobile))]` updater plugin
@@ -1061,8 +1062,9 @@ mod specta_tests {
             crate::commands::disconnect_gcal,
             crate::commands::set_gcal_window_days,
             crate::commands::set_gcal_privacy_mode,
-            // Spaces (FEAT-3 Phase 1)
+            // Spaces (FEAT-3 Phase 1 + Phase 2)
             crate::commands::list_spaces,
+            crate::commands::create_page_in_space,
         ])
     }
 

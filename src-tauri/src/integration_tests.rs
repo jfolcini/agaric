@@ -760,6 +760,7 @@ async fn pagination_on_empty_database_returns_no_items() {
         None,
         None,
         Some(50),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -817,6 +818,7 @@ async fn list_excludes_soft_deleted_blocks_and_trash_shows_only_deleted() {
         None,
         None,
         Some(50),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -834,6 +836,7 @@ async fn list_excludes_soft_deleted_blocks_and_trash_shows_only_deleted() {
         None,
         None,
         Some(50),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -885,6 +888,7 @@ async fn cursor_pagination_walks_all_blocks_without_duplicates() {
             None,
             cursor,
             Some(PAGE_SIZE),
+            None, // FEAT-3 Phase 2: space_id unscoped
         )
         .await
         .unwrap();
@@ -932,6 +936,7 @@ async fn pagination_with_exact_page_boundary_terminates_correctly() {
         None,
         None,
         Some(PAGE_SIZE),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1004,6 +1009,7 @@ async fn list_by_type_filters_to_matching_block_type() {
         None,
         None,
         Some(50),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1021,6 +1027,7 @@ async fn list_by_type_filters_to_matching_block_type() {
         None,
         None,
         Some(50),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1038,6 +1045,7 @@ async fn list_by_type_filters_to_matching_block_type() {
         None,
         None,
         Some(50),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1074,6 +1082,7 @@ async fn children_listed_in_position_order() {
         None,
         None,
         Some(50),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1452,7 +1461,7 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
     settle_bg_tasks(&mat).await;
 
     // Search for the original term — must find it
-    let results = search_blocks_inner(&pool, "quantum".into(), None, None, None, None)
+    let results = search_blocks_inner(&pool, "quantum".into(), None, None, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -1478,7 +1487,7 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
     settle_bg_tasks(&mat).await;
 
     // Search for the OLD term — must NOT find it
-    let old_results = search_blocks_inner(&pool, "quantum".into(), None, None, None, None)
+    let old_results = search_blocks_inner(&pool, "quantum".into(), None, None, None, None, None)
         .await
         .unwrap();
     assert!(
@@ -1487,7 +1496,7 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
     );
 
     // Search for the NEW term — must find it
-    let new_results = search_blocks_inner(&pool, "classical".into(), None, None, None, None)
+    let new_results = search_blocks_inner(&pool, "classical".into(), None, None, None, None, None)
         .await
         .unwrap();
     assert_eq!(

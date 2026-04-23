@@ -31,6 +31,7 @@ import {
 import { useNavigationStore } from '../stores/navigation'
 import { usePageBlockStoreApi } from '../stores/page-blocks'
 import { useResolveStore } from '../stores/resolve'
+import { useSpaceStore } from '../stores/space'
 import { useUndoStore } from '../stores/undo'
 import { PageAliasSection } from './PageAliasSection'
 import { PageHeaderMenu } from './PageHeaderMenu'
@@ -146,6 +147,14 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   const [kebabOpen, setKebabOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [forcePropertyExpanded, setForcePropertyExpanded] = useState(false)
+  // FEAT-3 Phase 2 — "Move to space" needs two bits of metadata that
+  // aren't derivable from props: whether the current page is itself a
+  // space block (moving spaces into spaces is nonsensical), and which
+  // space currently owns it (so the destination list can exclude it).
+  // Both come from the page's property set, loaded once and refreshed
+  // when the page changes.
+  const [isSpaceBlock, setIsSpaceBlock] = useState(false)
+  const [pageSpaceId, setPageSpaceId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!pageId) return
@@ -155,6 +164,9 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         setIsJournalTemplate(
           props.some((p) => p.key === 'journal-template' && p.value_text === 'true'),
         )
+        setIsSpaceBlock(props.some((p) => p.key === 'is_space' && p.value_text === 'true'))
+        const spaceProp = props.find((p) => p.key === 'space')
+        setPageSpaceId(spaceProp?.value_ref ?? null)
       })
       .catch((err: unknown) => {
         logger.warn(
@@ -290,6 +302,35 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     useNavigationStore.getState().openInNewTab(pageId, editableTitle || title)
     setKebabOpen(false)
   }, [pageId, editableTitle, title])
+
+  // --- FEAT-3 Phase 2 — Move to space ---
+  // Subscribe to `availableSpaces` so the sub-menu updates live when a
+  // peer creates/renames a space over sync. The list passed into the
+  // menu is already sorted (the space store guarantees alphabetical
+  // order from the backend `list_spaces_inner` query) so we just strip
+  // the current owner and hand the result to `PageHeaderMenu`.
+  const availableSpaces = useSpaceStore((s) => s.availableSpaces)
+  const moveTargets = availableSpaces.filter((s) => s.id !== pageSpaceId)
+
+  const handleMoveToSpace = useCallback(
+    async (targetSpaceId: string) => {
+      setKebabOpen(false)
+      const target = availableSpaces.find((s) => s.id === targetSpaceId)
+      const targetName = target?.name ?? ''
+      try {
+        await setProperty({ blockId: pageId, key: 'space', valueRef: targetSpaceId })
+        setPageSpaceId(targetSpaceId)
+        toast.success(t('space.movedToast', { space: targetName }))
+        // Refresh the page block store so any space-scoped subviews
+        // (outline, property table) pick up the new ownership.
+        await pageStore.getState().load()
+      } catch (err) {
+        logger.error('PageHeader', 'Failed to move page to space', { pageId, targetSpaceId }, err)
+        toast.error(t('space.moveFailed'))
+      }
+    },
+    [availableSpaces, pageId, pageStore, t],
+  )
 
   // --- Alias state ---
   const [aliases, setAliases] = useState<string[]>([])
@@ -453,6 +494,9 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
                 setDeleteDialogOpen(true)
               }}
               onOpenInNewTab={handleOpenInNewTab}
+              isSpaceBlock={isSpaceBlock}
+              moveTargets={moveTargets}
+              onMoveToSpace={handleMoveToSpace}
             />
           </div>
 

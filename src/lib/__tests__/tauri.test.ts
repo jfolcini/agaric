@@ -241,11 +241,10 @@ describe('listBlocks', () => {
       blockType: null,
       tagId: null,
       showDeleted: null,
-      agendaDate: null,
-      agendaDateRange: null,
-      agendaSource: null,
+      agenda: null,
       cursor: null,
       limit: null,
+      spaceId: null,
     })
     expect(result).toEqual(emptyPage)
   })
@@ -283,11 +282,14 @@ describe('listBlocks', () => {
       blockType: 'page',
       tagId: 'TAG01',
       showDeleted: true,
-      agendaDate: '2025-01-15',
-      agendaDateRange: null,
-      agendaSource: null,
+      agenda: {
+        date: '2025-01-15',
+        dateRange: null,
+        source: null,
+      },
       cursor: 'cursor123',
       limit: 25,
+      spaceId: null,
     })
     expect(result).toEqual(pageResp)
   })
@@ -302,9 +304,11 @@ describe('listBlocks', () => {
     expect(args['parentId']).toBeNull()
     expect(args['tagId']).toBeNull()
     expect(args['showDeleted']).toBeNull()
-    expect(args['agendaDate']).toBeNull()
+    // agenda params bundle to null on the IPC boundary when none are set
+    expect(args['agenda']).toBeNull()
     expect(args['cursor']).toBeNull()
     expect(args['limit']).toBeNull()
+    expect(args['spaceId']).toBeNull()
     // blockType should be the value we passed
     expect(args['blockType']).toBe('page')
   })
@@ -464,6 +468,7 @@ describe('searchBlocks', () => {
       limit: null,
       parentId: null,
       tagIds: null,
+      spaceId: null,
     })
     expect(result).toEqual(emptyPage)
   })
@@ -498,6 +503,7 @@ describe('searchBlocks', () => {
       limit: 25,
       parentId: null,
       tagIds: null,
+      spaceId: null,
     })
     expect(result).toEqual(pageResp)
   })
@@ -513,6 +519,7 @@ describe('searchBlocks', () => {
       limit: null,
       parentId: null,
       tagIds: null,
+      spaceId: null,
     })
   })
 })

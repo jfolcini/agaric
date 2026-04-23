@@ -51,6 +51,38 @@ const DEFAULT_PAGE_SIZE: i64 = 50;
 /// Maximum page size the client may request.
 const MAX_PAGE_SIZE: i64 = 200;
 
+// ---------------------------------------------------------------------------
+// FEAT-3 Phase 2 — shared space-filter SQL fragment.
+// ---------------------------------------------------------------------------
+//
+// Every paginated list / search query that honours the active space must
+// restrict results to blocks whose owning page (`COALESCE(b.page_id,
+// b.id)`) carries `space = ?space_id`. The clause short-circuits when
+// `?space_id` is NULL so the same SQL serves both the scoped and unscoped
+// cases without a separate codepath.
+//
+// Canonical form (bind slot `?N` is referenced twice — once for the NULL
+// guard, once for the subquery filter):
+//
+//     AND (?N IS NULL OR COALESCE(b.page_id, b.id) IN (
+//          SELECT bp.block_id FROM block_properties bp
+//          WHERE bp.key = 'space' AND bp.value_ref = ?N))
+//
+// `sqlx::query_as!` / `sqlx::query!` require a string literal and do
+// *not* accept `concat!()`, so the fragment is inlined at each compile-
+// time-checked callsite (`pagination::list_children`,
+// `pagination::list_by_type`, `pagination::list_trash`). The dynamic-SQL
+// FTS path (`fts::search_fts`) builds the same fragment through string
+// concatenation so its `?N` index tracks the runtime param count. Any
+// change to the filter SQL must mirror across every copy.
+//
+// Schema reminder (migration 0035 + migration 0027):
+// * `blocks.page_id` — nullable. For page blocks it is the page's own id;
+//   for content blocks it is the owning page's id.
+// * `block_properties(key = 'space').value_ref` — points to the space
+//   block's id. Non-space pages carry this property; space blocks
+//   themselves carry `is_space = 'true'` instead.
+
 /// Sentinel substituted for NULL `position` in keyset comparisons.
 ///
 /// Children with `position = NULL` (e.g. tag associations) are sorted *after*

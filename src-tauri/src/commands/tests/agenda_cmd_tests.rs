@@ -44,6 +44,7 @@ async fn list_blocks_with_agenda_source_filter_due_date() {
         Some("column:due_date".into()),
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -92,6 +93,7 @@ async fn list_blocks_with_agenda_source_filter_scheduled_date() {
         Some("column:scheduled_date".into()),
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -152,6 +154,7 @@ async fn list_blocks_with_agenda_no_source_returns_all() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -216,6 +219,7 @@ async fn list_blocks_with_date_range_returns_blocks_in_range() {
         Some("column:due_date".into()),
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -269,6 +273,7 @@ async fn list_blocks_with_date_range_single_day() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -297,6 +302,7 @@ async fn list_blocks_with_date_range_validates_format() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
 
@@ -318,6 +324,7 @@ async fn list_blocks_with_date_range_validates_format() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
 
@@ -339,6 +346,7 @@ async fn list_blocks_with_date_range_validates_format() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
 
@@ -383,6 +391,7 @@ async fn list_blocks_date_range_with_source_filter() {
         Some("column:due_date".into()),
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -410,6 +419,7 @@ async fn list_blocks_date_range_with_source_filter() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();

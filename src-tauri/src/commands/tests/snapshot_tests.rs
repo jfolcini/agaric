@@ -71,6 +71,7 @@ async fn snapshot_list_blocks_response() {
         None,
         None,
         Some(10),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();

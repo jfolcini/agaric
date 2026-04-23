@@ -93,11 +93,10 @@ describe('TrashView', () => {
         blockType: null,
         tagId: null,
         showDeleted: true,
-        agendaDate: null,
-        agendaDateRange: null,
-        agendaSource: null,
+        agenda: null,
         cursor: null,
         limit: 50,
+        spaceId: null,
       })
     })
   })
@@ -265,11 +264,10 @@ describe('TrashView', () => {
         blockType: null,
         tagId: null,
         showDeleted: true,
-        agendaDate: null,
-        agendaDateRange: null,
-        agendaSource: null,
+        agenda: null,
         cursor: 'cursor_page2',
         limit: 50,
+        spaceId: null,
       })
     })
 

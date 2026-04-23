@@ -674,6 +674,7 @@ async fn deleted_blocks_excluded_from_list_blocks() {
 
     let live = list_blocks_inner(
         &pool, None, None, None, None, None, None, None, None, None, None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -726,6 +727,7 @@ async fn deleted_blocks_visible_in_list_blocks_show_deleted() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1426,6 +1428,7 @@ async fn list_blocks_top_level_returns_root_blocks() {
 
     let resp = list_blocks_inner(
         &pool, None, None, None, None, None, None, None, None, None, None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1465,6 +1468,7 @@ async fn list_blocks_with_parent_id_returns_children_only() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1499,6 +1503,7 @@ async fn list_blocks_with_block_type_filter_returns_matching_type() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1513,6 +1518,7 @@ async fn list_blocks_empty_db_returns_empty_page_no_more() {
 
     let resp = list_blocks_inner(
         &pool, None, None, None, None, None, None, None, None, None, None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1554,6 +1560,7 @@ async fn list_blocks_show_deleted_returns_only_deleted() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1612,6 +1619,7 @@ async fn pagination_walk_all_pages_no_duplicates() {
             None,
             cursor,
             Some(4),
+            None, // FEAT-3 Phase 2: space_id unscoped
         )
         .await
         .unwrap();
@@ -1661,6 +1669,7 @@ async fn pagination_limit_1_produces_single_item_pages() {
             None,
             cursor,
             Some(1),
+            None, // FEAT-3 Phase 2: space_id unscoped
         )
         .await
         .unwrap();

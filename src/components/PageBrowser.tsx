@@ -40,7 +40,8 @@ import { usePageDelete } from '../hooks/usePageDelete'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
 import type { BlockRow } from '../lib/tauri'
-import { createBlock, listBlocks, resolvePageByAlias } from '../lib/tauri'
+import { createPageInSpace, listBlocks, resolvePageByAlias } from '../lib/tauri'
+import { useSpaceStore } from '../stores/space'
 import { EmptyState } from './EmptyState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { ViewHeader } from './ViewHeader'
@@ -75,10 +76,23 @@ interface PageBrowserProps {
 export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElement {
   const { t } = useTranslation()
 
+  // FEAT-3 Phase 2 — honour the current space. When the `SpaceStore`
+  // has not yet hydrated (`isReady === false`) we render a
+  // `LoadingSkeleton` instead of firing `listBlocks` so the first render
+  // never leaks cross-space pages. Once ready, `currentSpaceId` is
+  // threaded to `listBlocks` so the backend filters results.
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  const spaceIsReady = useSpaceStore((s) => s.isReady)
+
   const queryFn = useCallback(
     (cursor?: string) =>
-      listBlocks({ blockType: 'page', ...(cursor != null && { cursor }), limit: 50 }),
-    [],
+      listBlocks({
+        blockType: 'page',
+        ...(cursor != null && { cursor }),
+        limit: 50,
+        spaceId: currentSpaceId ?? undefined,
+      }),
+    [currentSpaceId],
   )
   const {
     items: pages,
@@ -86,7 +100,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     hasMore,
     loadMore,
     setItems: setPages,
-  } = usePaginatedQuery(queryFn, { onError: t('pageBrowser.loadFailed') })
+  } = usePaginatedQuery(queryFn, {
+    onError: t('pageBrowser.loadFailed'),
+    enabled: spaceIsReady,
+  })
 
   const { deleteTarget, deletingId, setDeleteTarget, handleConfirmDelete } = usePageDelete(setPages)
 
@@ -151,15 +168,25 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
   const handleCreatePage = useCallback(async () => {
     const name = newPageName.trim() || t('pageBrowser.untitled')
+    // FEAT-3 Phase 2 — a page must belong to a space. On the rare
+    // first-boot path where `SpaceStore` has not yet hydrated we
+    // refuse to create and surface a toast rather than silently
+    // creating an unscoped page. The `isReady` gate above normally
+    // prevents this branch from firing.
+    const activeSpaceId = useSpaceStore.getState().currentSpaceId
+    if (activeSpaceId == null) {
+      toast.error(t('pageBrowser.spaceNotReady'))
+      return
+    }
     setIsCreating(true)
     try {
-      const resp = await createBlock({ blockType: 'page', content: name })
+      const newId = await createPageInSpace({ content: name, spaceId: activeSpaceId })
       const newPage: BlockRow = {
-        id: resp.id,
-        block_type: resp.block_type,
-        content: resp.content,
-        parent_id: resp.parent_id,
-        position: resp.position,
+        id: newId,
+        block_type: 'page',
+        content: name,
+        parent_id: null,
+        position: null,
         deleted_at: null,
         is_conflict: false,
         conflict_type: null,
@@ -167,11 +194,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         priority: null,
         due_date: null,
         scheduled_date: null,
-        page_id: resp.id,
+        page_id: newId,
       }
       setPages((prev) => [newPage, ...prev])
       setNewPageName('')
-      onPageSelect?.(resp.id, resp.content ?? name)
+      onPageSelect?.(newId, name)
     } catch (error) {
       toast.error(t('pageBrowser.createFailed', { error: String(error) }), {
         action: { label: t('pageBrowser.retry'), onClick: () => handleCreatePage() },
@@ -392,13 +419,13 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         </div>
       </ViewHeader>
 
-      {loading && pages.length === 0 && (
+      {(!spaceIsReady || (loading && pages.length === 0)) && (
         <div aria-busy="true">
           <LoadingSkeleton count={3} height="h-10" className="page-browser-loading" />
         </div>
       )}
 
-      {!loading && pages.length === 0 && (
+      {spaceIsReady && !loading && pages.length === 0 && (
         <EmptyState
           icon={FileText}
           message={t('pageBrowser.noPages')}

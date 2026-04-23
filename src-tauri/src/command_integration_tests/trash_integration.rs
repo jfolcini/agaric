@@ -353,6 +353,7 @@ async fn list_trash_with_cascade_deleted_page_returns_only_root_and_restores_des
         None,
         None,
         Some(10),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -407,6 +408,7 @@ async fn list_trash_with_cascade_deleted_page_returns_only_root_and_restores_des
         None,
         None,
         Some(10),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -461,6 +463,7 @@ async fn purge_root_from_trash_removes_descendants() {
         None,
         None,
         Some(10),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();

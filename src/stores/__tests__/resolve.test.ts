@@ -433,6 +433,46 @@ describe('resolveStatus', () => {
 })
 
 // ---------------------------------------------------------------------------
+// clearPagesList (FEAT-3 Phase 2)
+// ---------------------------------------------------------------------------
+describe('clearPagesList', () => {
+  it('empties the pagesList array but preserves the cache map', () => {
+    // Pre-seed both `pagesList` (the short-query search list) and
+    // `cache` (the ULID → title resolver map) so we can verify the
+    // asymmetric invalidation contract.
+    const cache = new Map<string, { title: string; deleted: boolean }>([
+      ['PAGE_IN_OTHER_SPACE', { title: 'Cross-space chip', deleted: false }],
+      ['TAG_GLOBAL', { title: 'tag-global', deleted: false }],
+    ])
+    const pagesList = [
+      { id: 'PAGE_A1', title: 'Page A1' },
+      { id: 'PAGE_B1', title: 'Page B1' },
+    ]
+    useResolveStore.setState({ cache, pagesList, version: 7 })
+
+    const versionBefore = useResolveStore.getState().version
+    const cacheSizeBefore = useResolveStore.getState().cache.size
+
+    useResolveStore.getState().clearPagesList()
+
+    const state = useResolveStore.getState()
+    expect(state.pagesList).toHaveLength(0)
+    expect(state.cache.size).toBe(cacheSizeBefore)
+    // Existing cross-space `[[ULID]]` chips must still resolve to their
+    // original titles after clearPagesList — that's the whole point.
+    expect(state.cache.get('PAGE_IN_OTHER_SPACE')).toEqual({
+      title: 'Cross-space chip',
+      deleted: false,
+    })
+    expect(state.cache.get('TAG_GLOBAL')).toEqual({
+      title: 'tag-global',
+      deleted: false,
+    })
+    expect(state.version).toBe(versionBefore + 1)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // cache eviction
 // ---------------------------------------------------------------------------
 describe('cache eviction', () => {

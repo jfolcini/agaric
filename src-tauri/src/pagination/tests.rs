@@ -236,7 +236,9 @@ async fn list_children_returns_first_page() {
     }
 
     let page = PageRequest::new(None, Some(2)).unwrap();
-    let resp = list_children(&pool, Some("PARENT01"), &page).await.unwrap();
+    let resp = list_children(&pool, Some("PARENT01"), &page, None)
+        .await
+        .unwrap();
 
     assert_eq!(resp.items.len(), 2, "page size must be respected");
     assert!(resp.has_more, "more items remain");
@@ -273,10 +275,14 @@ async fn list_children_continues_from_cursor() {
     }
 
     let p1 = PageRequest::new(None, Some(2)).unwrap();
-    let r1 = list_children(&pool, Some("PARENT01"), &p1).await.unwrap();
+    let r1 = list_children(&pool, Some("PARENT01"), &p1, None)
+        .await
+        .unwrap();
 
     let p2 = PageRequest::new(r1.next_cursor, Some(2)).unwrap();
-    let r2 = list_children(&pool, Some("PARENT01"), &p2).await.unwrap();
+    let r2 = list_children(&pool, Some("PARENT01"), &p2, None)
+        .await
+        .unwrap();
 
     assert_eq!(r2.items.len(), 2, "second page should return 2 items");
     assert!(r2.has_more, "more items remain after second page");
@@ -312,6 +318,7 @@ async fn list_children_last_page_has_no_cursor() {
         &pool,
         Some("PARENT01"),
         &PageRequest::new(None, Some(2)).unwrap(),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -319,6 +326,7 @@ async fn list_children_last_page_has_no_cursor() {
         &pool,
         Some("PARENT01"),
         &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -326,6 +334,7 @@ async fn list_children_last_page_has_no_cursor() {
         &pool,
         Some("PARENT01"),
         &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -346,7 +355,9 @@ async fn list_children_returns_empty_when_parent_has_no_children() {
     insert_block(&pool, "PARENT01", "page", "parent", None, Some(1)).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_children(&pool, Some("PARENT01"), &page).await.unwrap();
+    let resp = list_children(&pool, Some("PARENT01"), &page, None)
+        .await
+        .unwrap();
 
     assert!(resp.items.is_empty(), "childless parent must return empty");
     assert!(
@@ -376,7 +387,7 @@ async fn list_children_lists_top_level_blocks() {
     .await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_children(&pool, None, &page).await.unwrap();
+    let resp = list_children(&pool, None, &page, None).await.unwrap();
 
     assert_eq!(
         resp.items.len(),
@@ -428,7 +439,9 @@ async fn list_children_excludes_soft_deleted() {
     soft_delete_block(&pool, "CHILD002", FIXED_DELETED_AT).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_children(&pool, Some("PARENT01"), &page).await.unwrap();
+    let resp = list_children(&pool, Some("PARENT01"), &page, None)
+        .await
+        .unwrap();
 
     assert_eq!(resp.items.len(), 2, "soft-deleted child must be excluded");
     assert_eq!(resp.items[0].id, "CHILD001", "first alive child present");
@@ -470,7 +483,9 @@ async fn list_children_excludes_conflict_blocks() {
         .unwrap();
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_children(&pool, Some("PARENT01"), &page).await.unwrap();
+    let resp = list_children(&pool, Some("PARENT01"), &page, None)
+        .await
+        .unwrap();
 
     assert_eq!(resp.items.len(), 1, "conflict child must be excluded");
     assert_eq!(
@@ -524,7 +539,9 @@ async fn list_children_sentinel_positions_sort_after_positioned() {
 
     // Page 1: positioned children first
     let p1 = PageRequest::new(None, Some(2)).unwrap();
-    let r1 = list_children(&pool, Some("PARENT01"), &p1).await.unwrap();
+    let r1 = list_children(&pool, Some("PARENT01"), &p1, None)
+        .await
+        .unwrap();
     assert_eq!(
         r1.items.len(),
         2,
@@ -536,7 +553,9 @@ async fn list_children_sentinel_positions_sort_after_positioned() {
 
     // Page 2: sentinel-position children via cursor
     let p2 = PageRequest::new(r1.next_cursor, Some(2)).unwrap();
-    let r2 = list_children(&pool, Some("PARENT01"), &p2).await.unwrap();
+    let r2 = list_children(&pool, Some("PARENT01"), &p2, None)
+        .await
+        .unwrap();
     assert_eq!(
         r2.items.len(),
         2,
@@ -560,7 +579,9 @@ async fn list_children_same_position_tiebreaks_by_id() {
     insert_block(&pool, "CHILD_CC", "content", "c", Some("PARENT01"), Some(5)).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_children(&pool, Some("PARENT01"), &page).await.unwrap();
+    let resp = list_children(&pool, Some("PARENT01"), &page, None)
+        .await
+        .unwrap();
 
     assert_eq!(
         resp.items.len(),
@@ -594,7 +615,9 @@ async fn list_children_exhaustive_walk_returns_all_items_once() {
     let mut cursor = None;
     loop {
         let page = PageRequest::new(cursor, Some(3)).unwrap();
-        let resp = list_children(&pool, Some("PARENT01"), &page).await.unwrap();
+        let resp = list_children(&pool, Some("PARENT01"), &page, None)
+            .await
+            .unwrap();
         all_ids.extend(resp.items.iter().map(|b| b.id.clone()));
         if !resp.has_more {
             break;
@@ -622,7 +645,7 @@ async fn list_by_type_returns_only_matching_type() {
     insert_block(&pool, "CONT0001", "content", "Content 1", None, None).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_by_type(&pool, "page", &page).await.unwrap();
+    let resp = list_by_type(&pool, "page", &page, None).await.unwrap();
 
     assert_eq!(resp.items.len(), 2, "only page-type blocks");
     assert!(
@@ -640,9 +663,14 @@ async fn list_by_type_paginates_with_cursor() {
         insert_block(&pool, &id, "page", &format!("Page {i}"), None, None).await;
     }
 
-    let r1 = list_by_type(&pool, "page", &PageRequest::new(None, Some(2)).unwrap())
-        .await
-        .unwrap();
+    let r1 = list_by_type(
+        &pool,
+        "page",
+        &PageRequest::new(None, Some(2)).unwrap(),
+        None, // FEAT-3 Phase 2: space_id unscoped
+    )
+    .await
+    .unwrap();
     assert_eq!(r1.items.len(), 2, "page 1 should return 2 items");
     assert!(r1.has_more, "page 1 should indicate more pages");
     assert_eq!(r1.items[0].id, "PAGE0001", "page 1 first item");
@@ -652,6 +680,7 @@ async fn list_by_type_paginates_with_cursor() {
         &pool,
         "page",
         &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -664,6 +693,7 @@ async fn list_by_type_paginates_with_cursor() {
         &pool,
         "page",
         &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -683,7 +713,7 @@ async fn list_by_type_excludes_soft_deleted() {
     soft_delete_block(&pool, "PAGE0002", FIXED_DELETED_AT).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_by_type(&pool, "page", &page).await.unwrap();
+    let resp = list_by_type(&pool, "page", &page, None).await.unwrap();
 
     assert_eq!(resp.items.len(), 2, "soft-deleted block must be excluded");
     assert_eq!(resp.items[0].id, "PAGE0001", "first alive page block");
@@ -708,7 +738,7 @@ async fn list_by_type_excludes_conflict_blocks() {
         .unwrap();
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_by_type(&pool, "page", &page).await.unwrap();
+    let resp = list_by_type(&pool, "page", &page, None).await.unwrap();
 
     assert_eq!(resp.items.len(), 1, "conflict page must be excluded");
     assert_eq!(
@@ -724,7 +754,7 @@ async fn list_by_type_returns_empty_for_unknown_type() {
     insert_block(&pool, "PAGE0001", "page", "Page 1", None, None).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_by_type(&pool, "nonexistent_type", &page)
+    let resp = list_by_type(&pool, "nonexistent_type", &page, None)
         .await
         .unwrap();
 
@@ -747,7 +777,7 @@ async fn list_trash_returns_empty_when_nothing_deleted() {
     insert_block(&pool, "BLOCK001", "content", "alive", None, None).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_trash(&pool, &page).await.unwrap();
+    let resp = list_trash(&pool, &page, None).await.unwrap();
 
     assert!(
         resp.items.is_empty(),
@@ -773,7 +803,7 @@ async fn list_trash_orders_by_deleted_at_descending() {
     soft_delete_block(&pool, "TRASH003", "2025-01-02T00:00:00+00:00").await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_trash(&pool, &page).await.unwrap();
+    let resp = list_trash(&pool, &page, None).await.unwrap();
 
     assert_eq!(resp.items.len(), 3, "all deleted blocks should be returned");
     assert_eq!(resp.items[0].id, "TRASH002", "most recently deleted first");
@@ -793,7 +823,7 @@ async fn list_trash_paginates_with_cursor() {
     }
 
     // Page 1: most recent → TRASH005, TRASH004
-    let r1 = list_trash(&pool, &PageRequest::new(None, Some(2)).unwrap())
+    let r1 = list_trash(&pool, &PageRequest::new(None, Some(2)).unwrap(), None)
         .await
         .unwrap();
     assert_eq!(r1.items.len(), 2, "trash page 1 should return 2 items");
@@ -802,18 +832,26 @@ async fn list_trash_paginates_with_cursor() {
     assert_eq!(r1.items[1].id, "TRASH004", "second most recent trash item");
 
     // Page 2: TRASH003, TRASH002
-    let r2 = list_trash(&pool, &PageRequest::new(r1.next_cursor, Some(2)).unwrap())
-        .await
-        .unwrap();
+    let r2 = list_trash(
+        &pool,
+        &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(r2.items.len(), 2, "trash page 2 should return 2 items");
     assert!(r2.has_more, "trash page 2 should indicate more");
     assert_eq!(r2.items[0].id, "TRASH003", "trash page 2 first item");
     assert_eq!(r2.items[1].id, "TRASH002", "trash page 2 second item");
 
     // Page 3 (last): TRASH001
-    let r3 = list_trash(&pool, &PageRequest::new(r2.next_cursor, Some(2)).unwrap())
-        .await
-        .unwrap();
+    let r3 = list_trash(
+        &pool,
+        &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(r3.items.len(), 1, "trash last page should return 1 item");
     assert!(!r3.has_more, "trash last page should not indicate more");
     assert!(
@@ -840,7 +878,7 @@ async fn list_trash_excludes_conflict_blocks() {
         .unwrap();
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_trash(&pool, &page).await.unwrap();
+    let resp = list_trash(&pool, &page, None).await.unwrap();
 
     assert_eq!(
         resp.items.len(),
@@ -899,7 +937,7 @@ async fn list_trash_deleted_page_with_children_returns_only_root() {
     soft_delete_block(&pool, "CHILD003", ts).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_trash(&pool, &page).await.unwrap();
+    let resp = list_trash(&pool, &page, None).await.unwrap();
 
     assert_eq!(
         resp.items.len(),
@@ -933,7 +971,7 @@ async fn list_trash_loose_content_block_with_alive_parent_appears_as_root() {
     soft_delete_block(&pool, "LOOSE001", "2025-04-01T00:00:00+00:00").await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_trash(&pool, &page).await.unwrap();
+    let resp = list_trash(&pool, &page, None).await.unwrap();
 
     assert_eq!(
         resp.items.len(),
@@ -968,7 +1006,7 @@ async fn list_trash_loose_deleted_block_with_different_batch_parent_appears() {
     soft_delete_block(&pool, "CHILD001", "2025-06-01T00:00:00+00:00").await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_trash(&pool, &page).await.unwrap();
+    let resp = list_trash(&pool, &page, None).await.unwrap();
 
     // Both are roots of their own batches.
     let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
@@ -1011,7 +1049,7 @@ async fn list_trash_pagination_cursor_with_mixed_root_sizes() {
     }
 
     // First page (limit 2) — expect ROOT0005, ROOT0004 (most recent first).
-    let r1 = list_trash(&pool, &PageRequest::new(None, Some(2)).unwrap())
+    let r1 = list_trash(&pool, &PageRequest::new(None, Some(2)).unwrap(), None)
         .await
         .unwrap();
     assert_eq!(r1.items.len(), 2, "first page must have exactly 2 roots");
@@ -1020,18 +1058,26 @@ async fn list_trash_pagination_cursor_with_mixed_root_sizes() {
     assert_eq!(r1.items[1].id, "ROOT0004");
 
     // Second page — expect ROOT0003, ROOT0002.
-    let r2 = list_trash(&pool, &PageRequest::new(r1.next_cursor, Some(2)).unwrap())
-        .await
-        .unwrap();
+    let r2 = list_trash(
+        &pool,
+        &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(r2.items.len(), 2, "second page must have exactly 2 roots");
     assert!(r2.has_more, "still one root left");
     assert_eq!(r2.items[0].id, "ROOT0003");
     assert_eq!(r2.items[1].id, "ROOT0002");
 
     // Last page — expect ROOT0001 only.
-    let r3 = list_trash(&pool, &PageRequest::new(r2.next_cursor, Some(2)).unwrap())
-        .await
-        .unwrap();
+    let r3 = list_trash(
+        &pool,
+        &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(r3.items.len(), 1, "last page must have 1 root");
     assert!(!r3.has_more, "last page reached");
     assert!(r3.next_cursor.is_none(), "no cursor after last page");
@@ -1058,7 +1104,7 @@ async fn list_trash_conflict_filter_still_applies_to_roots() {
         .unwrap();
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_trash(&pool, &page).await.unwrap();
+    let resp = list_trash(&pool, &page, None).await.unwrap();
 
     assert_eq!(resp.items.len(), 1, "conflict root must still be filtered");
     assert_eq!(resp.items[0].id, "NORM0001");
@@ -1220,6 +1266,7 @@ async fn cursor_stable_after_concurrent_inserts() {
         &pool,
         Some("PARENT01"),
         &PageRequest::new(None, Some(2)).unwrap(),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1258,6 +1305,7 @@ async fn cursor_stable_after_concurrent_inserts() {
         &pool,
         Some("PARENT01"),
         &PageRequest::new(saved_cursor, Some(10)).unwrap(),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -2016,7 +2064,9 @@ async fn snapshot_page_response_list_children() {
     .await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_children(&pool, Some("SNAP_PAR"), &page).await.unwrap();
+    let resp = list_children(&pool, Some("SNAP_PAR"), &page, None)
+        .await
+        .unwrap();
 
     insta::assert_yaml_snapshot!(resp);
 }
@@ -2041,7 +2091,7 @@ async fn snapshot_page_response_with_cursor() {
     }
 
     let page = PageRequest::new(None, Some(2)).unwrap();
-    let resp = list_children(&pool, Some("SNAP_PAR2"), &page)
+    let resp = list_children(&pool, Some("SNAP_PAR2"), &page, None)
         .await
         .unwrap();
 
@@ -2683,7 +2733,7 @@ async fn list_trash_rejects_cursor_without_deleted_at() {
     .unwrap();
 
     let page = PageRequest::new(Some(bad_cursor), Some(10)).unwrap();
-    let result = list_trash(&pool, &page).await;
+    let result = list_trash(&pool, &page, None).await;
 
     assert!(
         result.is_err(),
@@ -2754,7 +2804,9 @@ async fn cursor_stability_after_delete() {
 
     // Page 1: fetch first 5 children (limit=5)
     let p1 = PageRequest::new(None, Some(5)).unwrap();
-    let r1 = list_children(&pool, Some("CSPAR001"), &p1).await.unwrap();
+    let r1 = list_children(&pool, Some("CSPAR001"), &p1, None)
+        .await
+        .unwrap();
 
     assert_eq!(r1.items.len(), 5, "page 1 must return 5 items");
     assert!(r1.has_more, "page 1 must have more items");
@@ -2766,7 +2818,9 @@ async fn cursor_stability_after_delete() {
 
     // Page 2: continue from cursor — must see C06..C10
     let p2 = PageRequest::new(r1.next_cursor, Some(5)).unwrap();
-    let r2 = list_children(&pool, Some("CSPAR001"), &p2).await.unwrap();
+    let r2 = list_children(&pool, Some("CSPAR001"), &p2, None)
+        .await
+        .unwrap();
 
     assert_eq!(
         r2.items.len(),
@@ -2798,7 +2852,7 @@ async fn cursor_stability_after_delete() {
 
     // Verify a fresh full walk (no cursor) skips the deleted C03
     let fresh_page = PageRequest::new(None, Some(20)).unwrap();
-    let fresh = list_children(&pool, Some("CSPAR001"), &fresh_page)
+    let fresh = list_children(&pool, Some("CSPAR001"), &fresh_page, None)
         .await
         .unwrap();
     assert_eq!(
@@ -2838,7 +2892,9 @@ async fn list_children_exactly_limit_plus_one_returns_next_cursor() {
     }
 
     let page = PageRequest::new(None, Some(2)).unwrap();
-    let resp = list_children(&pool, Some("LP_PAR"), &page).await.unwrap();
+    let resp = list_children(&pool, Some("LP_PAR"), &page, None)
+        .await
+        .unwrap();
 
     assert_eq!(resp.items.len(), 2, "should return exactly limit items");
     assert!(resp.has_more, "has_more must be true with limit+1 items");
@@ -2869,7 +2925,9 @@ async fn list_children_exactly_limit_items_returns_no_next_cursor() {
     }
 
     let page = PageRequest::new(None, Some(2)).unwrap();
-    let resp = list_children(&pool, Some("LE_PAR"), &page).await.unwrap();
+    let resp = list_children(&pool, Some("LE_PAR"), &page, None)
+        .await
+        .unwrap();
 
     assert_eq!(resp.items.len(), 2, "should return all 2 items");
     assert!(!resp.has_more, "has_more must be false when no overflow");
@@ -2998,7 +3056,7 @@ async fn list_children_optimized_matches_ifnull_oracle() {
         let new_page = PageRequest::new(new_cursor.clone(), Some(2)).unwrap();
         let old_page = PageRequest::new(old_cursor.clone(), Some(2)).unwrap();
 
-        let new_resp = list_children(&pool, Some("PARENT01"), &new_page)
+        let new_resp = list_children(&pool, Some("PARENT01"), &new_page, None)
             .await
             .unwrap();
         let old_resp = list_children_ifnull_oracle(&pool, Some("PARENT01"), &old_page)
@@ -3478,6 +3536,327 @@ async fn test_list_page_history_includes_nested_children() {
         resp.items.len(),
         3,
         "page history must include ops for nested descendants"
+    );
+}
+
+// ====================================================================
+// FEAT-3 Phase 2 — space filtering
+// ====================================================================
+//
+// These tests exercise the `Some(space_id)` path of `list_by_type`,
+// `list_children`, and `list_trash` end-to-end so the shared
+// `AND (?N IS NULL OR COALESCE(b.page_id, b.id) IN (SELECT bp.block_id
+// FROM block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?N))`
+// SQL fragment is verified against live data. The existing coverage only
+// passes `None` for every call, so a regression in the filter SQL would
+// not be caught.
+//
+// Test-scoped helpers are defined inline to keep each test self-contained
+// (matches the existing module convention — see `insert_block`,
+// `soft_delete_block`). IDs are bare strings rather than real ULIDs:
+// `blocks.id` is TEXT and the command-layer ULID validation is bypassed
+// when we insert via raw SQL.
+
+/// ID used for the synthetic "SPACE_A" space block (satisfies the
+/// `block_properties.value_ref → blocks(id)` FK).
+const SPACE_A_ID: &str = "SPACE_AA";
+/// ID used for the synthetic "SPACE_B" space block.
+const SPACE_B_ID: &str = "SPACE_BB";
+
+/// Insert a page block that is itself a space (`is_space = 'true'`). The
+/// page row must exist for the `block_properties.value_ref` FK to
+/// succeed when a later page is assigned to this space.
+async fn insert_space_block(pool: &SqlitePool, id: &str, name: &str) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
+         VALUES (?, 'page', ?, NULL, 1, ?, 0)",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(id)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'is_space', 'true')",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Assign a block to a space by writing the materialised
+/// `block_properties(key = 'space', value_ref = <space_id>)` row directly.
+/// Bypasses `set_property_in_tx` intentionally — these tests target the
+/// filter SQL, not the command layer.
+async fn assign_to_space(pool: &SqlitePool, block_id: &str, space_id: &str) {
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)")
+        .bind(block_id)
+        .bind(space_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// Insert a block with an explicit `page_id` column value. Required for
+/// content blocks under a space-scoped parent — the space filter uses
+/// `COALESCE(b.page_id, b.id)` so children must carry the parent's id in
+/// `page_id` for the filter to resolve through the parent's `space`
+/// property.
+async fn insert_block_with_page_id(
+    pool: &SqlitePool,
+    id: &str,
+    block_type: &str,
+    content: &str,
+    parent_id: Option<&str>,
+    position: Option<i64>,
+    page_id: Option<&str>,
+) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(block_type)
+    .bind(content)
+    .bind(parent_id)
+    .bind(position)
+    .bind(page_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn list_by_type_pages_filters_by_space() {
+    let (pool, _dir) = test_pool().await;
+    insert_space_block(&pool, SPACE_A_ID, "Personal").await;
+    insert_space_block(&pool, SPACE_B_ID, "Work").await;
+
+    // Three non-space pages: two in SPACE_A, one in SPACE_B.
+    insert_block(&pool, "PAGE_AA1", "page", "Page A1", None, None).await;
+    assign_to_space(&pool, "PAGE_AA1", SPACE_A_ID).await;
+    insert_block(&pool, "PAGE_AA2", "page", "Page A2", None, None).await;
+    assign_to_space(&pool, "PAGE_AA2", SPACE_A_ID).await;
+    insert_block(&pool, "PAGE_BB1", "page", "Page B1", None, None).await;
+    assign_to_space(&pool, "PAGE_BB1", SPACE_B_ID).await;
+
+    let req = PageRequest::new(None, Some(50)).unwrap();
+    let resp = list_by_type(&pool, "page", &req, Some(SPACE_A_ID))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.items.len(),
+        2,
+        "SPACE_A filter must return exactly the 2 pages assigned to it \
+         (space blocks themselves carry `is_space`, not `space`, so are excluded)"
+    );
+    let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
+    assert!(
+        ids.contains(&"PAGE_AA1"),
+        "PAGE_AA1 (SPACE_A) must appear; got {ids:?}"
+    );
+    assert!(
+        ids.contains(&"PAGE_AA2"),
+        "PAGE_AA2 (SPACE_A) must appear; got {ids:?}"
+    );
+    assert!(
+        !ids.contains(&"PAGE_BB1"),
+        "PAGE_BB1 (SPACE_B) must not appear; got {ids:?}"
+    );
+}
+
+#[tokio::test]
+async fn list_by_type_pages_nonexistent_space_returns_empty() {
+    let (pool, _dir) = test_pool().await;
+    insert_space_block(&pool, SPACE_A_ID, "Personal").await;
+    insert_block(&pool, "PAGE_AA1", "page", "Page A1", None, None).await;
+    assign_to_space(&pool, "PAGE_AA1", SPACE_A_ID).await;
+
+    let req = PageRequest::new(None, Some(50)).unwrap();
+    let resp = list_by_type(&pool, "page", &req, Some("NONEXISTENT_SPACE"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.items.len(),
+        0,
+        "nonexistent space id must return zero rows, not error"
+    );
+    assert!(!resp.has_more, "empty result must not indicate more pages");
+    assert!(
+        resp.next_cursor.is_none(),
+        "empty result must have no cursor"
+    );
+}
+
+#[tokio::test]
+async fn list_by_type_pages_none_space_id_unscoped() {
+    let (pool, _dir) = test_pool().await;
+    insert_space_block(&pool, SPACE_A_ID, "Personal").await;
+    insert_space_block(&pool, SPACE_B_ID, "Work").await;
+    insert_block(&pool, "PAGE_AA1", "page", "Page A1", None, None).await;
+    assign_to_space(&pool, "PAGE_AA1", SPACE_A_ID).await;
+    insert_block(&pool, "PAGE_AA2", "page", "Page A2", None, None).await;
+    assign_to_space(&pool, "PAGE_AA2", SPACE_A_ID).await;
+    insert_block(&pool, "PAGE_BB1", "page", "Page B1", None, None).await;
+    assign_to_space(&pool, "PAGE_BB1", SPACE_B_ID).await;
+
+    let req = PageRequest::new(None, Some(50)).unwrap();
+    let resp = list_by_type(&pool, "page", &req, None).await.unwrap();
+
+    // 2 space blocks + 3 non-space pages = 5 `block_type = 'page'` rows.
+    assert_eq!(
+        resp.items.len(),
+        5,
+        "None space_id must return every page (2 spaces + 3 pages) — \
+         existing unscoped behaviour is preserved"
+    );
+}
+
+#[tokio::test]
+async fn list_children_filters_by_space() {
+    let (pool, _dir) = test_pool().await;
+    insert_space_block(&pool, SPACE_A_ID, "Personal").await;
+    insert_space_block(&pool, SPACE_B_ID, "Work").await;
+
+    // Parent page in SPACE_A with two content-block children. Children
+    // carry `page_id = parent_id` so the COALESCE(page_id, id) lookup
+    // resolves to the parent — which carries `space = SPACE_A`.
+    insert_block(&pool, "PARENT_A", "page", "Parent", None, Some(1)).await;
+    assign_to_space(&pool, "PARENT_A", SPACE_A_ID).await;
+    insert_block_with_page_id(
+        &pool,
+        "CHLD_AA1",
+        "content",
+        "child 1",
+        Some("PARENT_A"),
+        Some(1),
+        Some("PARENT_A"),
+    )
+    .await;
+    insert_block_with_page_id(
+        &pool,
+        "CHLD_AA2",
+        "content",
+        "child 2",
+        Some("PARENT_A"),
+        Some(2),
+        Some("PARENT_A"),
+    )
+    .await;
+
+    let req_a = PageRequest::new(None, Some(50)).unwrap();
+    let resp_a = list_children(&pool, Some("PARENT_A"), &req_a, Some(SPACE_A_ID))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp_a.items.len(),
+        2,
+        "SPACE_A filter must match the 2 children via their parent's space property"
+    );
+    let ids: Vec<&str> = resp_a.items.iter().map(|b| b.id.as_str()).collect();
+    assert!(
+        ids.contains(&"CHLD_AA1") && ids.contains(&"CHLD_AA2"),
+        "both children must appear; got {ids:?}"
+    );
+
+    let req_b = PageRequest::new(None, Some(50)).unwrap();
+    let resp_b = list_children(&pool, Some("PARENT_A"), &req_b, Some(SPACE_B_ID))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp_b.items.len(),
+        0,
+        "SPACE_B filter must exclude children whose parent lives in SPACE_A"
+    );
+}
+
+#[tokio::test]
+async fn list_children_excludes_cross_space_page_ids() {
+    let (pool, _dir) = test_pool().await;
+    insert_space_block(&pool, SPACE_A_ID, "Personal").await;
+    insert_space_block(&pool, SPACE_B_ID, "Work").await;
+
+    // Two top-level pages (parent_id IS NULL) — one per space — each
+    // with a child content block.
+    insert_block(&pool, "PAR_A", "page", "Parent A", None, Some(10)).await;
+    assign_to_space(&pool, "PAR_A", SPACE_A_ID).await;
+    insert_block_with_page_id(
+        &pool,
+        "CHD_A1",
+        "content",
+        "c a1",
+        Some("PAR_A"),
+        Some(1),
+        Some("PAR_A"),
+    )
+    .await;
+
+    insert_block(&pool, "PAR_B", "page", "Parent B", None, Some(11)).await;
+    assign_to_space(&pool, "PAR_B", SPACE_B_ID).await;
+    insert_block_with_page_id(
+        &pool,
+        "CHD_B1",
+        "content",
+        "c b1",
+        Some("PAR_B"),
+        Some(1),
+        Some("PAR_B"),
+    )
+    .await;
+
+    // `parent_id = None` → top-level query. SPACE_A filter must only
+    // surface PAR_A. The two space blocks themselves are also
+    // parent_id IS NULL but carry `is_space`, not `space`, so are
+    // excluded. PAR_B belongs to SPACE_B and must be excluded too.
+    let req = PageRequest::new(None, Some(50)).unwrap();
+    let resp = list_children(&pool, None, &req, Some(SPACE_A_ID))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.items.len(),
+        1,
+        "top-level list with SPACE_A must return exactly the SPACE_A parent"
+    );
+    assert_eq!(
+        resp.items[0].id, "PAR_A",
+        "SPACE_A parent is the only expected top-level row"
+    );
+}
+
+#[tokio::test]
+async fn list_trash_filters_by_space() {
+    let (pool, _dir) = test_pool().await;
+    insert_space_block(&pool, SPACE_A_ID, "Personal").await;
+    insert_space_block(&pool, SPACE_B_ID, "Work").await;
+
+    // Two soft-deleted pages, one per space. The space property is set
+    // before soft-delete — `list_trash` resolves via
+    // `COALESCE(page_id, id)` which is `id` for top-level pages, so
+    // the filter remains valid after the delete.
+    insert_block(&pool, "TRSH_A", "page", "Trash A", None, None).await;
+    assign_to_space(&pool, "TRSH_A", SPACE_A_ID).await;
+    soft_delete_block(&pool, "TRSH_A", "2025-02-01T00:00:00+00:00").await;
+
+    insert_block(&pool, "TRSH_B", "page", "Trash B", None, None).await;
+    assign_to_space(&pool, "TRSH_B", SPACE_B_ID).await;
+    soft_delete_block(&pool, "TRSH_B", "2025-02-02T00:00:00+00:00").await;
+
+    let req = PageRequest::new(None, Some(50)).unwrap();
+    let resp = list_trash(&pool, &req, Some(SPACE_A_ID)).await.unwrap();
+
+    assert_eq!(
+        resp.items.len(),
+        1,
+        "SPACE_A filter on trash must return exactly the SPACE_A deleted page"
+    );
+    assert_eq!(
+        resp.items[0].id, "TRSH_A",
+        "SPACE_A trash row must be TRSH_A"
     );
 }
 

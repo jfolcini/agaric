@@ -173,6 +173,7 @@ pub async fn export_page_markdown_inner(
         pool,
         Some(page_id),
         &pagination::PageRequest::new(None, Some(1000))?,
+        None, // FEAT-3 Phase 2: export is per-page — no space filter needed.
     )
     .await?;
 
@@ -409,7 +410,10 @@ pub async fn list_pages_inner(
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let capped = limit.map(|l| l.clamp(1, MCP_PAGE_LIMIT_CAP));
     let page = PageRequest::new(cursor, capped)?;
-    pagination::list_by_type(pool, "page", &page).await
+    // FEAT-3 Phase 2: `list_pages` is the MCP (agent) page enumeration
+    // and stays unscoped — agents see every space. Frontend-facing page
+    // lookups go through `list_blocks_inner` which threads `space_id`.
+    pagination::list_by_type(pool, "page", &page, None).await
 }
 
 /// Response shape for [`get_page_inner`] — the page itself plus its

@@ -17,11 +17,25 @@ export const commands = {
 	purgeBlock: (blockId: string) => typedError<PurgeResponse, AppErrorSchema>(__TAURI_INVOKE("purge_block", { blockId })),
 	// Tauri command: move a block to a new parent at a given position. Delegates to [`move_block_inner`].
 	moveBlock: (blockId: string, newParentId: string | null, newPosition: number) => typedError<MoveResponse, AppErrorSchema>(__TAURI_INVOKE("move_block", { blockId, newParentId, newPosition })),
-	// Tauri command: list blocks with filtering and pagination. Delegates to [`list_blocks_inner`].
-	listBlocks: (parentId: string | null, blockType: string | null, tagId: string | null, showDeleted: boolean | null, agendaDate: string | null, agendaDateRange: {
-	start: string,
-	end: string,
-} | null, agendaSource: string | null, cursor: string | null, limit: number | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("list_blocks", { parentId, blockType, tagId, showDeleted, agendaDate, agendaDateRange, agendaSource, cursor, limit })),
+	/**
+	 *  Tauri command: list blocks with filtering and pagination. Delegates to [`list_blocks_inner`].
+	 *
+	 *  The three agenda knobs (`date`, `date_range`, `source`) are bundled
+	 *  into a single [`AgendaQuery`] to keep this wrapper under the
+	 *  `tauri-specta` 10-arg limit after FEAT-3 Phase 2 added `space_id`.
+	 *  The hand-written TS wrapper in `src/lib/tauri.ts` keeps the flat
+	 *  public API (accepts `agendaDate` / `agendaDateRange` / `agendaSource`
+	 *  at the top level and marshals them into this struct for the IPC
+	 *  boundary).
+	 */
+	listBlocks: (parentId: string | null, blockType: string | null, tagId: string | null, showDeleted: boolean | null, agenda: {
+	// Single-date agenda lookup (`YYYY-MM-DD`).
+	date: string | null,
+	// Date-range agenda lookup (inclusive on both ends).
+	dateRange: DateRange | null,
+	// Optional source filter (`due_date` / `scheduled_date`).
+	source: string | null,
+} | null, cursor: string | null, limit: number | null, spaceId: string | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("list_blocks", { parentId, blockType, tagId, showDeleted, agenda, cursor, limit, spaceId })),
 	// Tauri command: fetch a single block by ID. Delegates to [`get_block_inner`].
 	getBlock: (blockId: string) => typedError<BlockRow, AppErrorSchema>(__TAURI_INVOKE("get_block", { blockId })),
 	// Tauri command: batch-resolve block metadata. Delegates to [`batch_resolve_inner`].
@@ -39,7 +53,7 @@ export const commands = {
 	// Tauri command: get materializer queue status. Delegates to [`get_status_inner`].
 	getStatus: () => typedError<StatusInfo, AppErrorSchema>(__TAURI_INVOKE("get_status")),
 	// Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`].
-	searchBlocks: (query: string, cursor: string | null, limit: number | null, parentId: string | null, tagIds: string[] | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("search_blocks", { query, cursor, limit, parentId, tagIds })),
+	searchBlocks: (query: string, cursor: string | null, limit: number | null, parentId: string | null, tagIds: string[] | null, spaceId: string | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("search_blocks", { query, cursor, limit, parentId, tagIds, spaceId })),
 	// Tauri command: query blocks by boolean tag expression. Delegates to [`query_by_tags_inner`].
 	queryByTags: (tagIds: string[], prefixes: string[], mode: string, includeInherited: boolean | null, cursor: string | null, limit: number | null) => typedError<PageResponse<BlockRow>, AppErrorSchema>(__TAURI_INVOKE("query_by_tags", { tagIds, prefixes, mode, includeInherited, cursor, limit })),
 	// Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].
@@ -271,9 +285,46 @@ export const commands = {
 	setGcalPrivacyMode: (mode: string) => typedError<null, AppErrorSchema>(__TAURI_INVOKE("set_gcal_privacy_mode", { mode })),
 	// Tauri command: list every space. Delegates to [`list_spaces_inner`].
 	listSpaces: () => typedError<SpaceRow[], AppErrorSchema>(__TAURI_INVOKE("list_spaces")),
+	/**
+	 *  Tauri command wrapper around [`create_page_in_space_inner`].
+	 *
+	 *  Returns a plain `String` (the new page's ULID) rather than `BlockId`
+	 *  to keep the specta-generated bindings the simple shape the frontend
+	 *  expects. Background cache tasks (tag-inheritance, block-tag-refs,
+	 *  FTS indexing) are dispatched after the ops are committed — we
+	 *  deliberately wait until the full page-create-plus-set-property pair
+	 *  is durable before scheduling derived-state work.
+	 */
+	createPageInSpace: (parentId: string | null, content: string, spaceId: string) => typedError<string, AppErrorSchema>(__TAURI_INVOKE("create_page_in_space", { parentId, content, spaceId })),
 };
 
 /* Types */
+/**
+ *  Bundled agenda filter for the [`list_blocks`] Tauri command.
+ *
+ *  Exists purely to keep `list_blocks`'s argument count under the
+ *  `tauri-specta` 10-arg limit after FEAT-3 Phase 2 added `space_id`.
+ *  The three sub-fields were previously top-level parameters and are
+ *  still threaded into `list_blocks_inner` as individual parameters —
+ *  the bundling is a transport-layer concern. `None` means "no agenda
+ *  filter applies" (the common case), and each sub-field remains
+ *  optional inside the struct so callers can still specify a single
+ *  date without the range, etc.
+ *
+ *  Serde `rename_all = "camelCase"` matches the Tauri command-arg
+ *  convention (camelCase keys on the IPC boundary), so the hand-written
+ *  TS wrapper in `src/lib/tauri.ts` can pass `{ dateRange, source, date }`
+ *  without an extra translation layer.
+ */
+export type AgendaQuery = {
+	// Single-date agenda lookup (`YYYY-MM-DD`).
+	date: string | null,
+	// Date-range agenda lookup (inclusive on both ends).
+	dateRange: DateRange | null,
+	// Optional source filter (`due_date` / `scheduled_date`).
+	source: string | null,
+};
+
 /**
  *  Helper struct matching the `{ kind, message }` JSON shape that [`AppError`]
  *  serialises to.  Used solely so specta can derive the TypeScript type for

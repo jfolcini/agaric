@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, block_type, content, parent_id, position,\n                deleted_at, is_conflict as \"is_conflict: bool\",\n                conflict_type, todo_state, priority, due_date, scheduled_date,\n                page_id\n         FROM blocks\n         WHERE block_type = ?1 AND deleted_at IS NULL AND is_conflict = 0\n           AND (?2 IS NULL OR id > ?3)\n         ORDER BY id ASC\n         LIMIT ?4",
+  "query": "SELECT id, block_type, content, parent_id, position,\n                deleted_at, is_conflict as \"is_conflict: bool\",\n                conflict_type, todo_state, priority, due_date, scheduled_date,\n                page_id\n         FROM blocks b\n         WHERE b.deleted_at IS NOT NULL AND b.is_conflict = 0\n           AND (\n                b.parent_id IS NULL\n                OR NOT EXISTS (\n                    SELECT 1 FROM blocks p\n                    WHERE p.id = b.parent_id AND p.deleted_at = b.deleted_at\n                )\n           )\n           AND (?1 IS NULL OR (\n                b.deleted_at < ?2 OR (b.deleted_at = ?2 AND b.id > ?3)))\n           AND (?5 IS NULL OR COALESCE(b.page_id, b.id) IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?5))\n         ORDER BY b.deleted_at DESC, b.id ASC\n         LIMIT ?4",
   "describe": {
     "columns": [
       {
@@ -70,7 +70,7 @@
       }
     ],
     "parameters": {
-      "Right": 4
+      "Right": 5
     },
     "nullable": [
       false,
@@ -88,5 +88,5 @@
       true
     ]
   },
-  "hash": "cfcc46f594ee8c63b70abfb2fd5f11f810755c9060f56220c9194428c56fbf00"
+  "hash": "4e6dfa90e5861a2c565de8389a50dff7a89329b64257b81ab1956c5ba77be10a"
 }

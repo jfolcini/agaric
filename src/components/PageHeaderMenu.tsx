@@ -2,6 +2,7 @@ import {
   BookTemplate,
   Download,
   ExternalLink,
+  FolderOutput,
   LayoutTemplate,
   Link,
   MoreVertical,
@@ -11,6 +12,7 @@ import {
   Trash2,
   Undo2,
 } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -18,6 +20,12 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/utils'
 import { getShortcutKeys } from '../lib/keyboard-config'
+
+/** A space shown in the "Move to space" sub-menu. */
+export interface MoveTargetSpace {
+  id: string
+  name: string
+}
 
 export interface PageHeaderMenuProps {
   canRedo: boolean
@@ -35,6 +43,20 @@ export interface PageHeaderMenuProps {
   onExport: () => void
   onDeleteRequest: () => void
   onOpenInNewTab?: (() => void) | undefined
+  /**
+   * FEAT-3 Phase 2 — "Move to space" support.
+   *
+   * `isSpaceBlock` — hide the menu entry when the page itself is a
+   *   space block (spaces cannot be moved into other spaces).
+   * `moveTargets` — alphabetical list of target spaces, already
+   *   filtered to exclude the current space. When the list is empty
+   *   the menu entry is hidden (no valid move target).
+   * `onMoveToSpace` — callback fired when the user picks a target.
+   *   `null` means the feature is unavailable (tests can pass `null`).
+   */
+  isSpaceBlock?: boolean | undefined
+  moveTargets?: MoveTargetSpace[] | undefined
+  onMoveToSpace?: ((targetSpaceId: string) => void) | undefined
 }
 
 export function PageHeaderMenu({
@@ -53,12 +75,22 @@ export function PageHeaderMenu({
   onExport,
   onDeleteRequest,
   onOpenInNewTab,
+  isSpaceBlock = false,
+  moveTargets,
+  onMoveToSpace,
 }: PageHeaderMenuProps) {
   const { t } = useTranslation()
   // FEAT-7 item 7: hide the "Open in new tab" affordance on mobile — the
   // hoisted TabBar is itself desktop-only, so the item would otherwise be
   // semantically misleading (the new tab is invisible on mobile).
   const isMobile = useIsMobile()
+
+  // FEAT-3 Phase 2 — the "Move to space" entry expands inline (no nested
+  // Radix popover) to keep focus management simple and the a11y tree
+  // flat. The sub-menu is keyboard-navigable via normal Tab order.
+  const [moveSubmenuOpen, setMoveSubmenuOpen] = useState(false)
+  const showMoveEntry =
+    !isSpaceBlock && onMoveToSpace != null && moveTargets != null && moveTargets.length > 0
 
   return (
     <div className="flex items-center gap-1">
@@ -188,6 +220,47 @@ export function PageHeaderMenu({
               {getShortcutKeys('exportPageMarkdown')}
             </span>
           </button>
+          {showMoveEntry && (
+            <>
+              <hr className="my-1 h-px bg-border border-none" />
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+                aria-haspopup="menu"
+                aria-expanded={moveSubmenuOpen}
+                onClick={() => setMoveSubmenuOpen((open) => !open)}
+              >
+                <FolderOutput className="h-3.5 w-3.5" />
+                {t('space.moveTo')}
+                <span className="ml-auto text-xs text-muted-foreground" aria-hidden="true">
+                  {moveSubmenuOpen ? '▾' : '▸'}
+                </span>
+              </button>
+              {moveSubmenuOpen && (
+                <div
+                  role="menu"
+                  aria-label={t('space.moveTo')}
+                  className="pl-4 mt-0.5 flex flex-col gap-0.5"
+                >
+                  {moveTargets.map((target) => (
+                    <button
+                      key={target.id}
+                      type="button"
+                      role="menuitem"
+                      title={target.name}
+                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-hidden"
+                      onClick={() => {
+                        setMoveSubmenuOpen(false)
+                        onMoveToSpace?.(target.id)
+                      }}
+                    >
+                      <span className="line-clamp-1">{target.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
           <hr className="my-1 h-px bg-border border-none" />
           <button
             type="button"

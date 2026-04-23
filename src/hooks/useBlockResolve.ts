@@ -13,17 +13,21 @@
 import { FileText, Hash, Tag } from 'lucide-react'
 import { matchSorter } from 'match-sorter'
 import { useCallback, useRef } from 'react'
+import { toast } from 'sonner'
 import type { PickerItem } from '../editor/SuggestionList'
 import { foldForSearch, matchesSearchFolded } from '../lib/fold-for-search'
+import { t as translate } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import {
   createBlock,
+  createPageInSpace,
   listBlocks,
   listTagsByPrefix,
   resolvePageByAlias,
   searchBlocks,
 } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
+import { useSpaceStore } from '../stores/space'
 
 function logSlowQuery(fn: string, query: string, t0: number, count: number): void {
   const durationMs = Math.round(performance.now() - t0)
@@ -78,11 +82,17 @@ function makePagePickerItem(id: string, title: string): PickerItem {
  * Short-query strategy: fuzzy-match against the preloaded pages cache.
  * Lazily falls back to `listBlocks` when the cache is empty, populating
  * `pagesListRef` as a side effect for subsequent calls.
+ *
+ * FEAT-3 Phase 2 — the lazy `listBlocks` fallback is scoped to the
+ * current space via `spaceId`. Cross-space `[[ULID]]` targets that are
+ * already in the document continue to resolve via the shared resolve
+ * cache, they just don't appear as new suggestions.
  */
 async function searchPagesViaCache(q: string, pagesListRef: PagesListRef): Promise<PickerItem[]> {
   let source = pagesListRef.current
   if (source.length === 0) {
-    const resp = await listBlocks({ blockType: 'page', limit: 500 })
+    const spaceId = useSpaceStore.getState().currentSpaceId ?? undefined
+    const resp = await listBlocks({ blockType: 'page', limit: 500, spaceId })
     source = resp.items.map((p) => ({ id: p.id, title: p.content ?? 'Untitled' }))
     pagesListRef.current = source
   }
@@ -94,9 +104,12 @@ async function searchPagesViaCache(q: string, pagesListRef: PagesListRef): Promi
  * Long-query strategy: FTS5 search filtered to pages. When FTS returns fewer
  * than 5 results and the preloaded cache is non-empty, supplements the result
  * set from cache (deduped, capped at 20 total).
+ *
+ * FEAT-3 Phase 2 — the FTS call is scoped to the current space.
  */
 async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise<PickerItem[]> {
-  const resp = await searchBlocks({ query: q, limit: 20 })
+  const spaceId = useSpaceStore.getState().currentSpaceId ?? undefined
+  const resp = await searchBlocks({ query: q, limit: 20, spaceId })
   const matches = resp.items
     .filter((b) => b.block_type === 'page')
     .map((b) => makePagePickerItem(b.id, b.content ?? 'Untitled'))
@@ -343,12 +356,29 @@ export function useBlockResolve(): UseBlockResolveReturn {
   }, [])
 
   const onCreatePage = useCallback(async (label: string): Promise<string> => {
+    // FEAT-3 Phase 2 — every page must belong to a space. Route the
+    // creation through the atomic `createPageInSpace` Tauri command so
+    // CreateBlock + SetProperty('space') are committed together.
+    // The `!isReady` branch is defensive — the roving editor doesn't
+    // render until `BlockTree` has mounted, which happens after boot's
+    // `refreshAvailableSpaces()` resolves, so in practice this guard
+    // almost never fires.
+    const { currentSpaceId, isReady } = useSpaceStore.getState()
+    if (!isReady || currentSpaceId == null) {
+      logger.warn(
+        'useBlockResolve',
+        'onCreatePage called before space hydrated; refusing to create',
+        { label },
+      )
+      toast.error(translate('space.notReady'))
+      throw new Error('Space store is not ready')
+    }
     try {
-      const block = await createBlock({ blockType: 'page', content: label })
+      const newId = await createPageInSpace({ content: label, spaceId: currentSpaceId })
       // Populate resolve cache so the link chip shows the title immediately
-      useResolveStore.getState().set(block.id, label, false)
-      pagesListRef.current = [...pagesListRef.current, { id: block.id, title: label }]
-      return block.id
+      useResolveStore.getState().set(newId, label, false)
+      pagesListRef.current = [...pagesListRef.current, { id: newId, title: label }]
+      return newId
     } catch (err) {
       logger.error('useBlockResolve', 'onCreatePage failed', { label }, err)
       throw err

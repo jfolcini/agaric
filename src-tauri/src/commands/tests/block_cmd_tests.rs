@@ -1086,6 +1086,7 @@ async fn list_blocks_no_filters_returns_top_level() {
 
     let resp = list_blocks_inner(
         &pool, None, None, None, None, None, None, None, None, None, None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1120,6 +1121,7 @@ async fn list_blocks_with_block_type_filter() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1149,6 +1151,7 @@ async fn list_blocks_with_parent_id_filter() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1185,6 +1188,7 @@ async fn list_blocks_with_tag_id_filter() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1225,6 +1229,7 @@ async fn list_blocks_show_deleted_returns_trash() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1257,6 +1262,7 @@ async fn list_blocks_rejects_conflicting_filters() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -1277,6 +1283,7 @@ async fn list_blocks_rejects_conflicting_filters() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -1297,6 +1304,7 @@ async fn list_blocks_rejects_conflicting_filters() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -1317,6 +1325,7 @@ async fn list_blocks_rejects_conflicting_filters() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -1342,7 +1351,8 @@ async fn list_blocks_single_filter_is_accepted() {
             None,
             None,
             None,
-            None
+            None,
+            None, // FEAT-3 Phase 2: space_id unscoped
         )
         .await
         .is_ok(),
@@ -1360,7 +1370,8 @@ async fn list_blocks_single_filter_is_accepted() {
             None,
             None,
             None,
-            None
+            None,
+            None, // FEAT-3 Phase 2: space_id unscoped
         )
         .await
         .is_ok(),
@@ -1378,7 +1389,8 @@ async fn list_blocks_single_filter_is_accepted() {
             None,
             None,
             None,
-            None
+            None,
+            None, // FEAT-3 Phase 2: space_id unscoped
         )
         .await
         .is_ok(),
@@ -1397,7 +1409,8 @@ async fn list_blocks_single_filter_is_accepted() {
             None,
             None,
             None,
-            None
+            None,
+            None, // FEAT-3 Phase 2: space_id unscoped
         )
         .await
         .is_ok(),
@@ -1411,6 +1424,7 @@ async fn list_blocks_empty_db_returns_empty_page() {
 
     let resp = list_blocks_inner(
         &pool, None, None, None, None, None, None, None, None, None, None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();

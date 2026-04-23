@@ -118,7 +118,9 @@ pub use queries::{
     query_backlinks_filtered, query_backlinks_filtered_inner, query_by_property,
     query_by_property_inner, search_blocks, search_blocks_inner,
 };
-pub use spaces::{list_spaces, list_spaces_inner, SpaceRow};
+pub use spaces::{
+    create_page_in_space, create_page_in_space_inner, list_spaces, list_spaces_inner, SpaceRow,
+};
 pub use sync_cmds::{
     cancel_pairing, cancel_pairing_inner, cancel_sync, cancel_sync_inner, confirm_pairing,
     confirm_pairing_inner, delete_peer_ref, delete_peer_ref_inner, get_device_id,
@@ -206,7 +208,7 @@ pub use queries::{
     __specta__fn__query_by_property, __specta__fn__search_blocks,
 };
 #[doc(hidden)]
-pub use spaces::__specta__fn__list_spaces;
+pub use spaces::{__specta__fn__create_page_in_space, __specta__fn__list_spaces};
 #[doc(hidden)]
 pub use sync_cmds::{
     __specta__fn__cancel_pairing, __specta__fn__cancel_sync, __specta__fn__confirm_pairing,
@@ -280,7 +282,7 @@ pub use queries::{
     __cmd__query_backlinks_filtered, __cmd__query_by_property, __cmd__search_blocks,
 };
 #[doc(hidden)]
-pub use spaces::__cmd__list_spaces;
+pub use spaces::{__cmd__create_page_in_space, __cmd__list_spaces};
 #[doc(hidden)]
 pub use sync_cmds::{
     __cmd__cancel_pairing, __cmd__cancel_sync, __cmd__confirm_pairing, __cmd__delete_peer_ref,
@@ -390,6 +392,32 @@ fn validate_date_format(date: &str) -> Result<(), AppError> {
 pub struct DateRange {
     pub start: String,
     pub end: String,
+}
+
+/// Bundled agenda filter for the [`list_blocks`] Tauri command.
+///
+/// Exists purely to keep `list_blocks`'s argument count under the
+/// `tauri-specta` 10-arg limit after FEAT-3 Phase 2 added `space_id`.
+/// The three sub-fields were previously top-level parameters and are
+/// still threaded into `list_blocks_inner` as individual parameters —
+/// the bundling is a transport-layer concern. `None` means "no agenda
+/// filter applies" (the common case), and each sub-field remains
+/// optional inside the struct so callers can still specify a single
+/// date without the range, etc.
+///
+/// Serde `rename_all = "camelCase"` matches the Tauri command-arg
+/// convention (camelCase keys on the IPC boundary), so the hand-written
+/// TS wrapper in `src/lib/tauri.ts` can pass `{ dateRange, source, date }`
+/// without an extra translation layer.
+#[derive(Debug, Clone, serde::Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgendaQuery {
+    /// Single-date agenda lookup (`YYYY-MM-DD`).
+    pub date: Option<String>,
+    /// Date-range agenda lookup (inclusive on both ends).
+    pub date_range: Option<DateRange>,
+    /// Optional source filter (`due_date` / `scheduled_date`).
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]

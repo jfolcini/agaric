@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT 1 as \"ok: i32\" FROM blocks b\n           WHERE b.id = ?\n             AND b.deleted_at IS NULL\n             AND b.is_conflict = 0\n             AND EXISTS (\n                 SELECT 1 FROM block_properties p\n                 WHERE p.block_id = b.id\n                   AND p.key = 'is_space'\n                   AND p.value_text = 'true'\n             )",
+  "describe": {
+    "columns": [
+      {
+        "name": "ok: i32",
+        "ordinal": 0,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "610af30a0857ba6aa3e4ec80281241d6f8302e7f7ce7f22687416b73e8f7b329"
+}

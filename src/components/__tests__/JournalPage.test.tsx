@@ -1702,15 +1702,15 @@ describe('JournalPage', () => {
         const listBlockCalls = mockedInvoke.mock.calls.filter(
           ([cmd, args]) =>
             cmd === 'list_blocks' &&
-            (args as { agendaSource?: string })?.agendaSource === 'column:due_date',
+            (args as { agenda?: { source?: string } })?.agenda?.source === 'column:due_date',
         )
         // Should be a single range call instead of 7 individual day calls
         expect(listBlockCalls).toHaveLength(1)
 
         const callArgs = listBlockCalls[0]?.[1] as {
-          agendaDateRange?: { start: string; end: string }
+          agenda?: { dateRange?: { start: string; end: string } }
         }
-        expect(callArgs.agendaDateRange).toBeDefined()
+        expect(callArgs.agenda?.dateRange).toBeDefined()
 
         const today = new Date()
         const day = today.getDay()
@@ -1719,8 +1719,8 @@ describe('JournalPage', () => {
         weekStart.setDate(today.getDate() + mondayOffset)
         const weekEnd = new Date(weekStart)
         weekEnd.setDate(weekStart.getDate() + 6)
-        expect(callArgs.agendaDateRange?.start).toBe(formatDate(weekStart))
-        expect(callArgs.agendaDateRange?.end).toBe(formatDate(weekEnd))
+        expect(callArgs.agenda?.dateRange?.start).toBe(formatDate(weekStart))
+        expect(callArgs.agenda?.dateRange?.end).toBe(formatDate(weekEnd))
       })
     })
 
@@ -1729,8 +1729,11 @@ describe('JournalPage', () => {
 
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
         if (cmd === 'list_blocks') {
-          const params = args as { agendaSource?: string; agendaDate?: string }
-          if (params?.agendaSource === 'column:scheduled_date' && params?.agendaDate === todayStr) {
+          const params = args as { agenda?: { source?: string; date?: string } }
+          if (
+            params?.agenda?.source === 'column:scheduled_date' &&
+            params?.agenda?.date === todayStr
+          ) {
             return {
               items: [
                 {
@@ -1782,10 +1785,11 @@ describe('JournalPage', () => {
       const listBlockCalls = mockedInvoke.mock.calls.filter(
         ([cmd, callArgs]) =>
           cmd === 'list_blocks' &&
-          (callArgs as { agendaSource?: string })?.agendaSource === 'column:scheduled_date',
+          (callArgs as { agenda?: { source?: string } })?.agenda?.source ===
+            'column:scheduled_date',
       )
       expect(listBlockCalls.length).toBeGreaterThanOrEqual(1)
-      expect((listBlockCalls[0]?.[1] as { agendaDate: string }).agendaDate).toBe(todayStr)
+      expect((listBlockCalls[0]?.[1] as { agenda: { date: string } }).agenda.date).toBe(todayStr)
     })
 
     it("completedDate 'Today' filter queries completed_at with today's date", async () => {

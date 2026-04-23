@@ -23,6 +23,7 @@ import {
   PageBlockContext,
   type PageBlockState,
 } from '../../stores/page-blocks'
+import { useSpaceStore } from '../../stores/space'
 
 // Capture the options passed to useRovingEditor so we can call searchTags/searchPages directly.
 let capturedSearchTags: ((query: string) => PickerItem[] | Promise<PickerItem[]>) | undefined
@@ -267,6 +268,15 @@ beforeEach(() => {
   useBlockStore.setState({
     focusedBlockId: null,
     selectedBlockIds: [],
+  })
+  // FEAT-3 Phase 2 — seed the space store so `onCreatePage` inside
+  // `useBlockResolve` routes through `createPageInSpace` without hitting
+  // the defensive `!isReady` guard. Tests that need to exercise the
+  // guard can override this in their own `beforeEach`.
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_TEST',
+    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test' }],
+    isReady: true,
   })
 })
 
@@ -643,7 +653,7 @@ describe('BlockTree picker wiring', () => {
     expect(typeof capturedOnCreatePage).toBe('function')
   })
 
-  it('onCreatePage calls create_block with blockType page and returns the ID', async () => {
+  it('onCreatePage calls create_page_in_space with content and current space id', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
     renderBlockTree()
@@ -652,22 +662,17 @@ describe('BlockTree picker wiring', () => {
       expect(capturedOnCreatePage).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'NEW_PAGE_ID_00000000000000',
-      block_type: 'page',
-      content: 'My New Page',
-      parent_id: null,
-      position: 0,
-    })
+    // FEAT-3 Phase 2 — `onCreatePage` now routes through the atomic
+    // `create_page_in_space` command, which returns the new page's ULID.
+    mockedInvoke.mockResolvedValueOnce('NEW_PAGE_ID_00000000000000')
 
     const resultId = await capturedOnCreatePage?.('My New Page')
 
     expect(resultId).toBe('NEW_PAGE_ID_00000000000000')
-    expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-      blockType: 'page',
+    expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
       content: 'My New Page',
       parentId: null,
-      position: null,
+      spaceId: 'SPACE_TEST',
     })
   })
 
@@ -2089,21 +2094,9 @@ describe('BlockTree searchPages caching', () => {
       expect(capturedOnCreatePage).toBeDefined()
     })
 
-    // Mock create_block
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'NEW_PAGE_ID',
-      block_type: 'page',
-      content: 'Freshly Created',
-      parent_id: null,
-      position: 0,
-      deleted_at: null,
-      is_conflict: false,
-      conflict_type: null,
-      todo_state: null,
-      priority: null,
-      due_date: null,
-      scheduled_date: null,
-    })
+    // FEAT-3 Phase 2 — onCreatePage routes through create_page_in_space,
+    // which returns the new page's ULID (a plain string).
+    mockedInvoke.mockResolvedValueOnce('NEW_PAGE_ID')
 
     await capturedOnCreatePage?.('Freshly Created')
 

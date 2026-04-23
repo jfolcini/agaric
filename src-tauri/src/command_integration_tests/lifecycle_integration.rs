@@ -186,6 +186,7 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
             None,
             cursor,
             Some(PAGE_SIZE),
+            None, // FEAT-3 Phase 2: space_id unscoped
         )
         .await
         .unwrap();
@@ -267,6 +268,7 @@ async fn list_blocks_with_agenda_date_returns_matching_blocks() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -303,6 +305,7 @@ async fn list_blocks_with_agenda_date_no_matches_returns_empty() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -380,6 +383,7 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -412,6 +416,7 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -585,6 +590,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -605,6 +611,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -625,6 +632,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -645,6 +653,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -665,6 +674,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -685,6 +695,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -705,6 +716,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -731,6 +743,7 @@ async fn test_list_blocks_accepts_valid_date() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -751,6 +764,7 @@ async fn test_list_blocks_accepts_valid_date() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -771,6 +785,7 @@ async fn test_list_blocks_accepts_valid_date() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(

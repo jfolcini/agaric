@@ -24,6 +24,7 @@ import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { addRecentPage } from '../../lib/recent-pages'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
+import { useSpaceStore } from '../../stores/space'
 import { SearchPanel } from '../SearchPanel'
 
 // UX-153: Mock resolvePageByAlias separately so alias-resolution calls
@@ -64,6 +65,17 @@ beforeEach(() => {
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
     selectedBlockId: null,
+  })
+  // FEAT-3 Phase 2 — SearchPanel now gates on `useSpaceStore.isReady`
+  // and passes `currentSpaceId` to `searchBlocks`. Seed the store so
+  // tests exercise the real code path (not the loading skeleton).
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_TEST',
+    availableSpaces: [
+      { id: 'SPACE_TEST', name: 'Test' },
+      { id: 'SPACE_OTHER', name: 'Other' },
+    ],
+    isReady: true,
   })
 })
 
@@ -129,6 +141,7 @@ describe('SearchPanel', () => {
         tagIds: null,
         cursor: null,
         limit: 50,
+        spaceId: 'SPACE_TEST',
       })
     })
 
@@ -161,6 +174,7 @@ describe('SearchPanel', () => {
         tagIds: null,
         cursor: null,
         limit: 50,
+        spaceId: 'SPACE_TEST',
       })
     })
 
@@ -228,6 +242,7 @@ describe('SearchPanel', () => {
         tagIds: null,
         cursor: 'cursor_abc',
         limit: 50,
+        spaceId: 'SPACE_TEST',
       })
     })
 
@@ -269,6 +284,7 @@ describe('SearchPanel', () => {
       tagIds: null,
       cursor: null,
       limit: 50,
+      spaceId: 'SPACE_TEST',
     })
   })
 
@@ -608,6 +624,7 @@ describe('SearchPanel', () => {
         tagIds: null,
         cursor: null,
         limit: 50,
+        spaceId: 'SPACE_TEST',
       })
     })
 
@@ -631,6 +648,7 @@ describe('SearchPanel', () => {
         tagIds: null,
         cursor: null,
         limit: 50,
+        spaceId: 'SPACE_TEST',
       })
     })
 
@@ -674,6 +692,7 @@ describe('SearchPanel', () => {
       tagIds: null,
       cursor: null,
       limit: 50,
+      spaceId: 'SPACE_TEST',
     })
   })
 
@@ -1485,6 +1504,7 @@ describe('SearchPanel', () => {
           tagIds: null,
           cursor: null,
           limit: 50,
+          spaceId: 'SPACE_TEST',
         })
       })
     })
@@ -1650,6 +1670,73 @@ describe('SearchPanel', () => {
       expect(screen.getByRole('search')).toBeInTheDocument()
       const sticky = container.querySelector('.sticky.top-0')
       expect(sticky).toBeNull()
+    })
+  })
+
+  // FEAT-3 Phase 2 — scoping + loading gate. SearchPanel now consults
+  // `useSpaceStore.isReady` before firing `searchBlocks`, and passes
+  // `currentSpaceId` through so the backend filters results to the
+  // active space. When the store hasn't hydrated yet the component
+  // renders a `LoadingSkeleton` instead of the search form.
+  describe('space scoping (FEAT-3 Phase 2)', () => {
+    it('renders a loading skeleton when the space store has not hydrated', () => {
+      useSpaceStore.setState({
+        currentSpaceId: null,
+        availableSpaces: [],
+        isReady: false,
+      })
+
+      const { container } = render(<SearchPanel />)
+
+      const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
+      expect(skeletons.length).toBeGreaterThan(0)
+      expect(container.querySelector('[aria-busy="true"]')).toBeInTheDocument()
+      // The search form must NOT render while the skeleton is up —
+      // otherwise a quick keystroke would fire `searchBlocks` with a
+      // null `spaceId` and leak cross-space matches.
+      expect(screen.queryByPlaceholderText(t('search.searchPlaceholder'))).not.toBeInTheDocument()
+    })
+
+    it('does not fire searchBlocks while the store is unhydrated', async () => {
+      useSpaceStore.setState({
+        currentSpaceId: null,
+        availableSpaces: [],
+        isReady: false,
+      })
+
+      render(<SearchPanel />)
+
+      // Tick once so any queued effects have a chance to run.
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      const searchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'search_blocks')
+      expect(searchCalls).toHaveLength(0)
+    })
+
+    it('passes the current spaceId through to searchBlocks after hydration', async () => {
+      // The default `beforeEach` already seeded the store with
+      // `currentSpaceId: 'SPACE_TEST'` + `isReady: true`, but we set
+      // a distinct id here to make the assertion less ambiguous.
+      useSpaceStore.setState({
+        currentSpaceId: 'SPACE_WORK',
+        availableSpaces: [{ id: 'SPACE_WORK', name: 'Work' }],
+        isReady: true,
+      })
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+      render(<SearchPanel />)
+
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+      typeAndSubmit(input, 'scoped')
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'search_blocks',
+          expect.objectContaining({ query: 'scoped', spaceId: 'SPACE_WORK' }),
+        )
+      })
     })
   })
 })

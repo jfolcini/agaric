@@ -342,6 +342,7 @@ async fn date_validation_invalid_month_13_returns_validation() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -366,6 +367,7 @@ async fn date_validation_short_format_returns_validation() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -390,6 +392,7 @@ async fn date_validation_two_digit_year_returns_validation() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -414,6 +417,7 @@ async fn date_validation_day_32_returns_validation() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -438,6 +442,7 @@ async fn date_validation_non_date_string_returns_validation() {
         None,
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await;
     assert!(

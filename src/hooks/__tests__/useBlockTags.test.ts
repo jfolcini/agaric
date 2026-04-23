@@ -92,11 +92,10 @@ describe('useBlockTags allTags', () => {
       blockType: 'tag',
       tagId: null,
       showDeleted: null,
-      agendaDate: null,
-      agendaDateRange: null,
-      agendaSource: null,
+      agenda: null,
       cursor: null,
       limit: null,
+      spaceId: null,
     })
   })
 

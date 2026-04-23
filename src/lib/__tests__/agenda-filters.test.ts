@@ -314,12 +314,14 @@ describe('executeAgendaFilters', () => {
       expect(result.blocks).toHaveLength(1)
       expect(result.blocks[0]?.id).toBe('due-today')
 
-      // Should have called list_blocks with agendaDate
+      // Should have called list_blocks with nested agenda.date
       expect(mockedInvoke).toHaveBeenCalledWith(
         'list_blocks',
         expect.objectContaining({
-          agendaDate: '2025-03-15',
-          agendaSource: 'column:due_date',
+          agenda: expect.objectContaining({
+            date: '2025-03-15',
+            source: 'column:due_date',
+          }),
         }),
       )
     })
@@ -332,12 +334,14 @@ describe('executeAgendaFilters', () => {
 
       await executeAgendaFilters([{ dimension: 'dueDate', values: ['This week'] }])
 
-      // Should have called list_blocks with agendaDateRange
+      // Should have called list_blocks with nested agenda.dateRange
       expect(mockedInvoke).toHaveBeenCalledWith(
         'list_blocks',
         expect.objectContaining({
-          agendaDateRange: { start: '2025-03-10', end: '2025-03-16' },
-          agendaSource: 'column:due_date',
+          agenda: expect.objectContaining({
+            dateRange: { start: '2025-03-10', end: '2025-03-16' },
+            source: 'column:due_date',
+          }),
         }),
       )
     })
@@ -470,9 +474,10 @@ describe('executeAgendaFilters', () => {
       const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
       expect(listBlocksCalls).toHaveLength(1)
       const [, args] = listBlocksCalls[0] as [string, Record<string, unknown>]
-      expect(args['agendaDate']).toBe('2024-01-15')
-      expect(args['agendaDateRange']).toBeNull()
-      expect(args['agendaSource']).toBe('column:due_date')
+      const agenda = args['agenda'] as Record<string, unknown>
+      expect(agenda['date']).toBe('2024-01-15')
+      expect(agenda['dateRange']).toBeNull()
+      expect(agenda['source']).toBe('column:due_date')
     })
 
     it('Next 7 days preset dispatches to listBlocks with agendaDateRange (range branch)', async () => {
@@ -481,9 +486,10 @@ describe('executeAgendaFilters', () => {
       const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
       expect(listBlocksCalls).toHaveLength(1)
       const [, args] = listBlocksCalls[0] as [string, Record<string, unknown>]
-      expect(args['agendaDateRange']).toEqual({ start: '2024-01-15', end: '2024-01-21' })
-      expect(args['agendaDate']).toBeNull()
-      expect(args['agendaSource']).toBe('column:due_date')
+      const agenda = args['agenda'] as Record<string, unknown>
+      expect(agenda['dateRange']).toEqual({ start: '2024-01-15', end: '2024-01-21' })
+      expect(agenda['date']).toBeNull()
+      expect(agenda['source']).toBe('column:due_date')
     })
 
     it('unknown value (no Overdue match, no preset match) returns an empty result', async () => {
@@ -520,8 +526,10 @@ describe('executeAgendaFilters', () => {
       expect(mockedInvoke).toHaveBeenCalledWith(
         'list_blocks',
         expect.objectContaining({
-          agendaDate: '2025-03-15',
-          agendaSource: 'column:scheduled_date',
+          agenda: expect.objectContaining({
+            date: '2025-03-15',
+            source: 'column:scheduled_date',
+          }),
         }),
       )
     })

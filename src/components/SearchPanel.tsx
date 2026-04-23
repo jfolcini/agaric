@@ -37,6 +37,7 @@ import {
   searchBlocks,
 } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
+import { useSpaceStore } from '../stores/space'
 import { EmptyState } from './EmptyState'
 import { PageLink } from './PageLink'
 import { ResultCard } from './ResultCard'
@@ -52,6 +53,14 @@ function hasCJK(text: string): boolean {
 
 export function SearchPanel(): React.ReactElement {
   const { t } = useTranslation()
+
+  // FEAT-3 Phase 2 — scope search to the current space. Mirrors the
+  // `PageBrowser` pattern: render a `LoadingSkeleton` until the
+  // `SpaceStore` has hydrated so the first `searchBlocks` call never
+  // leaks cross-space results.
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  const spaceIsReady = useSpaceStore((s) => s.isReady)
+
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [searched, setSearched] = useState(false)
@@ -96,8 +105,9 @@ export function SearchPanel(): React.ReactElement {
         tagIds: filterTagIds.length > 0 ? filterTagIds : undefined,
         cursor,
         limit: 50,
+        spaceId: currentSpaceId ?? undefined,
       }),
-    [debouncedQuery, filterPageId, filterTagIds],
+    [debouncedQuery, filterPageId, filterTagIds, currentSpaceId],
   )
 
   const {
@@ -108,7 +118,7 @@ export function SearchPanel(): React.ReactElement {
     error,
     setItems,
   } = usePaginatedQuery(queryFn, {
-    enabled: debouncedQuery.length > 0,
+    enabled: spaceIsReady && debouncedQuery.length > 0,
     onError: t('search.failed'),
   })
 
@@ -271,11 +281,15 @@ export function SearchPanel(): React.ReactElement {
     [navigateToPage],
   )
 
-  // Page picker: search pages on input change
+  // Page picker: search pages on input change (scoped to the current space)
   useEffect(() => {
     if (!pagePopoverOpen) return
     setPageSearchLoading(true)
-    listBlocks({ blockType: 'page', limit: 20 })
+    listBlocks({
+      blockType: 'page',
+      limit: 20,
+      spaceId: currentSpaceId ?? undefined,
+    })
       .then((res) => {
         // UX-248 — Unicode-aware fold so `İstanbul` ↔ `istanbul`
         // etc. match consistently with PageBrowser and HighlightMatch.
@@ -289,7 +303,7 @@ export function SearchPanel(): React.ReactElement {
         setPageSuggestions([])
       })
       .finally(() => setPageSearchLoading(false))
-  }, [pagePopoverOpen, pageSearch])
+  }, [pagePopoverOpen, pageSearch, currentSpaceId])
 
   // Tag picker: search tags on input change
   useEffect(() => {
@@ -334,6 +348,16 @@ export function SearchPanel(): React.ReactElement {
     setFilterPageTitle(null)
     setFilterTagIds([])
     setFilterTagNames([])
+  }
+
+  // FEAT-3 Phase 2 — render a skeleton while the SpaceStore hydrates so
+  // we never fire a `searchBlocks` call with an unresolved `spaceId`.
+  if (!spaceIsReady) {
+    return (
+      <div className="search-panel space-y-4" aria-busy="true">
+        <LoadingSkeleton count={3} height="h-10" className="search-panel-loading" />
+      </div>
+    )
   }
 
   return (

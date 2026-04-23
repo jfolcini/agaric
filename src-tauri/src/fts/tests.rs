@@ -277,7 +277,7 @@ async fn update_fts_indexes_block_and_search_finds_it() {
     update_fts_for_block(&pool, BLOCK_A).await.unwrap();
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let results = search_fts(&pool, "wonderful", &page, None, None)
+    let results = search_fts(&pool, "wonderful", &page, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -316,7 +316,7 @@ async fn update_fts_after_edit_finds_new_content() {
     let page = PageRequest::new(None, Some(50)).unwrap();
 
     // Old content should NOT be found
-    let old_results = search_fts(&pool, "original", &page, None, None)
+    let old_results = search_fts(&pool, "original", &page, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -326,7 +326,7 @@ async fn update_fts_after_edit_finds_new_content() {
     );
 
     // New content should be found
-    let new_results = search_fts(&pool, "different", &page, None, None)
+    let new_results = search_fts(&pool, "different", &page, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -351,7 +351,7 @@ async fn update_fts_deleted_block_removes_from_index() {
     update_fts_for_block(&pool, BLOCK_A).await.unwrap();
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let results = search_fts(&pool, "searchable", &page, None, None)
+    let results = search_fts(&pool, "searchable", &page, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -382,7 +382,7 @@ async fn update_fts_conflict_block_removes_from_index() {
     update_fts_for_block(&pool, BLOCK_A).await.unwrap();
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let results = search_fts(&pool, "conflict", &page, None, None)
+    let results = search_fts(&pool, "conflict", &page, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -430,7 +430,7 @@ async fn remove_fts_makes_block_unsearchable() {
     remove_fts_for_block(&pool, BLOCK_A).await.unwrap();
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let results = search_fts(&pool, "removable", &page, None, None)
+    let results = search_fts(&pool, "removable", &page, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -465,15 +465,21 @@ async fn rebuild_indexes_all_active_blocks() {
 
     let page = PageRequest::new(None, Some(50)).unwrap();
 
-    let a = search_fts(&pool, "alpha", &page, None, None).await.unwrap();
+    let a = search_fts(&pool, "alpha", &page, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(a.items.len(), 1, "rebuild should index alpha block");
     assert_eq!(a.items[0].id, BLOCK_A, "alpha search should return BLOCK_A");
 
-    let b = search_fts(&pool, "beta", &page, None, None).await.unwrap();
+    let b = search_fts(&pool, "beta", &page, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(b.items.len(), 1, "rebuild should index beta block");
     assert_eq!(b.items[0].id, BLOCK_B, "beta search should return BLOCK_B");
 
-    let g = search_fts(&pool, "gamma", &page, None, None).await.unwrap();
+    let g = search_fts(&pool, "gamma", &page, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(g.items.len(), 1, "rebuild should index gamma block");
     assert_eq!(g.items[0].id, BLOCK_C, "gamma search should return BLOCK_C");
 }
@@ -488,7 +494,7 @@ async fn rebuild_excludes_deleted_blocks() {
     rebuild_fts_index(&pool).await.unwrap();
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let deleted_results = search_fts(&pool, "deleted", &page, None, None)
+    let deleted_results = search_fts(&pool, "deleted", &page, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -497,7 +503,7 @@ async fn rebuild_excludes_deleted_blocks() {
         "deleted block should be excluded from rebuild"
     );
 
-    let visible_results = search_fts(&pool, "visible", &page, None, None)
+    let visible_results = search_fts(&pool, "visible", &page, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -517,7 +523,7 @@ async fn rebuild_excludes_conflict_blocks() {
     rebuild_fts_index(&pool).await.unwrap();
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let conflict_results = search_fts(&pool, "conflicting", &page, None, None)
+    let conflict_results = search_fts(&pool, "conflicting", &page, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -553,7 +559,9 @@ async fn rebuild_clears_stale_entries() {
     rebuild_fts_index(&pool).await.unwrap();
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let results = search_fts(&pool, "first", &page, None, None).await.unwrap();
+    let results = search_fts(&pool, "first", &page, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(
         results.items.len(),
         0,
@@ -576,7 +584,7 @@ async fn rebuild_resolves_tag_and_page_refs() {
 
     // Should find by resolved tag name — the tag block itself has "urgent"
     // and the content block references it via #[ULID], stripped to "urgent"
-    let tag_results = search_fts(&pool, "urgent", &page, None, None)
+    let tag_results = search_fts(&pool, "urgent", &page, None, None, None)
         .await
         .unwrap();
     assert!(
@@ -585,7 +593,9 @@ async fn rebuild_resolves_tag_and_page_refs() {
     );
 
     // Should find the content block by "task" (unique to it)
-    let task_results = search_fts(&pool, "task", &page, None, None).await.unwrap();
+    let task_results = search_fts(&pool, "task", &page, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(
         task_results.items.len(),
         1,
@@ -638,7 +648,7 @@ async fn fts_optimize_succeeds_and_search_still_works() {
 
     // Search should still work
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let results = search_fts(&pool, "optimize", &page, None, None)
+    let results = search_fts(&pool, "optimize", &page, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -685,7 +695,9 @@ async fn search_basic_finds_correct_block() {
     rebuild_fts_index(&pool).await.unwrap();
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let results = search_fts(&pool, "alpha", &page, None, None).await.unwrap();
+    let results = search_fts(&pool, "alpha", &page, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(
         results.items.len(),
         1,
@@ -704,7 +716,7 @@ async fn search_no_results() {
     rebuild_fts_index(&pool).await.unwrap();
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let results = search_fts(&pool, "nonexistent", &page, None, None)
+    let results = search_fts(&pool, "nonexistent", &page, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -729,7 +741,9 @@ async fn search_empty_query_returns_empty() {
     rebuild_fts_index(&pool).await.unwrap();
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let results = search_fts(&pool, "", &page, None, None).await.unwrap();
+    let results = search_fts(&pool, "", &page, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(
         results.items.len(),
         0,
@@ -748,7 +762,9 @@ async fn search_whitespace_query_returns_empty() {
     rebuild_fts_index(&pool).await.unwrap();
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let results = search_fts(&pool, "   ", &page, None, None).await.unwrap();
+    let results = search_fts(&pool, "   ", &page, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(
         results.items.len(),
         0,
@@ -779,7 +795,7 @@ async fn search_deleted_blocks_excluded() {
     soft_delete_block(&pool, BLOCK_B).await;
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let results = search_fts(&pool, "visible", &page, None, None)
+    let results = search_fts(&pool, "visible", &page, None, None, None)
         .await
         .unwrap();
     // Only BLOCK_A should appear (BLOCK_B is deleted)
@@ -839,7 +855,7 @@ async fn search_pagination_works() {
 
     // First page with limit 2
     let page1 = PageRequest::new(None, Some(2)).unwrap();
-    let results1 = search_fts(&pool, "pagination", &page1, None, None)
+    let results1 = search_fts(&pool, "pagination", &page1, None, None, None)
         .await
         .unwrap();
     assert_eq!(results1.items.len(), 2, "first page should return 2 items");
@@ -851,7 +867,7 @@ async fn search_pagination_works() {
 
     // Second page using cursor
     let page2 = PageRequest::new(results1.next_cursor, Some(2)).unwrap();
-    let results2 = search_fts(&pool, "pagination", &page2, None, None)
+    let results2 = search_fts(&pool, "pagination", &page2, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -890,7 +906,7 @@ async fn search_fts5_syntax_error_returns_validation() {
     // With query sanitization, unmatched quotes are escaped and no longer
     // produce syntax errors.  The query succeeds (returns 0 results since
     // the literal token does not match any content).
-    let result = search_fts(&pool, "\"unclosed quote", &page, None, None).await;
+    let result = search_fts(&pool, "\"unclosed quote", &page, None, None, None).await;
     assert!(
         result.is_ok(),
         "sanitized query should not produce a syntax error"
@@ -923,7 +939,7 @@ async fn search_multiple_terms_matches() {
     let page = PageRequest::new(None, Some(50)).unwrap();
 
     // Both blocks match "programming"
-    let both = search_fts(&pool, "programming", &page, None, None)
+    let both = search_fts(&pool, "programming", &page, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -933,7 +949,9 @@ async fn search_multiple_terms_matches() {
     );
 
     // Only BLOCK_A matches "rust"
-    let rust_only = search_fts(&pool, "rust", &page, None, None).await.unwrap();
+    let rust_only = search_fts(&pool, "rust", &page, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(
         rust_only.items.len(),
         1,
@@ -973,7 +991,7 @@ async fn search_sql_injection_attempt_no_crash() {
         "1 UNION SELECT * FROM blocks",
     ];
     for injection in injections {
-        let result = search_fts(&pool, injection, &page, None, None).await;
+        let result = search_fts(&pool, injection, &page, None, None, None).await;
         assert!(
             result.is_ok(),
             "SQL injection attempt should not crash: {injection}"
@@ -981,7 +999,7 @@ async fn search_sql_injection_attempt_no_crash() {
     }
 
     // Verify the database is intact
-    let check = search_fts(&pool, "normal", &page, None, None)
+    let check = search_fts(&pool, "normal", &page, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -1001,20 +1019,20 @@ async fn search_fts5_operators_are_sanitized() {
     let page = PageRequest::new(None, Some(50)).unwrap();
 
     // Bare "OR" with no surrounding terms is quoted as a literal word.
-    let result = search_fts(&pool, "OR", &page, None, None).await;
+    let result = search_fts(&pool, "OR", &page, None, None, None).await;
     assert!(result.is_ok(), "OR as query should not crash");
 
     // "NOT hello" is now preserved as the FTS5 NOT operator, which is a
     // binary operator — standalone NOT is an FTS5 syntax error.  The
     // search_fts error handler maps this to a Validation error.
-    let not_result = search_fts(&pool, "NOT hello", &page, None, None).await;
+    let not_result = search_fts(&pool, "NOT hello", &page, None, None, None).await;
     assert!(
         not_result.is_err(),
         "standalone NOT should produce a validation error"
     );
 
     // NEAR() should be treated as a literal word (not a recognised operator)
-    let near_result = search_fts(&pool, "NEAR(hello world)", &page, None, None).await;
+    let near_result = search_fts(&pool, "NEAR(hello world)", &page, None, None, None).await;
     assert!(near_result.is_ok(), "NEAR() as query should not crash");
 }
 
@@ -1044,7 +1062,7 @@ async fn search_special_fts5_characters_no_crash() {
         "col1 : col2",
     ];
     for q in special_queries {
-        let result = search_fts(&pool, q, &page, None, None).await;
+        let result = search_fts(&pool, q, &page, None, None, None).await;
         assert!(
             result.is_ok(),
             "Special FTS5 character query should not crash: {q}"
@@ -1061,7 +1079,7 @@ async fn search_unmatched_quotes_no_crash() {
     let page = PageRequest::new(None, Some(50)).unwrap();
 
     // With sanitization, unmatched quotes are escaped -- should succeed
-    let result = search_fts(&pool, "\"unclosed quote", &page, None, None).await;
+    let result = search_fts(&pool, "\"unclosed quote", &page, None, None, None).await;
     assert!(
         result.is_ok(),
         "unmatched quotes should not crash after sanitization"
@@ -1181,7 +1199,7 @@ async fn search_excludes_soft_deleted_blocks_after_index() {
     soft_delete_block(&pool, BLOCK_B).await;
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let results = search_fts(&pool, "unique", &page, None, None)
+    let results = search_fts(&pool, "unique", &page, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -1215,7 +1233,7 @@ async fn search_respects_max_results_cap() {
 
     // Request a limit higher than MAX_SEARCH_RESULTS (100)
     let page = PageRequest::new(None, Some(200)).unwrap();
-    let results = search_fts(&pool, "capped", &page, None, None)
+    let results = search_fts(&pool, "capped", &page, None, None, None)
         .await
         .unwrap();
 
@@ -1416,7 +1434,7 @@ async fn search_pagination_identical_ranks_no_duplicates_no_skips() {
 
     loop {
         let page = PageRequest::new(cursor.clone(), Some(2)).unwrap();
-        let result = search_fts(&pool, "identical", &page, None, None)
+        let result = search_fts(&pool, "identical", &page, None, None, None)
             .await
             .unwrap();
 
@@ -1483,7 +1501,7 @@ async fn search_cursor_round_trip_with_float_rank() {
 
     // First page: limit 1
     let page1 = PageRequest::new(None, Some(1)).unwrap();
-    let result1 = search_fts(&pool, "apple", &page1, None, None)
+    let result1 = search_fts(&pool, "apple", &page1, None, None, None)
         .await
         .unwrap();
     assert_eq!(result1.items.len(), 1, "first page should return 1 item");
@@ -1509,7 +1527,7 @@ async fn search_cursor_round_trip_with_float_rank() {
 
     // Second page using the cursor
     let page2 = PageRequest::new(result1.next_cursor, Some(1)).unwrap();
-    let result2 = search_fts(&pool, "apple", &page2, None, None)
+    let result2 = search_fts(&pool, "apple", &page2, None, None, None)
         .await
         .unwrap();
     assert_eq!(result2.items.len(), 1, "second page should return 1 item");
@@ -1522,7 +1540,7 @@ async fn search_cursor_round_trip_with_float_rank() {
 
     // Third page
     let page3 = PageRequest::new(result2.next_cursor, Some(1)).unwrap();
-    let result3 = search_fts(&pool, "apple", &page3, None, None)
+    let result3 = search_fts(&pool, "apple", &page3, None, None, None)
         .await
         .unwrap();
     assert_eq!(result3.items.len(), 1, "third page should return 1 item");
@@ -1588,7 +1606,7 @@ async fn search_pagination_close_ranks_epsilon_boundary() {
 
     loop {
         let page = PageRequest::new(cursor.clone(), Some(1)).unwrap();
-        let result = search_fts(&pool, "pagination", &page, None, None)
+        let result = search_fts(&pool, "pagination", &page, None, None, None)
             .await
             .unwrap();
 
@@ -1657,7 +1675,7 @@ async fn search_fts_sanitizer_protects_against_fts5_operators() {
         "(grouping)",
         "NEAR(a b)",
     ] {
-        let result = search_fts(&pool, dangerous_query, &page, None, None).await;
+        let result = search_fts(&pool, dangerous_query, &page, None, None, None).await;
         assert!(
             result.is_ok(),
             "sanitizer should protect query '{}' from parse error, got: {:?}",
@@ -1703,7 +1721,7 @@ async fn reindex_fts_references_batches_correctly() {
     rebuild_fts_index(&pool).await.unwrap();
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let before = search_fts(&pool, "meeting", &page, None, None)
+    let before = search_fts(&pool, "meeting", &page, None, None, None)
         .await
         .unwrap();
     // tag block itself + 3 content blocks
@@ -1724,7 +1742,7 @@ async fn reindex_fts_references_batches_correctly() {
     reindex_fts_references(&pool, tag_id).await.unwrap();
 
     // All 3 content blocks should now resolve to "standup"
-    let after = search_fts(&pool, "standup", &page, None, None)
+    let after = search_fts(&pool, "standup", &page, None, None, None)
         .await
         .unwrap();
     let content_ids: Vec<&str> = after
@@ -1746,7 +1764,7 @@ async fn reindex_fts_references_batches_correctly() {
     }
 
     // Old tag name should no longer match any content blocks
-    let old = search_fts(&pool, "meeting", &page, None, None)
+    let old = search_fts(&pool, "meeting", &page, None, None, None)
         .await
         .unwrap();
     let old_content: Vec<&str> = old
@@ -1800,6 +1818,7 @@ async fn reindex_fts_references_updates_tag_refs() {
         &crate::pagination::PageRequest::new(None, Some(10)).unwrap(),
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1825,6 +1844,7 @@ async fn reindex_fts_references_updates_tag_refs() {
         &crate::pagination::PageRequest::new(None, Some(10)).unwrap(),
         None,
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1882,7 +1902,7 @@ async fn reindex_fts_references_batch_50_blocks() {
     rebuild_fts_index(&pool).await.unwrap();
 
     let page = PageRequest::new(None, Some(100)).unwrap();
-    let before = search_fts(&pool, "project", &page, None, None)
+    let before = search_fts(&pool, "project", &page, None, None, None)
         .await
         .unwrap();
     assert!(
@@ -1906,7 +1926,7 @@ async fn reindex_fts_references_batch_50_blocks() {
     reindex_fts_references(&pool, tag_id).await.unwrap();
 
     // All 50 blocks should now resolve to "initiative"
-    let after = search_fts(&pool, "initiative", &page, None, None)
+    let after = search_fts(&pool, "initiative", &page, None, None, None)
         .await
         .unwrap();
     let content_after: Vec<&str> = after
@@ -1929,7 +1949,7 @@ async fn reindex_fts_references_batch_50_blocks() {
     }
 
     // Old name should no longer match any content blocks
-    let old = search_fts(&pool, "project", &page, None, None)
+    let old = search_fts(&pool, "project", &page, None, None, None)
         .await
         .unwrap();
     let old_content: Vec<&str> = old
@@ -1986,7 +2006,7 @@ async fn reindex_fts_references_updates_inline_only_referencing_block() {
     // Confirm baseline: "meeting" finds the block (via inline ref
     // resolution during strip_for_fts).
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let before = search_fts(&pool, "meeting", &page, None, None)
+    let before = search_fts(&pool, "meeting", &page, None, None, None)
         .await
         .unwrap();
     assert!(
@@ -2006,14 +2026,14 @@ async fn reindex_fts_references_updates_inline_only_referencing_block() {
     reindex_fts_references(&pool, tag_id).await.unwrap();
 
     // "standup" must now match the block; "meeting" must not.
-    let new_results = search_fts(&pool, "standup", &page, None, None)
+    let new_results = search_fts(&pool, "standup", &page, None, None, None)
         .await
         .unwrap();
     assert!(
         new_results.items.iter().any(|r| r.id == blk_id),
         "inline-only block must be reindexed so 'standup' finds it after rename"
     );
-    let old_results = search_fts(&pool, "meeting", &page, None, None)
+    let old_results = search_fts(&pool, "meeting", &page, None, None, None)
         .await
         .unwrap();
     let stale: Vec<&str> = old_results
@@ -2069,21 +2089,27 @@ async fn rebuild_fts_index_split_indexes_all_active_blocks() {
 
     let page = PageRequest::new(None, Some(50)).unwrap();
 
-    let a = search_fts(&pool, "alpha", &page, None, None).await.unwrap();
+    let a = search_fts(&pool, "alpha", &page, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(a.items.len(), 1, "split rebuild should index alpha block");
     assert_eq!(
         a.items[0].id, BLOCK_A,
         "alpha search should return BLOCK_A after split rebuild"
     );
 
-    let b = search_fts(&pool, "beta", &page, None, None).await.unwrap();
+    let b = search_fts(&pool, "beta", &page, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(b.items.len(), 1, "split rebuild should index beta block");
     assert_eq!(
         b.items[0].id, BLOCK_B,
         "beta search should return BLOCK_B after split rebuild"
     );
 
-    let g = search_fts(&pool, "gamma", &page, None, None).await.unwrap();
+    let g = search_fts(&pool, "gamma", &page, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(g.items.len(), 1, "split rebuild should index gamma block");
     assert_eq!(
         g.items[0].id, BLOCK_C,
@@ -2101,7 +2127,7 @@ async fn rebuild_fts_index_split_excludes_deleted() {
     rebuild_fts_index_split(&pool, &pool).await.unwrap();
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let deleted_results = search_fts(&pool, "deleted", &page, None, None)
+    let deleted_results = search_fts(&pool, "deleted", &page, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -2110,7 +2136,7 @@ async fn rebuild_fts_index_split_excludes_deleted() {
         "deleted block should be excluded from split rebuild"
     );
 
-    let visible_results = search_fts(&pool, "visible", &page, None, None)
+    let visible_results = search_fts(&pool, "visible", &page, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -2134,7 +2160,7 @@ async fn rebuild_fts_index_split_resolves_refs() {
     let page = PageRequest::new(None, Some(50)).unwrap();
 
     // Should find by resolved tag name
-    let tag_results = search_fts(&pool, "urgent", &page, None, None)
+    let tag_results = search_fts(&pool, "urgent", &page, None, None, None)
         .await
         .unwrap();
     assert!(
@@ -2143,7 +2169,9 @@ async fn rebuild_fts_index_split_resolves_refs() {
     );
 
     // Should find the content block by "task"
-    let task_results = search_fts(&pool, "task", &page, None, None).await.unwrap();
+    let task_results = search_fts(&pool, "task", &page, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(
         task_results.items.len(),
         1,
@@ -2166,7 +2194,9 @@ async fn rebuild_fts_index_split_clears_stale_entries() {
     rebuild_fts_index_split(&pool, &pool).await.unwrap();
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let results = search_fts(&pool, "first", &page, None, None).await.unwrap();
+    let results = search_fts(&pool, "first", &page, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(
         results.items.len(),
         0,
@@ -2196,7 +2226,9 @@ async fn update_fts_for_block_split_indexes_active_block() {
         .unwrap();
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let results = search_fts(&pool, "split", &page, None, None).await.unwrap();
+    let results = search_fts(&pool, "split", &page, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(
         results.items.len(),
         1,
@@ -2232,7 +2264,7 @@ async fn update_fts_for_block_split_removes_deleted_block() {
         .unwrap();
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let results = search_fts(&pool, "deleted", &page, None, None)
+    let results = search_fts(&pool, "deleted", &page, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -2266,7 +2298,7 @@ async fn update_fts_for_block_split_removes_conflict_block() {
         .unwrap();
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let results = search_fts(&pool, "conflict", &page, None, None)
+    let results = search_fts(&pool, "conflict", &page, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -2297,12 +2329,165 @@ async fn update_fts_for_block_split_handles_null_content() {
         .unwrap();
 
     let page = PageRequest::new(None, Some(50)).unwrap();
-    let results = search_fts(&pool, "content", &page, None, None)
+    let results = search_fts(&pool, "content", &page, None, None, None)
         .await
         .unwrap();
     assert_eq!(
         results.items.len(),
         0,
         "split variant should not index block with NULL content"
+    );
+}
+
+// ======================================================================
+// FEAT-3 Phase 2 — space filtering in search_fts
+// ======================================================================
+//
+// `search_fts` honours `space_id` by intersecting the result set with
+// the materialised `block_properties(key = 'space', value_ref = ?)`
+// table via `COALESCE(b.page_id, b.id)`. These tests exercise the
+// `Some(space_id)` path end-to-end so a regression in the dynamic-SQL
+// filter is caught — the rest of the module only passes `None`.
+
+/// ID of the synthetic `SPACE_A` space block used by the space-filter
+/// tests below. Valid block_id (the column is TEXT — no ULID format
+/// enforcement at the DB boundary).
+const FTS_SPACE_A_ID: &str = "FTS_SPC_A";
+/// ID of the synthetic `SPACE_B` space block.
+const FTS_SPACE_B_ID: &str = "FTS_SPC_B";
+
+/// Insert a space block (a page carrying `is_space = 'true'`). Required
+/// so the FK on `block_properties.value_ref` validates when the tests
+/// assign a page to the space.
+async fn insert_space_block_for_fts(pool: &SqlitePool, id: &str, name: &str) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, is_conflict) \
+         VALUES (?, 'page', ?, NULL, 1, ?, 0)",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(id)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'is_space', 'true')",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Assign a block to a space via a direct `block_properties` insert —
+/// bypasses the command layer because the test targets the FTS filter
+/// SQL, not op-log semantics.
+async fn assign_to_space_for_fts(pool: &SqlitePool, block_id: &str, space_id: &str) {
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)")
+        .bind(block_id)
+        .bind(space_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn search_fts_filters_by_space() {
+    let (pool, _dir) = test_pool().await;
+    insert_space_block_for_fts(&pool, FTS_SPACE_A_ID, "Personal").await;
+    insert_space_block_for_fts(&pool, FTS_SPACE_B_ID, "Work").await;
+
+    // Two pages with the same searchable keyword, one per space.
+    // `page_id` on page blocks is the block's own id (COALESCE resolves
+    // to `b.id`), so the `space` property lookup in `search_fts` applies
+    // directly to each page.
+    insert_block(
+        &pool,
+        BLOCK_A,
+        "page",
+        "the shared keyword lives here in A",
+        None,
+        Some(1),
+    )
+    .await;
+    assign_to_space_for_fts(&pool, BLOCK_A, FTS_SPACE_A_ID).await;
+
+    insert_block(
+        &pool,
+        BLOCK_B,
+        "page",
+        "the shared keyword lives here in B",
+        None,
+        Some(2),
+    )
+    .await;
+    assign_to_space_for_fts(&pool, BLOCK_B, FTS_SPACE_B_ID).await;
+
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+
+    // SPACE_A: exactly the SPACE_A page.
+    let resp_a = search_fts(&pool, "shared", &page, None, None, Some(FTS_SPACE_A_ID))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp_a.items.len(),
+        1,
+        "SPACE_A filter must return exactly the SPACE_A page"
+    );
+    assert_eq!(resp_a.items[0].id, BLOCK_A, "SPACE_A hit must be BLOCK_A");
+
+    // SPACE_B: exactly the SPACE_B page.
+    let resp_b = search_fts(&pool, "shared", &page, None, None, Some(FTS_SPACE_B_ID))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp_b.items.len(),
+        1,
+        "SPACE_B filter must return exactly the SPACE_B page"
+    );
+    assert_eq!(resp_b.items[0].id, BLOCK_B, "SPACE_B hit must be BLOCK_B");
+
+    // None: both pages (unscoped behaviour preserved).
+    let resp_all = search_fts(&pool, "shared", &page, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        resp_all.items.len(),
+        2,
+        "None space_id must surface both pages — existing unscoped behaviour"
+    );
+}
+
+#[tokio::test]
+async fn search_fts_nonexistent_space_returns_empty() {
+    let (pool, _dir) = test_pool().await;
+    insert_space_block_for_fts(&pool, FTS_SPACE_A_ID, "Personal").await;
+    insert_block(
+        &pool,
+        BLOCK_A,
+        "page",
+        "the shared keyword lives here in A",
+        None,
+        Some(1),
+    )
+    .await;
+    assign_to_space_for_fts(&pool, BLOCK_A, FTS_SPACE_A_ID).await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let resp = search_fts(&pool, "shared", &page, None, None, Some("NOPE"))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.items.len(),
+        0,
+        "nonexistent space id must return zero results, not error"
+    );
+    assert!(!resp.has_more, "empty result must not indicate more pages");
+    assert!(
+        resp.next_cursor.is_none(),
+        "empty result must have no cursor"
     );
 }

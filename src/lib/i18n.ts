@@ -46,6 +46,10 @@ const resources = {
       'space.switch': 'Switch space',
       'space.manage': 'Manage spaces…',
       'space.manageComingSoon': 'Coming in Phase 6',
+      'space.moveTo': 'Move to space',
+      'space.movedToast': 'Page moved to {{space}}',
+      'space.moveFailed': 'Failed to move page',
+      'space.notReady': 'Loading spaces…',
 
       // Empty states
       'empty.noBlocks': 'No blocks yet. Click + Add block below to start writing.',
@@ -570,6 +574,7 @@ const resources = {
       'pageBrowser.loadFailed': 'Failed to load pages',
       'pageBrowser.createFailed': 'Failed to create page: {{error}}',
       'pageBrowser.deleteFailed': 'Failed to delete page: {{error}}',
+      'pageBrowser.spaceNotReady': 'Loading spaces\u2026 try again in a moment',
       'pageBrowser.retry': 'Retry',
       'pageBrowser.exportAll': 'Export all pages',
       'pageBrowser.exporting': 'Exporting...',

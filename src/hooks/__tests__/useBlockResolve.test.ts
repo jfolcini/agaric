@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../lib/tauri', () => ({
   createBlock: vi.fn(),
+  createPageInSpace: vi.fn(),
   listBlocks: vi.fn(),
   listTagsByPrefix: vi.fn(),
   resolvePageByAlias: vi.fn(),
@@ -25,15 +26,18 @@ vi.mock('../../lib/tauri', () => ({
 
 import {
   createBlock,
+  createPageInSpace,
   listBlocks,
   listTagsByPrefix,
   resolvePageByAlias,
   searchBlocks,
 } from '../../lib/tauri'
 import { useResolveStore } from '../../stores/resolve'
+import { useSpaceStore } from '../../stores/space'
 import { useBlockResolve } from '../useBlockResolve'
 
 const mockedCreateBlock = vi.mocked(createBlock)
+const mockedCreatePageInSpace = vi.mocked(createPageInSpace)
 const mockedListBlocks = vi.mocked(listBlocks)
 const mockedListTagsByPrefix = vi.mocked(listTagsByPrefix)
 const mockedResolvePageByAlias = vi.mocked(resolvePageByAlias)
@@ -46,6 +50,14 @@ beforeEach(() => {
     pagesList: [],
     version: 0,
     _preloaded: false,
+  })
+  // FEAT-3 Phase 2 — `onCreatePage` and the `searchPages` IPC paths now
+  // consult `useSpaceStore`. Seed a deterministic space so both paths
+  // exercise the real code instead of the defensive `!isReady` guard.
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_TEST',
+    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test' }],
+    isReady: true,
   })
 })
 
@@ -553,7 +565,11 @@ describe('searchPages — short query (<=2 chars)', () => {
       items = await result.current.searchPages('al')
     })
 
-    expect(mockedListBlocks).toHaveBeenCalledWith({ blockType: 'page', limit: 500 })
+    expect(mockedListBlocks).toHaveBeenCalledWith({
+      blockType: 'page',
+      limit: 500,
+      spaceId: 'SPACE_TEST',
+    })
     // Should match "Alpha" (contains "al")
     const matchIds = items.filter((i) => !i.isCreate).map((i) => i.id)
     expect(matchIds).toContain('P10')
@@ -735,7 +751,11 @@ describe('searchPages — long query (>2 chars)', () => {
       items = await result.current.searchPages('meeting')
     })
 
-    expect(mockedSearchBlocks).toHaveBeenCalledWith({ query: 'meeting', limit: 20 })
+    expect(mockedSearchBlocks).toHaveBeenCalledWith({
+      query: 'meeting',
+      limit: 20,
+      spaceId: 'SPACE_TEST',
+    })
     // Only page-type blocks should be returned
     const nonCreate = items.filter((i) => !i.isCreate)
     expect(nonCreate).toEqual([
@@ -1138,7 +1158,11 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
     })
 
     // FTS receives "text" (stripped), not "text]]"
-    expect(mockedSearchBlocks).toHaveBeenCalledWith({ query: 'text', limit: 20 })
+    expect(mockedSearchBlocks).toHaveBeenCalledWith({
+      query: 'text',
+      limit: 20,
+      spaceId: 'SPACE_TEST',
+    })
     const nonCreate = items.filter((i) => !i.isCreate)
     expect(nonCreate).toEqual([expect.objectContaining({ id: 'P2', label: 'Text Document' })])
   })
@@ -1173,7 +1197,11 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
       items = await result.current.searchPages('test]')
     })
 
-    expect(mockedSearchBlocks).toHaveBeenCalledWith({ query: 'test', limit: 20 })
+    expect(mockedSearchBlocks).toHaveBeenCalledWith({
+      query: 'test',
+      limit: 20,
+      spaceId: 'SPACE_TEST',
+    })
     const nonCreate = items.filter((i) => !i.isCreate)
     expect(nonCreate).toEqual([expect.objectContaining({ id: 'P1', label: 'Test Page' })])
   })
@@ -1247,7 +1275,11 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
     })
 
     // FTS receives "meeting" (stripped), returns Meeting Notes
-    expect(mockedSearchBlocks).toHaveBeenCalledWith({ query: 'meeting', limit: 20 })
+    expect(mockedSearchBlocks).toHaveBeenCalledWith({
+      query: 'meeting',
+      limit: 20,
+      spaceId: 'SPACE_TEST',
+    })
     const nonCreate = items.filter((i) => !i.isCreate)
     expect(nonCreate).toEqual([expect.objectContaining({ id: 'F60', label: 'Meeting Notes' })])
   })
@@ -1256,22 +1288,8 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
 // ── onCreatePage ────────────────────────────────────────────────────────
 
 describe('onCreatePage', () => {
-  it('calls createBlock with page type and content', async () => {
-    mockedCreateBlock.mockResolvedValue({
-      id: 'NEW_PAGE_1',
-      block_type: 'page',
-      content: 'Brand New Page',
-      parent_id: null,
-      position: null,
-      deleted_at: null,
-      is_conflict: false,
-      conflict_type: null,
-      todo_state: null,
-      priority: null,
-      due_date: null,
-      scheduled_date: null,
-      page_id: null,
-    })
+  it('calls createPageInSpace with content and current space id', async () => {
+    mockedCreatePageInSpace.mockResolvedValue('NEW_PAGE_1')
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1280,29 +1298,18 @@ describe('onCreatePage', () => {
       newId = await result.current.onCreatePage('Brand New Page')
     })
 
-    expect(mockedCreateBlock).toHaveBeenCalledWith({
-      blockType: 'page',
+    expect(mockedCreatePageInSpace).toHaveBeenCalledWith({
       content: 'Brand New Page',
+      spaceId: 'SPACE_TEST',
     })
+    // FEAT-3 Phase 2 — the legacy `createBlock({ blockType: 'page' })`
+    // path is no longer invoked; the space-aware wrapper replaces it.
+    expect(mockedCreateBlock).not.toHaveBeenCalled()
     expect(newId).toBe('NEW_PAGE_1')
   })
 
   it('updates the resolve store with the new page', async () => {
-    mockedCreateBlock.mockResolvedValue({
-      id: 'NEW_PAGE_2',
-      block_type: 'page',
-      content: 'Store Updated Page',
-      parent_id: null,
-      position: null,
-      deleted_at: null,
-      is_conflict: false,
-      conflict_type: null,
-      todo_state: null,
-      priority: null,
-      due_date: null,
-      scheduled_date: null,
-      page_id: null,
-    })
+    mockedCreatePageInSpace.mockResolvedValue('NEW_PAGE_2')
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1315,21 +1322,7 @@ describe('onCreatePage', () => {
   })
 
   it('appends the new page to pagesListRef', async () => {
-    mockedCreateBlock.mockResolvedValue({
-      id: 'NEW_PAGE_3',
-      block_type: 'page',
-      content: 'Appended Page',
-      parent_id: null,
-      position: null,
-      deleted_at: null,
-      is_conflict: false,
-      conflict_type: null,
-      todo_state: null,
-      priority: null,
-      due_date: null,
-      scheduled_date: null,
-      page_id: null,
-    })
+    mockedCreatePageInSpace.mockResolvedValue('NEW_PAGE_3')
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1349,21 +1342,7 @@ describe('onCreatePage', () => {
   })
 
   it('returns the new block id', async () => {
-    mockedCreateBlock.mockResolvedValue({
-      id: 'RETURNED_ID',
-      block_type: 'page',
-      content: 'Test',
-      parent_id: null,
-      position: null,
-      deleted_at: null,
-      is_conflict: false,
-      conflict_type: null,
-      todo_state: null,
-      priority: null,
-      due_date: null,
-      scheduled_date: null,
-      page_id: null,
-    })
+    mockedCreatePageInSpace.mockResolvedValue('RETURNED_ID')
 
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1373,6 +1352,18 @@ describe('onCreatePage', () => {
     })
 
     expect(newId).toBe('RETURNED_ID')
+  })
+
+  // FEAT-3 Phase 2 — defensive guard for the `!isReady` branch.
+  it('refuses to create when the space store has not hydrated', async () => {
+    useSpaceStore.setState({ currentSpaceId: null, availableSpaces: [], isReady: false })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await expect(result.current.onCreatePage('New Page')).rejects.toThrow()
+    })
+    expect(mockedCreatePageInSpace).not.toHaveBeenCalled()
   })
 })
 
@@ -1416,8 +1407,8 @@ describe('error handling', () => {
     expect(items).toEqual([])
   })
 
-  it('onCreatePage propagates createBlock rejection', async () => {
-    mockedCreateBlock.mockRejectedValue(new Error('write permission denied'))
+  it('onCreatePage propagates createPageInSpace rejection', async () => {
+    mockedCreatePageInSpace.mockRejectedValue(new Error('write permission denied'))
 
     const { result } = renderHook(() => useBlockResolve())
 

@@ -119,7 +119,19 @@ export function trashDescendantCounts(rootIds: string[]): Promise<Record<string,
   return invoke('trash_descendant_counts', { rootIds })
 }
 
-/** List blocks with optional filters and cursor-based pagination. */
+/** List blocks with optional filters and cursor-based pagination.
+ *
+ * The public TypeScript shape keeps the agenda knobs (`agendaDate`,
+ * `agendaDateRange`, `agendaSource`) as three top-level fields for
+ * backward compatibility. On the IPC boundary they are bundled into the
+ * Rust `AgendaQuery` struct so the Tauri command stays under the
+ * `tauri-specta` 10-arg limit after FEAT-3 Phase 2 added `spaceId`.
+ *
+ * `spaceId` (FEAT-3 Phase 2) — when set, the backend filters results to
+ * blocks whose owning page carries `space = <spaceId>`. `undefined` (the
+ * default) leaves the result set unscoped, matching the pre-FEAT-3
+ * behaviour so existing callsites stay green.
+ */
 export function listBlocks(params?: {
   parentId?: string | undefined
   blockType?: string | undefined
@@ -130,17 +142,26 @@ export function listBlocks(params?: {
   agendaSource?: string | undefined
   cursor?: string | undefined
   limit?: number | undefined
+  spaceId?: string | undefined
 }): Promise<PageResponse<BlockRow>> {
+  const hasAgenda =
+    params?.agendaDate != null || params?.agendaDateRange != null || params?.agendaSource != null
+  const agenda = hasAgenda
+    ? {
+        date: params?.agendaDate ?? null,
+        dateRange: params?.agendaDateRange ?? null,
+        source: params?.agendaSource ?? null,
+      }
+    : null
   return invoke('list_blocks', {
     parentId: params?.parentId ?? null,
     blockType: params?.blockType ?? null,
     tagId: params?.tagId ?? null,
     showDeleted: params?.showDeleted ?? null,
-    agendaDate: params?.agendaDate ?? null,
-    agendaDateRange: params?.agendaDateRange ?? null,
-    agendaSource: params?.agendaSource ?? null,
+    agenda,
     cursor: params?.cursor ?? null,
     limit: params?.limit ?? null,
+    spaceId: params?.spaceId ?? null,
   })
 }
 
@@ -242,13 +263,19 @@ export function getConflicts(params?: {
   })
 }
 
-/** Full-text search across all blocks, paginated by relevance. */
+/** Full-text search across all blocks, paginated by relevance.
+ *
+ * `spaceId` (FEAT-3 Phase 2) — when set, restricts matches to blocks
+ * whose owning page carries `space = <spaceId>`. `undefined` means
+ * unscoped (pre-FEAT-3 behaviour).
+ */
 export function searchBlocks(params?: {
   query: string
   parentId?: string | undefined
   tagIds?: string[] | undefined
   cursor?: string | undefined
   limit?: number | undefined
+  spaceId?: string | undefined
 }): Promise<PageResponse<BlockRow>> {
   return invoke('search_blocks', {
     query: params?.query ?? '',
@@ -256,6 +283,7 @@ export function searchBlocks(params?: {
     tagIds: params?.tagIds ?? null,
     cursor: params?.cursor ?? null,
     limit: params?.limit ?? null,
+    spaceId: params?.spaceId ?? null,
   })
 }
 
@@ -926,4 +954,30 @@ export function readLogsForReport(redact: boolean): Promise<LogFileEntry[]> {
  */
 export function listSpaces(): Promise<SpaceRow[]> {
   return invoke<SpaceRow[]>('list_spaces')
+}
+
+/**
+ * Create a new page block and atomically assign it to `spaceId`.
+ *
+ * FEAT-3 Phase 2 — the backend wraps both the `CreateBlock` op and the
+ * `SetProperty(space = <spaceId>)` op in a single transaction so a page
+ * never exists without its space property. Callers that create
+ * top-level pages (PageBrowser "New page", App "New page" actions, the
+ * link-picker "Create new page" affordance) must route through this
+ * command rather than `createBlock({ blockType: 'page' })` — the latter
+ * leaves the new page unscoped and violates the "nothing outside of
+ * spaces" invariant.
+ *
+ * Returns the new page's ULID.
+ */
+export function createPageInSpace(params: {
+  parentId?: string | null | undefined
+  content: string
+  spaceId: string
+}): Promise<string> {
+  return invoke<string>('create_page_in_space', {
+    parentId: params.parentId ?? null,
+    content: params.content,
+    spaceId: params.spaceId,
+  })
 }

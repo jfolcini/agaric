@@ -493,6 +493,7 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
         limit,
         args.parent_id,
         args.tag_ids,
+        None, // FEAT-3 Phase 2: MCP agents see every space — unscoped.
     )
     .await?;
     // Truncate each result's content to SEARCH_SNIPPET_CAP chars. We
@@ -1321,6 +1322,7 @@ mod tests {
                     query.clone(),
                     None,
                     Some(SEARCH_RESULT_CAP),
+                    None,
                     None,
                     None,
                 )

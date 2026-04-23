@@ -56,6 +56,10 @@ pub async fn get_status_inner(
 ///
 /// Returns an empty page if the query is blank. Otherwise delegates to
 /// [`fts::search_fts`] with cursor pagination.
+///
+/// `space_id` (FEAT-3 Phase 2) — when `Some`, restricts matches to blocks
+/// whose owning page carries `space = ?space_id`. `None` = unscoped, the
+/// pre-FEAT-3 behaviour every existing callsite still uses.
 #[instrument(skip(pool, tag_ids), err)]
 pub async fn search_blocks_inner(
     pool: &SqlitePool,
@@ -64,6 +68,7 @@ pub async fn search_blocks_inner(
     limit: Option<i64>,
     parent_id: Option<String>,
     tag_ids: Option<Vec<String>>,
+    space_id: Option<String>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     if query.trim().is_empty() {
         return Ok(PageResponse {
@@ -79,6 +84,7 @@ pub async fn search_blocks_inner(
         &page,
         parent_id.as_deref(),
         tag_ids.as_deref(),
+        space_id.as_deref(),
     )
     .await
 }
@@ -270,6 +276,7 @@ pub async fn get_status(
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn search_blocks(
     pool: State<'_, ReadPool>,
     query: String,
@@ -277,8 +284,9 @@ pub async fn search_blocks(
     limit: Option<i64>,
     parent_id: Option<String>,
     tag_ids: Option<Vec<String>>,
+    space_id: Option<String>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    search_blocks_inner(&pool.0, query, cursor, limit, parent_id, tag_ids)
+    search_blocks_inner(&pool.0, query, cursor, limit, parent_id, tag_ids, space_id)
         .await
         .map_err(sanitize_internal_error)
 }

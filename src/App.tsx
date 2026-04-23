@@ -65,7 +65,7 @@ import { logger } from './lib/logger'
 import { CLOSE_ALL_OVERLAYS_EVENT } from './lib/overlay-events'
 import { setPriorityLevels } from './lib/priority-levels'
 import {
-  createBlock,
+  createPageInSpace,
   flushDraft,
   getConflicts,
   listBlocks,
@@ -76,6 +76,7 @@ import { cn } from './lib/utils'
 import { type JournalMode, useJournalStore } from './stores/journal'
 import { type PageEntry, selectPageStack, useNavigationStore, type View } from './stores/navigation'
 import { useResolveStore } from './stores/resolve'
+import { useSpaceStore } from './stores/space'
 import { useSyncStore } from './stores/sync'
 
 // ---------------------------------------------------------------------------
@@ -499,6 +500,10 @@ function App() {
   const syncState = useSyncStore((s) => s.state)
   const syncPeers = useSyncStore((s) => s.peers)
   const lastSyncedAt = useSyncStore((s) => s.lastSyncedAt)
+  // FEAT-3 Phase 2 — subscribe to `currentSpaceId` so the
+  // `clearPagesList` effect below re-runs whenever the active space
+  // changes (e.g. the user picks a different space in `SpaceSwitcher`).
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const { syncing, syncAll } = useSyncTrigger()
   const isOnline = useOnlineStatus()
   const isMobile = useIsMobile()
@@ -525,6 +530,20 @@ function App() {
   useEffect(() => {
     useResolveStore.getState().preload()
   }, [])
+
+  useEffect(() => {
+    // FEAT-3 Phase 2 — clear the global page-title search cache on space
+    // switch so the link picker's short-query path doesn't surface
+    // other-space matches. Resolve cache (title→ULID map) is kept intact
+    // so existing cross-space `[[ULID]]` chips still render their names.
+    //
+    // The `void currentSpaceId` pin is deliberate: biome's exhaustive-deps
+    // can't see that `clearPagesList` semantically depends on the current
+    // space (it reads state indirectly via the store getter), so we
+    // reference `currentSpaceId` once to keep the dep array meaningful.
+    void currentSpaceId
+    useResolveStore.getState().clearPagesList()
+  }, [currentSpaceId])
 
   // ── Boot recovery: flush orphaned drafts from previous crash ──────
   useEffect(() => {
@@ -667,10 +686,20 @@ function App() {
       }
       if (matchesShortcutBinding(e, 'createNewPage')) {
         e.preventDefault()
-        createBlock({ blockType: 'page', content: 'Untitled' })
-          .then((resp) => {
-            useResolveStore.getState().set(resp.id, 'Untitled', false)
-            useNavigationStore.getState().navigateToPage(resp.id, 'Untitled')
+        // FEAT-3 Phase 2 — every page must belong to a space. Route
+        // through the atomic `createPageInSpace` Tauri command. The
+        // `isReady`/`currentSpaceId` check is defensive: the shortcut
+        // only fires after boot has resolved `refreshAvailableSpaces()`.
+        const { currentSpaceId, isReady } = useSpaceStore.getState()
+        if (!isReady || currentSpaceId == null) {
+          logger.warn('App', 'createNewPage shortcut fired before space hydrated')
+          toast.error(t('space.notReady'))
+          return
+        }
+        createPageInSpace({ content: 'Untitled', spaceId: currentSpaceId })
+          .then((newId) => {
+            useResolveStore.getState().set(newId, 'Untitled', false)
+            useNavigationStore.getState().navigateToPage(newId, 'Untitled')
             announce(t('announce.newPageCreated'))
           })
           .catch((err: unknown) => {
@@ -754,10 +783,18 @@ function App() {
   }, [isMobile, t])
 
   const handleNewPage = useCallback(async () => {
+    // FEAT-3 Phase 2 — route through the atomic `createPageInSpace`
+    // Tauri command (CreateBlock + SetProperty('space') in one tx).
+    const { currentSpaceId, isReady } = useSpaceStore.getState()
+    if (!isReady || currentSpaceId == null) {
+      logger.warn('App', 'handleNewPage fired before space hydrated')
+      toast.error(t('space.notReady'))
+      return
+    }
     try {
-      const resp = await createBlock({ blockType: 'page', content: 'Untitled' })
-      useResolveStore.getState().set(resp.id, 'Untitled', false)
-      navigateToPage(resp.id, 'Untitled')
+      const newId = await createPageInSpace({ content: 'Untitled', spaceId: currentSpaceId })
+      useResolveStore.getState().set(newId, 'Untitled', false)
+      navigateToPage(newId, 'Untitled')
       announce(t('announce.newPageCreated'))
     } catch (err) {
       logger.error('App', 'Failed to create new page', undefined, err)

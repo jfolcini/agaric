@@ -11,6 +11,13 @@ use super::super::*;
 /// `block_type`, or `parent_id` (children, the default). Page size is
 /// clamped to `[1, 100]`.
 ///
+/// `space_id` (FEAT-3 Phase 2) further restricts the result set to blocks
+/// whose owning page carries `space = ?space_id`. Passing `None` keeps
+/// the pre-FEAT-3 behaviour (no filter) so existing callsites stay green.
+/// The filter is applied inside the child / by-type / trash paths; the
+/// agenda and tag paths remain unscoped in Phase 2 and gain scoping in
+/// Phase 4 (see REVIEW-LATER FEAT-3).
+///
 /// # Errors
 ///
 /// - [`AppError::Validation`] — multiple conflicting filters, or invalid date format
@@ -28,6 +35,7 @@ pub async fn list_blocks_inner(
     agenda_source: Option<String>,
     cursor: Option<String>,
     limit: Option<i64>,
+    space_id: Option<String>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     // Treat agenda_date_start/end as an agenda filter for conflict detection
     let has_agenda_range = agenda_date_start.is_some() && agenda_date_end.is_some();
@@ -65,8 +73,13 @@ pub async fn list_blocks_inner(
     let clamped_limit = limit.map(|l| l.clamp(1, 100));
     let page = pagination::PageRequest::new(cursor, clamped_limit)?;
 
+    // FEAT-3 Phase 2: the space filter applies to the "scopeable" paths
+    // (trash, list-by-type, list-children). Agenda and tag paths remain
+    // unscoped in this phase per the rollout plan — they migrate in
+    // Phase 4 (REVIEW-LATER FEAT-3).
+    let space_id_opt: Option<&str> = space_id.as_deref();
     if show_deleted == Some(true) {
-        pagination::list_trash(pool, &page).await
+        pagination::list_trash(pool, &page, space_id_opt).await
     } else if has_agenda_range {
         let start = agenda_date_start.as_ref().unwrap();
         let end = agenda_date_end.as_ref().unwrap();
@@ -84,9 +97,9 @@ pub async fn list_blocks_inner(
     } else if let Some(ref t) = tag_id {
         pagination::list_by_tag(pool, t, &page).await
     } else if let Some(ref bt) = block_type {
-        pagination::list_by_type(pool, bt, &page).await
+        pagination::list_by_type(pool, bt, &page, space_id_opt).await
     } else {
-        pagination::list_children(pool, parent_id.as_deref(), &page).await
+        pagination::list_children(pool, parent_id.as_deref(), &page, space_id_opt).await
     }
 }
 
@@ -157,6 +170,14 @@ pub async fn batch_resolve_inner(
 }
 
 /// Tauri command: list blocks with filtering and pagination. Delegates to [`list_blocks_inner`].
+///
+/// The three agenda knobs (`date`, `date_range`, `source`) are bundled
+/// into a single [`AgendaQuery`] to keep this wrapper under the
+/// `tauri-specta` 10-arg limit after FEAT-3 Phase 2 added `space_id`.
+/// The hand-written TS wrapper in `src/lib/tauri.ts` keeps the flat
+/// public API (accepts `agendaDate` / `agendaDateRange` / `agendaSource`
+/// at the top level and marshals them into this struct for the IPC
+/// boundary).
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -167,12 +188,20 @@ pub async fn list_blocks(
     block_type: Option<String>,
     tag_id: Option<String>,
     show_deleted: Option<bool>,
-    agenda_date: Option<String>,
-    agenda_date_range: Option<DateRange>,
-    agenda_source: Option<String>,
+    agenda: Option<AgendaQuery>,
     cursor: Option<String>,
     limit: Option<i64>,
+    space_id: Option<String>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
+    let (agenda_date, agenda_date_start, agenda_date_end, agenda_source) = match agenda {
+        Some(a) => (
+            a.date,
+            a.date_range.as_ref().map(|r| r.start.clone()),
+            a.date_range.as_ref().map(|r| r.end.clone()),
+            a.source,
+        ),
+        None => (None, None, None, None),
+    };
     list_blocks_inner(
         &pool.0,
         parent_id,
@@ -180,11 +209,12 @@ pub async fn list_blocks(
         tag_id,
         show_deleted,
         agenda_date,
-        agenda_date_range.as_ref().map(|r| r.start.clone()),
-        agenda_date_range.as_ref().map(|r| r.end.clone()),
+        agenda_date_start,
+        agenda_date_end,
         agenda_source,
         cursor,
         limit,
+        space_id,
     )
     .await
     .map_err(sanitize_internal_error)

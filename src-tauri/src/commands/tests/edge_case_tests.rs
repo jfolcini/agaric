@@ -192,6 +192,7 @@ async fn f14_page_size_zero_clamped_to_one() {
         None,
         None,
         Some(0),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -223,6 +224,7 @@ async fn f14_page_size_negative_clamped_to_one() {
         None,
         None,
         Some(-1),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -255,6 +257,7 @@ async fn f14_page_size_1000_clamped_to_100() {
         None,
         None,
         Some(1000),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -276,6 +279,7 @@ async fn f14_page_size_none_uses_default() {
 
     let resp = list_blocks_inner(
         &pool, None, None, None, None, None, None, None, None, None, None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();

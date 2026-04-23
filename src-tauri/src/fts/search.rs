@@ -201,6 +201,7 @@ pub async fn search_fts(
     page: &PageRequest,
     parent_id: Option<&str>,
     tag_ids: Option<&[String]>,
+    space_id: Option<&str>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     // Guard: empty/whitespace queries would cause an FTS5 syntax error.
     if query.trim().is_empty() {
@@ -228,7 +229,8 @@ pub async fn search_fts(
 
     // Build dynamic SQL with optional filter clauses.
     // Base parameters: ?1=query, ?2=cursor_flag, ?3=cursor_rank, ?4=cursor_id, ?5=limit
-    // Additional parameters are appended after ?5 for parent_id and tag_ids.
+    // Additional parameters are appended after ?5 for parent_id, tag_ids,
+    // and (FEAT-3 Phase 2) space_id.
     let mut sql = String::from(
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at, b.is_conflict, b.conflict_type,
@@ -281,6 +283,27 @@ pub async fn search_fts(
             &[]
         }
     };
+
+    // FEAT-3 Phase 2 — optional space-id filter. Resolves content blocks
+    // to their owning page via `COALESCE(b.page_id, b.id)` and intersects
+    // against `block_properties(key = 'space').value_ref`. Mirrors the
+    // `crate::space_filter_clause!` macro used by the pagination helpers
+    // — kept inline here because the dynamic-SQL shape of this query
+    // (varying param indices for parent / tag / space filters) prevents
+    // the compile-time sqlx macro from being applied.
+    let space_param_idx = if space_id.is_some() {
+        let idx = next_param;
+        sql.push_str(&format!(
+            "\n           AND COALESCE(b.page_id, b.id) IN (\
+             SELECT bp.block_id FROM block_properties bp \
+             WHERE bp.key = 'space' AND bp.value_ref = ?{idx})"
+        ));
+        next_param += 1;
+        Some(idx)
+    } else {
+        None
+    };
+
     // Suppress unused variable warnings — these indices are used only when
     // the corresponding filter is active, but the compiler cannot see that
     // through the dynamic query-building logic.
@@ -288,6 +311,7 @@ pub async fn search_fts(
         parent_param_idx,
         tag_param_start,
         tag_count_param_idx,
+        space_param_idx,
         next_param,
     );
 
@@ -313,6 +337,9 @@ pub async fn search_fts(
         #[allow(clippy::cast_possible_wrap)]
         let tag_count = active_tag_ids.len() as i64;
         db_query = db_query.bind(tag_count);
+    }
+    if let Some(sid) = space_id {
+        db_query = db_query.bind(sid);
     }
 
     let rows = db_query.fetch_all(pool).await.map_err(|e| {

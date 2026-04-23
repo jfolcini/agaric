@@ -14,7 +14,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -27,6 +27,7 @@ import {
   type PageBlockState,
 } from '../../stores/page-blocks'
 import { useResolveStore } from '../../stores/resolve'
+import { useSpaceStore } from '../../stores/space'
 import { useUndoStore } from '../../stores/undo'
 import { PageHeader } from '../PageHeader'
 import { TooltipProvider } from '../ui/tooltip'
@@ -49,6 +50,7 @@ vi.mock('lucide-react', () => ({
   Clock: () => <svg data-testid="clock-icon" />,
   Download: () => <svg data-testid="download-icon" />,
   ExternalLink: () => <svg data-testid="external-link-icon" />,
+  FolderOutput: () => <svg data-testid="folder-output-icon" />,
   Info: () => <svg data-testid="info-icon" />,
   LayoutTemplate: (props: Record<string, unknown>) => (
     <svg data-testid="layout-template-icon" {...props} />
@@ -98,6 +100,17 @@ beforeEach(() => {
   })
   useResolveStore.setState({ cache: new Map(), pagesList: [], version: 0, _preloaded: false })
   useUndoStore.setState({ pages: new Map() })
+  // FEAT-3 Phase 2 — seed two spaces so the "Move to space" sub-menu
+  // (which filters out the current owner) has a non-empty target list
+  // once a page's `space` property is populated.
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_PERSONAL',
+    availableSpaces: [
+      { id: 'SPACE_PERSONAL', name: 'Personal' },
+      { id: 'SPACE_WORK', name: 'Work' },
+    ],
+    isReady: true,
+  })
   // Default: no tags exist, no tags applied
   mockedInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'list_blocks') return emptyPage
@@ -1585,5 +1598,180 @@ describe('PageHeader UX-198 header outlet migration', () => {
     // The old sticky wrapper is gone.
     const sticky = container.querySelector('.sticky.top-0')
     expect(sticky).toBeNull()
+  })
+})
+
+// ── Move to space (FEAT-3 Phase 2) ──────────────────────────────────────
+//
+// The kebab menu learns a new entry that reveals a sub-menu of every
+// space except the current owner. Selecting a target calls `setProperty`
+// to rewrite `space=<targetSpaceId>` and fires a success toast. The
+// entry is hidden when the page itself is a space block (spaces can't
+// be nested inside other spaces).
+
+describe('PageHeader Move to space (FEAT-3 Phase 2)', () => {
+  const mockedToastSuccess = vi.mocked(toast.success)
+
+  /** Install an invoke mock that returns a page owned by `spaceId`. */
+  function setupPageWithSpace(
+    spaceId: string,
+    opts: { isSpace?: boolean } = {},
+  ): typeof mockedInvoke {
+    interface PropertyRow {
+      key: string
+      value_text: string | null
+      value_num: number | null
+      value_date: string | null
+      value_ref: string | null
+    }
+    mockedInvoke.mockImplementation(async (cmd, args) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') {
+        const props: PropertyRow[] = [
+          {
+            key: 'space',
+            value_text: null,
+            value_num: null,
+            value_date: null,
+            value_ref: spaceId,
+          },
+        ]
+        if (opts.isSpace) {
+          props.push({
+            key: 'is_space',
+            value_text: 'true',
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+          })
+        }
+        return props
+      }
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') return []
+      if (cmd === 'set_property') {
+        const record = args as Record<string, unknown> | undefined
+        return { block_id: record?.['blockId'] }
+      }
+      return null
+    })
+    return mockedInvoke
+  }
+
+  it('renders the "Move to space" menu item when the page is a regular page', async () => {
+    const user = userEvent.setup()
+    setupPageWithSpace('SPACE_PERSONAL')
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+
+    expect(await screen.findByText(/Move to space/i)).toBeInTheDocument()
+  })
+
+  it('hides "Move to space" when the page is itself a space block', async () => {
+    const user = userEvent.setup()
+    setupPageWithSpace('SPACE_PERSONAL', { isSpace: true })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Personal" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    // The Export entry is always shown so waiting for it proves the menu
+    // rendered to completion before asserting on absence.
+    await screen.findByText(/Export as Markdown/i)
+
+    expect(screen.queryByText(/Move to space/i)).not.toBeInTheDocument()
+  })
+
+  it('sub-menu lists every space except the current owner (alphabetical)', async () => {
+    const user = userEvent.setup()
+    setupPageWithSpace('SPACE_PERSONAL')
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText(/Move to space/i))
+
+    const submenu = await screen.findByRole('menu', { name: /Move to space/i })
+    // "Work" appears; "Personal" (the current owner) is filtered out.
+    expect(within(submenu).getByRole('menuitem', { name: 'Work' })).toBeInTheDocument()
+    expect(within(submenu).queryByRole('menuitem', { name: 'Personal' })).not.toBeInTheDocument()
+  })
+
+  it('click on a target fires set_property and shows the success toast', async () => {
+    const user = userEvent.setup()
+    setupPageWithSpace('SPACE_PERSONAL')
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText(/Move to space/i))
+    await user.click(await screen.findByRole('menuitem', { name: 'Work' }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'PAGE_1',
+        key: 'space',
+        valueText: null,
+        valueNum: null,
+        valueDate: null,
+        valueRef: 'SPACE_WORK',
+      })
+    })
+    await waitFor(() => {
+      expect(mockedToastSuccess).toHaveBeenCalledWith(expect.stringMatching(/moved to Work/i))
+    })
+  })
+
+  it('shows error toast when set_property rejects', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties')
+        return [
+          {
+            key: 'space',
+            value_text: null,
+            value_num: null,
+            value_date: null,
+            value_ref: 'SPACE_PERSONAL',
+          },
+        ]
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') return []
+      if (cmd === 'set_property') throw new Error('write failed')
+      return null
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText(/Move to space/i))
+    await user.click(await screen.findByRole('menuitem', { name: 'Work' }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(expect.stringMatching(/Failed to move page/i))
+    })
+  })
+
+  it('has no a11y violations with the Move to space sub-menu expanded', async () => {
+    const user = userEvent.setup()
+    setupPageWithSpace('SPACE_PERSONAL')
+
+    const { container } = renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText(/Move to space/i))
+    await screen.findByRole('menu', { name: /Move to space/i })
+
+    await waitFor(
+      async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
   })
 })

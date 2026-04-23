@@ -9,7 +9,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { addDays, addMonths, addWeeks, subDays, subMonths, subWeeks } from 'date-fns'
 import { toast } from 'sonner'
@@ -26,6 +26,7 @@ import { useBootStore } from '../../stores/boot'
 import { useJournalStore } from '../../stores/journal'
 import { selectPageStack, useNavigationStore } from '../../stores/navigation'
 import { useRecentPagesStore } from '../../stores/recent-pages'
+import { useResolveStore } from '../../stores/resolve'
 import { useSpaceStore } from '../../stores/space'
 import { useSyncStore } from '../../stores/sync'
 
@@ -97,10 +98,27 @@ beforeEach(() => {
 
   // FEAT-3 Phase 1: reset the space store so SpaceSwitcher renders
   // deterministic state regardless of test ordering.
+  //
+  // FEAT-3 Phase 2 — seed a "Personal" space so the new-page flow (which
+  // now routes through `createPageInSpace` and refuses to fire when
+  // `currentSpaceId == null`) has a valid space to attach to. Tests
+  // that need to exercise the unhydrated branch can override this
+  // locally in their own `beforeEach`.
   useSpaceStore.setState({
-    currentSpaceId: null,
-    availableSpaces: [],
-    isReady: false,
+    currentSpaceId: 'SPACE_PERSONAL',
+    availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal' }],
+    isReady: true,
+  })
+
+  // FEAT-3 Phase 2 — reset the resolve store so the `pagesList` /
+  // `cache` state doesn't leak between tests (and so the
+  // space-switch clear-cache test can observe a deterministic
+  // starting state).
+  useResolveStore.setState({
+    cache: new Map(),
+    pagesList: [],
+    version: 0,
+    _preloaded: false,
   })
 
   // Reset the sync store so lastSyncedAt is null.
@@ -122,8 +140,12 @@ beforeEach(() => {
   // FEAT-3 Phase 1 — `list_spaces` returns a flat `SpaceRow[]` rather
   // than the paginated `{items,next_cursor,has_more}` shape, so dispatch
   // by command name. Every other command keeps the empty-page default.
+  //
+  // FEAT-3 Phase 2 — return the same seeded "Personal" space so the
+  // boot-time `refreshAvailableSpaces()` call reconciles against a
+  // non-empty list and leaves `currentSpaceId` intact.
   mockedInvoke.mockImplementation(async (cmd: string) => {
-    if (cmd === 'list_spaces') return []
+    if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
     return emptyPage
   })
 })
@@ -403,16 +425,11 @@ describe('App', () => {
   })
 
   it('Ctrl+N creates a new page and navigates to it', async () => {
-    // Mock create_block to return a new page
+    // Mock create_page_in_space to return the new page's ULID (FEAT-3 Phase 2).
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'create_block') {
-        return {
-          id: 'NEW_PAGE_ID_00000000000000',
-          block_type: 'page',
-          content: 'Untitled',
-          parent_id: null,
-          position: 0,
-        }
+      if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+      if (cmd === 'create_page_in_space') {
+        return 'NEW_PAGE_ID_00000000000000'
       }
       return emptyPage
     })
@@ -427,14 +444,13 @@ describe('App', () => {
     // Fire Ctrl+N on window
     fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
 
-    // Should call create_block and then navigate to the new page
+    // Should call the atomic `create_page_in_space` command and then
+    // navigate to the new page.
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-        blockType: 'page',
-        content: 'Untitled',
-        parentId: null,
-        position: null,
-      })
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'create_page_in_space',
+        expect.objectContaining({ content: 'Untitled', parentId: null }),
+      )
     })
 
     await waitFor(() => {
@@ -527,14 +543,9 @@ describe('App', () => {
 
   it('Ctrl+N announces "New page created"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'create_block') {
-        return {
-          id: 'NEW_PAGE_ID_00000000000000',
-          block_type: 'page',
-          content: 'Untitled',
-          parent_id: null,
-          position: 0,
-        }
+      if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+      if (cmd === 'create_page_in_space') {
+        return 'NEW_PAGE_ID_00000000000000'
       }
       return emptyPage
     })
@@ -764,17 +775,13 @@ describe('App', () => {
         'agaric-keyboard-shortcuts',
         JSON.stringify({ createNewPage: 'Ctrl + Alt + M' }),
       )
+      // FEAT-3 Phase 2 — the atomic create_page_in_space command is
+      // now used instead of create_block for top-level pages. The IPC
+      // returns the new page's ULID (a string), not a BlockRow.
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'create_block') {
-          return {
-            id: 'NEW_PAGE_1',
-            block_type: 'page',
-            content: 'Untitled',
-            parent_id: null,
-            position: null,
-            deleted_at: null,
-            is_conflict: false,
-          }
+        if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+        if (cmd === 'create_page_in_space') {
+          return 'NEW_PAGE_1'
         }
         return emptyPage
       })
@@ -784,20 +791,20 @@ describe('App', () => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
-      // Old Ctrl+N does NOT fire create_block
+      // Old Ctrl+N does NOT fire the page-creation IPC
       fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
       await Promise.resolve()
       expect(mockedInvoke).not.toHaveBeenCalledWith(
-        'create_block',
-        expect.objectContaining({ blockType: 'page', content: 'Untitled' }),
+        'create_page_in_space',
+        expect.objectContaining({ content: 'Untitled' }),
       )
 
       // New Ctrl+Alt+M fires
       fireEvent.keyDown(window, { key: 'm', ctrlKey: true, altKey: true })
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith(
-          'create_block',
-          expect.objectContaining({ blockType: 'page', content: 'Untitled' }),
+          'create_page_in_space',
+          expect.objectContaining({ content: 'Untitled' }),
         )
       })
     })
@@ -1343,7 +1350,8 @@ describe('App', () => {
 
     it('Ctrl+N shows error toast when page creation fails', async () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'create_block') {
+        if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+        if (cmd === 'create_page_in_space') {
           throw new Error('Disk full')
         }
         return emptyPage
@@ -1369,7 +1377,8 @@ describe('App', () => {
     it('New Page sidebar button shows error toast when creation fails', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'create_block') {
+        if (cmd === 'list_spaces') return [{ id: 'SPACE_PERSONAL', name: 'Personal' }]
+        if (cmd === 'create_page_in_space') {
           throw new Error('Disk full')
         }
         return emptyPage
@@ -1859,6 +1868,67 @@ describe('App', () => {
         )
       })
       expect(getPriorityLevels()).toEqual(['1', '2', '3'])
+    })
+  })
+
+  // FEAT-3 Phase 2 — when the active space changes, the global
+  // `pagesList` (preloaded with every page at boot for the link picker's
+  // short-query path) must be wiped so the picker can't surface
+  // other-space matches. The ULID→title resolver `cache` is kept intact
+  // so existing cross-space `[[ULID]]` chips still render their names.
+  describe('FEAT-3 Phase 2 — pagesList cache on space switch', () => {
+    it('App_clears_pagesList_on_space_switch', async () => {
+      // Override the default mock so `preload()` populates
+      // `useResolveStore.pagesList` with a deterministic entry.
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_spaces') {
+          return [
+            { id: 'SPACE_A', name: 'A' },
+            { id: 'SPACE_B', name: 'B' },
+          ]
+        }
+        if (cmd === 'list_blocks') {
+          return {
+            items: [{ id: 'PAGE_A1', content: 'Page A1', deleted_at: null }],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (cmd === 'list_tags_by_prefix') return []
+        return emptyPage
+      })
+      useSpaceStore.setState({
+        currentSpaceId: 'SPACE_A',
+        availableSpaces: [
+          { id: 'SPACE_A', name: 'A' },
+          { id: 'SPACE_B', name: 'B' },
+        ],
+        isReady: true,
+      })
+
+      render(<App />)
+
+      // Wait for `preload()` to resolve and populate `pagesList`. The
+      // clear-on-mount of the space-change effect runs synchronously
+      // first (against an empty list); `preload()` is async and fills
+      // the list afterwards.
+      await waitFor(() => {
+        expect(useResolveStore.getState().pagesList.length).toBeGreaterThan(0)
+      })
+
+      act(() => {
+        useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+      })
+
+      await waitFor(() => {
+        expect(useResolveStore.getState().pagesList.length).toBe(0)
+      })
+      // `cache` must remain populated so cross-space `[[ULID]]` chips
+      // still resolve to their titles.
+      expect(useResolveStore.getState().cache.get('PAGE_A1')).toEqual({
+        title: 'Page A1',
+        deleted: false,
+      })
     })
   })
 })

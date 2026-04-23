@@ -39,6 +39,15 @@ interface ResolveStore {
   resolveTitle: (id: string) => string
   /** Resolve deleted status */
   resolveStatus: (id: string) => 'active' | 'deleted'
+  /**
+   * Clear the short-query page-title search cache (`pagesList`) on space
+   * switch so the link picker's `searchPagesViaCache` path can no longer
+   * surface pages from the previous space. The global title `cache`
+   * (ULID → {title, deleted}) is intentionally left intact so existing
+   * cross-space `[[ULID]]` chips continue to render their names.
+   * `version` is bumped so any memoised reads recompute.
+   */
+  clearPagesList: () => void
 }
 
 export const useResolveStore = create<ResolveStore>((set, get) => {
@@ -164,5 +173,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       if (cached) return cached.deleted ? 'deleted' : 'active'
       return 'active'
     },
+
+    clearPagesList: () => set((state) => ({ pagesList: [], version: state.version + 1 })),
   }
 })

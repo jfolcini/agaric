@@ -80,7 +80,7 @@ async fn get_conflicts_returns_conflict_blocks() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn search_blocks_inner_empty_query_returns_empty() {
     let (pool, _dir) = test_pool().await;
-    let result = search_blocks_inner(&pool, "".into(), None, None, None, None)
+    let result = search_blocks_inner(&pool, "".into(), None, None, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -94,7 +94,7 @@ async fn search_blocks_inner_empty_query_returns_empty() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn search_blocks_inner_whitespace_query_returns_empty() {
     let (pool, _dir) = test_pool().await;
-    let result = search_blocks_inner(&pool, "   ".into(), None, None, None, None)
+    let result = search_blocks_inner(&pool, "   ".into(), None, None, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -122,7 +122,7 @@ async fn search_blocks_inner_finds_indexed_block() {
     .await;
     crate::fts::rebuild_fts_index(&pool).await.unwrap();
 
-    let result = search_blocks_inner(&pool, "searchable".into(), None, None, None, None)
+    let result = search_blocks_inner(&pool, "searchable".into(), None, None, None, None, None)
         .await
         .unwrap();
     assert_eq!(result.items.len(), 1, "should find one matching block");
@@ -135,7 +135,7 @@ async fn search_blocks_inner_no_results_for_unindexed_term() {
     insert_block(&pool, "SRCH2", "content", "apple banana", None, Some(0)).await;
     crate::fts::rebuild_fts_index(&pool).await.unwrap();
 
-    let result = search_blocks_inner(&pool, "cherry".into(), None, None, None, None)
+    let result = search_blocks_inner(&pool, "cherry".into(), None, None, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -175,7 +175,7 @@ async fn search_blocks_with_parent_id_filter() {
     crate::fts::rebuild_fts_index(&pool).await.unwrap();
 
     // Without filter — both should appear
-    let all = search_blocks_inner(&pool, "searchable".into(), None, None, None, None)
+    let all = search_blocks_inner(&pool, "searchable".into(), None, None, None, None, None)
         .await
         .unwrap();
     assert_eq!(all.items.len(), 2, "no filter: should find both blocks");
@@ -188,6 +188,7 @@ async fn search_blocks_with_parent_id_filter() {
         None,
         Some("PAGE_A".into()),
         None,
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -236,7 +237,7 @@ async fn search_blocks_with_tag_filter() {
     crate::fts::rebuild_fts_index(&pool).await.unwrap();
 
     // Without tag filter — all three
-    let all = search_blocks_inner(&pool, "findme".into(), None, None, None, None)
+    let all = search_blocks_inner(&pool, "findme".into(), None, None, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -253,6 +254,7 @@ async fn search_blocks_with_tag_filter() {
         None,
         None,
         Some(vec!["TAG_X".into()]),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -272,6 +274,7 @@ async fn search_blocks_with_tag_filter() {
         None,
         None,
         Some(vec!["TAG_X".into(), "TAG_Y".into()]),
+        None, // FEAT-3 Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -310,7 +313,7 @@ async fn search_blocks_without_filters() {
     crate::fts::rebuild_fts_index(&pool).await.unwrap();
 
     // No filters (backward compatible) — all matching results returned
-    let result = search_blocks_inner(&pool, "universal".into(), None, None, None, None)
+    let result = search_blocks_inner(&pool, "universal".into(), None, None, None, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -320,10 +323,17 @@ async fn search_blocks_without_filters() {
     );
 
     // Empty tag_ids vec should be treated the same as None
-    let result_empty_tags =
-        search_blocks_inner(&pool, "universal".into(), None, None, None, Some(vec![]))
-            .await
-            .unwrap();
+    let result_empty_tags = search_blocks_inner(
+        &pool,
+        "universal".into(),
+        None,
+        None,
+        None,
+        Some(vec![]),
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         result_empty_tags.items.len(),
         2,

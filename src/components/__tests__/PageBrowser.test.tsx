@@ -19,6 +19,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { emptyPage, makePage } from '../../__tests__/fixtures'
+import { useSpaceStore } from '../../stores/space'
 import { PageBrowser } from '../PageBrowser'
 
 // Mock @tanstack/react-virtual to render all items (jsdom has zero-height containers)
@@ -65,6 +66,17 @@ beforeEach(() => {
   vi.clearAllMocks()
   localStorage.removeItem('page-browser-sort')
   localStorage.removeItem('starred-pages')
+  // FEAT-3 Phase 2 — PageBrowser now gates its render and listBlocks
+  // call on `useSpaceStore.isReady`. Seed the store so tests exercise
+  // the real code path rather than the loading skeleton.
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_TEST',
+    availableSpaces: [
+      { id: 'SPACE_TEST', name: 'Test' },
+      { id: 'SPACE_OTHER', name: 'Other' },
+    ],
+    isReady: true,
+  })
   // Default fallback: resolve_page_by_alias returns null (no alias match)
   mockedInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
@@ -84,11 +96,10 @@ describe('PageBrowser', () => {
         blockType: 'page',
         tagId: null,
         showDeleted: null,
-        agendaDate: null,
-        agendaDateRange: null,
-        agendaSource: null,
+        agenda: null,
         cursor: null,
         limit: 50,
+        spaceId: 'SPACE_TEST',
       })
     })
   })
@@ -171,11 +182,10 @@ describe('PageBrowser', () => {
         blockType: 'page',
         tagId: null,
         showDeleted: null,
-        agendaDate: null,
-        agendaDateRange: null,
-        agendaSource: null,
+        agenda: null,
         cursor: 'cursor_abc',
         limit: 50,
+        spaceId: 'SPACE_TEST',
       })
     })
 
@@ -354,19 +364,18 @@ describe('PageBrowser', () => {
         expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
       })
 
-      // Mock create_block response
-      mockedInvoke.mockResolvedValueOnce(makePage({ id: 'P_NEW', content: 'My Custom Page' }))
+      // Mock create_page_in_space response — atomic wrapper returns the new page's ULID
+      mockedInvoke.mockResolvedValueOnce('P_NEW')
 
       const input = screen.getByPlaceholderText('New page name...')
       await user.type(input, 'My Custom Page')
       await user.click(screen.getByRole('button', { name: /New Page/i }))
 
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-          blockType: 'page',
-          content: 'My Custom Page',
+        expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
           parentId: null,
-          position: null,
+          content: 'My Custom Page',
+          spaceId: 'SPACE_TEST',
         })
       })
 
@@ -384,7 +393,7 @@ describe('PageBrowser', () => {
         expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
       })
 
-      mockedInvoke.mockResolvedValueOnce(makePage({ id: 'P_NEW', content: 'Temp Name' }))
+      mockedInvoke.mockResolvedValueOnce('P_NEW')
 
       const input = screen.getByPlaceholderText('New page name...')
       await user.type(input, 'Temp Name')
@@ -427,17 +436,16 @@ describe('PageBrowser', () => {
         expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
       })
 
-      mockedInvoke.mockResolvedValueOnce(makePage({ id: 'P_ENTER', content: 'Enter Page' }))
+      mockedInvoke.mockResolvedValueOnce('P_ENTER')
 
       const input = screen.getByPlaceholderText('New page name...')
       await user.type(input, 'Enter Page{Enter}')
 
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-          blockType: 'page',
-          content: 'Enter Page',
+        expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
           parentId: null,
-          position: null,
+          content: 'Enter Page',
+          spaceId: 'SPACE_TEST',
         })
       })
     })
@@ -453,7 +461,7 @@ describe('PageBrowser', () => {
         expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
       })
 
-      mockedInvoke.mockResolvedValueOnce(makePage({ id: 'P_NAV', content: 'Navigate Here' }))
+      mockedInvoke.mockResolvedValueOnce('P_NAV')
 
       const input = screen.getByPlaceholderText('New page name...')
       await user.type(input, 'Navigate Here')
@@ -489,7 +497,7 @@ describe('PageBrowser', () => {
         expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
       })
 
-      // Mock create_block to fail
+      // Mock create_page_in_space to fail
       mockedInvoke.mockRejectedValueOnce(new Error('Create failed'))
 
       const input = screen.getByPlaceholderText('New page name...')
@@ -707,7 +715,7 @@ describe('PageBrowser', () => {
         expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
       })
 
-      // Mock create_block to return a pending promise (never resolves)
+      // Mock create_page_in_space to return a pending promise (never resolves)
       mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
 
       const input = screen.getByPlaceholderText('New page name...')
@@ -730,7 +738,7 @@ describe('PageBrowser', () => {
         expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
       })
 
-      // Mock create_block to resolve
+      // Mock create_page_in_space to resolve
       let resolveCreate!: (v: unknown) => void
       const p = new Promise((r) => {
         resolveCreate = r
@@ -746,8 +754,8 @@ describe('PageBrowser', () => {
       // Button should be disabled while creating
       expect(newPageBtn).toBeDisabled()
 
-      // Resolve the create call
-      resolveCreate(makePage({ id: 'P_NEW', content: 'Test Page' }))
+      // Resolve the create call — wrapper returns the new page's ULID
+      resolveCreate('P_NEW')
 
       // After creation, input is cleared so button is disabled due to empty input
       await waitFor(() => {

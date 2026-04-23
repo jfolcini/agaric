@@ -17,9 +17,15 @@ use crate::error::AppError;
 ///
 /// Ordered by `(deleted_at DESC, id ASC)` — most recently deleted first.
 /// Excludes conflict blocks (`is_conflict = 0`).
+///
+/// When `space_id` is `Some`, only trash roots whose owning page carries
+/// `space = ?space_id` are returned. Note that a soft-deleted block
+/// retains its `page_id` column value, so the filter applies identically
+/// to live and deleted blocks. See [`crate::space_filter_clause`].
 pub async fn list_trash(
     pool: &SqlitePool,
     page: &PageRequest,
+    space_id: Option<&str>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
@@ -34,6 +40,11 @@ pub async fn list_trash(
         None => (None, "", ""),
     };
 
+    // FEAT-3 Phase 2 — ?5 (space_id) drives the shared space filter.
+    // The clause is inlined here (rather than composed via
+    // `crate::space_filter_clause!`) because `sqlx::query_as!` requires
+    // a string literal and does not accept `concat!()`. Mirror any
+    // change to the filter SQL across every inlined copy.
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
@@ -51,12 +62,16 @@ pub async fn list_trash(
            )
            AND (?1 IS NULL OR (
                 b.deleted_at < ?2 OR (b.deleted_at = ?2 AND b.id > ?3)))
+           AND (?5 IS NULL OR COALESCE(b.page_id, b.id) IN (
+                SELECT bp.block_id FROM block_properties bp
+                WHERE bp.key = 'space' AND bp.value_ref = ?5))
          ORDER BY b.deleted_at DESC, b.id ASC
          LIMIT ?4"#,
         cursor_flag, // ?1
         cursor_del,  // ?2
         cursor_id,   // ?3
         fetch_limit, // ?4
+        space_id,    // ?5
     )
     .fetch_all(pool)
     .await?;
