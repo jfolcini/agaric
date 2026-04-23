@@ -74,6 +74,17 @@ export function RecentPagesStrip(): React.ReactElement | null {
       className="border-b border-border/40 bg-background px-4 md:px-6 py-1.5"
       data-testid="recent-pages-strip"
     >
+      {/*
+       * Responsive grid: `auto-fit` packs chips at their natural min/max
+       * width. Rough chip counts at common desktop widths (with 32 px
+       * horizontal padding, 8 px gap):
+       *   - 1440 px viewport → ~7 chips per row
+       *   - 1280 px viewport → ~6 chips
+       *   - 1024 px viewport → ~5 chips
+       *   -  800 px viewport → ~4 chips
+       *   -  768 px viewport (desktop min) → ~3 chips
+       * Below 768 px the strip doesn't render at all (mobile gate above).
+       */}
       <div
         className="grid gap-2"
         style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 180px))' }}

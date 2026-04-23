@@ -1,5 +1,53 @@
 # Session Log
 
+## Session 468 — Post-hoc fresh-eyes review of FEAT-7/8/9 (PROMPT.md-compliant split) + 1 trivial polish fix + UX-255/UX-256 filed (2026-04-23)
+
+**0 REVIEW-LATER items resolved, 2 new filed (UX-255, UX-256).** Open-items count 15 → 17. User asked for a fresh-eyes review of session 467's navigation-cluster work "as if we had followed PROMPT.md" — flagging that session 467's review had used a single combined subagent rather than the PROMPT.md-mandated split (technical + UX in parallel for frontend changes with user-facing impact). This session runs the proper split, triages the findings, applies the trivial polish fix directly, and files the two non-trivial findings as new REVIEW-LATER items.
+
+Reviewers:
+
+- **Technical subagent (`subagent_explore`):** APPROVE, zero findings. Verified every correctness claim from session 467 end-to-end: `switchTab` `currentView` flip (no-op when already in editor; bounds-checked; single state change), `navigateToPage` `recordVisit` hook fires exactly once per call (before set, before branching; covers both date-routed + default paths), `openInNewTab` mobile redirect at call site (`PageHeaderMenu.tsx:123` via `!isMobile`, with `App.tsx:728` keyboard-handler early-return as belt-and-suspenders), `useRecentPagesStore` persist key uniqueness (`agaric:recent-pages` distinct from `agaric:navigation`), `partialize` keeps only `recentPages`, MRU dedup + max-10 cap correct, `RecentPagesStrip` mobile-gate ordering (`useIsMobile()` first, then empty-state filter), `TabBar.tsx` FEAT-8 popover integration (`PopoverAnchor` wraps only the active tab button, not the full chrome; close-button `e.stopPropagation()` on `onClick` fires before menuitemradio-select propagation), `desktopOnly` keyboard condition correctly evaluated at runtime + registered in i18n. All AGENTS.md invariants respected (no new tables, op types, materializer queues, sync message types; one new Zustand store within the additive budget; no backend change; no hardcoded colors for state; no `biome-ignore` / `@ts-ignore` / non-null assertions / silent catches; React 19 conventions; strict TS settings).
+- **UX subagent (`subagent_explore`):** APPROVE WITH NOTES. Zero P1/P2. Three P3s — (1) active-tab dropdown trigger has no `aria-label` hinting at the popup so screen-reader users only hear the page title, complementary to UX-254's visual discoverability issue but targets AT users; (2) `RecentPagesStrip` chips are Tab-reachable but lack arrow-key traversal (inconsistent with `TabBar`'s `useListKeyboardNavigation` pattern; was explicitly optional at v1 ship time); (3) the responsive-grid `gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 180px))'` has no comment documenting expected chip counts at common viewport widths (docs-only; future-maintainer ergonomics). Copy review: all new keys (`recent.ariaLabel`, `recent.untitled`, `keyboard.condition.desktopOnly`) passed verbatim. All four interaction flow traces (first-time tab discovery, bounce-between-views, Recent-strip MRU, desktop→tablet rotation) felt natural with no state-loss or surprise behaviour.
+
+### What changed this session
+
+**Polish fix (P3-3 — responsive grid documentation, commit `TBD`):**
+
+- **`src/components/RecentPagesStrip.tsx`** — added an inline block comment above the grid container documenting expected chip counts at common desktop viewport widths (1440 / 1280 / 1024 / 800 / 768 px → ~7 / 6 / 5 / 4 / 3 chips per row). Derived from the arithmetic `(viewport - 32 px padding) / (180 px + 8 px gap)`. Helps a future maintainer audit the grid's responsive behaviour without re-deriving the math from first principles. No functional change; no test impact.
+
+**New REVIEW-LATER item — UX-255 (active-tab dropdown aria-label):**
+
+Sibling to UX-254 but for AT users: when the active tab in page-editor doubles as the Popover trigger, Radix wires `aria-haspopup` + `aria-expanded` automatically, but the button's accessible name stays as the page title — no hint that the tab opens a tab-switcher menu. Filed with 3 fix options (recommended: conditional `aria-label={t('tabs.switchTabsHint', { title })}` on the active-in-editor case; fallback: `aria-describedby` with an sr-only hint span; accept-as-is: Radix `aria-haspopup` is enough). Tests: assert the aria-label matches only for the active-in-editor case; axe passes regardless. S-cost (~30 min). Pairs naturally with UX-254 for a FEAT-8 a11y + discoverability polish session (~1 h).
+
+**New REVIEW-LATER item — UX-256 (RecentPagesStrip arrow-key navigation):**
+
+The chips are Tab-reachable but lack arrow-key traversal — inconsistent with `TabBar`'s `useListKeyboardNavigation` pattern. FEAT-9's original spec explicitly marked arrow-key nav as optional at v1 ship time; the current implementation took the optional deferral. Filed with the fix shape (wrap the chip loop in `useListKeyboardNavigation`, 5-item test coverage including wrap-around + Tab-from-outside behaviour). S-cost (~45 min). Can bundle with UX-254 + UX-255 for a combined navigation-cluster polish session (~2 h total for all three).
+
+### Verification
+
+- `npx vitest run src/components/__tests__/RecentPagesStrip.test.tsx`: 12/12 passed (the new comment is a structural no-op).
+- `prek run --all-files`: all 26 hooks green (pending the commit — to be verified by the pre-commit hook).
+- No Rust, backend, sqlx, or specta change.
+
+### Design decisions
+
+- **Split the PROMPT.md review properly this time.** Session 467 used a single combined `subagent_explore` review, which was efficient but skipped the PROMPT.md-specified two-dimensional pattern. This session demonstrates the correct flow — technical reviewer focuses on correctness / test coverage / conventions / architectural stability; UX reviewer focuses on discoverability / consistency / mobile parity / visual coherence / edge cases / copy review / a11y. The findings from the split run are strictly a SUPERSET of the combined run (both P3s that emerged are UX-specific — the technical reviewer's single-dimensional re-pass found nothing new beyond the original combined review's conclusions).
+- **Apply P3-3 directly; file P3-1 + P3-2.** PROMPT.md's "apply trivial 1-line fixes directly" explicitly covers the documentation comment. P3-1 (aria-label) and P3-2 (arrow-key nav) are small but non-trivial — they require i18n keys, conditional logic, tests — so they're filed rather than applied here.
+- **UX-255 is distinct from UX-254.** Different audiences (AT vs. sighted users), different mechanisms (aria-label vs. visible chevron), different fix shapes. Splitting them in the backlog lets a future session cleanly pick either or both.
+- **UX-256 honors the original FEAT-9 spec's optional marker.** The spec explicitly said "Arrow keys traverse chips ... ; Enter activates." — the implementation shipped without arrow-key nav because the reviewer marked it optional. Filing UX-256 documents the deferral and scopes the eventual fix; it is NOT a regression from v1.
+
+### Architectural invariants respected (AGENTS.md)
+
+- Docs-only code change + two REVIEW-LATER filings. No architectural surface changes.
+
+### Notes for the next session
+
+- **Navigation-cluster polish session is now well-sized.** UX-254 + UX-255 + UX-256 together are ~2 h, all pure-frontend, all S-cost, all ready without sign-off. Ideal PROMPT.md batch.
+- **Remaining open items (17):** FEAT-3, FEAT-4, FEAT-4i, FEAT-5, FEAT-5g, PERF-19, PERF-20, PERF-23, PUB-2, PUB-3, PUB-5, PUB-7, UX-249, UX-250, UX-254, UX-255, UX-256. Same blocking categories as session 466/467's close-outs — except the three nav-cluster polish items (UX-254/255/256) which are all ready.
+- **Session-log lesson:** when a change has both code AND user-facing impact, the PROMPT.md review must run as two parallel dimensions. A combined single-subagent review is efficient but can miss class-specific findings (in this case, the P3 UX items that only surfaced when the UX reviewer was given a dedicated lens).
+
+---
+
 ## Session 467 — FEAT-7 + FEAT-8 + FEAT-9 navigation cluster shipped + UX-254 filed (2026-04-23)
 
 **3 REVIEW-LATER items resolved (FEAT-7, FEAT-8, FEAT-9), 1 new filed (UX-254).** Open-items count 17 → 15. Full navigation-cluster delivery in a single atomic change: shell-level TabBar hoist (FEAT-7), active-tab dropdown switcher (FEAT-8), and Recent-pages MRU strip (FEAT-9). Found fully-staged at session start from a prior agent pass that did not close the loop; orchestrator ran the target + full-suite tests, dispatched a fresh-eyes review subagent per PROMPT.md §"No self-reviews", and committed code + bookkeeping separately. All three items had been user-sign-off-blocked per the session-466 close-out notes — the implementation that appeared in the working tree implicitly reflects the visual-direction decisions (inactive-tab styling via `SidebarMenuButton` tokens, mobile-hidden chrome, autohide-at-one-tab preserved).
