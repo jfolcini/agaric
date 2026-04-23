@@ -1,5 +1,72 @@
 # Session Log
 
+## Session 466 — UX-252 + UX-253 resolved: activity-feed Undo-after-success + touch discoverability (2026-04-23)
+
+**2 REVIEW-LATER items resolved (UX-252, UX-253), 0 new filed.** Open-items count 19 → 17. Both were S-cost pure-frontend items filed during the review passes of sessions 464 and 465, both touching `src/components/AgentAccessSettingsTab.tsx`. Session 465's notes explicitly called them out as a natural batch. Implemented together in one build subagent, one review subagent, one commit (`83ce963`), and one bookkeeping commit (this entry).
+
+### What changed (commit `83ce963`)
+
+**UX-252 — Revert-session / Undo buttons disappear after success:**
+
+- **`src/components/AgentAccessSettingsTab.tsx`** — new ephemeral state `revertedOpKeys: Set<string>` (lazy-initialized, keyed by `${device_id}:${seq}`, scoped to the component lifetime). `handleUndo` adds the reverted opRef's key to the set in the `try` block AFTER `await revertOps({ ops: [opRef] })` succeeds; `confirmRevertSession` iterates `target.ops` and adds every key in the `try` block after the batch `revertOps({ ops: target.ops })` succeeds. Error paths leave the set unchanged so the user can retry. The `undoableBySession` memo gains `revertedOpKeys` in its dep array and filters entries whose opRef key is in the set; the per-entry `canUndo` predicate gets the same filter. Result: after a successful revert, the affected button (or header, when all ops of a session have been reverted) simply disappears from the DOM — the entry row itself stays visible so users still see the history of what the agent did.
+- The pattern avoids reusing `undoingKeys` (slice 3 in-flight marker) and `revertingSessions` (slice 4 in-flight marker); those are transient, `revertedOpKeys` is terminal. Keeping them separate preserves the semantics of each.
+- No persist wiring. No Zustand. No localStorage. Scoped to the component lifetime, which matches the activity feed's own ephemeral 100-entry render ring.
+
+**UX-253 — Per-entry Undo button gains visible text on touch:**
+
+- **`src/components/AgentAccessSettingsTab.tsx`** — the non-spinner branch of the per-entry Undo button body now renders `<Undo2>` + `<span className="hidden [@media(pointer:coarse)]:inline ml-1">{t('agentAccess.undoAgentOp.buttonText')}</span>`. Desktop (fine pointer) keeps the existing icon-only chrome; touch devices (coarse pointer) show `[↶ Undo]`. Matches the `[@media(pointer:coarse)]:` pattern already used by `TrashView`, `SearchPanel`, `PageBrowser`, `PropertyDefinitionsList`, `TemplatesView`, and `SourcePageFilter`.
+- **`src/lib/i18n.ts`** — one new key `agentAccess.undoAgentOp.buttonText` → `"Undo"`.
+- The button's `aria-label` is unchanged (still carries the full verb "Undo this agent action" for screen readers) — double-labeling "Undo" + "Undo this agent action" would be noise, so the visible span's short word + the aria-label's full phrase cover complementary audiences.
+- The session-header button is untouched — it already has a visible "Revert session" label.
+
+**Tests — `src/components/__tests__/AgentAccessSettingsTab.test.tsx`:**
+
+- **+6 UX-252 tests** (`describe('... revertedOpKeys tracking (UX-252)', ...)`):
+  1. After successful per-entry Undo, the button disappears for that entry.
+  2. Entry metadata (Badge, summary, time) stays rendered.
+  3. After successful per-session Revert, the session header disappears.
+  4. Error path keeps the button clickable (retry possible).
+  5. Header count decreases as individual undos happen (5 → 4 → …).
+  6. Header disappears when remaining undoable op count drops below 2.
+- **+2 UX-253 tests** (`describe('... touch discoverability (UX-253)', ...)`):
+  1. The per-entry Undo button contains a `<span>` with the "Undo" i18n text AND the `[@media(pointer:coarse)]:inline` class (pins the responsive-visibility contract; jsdom can't apply CSS media queries, so the test asserts the DOM structure + className rather than visual behaviour).
+  2. While in-flight, the `<span>` is not in the DOM — the spinner replaces icon + text together.
+- **1 existing test updated** — `"shows a spinner and disables the button while the revert is in flight"`: pre-UX-252, the test held a reference to the button DOM node and asserted `not.toBeDisabled()` after resolve. UX-252 removes the node from the React tree on success, so the detached reference's `disabled=true` from its last render persisted. Fixed per the spec's flagged "likely-affected" call-out: replaced the stale reference with `queryByLabelText(undoLabel)` (returns `null` once the button leaves the DOM) + a row-still-rendered assertion.
+
+### Verification
+
+- `npx vitest run src/components/__tests__/AgentAccessSettingsTab.test.tsx`: **55/55 passed** (was 47; +8 net, 1 updated). Final run duration ~3.2 s.
+- `prek run --all-files`: all 26 hooks green after a single biome formatter auto-fix (one multi-line `toHaveTextContent` call collapsed to single-line).
+- No Rust, backend, sqlx, or specta change — no backend test runs required.
+
+### Design decisions
+
+- **Ephemeral in-component state, not persisted.** The REVIEW-LATER entry's Option 1 was explicitly about keeping state scoped to the component lifetime. Persisting reverted-opRef tracking would couple the activity feed (a short-lived UI surface) to long-term storage for no durable benefit — the feed itself rolls over at 100 entries. Option 2 (refresh-from-backend) was rejected for the same scoping reason.
+- **Keep `revertedOpKeys` distinct from `undoingKeys` / `revertingSessions`.** Three independent Sets, three independent lifecycles. `undoingKeys` clears in the per-entry `finally`. `revertingSessions` clears in the per-session `finally`. `revertedOpKeys` only grows (within the component lifetime) and is cleared implicitly on unmount. Conflating any two would entangle in-flight with terminal states and subtly break either retry or the disappear-after-success guarantee.
+- **Responsive text for UX-253, not always-visible.** Option 2 (always-visible "Undo" next to the icon, matching the session-header button's pattern) would add ~40-50 px of chrome weight to every activity row on desktop. The activity feed is a compact 100-row scroll region; adding a text label to each button would visibly thicken it. Gating behind `[@media(pointer:coarse)]` preserves desktop minimalism AND solves the touch-discoverability gap.
+- **Test with DOM structure, not visual behaviour, for media-query classes.** jsdom does not apply CSS `@media` rules, so a test can't assert "the span is visually hidden on desktop". The substitute is to assert (a) the span is in the DOM (with its i18n text) when the icon is visible, and (b) the span carries the `[@media(pointer:coarse)]:inline` class — which pins the contract that, on real devices, the CSS will do the right thing. The axe test (shipped by session 463) still validates a11y regardless of media-query state.
+
+### Architectural invariants respected (AGENTS.md)
+
+- **Op log append-only, CQRS split, sqlx compile-time queries** — all untouched. Frontend-only change.
+- **No new tables, op types, Zustand stores, materializer queues, sync message types.** `revertedOpKeys` is component-local `useState`.
+- **No `biome-ignore`, `@ts-ignore`, non-null assertions, or silent catch blocks.** All error paths continue to use `logger.error` + toast.
+- **Radix UI + `cn()` + semantic tokens** — no new hardcoded Tailwind colors; the new utility class is the established `[@media(pointer:coarse)]:` arbitrary-media-query pattern.
+- **`exactOptionalPropertyTypes` / `noImplicitReturns` / `useExplicitLengthCheck`** — all satisfied.
+- **React 19 conventions:** no `React.forwardRef`, no `React.ComponentRef`, functional setState updates throughout, lazy `useState` init.
+
+### Review summary (fresh-eyes `subagent_explore`)
+
+APPROVE WITH NOTES. Zero P1/P2 blockers. All critical correctness checks passed: `revertedOpKeys` is added only on success (not in `finally`, not on error), both memo dep arrays are correct, `canUndo` predicate is extended, `firstSeenIdxBySession` is deliberately untouched (header hides via the existing `sessionOps.length >= 2` gate), UX-253's span is inside the non-spinner branch, `aria-label` + tooltip are preserved. P3s — session-revert error-path test gap (code path identical to per-entry, low risk), concurrent per-entry + session race (pre-existing, inherent to user concurrency, doesn't get worse), ring rollover dead-key memory (≤ 4 KB, negligible). All accepted as non-actionable.
+
+### Notes for the next session
+
+- **FEAT-4 v2 now polished as well as shipped.** Slices 1-4 done; activity-feed UX tightened against double-revert and touch-icon obscurity. Only FEAT-4i (v3 Mobile) remains in the FEAT-4 umbrella, DEFERRED.
+- **Remaining open items (17):** FEAT-3, FEAT-4, FEAT-4i, FEAT-5, FEAT-5g, FEAT-7, FEAT-8, FEAT-9, PERF-19, PERF-20, PERF-23, PUB-2, PUB-3, PUB-5, PUB-7, UX-249, UX-250. FEAT-7 (shell-level TabBar) is the next ready-but-sign-off-gated item; everything else is either deferred, an explicit non-fix (PERF-*), or blocked on user sign-off (FEAT-3 needs 8-question sign-off, FEAT-7 needs visual-direction sign-off, FEAT-8/9 depend on FEAT-7, UX-249 pairs with UX-250, UX-250 needs Option A/B decision).
+- **Next PROMPT.md batch is narrow.** The ready + no-sign-off set is now empty. Next session likely needs user input before more batches can be productively worked.
+
+---
+
 ## Session 465 — Fresh-eyes review of recent MCP work + two polish fixes + UX-253 filed (2026-04-23)
 
 **0 REVIEW-LATER items resolved, 1 new filed (UX-253).** Open-items count 18 → 19. User asked for a fresh-eyes review of the recent MCP work (sessions 463 + 464 — FEAT-4c emission wiring + FEAT-4h slice 3 per-entry Undo + FEAT-4h slice 4 per-session bulk-revert) treated holistically as if following PROMPT.md's step 4 (no self-reviews; technical + UX dimensions in parallel). Two read-only subagents ran concurrently; both returned APPROVE WITH NOTES with zero P1 blockers. Triaged findings into "apply now" (two polish fixes) and "file as follow-up" (one new UX item). One small code commit closes the loop.
