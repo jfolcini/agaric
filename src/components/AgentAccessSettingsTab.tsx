@@ -147,6 +147,13 @@ export function AgentAccessSettingsTab(): React.ReactElement {
   // Session ids currently in-flight — used to disable the per-session
   // button and swap its icon to a spinner.  Keyed by sessionId.
   const [revertingSessions, setRevertingSessions] = useState<Set<string>>(() => new Set())
+  // UX-252 — terminal-state tracking. Once an opRef has been successfully
+  // reverted (single-entry Undo OR per-session bulk revert), its button
+  // disappears from the feed so the user can't click again and hit
+  // unexpected backend double-undo behaviour. Scoped to the component
+  // lifetime — ephemeral, matches the activity-feed's own 100-entry render
+  // ring.
+  const [revertedOpKeys, setRevertedOpKeys] = useState<Set<string>>(() => new Set())
 
   // Re-render every 60 s so relative-time labels in the activity feed
   // refresh ("2m ago" → "3m ago") without needing a separate interval
@@ -315,6 +322,14 @@ export function AgentAccessSettingsTab(): React.ReactElement {
       try {
         await revertOps({ ops: [opRef] })
         toast.success(t('agentAccess.undoAgentOp.success'))
+        // UX-252 — mark this opRef's button as terminal-success so it
+        // disappears from the feed. On error the key is NOT added, so
+        // the user can retry.
+        setRevertedOpKeys((prev) => {
+          const next = new Set(prev)
+          next.add(key)
+          return next
+        })
       } catch (err) {
         logger.error('AgentAccessSettingsTab', 'undo failed', { opRef }, err)
         toast.error(
@@ -345,14 +360,22 @@ export function AgentAccessSettingsTab(): React.ReactElement {
   const undoableBySession = useMemo(() => {
     const map = new Map<string, Array<{ device_id: string; seq: number }>>()
     for (const entry of entries) {
-      if (entry.actorKind === 'agent' && entry.result.kind === 'ok' && entry.opRef != null) {
+      if (
+        entry.actorKind === 'agent' &&
+        entry.result.kind === 'ok' &&
+        entry.opRef != null &&
+        // UX-252 — opRefs that have been successfully reverted drop out
+        // of the per-session list so the header's visible count + the
+        // ≥ 2 visibility gate both reflect the remaining undoable ops.
+        !revertedOpKeys.has(`${entry.opRef.device_id}:${entry.opRef.seq}`)
+      ) {
         const list = map.get(entry.sessionId) ?? []
         list.push(entry.opRef)
         map.set(entry.sessionId, list)
       }
     }
     return map
-  }, [entries])
+  }, [entries, revertedOpKeys])
 
   // First-seen indices by sessionId, computed in newest-first order.
   // The header lands on the most-recent entry of a session so it sits
@@ -393,6 +416,17 @@ export function AgentAccessSettingsTab(): React.ReactElement {
     try {
       await revertOps({ ops: target.ops })
       toast.success(t('agentAccess.revertSession.success', { count: target.ops.length }))
+      // UX-252 — mark every opRef in the batch as terminal-success so
+      // the session header + every per-entry Undo button in this
+      // session drop out of the feed. On error none are added, so
+      // the user can retry the whole batch.
+      setRevertedOpKeys((prev) => {
+        const next = new Set(prev)
+        for (const op of target.ops) {
+          next.add(`${op.device_id}:${op.seq}`)
+        }
+        return next
+      })
     } catch (err) {
       logger.error(
         'AgentAccessSettingsTab',
@@ -594,7 +628,13 @@ export function AgentAccessSettingsTab(): React.ReactElement {
                     const canUndo =
                       entry.actorKind === 'agent' &&
                       entry.result.kind === 'ok' &&
-                      entry.opRef != null
+                      entry.opRef != null &&
+                      // UX-252 — a successful revert marks this opRef as
+                      // terminal-success; the button disappears from
+                      // the feed so the user can't double-click through
+                      // an unexpected backend toggle (delete↔restore,
+                      // etc).
+                      !revertedOpKeys.has(`${entry.opRef.device_id}:${entry.opRef.seq}`)
                     const undoKey =
                       entry.opRef != null ? `${entry.opRef.device_id}:${entry.opRef.seq}` : null
                     const isUndoing = undoKey !== null && undoingKeys.has(undoKey)
@@ -700,7 +740,20 @@ export function AgentAccessSettingsTab(): React.ReactElement {
                                   {isUndoing ? (
                                     <Spinner size="sm" />
                                   ) : (
-                                    <Undo2 className="h-3.5 w-3.5" />
+                                    <>
+                                      <Undo2 className="h-3.5 w-3.5" />
+                                      {/*
+                                       * UX-253 — hidden by default (icon-only on
+                                       * desktop), revealed on coarse pointers so
+                                       * touch-only users get a visible label
+                                       * alongside the icon. The `aria-label` +
+                                       * tooltip stay unchanged to avoid
+                                       * double-labelling screen readers.
+                                       */}
+                                      <span className="hidden [@media(pointer:coarse)]:inline ml-1">
+                                        {t('agentAccess.undoAgentOp.buttonText')}
+                                      </span>
+                                    </>
                                   )}
                                 </Button>
                               </TooltipTrigger>

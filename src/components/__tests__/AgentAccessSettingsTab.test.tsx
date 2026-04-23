@@ -780,17 +780,20 @@ describe('AgentAccessSettingsTab — undo agent op', () => {
     expect(btn).toHaveAttribute('aria-busy', 'true')
     expect(btn.querySelector('[data-slot="spinner"]')).not.toBeNull()
 
-    // Resolve the pending invoke and confirm the spinner goes away.
+    // Resolve the pending invoke — UX-252: a successful revert marks
+    // this opRef terminal-success so the per-entry Undo button drops
+    // out of the DOM entirely (instead of re-enabling). The entry row
+    // itself stays rendered — only the action affordance vanishes.
     await act(async () => {
       resolveRevert?.(undefined)
       await revertPromise
     })
 
     await waitFor(() => {
-      expect(btn).not.toBeDisabled()
+      expect(screen.queryByLabelText(undoLabel)).not.toBeInTheDocument()
     })
-    expect(btn).toHaveAttribute('aria-busy', 'false')
-    expect(btn.querySelector('[data-slot="spinner"]')).toBeNull()
+    // The activity row for this entry is still rendered.
+    expect(screen.getByTestId('mcp-activity-row')).toBeInTheDocument()
   })
 
   it('logs and toasts a generic failure when revert_ops rejects with a non-NonReversible error', async () => {
@@ -1439,6 +1442,335 @@ describe('AgentAccessSettingsTab — revert session', () => {
       { timeout: 8000 },
     )
   }, 15000)
+})
+
+// ---------------------------------------------------------------------------
+// UX-252 — terminal-state tracking for successfully-reverted opRefs.
+//
+// A successful per-entry Undo OR per-session bulk revert adds every
+// reverted opRef's `${device_id}:${seq}` key to an in-component
+// `revertedOpKeys` Set.  The per-entry Undo button visibility
+// predicate + the `undoableBySession` memo both filter against that
+// set, so after a successful revert the action affordances disappear
+// from the DOM — preventing a user who missed the toast from
+// double-clicking and triggering unexpected backend toggle
+// behaviour.  On error no keys are added, so the user can retry.
+// ---------------------------------------------------------------------------
+
+describe('AgentAccessSettingsTab — revertedOpKeys tracking (UX-252)', () => {
+  const undoLabel = 'Undo this agent action'
+
+  it('hides the per-entry Undo button after a successful revert', async () => {
+    const user = userEvent.setup()
+    setupInvoke(makeStatus())
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(makeActivityEntry({ opRef: { device_id: 'D', seq: 1 } }))
+    })
+
+    const btn = await screen.findByLabelText(undoLabel)
+    await user.click(btn)
+
+    // Wait for the success toast to fire — flush state updates.
+    await waitFor(() => {
+      expect(mockedToastSuccess).toHaveBeenCalledWith('Agent action undone')
+    })
+    // Button disappears from the DOM; the entry row itself stays.
+    await waitFor(() => {
+      expect(screen.queryByLabelText(undoLabel)).not.toBeInTheDocument()
+    })
+  })
+
+  it('keeps the entry summary / timestamp / toolName badge after a successful revert', async () => {
+    const user = userEvent.setup()
+    setupInvoke(makeStatus())
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'create_block',
+          summary: 'created 1 block',
+          timestamp: new Date('2024-01-01T00:00:00Z').toISOString(),
+          opRef: { device_id: 'D', seq: 1 },
+        }),
+      )
+    })
+
+    const btn = await screen.findByLabelText(undoLabel)
+    await user.click(btn)
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText(undoLabel)).not.toBeInTheDocument()
+    })
+
+    // Only the action affordance disappeared — the row content stays.
+    const row = screen.getByTestId('mcp-activity-row')
+    expect(within(row).getByText('create_block')).toBeInTheDocument()
+    expect(within(row).getByText('created 1 block')).toBeInTheDocument()
+    const time = row.querySelector('time')
+    expect(time).not.toBeNull()
+    expect(time).toHaveAttribute('dateTime', '2024-01-01T00:00:00.000Z')
+  })
+
+  it('hides the session header after a successful per-session revert', async () => {
+    const user = userEvent.setup()
+    setupInvoke(makeStatus())
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'create_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 1).toISOString(),
+          sessionId: 'SESSION_BULK',
+          opRef: { device_id: 'D', seq: 1 },
+        }),
+      )
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'edit_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 2).toISOString(),
+          sessionId: 'SESSION_BULK',
+          opRef: { device_id: 'D', seq: 2 },
+        }),
+      )
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'set_property',
+          timestamp: new Date(2024, 0, 1, 0, 0, 3).toISOString(),
+          sessionId: 'SESSION_BULK',
+          opRef: { device_id: 'D', seq: 3 },
+        }),
+      )
+    })
+
+    // Header renders — 3 undoable ops in SESSION_BULK.
+    const revertBtn = await screen.findByTestId('mcp-activity-revert-session')
+    await user.click(revertBtn)
+
+    const confirm = await screen.findByRole('alertdialog')
+    const actionBtn = await within(confirm).findByRole('button', { name: 'Revert session' })
+    await user.click(actionBtn)
+
+    // Wait for the success toast to fire — flush state updates.
+    await waitFor(() => {
+      expect(mockedToastSuccess).toHaveBeenCalledWith('Session reverted (3 actions)')
+    })
+
+    // Every opRef in the session is now in `revertedOpKeys`;
+    // `undoableBySession.get(SESSION_BULK)` is empty → header gate
+    // `sessionOps.length >= 2` fails and the header vanishes.
+    await waitFor(() => {
+      expect(screen.queryByTestId('mcp-activity-session-header')).not.toBeInTheDocument()
+    })
+    // Every per-entry Undo button in the session is also gone.
+    expect(screen.queryAllByLabelText(undoLabel)).toHaveLength(0)
+  })
+
+  it('keeps the per-entry Undo button clickable after a failed revert (user can retry)', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_mcp_status') return makeStatus()
+      if (cmd === 'get_mcp_rw_status') return makeRwStatus()
+      if (cmd === 'revert_ops') {
+        throw Object.assign(new Error('disk full'), { kind: 'database' })
+      }
+      return undefined
+    })
+
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(makeActivityEntry({ opRef: { device_id: 'D', seq: 17 } }))
+    })
+
+    const btn = await screen.findByLabelText(undoLabel)
+    await user.click(btn)
+
+    // Error toast fires — but the button stays in the DOM and clickable.
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Could not undo agent action')
+    })
+    expect(screen.getByLabelText(undoLabel)).toBeInTheDocument()
+    // The in-flight state clears so the button is re-enabled for retry.
+    await waitFor(() => {
+      expect(screen.getByLabelText(undoLabel)).not.toBeDisabled()
+    })
+  })
+
+  it('reduces the session-header count by one after a per-entry Undo in a 5-op session', async () => {
+    const user = userEvent.setup()
+    setupInvoke(makeStatus())
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      for (let i = 1; i <= 5; i++) {
+        fireActivityEvent(
+          makeActivityEntry({
+            toolName: 'create_block',
+            timestamp: new Date(2024, 0, 1, 0, 0, i).toISOString(),
+            sessionId: 'SESSION_FIVE',
+            opRef: { device_id: 'D', seq: i },
+          }),
+        )
+      }
+    })
+
+    // Header shows "5 agent actions".
+    const header = await screen.findByTestId('mcp-activity-session-header')
+    expect(header).toHaveTextContent('5 agent actions')
+
+    // Click the per-entry Undo on one row (any of them).
+    const undoBtns = screen.getAllByLabelText(undoLabel)
+    expect(undoBtns).toHaveLength(5)
+    await user.click(undoBtns[0] as HTMLElement)
+
+    await waitFor(() => {
+      expect(mockedToastSuccess).toHaveBeenCalledWith('Agent action undone')
+    })
+
+    // The filter drops one opRef from `undoableBySession`; the header
+    // count drops to "4 agent actions" but the header stays present
+    // (4 ≥ 2).
+    await waitFor(() => {
+      expect(screen.getByTestId('mcp-activity-session-header')).toHaveTextContent('4 agent actions')
+    })
+    expect(screen.getAllByLabelText(undoLabel)).toHaveLength(4)
+  })
+
+  it('hides the session header after a per-entry Undo in a 2-op session drops the count to 1', async () => {
+    const user = userEvent.setup()
+    setupInvoke(makeStatus())
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'create_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 1).toISOString(),
+          sessionId: 'SESSION_TWO',
+          opRef: { device_id: 'D', seq: 1 },
+        }),
+      )
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'edit_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 2).toISOString(),
+          sessionId: 'SESSION_TWO',
+          opRef: { device_id: 'D', seq: 2 },
+        }),
+      )
+    })
+
+    // Header renders with "2 agent actions".
+    const header = await screen.findByTestId('mcp-activity-session-header')
+    expect(header).toHaveTextContent('2 agent actions')
+
+    const undoBtns = screen.getAllByLabelText(undoLabel)
+    expect(undoBtns).toHaveLength(2)
+    await user.click(undoBtns[0] as HTMLElement)
+
+    await waitFor(() => {
+      expect(mockedToastSuccess).toHaveBeenCalledWith('Agent action undone')
+    })
+
+    // 1 remaining op → header gate `sessionOps.length >= 2` fails and
+    // the header vanishes. Per-entry Undo still visible on the remaining
+    // row.
+    await waitFor(() => {
+      expect(screen.queryByTestId('mcp-activity-session-header')).not.toBeInTheDocument()
+    })
+    expect(screen.getAllByLabelText(undoLabel)).toHaveLength(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// UX-253 — per-entry Undo button carries a visible text label next to
+// the icon on coarse-pointer (touch) devices.
+//
+// Desktop keeps the minimal icon-only chrome. Touch users see "Undo"
+// text rendered inside a `<span>` with a Tailwind arbitrary-media
+// class `[@media(pointer:coarse)]:inline` that flips the default
+// `hidden` class on coarse pointers. jsdom does NOT evaluate
+// `@media(pointer:coarse)` rules, so the tests assert DOM structure
+// (span present, class pinned) rather than computed visibility.
+// ---------------------------------------------------------------------------
+
+describe('AgentAccessSettingsTab — touch discoverability (UX-253)', () => {
+  const undoLabel = 'Undo this agent action'
+
+  it('renders the buttonText span with the responsive class when the icon is visible', async () => {
+    setupInvoke(makeStatus())
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(makeActivityEntry({ opRef: { device_id: 'D', seq: 1 } }))
+    })
+
+    const btn = await screen.findByLabelText(undoLabel)
+    // Text label is always in the DOM when the icon is shown (not
+    // while in-flight). CSS `[@media(pointer:coarse)]:inline` flips
+    // it visible on coarse pointers — jsdom can't evaluate that, so
+    // we pin the class instead.
+    const label = within(btn).getByText('Undo')
+    expect(label).toBeInTheDocument()
+    expect(label).toHaveClass('hidden')
+    expect(label).toHaveClass('[@media(pointer:coarse)]:inline')
+  })
+
+  it('replaces the icon+text fragment with a spinner while the revert is in flight', async () => {
+    const user = userEvent.setup()
+    let resolveRevert: ((value: unknown) => void) | undefined
+    const revertPromise = new Promise((r) => {
+      resolveRevert = r
+    })
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_mcp_status') return makeStatus()
+      if (cmd === 'get_mcp_rw_status') return makeRwStatus()
+      if (cmd === 'revert_ops') return revertPromise
+      return undefined
+    })
+
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(makeActivityEntry({ opRef: { device_id: 'D', seq: 1 } }))
+    })
+
+    const btn = await screen.findByLabelText(undoLabel)
+    // Label present before the click.
+    expect(within(btn).getByText('Undo')).toBeInTheDocument()
+
+    await user.click(btn)
+
+    // While in-flight the whole icon+text fragment is replaced by the
+    // spinner — the "Undo" span is no longer in the DOM.
+    await waitFor(() => {
+      expect(within(btn).queryByText('Undo')).not.toBeInTheDocument()
+    })
+    expect(btn.querySelector('[data-slot="spinner"]')).not.toBeNull()
+
+    // Resolve the deferred invoke; UX-252 then removes the entire
+    // button from the DOM on success.
+    await act(async () => {
+      resolveRevert?.(undefined)
+      await revertPromise
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText(undoLabel)).not.toBeInTheDocument()
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
