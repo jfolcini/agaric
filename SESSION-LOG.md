@@ -1,5 +1,87 @@
 # Session Log
 
+## Session 467 — FEAT-7 + FEAT-8 + FEAT-9 navigation cluster shipped + UX-254 filed (2026-04-23)
+
+**3 REVIEW-LATER items resolved (FEAT-7, FEAT-8, FEAT-9), 1 new filed (UX-254).** Open-items count 17 → 15. Full navigation-cluster delivery in a single atomic change: shell-level TabBar hoist (FEAT-7), active-tab dropdown switcher (FEAT-8), and Recent-pages MRU strip (FEAT-9). Found fully-staged at session start from a prior agent pass that did not close the loop; orchestrator ran the target + full-suite tests, dispatched a fresh-eyes review subagent per PROMPT.md §"No self-reviews", and committed code + bookkeeping separately. All three items had been user-sign-off-blocked per the session-466 close-out notes — the implementation that appeared in the working tree implicitly reflects the visual-direction decisions (inactive-tab styling via `SidebarMenuButton` tokens, mobile-hidden chrome, autohide-at-one-tab preserved).
+
+### What changed (commit `f2bc26a`)
+
+**FEAT-7 — App-shell TabBar hoist (`src/App.tsx` + `src/components/TabBar.tsx`):**
+
+- `<TabBar />` moved from inside `ViewRouter`'s `'page-editor'` case to the app shell — rendered between `<header>` and `<RecentPagesStrip>` / `<ViewHeaderOutletSlot>`. Full-width sticky row visible in every sidebar view on desktop. `useNavigationStore.switchTab()` gained a `currentView` flip so clicking a tab from Journal/Pages/etc. jumps back to `'page-editor'` while preserving `tabs` + `activeTabIndex` + per-tab `pageStack`.
+- Inactive-tab visual: when `currentView !== 'page-editor'`, the active tab uses `bg-sidebar-accent` + `text-sidebar-accent-foreground` + `border-sidebar-border` (semantic tokens; mirrors `SidebarMenuButton`'s inactive state per the spec's "do not introduce new hardcoded Tailwind colors" rule).
+- `tabs.length <= 1` autohide guard preserved with an inline comment citing the FEAT-7 decision. No "+" button. No per-tab `currentView` field on the `Tab` interface.
+- Mobile (`useIsMobile()`, viewport < 768 px): `<TabBar />` returns `null` BEFORE the autohide check so the underlying `tabs: Tab[]` state persists across desktop → mobile → desktop resize. `openInNewTab` MenuItem in `PageHeaderMenu` is hidden via `!isMobile` at the call site.
+- Keyboard: 4 shortcuts (`Ctrl+T` / `Ctrl+W` / `Ctrl+Tab` / `Ctrl+Shift+Tab`) re-gated from `inEditor` → `desktopOnly` (new i18n key `keyboard.condition.desktopOnly`). Handler in `App.tsx` short-circuits on `if (isMobile) return`.
+
+**FEAT-8 — Active-tab dropdown switcher (`src/components/TabBar.tsx`):**
+
+- Clicking the active tab's label (only when `currentView === 'page-editor'`) opens a `Popover` / `PopoverAnchor` / `PopoverContent` listing every open tab. Reuses the existing `ui/popover.tsx` primitive.
+- Menu items render as `role="menuitemradio"`; active tab shows `<Check>`. Per-row close X uses `e.stopPropagation()` + `e.preventDefault()` to keep the menu open.
+- No store changes — uses existing `switchTab()` + `closeTab()`.
+- Known gap filed as UX-254: the `ChevronDown` affordance hint is faint (`size-3 opacity-50`) and only rendered when `currentView === 'page-editor'`; users in other views see no visual cue that the dropdown exists.
+
+**FEAT-9 — Recent-pages strip (`src/stores/recent-pages.ts` + `src/components/RecentPagesStrip.tsx`):**
+
+- New Zustand store `useRecentPagesStore` — `PageRef = { pageId: string; title: string }`. `recordVisit(ref)` does MRU dedup (existing `pageId` → move to front; max 10 retained). `persist` middleware with `partialize` keeping only `recentPages` — survives app restarts.
+- `useNavigationStore.navigateToPage` gained a single `useRecentPagesStore.getState().recordVisit(...)` call at the hook point — covers every navigation entry point including the date-routed journal branch. `setView` / `goBack` / block-zoom do NOT call `recordVisit` (pinned by tests). Separation of concerns: explicit page navigation counts as a visit; view switches and in-page navigation do not.
+- New component `RecentPagesStrip.tsx` — responsive grid `gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 180px))'`. Chips are `<Button>` wrappers with page title (`truncate` class + `title=` attribute for the full-title tooltip fallback). Plain click → `navigateToPage`; `Ctrl/Cmd+click` or middle-click (`onAuxClick` with `e.button === 1`) → `openInNewTab`.
+- Current page filtered at render time: `recentPages.filter(p => p.pageId !== activePageId)` where `activePageId` is derived from the active tab's stack top.
+- Shell mount: `<RecentPagesStrip />` in `App.tsx` between `<TabBar />` and `<ViewHeaderOutletSlot>`. Component returns `null` on mobile OR when the visible list is empty — same auto-hide semantics as the TabBar.
+- `aria-label="Recently visited pages"` on the wrapping `<nav>` via the new `recent.ariaLabel` i18n key.
+
+**New REVIEW-LATER item — UX-254:**
+
+Active-tab dropdown switcher (FEAT-8) has poor discoverability: the `ChevronDown` visual hint is too faint (`size-3 opacity-50`) and is only rendered when `currentView === 'page-editor'`, so users on Journal / Pages / other sidebar views can't see that the dropdown affordance exists. Three fix options documented (increase chevron prominence; always-render in inactive-view state; add a dedicated icon-only trigger). S-cost, pure-frontend, no user sign-off required.
+
+### Verification
+
+- `npx vitest run src/components/__tests__/TabBar.test.tsx src/components/__tests__/App.test.tsx src/components/__tests__/RecentPagesStrip.test.tsx src/stores/__tests__/navigation.test.ts src/stores/__tests__/recent-pages.test.ts src/components/__tests__/KeyboardShortcuts.test.tsx`: 230/230 passed on the directly-touched files.
+- `npx vitest run` (full frontend suite): **7658 passed across 300 test files.** Zero regressions anywhere.
+- `prek run --all-files`: all 26 hooks green on the first pass.
+- No Rust / backend / sqlx / specta change.
+
+### Test-file deltas
+
+- `src/components/__tests__/TabBar.test.tsx` (+210): shell-level render across views, inactive-tab styling assertions, FEAT-8 dropdown interactions (open / close / radio selection / close-button-keeps-menu-open).
+- `src/components/__tests__/App.test.tsx` (+235): shell-level TabBar / RecentPagesStrip mount verification across all 11 sidebar destinations.
+- `src/components/__tests__/RecentPagesStrip.test.tsx` (NEW, 230 lines, 12 tests): render with N visits, current-page exclusion, empty-state auto-hide, mobile auto-hide, plain click → `navigateToPage`, Ctrl/Cmd+click → `openInNewTab`, middle-click → `openInNewTab`, `title` tooltip, axe a11y.
+- `src/stores/__tests__/navigation.test.ts` (+138): `switchTab` flips `currentView` from non-editor views; `navigateToPage` calls `recordVisit`; `setView` / `goBack` / block-zoom do NOT call `recordVisit`; date-routed branch still records the visit.
+- `src/stores/__tests__/recent-pages.test.ts` (NEW, 143 lines, 10 tests): `recordVisit` MRU order, dedup on existing `pageId`, max-10 cap, `persist` round-trip.
+- `src/components/__tests__/KeyboardShortcuts.test.tsx` (+14): shortcut-gating uses `desktopOnly` condition rather than `inEditor`.
+
+### Review summary (fresh-eyes `subagent_explore`)
+
+**APPROVE** (full, not "with notes"). Zero P1/P2 blockers. Reviewer verified every correctness claim in the spec: shell mount location + autohide ordering + mobile early-return + inactive-tab semantic tokens + switchTab `currentView` flip + `openInNewTab` mobile redirect (at call site) + keyboard-condition expansion + no per-tab `currentView` + dropdown primitive reuse + per-row close-X preservation + MRU dedup + single `recordVisit` hook point + current-page-excluded-at-render + responsive grid + tooltip fallback. All AGENTS.md invariants preserved (no new tables, op types, materializer queues, sync message types; one new Zustand store within the additive budget; no backend change; no hardcoded colors for state; no `biome-ignore` / `@ts-ignore` / non-null assertions; React 19 conventions throughout; `exactOptionalPropertyTypes` / `noImplicitReturns` satisfied). Only minor observation was UX-254 (already filed) + a nice-to-have about arrow-key nav in `RecentPagesStrip` via `useListKeyboardNavigation` (the spec marked it optional; chips are clickable and Tab-reachable).
+
+### Design decisions
+
+- **Mobile gets no navigation chrome at all.** Both `<TabBar />` and `<RecentPagesStrip />` return `null` on `useIsMobile() === true`. The underlying `tabs: Tab[]` + `recentPages: PageRef[]` state persists across resize — a user who opens 3 tabs on a 1024 px viewport, rotates to 600 px (both bars vanish), and rotates back to 1024 px sees all 3 tabs + recent-strip entries intact. No state reset on the mobile gate.
+- **`openInNewTab` redirect at the call site, not inside the store action.** `PageHeaderMenu.tsx` gates the MenuItem on `!isMobile`. The store's `openInNewTab` action is unchanged; mobile code paths simply never call it (they call `navigateToPage` instead). Spec accepted either location; call-site gating keeps the store action's semantics pure.
+- **Single `recordVisit` hook point in `navigateToPage`.** Placing it inside the store action (rather than at every call site) means every navigation entry point — sidebar click, tab switch, page-link click, backlink click, block-ref click, Ctrl+T open, date-routed journal navigation — records the visit uniformly. Adding a new navigation entry point in the future only needs to route through `navigateToPage`; no second change in the recent-pages strip.
+- **Active-tab-label-click triggers the dropdown, not a separate caret button.** FEAT-8 spec described the active tab's label as the trigger. Keeps the TabBar compact at low tab counts and avoids a second click target. The faint `ChevronDown` hint is the tradeoff that UX-254 now tracks.
+- **Current-page filter at render time (not in the store).** `recentPages` persists as a pure MRU list; the "exclude current page" semantics live in the component. A future feature that needs the full list (e.g. a command palette) can consume the store directly without fighting a filter.
+- **Visual alignment across the chrome stack.** `<header>` + `<TabBar>` + `<RecentPagesStrip>` + `<ViewHeaderOutletSlot>` all share the `px-4 md:px-6` horizontal padding. Border opacity hierarchy (full on TabBar, 40% on RecentPagesStrip) gives visual weight to the tab-ownership signal vs. the implicit-recent-history signal.
+
+### Architectural invariants respected (AGENTS.md)
+
+- **Op log append-only, CQRS split, sqlx compile-time queries, recursive CTE filters** — all untouched. Frontend-only change.
+- **One new Zustand store (`useRecentPagesStore`) — within the additive budget** established by the Architectural Stability section. `persist` middleware follows the existing `useNavigationStore` pattern.
+- **No new tables, op types, materializer queues, sync message types.** No backend change.
+- **Design-system primitives only:** Popover, Button, ScrollArea from `ui/`; semantic tokens (`bg-sidebar-accent`, `text-sidebar-accent-foreground`, `border-sidebar-border`, `text-muted-foreground`, `border-border/40`) — no hardcoded Tailwind color classes where state tokens exist.
+- **React 19 conventions:** no `React.forwardRef`, no `React.ComponentRef`, no ambient `JSX.*`. Components accept `ref` as a normal prop where needed.
+- **No weakening of strict settings:** zero new `#[allow]`, `biome-ignore`, `@ts-ignore`, non-null assertions. `exactOptionalPropertyTypes` / `noImplicitReturns` / `useExplicitLengthCheck` / `useAwait` all preserved.
+
+### Notes for the next session
+
+- **Navigation cluster is done.** FEAT-3 (Spaces, phase 3) is now the only item in the navigation-cluster sequencing plan that's still open; phase 3's refactor (`tabs` → `tabsBySpace`, `recentPages` → `recentPagesBySpace`) is a one-line selector swap in `TabBar.tsx` + `RecentPagesStrip.tsx` + `keyboard-config.ts`. FEAT-3's own 8-question sign-off remains the gate.
+- **UX-254** is the natural follow-up to FEAT-8 — S-cost, pure-frontend, no sign-off needed. Could pair with a future UX polish session if the chevron-prominence fix lands alongside other polish.
+- **Arrow-key nav in `RecentPagesStrip`** via `useListKeyboardNavigation` was flagged by the reviewer as a nice-to-have P3. Chips are already clickable + Tab-reachable + Enter-activatable; arrow-key traversal would add polish but isn't a regression from the v1 scope.
+- **Remaining open items (15):** FEAT-3, FEAT-4, FEAT-4i, FEAT-5, FEAT-5g, PERF-19, PERF-20, PERF-23, PUB-2, PUB-3, PUB-5, PUB-7, UX-249, UX-250, UX-254. Same blocking-categories as session 466's close-out — everything is deferred, sign-off-gated, or an explicit non-fix — except UX-254 (newly-ready polish).
+- **Next PROMPT.md batch:** UX-254 alone is a 1-item S-cost follow-up. The "3-6 related items" rule in PROMPT.md is a soft target; UX-254 could pair with a backend-touchup session, or sit on the backlog until a future UX pass picks it up with other polish items.
+
+---
+
 ## Session 466 — UX-252 + UX-253 resolved: activity-feed Undo-after-success + touch discoverability (2026-04-23)
 
 **2 REVIEW-LATER items resolved (UX-252, UX-253), 0 new filed.** Open-items count 19 → 17. Both were S-cost pure-frontend items filed during the review passes of sessions 464 and 465, both touching `src/components/AgentAccessSettingsTab.tsx`. Session 465's notes explicitly called them out as a natural batch. Implemented together in one build subagent, one review subagent, one commit (`83ce963`), and one bookkeeping commit (this entry).
