@@ -1,5 +1,78 @@
 # Session Log
 
+## Session 471 — FEAT-3 Phase 1 shipped: Spaces data model + boot-time bootstrap + sidebar SpaceSwitcher (2026-04-23)
+
+**0 REVIEW-LATER items resolved; FEAT-3 transitioned DESIGN → IN PROGRESS (Phase 1 of 6 shipped).** Open-items count unchanged at 12. The user picked FEAT-3 after looking at the remaining open items (all deferred PUB items, deliberate PERF non-fix decisions, deferred FEAT sub-items) and decided to resolve the 8 blocking design questions + start implementation. All 8 questions resolved up-front in two batched `ask_user_question` rounds plus one clarifying round on the bootstrap interpretation. One combined Phase 1 build subagent (Rust + Frontend cohesive slice), two parallel reviewers (technical + UX). Technical APPROVE, zero findings. UX APPROVE WITH NOTES, zero P1, two P2 observations — both explicitly categorized by the reviewer as "acceptable for Phase 1" and "Phase 2+ follow-up" (branding preservation, collapsed-icon-sidebar indicator). Both are captured in the FEAT-3 detail section's Phase 6 bullet rather than filed as separate REVIEW-LATER items. One code commit (`0b7fffd`), one docs commit (this entry).
+
+Batch composition (1 item, Phase 1 of the rollout):
+
+- **FEAT-3 Phase 1** — migration + model + boot-time bootstrap + `list_spaces` + `SpaceStore` + `SpaceSwitcher`. Panels (pages / search / journal / agenda / graph / backlinks) are NOT yet scoped — that's Phase 2.
+
+### 8 user decisions locked in
+
+- **Seeded spaces**: 2 ("Personal" + "Work").
+- **Bootstrap**: deterministic genesis ops for the 2 seeded spaces + normal per-device op-log for user-created spaces. The clarifying round established that user-created spaces don't auto-merge by name — two "Project X" spaces created independently stay distinct until manually reconciled.
+- **Space deletion**: forbid deleting a non-empty space (no soft-delete, no reassign-on-delete flow).
+- **First-boot UI**: LoadingSkeleton on space-scoped panels until `useSpaceStore.isReady`. Not user-visible until Phase 2 when panels start gating on the store.
+- **Cross-space links**: forbidden outright. Picker is current-space-only, no opt-in. Existing `[[ULID]]` targets in another space render as broken-link chips (existing UX).
+- **Graph view**: no cross-space edges to render (follows from the previous).
+- **Export**: no cross-space references in exported markdown (follows from the previous).
+- **Search operator**: the switcher is the only scoping surface — no `space:<name>` operator.
+
+### What changed (commit `0b7fffd`)
+
+**Backend:**
+
+- **`src-tauri/migrations/0035_spaces.sql`** — seeds `is_space` (text) + `space` (ref) property definitions, adds filtered index `idx_block_properties_space` on `block_properties(value_ref) WHERE key = 'space'`. No op-log mutation — migration stays pure schema per AGENTS.md invariant 1.
+- **`src-tauri/src/spaces/mod.rs` + `bootstrap.rs`** — new module. Reserved deterministic ULIDs: `SPACE_PERSONAL_ULID = "00000000000000000AGAR1CPER"` + `SPACE_WORK_ULID = "00000000000000000AGAR1CWRK"` (both verified to contain no I/L/O/U via a compile-time test). `bootstrap_spaces()` has a fast-path idempotency check (both seeded blocks exist with `is_space='true'` → skip) and per-step resume for partial-crash recovery: if only Personal was created on a prior boot, the second boot creates Work, re-checks the `is_space` property, and migrates any still-unscoped pages. Op emission uses `append_local_op_in_tx` — append-only invariant preserved.
+- **`src-tauri/src/commands/spaces.rs`** — `SpaceRow { id, name }` specta type + `list_spaces_inner` + `#[tauri::command] list_spaces` wrapper. SQL filters `deleted_at IS NULL AND is_conflict = 0` on both the `blocks` join AND the `is_space` property row (otherwise an orphaned property row on a deleted space block would still show up). Sorted alphabetically by content for stable UI ordering.
+- **`src-tauri/src/lib.rs`** — `pub mod spaces;`, boot-time `spaces::bootstrap_spaces(&pools.write, &device_id).await?` call after the existing FTS / `block_tag_refs` / projected-agenda boot tasks. Bootstrap failure is boot-fatal (the "nothing outside of spaces" invariant cannot hold without it). `crate::commands::list_spaces` registered in both the runtime `collect_commands![]` and the `specta_tests::specta_builder()`.
+- **`src-tauri/src/commands/mod.rs`** — `mod spaces;` + re-exports (`list_spaces`, `list_spaces_inner`, `SpaceRow`, `__specta__fn__list_spaces`, `__cmd__list_spaces`).
+- **`src-tauri/src/mcp/tools_ro.rs`** — `list_property_defs_happy_path` count updated 17 → 19. The MCP snapshot file gains alphabetically-inserted `is_space` + `space` rows.
+
+**Frontend:**
+
+- **`src/stores/space.ts`** — new Zustand store. State: `currentSpaceId` (persisted under `agaric:space` via zustand-persist, `partialize` on this field only), `availableSpaces: SpaceRow[]`, `isReady: boolean`. Actions: `setCurrentSpace`, `refreshAvailableSpaces`. IPC guard: `Array.isArray(result)` + `logger.warn` on non-array (AGENTS.md frontend pitfall #25 — never silent `.catch(() => {})`). Rehydrate path: if persisted `currentSpaceId` doesn't resolve against the freshly-fetched `availableSpaces`, fall back to the first alphabetical space (handles the "space deleted on another device" case).
+- **`src/components/SpaceSwitcher.tsx`** — Radix Select from `ui/select.tsx`. Mount-time `refreshAvailableSpaces()`. `aria-label="Switch space"` via a new `space.switch` i18n key. "Manage spaces…" at the bottom of the dropdown is disabled + carries a tooltip `space.manageComingSoon` ("Coming soon") — Phase 6 wires it up. A `MANAGE_SENTINEL` guards against the Radix Select trigger accidentally treating the disabled item as a value change. Wrapped in `group-data-[collapsible=icon]:hidden` so the collapsed icon-rail stays a clean vertical strip (known Phase 1 limitation — Phase 6 adds a collapsed-mode indicator).
+- **`src/lib/bindings.ts`** — regenerated via `cargo test -- specta_tests --ignored`. `SpaceRow` type + `listSpaces` command.
+- **`src/lib/tauri.ts`** — hand-written `listSpaces()` wrapper + `SpaceRow` re-export.
+- **`src/lib/i18n.ts`** — 3 new keys: `space.switch`, `space.manage`, `space.manageComingSoon`.
+- **`src/App.tsx`** — replaces the static `<img src="/agaric.svg"> + <span>Agaric</span>` branding block in `SidebarHeader` with `<SpaceSwitcher />` (wrapped in `group-data-[collapsible=icon]:hidden`). App identity is preserved via the window title (`<title>Agaric</title>` in `index.html`) and the favicon.
+
+### Tests
+
+- **Rust (new tests: 15)**: 9 in `spaces/tests.rs` (fresh install, upgrade with existing pages, idempotent, skip-already-scoped, skip-space-blocks-themselves, skip-deleted, skip-conflict, partial-crash resume, ULID validation + distinctness), 6 in `commands/spaces.rs` (seed returns both, excludes non-spaces, alphabetical order, excludes deleted/conflict, empty DB, row field shape). Exact-count `assert_eq!` throughout. `cargo nextest run`: **2675 passed / 0 failed / 2 skipped**. `cargo sqlx prepare --check -- --tests`: clean (18 new query-cache entries committed).
+- **Frontend (new tests: 25)**: 16 in `src/stores/__tests__/space.test.ts` (state shape, refresh happy + IPC-error, rehydrate with stale id, persistence roundtrip, reactive updates), 9 in `src/components/__tests__/SpaceSwitcher.test.tsx` (render, interaction, alphabetical ordering, disabled Manage + tooltip, axe clean, sentinel guard, mount refresh). `src/components/__tests__/App.test.tsx` default mock swapped from `mockResolvedValue(emptyPage)` to `mockImplementation` routing `list_spaces` → `[]`; 71 existing `screen.getByText('Agaric')` assertions replaced with `screen.getByRole('combobox', { name: /Switch space/ })` since the "Agaric" branding text is gone. `npx vitest run`: **7717 passed / 0 failed across 302 files**. `npx tsc --noEmit`: clean.
+
+### Verification
+
+- `prek run --all-files`: all 26 hooks green after one biome auto-format pass (4 files) + one `cargo fmt` pass.
+- `cargo nextest run --no-fail-fast`: 2675/0/2.
+- `npx vitest run`: 7717 passed.
+
+### Review summary (two parallel subagents per PROMPT.md §4)
+
+- **Technical reviewer (`subagent_explore`):** APPROVE, zero findings. Verified the 6 builder-called-out deviations end-to-end: (1) fast-path idempotency check handles fresh install + fresh install without pages + partial-crash correctly (not the spec's initial proposal, which failed on the zero-page fresh-install case); (2) `State<'_, ReadPool>` matches sibling read-only commands (spot-checked); (3) hiding the SpaceSwitcher on icon-collapsed sidebar is purely presentational — no keyboard-shortcut infrastructure yet assumes mount; (4) `Array.isArray` guard uses `logger.warn` matching pitfall #25; (5) 71 `getByText('Agaric')` → `getByRole('combobox', { name: /Switch space/ })` replacements are semantically equivalent sidebar-rendered assertions (the new assertion is more accessible-query-hygienic); (6) bootstrap uses `position = 1` not `0` per AGENTS.md pitfall #13. All AGENTS.md invariants respected — no op-log mutation from migration, no recursive CTE without `is_conflict = 0`, bootstrap-failure is boot-fatal (not `.ok()`'d), no silent catches, no `unsafe` / `#[allow(...)]` / `biome-ignore` / non-null assertions.
+- **UX reviewer (`subagent_explore`):** APPROVE WITH NOTES. Zero P1. Two P2s — both the reviewer themselves classified as "acceptable for Phase 1" with Phase 2+ follow-up guidance: (a) the sidebar branding text "Agaric" is gone and app identity now rests entirely on the window title + favicon (`index.html`); (b) when the sidebar collapses to icon mode, the SpaceSwitcher is hidden so the user cannot see or switch their space without expanding first. Both are captured in the FEAT-3 detail section's Phase 6 bullet in REVIEW-LATER.md rather than filed as separate items, since they're natural Phase 6 polish work. Three P3 notes: copy tweak on the "Coming soon" tooltip (current copy is acceptable), discoverability of the switcher chevron (Radix chevron + `aria-label` already handles it), hover effect on the trigger (Radix Select primitive already applies the accent-color hover).
+
+### Design decisions
+
+- **One combined build subagent, not a split.** Phase 1 is a cohesive slice spanning migration + Rust backend + specta + TS wrapper + store + component + App integration + tests. Splitting into parallel Rust/Frontend subagents would have introduced a merge-conflict risk on `src/lib/tauri.ts` (the Rust side owns specta regen + the wrapper addition; the Frontend side imports it). Single-subagent communication stayed simpler and the walltime was acceptable.
+- **Deterministic genesis ops, not first-sync reconciliation.** After user clarification, the cleanest path was "deterministic reserved ULIDs for the 2 seeded spaces, normal per-device ULIDs for user-created spaces." This leverages the existing materializer `INSERT OR IGNORE` convergence on the `blocks` PK — no new sync-protocol merge flow needed. User-created spaces don't auto-merge by name; two devices creating "Project X" independently keep them distinct until the user reconciles manually.
+- **Bootstrap failure is boot-fatal.** The "nothing outside of spaces" invariant cannot hold if bootstrap fails — any subsequent query that tries to read `space`-scoped results would see unassigned pages. Boot-fatal propagation (not `.ok()`) is the right call.
+- **Fast-path idempotency check changed from the spec.** Spec: "Personal exists AND Work exists AND at least one page has `space` property." That fails on fresh installs with zero pre-existing pages (bootstrap would re-emit ops every boot). Builder's correction: "Personal + Work both exist AND both have `is_space='true'`" is strictly sufficient proof of a prior successful run; partial-crash cases are already handled by the per-step resume logic inside the transactional path.
+- **Hide the switcher in icon-collapsed sidebar.** The existing `SidebarHeader` branding had `group-data-[collapsible=icon]:` styles; matching the pattern preserves the collapsed-rail aesthetic. The Phase 6 polish bullet now explicitly calls out the need for a 32px single-letter indicator so users can switch spaces without expanding.
+- **No new REVIEW-LATER items filed from UX reviewer P2s.** Both P2 observations are squarely Phase 6 polish work and are now explicit bullets in the FEAT-3 detail section's Phase 6 description. Filing them as separate UX-* items would create cross-referencing overhead with no additional tracking value.
+
+### Stats
+
+- 1 code commit (`0b7fffd`) + 1 docs commit (this entry).
+- 37 files changed (roughly +~1800 / -~100).
+- 0 REVIEW-LATER items resolved; 0 new items filed. FEAT-3 status transitioned DESIGN → IN PROGRESS.
+- 1 new migration (0035), 1 new backend module (`spaces/`), 1 new Tauri command (`list_spaces`), 1 new Zustand store (`space`), 1 new component (`SpaceSwitcher`), ~40 new tests (Rust + frontend combined).
+
+---
+
 ## Session 470 — UX-249 + UX-250 resolved: clickable inline tag chips + `block_tag_refs` derived-state table (2026-04-23)
 
 **2 REVIEW-LATER items resolved (UX-249, UX-250), 0 new filed.** Open-items count 14 → 12. Tightly-coupled UX pair shipped together per UX-249's explicit recommendation ("land together with UX-250 so the click target is non-empty"). UX-249 (S) wires inline `#[ULID]` tag chips to `navigateToPage(tagId, tagName)` across every rich-content surface + TipTap NodeView; UX-250 (M) adds a new `block_tag_refs` derived-state table so inline refs contribute to tags-view counts and surface through `TagFilterPanel` / `query_by_tags`. Option A (the architectural change that adds one new table) was user-approved before implementation per AGENTS.md §"Architectural Stability". Two parallel build subagents (Rust backend on `src-tauri/`, Frontend on `src/`) on non-overlapping directories — no worktrees needed. Three review subagents ran in parallel: technical + UX for the frontend, technical for the backend. All three approved; three P2 findings surfaced by the backend technical reviewer were applied directly by the orchestrator (one test rename, one log-message polish, and one "missing inheritance regression test" finding that turned out to already exist and the reviewer had missed it). One code commit (`755443a`), one docs commit (this entry).

@@ -397,6 +397,17 @@ Shows tasks with due/scheduled dates for the current day. Filter bar with 4 butt
 
 Sorting: by creation date, property text/number/date (ascending or descending).
 
+### Spaces (FEAT-3 Phase 1)
+
+Partition pages into user-defined contexts ("Personal" / "Work") with a sidebar switcher. Phase 1 ships the data model, bootstrap, `list_spaces` command, `SpaceStore` (Zustand + persist), and `SpaceSwitcher` UI. Phases 2–6 scope query commands (`list_blocks` / `search_blocks` / agenda / graph / backlinks / journal), per-space tabs + recent, Move-to-space action, keyboard shortcuts, and the space-management UI.
+
+- **Data model**: a space is a regular `page` block with `is_space = 'true'` (text property). Every non-space page owns a `space` (ref) property pointing to its owning space. Reuses the properties system (AGENTS.md "primary extension point") — no new tables, no new op types, no sync-protocol changes. Migration 0035 seeds the two property definitions + a filtered index on `block_properties(value_ref) WHERE key = 'space'`.
+- **Seeded spaces**: 2 defaults — "Personal" and "Work" — created at boot via `src-tauri/src/spaces/bootstrap.rs` with reserved deterministic ULIDs (`00000000000000000AGAR1CPER` + `00000000000000000AGAR1CWRK`). Each device emits its own `CreateBlock` + `SetProperty(is_space=true)` ops for both; the materializer's `INSERT OR IGNORE` on `blocks` converges every device on the same two rows even though op_log hashes differ per device (device_id is part of the hash preimage). User-created spaces after that use normal per-device ULIDs.
+- **Upgrade**: every existing non-space page without a `space` property gets a local `set_property(page, 'space', PERSONAL_ULID)` op. Non-deterministic timestamps are fine — `block_properties` UPSERT on `(block_id, key)` converges on sync. Bootstrap is idempotent (fast-path skip when both seeded blocks already carry `is_space='true'`) and partial-crash-resumable.
+- **`list_spaces`** (`src-tauri/src/commands/spaces.rs`): Tauri command returning `[{id, name}]` for every block carrying `is_space='true'`, filtered `deleted_at IS NULL AND is_conflict = 0` on both the blocks row and the property row, sorted alphabetically by content. Registered in the specta builder; `SpaceRow` type + `listSpaces` wrapper live in `src/lib/bindings.ts` + `src/lib/tauri.ts`.
+- **`SpaceStore`** (`src/stores/space.ts`): `currentSpaceId`, `availableSpaces`, `isReady`, `setCurrentSpace`, `refreshAvailableSpaces`. Zustand + persist (`agaric:space`) with `partialize` on `currentSpaceId` only. `Array.isArray` IPC guard (pitfall #25) + `logger.warn` on reject. Stale-id reconciliation on rehydrate falls back to the first alphabetical space.
+- **`SpaceSwitcher`** (`src/components/SpaceSwitcher.tsx`): Radix Select in `SidebarHeader` (replaces the static `<img> + "Agaric"` branding block). Displays the current space name; dropdown lists all available spaces alphabetically. Disabled "Manage spaces…" placeholder at the bottom of the dropdown with a "Coming soon" tooltip (Phase 6 surface). Mount-time `refreshAvailableSpaces()` call. `aria-label="Switch space"` via i18n. Wrapped in `group-data-[collapsible=icon]:hidden` so the collapsed icon-rail stays compact — a known Phase 1 limitation the Phase 6 polish addresses with a dedicated collapsed-mode indicator.
+
 ---
 
 ## 8. Sync
