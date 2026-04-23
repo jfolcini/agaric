@@ -1,5 +1,83 @@
 # Session Log
 
+## Session 469 — UX-254 + UX-255 + UX-256 resolved: navigation-cluster polish (2026-04-23)
+
+**3 REVIEW-LATER items resolved (UX-254, UX-255, UX-256), 0 new filed.** Open-items count 17 → 14. Full navigation-cluster polish batch — the three S-cost follow-ups that had been filed against the session-467 FEAT-7/8/9 ship. All three touched either `src/components/TabBar.tsx` (UX-254 + UX-255) or `src/components/RecentPagesStrip.tsx` (UX-256); the orchestrator split the batch across two parallel build subagents on non-overlapping files per PROMPT.md. Two parallel review subagents (technical + UX) ran post-build. Both approved; UX reviewer flagged one P2 (missing Space-key parity test) that the orchestrator applied directly before committing. One code commit (`c4334ec`), one docs commit (this entry).
+
+Batch composition (3 items, same domain, file-boundary split):
+
+- **UX-254** — `TabBar.tsx` chevron discoverability (visual polish).
+- **UX-255** — `TabBar.tsx` active-tab dropdown `aria-label` (a11y).
+- **UX-256** — `RecentPagesStrip.tsx` arrow-key navigation (keyboard).
+
+### What changed (commit `c4334ec`)
+
+**UX-254 — Chevron visual polish (`src/components/TabBar.tsx`):**
+
+- Base opacity bumped `opacity-50` → `opacity-70` on the `ChevronDown` icon that indicates the FEAT-8 dropdown trigger. Added `group-hover:opacity-100` so the chevron intensifies to full opacity when the user hovers the active tab. Required adding the `group` utility class to each tab button so the child's `group-hover:` utility resolves — no other child inside the tab uses `group-*:` tokens, so no scope collision.
+- Chevron still gated on `isActive && currentView === 'page-editor'`. Non-editor views render NO chevron because clicking the active tab in those views is the view-flip gesture (FEAT-7), not the dropdown-open gesture — an affordance there would be misleading.
+- UX-reviewer contrast check: `text-muted-foreground` at `opacity-70` on `bg-background` yields ~4.2:1 (light mode) / ~4.8:1 (dark mode) contrast, both comfortably above the 3:1 WCAG AA threshold for non-text icons.
+
+**UX-255 — Active-tab dropdown `aria-label` (`src/components/TabBar.tsx` + `src/lib/i18n.ts`):**
+
+- Added a conditional `aria-label={t('tabs.switchTabsHint', { title: displayTitle })}` on the active tab button when `i === activeTabIndex && currentView === 'page-editor'` — the exact same condition that gates the Radix `Popover` wiring. Screen readers now hear "Switch tabs: Meeting notes, button, menu pop-up, collapsed" instead of the previous "Meeting notes, button, menu pop-up, collapsed" — a discoverability win for AT users.
+- When the tab is NOT active, OR when `currentView !== 'page-editor'`, NO `aria-label` is set — accessible name falls back to the button's visible text (the tab title). Inactive tabs + non-editor-view active tabs keep their plain-tab semantics.
+- Radix-wired `aria-haspopup="menu"` + `aria-expanded` are preserved — the new `aria-label` is complementary, not an override.
+- New i18n key: `'tabs.switchTabsHint': 'Switch tabs: {{title}}'`. Placed in the existing `tabs.*` namespace; falls back to existing `tabs.untitled` when the tab's label is empty.
+- `tab.label || t('tabs.untitled')` extracted into a local `displayTitle` inside the `tabs.map(...)` callback to DRY the visible span + the aria-label.
+
+**UX-256 — `RecentPagesStrip` arrow-key navigation (`src/components/RecentPagesStrip.tsx`):**
+
+- Wired the shared `useListKeyboardNavigation` hook (already used by `TabBar` / `TagList` / `BlockTree` pickers). Hook options: `itemCount: visible.length`, `horizontal: true`, `wrap: true` (default), `onSelect: (index) => navigateToPage(ref.pageId, ref.title)` for Enter/Space activation.
+- **Hook called unconditionally at the top of the render function**, BEFORE the mobile / empty-state early returns. Rules-of-Hooks compliance: the hook's own `handleKeyDown` early-returns on `itemCount === 0`, so the call is safe when the strip renders nothing.
+- Roving tabindex: each chip gets `tabIndex={idx === focusedIndex ? 0 : -1}`. Tab into the strip lands on the focused chip; arrow keys move focus within the strip without leaving it.
+- Imperative DOM focus via `useEffect([focusedIndex])`. The effect reads `document.activeElement` and only calls `.focus()` on the new chip when focus is already inside the strip — this is the critical focus-steal guard that prevents the strip from yanking focus away from the user on mount or on the hook's internal `focusedIndex` reset when `itemCount` changes (e.g., when a new visit is recorded elsewhere and the recent-pages list grows).
+- Per-chip ref map (`Map<number, HTMLButtonElement | null>`) with callback refs on each `<Button>`. `Button` accepts `ref` as a normal prop per React 19 convention — no `forwardRef` wrapper needed.
+- `onKeyDown` on the `<nav>` container calls `handleKeyDown(e)`; if the hook consumed the key (returns `true`), `e.preventDefault()` stops the browser's default scrolling behaviour on arrows.
+- All pre-existing behaviours preserved: mobile hide, empty-state null, `aria-label` on `<nav>`, `title` + `truncate` on chips, plain click / Ctrl+click / middle-click semantics.
+
+**Tests:**
+
+- `src/components/__tests__/TabBar.test.tsx` 33 → 40 (+7). UX-254 × 2 (chevron opacity classes, `group` class on parent tab); UX-255 × 5 (aria-label present on active-in-editor, untitled fallback via `tabs.untitled`, inactive tabs have no aria-label, non-editor view active tab has no aria-label, Radix `aria-haspopup` + `aria-expanded` preserved).
+- `src/components/__tests__/RecentPagesStrip.test.tsx` 12 → 20 (+8). ArrowRight forward + wrap-to-first, ArrowLeft mirror + wrap-to-last, Enter activates `navigateToPage(pageId, title)`, **Space activates** (+1 over build-subagent's +7 — review-driven P2 follow-up pinning Enter/Space parity), roving tabindex contract (exactly one chip has `tabIndex=0`), ArrowUp/Down no-op in horizontal mode, axe clean.
+- No existing tests modified. Existing "clicks open the dropdown", "Ctrl+click opens in new tab", "mobile hides the strip", etc. all still pass unchanged.
+
+### Verification
+
+- `npx vitest run src/components/__tests__/TabBar.test.tsx src/components/__tests__/RecentPagesStrip.test.tsx`: **60/60 passed** (40 TabBar + 20 RecentPagesStrip).
+- `prek run --all-files`: all 26 hooks green after one biome auto-format pass (two files formatted — multi-line JSX collapsed back to single-line per biome's style).
+- No Rust, backend, sqlx, or specta change.
+
+### Review summary (two parallel subagents per PROMPT.md §4)
+
+- **Technical reviewer (`subagent_explore`):** APPROVE. Zero findings. Verified every correctness claim end-to-end — chevron opacity + `group-hover` composition, `group` class placement, `aria-label` gating on the exact same condition as the Popover wiring, `tabs.switchTabsHint` i18n key placement, `displayTitle` DRY extraction, Radix attrs preserved, Rules-of-Hooks compliance (hook called unconditionally before early returns), `useEffect([focusedIndex])` focus-guard pattern, `Button` ref-as-prop + null-branching in the ref callback, roving-tabindex contract, Rules-of-Hooks-friendly unconditional hook call with empty-state safety inside the hook. All AGENTS.md invariants respected (no new tables, op types, stores, queues, message types; one shared hook reused per "check `src/hooks/` first" rule; semantic tokens only; no `biome-ignore` / `@ts-ignore` / non-null assertions / silent catches; React 19 conventions; strict TS settings).
+- **UX reviewer (`subagent_explore`):** APPROVE WITH NOTES. Zero P1. One P2 — missing Space-key parity test in `RecentPagesStrip.test.tsx` (the hook treats Enter and Space identically as activation keys per its source line 159, but the shipped test covered only Enter). Fix applied as orchestrator polish (new test mirrors the Enter test's setup and asserts `navigateToPage(pageId, title)` fires on Space). Two P3s — positional aria-label hints on RecentPagesStrip chips ("Alpha, 1 of 3 recent pages"; nice-to-have for AT users on long lists); copy-review pass on `tabs.switchTabsHint` (acceptable as-is; alternative phrasings were subjective preferences, not defects). Flow-trace observations: the navigation chrome now reads as a unified, keyboard-friendly, accessible system — chevron pops on hover (UX-254); screen-reader users hear the dropdown hint (UX-255); keyboard power users recognise the roving-tabindex pattern from TabBar and expect it in the strip (UX-256).
+
+### Design decisions
+
+- **Split the batch by file boundary, not by item.** UX-254 + UX-255 both touch `TabBar.tsx`; UX-256 touches `RecentPagesStrip.tsx`. Splitting along file boundaries kept the two build subagents free of merge conflicts — UX-254 and UX-255 share a single coherent diff (same function, same imports, same test fixtures) rather than landing in two sequential commits. Pure file-boundary parallelism per PROMPT.md.
+- **Apply the P2 directly; file no new items.** The Space-key test gap was a single-test addition (~20 lines) mirroring the existing Enter test verbatim — matches PROMPT.md's "apply trivial 1-line fixes directly" directive in spirit. Filing it as a new REVIEW-LATER item would have been unnecessary ceremony for a test-only fix. The UX reviewer's two P3s (positional aria-label; copy-review) are left unfiled — the first is a genuine nice-to-have that can surface organically if an AT user complains; the second is subjective and the shipped copy is acceptable.
+- **`group-hover` scope includes the close-X.** Hovering the close-X button also intensifies the chevron (both are inside the `group`-classed tab button). The UX reviewer considered whether this could confuse users but concluded it's fine: the close-X has its own distinct hover treatment (red tint via `hover:bg-destructive/20`), and the chevron intensification reinforces "the whole tab is interactive" rather than conflicting.
+- **Enter and Space both activate the focused chip.** The hook treats them identically; the shipped implementation inherits that. Adding a Space-specific test pins the parity so a future refactor can't silently narrow the match.
+
+### Architectural invariants respected (AGENTS.md)
+
+- Frontend-only, no backend / sqlx / specta surface change.
+- `useListKeyboardNavigation` reused from `src/hooks/` per the "check `src/hooks/` first" rule — no reimplementation of keyboard traversal logic in either TabBar or RecentPagesStrip.
+- `Popover` + `ChevronDown` + `Button` primitives all from established sources (`src/components/ui/` + `lucide-react`). No new primitives.
+- React 19: no `React.forwardRef`, no `React.ComponentRef`, callback-ref pattern consistent across TabBar + RecentPagesStrip.
+- Semantic tokens only — `text-muted-foreground` for the chevron, no hardcoded Tailwind colors.
+- No new `biome-ignore`, `@ts-ignore`, non-null assertions, or silent catch blocks.
+- `exactOptionalPropertyTypes` / `noImplicitReturns` / `useExplicitLengthCheck` all satisfied.
+
+### Notes for the next session
+
+- **Navigation cluster is now fully polished.** FEAT-7 (TabBar hoist) + FEAT-8 (dropdown) + FEAT-9 (recent strip) shipped in session 467; UX-254 + UX-255 + UX-256 polish in this session. Only FEAT-3 (Spaces, phase 3) remains in the cluster as a coupled refactor, and it stays sign-off-gated on 8 open design questions.
+- **Remaining open items (14):** FEAT-3, FEAT-4, FEAT-4i, FEAT-5, FEAT-5g, PERF-19, PERF-20, PERF-23, PUB-2, PUB-3, PUB-5, PUB-7, UX-249, UX-250. All either deferred, sign-off-gated, explicit non-fixes (PERF-*), or pair-blocked (UX-249 pairs with UX-250 which needs Option A/B decision). The READY-without-sign-off set is empty again.
+- **Session-log takeaway:** PROMPT.md's two-dimensional review pattern (technical + UX in parallel) caught a P2 test gap that a single combined review might have passed as "nice-to-have". The split review remains the right default for frontend changes with user-facing impact.
+
+---
+
 ## Session 468 — Post-hoc fresh-eyes review of FEAT-7/8/9 (PROMPT.md-compliant split) + 1 trivial polish fix + UX-255/UX-256 filed (2026-04-23)
 
 **0 REVIEW-LATER items resolved, 2 new filed (UX-255, UX-256).** Open-items count 15 → 17. User asked for a fresh-eyes review of session 467's navigation-cluster work "as if we had followed PROMPT.md" — flagging that session 467's review had used a single combined subagent rather than the PROMPT.md-mandated split (technical + UX in parallel for frontend changes with user-facing impact). This session runs the proper split, triages the findings, applies the trivial polish fix directly, and files the two non-trivial findings as new REVIEW-LATER items.
