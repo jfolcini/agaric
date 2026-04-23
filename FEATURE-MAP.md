@@ -190,6 +190,8 @@ Markdown-based WYSIWYG editing:
 - Renaming a tag or page propagates everywhere automatically
 - **Broken link chips** (deleted targets) show "Broken link — click to remove" tooltip; clicking removes the chip (recoverable via undo)
 - `((ULID))` tokens are tracked in the `block_links` table alongside `[[ULID]]` links
+- **Clickable inline tag chips** (UX-249): `#[ULID]` chips in block content are `role="link"` with Enter/Space activation — click navigates to the tag-as-a-page view via `navigateToPage`, matching `TagList` semantics. Wired across every rich-content surface (journal, page editor, backlinks, search results, history, conflict list, trash) and inside the TipTap `tag-ref` NodeView. Deleted-tag chips still fire the handler. Shared via `useTagClickHandler()` in `src/hooks/useRichContentCallbacks.ts`.
+- `#[ULID]` inline tag references are tracked in the `block_tag_refs` derived-state table (UX-250 Option A), separate from explicit `block_tags`. Used by `tags_cache.usage_count` (UNION with `DISTINCT block_id` so mixed explicit+inline on one block counts once) and `query_by_tags` / `TagFilterPanel` (UNION in `tag_query::resolve_expr` for both `Tag` and `Prefix`). Inheritance (`block_tag_inherited`) is explicit-only by design — inline refs do not propagate to children. Maintained incrementally by `ReindexBlockTagRefs` + `RebuildBlockTagRefsCache` materializer tasks, wiped+rebuilt on snapshot restore, backfilled on boot when the table is empty (migration 0034 creates the table but leaves backfill to Rust, since SQLite lacks regex). `reindex_fts_references` also walks `block_tag_refs` so tag rename refreshes inline-only referencing blocks' FTS entries.
 
 ### Task Management
 
