@@ -35,7 +35,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { Copy, Undo2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -134,6 +134,19 @@ export function AgentAccessSettingsTab(): React.ReactElement {
   // activity rows, keyed by `${device_id}:${seq}`.  Buttons disable +
   // swap to a spinner while their key is in the set.
   const [undoingKeys, setUndoingKeys] = useState<Set<string>>(() => new Set())
+  // FEAT-4h slice 4 — per-session bulk revert.
+  //
+  // Confirmation target for the per-session bulk-revert flow.  The
+  // payload carries the session id + the exact opRefs we'll submit so
+  // confirm-time count matches the confirmed action.  Null when the
+  // dialog is closed.
+  const [pendingSessionRevert, setPendingSessionRevert] = useState<{
+    sessionId: string
+    ops: Array<{ device_id: string; seq: number }>
+  } | null>(null)
+  // Session ids currently in-flight — used to disable the per-session
+  // button and swap its icon to a spinner.  Keyed by sessionId.
+  const [revertingSessions, setRevertingSessions] = useState<Set<string>>(() => new Set())
 
   // Re-render every 60 s so relative-time labels in the activity feed
   // refresh ("2m ago" → "3m ago") without needing a separate interval
@@ -321,6 +334,87 @@ export function AgentAccessSettingsTab(): React.ReactElement {
     [t],
   )
 
+  // FEAT-4h slice 4 — derived per-session data.
+  //
+  // Walk the current entries (newest-first) and bucket the opRef of
+  // every agent+ok+opRef entry by sessionId.  Used to:
+  //   - gate the per-session "Revert session" button on ≥ 2 ops
+  //   - collect the opRef payload when the button is clicked
+  //   - decide which entry gets the session header (the first-seen
+  //     of each sessionId in newest-first order)
+  const undoableBySession = useMemo(() => {
+    const map = new Map<string, Array<{ device_id: string; seq: number }>>()
+    for (const entry of entries) {
+      if (entry.actorKind === 'agent' && entry.result.kind === 'ok' && entry.opRef != null) {
+        const list = map.get(entry.sessionId) ?? []
+        list.push(entry.opRef)
+        map.set(entry.sessionId, list)
+      }
+    }
+    return map
+  }, [entries])
+
+  // First-seen indices by sessionId, computed in newest-first order.
+  // The header lands on the most-recent entry of a session so it sits
+  // at the top of the group as the user scrolls the feed.
+  const firstSeenIdxBySession = useMemo(() => {
+    const m = new Map<string, number>()
+    entries.forEach((entry, idx) => {
+      if (!m.has(entry.sessionId)) m.set(entry.sessionId, idx)
+    })
+    return m
+  }, [entries])
+
+  // User clicked "Revert session" on a session header — open the
+  // confirm dialog with the exact opRefs we'll submit.  The ops array
+  // is a snapshot of the session's undoable entries at click time; if
+  // the ring rolls over between the click and the confirmation, the
+  // user still reverts what they saw.
+  const handleRevertSessionClick = useCallback(
+    (sessionId: string) => {
+      const ops = undoableBySession.get(sessionId) ?? []
+      if (ops.length === 0) return
+      setPendingSessionRevert({ sessionId, ops })
+    },
+    [undoableBySession],
+  )
+
+  // Confirmed — fire revertOps with the full set.  Mirrors
+  // handleUndo's error handling (generic failure vs NonReversible).
+  const confirmRevertSession = useCallback(async () => {
+    const target = pendingSessionRevert
+    if (target === null) return
+    setPendingSessionRevert(null)
+    setRevertingSessions((prev) => {
+      const next = new Set(prev)
+      next.add(target.sessionId)
+      return next
+    })
+    try {
+      await revertOps({ ops: target.ops })
+      toast.success(t('agentAccess.revertSession.success', { count: target.ops.length }))
+    } catch (err) {
+      logger.error(
+        'AgentAccessSettingsTab',
+        'revert session failed',
+        { sessionId: target.sessionId, opCount: target.ops.length },
+        err,
+      )
+      toast.error(
+        isNonReversibleError(err)
+          ? t('agentAccess.revertSession.nonReversible')
+          : t('agentAccess.revertSession.failed'),
+      )
+    } finally {
+      setRevertingSessions((prev) => {
+        if (!prev.has(target.sessionId)) return prev
+        const next = new Set(prev)
+        next.delete(target.sessionId)
+        return next
+      })
+    }
+  }, [pendingSessionRevert, t])
+
   const socketPath = status?.socket_path ?? ''
   const rwSocketPath = rwStatus?.socket_path ?? ''
 
@@ -504,61 +598,112 @@ export function AgentAccessSettingsTab(): React.ReactElement {
                     const undoKey =
                       entry.opRef != null ? `${entry.opRef.device_id}:${entry.opRef.seq}` : null
                     const isUndoing = undoKey !== null && undoingKeys.has(undoKey)
+                    // FEAT-4h slice 4 — session-header controls.  The
+                    // header renders on the first-seen entry of each
+                    // session (in newest-first order, i.e. the most
+                    // recent row of that session) and only when the
+                    // session has ≥ 2 undoable ops.  One-action sessions
+                    // fall through to the per-entry Undo button.
+                    const sessionOps = undoableBySession.get(entry.sessionId) ?? []
+                    const isFirstSeenOfSession = firstSeenIdxBySession.get(entry.sessionId) === idx
+                    const showSessionHeader = isFirstSeenOfSession && sessionOps.length >= 2
+                    const isRevertingSession = revertingSessions.has(entry.sessionId)
                     return (
-                      <li
-                        // Activity entries are append-only and ordered newest-first.
-                        // The backend stamps `timestamp` with microsecond precision
-                        // so collisions within the same tool are vanishingly rare;
-                        // the idx tiebreaker covers the pathological same-microsecond
-                        // case (two agents calling the same tool concurrently).
-                        // biome-ignore lint/suspicious/noArrayIndexKey: append-only ring, idx stable per-entry
-                        key={`${entry.timestamp}-${idx}-${entry.toolName}`}
-                        className="activity-row flex items-start gap-3 p-3 text-sm"
-                        data-testid="mcp-activity-row"
-                      >
-                        <Badge variant="outline" className="font-mono text-xs shrink-0">
-                          {entry.toolName}
-                        </Badge>
-                        <span
-                          className={cn(
-                            'flex-1 break-words',
-                            entry.result.kind === 'err' && 'text-destructive',
-                          )}
-                        >
-                          {entry.summary}
-                        </span>
-                        <time
-                          className="text-xs text-muted-foreground shrink-0 tabular-nums"
-                          dateTime={entry.timestamp}
-                        >
-                          {formatRelativeTime(entry.timestamp, t)}
-                        </time>
-                        {canUndo && entry.opRef != null && (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="shrink-0"
-                                onClick={() => {
-                                  if (entry.opRef != null) void handleUndo(entry.opRef)
-                                }}
-                                disabled={isUndoing}
-                                aria-busy={isUndoing}
-                                aria-label={t('agentAccess.undoAgentOp.ariaLabel')}
-                                data-testid="mcp-activity-undo"
-                              >
-                                {isUndoing ? (
-                                  <Spinner size="sm" />
-                                ) : (
-                                  <Undo2 className="h-3.5 w-3.5" />
-                                )}
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>{t('agentAccess.undoAgentOp.tooltip')}</TooltipContent>
-                          </Tooltip>
+                      // biome-ignore lint/suspicious/noArrayIndexKey: append-only ring, idx stable per-entry
+                      <Fragment key={`${entry.timestamp}-${idx}-${entry.toolName}`}>
+                        {showSessionHeader && (
+                          <li
+                            className="flex items-center justify-between gap-3 px-3 py-2 bg-muted/30 text-xs text-muted-foreground border-b"
+                            data-testid="mcp-activity-session-header"
+                            data-session-id={entry.sessionId}
+                          >
+                            <span className="font-medium">
+                              {t('agentAccess.revertSession.buttonAriaLabel', {
+                                count: sessionOps.length,
+                              })}
+                            </span>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="shrink-0"
+                                  onClick={() => handleRevertSessionClick(entry.sessionId)}
+                                  disabled={isRevertingSession}
+                                  aria-busy={isRevertingSession}
+                                  aria-label={t('agentAccess.revertSession.buttonAriaLabel', {
+                                    count: sessionOps.length,
+                                  })}
+                                  data-testid="mcp-activity-revert-session"
+                                >
+                                  {isRevertingSession ? (
+                                    <Spinner size="sm" />
+                                  ) : (
+                                    <>
+                                      <Undo2 className="h-3.5 w-3.5 mr-1" />
+                                      <span>{t('agentAccess.revertSession.button')}</span>
+                                    </>
+                                  )}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                {t('agentAccess.revertSession.buttonAriaLabel', {
+                                  count: sessionOps.length,
+                                })}
+                              </TooltipContent>
+                            </Tooltip>
+                          </li>
                         )}
-                      </li>
+                        <li
+                          className="activity-row flex items-start gap-3 p-3 text-sm"
+                          data-testid="mcp-activity-row"
+                        >
+                          <Badge variant="outline" className="font-mono text-xs shrink-0">
+                            {entry.toolName}
+                          </Badge>
+                          <span
+                            className={cn(
+                              'flex-1 break-words',
+                              entry.result.kind === 'err' && 'text-destructive',
+                            )}
+                          >
+                            {entry.summary}
+                          </span>
+                          <time
+                            className="text-xs text-muted-foreground shrink-0 tabular-nums"
+                            dateTime={entry.timestamp}
+                          >
+                            {formatRelativeTime(entry.timestamp, t)}
+                          </time>
+                          {canUndo && entry.opRef != null && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="shrink-0"
+                                  onClick={() => {
+                                    if (entry.opRef != null) void handleUndo(entry.opRef)
+                                  }}
+                                  disabled={isUndoing}
+                                  aria-busy={isUndoing}
+                                  aria-label={t('agentAccess.undoAgentOp.ariaLabel')}
+                                  data-testid="mcp-activity-undo"
+                                >
+                                  {isUndoing ? (
+                                    <Spinner size="sm" />
+                                  ) : (
+                                    <Undo2 className="h-3.5 w-3.5" />
+                                  )}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                {t('agentAccess.undoAgentOp.tooltip')}
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+                        </li>
+                      </Fragment>
                     )
                   })}
                 </ul>
@@ -684,6 +829,21 @@ export function AgentAccessSettingsTab(): React.ReactElement {
         actionLabel={t('agentAccess.rwConfirmDisconnectAction')}
         actionVariant="destructive"
         onAction={() => void handleDisconnectAllRw()}
+      />
+
+      {/* FEAT-4h slice 4 — per-session bulk revert confirmation */}
+      <ConfirmDialog
+        open={pendingSessionRevert !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingSessionRevert(null)
+        }}
+        title={t('agentAccess.revertSession.confirmTitle')}
+        description={t('agentAccess.revertSession.confirmDescription', {
+          count: pendingSessionRevert?.ops.length ?? 0,
+        })}
+        actionLabel={t('agentAccess.revertSession.confirmAction')}
+        actionVariant="destructive"
+        onAction={() => void confirmRevertSession()}
       />
     </div>
   )

@@ -1959,6 +1959,23 @@ const resources = {
       'agentAccess.undoAgentOp.success': 'Agent action undone',
       'agentAccess.undoAgentOp.failed': 'Could not undo agent action',
       'agentAccess.undoAgentOp.nonReversible': 'This agent action cannot be undone',
+      // FEAT-4h slice 4: per-session bulk-revert on the activity feed
+      'agentAccess.revertSession.button': 'Revert session',
+      'agentAccess.revertSession.buttonAriaLabel_one':
+        'Revert this agent session ({{count}} action)',
+      'agentAccess.revertSession.buttonAriaLabel_other':
+        'Revert this agent session ({{count}} actions)',
+      'agentAccess.revertSession.confirmTitle': 'Revert session?',
+      'agentAccess.revertSession.confirmDescription_one':
+        'This will undo {{count}} agent action from this session. Continue?',
+      'agentAccess.revertSession.confirmDescription_other':
+        'This will undo {{count}} agent actions from this session. Continue?',
+      'agentAccess.revertSession.confirmAction': 'Revert session',
+      'agentAccess.revertSession.success_one': 'Session reverted ({{count}} action)',
+      'agentAccess.revertSession.success_other': 'Session reverted ({{count}} actions)',
+      'agentAccess.revertSession.failed': 'Could not revert session',
+      'agentAccess.revertSession.nonReversible':
+        'One or more actions in this session cannot be undone',
 
       // FEAT-5f: Google Calendar (experimental) settings tab
       'settings.tabGoogleCalendar': 'Google Calendar',

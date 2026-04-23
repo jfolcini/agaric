@@ -947,6 +947,495 @@ describe('AgentAccessSettingsTab — undo agent op', () => {
 })
 
 // ---------------------------------------------------------------------------
+// FEAT-4h slice 4 — per-session bulk-revert on the activity feed.
+//
+// A session header renders on the first-seen entry (newest-first) of
+// each session that has ≥ 2 undoable ops.  The header carries a
+// "Revert session" button that opens a confirm dialog with the exact
+// opRefs snapshotted at click time; confirming fires `revert_ops`
+// once with the full batch.  Failure paths mirror the per-entry Undo
+// error handling (generic failure vs NonReversible).
+// ---------------------------------------------------------------------------
+
+describe('AgentAccessSettingsTab — revert session', () => {
+  const revertSessionLabelExact3 = 'Revert this agent session (3 actions)'
+  const revertSessionLabelExact2 = 'Revert this agent session (2 actions)'
+
+  it('renders a session header on the first-seen entry when the session has ≥ 2 undoable ops', async () => {
+    setupInvoke(makeStatus())
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'create_block',
+          summary: 'created 1 block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 1).toISOString(),
+          sessionId: 'SESSION_A',
+          opRef: { device_id: 'D', seq: 1 },
+        }),
+      )
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'edit_block',
+          summary: 'edited 1 block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 2).toISOString(),
+          sessionId: 'SESSION_A',
+          opRef: { device_id: 'D', seq: 2 },
+        }),
+      )
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'set_property',
+          summary: 'set property foo=bar',
+          timestamp: new Date(2024, 0, 1, 0, 0, 3).toISOString(),
+          sessionId: 'SESSION_A',
+          opRef: { device_id: 'D', seq: 3 },
+        }),
+      )
+    })
+
+    const headers = await screen.findAllByTestId('mcp-activity-session-header')
+    expect(headers).toHaveLength(1)
+    // Revert-session button renders inside the header with the plural
+    // label ("3 actions") and the "Revert session" button text.
+    const revertBtn = within(headers[0] as HTMLElement).getByTestId('mcp-activity-revert-session')
+    expect(revertBtn).toHaveTextContent('Revert session')
+    expect(revertBtn).toHaveAttribute('aria-label', revertSessionLabelExact3)
+  })
+
+  it('does NOT render a session header when the session has only 1 undoable op', async () => {
+    setupInvoke(makeStatus())
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(
+        makeActivityEntry({
+          sessionId: 'SESSION_SINGLE',
+          opRef: { device_id: 'D', seq: 1 },
+        }),
+      )
+    })
+
+    // Row renders but no session header appears.
+    await screen.findByTestId('mcp-activity-row')
+    expect(screen.queryByTestId('mcp-activity-session-header')).not.toBeInTheDocument()
+    // Per-entry Undo button is still present (slice 3 behaviour).
+    expect(screen.getByLabelText('Undo this agent action')).toBeInTheDocument()
+  })
+
+  it('does NOT render a session header on non-first-seen entries of the same session', async () => {
+    setupInvoke(makeStatus())
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'create_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 1).toISOString(),
+          sessionId: 'SESSION_A',
+          opRef: { device_id: 'D', seq: 1 },
+        }),
+      )
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'edit_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 2).toISOString(),
+          sessionId: 'SESSION_A',
+          opRef: { device_id: 'D', seq: 2 },
+        }),
+      )
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'set_property',
+          timestamp: new Date(2024, 0, 1, 0, 0, 3).toISOString(),
+          sessionId: 'SESSION_A',
+          opRef: { device_id: 'D', seq: 3 },
+        }),
+      )
+    })
+
+    // Three rows, exactly one header — rendered on the first-seen
+    // entry (newest, i.e. set_property at the top of the feed).
+    const rows = await screen.findAllByTestId('mcp-activity-row')
+    expect(rows).toHaveLength(3)
+    const headers = screen.getAllByTestId('mcp-activity-session-header')
+    expect(headers).toHaveLength(1)
+  })
+
+  it('renders separate session headers when two sessions are interleaved', async () => {
+    setupInvoke(makeStatus())
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      // A1, B1, A2, B2 — both sessions end up with 2 undoable ops each.
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'create_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 1).toISOString(),
+          sessionId: 'SESSION_ALPHA',
+          opRef: { device_id: 'D', seq: 1 },
+        }),
+      )
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'create_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 2).toISOString(),
+          sessionId: 'SESSION_BETA',
+          opRef: { device_id: 'D', seq: 2 },
+        }),
+      )
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'edit_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 3).toISOString(),
+          sessionId: 'SESSION_ALPHA',
+          opRef: { device_id: 'D', seq: 3 },
+        }),
+      )
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'edit_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 4).toISOString(),
+          sessionId: 'SESSION_BETA',
+          opRef: { device_id: 'D', seq: 4 },
+        }),
+      )
+    })
+
+    await screen.findAllByTestId('mcp-activity-row')
+    const headers = screen.getAllByTestId('mcp-activity-session-header')
+    expect(headers).toHaveLength(2)
+    const sessionIds = headers.map((h) => h.getAttribute('data-session-id')).sort()
+    expect(sessionIds).toEqual(['SESSION_ALPHA', 'SESSION_BETA'])
+  })
+
+  it('ignores user-authored and failed entries when counting session ops', async () => {
+    setupInvoke(makeStatus())
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      // 1 agent + ok + opRef (counts)
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'create_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 1).toISOString(),
+          sessionId: 'SESSION_X',
+          opRef: { device_id: 'D', seq: 1 },
+        }),
+      )
+      // 1 user + ok + opRef (excluded — user-authored)
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'create_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 2).toISOString(),
+          actorKind: 'user',
+          agentName: undefined,
+          sessionId: 'SESSION_X',
+          opRef: { device_id: 'D', seq: 2 },
+        }),
+      )
+      // 1 agent + err + opRef (excluded — failure)
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'edit_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 3).toISOString(),
+          sessionId: 'SESSION_X',
+          result: { kind: 'err', message: 'invalid content' },
+          opRef: { device_id: 'D', seq: 3 },
+        }),
+      )
+    })
+
+    // Total session-X undoable ops = 1 → header hidden.
+    await screen.findAllByTestId('mcp-activity-row')
+    expect(screen.queryByTestId('mcp-activity-session-header')).not.toBeInTheDocument()
+  })
+
+  it('clicking Revert session opens the confirm dialog with the correct count', async () => {
+    const user = userEvent.setup()
+    setupInvoke(makeStatus())
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'create_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 1).toISOString(),
+          sessionId: 'SESSION_A',
+          opRef: { device_id: 'D', seq: 1 },
+        }),
+      )
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'edit_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 2).toISOString(),
+          sessionId: 'SESSION_A',
+          opRef: { device_id: 'D', seq: 2 },
+        }),
+      )
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'set_property',
+          timestamp: new Date(2024, 0, 1, 0, 0, 3).toISOString(),
+          sessionId: 'SESSION_A',
+          opRef: { device_id: 'D', seq: 3 },
+        }),
+      )
+    })
+
+    const revertBtn = await screen.findByTestId('mcp-activity-revert-session')
+    await user.click(revertBtn)
+
+    const confirm = await screen.findByRole('alertdialog')
+    // Title + plural description both include the snapshotted count.
+    expect(within(confirm).getByText('Revert session?')).toBeInTheDocument()
+    expect(
+      within(confirm).getByText('This will undo 3 agent actions from this session. Continue?'),
+    ).toBeInTheDocument()
+  })
+
+  it('confirming invokes revert_ops with every undoable opRef in the session in iteration order', async () => {
+    const user = userEvent.setup()
+    setupInvoke(makeStatus())
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    // Fire events in seq order 1, 2, 3 — feed is newest-first so
+    // entries.map walks [seq=3, seq=2, seq=1], and undoableBySession
+    // buckets in that walk order.  Expected ops payload is the same
+    // newest-first sequence.
+    act(() => {
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'create_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 1).toISOString(),
+          sessionId: 'SESSION_A',
+          opRef: { device_id: 'D', seq: 1 },
+        }),
+      )
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'edit_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 2).toISOString(),
+          sessionId: 'SESSION_A',
+          opRef: { device_id: 'D', seq: 2 },
+        }),
+      )
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'set_property',
+          timestamp: new Date(2024, 0, 1, 0, 0, 3).toISOString(),
+          sessionId: 'SESSION_A',
+          opRef: { device_id: 'D', seq: 3 },
+        }),
+      )
+    })
+
+    const revertBtn = await screen.findByTestId('mcp-activity-revert-session')
+    await user.click(revertBtn)
+
+    const confirm = await screen.findByRole('alertdialog')
+    const actionBtn = await within(confirm).findByRole('button', { name: 'Revert session' })
+    await user.click(actionBtn)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('revert_ops', {
+        ops: [
+          { device_id: 'D', seq: 3 },
+          { device_id: 'D', seq: 2 },
+          { device_id: 'D', seq: 1 },
+        ],
+      })
+    })
+    // Exact count assertion — exactly one revert_ops call with 3 ops.
+    const revertCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'revert_ops')
+    expect(revertCalls).toHaveLength(1)
+    const payload = revertCalls[0]?.[1] as { ops: unknown[] }
+    expect(payload.ops).toHaveLength(3)
+    expect(mockedToastSuccess).toHaveBeenCalledWith('Session reverted (3 actions)')
+  })
+
+  it('cancelling the confirm dialog does NOT invoke revert_ops', async () => {
+    const user = userEvent.setup()
+    setupInvoke(makeStatus())
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'create_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 1).toISOString(),
+          sessionId: 'SESSION_A',
+          opRef: { device_id: 'D', seq: 1 },
+        }),
+      )
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'edit_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 2).toISOString(),
+          sessionId: 'SESSION_A',
+          opRef: { device_id: 'D', seq: 2 },
+        }),
+      )
+    })
+
+    const revertBtn = await screen.findByTestId('mcp-activity-revert-session')
+    await user.click(revertBtn)
+
+    const confirm = await screen.findByRole('alertdialog')
+    const cancelBtn = await within(confirm).findByRole('button', { name: /cancel/i })
+    await user.click(cancelBtn)
+
+    // Dialog closes.
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    })
+    // revert_ops was never invoked.
+    const revertCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'revert_ops')
+    expect(revertCalls).toHaveLength(0)
+    // Sanity — plural label still matches the 2-op session.
+    expect(revertBtn).toHaveAttribute('aria-label', revertSessionLabelExact2)
+  })
+
+  it('fires the session-specific nonReversible toast when revert_ops rejects with kind=non_reversible', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_mcp_status') return makeStatus()
+      if (cmd === 'get_mcp_rw_status') return makeRwStatus()
+      if (cmd === 'revert_ops') {
+        throw Object.assign(new Error('Non-reversible: purge_block cannot be undone'), {
+          kind: 'non_reversible',
+        })
+      }
+      return undefined
+    })
+
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'create_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 1).toISOString(),
+          sessionId: 'SESSION_A',
+          opRef: { device_id: 'D', seq: 1 },
+        }),
+      )
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'edit_block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 2).toISOString(),
+          sessionId: 'SESSION_A',
+          opRef: { device_id: 'D', seq: 2 },
+        }),
+      )
+    })
+
+    const revertBtn = await screen.findByTestId('mcp-activity-revert-session')
+    await user.click(revertBtn)
+    const confirm = await screen.findByRole('alertdialog')
+    const actionBtn = await within(confirm).findByRole('button', { name: 'Revert session' })
+    await user.click(actionBtn)
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(
+        'One or more actions in this session cannot be undone',
+      )
+    })
+    // Session-specific error — not the per-entry wording.
+    expect(mockedToastError).not.toHaveBeenCalledWith('This agent action cannot be undone')
+    expect(mockedLoggerError).toHaveBeenCalledWith(
+      'AgentAccessSettingsTab',
+      'revert session failed',
+      { sessionId: 'SESSION_A', opCount: 2 },
+      expect.objectContaining({ kind: 'non_reversible' }),
+    )
+  })
+
+  it('has no axe violations on a session-grouped feed', async () => {
+    setupInvoke(makeStatus())
+    const { container } = render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      // Session A — 2 undoable ops (header shown).
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'create_block',
+          summary: 'created 1 block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 1).toISOString(),
+          sessionId: 'SESSION_A',
+          opRef: { device_id: 'D', seq: 1 },
+        }),
+      )
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'edit_block',
+          summary: 'edited 1 block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 2).toISOString(),
+          sessionId: 'SESSION_A',
+          opRef: { device_id: 'D', seq: 2 },
+        }),
+      )
+      // Session B — user-authored, excluded from header.
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'create_block',
+          summary: 'user created 1 block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 3).toISOString(),
+          actorKind: 'user',
+          agentName: undefined,
+          sessionId: 'SESSION_B',
+          opRef: { device_id: 'D', seq: 3 },
+        }),
+      )
+      // Session C — 1 ok + 1 err, only 1 undoable so no header.
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'set_property',
+          summary: 'set property foo=bar',
+          timestamp: new Date(2024, 0, 1, 0, 0, 4).toISOString(),
+          sessionId: 'SESSION_C',
+          opRef: { device_id: 'D', seq: 4 },
+        }),
+      )
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'edit_block',
+          summary: 'edit failed',
+          timestamp: new Date(2024, 0, 1, 0, 0, 5).toISOString(),
+          sessionId: 'SESSION_C',
+          result: { kind: 'err', message: 'validation failed' },
+          opRef: { device_id: 'D', seq: 5 },
+        }),
+      )
+    })
+
+    const rows = await screen.findAllByTestId('mcp-activity-row')
+    expect(rows).toHaveLength(5)
+    const headers = screen.getAllByTestId('mcp-activity-session-header')
+    expect(headers).toHaveLength(1)
+
+    await waitFor(
+      async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      },
+      { timeout: 8000 },
+    )
+  }, 15000)
+})
+
+// ---------------------------------------------------------------------------
 // Kill switch — RO
 // ---------------------------------------------------------------------------
 
