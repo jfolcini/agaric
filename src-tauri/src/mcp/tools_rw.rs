@@ -1136,4 +1136,54 @@ mod tests {
             "agent-invoked delete_block must stamp op_log.origin='agent:<name>'",
         );
     }
+
+    /// FEAT-4h slice 3: every RW-tool-written op must populate the
+    /// `LAST_APPEND` task-local so the dispatch layer can attach an
+    /// `OpRef` to the emitted `mcp:activity` entry. This test pins the
+    /// invariant by driving `append_block` inside an explicit
+    /// `LAST_APPEND.scope(...)` and checking the cell after the call.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn append_block_populates_last_append_inside_scope() {
+        use crate::mcp::last_append::LAST_APPEND;
+        use std::cell::Cell;
+
+        let (tools, mat, pool, _dir) = mk_tools().await;
+        let parent = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Parent".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        let captured = LAST_APPEND
+            .scope(Cell::new(None), async {
+                tools
+                    .call_tool(
+                        "append_block",
+                        json!({"parent_id": parent.id.clone(), "content": "hello"}),
+                        &test_ctx_agent(),
+                    )
+                    .await
+                    .expect("happy path");
+                LAST_APPEND.with(|c| c.take())
+            })
+            .await;
+
+        let op_ref = captured.expect("append_block must populate LAST_APPEND with its OpRef");
+        assert_eq!(
+            op_ref.device_id, DEV,
+            "op_ref.device_id must match the tools' configured device id",
+        );
+        assert!(
+            op_ref.seq > 0,
+            "op_ref.seq must be > 0 for a real append, got {}",
+            op_ref.seq,
+        );
+    }
 }

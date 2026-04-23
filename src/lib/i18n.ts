@@ -1953,6 +1953,12 @@ const resources = {
       'agentAccess.rwConfirmDisconnectAction': 'Disconnect all read-write',
       'agentAccess.rwEnabledWarning':
         'Agents can create, edit, and delete blocks while this is on.',
+      // FEAT-4h slice 3: per-entry Undo button on agent-authored RW activity rows
+      'agentAccess.undoAgentOp.ariaLabel': 'Undo this agent action',
+      'agentAccess.undoAgentOp.tooltip': 'Undo this agent action',
+      'agentAccess.undoAgentOp.success': 'Agent action undone',
+      'agentAccess.undoAgentOp.failed': 'Could not undo agent action',
+      'agentAccess.undoAgentOp.nonReversible': 'This agent action cannot be undone',
 
       // FEAT-5f: Google Calendar (experimental) settings tab
       'settings.tabGoogleCalendar': 'Google Calendar',

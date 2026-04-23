@@ -169,6 +169,16 @@ pub async fn append_local_op_in_tx(
     .execute(&mut **tx)
     .await?;
 
+    // FEAT-4h slice 3: populate the task-local `LAST_APPEND` cell so the
+    // MCP dispatch layer can attach an `OpRef` to the emitted
+    // `mcp:activity` entry for per-entry Undo. Silent no-op outside an
+    // `mcp::last_append::LAST_APPEND` scope — i.e. every frontend-invoked
+    // command.
+    crate::mcp::last_append::record_append(crate::op::OpRef {
+        device_id: device_id.to_string(),
+        seq,
+    });
+
     Ok(OpRecord {
         device_id: device_id.to_owned(),
         seq,
@@ -1492,6 +1502,48 @@ mod tests {
             origin, "user",
             "remote op inserted via dag::insert_remote_op must pick up the \
              'user' column default from migration 0033",
+        );
+    }
+
+    /// FEAT-4h slice 3: `append_local_op_in_tx` must populate the
+    /// `LAST_APPEND` task-local with the freshly-inserted `(device_id,
+    /// seq)` pair when a scope is active. Outside a scope (the
+    /// frontend-invoked path) the call is a silent no-op — that path is
+    /// covered in `mcp::last_append::tests::record_append_outside_scope_is_silent_noop`.
+    #[tokio::test]
+    async fn append_local_op_in_tx_populates_last_append_inside_scope() {
+        use crate::mcp::last_append::LAST_APPEND;
+        use std::cell::Cell;
+
+        let (pool, _dir) = test_pool().await;
+
+        let got = LAST_APPEND
+            .scope(Cell::new(None), async {
+                let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+                let record = append_local_op_in_tx(
+                    &mut tx,
+                    TEST_DEVICE,
+                    make_create_payload("BLKLAPPEND"),
+                    FIXED_TS.into(),
+                )
+                .await
+                .unwrap();
+                tx.commit().await.unwrap();
+
+                let captured = LAST_APPEND.with(|c| c.take());
+                (record, captured)
+            })
+            .await;
+
+        let (record, captured) = got;
+        let captured = captured.expect("LAST_APPEND must be populated after append_local_op_in_tx");
+        assert_eq!(
+            captured.device_id, record.device_id,
+            "LAST_APPEND.device_id must match the inserted row",
+        );
+        assert_eq!(
+            captured.seq, record.seq,
+            "LAST_APPEND.seq must match the inserted row",
         );
     }
 }

@@ -1779,4 +1779,32 @@ mod tests {
             ".page_id" => "[ULID]",
         });
     }
+
+    /// FEAT-4h slice 3: RO tools must NOT populate `LAST_APPEND` — they
+    /// don't append ops, so the dispatch layer should see `None` and
+    /// emit an `ActivityEntry` with `op_ref = None`. Drive `list_pages`
+    /// inside an explicit scope and assert the cell is still `None` on
+    /// exit.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_pages_does_not_populate_last_append() {
+        use crate::mcp::last_append::LAST_APPEND;
+        use std::cell::Cell;
+
+        let (tools, _mat, _dir) = mk_tools().await;
+
+        let captured = LAST_APPEND
+            .scope(Cell::new(None), async {
+                tools
+                    .call_tool("list_pages", json!({}), &test_ctx())
+                    .await
+                    .expect("list_pages ok");
+                LAST_APPEND.with(|c| c.take())
+            })
+            .await;
+
+        assert!(
+            captured.is_none(),
+            "RO tool `list_pages` must not populate LAST_APPEND; got {captured:?}",
+        );
+    }
 }

@@ -33,7 +33,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { Copy } from 'lucide-react'
+import { Copy, Undo2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -42,9 +42,12 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { logger } from '@/lib/logger'
+import { revertOps } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { ConfirmDialog } from './ConfirmDialog'
 import { EmptyState } from './EmptyState'
@@ -71,6 +74,17 @@ interface McpRwStatus {
 /**
  * Mirrors the Rust `ActivityEntry` struct emitted on the `mcp:activity`
  * Tauri event bus (see `src-tauri/src/mcp/activity.rs`).
+ *
+ * `sessionId` is the per-connection ULID assigned by the MCP backend —
+ * required for every entry so the feed can group/scope activity by
+ * session in future slices.
+ *
+ * `opRef` is populated only for read-write tool successes that wrote an
+ * op to the log.  RO tools, failed calls, and user-authored entries
+ * leave it undefined.  The field stays `snake_case` inside the object
+ * because it mirrors the Rust `OpRef` type exposed in
+ * `src/lib/bindings.ts` — the backend serialises `device_id` / `seq`
+ * that way and the wrapper in `tauri.ts` forwards the same shape.
  */
 interface ActivityEntry {
   toolName: string
@@ -79,6 +93,23 @@ interface ActivityEntry {
   actorKind: 'user' | 'agent'
   agentName?: string | undefined
   result: { kind: 'ok' } | { kind: 'err'; message: string }
+  sessionId: string
+  opRef?: { device_id: string; seq: number } | undefined
+}
+
+/**
+ * Shape of an `AppError::NonReversible` once it crosses the Tauri IPC
+ * boundary.  Used by the undo handler to branch on a dedicated toast —
+ * the 6 current RW tools never produce non-reversible ops, but this
+ * guard exists for forward-compat (future `purge_block` surfacing etc).
+ */
+function isNonReversibleError(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'kind' in err &&
+    (err as { kind?: unknown }).kind === 'non_reversible'
+  )
 }
 
 const MCP_ACTIVITY_EVENT = 'mcp:activity'
@@ -99,6 +130,10 @@ export function AgentAccessSettingsTab(): React.ReactElement {
   const [entries, setEntries] = useState<ActivityEntry[]>([])
   const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget>(null)
   const [, setTick] = useState<number>(0)
+  // Per-entry loading state for the Undo button on agent-authored RW
+  // activity rows, keyed by `${device_id}:${seq}`.  Buttons disable +
+  // swap to a spinner while their key is in the set.
+  const [undoingKeys, setUndoingKeys] = useState<Set<string>>(() => new Set())
 
   // Re-render every 60 s so relative-time labels in the activity feed
   // refresh ("2m ago" → "3m ago") without needing a separate interval
@@ -249,6 +284,42 @@ export function AgentAccessSettingsTab(): React.ReactElement {
       toast.error(t('agentAccess.rwDisconnectFailed'))
     }
   }, [loadStatus, t])
+
+  // Revert a single agent-authored op from the activity feed.  Called
+  // from the per-entry Undo button — only rendered on agent + ok +
+  // opRef-present rows.  Tracks in-flight state via `undoingKeys` so
+  // the button disables and swaps to a spinner while the IPC call is
+  // pending.  On `NonReversible` we show a dedicated toast; every
+  // other error falls through to the generic failure toast.
+  const handleUndo = useCallback(
+    async (opRef: { device_id: string; seq: number }) => {
+      const key = `${opRef.device_id}:${opRef.seq}`
+      setUndoingKeys((prev) => {
+        const next = new Set(prev)
+        next.add(key)
+        return next
+      })
+      try {
+        await revertOps({ ops: [opRef] })
+        toast.success(t('agentAccess.undoAgentOp.success'))
+      } catch (err) {
+        logger.error('AgentAccessSettingsTab', 'undo failed', { opRef }, err)
+        toast.error(
+          isNonReversibleError(err)
+            ? t('agentAccess.undoAgentOp.nonReversible')
+            : t('agentAccess.undoAgentOp.failed'),
+        )
+      } finally {
+        setUndoingKeys((prev) => {
+          if (!prev.has(key)) return prev
+          const next = new Set(prev)
+          next.delete(key)
+          return next
+        })
+      }
+    },
+    [t],
+  )
 
   const socketPath = status?.socket_path ?? ''
   const rwSocketPath = rwStatus?.socket_path ?? ''
@@ -411,39 +482,88 @@ export function AgentAccessSettingsTab(): React.ReactElement {
           <EmptyState message={t('agentAccess.activityEmpty')} compact />
         ) : (
           <ScrollArea className="h-[280px] rounded-md border" data-testid="mcp-activity-feed">
-            <ul className="divide-y" role="log" aria-label={t('agentAccess.activityLabel')}>
-              {entries.map((entry, idx) => (
-                <li
-                  // Activity entries are append-only and ordered newest-first.
-                  // The backend stamps `timestamp` with microsecond precision
-                  // so collisions within the same tool are vanishingly rare;
-                  // the idx tiebreaker covers the pathological same-microsecond
-                  // case (two agents calling the same tool concurrently).
-                  // biome-ignore lint/suspicious/noArrayIndexKey: append-only ring, idx stable per-entry
-                  key={`${entry.timestamp}-${idx}-${entry.toolName}`}
-                  className="activity-row flex items-start gap-3 p-3 text-sm"
-                  data-testid="mcp-activity-row"
-                >
-                  <Badge variant="outline" className="font-mono text-xs shrink-0">
-                    {entry.toolName}
-                  </Badge>
-                  <span
-                    className={cn(
-                      'flex-1 break-words',
-                      entry.result.kind === 'err' && 'text-destructive',
-                    )}
-                  >
-                    {entry.summary}
-                  </span>
-                  <time
-                    className="text-xs text-muted-foreground shrink-0 tabular-nums"
-                    dateTime={entry.timestamp}
-                  >
-                    {formatRelativeTime(entry.timestamp, t)}
-                  </time>
-                </li>
-              ))}
-            </ul>
+            {/*
+             * `role="log"` lives on a wrapper `<div>` rather than the
+             * `<ul>` so axe-core's `aria-allowed-role` + `listitem`
+             * rules are satisfied: the live-region semantics stay
+             * intact while the `<ul>` keeps its implicit `list` role
+             * (required so `<li>` children are properly contained).
+             */}
+            <TooltipProvider>
+              <div role="log" aria-live="polite" aria-label={t('agentAccess.activityLabel')}>
+                <ul className="divide-y">
+                  {entries.map((entry, idx) => {
+                    // Show the Undo button iff the entry is an agent-authored
+                    // successful RW tool call (opRef is backend-populated only
+                    // in that exact case).  RO tools, failures, and user-authored
+                    // rows render nothing in that slot — no disabled button.
+                    const canUndo =
+                      entry.actorKind === 'agent' &&
+                      entry.result.kind === 'ok' &&
+                      entry.opRef != null
+                    const undoKey =
+                      entry.opRef != null ? `${entry.opRef.device_id}:${entry.opRef.seq}` : null
+                    const isUndoing = undoKey !== null && undoingKeys.has(undoKey)
+                    return (
+                      <li
+                        // Activity entries are append-only and ordered newest-first.
+                        // The backend stamps `timestamp` with microsecond precision
+                        // so collisions within the same tool are vanishingly rare;
+                        // the idx tiebreaker covers the pathological same-microsecond
+                        // case (two agents calling the same tool concurrently).
+                        // biome-ignore lint/suspicious/noArrayIndexKey: append-only ring, idx stable per-entry
+                        key={`${entry.timestamp}-${idx}-${entry.toolName}`}
+                        className="activity-row flex items-start gap-3 p-3 text-sm"
+                        data-testid="mcp-activity-row"
+                      >
+                        <Badge variant="outline" className="font-mono text-xs shrink-0">
+                          {entry.toolName}
+                        </Badge>
+                        <span
+                          className={cn(
+                            'flex-1 break-words',
+                            entry.result.kind === 'err' && 'text-destructive',
+                          )}
+                        >
+                          {entry.summary}
+                        </span>
+                        <time
+                          className="text-xs text-muted-foreground shrink-0 tabular-nums"
+                          dateTime={entry.timestamp}
+                        >
+                          {formatRelativeTime(entry.timestamp, t)}
+                        </time>
+                        {canUndo && entry.opRef != null && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="shrink-0"
+                                onClick={() => {
+                                  if (entry.opRef != null) void handleUndo(entry.opRef)
+                                }}
+                                disabled={isUndoing}
+                                aria-busy={isUndoing}
+                                aria-label={t('agentAccess.undoAgentOp.ariaLabel')}
+                                data-testid="mcp-activity-undo"
+                              >
+                                {isUndoing ? (
+                                  <Spinner size="sm" />
+                                ) : (
+                                  <Undo2 className="h-3.5 w-3.5" />
+                                )}
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>{t('agentAccess.undoAgentOp.tooltip')}</TooltipContent>
+                          </Tooltip>
+                        )}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            </TooltipProvider>
           </ScrollArea>
         )}
       </div>

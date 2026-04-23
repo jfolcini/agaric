@@ -87,12 +87,36 @@ pub struct ClientInfo {
 /// the shared ring and emits an `mcp:activity` Tauri event. The current
 /// placeholder dispatch returns `-32601` and does *not* emit — only real
 /// tool invocations (wired by FEAT-4c) should record activity.
-#[derive(Debug, Default)]
+///
+/// `session_id` is an opaque ULID generated once on connection open and
+/// stamped onto every emitted [`super::activity::ActivityEntry`]. Stable
+/// across every request on the same socket connection — enables the
+/// frontend activity-feed (FEAT-4h slice 3) to group entries by MCP
+/// session and render a per-session Undo affordance.
+#[derive(Debug)]
 pub struct ConnectionState {
     pub client_info: Option<ClientInfo>,
     pub protocol_version: Option<String>,
     pub initialized: bool,
     pub activity_ctx: Option<super::activity::ActivityContext>,
+    pub session_id: String,
+}
+
+impl Default for ConnectionState {
+    fn default() -> Self {
+        Self {
+            client_info: None,
+            protocol_version: None,
+            initialized: false,
+            activity_ctx: None,
+            // Fresh ULID per connection. `Ulid::new()` uses the current
+            // UTC millisecond + 80 bits of entropy — collision-free for
+            // our purposes (single-user local socket). Never empty — the
+            // frontend groups entries by `sessionId`, so an empty string
+            // would collapse every session into one.
+            session_id: Ulid::new().to_string(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -403,7 +427,9 @@ async fn handle_tools_call<R: ToolRegistry>(
         .map(|ci| ci.name.clone())
         .unwrap_or_else(|| "unknown".to_string());
     let ctx = ActorContext {
-        actor: Actor::Agent { name: agent_name },
+        actor: Actor::Agent {
+            name: agent_name.clone(),
+        },
         request_id: Ulid::new().to_string(),
     };
 
@@ -416,11 +442,61 @@ async fn handle_tools_call<R: ToolRegistry>(
     //   explicit-parameter style do not need to touch the task-local.
     let scoped_ctx = ctx.clone();
     let call_ctx = ctx;
-    let result = ACTOR
+
+    // FEAT-4h slice 3: wrap the registry call in TWO task-local scopes
+    // (ACTOR outer, LAST_APPEND inner). `append_local_op_in_tx` pokes
+    // its freshly-inserted `OpRef` into LAST_APPEND; we harvest it here
+    // so the emitted activity entry can carry it for per-entry Undo.
+    // Capturing happens INSIDE the scope so the task-local is still
+    // alive when we read it.
+    let (result, op_ref) = ACTOR
         .scope(scoped_ctx, async {
-            registry.call_tool(&name, args, &call_ctx).await
+            super::last_append::LAST_APPEND
+                .scope(std::cell::Cell::new(None), async {
+                    let r = registry.call_tool(&name, args, &call_ctx).await;
+                    let captured = super::last_append::LAST_APPEND.with(std::cell::Cell::take);
+                    (r, captured)
+                })
+                .await
         })
         .await;
+
+    // FEAT-4c emission path: if an activity context is attached to the
+    // connection, emit one entry per completed tool call (success or
+    // failure). The frontend activity feed renders errors too, so the
+    // emission branches cover both the Ok and Err arms.
+    if let Some(ref ctx) = state.activity_ctx {
+        use super::activity::{emit_tool_completion, ActivityResult as ActRes, ActorKind};
+        // TODO(FEAT-4h-followup): per-tool privacy-safe summaries
+        // (counts, block_ids — never content). For MVP the tool name
+        // doubles as the summary.
+        let summary = name.clone();
+        let result_variant = match &result {
+            Ok(_) => ActRes::Ok,
+            Err(err) => {
+                // Clip the message to avoid leaking long error chains
+                // into the activity feed. 200 Unicode scalars is
+                // plenty for "block not found" / "validation failed:
+                // ..." style messages.
+                let short: String = err.to_string().chars().take(200).collect();
+                ActRes::Err(short)
+            }
+        };
+        // `ActorKind::Agent` is correct for every MCP dispatch today —
+        // the `User` branch is reserved for future non-MCP usage of
+        // the same seam. The agent name is the handshake's
+        // `clientInfo.name` (see the `unwrap_or_else` fallback above).
+        emit_tool_completion(
+            ctx,
+            name.clone(),
+            summary,
+            ActorKind::Agent,
+            Some(agent_name.clone()),
+            result_variant,
+            state.session_id.clone(),
+            op_ref,
+        );
+    }
 
     match result {
         Ok(value) => Ok(wrap_tool_result_success(value)),
@@ -1687,13 +1763,36 @@ mod tests {
         assert!(state.activity_ctx.is_none());
     }
 
+    #[test]
+    fn connection_state_default_generates_non_empty_ulid_session_id() {
+        // FEAT-4h slice 3: `session_id` must be a fresh ULID on every
+        // `default()` call so each connection can be grouped by session
+        // in the activity feed. An empty string would collapse every
+        // connection's entries into one.
+        let a = ConnectionState::default();
+        let b = ConnectionState::default();
+        assert_eq!(
+            a.session_id.len(),
+            26,
+            "ULID Crockford base32 length is 26, got {:?}",
+            a.session_id,
+        );
+        assert!(!a.session_id.is_empty());
+        assert_ne!(
+            a.session_id, b.session_id,
+            "each ConnectionState::default() must produce a distinct ULID",
+        );
+    }
+
     #[tokio::test]
-    async fn handle_connection_accepts_activity_ctx_without_emitting_on_placeholder_tools_call() {
-        // Spec invariant: the placeholder `tools/call` returns -32601 and
-        // MUST NOT record activity — only real tool invocations (FEAT-4c)
-        // should emit. Exercise the full dispatch path with an activity
-        // context attached and assert the recorder stays empty.
-        use super::super::activity::{ActivityContext, ActivityRing, RecordingEmitter};
+    async fn handle_connection_emits_activity_on_placeholder_error_tools_call() {
+        // FEAT-4h slice 3 wires the emission path: every completed
+        // `tools/call` — success or failure — pushes an activity
+        // entry. The PlaceholderRegistry returns `AppError::NotFound`,
+        // so the emitted entry must carry `ActivityResult::Err(...)`.
+        use super::super::activity::{
+            ActivityContext, ActivityResult, ActivityRing, RecordingEmitter,
+        };
         use std::sync::Mutex;
 
         let ring = Arc::new(Mutex::new(ActivityRing::new()));
@@ -1749,13 +1848,30 @@ mod tests {
 
         assert_eq!(
             emitter.len(),
-            0,
-            "placeholder -32601 must not emit activity; FEAT-4c wires the real tool dispatch",
+            1,
+            "FEAT-4h slice 3 emits one entry per completed tools/call — \
+             errors count too",
+        );
+        let entries = emitter.entries();
+        let entry = entries.first().expect("one entry");
+        assert_eq!(entry.tool_name, "search");
+        assert!(
+            matches!(entry.result, ActivityResult::Err(_)),
+            "PlaceholderRegistry's NotFound must surface as Err; got {:?}",
+            entry.result,
+        );
+        assert!(
+            entry.op_ref.is_none(),
+            "PlaceholderRegistry does not append any op, so op_ref is None",
+        );
+        assert!(
+            !entry.session_id.is_empty(),
+            "session_id must be stamped from ConnectionState.session_id",
         );
         assert_eq!(
             ring.lock().unwrap().len(),
-            0,
-            "ring stays empty until a real tool is invoked",
+            1,
+            "ring receives one entry per tools/call",
         );
     }
 
@@ -1795,6 +1911,8 @@ mod tests {
             ActorKind::Agent,
             Some("claude-desktop".to_string()),
             ActivityResult::Ok,
+            state.session_id.clone(),
+            None,
         );
 
         assert_eq!(
@@ -1811,5 +1929,237 @@ mod tests {
         assert_eq!(entry.tool_name, "search");
         assert_eq!(entry.actor_kind, ActorKind::Agent);
         assert_eq!(entry.agent_name.as_deref(), Some("claude-desktop"));
+        assert_eq!(entry.session_id, state.session_id);
+        assert!(entry.op_ref.is_none());
+    }
+
+    // -----------------------------------------------------------------
+    // FEAT-4h slice 3 — `handle_tools_call` emission path
+    //
+    // These tests drive the `handle_tools_call` function directly (not
+    // via the full socket round-trip) so they can probe the precise
+    // emission behaviour: success-with-session-id-and-no-op-ref,
+    // failure-with-err-result, op_ref-carrying-from-LAST_APPEND, the
+    // no-ctx path, and per-connection session-id stability.
+    // -----------------------------------------------------------------
+
+    /// Minimal test registry: always returns `Ok(Value::Null)`.
+    #[derive(Default)]
+    struct OkRegistry;
+
+    impl ToolRegistry for OkRegistry {
+        fn list_tools(&self) -> Vec<ToolDescription> {
+            Vec::new()
+        }
+        async fn call_tool(
+            &self,
+            _name: &str,
+            _args: Value,
+            _ctx: &ActorContext,
+        ) -> Result<Value, AppError> {
+            Ok(Value::Null)
+        }
+    }
+
+    /// Test registry that records a fixed `OpRef` into the `LAST_APPEND`
+    /// task-local before returning success — simulates a RW tool that
+    /// appended one op.
+    struct AppendingRegistry {
+        op_ref: crate::op::OpRef,
+    }
+
+    impl ToolRegistry for AppendingRegistry {
+        fn list_tools(&self) -> Vec<ToolDescription> {
+            Vec::new()
+        }
+        async fn call_tool(
+            &self,
+            _name: &str,
+            _args: Value,
+            _ctx: &ActorContext,
+        ) -> Result<Value, AppError> {
+            super::super::last_append::record_append(self.op_ref.clone());
+            Ok(Value::Null)
+        }
+    }
+
+    fn recording_ctx() -> (
+        super::super::activity::ActivityContext,
+        Arc<super::super::activity::RecordingEmitter>,
+    ) {
+        use super::super::activity::{
+            ActivityContext, ActivityEmitter, ActivityRing, RecordingEmitter,
+        };
+        use std::sync::Mutex;
+
+        let ring = Arc::new(Mutex::new(ActivityRing::new()));
+        let recorder = Arc::new(RecordingEmitter::new());
+        let emitter: Arc<dyn ActivityEmitter> = recorder.clone();
+        (ActivityContext::new(ring, emitter), recorder)
+    }
+
+    #[tokio::test]
+    async fn handle_tools_call_emits_activity_on_success_with_session_id_and_no_op_ref() {
+        use super::super::activity::ActivityResult;
+
+        let (ctx, recorder) = recording_ctx();
+        let state = ConnectionState {
+            client_info: Some(ClientInfo {
+                name: "claude".to_string(),
+                version: None,
+            }),
+            activity_ctx: Some(ctx),
+            ..ConnectionState::default()
+        };
+        let registry = OkRegistry;
+        let params = json!({ "name": "search", "arguments": {} });
+
+        let result = handle_tools_call(&state, &params, &registry)
+            .await
+            .expect("tools/call succeeds");
+        // The envelope wraps the null Value — check isError=false as
+        // the success signal.
+        assert_eq!(result["isError"], false);
+
+        let entries = recorder.entries();
+        assert_eq!(entries.len(), 1, "exactly one emission per call");
+        let entry = &entries[0];
+        assert_eq!(entry.tool_name, "search");
+        assert!(matches!(entry.result, ActivityResult::Ok));
+        assert_eq!(
+            entry.session_id, state.session_id,
+            "session_id is threaded from ConnectionState",
+        );
+        assert!(
+            entry.op_ref.is_none(),
+            "OkRegistry records no append → op_ref must be None",
+        );
+        assert_eq!(entry.agent_name.as_deref(), Some("claude"));
+    }
+
+    #[tokio::test]
+    async fn handle_tools_call_emits_activity_on_error_with_err_result() {
+        use super::super::activity::ActivityResult;
+
+        let (ctx, recorder) = recording_ctx();
+        let state = ConnectionState {
+            client_info: Some(ClientInfo {
+                name: "agent-x".to_string(),
+                version: None,
+            }),
+            activity_ctx: Some(ctx),
+            ..ConnectionState::default()
+        };
+        let registry = PlaceholderRegistry;
+        let params = json!({ "name": "ghost", "arguments": {} });
+
+        let (code, msg) = handle_tools_call(&state, &params, &registry)
+            .await
+            .expect_err("placeholder never resolves to Ok");
+        assert_eq!(code, JSONRPC_RESOURCE_NOT_FOUND);
+        assert!(msg.contains("ghost"));
+
+        let entries = recorder.entries();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.tool_name, "ghost");
+        match &entry.result {
+            ActivityResult::Err(short) => {
+                assert!(
+                    short.contains("ghost"),
+                    "error message should echo the AppError body, got {short:?}",
+                );
+                assert!(
+                    short.chars().count() <= 200,
+                    "error message must be clipped to 200 chars, got {}",
+                    short.chars().count(),
+                );
+            }
+            other => panic!("expected Err, got {other:?}"),
+        }
+        assert_eq!(entry.session_id, state.session_id);
+        assert!(entry.op_ref.is_none());
+    }
+
+    #[tokio::test]
+    async fn handle_tools_call_op_ref_populated_when_tool_records_append() {
+        let (ctx, recorder) = recording_ctx();
+        let state = ConnectionState {
+            client_info: Some(ClientInfo {
+                name: "claude".to_string(),
+                version: None,
+            }),
+            activity_ctx: Some(ctx),
+            ..ConnectionState::default()
+        };
+        let expected = crate::op::OpRef {
+            device_id: "TEST".to_string(),
+            seq: 42,
+        };
+        let registry = AppendingRegistry {
+            op_ref: expected.clone(),
+        };
+        let params = json!({ "name": "append_block", "arguments": {} });
+
+        let _ = handle_tools_call(&state, &params, &registry)
+            .await
+            .expect("tools/call succeeds");
+
+        let entries = recorder.entries();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(
+            entry.op_ref.as_ref(),
+            Some(&expected),
+            "op_ref must be captured from LAST_APPEND and surfaced on the entry",
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_tools_call_does_not_emit_when_activity_ctx_is_none() {
+        // No activity_ctx — dispatch must still work; there's nothing
+        // to observe emission-wise, but the test verifies the None
+        // branch doesn't panic and the result still round-trips.
+        let state = ConnectionState::default();
+        assert!(state.activity_ctx.is_none());
+        let registry = OkRegistry;
+        let params = json!({ "name": "search", "arguments": {} });
+
+        let result = handle_tools_call(&state, &params, &registry)
+            .await
+            .expect("tools/call succeeds without activity_ctx");
+        assert_eq!(result["isError"], false);
+    }
+
+    #[tokio::test]
+    async fn handle_tools_call_session_id_stable_across_two_requests() {
+        // FEAT-4h slice 3 invariant: every emission from the same
+        // connection carries the same `session_id`.
+        let (ctx, recorder) = recording_ctx();
+        let state = ConnectionState {
+            client_info: Some(ClientInfo {
+                name: "claude".to_string(),
+                version: None,
+            }),
+            activity_ctx: Some(ctx),
+            ..ConnectionState::default()
+        };
+        let registry = OkRegistry;
+
+        let _ = handle_tools_call(&state, &json!({ "name": "a", "arguments": {} }), &registry)
+            .await
+            .unwrap();
+        let _ = handle_tools_call(&state, &json!({ "name": "b", "arguments": {} }), &registry)
+            .await
+            .unwrap();
+
+        let entries = recorder.entries();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            entries[0].session_id, entries[1].session_id,
+            "both entries must share the same session_id (stable across requests \
+             on the same ConnectionState)",
+        );
+        assert_eq!(entries[0].session_id, state.session_id);
     }
 }

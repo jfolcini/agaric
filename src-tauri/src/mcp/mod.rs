@@ -17,6 +17,7 @@
 
 pub mod activity;
 pub mod actor;
+pub mod last_append;
 pub mod registry;
 pub mod server;
 pub mod tools_ro;

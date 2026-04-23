@@ -131,6 +131,41 @@ function makeRwStatus(overrides: Partial<McpRwStatus> = {}): McpRwStatus {
 }
 
 /**
+ * Mirrors the production `ActivityEntry` shape (wire payload emitted on
+ * `mcp:activity`).  Includes the FEAT-4h slice 3 additions:
+ *   - `sessionId` — required per-connection ULID
+ *   - `opRef` — optional snake_case OpRef populated only for RW + ok
+ *
+ * Factory defaults match the most common fixture (agent + ok + opRef
+ * present) so FEAT-4h slice 3 tests read cleanly; overrides let tests
+ * flip `actorKind` / `result` / `opRef` with one line.
+ */
+interface ActivityEntryFixture {
+  toolName: string
+  summary: string
+  timestamp: string
+  actorKind: 'user' | 'agent'
+  agentName?: string | undefined
+  result: { kind: 'ok' } | { kind: 'err'; message: string }
+  sessionId: string
+  opRef?: { device_id: string; seq: number } | undefined
+}
+
+function makeActivityEntry(overrides: Partial<ActivityEntryFixture> = {}): ActivityEntryFixture {
+  return {
+    toolName: 'create_block',
+    summary: 'created 1 block',
+    timestamp: new Date('2024-01-01T00:00:00Z').toISOString(),
+    actorKind: 'agent',
+    agentName: 'claude-desktop',
+    result: { kind: 'ok' },
+    sessionId: 'SESSION_TEST',
+    opRef: { device_id: 'D', seq: 1 },
+    ...overrides,
+  }
+}
+
+/**
  * Default invoke mock: every RO + RW MCP command resolves to a sensible
  * default so re-fetches after toggles / disconnect succeed without
  * per-test re-mocking.
@@ -517,6 +552,8 @@ describe('AgentAccessSettingsTab — activity feed', () => {
         actorKind: 'agent',
         agentName: 'claude-desktop',
         result: { kind: 'ok' },
+        sessionId: 'SESSION_TEST',
+        opRef: undefined,
       })
     })
     act(() => {
@@ -527,6 +564,8 @@ describe('AgentAccessSettingsTab — activity feed', () => {
         actorKind: 'agent',
         agentName: 'claude-desktop',
         result: { kind: 'ok' },
+        sessionId: 'SESSION_TEST',
+        opRef: undefined,
       })
     })
 
@@ -553,6 +592,8 @@ describe('AgentAccessSettingsTab — activity feed', () => {
           actorKind: 'agent',
           agentName: 'test',
           result: { kind: 'ok' },
+          sessionId: 'SESSION_TEST',
+          opRef: undefined,
         })
       }
     })
@@ -579,6 +620,8 @@ describe('AgentAccessSettingsTab — activity feed', () => {
         actorKind: 'agent',
         agentName: 'test',
         result: { kind: 'err', message: 'invalid query' },
+        sessionId: 'SESSION_TEST',
+        opRef: undefined,
       })
     })
 
@@ -587,6 +630,320 @@ describe('AgentAccessSettingsTab — activity feed', () => {
     expect(row.querySelector('.text-destructive')).not.toBeNull()
     expect(container).toBeDefined()
   })
+})
+
+// ---------------------------------------------------------------------------
+// FEAT-4h slice 3 — per-entry Undo button on agent-authored RW rows.
+// Visibility rules (button renders iff all three hold):
+//   - actorKind === 'agent'
+//   - result.kind === 'ok'
+//   - opRef != null
+// Click handler delegates to `revert_ops` with a single OpRef; loading
+// state is keyed by `${device_id}:${seq}` and swaps the button to a
+// spinner while the IPC call is in flight.  NonReversible errors get a
+// dedicated toast; every other error falls through to the generic one.
+// ---------------------------------------------------------------------------
+
+describe('AgentAccessSettingsTab — undo agent op', () => {
+  const undoLabel = 'Undo this agent action'
+
+  it('renders the undo button on an agent-authored RW activity row', async () => {
+    setupInvoke(makeStatus())
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'create_block',
+          actorKind: 'agent',
+          result: { kind: 'ok' },
+          opRef: { device_id: 'D', seq: 1 },
+        }),
+      )
+    })
+
+    expect(await screen.findByLabelText(undoLabel)).toBeInTheDocument()
+  })
+
+  it('hides the undo button on a user-authored activity row', async () => {
+    setupInvoke(makeStatus())
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(
+        makeActivityEntry({
+          actorKind: 'user',
+          result: { kind: 'ok' },
+          opRef: { device_id: 'D', seq: 1 },
+        }),
+      )
+    })
+
+    // Wait for the row to render before asserting absence of the button.
+    await screen.findByTestId('mcp-activity-row')
+    expect(screen.queryByLabelText(undoLabel)).not.toBeInTheDocument()
+  })
+
+  it('hides the undo button on a failed agent activity row', async () => {
+    setupInvoke(makeStatus())
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(
+        makeActivityEntry({
+          actorKind: 'agent',
+          result: { kind: 'err', message: 'validation failed' },
+          opRef: { device_id: 'D', seq: 1 },
+        }),
+      )
+    })
+
+    await screen.findByTestId('mcp-activity-row')
+    expect(screen.queryByLabelText(undoLabel)).not.toBeInTheDocument()
+  })
+
+  it('hides the undo button when opRef is missing (e.g. RO tool)', async () => {
+    setupInvoke(makeStatus())
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'search',
+          actorKind: 'agent',
+          result: { kind: 'ok' },
+          opRef: undefined,
+        }),
+      )
+    })
+
+    await screen.findByTestId('mcp-activity-row')
+    expect(screen.queryByLabelText(undoLabel)).not.toBeInTheDocument()
+  })
+
+  it('invokes revert_ops with the correct OpRef and fires a success toast', async () => {
+    const user = userEvent.setup()
+    setupInvoke(makeStatus())
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(makeActivityEntry({ opRef: { device_id: 'D', seq: 1 } }))
+    })
+
+    const btn = await screen.findByLabelText(undoLabel)
+    await user.click(btn)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('revert_ops', {
+        ops: [{ device_id: 'D', seq: 1 }],
+      })
+    })
+    expect(mockedToastSuccess).toHaveBeenCalledWith('Agent action undone')
+  })
+
+  it('shows a spinner and disables the button while the revert is in flight', async () => {
+    const user = userEvent.setup()
+    // Deferred promise so the undo never resolves until we explicitly
+    // resolve it — lets us observe the loading state.
+    let resolveRevert: ((value: unknown) => void) | undefined
+    const revertPromise = new Promise((r) => {
+      resolveRevert = r
+    })
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_mcp_status') return makeStatus()
+      if (cmd === 'get_mcp_rw_status') return makeRwStatus()
+      if (cmd === 'revert_ops') return revertPromise
+      return undefined
+    })
+
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(makeActivityEntry({ opRef: { device_id: 'D', seq: 42 } }))
+    })
+
+    const btn = await screen.findByLabelText(undoLabel)
+    expect(btn).not.toBeDisabled()
+    expect(btn).toHaveAttribute('aria-busy', 'false')
+
+    await user.click(btn)
+
+    await waitFor(() => {
+      expect(btn).toBeDisabled()
+    })
+    expect(btn).toHaveAttribute('aria-busy', 'true')
+    expect(btn.querySelector('[data-slot="spinner"]')).not.toBeNull()
+
+    // Resolve the pending invoke and confirm the spinner goes away.
+    await act(async () => {
+      resolveRevert?.(undefined)
+      await revertPromise
+    })
+
+    await waitFor(() => {
+      expect(btn).not.toBeDisabled()
+    })
+    expect(btn).toHaveAttribute('aria-busy', 'false')
+    expect(btn.querySelector('[data-slot="spinner"]')).toBeNull()
+  })
+
+  it('logs and toasts a generic failure when revert_ops rejects with a non-NonReversible error', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_mcp_status') return makeStatus()
+      if (cmd === 'get_mcp_rw_status') return makeRwStatus()
+      if (cmd === 'revert_ops') {
+        // Mirror the `AppError::Database` wire shape from
+        // src-tauri/src/error.rs — `{ kind, message }` carried on an
+        // Error instance so biome's useThrowOnlyError is satisfied.
+        throw Object.assign(new Error('disk full'), { kind: 'database' })
+      }
+      return undefined
+    })
+
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(makeActivityEntry({ opRef: { device_id: 'D', seq: 7 } }))
+    })
+
+    const btn = await screen.findByLabelText(undoLabel)
+    await user.click(btn)
+
+    await waitFor(() => {
+      expect(mockedLoggerError).toHaveBeenCalledWith(
+        'AgentAccessSettingsTab',
+        'undo failed',
+        { opRef: { device_id: 'D', seq: 7 } },
+        expect.objectContaining({ kind: 'database' }),
+      )
+    })
+    expect(mockedToastError).toHaveBeenCalledWith('Could not undo agent action')
+    // Button is re-enabled after the error settles.
+    await waitFor(() => {
+      expect(btn).not.toBeDisabled()
+    })
+  })
+
+  it('fires the non-reversible toast when revert_ops rejects with kind=non_reversible', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_mcp_status') return makeStatus()
+      if (cmd === 'get_mcp_rw_status') return makeRwStatus()
+      if (cmd === 'revert_ops') {
+        // Matches the `AppError::NonReversible` serialization from
+        // src-tauri/src/error.rs — `{ kind, message }` shape with
+        // `kind === 'non_reversible'`, carried on an Error instance
+        // so biome's useThrowOnlyError is satisfied.
+        throw Object.assign(new Error('Non-reversible operation: purge_block cannot be undone'), {
+          kind: 'non_reversible',
+        })
+      }
+      return undefined
+    })
+
+    render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      fireActivityEvent(makeActivityEntry({ opRef: { device_id: 'D', seq: 9 } }))
+    })
+
+    const btn = await screen.findByLabelText(undoLabel)
+    await user.click(btn)
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('This agent action cannot be undone')
+    })
+    // Generic failure toast must not fire — dedicated branch only.
+    expect(mockedToastError).not.toHaveBeenCalledWith('Could not undo agent action')
+    expect(mockedLoggerError).toHaveBeenCalledWith(
+      'AgentAccessSettingsTab',
+      'undo failed',
+      { opRef: { device_id: 'D', seq: 9 } },
+      expect.objectContaining({ kind: 'non_reversible' }),
+    )
+  })
+
+  it('has no axe violations with a mixed agent/user/ok/err activity feed', async () => {
+    setupInvoke(makeStatus())
+    const { container } = render(<AgentAccessSettingsTab />)
+    await screen.findByText('Read-only access')
+
+    act(() => {
+      // 1. Agent + ok + opRef → undo button visible.
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'create_block',
+          summary: 'created 1 block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 1).toISOString(),
+          opRef: { device_id: 'D', seq: 1 },
+        }),
+      )
+      // 2. Agent + ok + no opRef (RO tool) → no undo.
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'search',
+          summary: 'searched for "foo"',
+          timestamp: new Date(2024, 0, 1, 0, 0, 2).toISOString(),
+          opRef: undefined,
+        }),
+      )
+      // 3. Agent + err → no undo.
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'edit_block',
+          summary: 'edit failed',
+          timestamp: new Date(2024, 0, 1, 0, 0, 3).toISOString(),
+          result: { kind: 'err', message: 'bad content' },
+          opRef: { device_id: 'D', seq: 2 },
+        }),
+      )
+      // 4. User + ok → no undo (user-authored, no agent action to revert).
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'create_block',
+          summary: 'user created 1 block',
+          timestamp: new Date(2024, 0, 1, 0, 0, 4).toISOString(),
+          actorKind: 'user',
+          agentName: undefined,
+          opRef: { device_id: 'D', seq: 3 },
+        }),
+      )
+      // 5. Agent + ok + opRef → undo button visible.
+      fireActivityEvent(
+        makeActivityEntry({
+          toolName: 'set_property',
+          summary: 'set property foo=bar',
+          timestamp: new Date(2024, 0, 1, 0, 0, 5).toISOString(),
+          opRef: { device_id: 'D', seq: 4 },
+        }),
+      )
+    })
+
+    const rows = await screen.findAllByTestId('mcp-activity-row')
+    expect(rows).toHaveLength(5)
+    // Exactly two undo buttons (fixtures 1 and 5).
+    expect(screen.getAllByLabelText('Undo this agent action')).toHaveLength(2)
+
+    // axe cold-load can exceed 1 s under worker contention.  Wrap in
+    // `waitFor` with a raised timeout and an outer per-test timeout
+    // that leaves headroom (AGENTS.md §axe cold-load).
+    await waitFor(
+      async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      },
+      { timeout: 8000 },
+    )
+  }, 15000)
 })
 
 // ---------------------------------------------------------------------------

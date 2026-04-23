@@ -114,6 +114,16 @@ pub struct ActivityEntry {
     pub agent_name: Option<String>,
     /// Success / failure outcome of the tool invocation.
     pub result: ActivityResult,
+    /// Opaque per-connection session ULID. Populated by the dispatch
+    /// layer from `ConnectionState.session_id`. Stable across every
+    /// request on the same socket connection. Serialised as `sessionId`.
+    pub session_id: String,
+    /// `OpRef` of the op this tool call produced, if any. `None` for
+    /// RO tools and for tools that produce no ops. Populated by the
+    /// dispatch layer from the `LAST_APPEND` task-local. Serialised as
+    /// `opRef`; omitted from the wire payload when `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub op_ref: Option<crate::op::OpRef>,
 }
 
 impl fmt::Debug for ActivityEntry {
@@ -132,6 +142,12 @@ impl fmt::Debug for ActivityEntry {
             .field("actor_kind", &self.actor_kind)
             .field("agent_name", redacted)
             .field("result", &self.result)
+            // `session_id` is an opaque ULID (no PII), safe to render.
+            .field("session_id", &self.session_id)
+            // `op_ref` is `(device_id, seq)` — internal metadata, safe
+            // to render. `{:?}` on the `Option` keeps the `Some` /
+            // `None` shape visible.
+            .field("op_ref", &self.op_ref)
             .finish()
     }
 }
@@ -344,6 +360,13 @@ pub fn emit_activity(
 /// and dispatches it through [`emit_activity`]. Exposed as the stable
 /// integration point FEAT-4c will call from the `tools/call` success and
 /// failure branches.
+///
+/// `session_id` is the opaque per-connection ULID carried by
+/// `ConnectionState.session_id`; it is stable across every request on
+/// the same socket. `op_ref` is the `(device_id, seq)` pair captured
+/// from the `LAST_APPEND` task-local inside `handle_tools_call` — `None`
+/// for RO tools and for tools that produced no op.
+#[allow(clippy::too_many_arguments)]
 pub fn emit_tool_completion(
     ctx: &ActivityContext,
     tool_name: impl Into<String>,
@@ -351,6 +374,8 @@ pub fn emit_tool_completion(
     actor_kind: ActorKind,
     agent_name: Option<String>,
     result: ActivityResult,
+    session_id: impl Into<String>,
+    op_ref: Option<crate::op::OpRef>,
 ) {
     let entry = ActivityEntry {
         tool_name: tool_name.into(),
@@ -359,6 +384,8 @@ pub fn emit_tool_completion(
         actor_kind,
         agent_name,
         result,
+        session_id: session_id.into(),
+        op_ref,
     };
     emit_activity(&ctx.ring, ctx.emitter.as_ref(), entry);
 }
@@ -427,6 +454,8 @@ mod tests {
             actor_kind: ActorKind::Agent,
             agent_name: Some(format!("agent-{tag}")),
             result: ActivityResult::Ok,
+            session_id: "SESSION".to_string(),
+            op_ref: None,
         }
     }
 
@@ -563,6 +592,8 @@ mod tests {
             ActorKind::Agent,
             Some("claude-desktop".to_string()),
             ActivityResult::Ok,
+            "SESSION-1",
+            None,
         );
         let after = Utc::now();
 
@@ -574,9 +605,42 @@ mod tests {
         assert_eq!(entry.actor_kind, ActorKind::Agent);
         assert_eq!(entry.agent_name.as_deref(), Some("claude-desktop"));
         assert!(matches!(entry.result, ActivityResult::Ok));
+        assert_eq!(entry.session_id, "SESSION-1");
+        assert!(entry.op_ref.is_none(), "RO-style call carries no op_ref");
         assert!(
             entry.timestamp >= before && entry.timestamp <= after,
             "timestamp must be bounded by (before, after) around the call",
+        );
+    }
+
+    #[test]
+    fn emit_tool_completion_surfaces_session_id_and_op_ref_when_provided() {
+        let ring = Arc::new(Mutex::new(ActivityRing::new()));
+        let emitter: Arc<dyn ActivityEmitter> = Arc::new(RecordingEmitter::new());
+        let ctx = ActivityContext::new(ring.clone(), emitter.clone());
+
+        let op_ref = crate::op::OpRef {
+            device_id: "DEV-A".to_string(),
+            seq: 42,
+        };
+        emit_tool_completion(
+            &ctx,
+            "append_block",
+            "appended",
+            ActorKind::Agent,
+            Some("claude-desktop".to_string()),
+            ActivityResult::Ok,
+            "SESSION-2",
+            Some(op_ref.clone()),
+        );
+
+        let guard = ring.lock().unwrap();
+        let entry = guard.entries().front().expect("one entry");
+        assert_eq!(entry.session_id, "SESSION-2");
+        assert_eq!(
+            entry.op_ref.as_ref(),
+            Some(&op_ref),
+            "op_ref must be threaded onto the entry verbatim",
         );
     }
 
@@ -614,6 +678,8 @@ mod tests {
             actor_kind: ActorKind::Agent,
             agent_name: Some("sensitive-agent-identifier".to_string()),
             result: ActivityResult::Ok,
+            session_id: "SESSION".to_string(),
+            op_ref: None,
         };
         let rendered = format!("{entry:?}");
         assert!(
@@ -635,6 +701,8 @@ mod tests {
             actor_kind: ActorKind::User,
             agent_name: None,
             result: ActivityResult::Ok,
+            session_id: "SESSION".to_string(),
+            op_ref: None,
         };
         let rendered = format!("{entry:?}");
         assert!(
@@ -664,6 +732,8 @@ mod tests {
             actor_kind: ActorKind::Agent,
             agent_name: Some("claude".to_string()),
             result: ActivityResult::Ok,
+            session_id: "SESSION".to_string(),
+            op_ref: None,
         };
         let v = serde_json::to_value(&entry).unwrap();
         assert_eq!(v["toolName"], "get_block");
@@ -682,11 +752,64 @@ mod tests {
             actor_kind: ActorKind::User,
             agent_name: None,
             result: ActivityResult::Ok,
+            session_id: "SESSION".to_string(),
+            op_ref: None,
         };
         let v = serde_json::to_value(&entry).unwrap();
         assert!(
             v.get("agentName").is_none(),
             "agentName should be omitted when None; got {v}",
+        );
+    }
+
+    #[test]
+    fn activity_entry_serialises_session_id_and_op_ref() {
+        // Frontend wire-shape contract: `sessionId` is always present;
+        // `opRef` (when present) uses snake_case keys on the inner
+        // struct — matches the `OpRef` specta binding already in use.
+        let entry = ActivityEntry {
+            tool_name: "append_block".to_string(),
+            summary: "appended".to_string(),
+            timestamp: Utc::now(),
+            actor_kind: ActorKind::Agent,
+            agent_name: Some("claude".to_string()),
+            result: ActivityResult::Ok,
+            session_id: "01JABCDEFGHJKMNPQRSTVWXYZ0".to_string(),
+            op_ref: Some(crate::op::OpRef {
+                device_id: "DEV-A".to_string(),
+                seq: 7,
+            }),
+        };
+        let v = serde_json::to_value(&entry).unwrap();
+        assert_eq!(v["sessionId"], "01JABCDEFGHJKMNPQRSTVWXYZ0");
+        // `OpRef` serialises with snake_case `device_id` / `seq` (matches
+        // `bindings.ts`). This intentionally differs from the outer
+        // `ActivityEntry` camelCase policy because `OpRef` is reused by
+        // specta bindings elsewhere — do not rename its fields.
+        assert_eq!(v["opRef"]["device_id"], "DEV-A");
+        assert_eq!(v["opRef"]["seq"], 7);
+    }
+
+    #[test]
+    fn activity_entry_omits_op_ref_when_none() {
+        let entry = ActivityEntry {
+            tool_name: "search".to_string(),
+            summary: "".to_string(),
+            timestamp: Utc::now(),
+            actor_kind: ActorKind::Agent,
+            agent_name: Some("claude".to_string()),
+            result: ActivityResult::Ok,
+            session_id: "SESS".to_string(),
+            op_ref: None,
+        };
+        let v = serde_json::to_value(&entry).unwrap();
+        assert!(
+            v.get("opRef").is_none(),
+            "opRef must be omitted from the wire payload when None; got {v}",
+        );
+        assert_eq!(
+            v["sessionId"], "SESS",
+            "sessionId must always be present, even when opRef is omitted",
         );
     }
 
