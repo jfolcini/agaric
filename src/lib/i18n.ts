@@ -1961,15 +1961,20 @@ const resources = {
       'agentAccess.undoAgentOp.nonReversible': 'This agent action cannot be undone',
       // FEAT-4h slice 4: per-session bulk-revert on the activity feed
       'agentAccess.revertSession.button': 'Revert session',
+      // Visible label on the session-header row. Short + pluralized
+      // count; distinct from `buttonAriaLabel` so the header's visible
+      // text does not duplicate the button's aria-label verbatim.
+      'agentAccess.revertSession.headerLabel_one': '{{count}} agent action',
+      'agentAccess.revertSession.headerLabel_other': '{{count}} agent actions',
       'agentAccess.revertSession.buttonAriaLabel_one':
         'Revert this agent session ({{count}} action)',
       'agentAccess.revertSession.buttonAriaLabel_other':
         'Revert this agent session ({{count}} actions)',
       'agentAccess.revertSession.confirmTitle': 'Revert session?',
       'agentAccess.revertSession.confirmDescription_one':
-        'This will undo {{count}} agent action from this session. Continue?',
+        'This will undo {{count}} agent action in this session. Continue?',
       'agentAccess.revertSession.confirmDescription_other':
-        'This will undo {{count}} agent actions from this session. Continue?',
+        'This will undo {{count}} agent actions in this session. Continue?',
       'agentAccess.revertSession.confirmAction': 'Revert session',
       'agentAccess.revertSession.success_one': 'Session reverted ({{count}} action)',
       'agentAccess.revertSession.success_other': 'Session reverted ({{count}} actions)',

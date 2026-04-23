@@ -1,5 +1,55 @@
 # Session Log
 
+## Session 465 — Fresh-eyes review of recent MCP work + two polish fixes + UX-253 filed (2026-04-23)
+
+**0 REVIEW-LATER items resolved, 1 new filed (UX-253).** Open-items count 18 → 19. User asked for a fresh-eyes review of the recent MCP work (sessions 463 + 464 — FEAT-4c emission wiring + FEAT-4h slice 3 per-entry Undo + FEAT-4h slice 4 per-session bulk-revert) treated holistically as if following PROMPT.md's step 4 (no self-reviews; technical + UX dimensions in parallel). Two read-only subagents ran concurrently; both returned APPROVE WITH NOTES with zero P1 blockers. Triaged findings into "apply now" (two polish fixes) and "file as follow-up" (one new UX item). One small code commit closes the loop.
+
+Reviewers:
+
+- **Technical subagent (`subagent_explore`):** APPROVE WITH NOTES, zero P1/P2. Verified every claim from session 463 + 464: `ACTOR` outer / `LAST_APPEND` inner scope nesting, op_ref capture inside the scope before it exits, Unicode-safe error-message clipping via `.chars().take(200)`, session-id stability across requests, `skip_serializing_if` omits `opRef` from the wire payload when None, snapshot-at-click semantics for slice 4's `pendingSessionRevert`, in-flight state cleanup in `finally` with defensive Set-check, per-task isolation of `LAST_APPEND.scope` via `multi_thread` tokio test. Confirmed all AGENTS.md invariants (op log append-only, CQRS split, sqlx compile-time queries, no new `unsafe`, no new `#[allow]` / `biome-ignore` / `@ts-ignore`, no new non-null assertions, no new tables / op types / stores / materializer queues / sync message types). Only P3s surfaced (coexistence test + double-click test + touch tooltip — all acceptable or already covered).
+- **UX subagent (`subagent_explore`):** APPROVE WITH NOTES. Three P2 findings — (1) session-header visible `<span>` duplicated the button's `aria-label` verbatim; (2) per-entry Undo button icon-only on touch where Radix Tooltip doesn't fire; (3) tooltip content == aria-label (codebase pattern, skipped). Three P3 findings — narrow-viewport visual distinction for the header, confirm-description copy ("from" → "in"), ring-rollover-during-confirm documentation (already has comments). Copy review passed verbatim across all 16 new i18n keys.
+
+### What changed this session (commit `TBD`)
+
+**Polish fix P2-1 — session-header label clarity:**
+
+- **`src/lib/i18n.ts`** (+4) — added two new pluralized keys:
+  - `agentAccess.revertSession.headerLabel_one` → `"{{count}} agent action"`
+  - `agentAccess.revertSession.headerLabel_other` → `"{{count}} agent actions"`
+  The existing `buttonAriaLabel_*` keys stay as-is (the button's aria-label still carries the full verb for screen readers).
+- **`src/components/AgentAccessSettingsTab.tsx`** (+6 / −3) — the visible `<span>` on the session-header row now uses the new `headerLabel` key. A comment block explains the deliberate split: visible text = short count, button aria-label + tooltip = full verb. No change to the button's appearance or semantics.
+
+**Polish fix P3-2 — confirm-description copy precision:**
+
+- **`src/lib/i18n.ts`** (+0 / −0, 2 words changed) — `"{{count}} agent action(s) from this session"` → `"{{count}} agent action(s) in this session"` in both `confirmDescription_one` and `confirmDescription_other`. Locative "in" reads more naturally than extractive "from".
+
+**Test updates:**
+
+- **`src/components/__tests__/AgentAccessSettingsTab.test.tsx`** (+4 / −1) — (1) extended the "renders a session header" test to assert the header's visible text is `"3 agent actions"` AND explicitly NOT `"Revert this agent session"` (pins the P2-1 fix); (2) updated the "clicking Revert session opens the confirm dialog with the correct count" test to match the new "in this session" copy.
+
+**New REVIEW-LATER item:**
+
+- **UX-253 — Per-entry activity-feed Undo button is icon-only on touch.** Files the P2 the UX reviewer surfaced about sighted touch-only users seeing a lone `Undo2` icon (Radix Tooltip does not fire on touch; only the `aria-label` is present for screen readers; button is still tappable but discoverability is poor). Entry captures four fix options (responsive visible text via `[@media(pointer:coarse)]:inline` — recommended; always-visible text; click-to-toggle touch tooltip; do-nothing); test plan; do-not list (don't remove the icon, don't double-label aria, don't touch the slice-4 session-header button); and a note that it can pair with UX-252 in one polish session. Cost: S (~45 min).
+
+### Verification
+
+- `npx vitest run src/components/__tests__/AgentAccessSettingsTab.test.tsx`: 47/47 passed (same count; P2-1 + P3-2 fixes cleanly absorbed without net test count change).
+- `prek run --all-files`: all 26 hooks green on the final run.
+- No Rust, backend, sqlx, or specta change.
+
+### Design decisions
+
+- **Apply only the clear wins; file the rest.** The UX reviewer raised three P2s. P2-1 (label redundancy) is a clear semantic win with a well-scoped fix. P3-2 (copy "from" → "in") is a two-word literal change. Both applied. P2-2 (touch discoverability) requires design judgement on four distinct fix shapes and is best-addressed with dedicated thinking — filed as UX-253. P2-3 (tooltip == aria-label) is the established codebase pattern and not worth churning.
+- **Keep `buttonAriaLabel_*` keys separate from `headerLabel_*` keys.** The button's aria-label preserves the full verb ("Revert this agent session (N actions)") for screen-reader users who need the complete context at the action site. The header's visible label drops the verb because the button directly below it already carries it as visible text ("Revert session"). Two keys, two audiences, zero redundancy.
+- **Test both directions of the P2-1 fix.** The test now asserts BOTH `toHaveTextContent('3 agent actions')` AND `not.toHaveTextContent('Revert this agent session')` — a future regression that reverted to the redundant copy would fail the second assertion even if the first still passed (superset match).
+
+### Notes for the next session
+
+- **UX-252 + UX-253 pair naturally** — both touch `AgentAccessSettingsTab.tsx`, both are S-cost, both are strictly additive polish. A single follow-up session can close both, bringing the MCP activity-feed UX to a tight state (no stale buttons, clear touch discoverability). Total cost: ~2 h.
+- **No open FEAT-4h work remains.** The umbrella stays IN PROGRESS only because v3 (FEAT-4i — Mobile) is DEFERRED; v2 is fully shipped and polished.
+
+---
+
 ## Session 464 — FEAT-4h slice 4 per-session bulk-revert (closes FEAT-4h) + UX-252 filed (2026-04-23)
 
 **1 REVIEW-LATER item resolved (FEAT-4h), 1 new filed (UX-252).** Open-items count unchanged at 18. FEAT-4h (MCP v2 umbrella) fully closed — its table row + detail section removed, and the FEAT-4 umbrella Status line updated to note v2 complete. A second commit was NOT needed for docs — the slice 4 implementation was found already staged at session start (from a prior agent pass that never committed); orchestrator reviewed, ran prek, committed code as `0157192`, then landed bookkeeping separately.

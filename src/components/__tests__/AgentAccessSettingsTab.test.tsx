@@ -998,8 +998,14 @@ describe('AgentAccessSettingsTab — revert session', () => {
 
     const headers = await screen.findAllByTestId('mcp-activity-session-header')
     expect(headers).toHaveLength(1)
-    // Revert-session button renders inside the header with the plural
-    // label ("3 actions") and the "Revert session" button text.
+    // Header's VISIBLE text is the short pluralized count — distinct from
+    // the button's aria-label so screen-reader users and sighted users
+    // get non-duplicate information.
+    expect(headers[0]).toHaveTextContent('3 agent actions')
+    expect(headers[0]).not.toHaveTextContent('Revert this agent session')
+    // Revert-session button renders inside the header with the
+    // "Revert session" button text + the full aria-label for
+    // screen readers.
     const revertBtn = within(headers[0] as HTMLElement).getByTestId('mcp-activity-revert-session')
     expect(revertBtn).toHaveTextContent('Revert session')
     expect(revertBtn).toHaveAttribute('aria-label', revertSessionLabelExact3)
@@ -1197,7 +1203,7 @@ describe('AgentAccessSettingsTab — revert session', () => {
     // Title + plural description both include the snapshotted count.
     expect(within(confirm).getByText('Revert session?')).toBeInTheDocument()
     expect(
-      within(confirm).getByText('This will undo 3 agent actions from this session. Continue?'),
+      within(confirm).getByText('This will undo 3 agent actions in this session. Continue?'),
     ).toBeInTheDocument()
   })
 

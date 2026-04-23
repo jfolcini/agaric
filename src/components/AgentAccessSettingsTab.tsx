@@ -617,8 +617,15 @@ export function AgentAccessSettingsTab(): React.ReactElement {
                             data-testid="mcp-activity-session-header"
                             data-session-id={entry.sessionId}
                           >
+                            {/*
+                             * Visible label = short pluralized count
+                             * ("5 agent actions"). Distinct from the
+                             * button's `aria-label` / tooltip, which
+                             * carry the full verb ("Revert this agent
+                             * session (5 actions)") for screen readers.
+                             */}
                             <span className="font-medium">
-                              {t('agentAccess.revertSession.buttonAriaLabel', {
+                              {t('agentAccess.revertSession.headerLabel', {
                                 count: sessionOps.length,
                               })}
                             </span>
