@@ -99,7 +99,15 @@ jobs:
           releaseBody: 'See the assets to download and install this version.'
           releaseDraft: true
           prerelease: false
-          args: --target ${{ matrix.target }}
+          # `-v` raises tauri-bundler's log level from Info to Debug, which
+          # is the only way to surface the real stdout/stderr of the
+          # external bundlers (linuxdeploy on Linux, candle/light on
+          # Windows, codesign on macOS). Without it, every bundling
+          # failure shows only the generic `failed to run <tool>` wrapper
+          # from `output_ok()` in tauri-bundler — no underlying error
+          # text. The release matrix only fires on tag pushes, so the
+          # extra log volume is acceptable for the diagnostic value.
+          args: --target ${{ matrix.target }} -v
 
       # UX-233: Tauri 2's AppImage bundler emits a .DirIcon symlink with an
       # absolute path into the build machine's file tree (broken on every other
