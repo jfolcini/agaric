@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-22 open items.
+69 open items.
 
 Previously resolved: 396+ items across 149 sessions.
 
@@ -38,9 +38,56 @@ Previously resolved: 396+ items across 149 sessions.
 | MAINT-94 | MAINT | `MONTH_SHORT` array duplicated verbatim in `agenda-sort.ts` and `date-utils.ts`; also not routed through `t()` | S |
 | MAINT-95 | MAINT | `recent-pages.ts` casts parsed localStorage to typed array without per-element shape validation | S |
 | MAINT-96 | MAINT | Decompose `AgentAccessSettingsTab.tsx` (910 lines) and extract inline `AddFilterRow` from `BacklinkFilterBuilder.tsx` (lines 234–553) | M |
+| MAINT-97 | MAINT | Test convention docs drifted from reality — file counts, Playwright timeout, missing snapshot directories, "21 spec files" claim | S |
+| MAINT-98 | MAINT | E2E helpers: extract inlined `blurEditors` / `reopenPage` to `e2e/helpers.ts` and document portal-scoped helpers in `src/__tests__/AGENTS.md` | S |
+| MAINT-99 | MAINT | No automated enforcement for several documented test rules (axe-audit per component test, IPC-error-path coverage, test file naming convention) | M |
+| MAINT-100 | MAINT | MD documentation drift sweep across UX.md / FEATURE-MAP.md / README.md / COMPARISON.md / AGENTS.md (~10 small drift items batched) | S |
+| MAINT-101 | MAINT | `tag-colors.ts` is localStorage-only despite header comment claiming property-sync persistence | M |
+| MAINT-102 | MAINT | `ResultCard.highlightText` prop accepted but never consumed (drift with FEATURE-MAP.md highlighting claim) | S |
+| MAINT-103 | MAINT | `BlockPropertyEditor` inline editor uses absolute positioning without portal — should follow the `suggestion-renderer` pattern | M |
+| MAINT-104 | MAINT | Hardcoded English error in `BacklinkFilterBuilder` property-key validation (bypasses `t()`) | S |
+| MAINT-105 | MAINT | Misc small consistency cleanups (selector-list comment, `e.repeat` guards, warned-ref noise, sidebar mode comment, undo-group window revisit) | S |
 | TEST-1 | TEST | Frontend test coverage gaps in 6 specific files surfaced by review (filter-pill, switch, textarea, useEditorBlur portal scan, page-blocks loadSubtree cap, main.tsx error handlers) | S |
+| TEST-2 | TEST | ~30 wrapper functions in `src/lib/tauri.ts` lack individual tests beyond the shallow cross-cutting test (only command-name verified, not `null` defaults / arg shape) | M |
+| TEST-3 | TEST | Browser/E2E `tauri-mock` `revert.ts` only handles 5 of 13 reversible op types — undo/redo for property/tag/state ops is a silent no-op in mock; can't be E2E-tested | M |
+| TEST-4 | TEST | 25 of 26 Playwright specs lack a console-error listener — backend / mock errors leak silently in every E2E suite except `smoke.spec.ts` | M |
+| TEST-5 | TEST | `property-picker.test.ts` (6 tests) and `checkbox-input-rule.test.ts` (17 tests) exercise extension config + regex only, not editor integration | M |
+| TEST-6 | TEST | Weak-assertion sweep: `toBeTruthy()` for element existence, `toBeGreaterThan(0)` for known-count arrays, `toHaveBeenCalled()` without `…With(...)` (verified in 5 files) | S |
+| TEST-7 | TEST | Real-timer `setTimeout` sleeps in 4 test files (RescheduleDropZone, recent-pages, useSyncEvents, helpers.ts dragBlock 50/150 ms) — flake risk under CI load | S |
+| TEST-8 | TEST | `page-blocks.test.ts` lacks `splitBlock()` error-rollback test; existing `remove()` error test only checks `toHaveLength(1)`, not block-content preservation | S |
+| TEST-9 | TEST | Hardcoded English assertions in `AttachmentList.test.tsx` and `SearchPanel.test.tsx` instead of `t('key')` per the i18n-in-tests rule | S |
+| TEST-10 | TEST | `useBlockResolve.test.ts` uses sticky `mockResolvedValue` 50× and never `mockResolvedValueOnce` — call-ordering bugs go undetected | S |
+| TEST-11 | TEST | 7 E2E specs use CSS-class selectors (23 instances total) instead of `data-testid` per the documented selector convention | M |
+| TEST-12 | TEST | `e2e/settings.spec.ts` theme-options test only checks 3 of 7 shipped themes | S |
+| TEST-13 | TEST | `TabBar` dropdown Esc-to-close behaviour not explicitly tested | S |
 | UX-257 | UX | Breadcrumb bar (zoom + page header) doesn't read as a breadcrumb, is oversized, and styling is inconsistent across the two surfaces | M |
 | UX-258 | UX | DailyView / DaySection don't scroll to `selectedBlockId` on mount when navigating into a date-titled page (`TODO(UX-242)` in `src/stores/navigation.ts`) | S |
+| UX-259 | UX | `ConfirmDialog` `autoFocus` lands on the destructive action button — Enter on a destructive confirm is a footgun | S |
+| UX-260 | UX | Discoverability sweep for keyboard shortcuts and gestures (sidebar swipe, journal nav, undo tiers, Shift+Click range, properties drawer shortcut, Ctrl+F, KeyboardShortcuts→Settings link) | M |
+| UX-261 | UX | `PageTreeItem` delete button is `opacity-0` until hover — invisible to keyboard users on `:focus-visible` | S |
+| UX-262 | UX | `TabBar` close button is a `<button>` nested inside a `role="menuitemradio"` div — nested-interactive a11y violation | S |
+| UX-263 | UX | Pairing flow polish (countdown SR announcements, ordinal labels, address/rename validation, mid-pair close guard, countdown pause while typing) | M |
+| UX-264 | UX | Sync error UX (no retry action on failure toast, no online/offline transition feedback, no batch progress, camera-permission denial leaves user stuck on QR mode) | M |
+| UX-265 | UX | Conflict UI improvements (Keep/Discard label clarity, sort/filter for large conflict sets, type-badge tooltips, missing-original-block fallback, large-diff handling) | M |
+| UX-266 | UX | Sync status visibility — sidebar-footer indicator missing when StatusPanel collapsed; "discovering" state visually identical to "pairing"; deleted-current-space silently switches without notification | S |
+| UX-267 | UX | Unpair confirmation dialog doesn't explain that ops are retained locally — users fear data loss | S |
+| UX-268 | UX | Touch-target / mobile sizing fixes across Agenda + Search (DuePanelFilters toggle missing min-h + aria-label, AgendaSortGroup buttons missing min-w, SourcePageFilter button responsiveness, BacklinkFilterBuilder add-filter row mobile layout) | S |
+| UX-269 | UX | `SearchPanel` consolidation — switch custom load-more to shared `LoadMoreButton`, fix aria-live placement, debounce visual feedback, CJK notice placement, alias-overlay positioning, results-count announcement | M |
+| UX-270 | UX | `GraphView` a11y + filter persistence — bare `overflow-y-auto` → `ScrollArea`, redundant aria-label on labelled checkboxes, `role="img"` on interactive SVG, filter state reset on every navigation | M |
+| UX-271 | UX | Backlinks linked-vs-unlinked distinction missing in `BacklinkGroupRenderer`; `LinkedReferences` lacks active-filter count badge; tag-search popover scroll handling unclear | S |
+| UX-272 | UX | Properties drawer / picker polish (no-pages empty-state styling, AND/OR/NOT mode affordance, definitions-loading state, date-input debounce, choice options count + reorder, disabled "Add option" when empty, type badge for "Create new", ref-save spinner) | M |
+| UX-273 | UX | Inline link UX — `LinkPreviewTooltip` only fires on hover (no keyboard activation); suggestion popups don't handle viewport edges on mobile | M |
+| UX-274 | UX | Agenda views — `DateChipEditor` parse error not shown on input itself; `QueryResult` error has no retry; `RescheduleDropZone` has no keyboard alternative; per-group collapse not persisted; empty-filter validation silent; `DuePanel` projected entries skipped by keyboard nav; `QueryBuilderModal` accepts unknown property keys | M |
+| UX-275 | UX | History view UX gaps — Restore-to-here wording, non-reversible icon a11y, missing inline filter clear, DiffDisplay hunk navigation, descendant-count badge wrap, batch keyboard shortcuts, restore-action missing undo toast, checkbox row-click ambiguity, generic error banner, no batch-restore confirmation | M |
+| UX-276 | UX | Settings — active tab resets on navigation; no URL-based deep-link to specific settings sections | S |
+| UX-277 | UX | `BugReportDialog` polish — uses native `<input type="checkbox">` instead of design-system `Checkbox`, no success toast after submit, no log-content preview before submit | S |
+| UX-278 | UX | `WelcomeModal` — sample page content hardcoded English; feature list uses `<div>` instead of `<ul>/<li>` semantics | S |
+| UX-279 | UX | `FeatureErrorBoundary` (section-level errors) lacks "Report bug" affordance — only the global `ErrorBoundary` has it | M |
+| UX-280 | UX | Attachments / Image / PDF polish — `PdfViewerDialog` lacks keyboard page-nav shortcuts; `ImageResizeToolbar` buttons lack `aria-pressed` | S |
+| UX-281 | UX | Suggestion list & roving editor polish — category headers use plain `<div>` (need `role="heading"`); markdown serializer warns on unknown inline nodes but strips them silently to user; gutter-button tooltips invisible on touch | S |
+| UX-282 | UX | `src/lib/announcer.ts` exists with `announce.*` i18n keys but is invoked from very few places — paid-for accessibility utility is largely unused | M |
+| UX-283 | UX | Templates / Data settings polish — `TemplatesView` lacks empty state when search yields no results; `DataSettingsTab` import has no per-file progress indicator | S |
+| UX-284 | UX | `RecentPagesStrip` and `SpaceSwitcher` discoverability — focus marker on chips relies only on ring; "Manage spaces" disabled tooltip may not trigger on touch | S |
 | PUB-2 | PUB | Git author email across all history is corporate (`javier.folcini@avature.net`) | S |
 | PUB-3 | PUB | Employer IP clearance before public release | S |
 | PUB-5 | PUB | Tauri updater endpoint points to a GitHub org/repo that does not yet exist | S |
@@ -751,6 +798,136 @@ The function validates that the parsed value is an array but does not validate t
 **Risk:** M — both files have substantial test surfaces (component tests + axe). After extraction, full vitest run + axe pass required.
 **Impact:** S–M — pure maintainability; no functional change, no UX change.
 
+### MAINT-97 — Test convention docs drifted from reality (counts, Playwright timeout, missing snapshot directories)
+
+**Problem:** A pass over the three test-convention docs (`AGENTS.md`, `src/__tests__/AGENTS.md`, `src-tauri/tests/AGENTS.md`) verified each numeric / structural claim against the code. Several have drifted:
+
+| Doc claim | Reality | Source |
+|-----------|---------|--------|
+| `src/__tests__/AGENTS.md:40` "133 component test files" | 136 (`src/components/__tests__/*.test.tsx`) | Drift |
+| `src/__tests__/AGENTS.md:46` "20 editor test files" | 21 (`src/editor/__tests__/`, 20 `.ts` + 1 `.tsx`) | Drift |
+| `src/__tests__/AGENTS.md:52` "8 store test files" | 10 (`src/stores/__tests__/`) | Drift |
+| `src/__tests__/AGENTS.md:62` "39 lib test files" | 42 (`src/lib/__tests__/`) | Drift |
+| `src/__tests__/AGENTS.md:373` "21 spec files" | 26 (`e2e/*.spec.ts`) — root `AGENTS.md:29` already says 26, so this one *contradicts* the root | Drift + internal contradiction |
+| `src/__tests__/AGENTS.md:380` "Global expect timeout: 3000ms" | `playwright.config.ts:11` sets `expect: { timeout: 8000 }` | Drift |
+| `src-tauri/tests/AGENTS.md:260–270` lists 4 snapshot directories | 6 exist — also `src-tauri/src/mcp/snapshots/` (11 files) and `src-tauri/src/gcal_push/snapshots/` (6 files) | Missing |
+| `AGENTS.md:87` "30 migrations" | 35 (`src-tauri/migrations/0001…0035`) | Drift |
+
+**Fix:** Single doc-update commit. Update each line to the verified number; add the two missing snapshot dirs to the `src-tauri/tests/AGENTS.md` list; reconcile the root vs. frontend "26 vs. 21" specs claim. Optional follow-up (in MAINT-99 below): a tiny `prek` hook that grep-counts files vs. the tables and fails if drift > 1.
+
+**Cost:** S (doc-only, ~30 min).
+**Risk:** S — pure documentation update; no production code touched.
+**Impact:** S — these docs are the source of truth for test conventions; wrong counts undermine trust in the rest of the document for new contributors and review subagents.
+
+### MAINT-98 — E2E helpers: extract inlined `blurEditors` / `reopenPage`, document portal-scoped helpers
+
+**Problem:** Two issues at the E2E test infrastructure layer:
+
+1. **Inlined helpers in spec files.** `e2e/undo-redo-blocks.spec.ts:25-33` defines `reopenPage(page)` (navigate-away-and-back to force a `BlockTree` re-fetch from the mock backend) and `e2e/undo-redo-blocks.spec.ts:39-59` defines `blurEditors(page)` (press Escape to leave `contentEditable` focus so Ctrl+Z hits the page-level handler instead of ProseMirror's in-editor undo). The frontend AGENTS.md `E2E undo/redo helpers` section (`src/__tests__/AGENTS.md:407-412`) describes these by name and explains why they're needed, but they're inlined in a spec file rather than exported from `e2e/helpers.ts`. Other specs that need the same behaviour have no easy way to consume them.
+
+2. **Portal-scoped helpers undocumented.** `e2e/helpers.ts:55-98` defines `activeDialog`, `activeSheet`, `activePopover`, `activeMenu`, `activeSuggestionList`, `activeRoleDialog`, `activeSuggestionPopup` — used heavily across specs (e.g. `properties-system.spec.ts:104,110,178`, `templates.spec.ts:68,156`, `inner-links.spec.ts:167,192,274`) to scope queries to the most-recently-opened Radix portal and avoid stale-DOM collisions in parallel test runs. None of these helpers are documented in `src/__tests__/AGENTS.md` "E2E Testing (Playwright)" section. New contributors will reinvent them and produce flaky tests.
+
+**Fix:**
+
+1. Move `blurEditors` and `reopenPage` out of `e2e/undo-redo-blocks.spec.ts` into `e2e/helpers.ts`; export them; update the spec to import. Add JSDoc describing why each is needed (links to AGENTS.md pitfalls).
+2. Add a "Portal-scoped helpers" subsection in `src/__tests__/AGENTS.md` (after the existing E2E "Patterns" block, ~line 402) listing each helper with a one-line example. Reference `TEST-1b` in REVIEW-LATER.md if/when that gets reopened. Mention the `.last()` pick-most-recent rule used internally so reviewers understand the design.
+
+**Cost:** S (~1h, mechanical extraction + doc subsection).
+**Risk:** S — pure refactor of test infrastructure; no production code touched. Existing specs continue to work because they only consume.
+**Impact:** S–M — closes a discoverability gap that's already costing reviewer-time (verification subagents flagged the missing doc explicitly).
+
+### MAINT-99 — No automated enforcement for several documented test rules
+
+**Problem:** Several rules in the test-convention docs have no automated enforcement and rely on manual review. Each one is easy to add as a `prek` hook; together they make the documented conventions binding instead of aspirational.
+
+| Rule | Doc | Currently enforced by | Gap |
+|------|-----|------------------------|-----|
+| Every `src/components/__tests__/*.test.tsx` includes at least one `axe(...)` call | `src/__tests__/AGENTS.md:227` | Manual review | Easy: grep-based `prek` hook |
+| Every component that calls `invoke` has at least one error-path test (mocked rejection) | `AGENTS.md:198` | Manual review | Tractable: scan test files using `vi.mocked(invoke)` for at least one `mockRejectedValueOnce` |
+| Test file naming: `.test.ts` / `.test.tsx` for Vitest, `.spec.ts` for Playwright | `src/__tests__/AGENTS.md:81` | Manual review | Easy: `find` + assertions |
+| Snapshot tests must redact ULIDs / timestamps / hashes / cursors | `src-tauri/tests/AGENTS.md:284-313` | Manual review | Tractable: parse `.snap` files for raw 26-char Crockford / 64-char hex / ISO-8601 patterns |
+| Test-file count tables in AGENTS.md docs match reality (see MAINT-97) | — | Nothing | Easy: tiny grep + comparator |
+
+**Fix:** Add one `prek` hook per rule under the existing `[[repos]]` section in `prek.toml`. Pattern lives next to `no-hsl-rgb-var-wrap` and `tauri-mock-parity` (both already grep-based). Each hook runs only on the relevant `types_or` to keep CI fast. Start with the easy three (axe-presence, file-naming, count-tables); the IPC-error-path and snapshot-redaction hooks need careful pattern design and can land in a follow-up.
+
+**Cost:** M (~1 day for the three easy hooks; ~half day each for the harder two).
+**Risk:** S — purely additive lint hooks. May surface a small number of pre-existing violations that need cleanup before the hook turns green; expect 1–2 hours of fix-up per hook on first activation.
+**Impact:** M — closes the gap between documented and actual conventions; reduces reviewer-time spent catching the same anti-patterns over and over.
+
+### MAINT-100 — MD documentation drift sweep across UX.md / FEATURE-MAP.md / README.md / COMPARISON.md / AGENTS.md
+
+**Problem:** A focused review surfaced ~10 small drift items between the docs and what ships. Bundled because each fix is one or two lines and they're disjoint:
+
+- `UX.md:1175` references `AddPropertySection`; the actual component is `AddPropertyPopover` (`src/components/AddPropertyPopover.tsx`).
+- `UX.md` Property Drawer section (lines 1166-1177) doesn't document focus-trap, focus-restoration on close, Tab cycling, or Esc behaviour.
+- `UX.md` LinkedReferences paragraph (lines 128-129) has no parallel paragraph for `UnlinkedReferences` filters (UX-168).
+- `UX.md` Toast Action Patterns specifies 6s for Undo actions; `useUndoShortcuts.ts:71,93` uses 1500 ms — clarify in the doc that 1500 ms is *operation feedback* (no action button) and 6 s is for toasts that carry an Undo button (different patterns).
+- `UX.md` History View Shortcuts (~382-394) is missing PageUp/Down (already implemented in `useListKeyboardNavigation`), Shift+Click range select (UX-140 in `useListMultiSelect.ts:76-102`), and the cursor-based pagination contract (`HistoryView.tsx:70-88`).
+- `UX.md` Two-Tier Undo/Redo section (~952-970) doesn't document `UNDO_GROUP_WINDOW_MS = 200` (`src/stores/undo.ts:24`) or `MAX_REDO_STACK = 100` (`src/stores/undo.ts:21`).
+- `FEATURE-MAP.md:38` claims "Query term highlighting in result cards (via HighlightMatch)"; `ResultCard.tsx:31-36` accepts `highlightText` but never uses it (see MAINT-102) — fix the doc or the code.
+- `FEATURE-MAP.md:117` mentions "circles with truncated labels" for graph nodes; truncation happens at 20 chars in `useGraphSimulation.ts:152` — document the cap.
+- `README.md:14` says "no telemetry"; the local `src/lib/logger.ts` IPC bridge writes errors to disk for `BugReportDialog`. Tighten to "no cloud telemetry / no external analytics".
+- `COMPARISON.md` carries version-specific claims (e.g. specific Logseq stable version + date) that can go stale; add a "verified as of" header so the staleness is visible.
+- `AGENTS.md` "Frontend Development Guidelines" doesn't mention the shared `BatchActionToolbar` primitive — add to the shared-components table.
+
+**Cost:** S — single doc-only sweep.
+**Risk:** S — pure docs.
+**Impact:** S — keeps docs honest; reduces "documented feature missing" surprises in onboarding.
+
+### MAINT-101 — `src/lib/tag-colors.ts` is localStorage-only despite header comment claiming property-sync persistence
+
+**Problem:** `src/lib/tag-colors.ts:1-58` has a header comment that claims tag colours "Also persist to block properties via `setProperty()` for cross-device sync"; the implementation is localStorage-only. Tag colours are device-local and never reach the op log, so two devices can show the same tag in different colours forever.
+
+**Decision required:** either honour the comment (wire colours through a `tag_color` property on the tag's page block, fall back to localStorage as a cache — purely additive, uses the existing properties extension point per AGENTS.md "Architectural Stability") or honour the code (drop the property-sync claim from the comment, document tag colours as device-local). The current state is a contract bug: code and comment disagree.
+
+**Cost:** M (sync option) / S (doc-only option).
+**Risk:** S.
+**Impact:** M (sync option) — multi-device users see the same palette / S (doc-only).
+
+### MAINT-102 — `ResultCard.highlightText` prop accepted but never consumed
+
+**Problem:** `src/components/ResultCard.tsx:31-36` declares `highlightText?: string` with a JSDoc that admits it isn't used: "Currently accepted for API compatibility but rich content rendering takes priority over plain-text highlighting." `SearchPanel.tsx:517,554` passes `highlightText={debouncedQuery}` and the value is silently discarded. `FEATURE-MAP.md:38` claims the feature ("Query term highlighting in result cards (via HighlightMatch)") this prop was supposed to enable.
+
+**Fix:** either implement highlight propagation through `renderRichContent` (rich pipeline takes priority — that's why the prop is dead — but a non-rich fallback or post-render highlight pass is feasible) or drop the prop, drop the call sites, and remove the FEATURE-MAP line. The drop path is smaller and more honest; the implement path restores a documented feature.
+
+**Cost:** S (drop) / M (implement).
+**Risk:** S.
+**Impact:** S.
+
+### MAINT-103 — `BlockPropertyEditor` inline editor uses absolute positioning without portal
+
+**Problem:** `src/components/BlockPropertyEditor.tsx:40-44` renders the inline edit popup with a plain `<div className="absolute z-50 ...">`. If the surrounding row is inside a scroll container with `overflow: hidden`, the popup gets clipped. Every other floating UI in the editor (suggestion popups, `BlockContextMenu`, `BlockDatePicker`) goes through `createPortal()` + `@floating-ui/dom` per AGENTS.md "Floating UI lifecycle logging".
+
+**Fix:** convert to the portal pattern used by `src/editor/suggestion-renderer.ts`: `createPortal(<div data-editor-portal>...)` with `computePosition` from `@floating-ui/dom`, log lifecycle (warn on stale/null state, fallback positioning, `.catch` on positioning), and ensure the portal selector is recognised by `EDITOR_PORTAL_SELECTORS` in `src/hooks/useEditorBlur.ts` (the `[data-editor-portal]` entry already covers this).
+
+**Cost:** M.
+**Risk:** M — touches editor blur lifecycle; needs careful tests.
+**Impact:** S — closes a small clipping risk and aligns with the documented floating-UI pattern.
+
+### MAINT-104 — Hardcoded English error in `BacklinkFilterBuilder` property-key validation
+
+**Problem:** `src/components/BacklinkFilterBuilder.tsx:140` returns `{ error: \`No blocks have property "${trimmedKey}"\` }` — a raw English string baked into a UI message. Verified to be the only hardcoded user-visible English string surfaced in the review (other "hardcoded" findings turned out to be already-i18n'd).
+
+**Fix:** add an i18n key (e.g. `backlink.propertyNotFound`) with `{{key}}` interpolation in `src/lib/i18n.ts`; route through `t()`.
+
+**Cost:** S.
+**Risk:** S — pure i18n.
+**Impact:** S — closes an i18n hole on non-English locales.
+
+### MAINT-105 — Misc small consistency cleanups across editor / shell / sync
+
+**Problem:** Five low-risk consistency tweaks bundled into one entry because each is XS:
+
+1. `src/hooks/useEditorBlur.ts:31-40` — `EDITOR_PORTAL_SELECTORS` array has no inline comment linking back to the AGENTS.md "Floating UI lifecycle logging" rule it implements. Add a one-line `// AGENTS.md: keep selectors here in sync when adding new editor-side overlays`.
+2. `src/components/ViewHeader.tsx:47-63` — the portal-mount-race warning uses a single boolean `warnedRef`, so a view that renders multiple `<ViewHeader>`s fires the warning multiple times in one paint. Replace with a `Set` keyed by component identity, or rate-limit.
+3. `src/App.tsx:646-713` — global keyboard handlers (journal nav, tab cycle, etc.) don't check `e.repeat`, so holding a key fires repeated state writes / SR announcements. Add `if (e.repeat) return` to the navigation handlers.
+4. `src/App.tsx:854` — `<Sidebar collapsible="icon">` has no inline comment explaining why "icon" is chosen over "offcanvas". Add a one-liner pointing to UX.md § Mobile Sidebar.
+5. `src/stores/undo.ts:24` — `UNDO_GROUP_WINDOW_MS = 200` was set for recurrence ops creating 8-10 ops in a burst. Under any load (slow disk, network) ops can fall outside the 200 ms window and undo gets unwieldy. Re-evaluate at 500 ms; document the chosen value in UX.md (covered by MAINT-100).
+
+**Cost:** S — each is XS, total well under 2h.
+**Risk:** S — defensive / cosmetic.
+**Impact:** S — small, sustained quality bar.
+
 ---
 
 ## TEST — Test coverage gaps surfaced during review
@@ -773,6 +950,192 @@ The function validates that the parsed value is an array but does not validate t
 **Cost:** S (each file; ~30 min). Bundle suggestion: one PR per logical group (3 ui/ primitives; the two hooks/stores; main.tsx alone).
 **Risk:** S — additive tests; no production-code change.
 **Impact:** S — closes coverage holes on paths that are demonstrably risk-bearing.
+
+### TEST-2 — ~30 wrapper functions in `src/lib/tauri.ts` lack individual tests beyond the shallow cross-cutting test
+
+**Problem:** `src/lib/tauri.ts` exports ~84 wrapper functions around Tauri `invoke()`. The cross-cutting test in `src/lib/__tests__/tauri.test.ts:1927-2049` calls 47 of them and verifies only the snake_case command name — not the argument shape, not the `?? null` defaulting that the wrappers exist for in the first place (Tauri 2 requires `null` for Rust `Option<T>`, not `undefined`; this is a documented Pitfall, `src/__tests__/AGENTS.md:539`). The remaining ~30 wrappers have no test at all in this file (verified absent from the imports at lines 14-74): `listPageLinks`, `importMarkdown`, `listProjectedAgenda`, `saveDraft`, `flushDraft`, `deleteDraft`, `setPeerAddress`, `fetchLinkMetadata`, `getLinkMetadata`, `collectBugReportMetadata`, `readLogsForReport`, `getLogDir`, `getCompactionStatus`, `compactOpLog`, `restorePageToOp`, `listSpaces`, `createPageInSpace`, `listDrafts`, `restoreAllDeleted`, `purgeAllDeleted`, plus several others.
+
+**Why it matters:** The wrappers are where the `null`-vs-`undefined` defaulting happens. A regression there silently corrupts every IPC call to that command — backend deserializes the wrong field as `Some(undefined)` (which JSON-serializes to absent), which Rust then sees as `None`, producing wrong results without any error. Caught only by integration / E2E tests if at all.
+
+**Fix:** Use the existing `createBlock` test (`src/lib/__tests__/tauri.test.ts:86-139`) as the template. One `describe` per wrapper with three `it`s: (i) command name matches snake_case; (ii) all args present with sample values produce the exact `invoke` call argument shape via `toHaveBeenCalledWith({ ... })`; (iii) optional / nullable args default to `null` (not `undefined`) when the caller passes `undefined`. Pattern is mechanical — can be partially scaffolded by reading the wrapper signatures and emitting boilerplate.
+
+**Cost:** M (~1–2 days for ~30 wrappers, mostly mechanical).
+**Risk:** S — additive tests; no production-code change.
+**Impact:** M — closes a real correctness gap on every IPC boundary that's currently unverified.
+
+### TEST-3 — Browser/E2E `tauri-mock` `revert.ts` only handles 5 of 13 reversible op types
+
+**Problem:** `src/lib/tauri-mock/revert.ts:30-45` switches on `op_type` and only handles `create_block`, `delete_block`, `edit_block`, `move_block`, `restore_block`. The `default:` case is a silent no-op (`return`). The other reversible op types — `set_property`, `delete_property`, `add_tag`, `remove_tag`, `set_todo_state`, `set_priority`, `set_due_date`, `set_scheduled_date` — fall through and produce no state change in the mock.
+
+**Why it matters:** This is both a *mock feature gap* and a downstream *test gap*: any E2E test that exercises undo/redo for property/tag/state changes runs against a mock that silently does nothing. The flow appears to "work" (no error, history bumps as expected) but the user-visible state in the mock doesn't actually revert. Real users of the desktop/Android build hit the real backend and see the correct revert; preview/E2E users do not. The header comment at `revert.ts:9-12` explicitly states "Keep behaviour identical to the real backend's reverse logic" — that's currently violated.
+
+**Fix:**
+
+1. Extend the switch in `revert.ts` to handle the 8 missing op types. Each case mutates the mock's `block_properties` / `block_tags` map back to the prior state recorded in the op payload (the payload already carries the `from_*` fields the real backend uses).
+2. Extend `src/lib/tauri-mock/__tests__/revert.test.ts` (currently 11 tests covering the 5 implemented types) with one happy-path test per added op type, plus the existing "no-op for unknown" test should still pass for genuinely unknown ops only.
+3. After landing, audit `e2e/undo-redo-blocks.spec.ts` for opportunities to add property/tag undo/redo flows that were previously impossible to test.
+
+**Cost:** M (~1 day — 8 cases each ~30 min, plus tests).
+**Risk:** S — adding cases to an existing switch; default branch unchanged.
+**Impact:** M — restores parity between mock and real backend on a documented contract; unlocks new E2E coverage for property/tag undo flows.
+
+### TEST-4 — 25 of 26 Playwright specs lack a console-error listener
+
+**Problem:** `grep "page.on('console" e2e/*.spec.ts` returns one match: `e2e/smoke.spec.ts:31`. The other 25 specs run without any check that the page emitted a console error. Backend errors that reach the browser console (mock failures returning unexpected shapes, IPC handler crashes, React error-boundary fall-throughs, unhandled promise rejections, dev-time warnings escaping to prod) currently pass the suite silently for every feature except smoke.
+
+**Why it matters:** This is the cheapest way to catch a class of regressions that doesn't surface as a failed assertion — code throws, the UI degrades silently, the test still clicks the next button. The smoke test already proves the pattern works (it filters favicon noise and asserts `expect(realErrors).toEqual([])`).
+
+**Fix:**
+
+1. Add an `expectNoConsoleErrors(page)` helper to `e2e/helpers.ts` that registers `page.on('console', ...)` with the same favicon filter as `smoke.spec.ts`, returns a function the test can call in `afterEach` to assert the captured-error array is empty. Register the listener BEFORE `page.goto()` so pre-load errors are captured.
+2. Wire the helper into the existing `test.beforeEach` block in `e2e/helpers.ts` (lines 30-50, the mock-reset hook) so every spec gets it for free.
+3. Run the suite once; expect 1–2 days of triage to fix or whitelist legitimate warnings that surface. Whitelisting should be the exception, not the rule.
+
+**Cost:** M (~1 day implementation + ~1–2 days triage on first activation).
+**Risk:** M — turning the listener on may surface real warnings that need triage. Some may be noisy dev-only logs that need filtering or fixing in production code.
+**Impact:** M — catches a real class of regressions that currently leaks through every E2E suite.
+
+### TEST-5 — `property-picker.test.ts` and `checkbox-input-rule.test.ts` test extension config only, not editor integration
+
+**Problem:** Two of the 10 custom TipTap extensions have test files that exercise only the static configuration shape of the extension, not its behaviour against an actual editor:
+
+- `src/editor/__tests__/property-picker.test.ts` — 6 tests; all check `Extension.create({...})` returns an object with the expected name / default options / options-merging behaviour. No test drives a TipTap editor through the picker's suggestion command, no test inserts a property reference into a doc.
+- `src/editor/__tests__/checkbox-input-rule.test.ts` — 17 tests across 3 describe blocks. The first 6 tests configuration; the next 8 test the regex patterns in isolation; the last 3 spy on the input-rule handler signature. None drive an actual ProseMirror transaction through `[ ] ` or `[x] ` to verify a checkbox node materialises in the resulting doc.
+
+Compare with `src/editor/__tests__/at-tag-picker.test.ts` (~452 lines) and `src/editor/__tests__/block-link-picker.test.ts` (~600+ lines), which both drive actual editor instances and assert on the resulting transactions / nodes.
+
+**Why it matters:** These extensions are exactly where the `EDITOR_PORTAL_SELECTORS` discipline (Pitfall 23, `src/__tests__/AGENTS.md:583`), capture-phase keydown handling (Pitfall 19), and `flushSync` ordering (Pitfall 16) bugs land. Configuration-only tests catch zero of those.
+
+**Fix:** Add an integration test file (or expand the existing one) for each extension following the `at-tag-picker` template: instantiate a minimal `Editor` with the extension under test, drive it through a suggestion-trigger sequence, assert the resulting JSON doc has the expected node / mark inserted at the correct position. ~10–15 new tests per extension.
+
+**Cost:** M (~1 day for both extensions).
+**Risk:** S — additive tests.
+**Impact:** M — closes coverage on hot-path picker code where flushSync / portal / capture-phase regressions actually occur.
+
+### TEST-6 — Weak-assertion sweep: `toBeTruthy` / `toBeGreaterThan(0)` / `toHaveBeenCalled` without `…With(...)`
+
+**Problem:** Five files (verified by independent grep) use weak assertions where stronger ones would catch real regressions. Quality-standards rule from `src/__tests__/AGENTS.md:529`: *"Use `toHaveLength(N)` with exact counts, not `Array.isArray()` or `.length >= 1`. […] `toHaveBeenCalledWith` with exact args, not just `toHaveBeenCalled`."*
+
+| File | Line(s) | Pattern | Verified count |
+|------|---------|---------|----------------|
+| `src/components/__tests__/SearchPanel.test.tsx` | 1692 | `expect(skeletons.length).toBeGreaterThan(0)` (component renders exactly 2 skeletons) | 1 |
+| `src/components/__tests__/ConflictList.test.tsx` | 948, 971, 992, 1009, 1292, 1343, 1418, 1477, 1579, 1628, 1686 | `expect(x).toBeTruthy()` for element-existence checks | 11 |
+| `src/components/__tests__/JournalPage.test.tsx` | 2795, 2822, 2849, 2884, 2885, 2886 | `expect(dueDots.length).toBeGreaterThan(0)` | 6 |
+| `src/components/__tests__/PageBrowser.test.tsx` | 233, 239, 969, 1623 | `expect(...).toBeTruthy()` for element existence | 4 |
+| `src/components/__tests__/LinkEditPopover.test.tsx` | various | `expect(mock).toHaveBeenCalled()` without `…With(...)` | 36 |
+| `src/editor/__tests__/suggestion-renderer.test.ts` | 143, 167, 191, 224, 262, 290, 358, 445, 482, 526, 563, 592, 646, 660, 666, 675, 680, 714, 722, 747, 774, 846, 852, 866, 903 | `expect(popup).toBeTruthy()` for DOM element existence | 25 |
+| `src/lib/__tests__/keyboard-config.test.ts` | 39-42 | `expect(s.id).toBeTruthy()` in a property-shape loop | 4 |
+| `src/components/journal/__tests__/MonthlyDayCell.test.tsx` | 165 | `.not.toBeNull()` instead of `.toBeInstanceOf(HTMLElement)` | 1 |
+
+**Fix:** File-by-file sweep. For element-existence: `toBeInTheDocument()` (RTL) or `toBeInstanceOf(HTMLElement)`. For known-count arrays: `toHaveLength(N)`. For mock invocations: `toHaveBeenCalledWith(expectedArgs)`. The `LinkEditPopover.test.tsx` case is the largest (36 instances) — bundle as its own commit.
+
+**Cost:** S (~half day for the small files) / M (~1–2 days incl. `LinkEditPopover.test.tsx`).
+**Risk:** S — pure tightening of assertions; tests still pass when behaviour is correct.
+**Impact:** M — catches off-by-one / wrong-arg regressions that currently pass.
+
+### TEST-7 — Real-timer `setTimeout` sleeps in 4 test files
+
+**Problem:** Quality-standards rule from `src/__tests__/AGENTS.md:526`: *"Use `waitFor` / `findBy*` instead of `sleep`. Debounce tests use `vi.useFakeTimers()` + `vi.advanceTimersByTime()`."* These four sites violate it on real timers (verified absence of `vi.useFakeTimers()` for the relevant tests):
+
+| File | Line(s) | Sleep | What it's gating |
+|------|---------|-------|------------------|
+| `src/components/journal/__tests__/RescheduleDropZone.test.tsx` | 218 | `setTimeout(r, 50)` | A "should NOT have been called" assertion — the sleep gives the negative-path the chance to fail. **Highest flake risk** because there's no signal to wait for. |
+| `src/lib/__tests__/recent-pages.test.ts` | 80 | `setTimeout(r, 5)` | Forces a `Date.now()` delta between two `pushRecentPage` calls so the `visitedAt` ordering can be asserted. |
+| `src/hooks/__tests__/useSyncEvents.test.ts` | 245, 261, 585, 609, 636, 695 | `setTimeout(r, 10)` (×4) and `setTimeout(r, 50)` (×2) | Wait for async listener setup or IPC response. None are inside `vi.useFakeTimers()` scope. |
+| `e2e/helpers.ts` | 192 (350 ms), 200 (50 ms), 204 (150 ms) | `page.waitForTimeout(...)` inside `dragBlock` | The 350 ms is justified by dnd-kit's PointerSensor activation delay and should be kept (with a named `DND_ACTIVATION_DELAY_MS` constant + comment); the 50 / 150 ms are inter-step pauses without a clear deterministic alternative documented. |
+
+**Fix:**
+
+- `RescheduleDropZone`: replace with `await waitFor(() => expect(mockSetDueDate).not.toHaveBeenCalled())` or, better, restructure the test so the negative is asserted synchronously after a single deterministic event.
+- `recent-pages`: switch to `vi.useFakeTimers()` + `vi.setSystemTime(...)` between calls. Avoid wall-clock entirely.
+- `useSyncEvents`: convert to fake timers + `vi.advanceTimersByTime(...)` or `vi.waitFor(...)` against an observable end state.
+- `helpers.ts dragBlock`: extract `DND_ACTIVATION_DELAY_MS = 350` constant with a comment citing dnd-kit's PointerSensor; document the 50/150 ms gates with a similar comment, or replace with `expect.poll(() => …).toBe(...)` if a deterministic signal exists.
+
+**Cost:** S (~half day across all four files).
+**Risk:** S — these are flake sources today; fixes can only reduce flake.
+**Impact:** M — flake removal is a force multiplier on every CI run.
+
+### TEST-8 — `page-blocks.test.ts`: missing `splitBlock` error rollback test, weak `remove()` error assertion
+
+**Problem:** Two specific gaps in `src/stores/__tests__/page-blocks.test.ts`:
+
+1. **`splitBlock` has no error-path test.** The test suite at lines 459–654 covers happy paths (split at start, middle, end of content; split with marks; split preserving children). It does not cover the case where the composite operation `edit() + createBelow()` fails partway. `splitBlock` first persists the truncated content of the original block via `edit()`, then creates the new block with the remainder via `createBelow()`. If `createBelow()` fails after `edit()` has succeeded, the original block is left truncated *without* the corresponding new block — a silent data-loss scenario.
+
+2. **`remove()` error test is too loose.** Lines 425–434 (`'does not modify state on backend error'`) call `mockRejectedValueOnce` and then assert only `expect(store.getState().blocks).toHaveLength(1)`. The assertion passes whether the rolled-back block is the original or any other block of the right count — content is not verified.
+
+**Fix:**
+
+1. Add `it('rolls back on createBelow failure during splitBlock')`: mock `edit` to resolve, mock `createBelow` to reject, call `splitBlock(...)`, assert the block reverts to its original content (capture `previousContent` before the call, compare after).
+2. Strengthen the existing `remove()` error test to `expect(store.getState().blocks[0]).toEqual(originalBlock)` so content is asserted, not just count.
+
+**Cost:** S (~30 min — both fixes are mechanical).
+**Risk:** S — additive test + assertion strengthening.
+**Impact:** M — closes a real partial-failure scenario (`splitBlock` rollback on backend error) that's currently invisible to the test suite.
+
+### TEST-9 — Hardcoded English assertions in `AttachmentList.test.tsx` and `SearchPanel.test.tsx`
+
+**Problem:** Quality-standards rule from `src/__tests__/AGENTS.md:530`: *"Use `t('key')` calls in test assertions, not hardcoded English strings. This ensures tests don't break when translations change, and validates that i18n keys are wired correctly."* Two specific violations:
+
+- `src/components/__tests__/AttachmentList.test.tsx:126,128` — asserts on `'Delete "to-delete.txt"?'` and `'Click the delete button again to confirm.'` (toast strings).
+- `src/components/__tests__/SearchPanel.test.tsx:122, 195, 374, 383` — regex patterns `/No results found/`, `/CJK search is limited/` (visible text).
+
+**Fix:** Look up the relevant `t()` keys from the components under test. Replace each hardcoded string with `t('attachments.confirmDelete', { filename: 'to-delete.txt' })` (or the corresponding key — verify against the component source). For regex matchers, switch to `screen.getByText(t('search.noResults'))`.
+
+**Cost:** S (~30 min).
+**Risk:** S — pure tightening; current strings already match the English locale.
+**Impact:** S — prevents these tests from breaking on a translation update; validates that the keys are actually wired.
+
+### TEST-10 — `useBlockResolve.test.ts` uses sticky `mockResolvedValue` 50× and never `mockResolvedValueOnce`
+
+**Problem:** Quality-standards rule from `src/__tests__/AGENTS.md:551`: *"`mockResolvedValueOnce` consumes in call order. If a component calls `invoke` multiple times on mount, chain `Once` calls in the right order or use `mockImplementation` with command dispatch."* `src/hooks/__tests__/useBlockResolve.test.ts` has 50 calls to `mockResolvedValue(...)` (verified by grep) and zero calls to `mockResolvedValueOnce(...)`.
+
+**Why it matters:** `useBlockResolve` calls `invoke('get_block', { blockId })` once per resolve target. With sticky mocks, every `invoke` call returns the same value regardless of which block ID was requested — a regression where the hook calls the wrong command, passes the wrong arg, or calls more times than expected goes undetected because every call returns the seeded value.
+
+**Fix:** File-by-file sweep of the 50 sites. For each test:
+- If the test exercises a single resolve, change to `mockResolvedValueOnce` so a stray extra call is flagged.
+- If the test exercises multiple resolves with different block IDs, change to `mockImplementation((cmd, args) => { … switch on args.blockId … })` so each ID gets its expected response.
+
+**Cost:** S–M (~half day — mostly mechanical, but each test needs context to choose the right pattern).
+**Risk:** S — current tests pass with sticky mocks because the hook's behaviour is correct today; the tightening makes future regressions detectable.
+**Impact:** M — closes the largest single-file violation of a documented mocking rule in the frontend.
+
+### TEST-11 — 7 E2E specs use CSS-class selectors (23 instances) instead of `data-testid`
+
+**Problem:** Selector convention from `src/__tests__/AGENTS.md:404`: *"Use `data-testid` selectors (not CSS classes) for targeting elements."* Verified violations (`grep -n "page.locator('\." e2e/*.spec.ts` returns 23 hits across 7 specs):
+
+| File | Lines | Selector |
+|------|-------|----------|
+| `e2e/inner-links.spec.ts` | 79, 376 | `.block-tree`, `.linked-references` |
+| `e2e/batch-operations.spec.ts` | 65, 96, 129 | `.batch-toolbar` |
+| `e2e/attachments.spec.ts` | 62, 82, 92, 117, 146 | `.attachment-badge` |
+| `e2e/sync-ui.spec.ts` | 111, 112 | `.device-no-peers` |
+| `e2e/agenda-advanced.spec.ts` | 245, 519, 533, 537, 557, 561, 588 | `.due-panel-priority`, `.agenda-results-item`, `.agenda-group-header` |
+
+**Fix:** For each violation, add the matching `data-testid` to the corresponding component (one-line edit per component) and update the spec selector to `page.locator('[data-testid="..."]')` or, better, `page.getByTestId('...')`. CSS classes used purely for styling stay; the `data-testid` is what tests bind to. After landing, optionally extend MAINT-99's lint hooks with a check for `page.locator('\\.` patterns in `e2e/`.
+
+**Cost:** M (~1 day across 7 specs + ~7 component edits).
+**Risk:** S — additive `data-testid` attributes; existing CSS classes preserved for styling.
+**Impact:** M — CSS refactors are a recurring source of test breakage; switching to `data-testid` decouples test stability from style changes.
+
+### TEST-12 — `e2e/settings.spec.ts` theme-options test only checks 3 of 7 shipped themes
+
+**Problem:** `e2e/settings.spec.ts:33-46` opens the theme combobox and asserts that "Light", "Dark", and "System" options are visible. `SettingsView.tsx:207-215` ships seven themes: those three plus Solarized Light, Solarized Dark, Dracula, and One Dark Pro. The other four are not exercised — a regression that drops or renames any of them would not break this test.
+
+**Fix:** loop through all seven theme labels (use the i18n keys or hardcoded names matching the source) and assert each is visible. Optionally extend to assert that selecting each one applies the correct `data-theme` attribute on `<html>`.
+
+**Cost:** S.
+**Risk:** S — additive test.
+**Impact:** S — regression coverage for the four un-tested themes.
+
+### TEST-13 — `TabBar` dropdown Esc-to-close behaviour not explicitly tested
+
+**Problem:** `src/components/TabBar.tsx:143-264` uses a Radix Popover for the active-tab dropdown. Radix Popover handles Escape automatically, but this repo has no test that asserts the dropdown actually closes on Escape. If the Popover were ever swapped for a custom implementation, or if a parent listener captured Escape, the close behaviour could regress silently. Pair with UX-262 (the close button currently nested inside `role="menuitemradio"`).
+
+**Fix:** add a small test (component or e2e) that opens the dropdown, presses Escape, asserts the menu is gone and focus returns to the trigger.
+
+**Cost:** S.
+**Risk:** S.
+**Impact:** S — pinpoint regression catch on a high-traffic surface.
 
 ---
 
@@ -847,6 +1210,353 @@ Net result: one bar uses `›` chevrons + full-sized rich chips at `text-sm`; th
 **Cost:** S — small wiring change touching DailyView / DaySection + one new test section. No invariant impact, no new abstractions.
 
 **Status:** Open — explicit follow-up filed by UX-242 (session 437); the parent UX-242 (date-routing on title-match navigation) shipped without this final scroll-to-block slice.
+
+### UX-259 — `ConfirmDialog` `autoFocus` lands on the destructive action button
+
+**Problem:** `src/components/ConfirmDialog.tsx:75-86` always sets `autoFocus` on the `<AlertDialogAction>` regardless of variant. For dialogs raised with `actionVariant="destructive"` (purge selected, batch revert, restore-to-here, unpair, compact ops, conflict batch keep/discard) the dialog opens with focus already on the red action button — a reflex Enter confirms the destructive action without ever moving focus.
+
+**Fix:** when `actionVariant === 'destructive'`, focus the Cancel button instead. Drop `autoFocus` on the action; add it to Cancel when destructive. Optionally add a 500 ms grace period before allowing action-button activation so reflex Enter still lands on Cancel.
+
+**Acceptance:** test every destructive caller (`TrashView` purge, `HistoryView` revert + restore-to-here, `ConflictList` batch keep/discard, `UnpairConfirmDialog`, `CompactionCard`) — Enter immediately after the dialog opens must cancel, never confirm. Non-destructive callers retain action-button focus.
+
+**Cost:** S.
+**Risk:** M — touches the dialog primitive used by every destructive flow; needs every caller's tests refreshed.
+**Impact:** L — directly prevents accidental data destruction across the most dangerous code paths.
+
+### UX-260 — Discoverability sweep for keyboard shortcuts, gestures, and customization
+
+**Problem:** Several real, working features are effectively invisible to users who don't read code or doc files:
+
+1. **Sidebar swipe-to-open on mobile.** `src/components/ui/sidebar.tsx:31-32` defines `SWIPE_EDGE_ZONE = 20` and `SWIPE_MIN_DISTANCE = 50`. The gesture works but the rail has no visual hint at the left edge — first-time mobile users won't discover it.
+2. **Journal date-navigation shortcuts.** `src/App.tsx:184-200` ships `Alt+Left/Right` (prev/next day) and `Alt+T` (today). The prev/next/today buttons in `JournalPage` have no tooltip showing the binding.
+3. **Two-tier undo/redo.** `src/hooks/useUndoShortcuts.ts:1-105` distinguishes editor-undo (ProseMirror) from page-undo (op log); the user has no UI signal which tier `Ctrl+Z` will hit.
+4. **Shift+Click range select** (UX-140) implemented in `src/hooks/useListMultiSelect.ts:76-102`, used by HistoryView, TrashView, ConflictList. No tooltip, no toolbar hint anywhere except `HistorySelectionToolbar:63-65`.
+5. **Properties drawer keyboard binding.** `src/editor/use-block-keyboard.ts:186-193` recognises a configurable `openPropertiesDrawer` shortcut, but the binding is not in the `KeyboardShortcuts` panel and no UI button surfaces it.
+6. **Ctrl+F → SearchPanel.** Documented in UX.md but not in the `SearchPanel.tsx` header comment, which makes the dispatch chain hard to trace.
+7. **`KeyboardShortcuts` sheet doesn't link to Settings → Keyboard.** Users see the shortcuts but can't discover that they're customisable (`src/components/KeyboardShortcuts.tsx:94-235`).
+
+**Fix outline (single sweep):**
+
+- Mobile sidebar: render a 2-3 px gradient indicator at `left-0 inset-y-0 w-[3px] bg-foreground/10` on `pointer:coarse` only.
+- Journal nav buttons: add `Tooltip` showing the chord (use `t()` keys; no hardcoded English).
+- Page-header undo button: tooltip clarifies which tier fires depending on whether the editor is currently focused.
+- Shift+Click hint: add `t('list.rangeSelectHint')` to `BatchActionToolbar` (right-aligned), reusing the `HistorySelectionToolbar` pattern across the other callers.
+- Properties drawer shortcut: add to `KeyboardShortcuts` panel + tooltip on the gutter property button (UX.md keyboard-shortcuts table — see MAINT-100).
+- `SearchPanel.tsx:1-10` header: one-line comment "Opened via Ctrl+F (see App.tsx global handler)".
+- `KeyboardShortcuts.tsx`: add a footer button `t('keyboard.customizeButton')` that navigates to Settings → Keyboard.
+
+**Cost:** M — many small surfaces but each fix is XS.
+**Risk:** S — additive UI, no behaviour change.
+**Impact:** L — flips a large amount of latent capability into discoverable capability.
+
+### UX-261 — `PageTreeItem` delete button is `opacity-0` until hover — invisible to keyboard users
+
+**Problem:** `src/components/PageTreeItem.tsx:58-71` styles the delete button as `opacity-0 group-hover:opacity-100`, with a touch override (`[@media(pointer:coarse)]:opacity-100`) but no `focus-visible` override. Keyboard users tab onto the button, the button is announced via aria-label, but it is invisible — they cannot see what they're about to delete or which row currently owns focus. Violates WCAG 2.1 SC 2.4.7 (Focus Visible).
+
+**Fix:** add `focus-visible:opacity-100` (and ideally `peer-focus-visible:` on the button so the row also shows focus state). Alternatively remove the `opacity-0` rule and accept always-visible delete buttons.
+
+**Cost:** S.
+**Risk:** S.
+**Impact:** M — fixes a real keyboard-a11y hole on the page tree, one of the highest-traffic surfaces.
+
+### UX-262 — `TabBar` close button nested inside `role="menuitemradio"` — nested-interactive a11y violation
+
+**Problem:** `src/components/TabBar.tsx:245-259` renders an in-dropdown tab close button as a `<button>` inside a `<div role="menuitemradio">`. Nested interactive elements are forbidden by WAI-ARIA — keyboard navigation between menu items doesn't reach the close button, and screen readers may announce the row inconsistently.
+
+**Fix:** restructure to flatten the interactive tree. Preferred (matches the rest of the app's Radix-everywhere stance per AGENTS.md): split into two sibling `MenuItem`s in a row — one activates the tab, one closes it — both reachable by arrow keys. Pair with TEST-13 to assert Esc-closes-dropdown survives the restructure.
+
+**Cost:** S.
+**Risk:** M — high-traffic surface; needs a11y + keyboard tests refreshed.
+**Impact:** M — closes a clear a11y violation.
+
+### UX-263 — Pairing flow polish
+
+**Problem:** Several small but real issues across the pairing UI:
+
+- `src/components/PairingEntryForm.tsx:93` — passphrase inputs have aria-label and a placeholder ordinal ("1st/2nd/3rd/4th") but no visible label; on narrow screens or for users with cognitive load, position context can be lost.
+- `src/components/PairingQrDisplay.tsx:57-73` — SR countdown announces only at 60-second intervals + 30 s, then goes silent. For a 5-minute session, screen-reader users get no warning in the final 30 s. Announce at 60/30/10/5 s or every 10 s in the final minute.
+- `src/components/PeerListItem.tsx:49-62` — device address input accepts any string; only an error toast on failure. Add a regex check (`^[a-zA-Z0-9.-]+:\d+$`) with inline error and a "Format: host:port" hint; disable Save until valid.
+- `src/components/DeviceManagement.tsx:151-166` — device rename has no client-side validation or character limit. Add a 50-char cap, allow alphanumerics + space/hyphen/underscore, show a counter.
+- `src/components/PairingDialog.tsx:310-326` — Esc / outside-click closes the dialog mid-pairing without confirmation, discarding entered words / scanner state. Block the close when `pairLoading === true` or scanner is active, or surface a "Pairing in progress — close anyway?" confirm.
+- `src/components/PairingDialog.tsx:137-153` — countdown keeps ticking while user types passphrase; pause on focus of any input, resume on blur or 5 s of inactivity.
+
+**Cost:** M — bundle of XS/S items.
+**Risk:** S — defensive UI tweaks.
+**Impact:** M — first-impression polish on the only flow most users see twice.
+
+### UX-264 — Sync error UX
+
+**Problem:** Sync error feedback is consistently weak:
+
+- `src/hooks/useSyncTrigger.ts:42-50, 110-115` — failure toasts show `t('sync.failedForDevice', { deviceId: peerId.slice(0, 12) })` with no retry action and no error category. UX.md "Toast Action Patterns" mandates a retry action for retryable failures.
+- `src/hooks/useSyncTrigger.ts:152-159` — when transitioning from offline → online, `syncAll()` is triggered but no toast / banner confirms the transition. On mobile, network transitions are frequent and the StatusPanel is often not visible.
+- `src/components/ConflictList.tsx:362-400` — batch keep/discard processes conflicts sequentially with no per-item progress. For 50+ conflicts (realistic after a re-pair), users see only a spinner.
+- `src/components/QrScanner.tsx:34-77` — camera-permission denial is shown inside the scanner component but the parent `PairingEntryForm` does not auto-switch to manual entry. User has to click "Type Passphrase" themselves.
+
+**Fix outline:** add retry actions to failure toasts (see UX.md pattern); show a toast "Back online — syncing…" on the offline→online transition; add progress text "Resolving 3 of 50…" during conflict batch ops; auto-switch to manual mode on camera-permission denial with a `t('pairing.cameraDeniedFallback')` toast.
+
+**Cost:** M.
+**Risk:** M — toast retry needs backend error categorisation; auto-fallback needs careful focus-management.
+**Impact:** L — significantly improves user trust in sync.
+
+### UX-265 — Conflict UI improvements
+
+**Problem:** Several issues in the conflict-resolution surface:
+
+- `src/components/ConflictListItem.tsx:147-171` — "Keep" (outline) / "Discard" (destructive) buttons rely on visual hierarchy alone to communicate which is safer. Add tooltip / aria descriptions ("Keep: use the incoming version" / "Discard: delete the conflict copy"). Consider swapping order so the safer action sits on the right.
+- `src/components/ConflictList.tsx:414-442` — no sort / filter on the conflict list. After a re-pair, users may face dozens of conflicts and have no way to prioritise by type, source device, or timestamp. Add a filter bar with conflict-type + source-device + date-range dimensions.
+- `src/components/ConflictListItem.tsx:108-117` — conflict-type badge has aria-label but no visible tooltip. Wrap in a `Tooltip` showing the existing `conflict.type${type}` i18n description.
+- `src/components/ConflictTypeRenderer.tsx:224-240` — Property and Move conflicts fall through to `TextConflictView` when the original block is missing. The fallback shows "(original not available)" which is confusing for typed conflicts. Show a warning banner ("Original block not found — showing conflict content only") and disable the Keep action.
+- `src/components/DiffDisplay.tsx:24-53` — diffs render all spans inline with no special handling for very large diffs (10 KB+ blocks edited on two devices). The container has `max-h-40` upstream but the SVG render still touches every span. Add a "Show full diff" / "Collapse" toggle for diffs above a threshold (e.g., >500 spans).
+
+**Cost:** M.
+**Risk:** S — additive.
+**Impact:** M — improves usability of an inherently stressful flow.
+
+### UX-266 — Sync status visibility & space-deletion notification
+
+**Problem:**
+
+- `src/components/StatusPanel.tsx:219-295` — sync status is only visible when the StatusPanel card is expanded. When collapsed (the common case), users have no glanceable signal of sync state. The sidebar footer has a "Sync" button but no status indicator.
+- `src/stores/sync.ts:11` — `discovering` and `pairing` use the same amber dot (`syncStateDotClasses` in `StatusPanel.tsx:67-82`) and the only differentiator is a text label some users won't read. Either combine into a "Connecting…" state or add per-state icons (checkmark / spinner / X / dash) so the dot carries non-color signal in addition to the existing text.
+- `src/stores/space.ts:45-52` — when the current space is deleted on another device, the store silently falls back to the first available space. Users can be confused why they're "in a different space". Add a one-shot toast: "Your active space was deleted on another device. Switched to {{space}}."
+
+**Cost:** S.
+**Risk:** S — small additive UI.
+**Impact:** M — makes sync state and space changes glanceable.
+
+### UX-267 — Unpair confirmation dialog doesn't explain that ops are retained locally
+
+**Problem:** `src/components/UnpairConfirmDialog.tsx:32-34` confirmation copy says only "You will need to pair again to sync." It doesn't clarify the threat-model-correct behaviour: the operation log is retained locally and on the peer, no notes are deleted, and re-pairing later resumes sync from where it left off. Users routinely fear data loss and back out of legitimate unpairs.
+
+**Fix:** update the i18n string to: "This removes the pairing. Your notes and sync history remain on this device. You can pair again later to resume syncing." Aligns with AGENTS.md threat model (single-user, multi-device).
+
+**Cost:** S — XS, single i18n string.
+**Risk:** S.
+**Impact:** L — reduces user anxiety and cuts a real "I'll back out instead" friction point.
+
+### UX-268 — Touch-target / mobile sizing fixes across Agenda + Search
+
+**Problem:** A focused review found four real touch-sizing gaps (after filtering out earlier false positives that had already been handled by the `touch-target` utility / Button `size="sm"`):
+
+- `src/components/DuePanelFilters.tsx:74-93` — "Hide before scheduled" toggle uses `text-xs px-1.5 py-0.5` with no `[@media(pointer:coarse)]:min-h-[44px]` and only `title` + `aria-pressed` (no `aria-label`). Add both.
+- `src/components/AgendaSortGroupControls.tsx:49-60` — sort/group buttons have `min-h-[44px]` on touch but no `min-w` constraint, producing tall narrow buttons with awkward aspect ratios. Add `[@media(pointer:coarse)]:min-w-[44px]`.
+- `src/components/DuePanelFilters.tsx:55-72` — filter pills similarly missing `min-w` on touch.
+- `src/components/SourcePageFilter.tsx:119-130` — uses `size="sm"` (h-8 base) plus `min-h-[44px]` on touch; verify the override actually fires (`min-*` doesn't override fixed height when both are set). Likely safer to switch to `size="icon"` or to `h-7 w-7 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11`.
+- `src/components/BacklinkFilterBuilder.tsx:336-346` — add-filter row switches to `flex-col` on touch but child inputs still have fixed widths (`w-24`, `w-40`); add `[@media(pointer:coarse)]:w-full` on the children.
+
+**Cost:** S — bundle of XS items.
+**Risk:** S — pure CSS.
+**Impact:** M — fixes a handful of real one-handed mobile-tap frustrations.
+
+### UX-269 — `SearchPanel` consolidation
+
+**Problem:** SearchPanel hand-rolls several primitives the design system already provides:
+
+- `src/components/SearchPanel.tsx:577-587` — custom "Load more" button instead of the shared `LoadMoreButton`; missing `aria-busy={searchLoading}`.
+- `src/components/SearchPanel.tsx:504-575` — `aria-live="polite"` wraps the interactive `role="listbox"`, so SR users may hear the entire region re-announced on result changes. Move `aria-live` to a separate status `<div>` above the list.
+- `src/components/SearchPanel.tsx:193-217, 384` — spinner shows when `typing` OR `searchLoading`; users don't know if they're waiting on debounce or fetch. Show distinct labels.
+- `src/components/SearchPanel.tsx:470-475` — CJK limitation notice appears below the min-char hint and above results; users searching with CJK input often don't see it. Move closer to the input or fold into the empty state.
+- `src/components/SearchPanel.tsx:509-523` — alias-match overlay label is positioned absolutely and may overlap content on narrow viewports. Move into the `ResultCard` as a subtitle or below the card.
+- `src/components/SearchPanel.tsx:570-574` — results count is rendered visually but not announced. Wrap in `aria-live="polite"` (separate region from the listbox).
+
+**Fix:** rewire to use `<LoadMoreButton hasMore={hasMore} loading={searchLoading} onLoadMore={loadMore} />` and refactor the live-region structure.
+
+**Cost:** M.
+**Risk:** S — design-system migration.
+**Impact:** M — consistency + a11y.
+
+### UX-270 — `GraphView` a11y + filter persistence
+
+**Problem:**
+
+- `src/components/GraphFilterBar.tsx:196` — uses bare `overflow-y-auto` instead of `ScrollArea` for the tag list; AGENTS.md mandates `ScrollArea` for all scrollable containers (`SourcePageFilter.tsx:140` is the correct pattern).
+- `src/components/GraphFilterBar.tsx:191-213` — checkbox has `aria-label={tag.name}` *and* a `<label>` element wrapping the input with the same text. Remove the redundant `aria-label`.
+- `src/components/GraphView.tsx:207-212` — SVG has `role="img"` while the inner nodes are interactive (`role="button"`, Enter/Space handlers via `useGraphSimulation.ts`). Either drop the wrapper role or use `role="application"`.
+- `src/components/GraphFilterBar.tsx:309-431` — filters reset on every navigation; unlike SearchPanel and BacklinkFilterBuilder, GraphFilterBar has no localStorage persistence. Persist under `agaric:graph-filters`.
+- `src/hooks/useGraphSimulation.ts:136-176` — keyboard nav (`tabindex=0`, `role="button"`, Enter/Space handler) is implemented but undocumented in the file; add a JSDoc comment block explaining the pattern (mirrors AGENTS.md "Floating UI lifecycle logging" doc-as-you-go expectation).
+
+**Cost:** M — bundle.
+**Risk:** S.
+**Impact:** M — a11y + persistence parity with the rest of the app.
+
+### UX-271 — Backlinks linked-vs-unlinked distinction & filter discoverability
+
+**Problem:**
+
+- `src/components/BacklinkGroupRenderer.tsx:1-86` — renders backlink groups with no visible signal of whether each is "Linked" (`[[ref]]`) or "Unlinked" (mention without link). FEATURE-MAP.md:128-129 documents the two as distinct sections; the renderer makes them indistinguishable. Add a badge or icon, fed by a prop from the parent (`LinkedReferences` vs `UnlinkedReferences`).
+- `src/components/LinkedReferences.tsx:1-413` — has advanced filters (type, status, priority, contains, property, date, has-tag, tag-prefix) but no count badge on the "Advanced filters" trigger when filters are active. Compare with `AgendaFilterBuilder` which surfaces active count.
+- `src/components/BacklinkFilterBuilder.tsx:547-571` — `SearchablePopover` is used for tag selection but no explicit scroll handling for large tag lists; verify the popover internally uses `ScrollArea` (otherwise wrap).
+
+**Cost:** S.
+**Risk:** S.
+**Impact:** M — clarifies one of the most useful but most-confused surfaces.
+
+### UX-272 — Properties drawer / picker polish
+
+**Problem:** Eight small UX gaps in the properties UI. Bundled because each is XS:
+
+- `src/components/PropertyRowEditor.tsx:265-268` — ref-picker no-pages state is a plain styled `<div>` with muted text; use `EmptyState` (with an icon) and offer "Create new page" when search has content.
+- `src/components/TagFilterPanel.tsx:290-344` — AND/OR/NOT mode toggle distinguishes only via `Button` variant (`default` vs `outline`); add tooltips ("AND: blocks must have ALL selected tags" etc.) and consider an icon (∩ / ∪ / ¬).
+- `src/components/BlockPropertyDrawer.tsx:75-96` — drawer shows generic "Loading…" while fetching properties + definitions. Use `LoadingSkeleton`; disable "Add property" with a tooltip until definitions arrive.
+- `src/hooks/useDateInput.ts:53-67` — `parseDate()` runs on every keystroke (no debounce). Debounce 300 ms; only set `datePreview` when parsing succeeds.
+- `src/components/PropertyRowEditor.tsx:135-180` — choice options editor lacks a count badge ("3 options") and drag-to-reorder; add both.
+- `src/components/PropertyRowEditor.tsx:150-155` — "Add option" button is not `disabled` when input is empty; current guard returns silently. Disable the button.
+- `src/components/AddPropertyPopover.tsx:144-154` — "Create new" button doesn't surface the default type ('text'). Show a small "(text)" hint or surface the type selector inline.
+- `src/components/PropertyRowEditor.tsx:205-225` — selecting a ref page closes the popover immediately with no spinner / success toast; add a brief loading indicator.
+
+**Cost:** M — bundle of XS items.
+**Risk:** S.
+**Impact:** M — properties is the documented "primary extension point"; polish here pays off everywhere.
+
+### UX-273 — Inline link UX: keyboard preview + popup viewport handling
+
+**Problem:**
+
+- `src/components/LinkPreviewTooltip.tsx:1-118` — tooltip only fires on `mouseover`/`mouseout`; not accessible to keyboard-only users. Extend `useLinkPreview` to detect focus on external links and show on focus; add a keyboard shortcut to preview the focused link; ensure Esc dismisses.
+- `src/editor/suggestion-renderer.ts:53-56` — `computePosition` middleware uses `padding: 8` for `flip()` and `shift()`. On mobile narrow viewports the popup can still clip near the bottom. Increase padding to 16 on `pointer:coarse` and add `size()` middleware to cap popup height at 60vh on mobile.
+
+**Cost:** M.
+**Risk:** M — link preview spans hover + focus state machines.
+**Impact:** M — closes a real keyboard-a11y gap and a real mobile clipping issue.
+
+### UX-274 — Agenda views: error retry, parse feedback, persistence, keyboard nav
+
+**Problem:** Seven small UX gaps in agenda + queries:
+
+- `src/components/DateChipEditor.tsx:105-116` — when parse fails, error message is in helper text only; the input itself has no `aria-invalid` or `border-destructive`. Add both.
+- `src/components/QueryResult.tsx:201` — `{error && <div className="...">{error}</div>}` has no retry button. Add one that calls `fetchResults()`.
+- `src/components/journal/RescheduleDropZone.tsx:29-102` — drag-only interface with a `biome-ignore` acknowledging no keyboard alternative. Document the keyboard reschedule path (DateChipEditor) in the component's JSDoc; consider a context-menu reschedule on right-click of agenda items.
+- `src/components/journal/UnfinishedTasks.tsx:161` — per-group collapse state lives in React state only; parent section collapse persists to localStorage. Add per-group persistence under e.g. `unfinishedTasks.groupCollapsed`.
+- `src/components/AgendaFilterBuilder.tsx:140-145` — clicking "Apply" with no values silently does nothing; the button is disabled but disabled state isn't visually obvious. Either make disabled prominent (`opacity-50 cursor-not-allowed`) or show a brief toast.
+- `src/components/DuePanel.tsx:331-380` — projected entries (`<li>` with `onClick` + `onKeyDown`) are not part of the `useListKeyboardNavigation` flat-items array. Keyboard users can't arrow-navigate to them.
+- `src/components/QueryBuilderModal.tsx:96-116` — accepts arbitrary property keys without checking against `listPropertyDefinitions()`. Add autocomplete or pre-save validation.
+
+**Cost:** M.
+**Risk:** S.
+**Impact:** M.
+
+### UX-275 — History view UX gaps
+
+**Problem:** Eleven small issues in the history surface (`HistoryView`, `HistoryListItem`, `HistoryFilterBar`, `HistoryPanel`, `BatchActionToolbar`, `TrashView`, `DiffDisplay`):
+
+- `src/components/HistoryView.tsx:386-402` — "Restore to here" confirmation description doesn't make the scope explicit ("All operations after this point will be reverted. This action itself can be undone.").
+- `src/components/HistoryListItem.tsx:289-304` — non-reversible-op lock icon has aria-label `Non-reversible` but doesn't explain why (purge cannot be undone). Expand the label; consider increasing icon size on touch.
+- `src/components/HistoryFilterBar.tsx:49-82` — no inline ✕ to clear an active op-type filter; users have to open the dropdown and pick "All". Add an active-filter affordance.
+- `src/components/DiffDisplay.tsx:16-54` — no keyboard navigation between hunks; large diffs render as one paragraph. Add prev/next change buttons; wrap in `<div role="region" aria-label="...">`.
+- `src/components/TrashView.tsx:543-551` — descendant-count badge can wrap on narrow viewports; verify the i18n key `trash.itemsInBatch` exists; consider a more prominent badge variant.
+- `src/components/TrashView.tsx:438-459` — batch toolbar buttons (Restore / Purge) lack keyboard shortcuts and a hint matching `HistorySelectionToolbar:63-65`.
+- `src/components/HistoryPanel.tsx:83-103` — restore success toast has no "Undo" action; UX.md "Toast Action Patterns" mandates one for reversible actions. Capture previous content before the restore so undo can revert.
+- `src/components/HistoryListItem.tsx:243-254` — checkbox + row-click both toggle selection on touch; users may accidentally select by tapping the row. Add visible focus-ring on the checkbox; clarify ownership (clickable row OR clickable checkbox, not both).
+- `src/components/TrashView.tsx:390-405` — filter input has search icon on left but no inline ✕; add one when `filterText.length > 0`.
+- `src/components/HistoryListItem.tsx:265-287` — "Restore to here" is icon-only via `Button size="sm"`; tooltip is the only label. On touch (no hover), the meaning is hidden. Add a text label or move to a long-press / context menu.
+- `src/components/HistoryView.tsx:311-322` — error banner has retry but generic message. Pass more context (network / server / unknown) into the error state and `logger.error` the full error.
+- `src/components/TrashView.tsx:268-289` — batch *restore* has no confirmation while batch *purge* does; inconsistent. Add confirmation when `selected.size > 5` (or always).
+
+**Cost:** M.
+**Risk:** S.
+**Impact:** M.
+
+### UX-276 — Settings: tab persistence + URL deep-link support
+
+**Problem:**
+
+- `src/components/SettingsView.tsx:128` — `activeTab` is `useState<SettingsTab>('general')`; navigating away and back resets to General. The font-size pref already uses localStorage (line 149); follow the same pattern.
+- `src/components/SettingsView.tsx:126-178` — no URL-based deep-link to a specific tab. Power users and support flows can't share `…?settings=keyboard` links. Sync `activeTab` with a query param via `useNavigationStore` (or a thin wrapper).
+
+**Cost:** S.
+**Risk:** M (deep-link path) — needs coordination with the navigation store.
+**Impact:** M.
+
+### UX-277 — `BugReportDialog` polish
+
+**Problem:**
+
+- `src/components/BugReportDialog.tsx:319-332` — uses a native `<input type="checkbox">` instead of the design-system `Checkbox` (`src/components/ui/checkbox.tsx`). Inconsistent focus styling.
+- `src/components/BugReportDialog.tsx:170-192` — successful submit closes the dialog and opens the GitHub issue URL but shows no toast. Add `toast.success(t('bugReport.submitted'))`.
+- `src/components/BugReportDialog.tsx:283-315` — logs section lists filenames + sizes but offers no preview of contents. Users cannot verify what data they're submitting. Add a per-entry "Preview" button that shows the first 500 chars in a modal.
+
+**Cost:** S — for items 1+2; M if log preview is included.
+**Risk:** S.
+**Impact:** M — improves transparency and design-system parity.
+
+### UX-278 — `WelcomeModal` i18n + semantic markup
+
+**Problem:**
+
+- `src/components/WelcomeModal.tsx:59-103` — onboarding sample-page content ("Getting Started", "Welcome to Agaric! This is a local-first note-taking app.", "Quick Tips") is hardcoded English. Non-English users see UI chrome localised but onboarding content in English.
+- `src/components/WelcomeModal.tsx:158-169` — feature list uses `<div>` per item; should be `<ul role="list">` + `<li>` for proper SR semantics.
+
+**Fix:** lift sample content into i18n keys (or document explicitly in REVIEW-LATER that English samples are an intentional learning-aid choice). Wrap the feature list in `<ul>`.
+
+**Cost:** S.
+**Risk:** S.
+**Impact:** S.
+
+### UX-279 — `FeatureErrorBoundary` lacks "Report bug" affordance
+
+**Problem:** `src/components/FeatureErrorBoundary.tsx:39-64` (section-level error boundary) only offers "Retry"; the global `ErrorBoundary` offers both "Reload" and "Report bug". For consistency and support workflows, section-level crashes should also surface the bug-report path.
+
+**Fix:** add a "Report bug" button that opens `BugReportDialog` with the error message and stack trace pre-filled. Requires plumbing — either pass `onReportBug` callback through children, use a React context, or dispatch a global event. Match the cost/complexity tier to the value: a global event is the smallest change.
+
+**Cost:** M.
+**Risk:** M.
+**Impact:** M.
+
+### UX-280 — Attachments / Image / PDF polish
+
+**Problem:**
+
+- `src/components/PdfViewerDialog.tsx:31-250` — Prev/Next buttons but no keyboard shortcuts (Arrow Left/Right, PageUp/PageDown). Add a `useEffect` with the dialog as the focus root.
+- `src/components/ImageResizeToolbar.tsx:51-65` — preset buttons change variant based on `currentWidth` but no `aria-pressed`. Add `aria-pressed={currentWidth === preset.value}`.
+
+**Cost:** S.
+**Risk:** S.
+**Impact:** S.
+
+### UX-281 — Suggestion list & roving editor polish
+
+**Problem:**
+
+- `src/editor/SuggestionList.tsx:188-198` — suggestion category headers are plain `<div>`s with no semantic role. Use `<h3>` or `role="heading" aria-level="3"`. Verify keyboard nav still skips them.
+- `src/editor/markdown-serializer.ts:249-250, 407-410` — when an unknown TipTap inline node type appears, the serializer logs a warn and strips the content. The user gets no UI signal that data was dropped (rare but possible after an extension upgrade). Surface a `toast.warning(t('editor.unknownNodeType', { type }))` on the first occurrence per session (rate-limited).
+- `src/components/BlockGutterControls.tsx:104-112` — gutter buttons rely on tooltips for labels; on touch (no hover), the label is hidden. Either show inline labels on `pointer:coarse` or move to a long-press affordance.
+
+**Cost:** S.
+**Risk:** S.
+**Impact:** S.
+
+### UX-282 — `src/lib/announcer.ts` is largely unused
+
+**Problem:** `src/lib/announcer.ts` exposes `announce(message)` for SR-only announcements, and `src/lib/i18n.ts` defines a full `announce.*` keyspace (e.g. `announce.blockDeleted`, `announce.taskState`, `announce.navigatedToPrevious`). The keys are wired in some App-level handlers (`src/App.tsx:184-200` journal nav) but most user actions — toast successes, batch ops, drag-reschedule, conflict resolution — only show visual toasts and never call `announce()`. The accessibility infrastructure is paid for but not used.
+
+**Fix:** audit every action that emits a toast or updates state visibly, and call `announce(t('announce.<key>'))` in parallel. Group by feature area: undo/redo, batch ops, conflict resolution, sync events, agenda reschedule, page rename / move / delete. Add a regression test (component or e2e) per cluster: spy on `announce()` and assert it's called with the expected i18n key.
+
+**Cost:** M — broad sweep.
+**Risk:** S — additive.
+**Impact:** L — completes a documented a11y commitment that is currently fictional in most flows.
+
+### UX-283 — Templates / Data settings polish
+
+**Problem:**
+
+- `src/components/TemplatesView.tsx:35-245` — when the search filter yields zero matches, the list is silently empty; users may think there are no templates at all. Add an `EmptyState` with `t('templates.noSearchResults')` when `filtered.length === 0 && search.length > 0`.
+- `src/components/DataSettingsTab.tsx:28-71` — multi-file imports show only a single spinner; no per-file progress. Render "Importing file 2 of 5: document.md" during the loop.
+
+**Cost:** S.
+**Risk:** S.
+**Impact:** S.
+
+### UX-284 — `RecentPagesStrip` and `SpaceSwitcher` discoverability
+
+**Problem:**
+
+- `src/components/RecentPagesStrip.tsx:65-80` — supports arrow-key navigation (UX-256) but the focused chip relies entirely on the `Button` ring; consider also a subtle background tint to make the focus location more obvious.
+- `src/components/SpaceSwitcher.tsx:79-100` — disabled "Manage spaces…" entry has a tooltip on hover, but tooltips don't fire on touch. Add a small info icon (`Info` from lucide) next to the text so the tooltip target is also visible to mobile users.
+
+**Cost:** S.
+**Risk:** S.
+**Impact:** S.
 
 ---
 
