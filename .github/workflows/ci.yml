@@ -52,6 +52,12 @@ jobs:
 
       - name: Install system dependencies (Linux)
         if: matrix.label == 'linux'
+        # patchelf and libappindicator3-dev are required for the AppImage
+        # bundling step (linuxdeploy uses patchelf to rewrite RPATH on the
+        # bundled .so files). Without patchelf, tauri-bundler fails the
+        # AppImage step with a generic "failed to run linuxdeploy" error
+        # after ~60s of churn — match the apt list in release.yml so both
+        # workflows produce identical bundles.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -60,6 +66,8 @@ jobs:
             libssl-dev \
             librsvg2-dev \
             libsoup-3.0-dev \
+            libappindicator3-dev \
+            patchelf \
             pkg-config
 
       - name: Install Rust toolchain
@@ -211,9 +219,44 @@ jobs:
         run: cargo install tauri-cli --locked
 
       - name: Initialize Tauri Android project
-        # Tauri re-generates src-tauri/gen/android/ on first build, but doing
-        # it explicitly here gives the patch step below a stable target file.
-        run: cargo tauri android init
+        # `src-tauri/gen/android/` is gitignored EXCEPT for a handful of
+        # tracked override files (AndroidManifest.xml + the two res/xml
+        # configs + proguard-rules.pro) that carry CAMERA / Wi-Fi-multicast
+        # permissions, the FileProvider and AndroidTV LEANBACK_LAUNCHER
+        # tweaks, and the network_security_config / file_paths overrides.
+        # On a fresh CI checkout the directory therefore looks like a
+        # *partially* initialised Android scaffold, which trips Tauri 2's
+        # `android init` (it sees the existing files, then fails because
+        # `app/src/main/java/com/agaric/app/` is missing — exactly the
+        # state the user is asked to recreate from scratch).
+        #
+        # Solution: stash the tracked overrides, wipe `gen/android/`, run
+        # init against a clean slate, then restore the overrides on top of
+        # the freshly-generated scaffold so our customisations are
+        # preserved. Tauri re-generates the directory on first build, but
+        # doing it explicitly here gives the patch step below a stable
+        # target file.
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OVERRIDES="$(mktemp -d)"
+          if [ -d src-tauri/gen/android ]; then
+            while IFS= read -r f; do
+              rel="${f#src-tauri/gen/android/}"
+              mkdir -p "$OVERRIDES/$(dirname "$rel")"
+              cp "$f" "$OVERRIDES/$rel"
+            done < <(git ls-files src-tauri/gen/android)
+            rm -rf src-tauri/gen/android
+          fi
+
+          cargo tauri android init
+
+          # Restore the tracked overrides on top of the regenerated scaffold.
+          if find "$OVERRIDES" -mindepth 1 -print -quit | grep -q .; then
+            cp -R "$OVERRIDES/." src-tauri/gen/android/
+          fi
+          rm -rf "$OVERRIDES"
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
 
