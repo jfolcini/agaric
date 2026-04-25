@@ -423,14 +423,16 @@ describe('PageBlockStore', () => {
     })
 
     it('does not modify state on backend error', async () => {
+      const originalBlock = makeBlock({ id: 'A' })
       store.setState({
-        blocks: [makeBlock({ id: 'A' })],
+        blocks: [originalBlock],
       })
       mockedInvoke.mockRejectedValueOnce(new Error('delete failed'))
 
       await store.getState().remove('A')
 
       expect(store.getState().blocks).toHaveLength(1)
+      expect(store.getState().blocks[0]).toEqual(originalBlock)
     })
 
     it('does not mutate global block store selection — callers manage selection', async () => {
@@ -651,6 +653,30 @@ describe('PageBlockStore', () => {
       expect(blocks).toHaveLength(2)
       expect(blocks[0]?.content).toBe('hello')
       expect(blocks[1]?.content).toBe('world')
+    })
+
+    it('rolls back on createBelow failure during splitBlock', async () => {
+      const block = makeBlock({ id: 'A', position: 0, content: 'original' })
+      store.setState({ blocks: [block] })
+
+      const previousContent = store.getState().blocks[0]?.content
+
+      // edit('A', 'line1') → invoke('edit_block', ...) — succeeds
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'A',
+        block_type: 'text',
+        content: 'line1',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+      })
+      // createBelow('A', 'line2') → invoke('create_block', ...) — rejects
+      mockedInvoke.mockRejectedValueOnce(new Error('create failed'))
+
+      await store.getState().splitBlock('A', 'line1\nline2')
+
+      // Original block should revert to its original content after the failed createBelow
+      expect(store.getState().blocks[0]?.content).toBe(previousContent)
     })
 
     it('rejects a second concurrent splitBlock on the same block (re-entrancy guard)', async () => {

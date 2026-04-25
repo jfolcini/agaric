@@ -159,6 +159,9 @@ export async function saveBlock(page: Page) {
   }
 }
 
+// dnd-kit PointerSensor activation delay; do not lower without checking PointerSensor config
+const DND_ACTIVATION_DELAY_MS = 350
+
 /**
  * Drag one element to another using manual pointer events.
  *
@@ -189,7 +192,7 @@ export async function dragBlock(page: Page, source: Locator, target: Locator): P
   await page.mouse.down()
 
   // Hold still for the delay activation constraint (250 ms delay, 5 px tolerance)
-  await page.waitForTimeout(350)
+  await page.waitForTimeout(DND_ACTIVATION_DELAY_MS)
 
   // Move vertically to target in small increments
   const moveSteps = 20
@@ -197,10 +200,13 @@ export async function dragBlock(page: Page, source: Locator, target: Locator): P
     const x = sx + (tx - sx) * (i / moveSteps)
     const y = sy + (ty - sy) * (i / moveSteps)
     await page.mouse.move(x, y)
+    // Inter-step pause for HitTest update — lets dnd-kit's collision detection
+    // observe the new pointer position before the next move event arrives
     if (i % 5 === 0) await page.waitForTimeout(50)
   }
 
-  // Pause for dnd-kit to process the over state, then drop
+  // Post-drop ProseMirror DOM settle — pause for dnd-kit to process the final
+  // "over" state and let any pending DOM updates flush before the mouse-up
   await page.waitForTimeout(150)
   await page.mouse.up()
 }

@@ -17,6 +17,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
+import { t } from '@/lib/i18n'
 import {
   createPageBlockStore,
   PageBlockContext,
@@ -123,9 +124,9 @@ describe('AttachmentList', () => {
     // First click — confirmation toast
     await user.click(deleteBtn)
     expect(mockedToast).toHaveBeenCalledWith(
-      'Delete "to-delete.txt"?',
+      t('attachments.confirmDelete', { name: 'to-delete.txt' }),
       expect.objectContaining({
-        description: 'Click the delete button again to confirm.',
+        description: t('attachments.clickAgain'),
         duration: 3000,
       }),
     )
@@ -136,7 +137,9 @@ describe('AttachmentList', () => {
     // Second click — actually deletes
     await user.click(deleteBtn)
     expect(mockedInvoke).toHaveBeenCalledWith('delete_attachment', { attachmentId: 'a1' })
-    expect(mockedToastSuccess).toHaveBeenCalledWith('Deleted to-delete.txt')
+    expect(mockedToastSuccess).toHaveBeenCalledWith(
+      t('attachments.deleted', { name: 'to-delete.txt' }),
+    )
   })
 
   it('resets pending delete state after timeout', async () => {

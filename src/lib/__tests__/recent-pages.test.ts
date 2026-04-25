@@ -12,7 +12,7 @@
  *  - State persists across getRecentPages calls
  */
 
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { addRecentPage, getRecentPages } from '../recent-pages'
 
 const STORAGE_KEY = 'recent_pages'
@@ -102,24 +102,34 @@ describe('recent-pages', () => {
       }
     })
 
-    it('adding the same page again moves it to the top and updates visitedAt', async () => {
-      addRecentPage('PAGE_A', 'First')
-      addRecentPage('PAGE_B', 'Second')
-      // Ensure visitedAt changes (Date.now has millisecond precision)
-      await new Promise((r) => setTimeout(r, 5))
-      const prev = getRecentPages()[1]?.visitedAt
-      addRecentPage('PAGE_A', 'First (revisited)')
+    it('adding the same page again moves it to the top and updates visitedAt', () => {
+      // fake timers: deterministic visitedAt ordering — Date.now has millisecond
+      // precision, so two real-time-adjacent addRecentPage calls can share the
+      // same timestamp string and break the strict-greater-than comparison below.
+      vi.useFakeTimers()
+      try {
+        vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+        addRecentPage('PAGE_A', 'First')
+        addRecentPage('PAGE_B', 'Second')
 
-      const pages = getRecentPages()
-      expect(pages).toHaveLength(2)
-      expect(pages[0]?.id).toBe('PAGE_A')
-      expect(pages[0]?.title).toBe('First (revisited)')
-      expect(pages[1]?.id).toBe('PAGE_B')
-      // Latest visit has a strictly newer timestamp than the earlier one
-      expect(pages[0]?.visitedAt).toBeDefined()
-      expect(prev).toBeDefined()
-      if (pages[0] && prev !== undefined) {
-        expect(pages[0].visitedAt > prev).toBe(true)
+        const prev = getRecentPages()[1]?.visitedAt
+
+        vi.setSystemTime(new Date('2026-01-01T00:00:01.000Z'))
+        addRecentPage('PAGE_A', 'First (revisited)')
+
+        const pages = getRecentPages()
+        expect(pages).toHaveLength(2)
+        expect(pages[0]?.id).toBe('PAGE_A')
+        expect(pages[0]?.title).toBe('First (revisited)')
+        expect(pages[1]?.id).toBe('PAGE_B')
+        // Latest visit has a strictly newer timestamp than the earlier one
+        expect(pages[0]?.visitedAt).toBeDefined()
+        expect(prev).toBeDefined()
+        if (pages[0] && prev !== undefined) {
+          expect(pages[0].visitedAt > prev).toBe(true)
+        }
+      } finally {
+        vi.useRealTimers()
       }
     })
 

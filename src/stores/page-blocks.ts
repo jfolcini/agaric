@@ -433,11 +433,33 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           await get().edit(blockId, plan.content)
           return
         }
+        // Capture the pre-edit content so we can roll back the optimistic
+        // local update if the FIRST `createBelow` fails after `edit` already
+        // committed `plan.first` to local state. Without this, a partial-
+        // failure split silently truncates the original block to `plan.first`
+        // and the user's later content (`plan.rest`) is lost. If a later
+        // `createBelow` fails (e.g. block-3 creation in a 4-line split after
+        // blocks 1+2 succeeded), we leave the partial valid state alone —
+        // rolling back at that point would orphan the already-created blocks.
+        const previousContent = get().blocks.find((b) => b.id === blockId)?.content
         await get().edit(blockId, plan.first)
         let lastId = blockId
         for (const content of plan.rest) {
           const newId = await get().createBelow(lastId, content)
-          if (newId) lastId = newId
+          if (newId === null) {
+            // createBelow failed (it logged + toasted internally). Only roll
+            // back when no new blocks were created yet — the `lastId === blockId`
+            // check is the durable signal for "first iteration failed."
+            if (lastId === blockId && previousContent !== undefined) {
+              set((state) => ({
+                blocks: state.blocks.map((b) =>
+                  b.id === blockId ? { ...b, content: previousContent } : b,
+                ),
+              }))
+            }
+            return
+          }
+          lastId = newId
         }
       } finally {
         splitInProgress.delete(blockId)

@@ -196,27 +196,35 @@ describe('RescheduleDropZone', () => {
   })
 
   it('does not call setDueDate when drop has no blockId data', async () => {
-    render(
-      <RescheduleDropZone dateStr="2025-01-15">
-        <span>Content</span>
-      </RescheduleDropZone>,
-    )
+    // fake timers: deterministic negative-path assertion. The handler early-returns
+    // synchronously when blockId is empty, but fake timers + advance keep the
+    // assertion robust against future refactors that introduce awaitable work.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      render(
+        <RescheduleDropZone dateStr="2025-01-15">
+          <span>Content</span>
+        </RescheduleDropZone>,
+      )
 
-    const zone = screen.getByTestId('reschedule-drop-zone-2025-01-15')
+      const zone = screen.getByTestId('reschedule-drop-zone-2025-01-15')
 
-    // Drop with the right MIME type but empty blockId
-    const emptyDataTransfer = {
-      types: [RESCHEDULE_DRAG_TYPE],
-      getData: () => '',
-      setData: vi.fn(),
-      dropEffect: 'none',
-      effectAllowed: 'uninitialized',
+      // Drop with the right MIME type but empty blockId
+      const emptyDataTransfer = {
+        types: [RESCHEDULE_DRAG_TYPE],
+        getData: () => '',
+        setData: vi.fn(),
+        dropEffect: 'none',
+        effectAllowed: 'uninitialized',
+      }
+      fireEvent.drop(zone, { dataTransfer: emptyDataTransfer })
+
+      // Drain pending timers + microtasks deterministically
+      await vi.advanceTimersByTimeAsync(100)
+      expect(mockSetDueDate).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
     }
-    fireEvent.drop(zone, { dataTransfer: emptyDataTransfer })
-
-    // Give async a tick to settle
-    await new Promise((r) => setTimeout(r, 50))
-    expect(mockSetDueDate).not.toHaveBeenCalled()
   })
 
   // 7. Has no a11y violations

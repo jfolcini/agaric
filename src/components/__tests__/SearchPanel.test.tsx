@@ -118,7 +118,7 @@ describe('SearchPanel', () => {
 
   it('shows no results before first search', () => {
     render(<SearchPanel />)
-    expect(screen.queryByText(/No results found/)).not.toBeInTheDocument()
+    expect(screen.queryByText(t('search.noResultsFound'))).not.toBeInTheDocument()
     expect(screen.queryByText('Searching...')).not.toBeInTheDocument()
   })
 
@@ -192,7 +192,7 @@ describe('SearchPanel', () => {
     typeAndSubmit(input, 'nothing')
 
     await waitFor(() => {
-      expect(screen.getByText(/No results found/)).toBeInTheDocument()
+      expect(screen.getByText(t('search.noResultsFound'))).toBeInTheDocument()
     })
   })
 
@@ -309,7 +309,7 @@ describe('SearchPanel', () => {
 
     await waitFor(() => {
       expect(screen.queryByText(textContent('test content'))).not.toBeInTheDocument()
-      expect(screen.queryByText(/No results found/)).not.toBeInTheDocument()
+      expect(screen.queryByText(t('search.noResultsFound'))).not.toBeInTheDocument()
     })
   })
 
@@ -371,7 +371,7 @@ describe('SearchPanel', () => {
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     fireEvent.change(input, { target: { value: '你好' } })
 
-    expect(screen.getByText(/CJK search is limited/)).toBeInTheDocument()
+    expect(screen.getByText(t('search.cjkLimitationNote'))).toBeInTheDocument()
   })
 
   it('does not show CJK notice for Latin input', () => {
@@ -380,7 +380,7 @@ describe('SearchPanel', () => {
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     fireEvent.change(input, { target: { value: 'hello' } })
 
-    expect(screen.queryByText(/CJK search is limited/)).not.toBeInTheDocument()
+    expect(screen.queryByText(t('search.cjkLimitationNote'))).not.toBeInTheDocument()
   })
 
   it('has no a11y violations', async () => {
@@ -427,7 +427,7 @@ describe('SearchPanel', () => {
     })
 
     // No results shown
-    expect(screen.queryByText(/No results found/)).not.toBeInTheDocument()
+    expect(screen.queryByText(t('search.noResultsFound'))).not.toBeInTheDocument()
   })
 
   it('has a search landmark', () => {
@@ -605,7 +605,7 @@ describe('SearchPanel', () => {
 
     expect(mockedInvoke).not.toHaveBeenCalled()
     // Should not show "No results found." since no search was performed
-    expect(screen.queryByText(/No results found/)).not.toBeInTheDocument()
+    expect(screen.queryByText(t('search.noResultsFound'))).not.toBeInTheDocument()
   })
 
   it('handles very long search query (>500 chars)', async () => {
@@ -629,7 +629,7 @@ describe('SearchPanel', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByText(/No results found/)).toBeInTheDocument()
+      expect(screen.getByText(t('search.noResultsFound'))).toBeInTheDocument()
     })
   })
 
