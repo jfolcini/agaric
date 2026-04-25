@@ -30,9 +30,5 @@
   "1116663": {
     "active": true,
     "notes": "dompurify ADD_TAGS+FORBID_TAGS bypass via transitive dep mermaid; mermaid does not expose ADD_TAGS/FORBID_TAGS to users and per AGENTS.md threat model the app is single-user local-first with no adversarial input"
-  },
-  "1116970": {
-    "active": true,
-    "notes": "uuid v<14.0.0 v3/v5/v6 out-of-bounds buf writes via transitive dep mermaid@11.14.0 -> uuid@11.1.0; mermaid does not expose buf/offset parameters to users and per AGENTS.md threat model the app is single-user local-first with no adversarial input"
   }
 }

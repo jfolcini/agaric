@@ -22,7 +22,8 @@
     "tauri:build": "cargo tauri build && [ \"$(uname)\" = Linux ] && bash scripts/fix-appimage-icons.sh || true"
   },
   "overrides": {
-    "smol-toml": ">=1.6.1"
+    "smol-toml": ">=1.6.1",
+    "uuid": "^14.0.0"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
