@@ -17,9 +17,9 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-69 open items.
+63 open items.
 
-Previously resolved: 396+ items across 149 sessions.
+Previously resolved: 402+ items across 149 sessions.
 
 | ID | Section | Title | Cost |
 |----|---------|-------|------|
@@ -37,19 +37,13 @@ Previously resolved: 396+ items across 149 sessions.
 | PERF-20 | PERF | Backlink filter resolver has no concurrency cap on `try_join_all` | S |
 | PERF-23 | PERF | `read_attachment_file` buffers whole file before chunked send | S |
 | BUG-1 | BUG | Markdown serializer/parser round-trip splits code blocks whose content contains a line starting with three backticks | M |
-| MAINT-92 | MAINT | `suggestion-renderer` outside-click handler doesn't verify editor identity before dispatching to `view` | S |
-| MAINT-93 | MAINT | `ConflictList` has a truly silent `.catch(() => {})` (only such instance found in `src/`) | S |
-| MAINT-94 | MAINT | `MONTH_SHORT` array duplicated verbatim in `agenda-sort.ts` and `date-utils.ts`; also not routed through `t()` | S |
-| MAINT-95 | MAINT | `recent-pages.ts` casts parsed localStorage to typed array without per-element shape validation | S |
 | MAINT-96 | MAINT | Decompose `AgentAccessSettingsTab.tsx` (910 lines) and extract inline `AddFilterRow` from `BacklinkFilterBuilder.tsx` (lines 234–553) | M |
 | MAINT-97 | MAINT | Test convention docs drifted from reality — file counts, Playwright timeout, missing snapshot directories, "21 spec files" claim | S |
 | MAINT-98 | MAINT | E2E helpers: extract inlined `blurEditors` / `reopenPage` to `e2e/helpers.ts` and document portal-scoped helpers in `src/__tests__/AGENTS.md` | S |
 | MAINT-99 | MAINT | No automated enforcement for several documented test rules (axe-audit per component test, IPC-error-path coverage, test file naming convention) | M |
 | MAINT-100 | MAINT | MD documentation drift sweep across UX.md / FEATURE-MAP.md / README.md / COMPARISON.md / AGENTS.md (~10 small drift items batched) | S |
 | MAINT-101 | MAINT | `tag-colors.ts` is localStorage-only despite header comment claiming property-sync persistence | M |
-| MAINT-102 | MAINT | `ResultCard.highlightText` prop accepted but never consumed (drift with FEATURE-MAP.md highlighting claim) | S |
 | MAINT-103 | MAINT | `BlockPropertyEditor` inline editor uses absolute positioning without portal — should follow the `suggestion-renderer` pattern | M |
-| MAINT-104 | MAINT | Hardcoded English error in `BacklinkFilterBuilder` property-key validation (bypasses `t()`) | S |
 | MAINT-105 | MAINT | Misc small consistency cleanups (selector-list comment, `e.repeat` guards, warned-ref noise, sidebar mode comment, undo-group window revisit) | S |
 | TEST-1 | TEST | Frontend test coverage gaps in 6 specific files surfaced by review (filter-pill, switch, textarea, useEditorBlur portal scan, page-blocks loadSubtree cap, main.tsx error handlers) | S |
 | TEST-2 | TEST | ~30 wrapper functions in `src/lib/tauri.ts` lack individual tests beyond the shallow cross-cutting test (only command-name verified, not `null` defaults / arg shape) | M |
@@ -786,81 +780,6 @@ If a user pastes (or types) a code block whose content contains a line beginning
 
 ## MAINT — Tooling / dev-experience maintenance / code quality
 
-### MAINT-92 — `suggestion-renderer` outside-click handler doesn't verify editor identity before dispatching
-
-**Problem:** `src/editor/suggestion-renderer.ts:139-164` registers a capture-phase `pointerdown` listener that, on outside-click, dispatches a meta-update to `editorRef.view`. The handler captures `editorRef` (the editor at registration time) and only null-checks it before dispatch. Agaric uses a roving-editor pattern where TipTap instances swap as focus moves between blocks; if a renderer leaks past its owning instance for any reason (e.g. a popup dismissal that races with focus moving), the dispatch lands on a stale view. The surrounding `try` block catches and logs (`logger.warn` on line 150), so this is defense-in-depth rather than a live bug — but the guard is incomplete.
-
-**Fix:** before `editorRef.view.dispatch(tr)`, also verify that `editorRef === props.editor` (or check `editorRef.view.isDestroyed === false`). One added condition; no behavioural change in the common case. Reference for the desired pattern: AGENTS.md "Floating UI lifecycle logging" (`src/editor/suggestion-renderer.ts` is itself the canonical example, so this is closing a small gap in its own pattern).
-
-**Cost:** S
-**Risk:** S — single defensive check; existing tests should pass unchanged.
-**Impact:** S — eliminates a vanishingly rare class of cross-instance dispatch.
-
-### MAINT-93 — `ConflictList` has a truly silent `.catch(() => {})` (only such instance found in `src/`)
-
-**Problem:** `src/components/ConflictList.tsx:141-143`:
-
-```tsx
-.catch(() => {
-  // Not in Tauri context — no-op
-})
-```
-
-This is the only genuinely-silent `.catch(() => {})` block in the entire frontend (verified across all of `src/` via two independent passes). AGENTS.md "Anti-patterns" explicitly forbids the form: *"Silent `.catch(() => {})` blocks — always use `logger.warn` or `logger.error`. Silent error swallowing masks real bugs."* The intent here (graceful degradation when running outside Tauri, e.g. the Vite dev server without the `tauri-mock` shim active) is reasonable; the form is wrong.
-
-**Fix:**
-
-```tsx
-.catch((err: unknown) => {
-  logger.warn(
-    'ConflictList',
-    'sync:complete listener unavailable (likely no Tauri context)',
-    undefined,
-    err,
-  )
-})
-```
-
-**Cost:** S
-**Risk:** S — purely additive; no behavioural change beyond a single warn-level log line in non-Tauri contexts.
-**Impact:** S — closes the last anti-pattern hit in the frontend.
-
-### MAINT-94 — `MONTH_SHORT` duplicated verbatim across `agenda-sort.ts` and `date-utils.ts` (and not i18n-routed)
-
-**Problem:** Identical 12-element English-only `MONTH_SHORT` arrays exist at:
-
-- `src/lib/agenda-sort.ts:405-418`
-- `src/lib/date-utils.ts:63-76`
-
-Both arrays carry the same comment (`/** Short month names for compact date display. */`) and are consumed by `formatCompactDate` in their respective modules. DRY violation. Separately, these are user-visible labels not running through `i18n.t()`, so they remain English on every locale.
-
-**Fix:**
-
-1. Delete the duplicate from `agenda-sort.ts`. Import from `date-utils.ts` instead.
-2. (Optional, larger) Replace the static array with a call through `Intl.DateTimeFormat(locale, { month: 'short' })` so compact dates respect the user's locale. This also closes a small i18n gap consistent with the rest of the app's `t()`-based labels.
-
-**Cost:** S (step 1 alone) / M (steps 1 + 2).
-**Risk:** S — pure refactor; existing tests for `formatCompactDate` carry the contract.
-**Impact:** S — DRY win; localised date labels if step 2 is taken.
-
-### MAINT-95 — `recent-pages.ts` casts parsed localStorage to typed array without per-element shape validation
-
-**Problem:** `src/lib/recent-pages.ts:18-28`:
-
-```ts
-const parsed: unknown = JSON.parse(raw)
-if (!Array.isArray(parsed)) return []
-return parsed as RecentPage[]
-```
-
-The function validates that the parsed value is an array but does not validate that each element has the expected `id` / `title` / `visitedAt` shape. Per AGENTS.md threat model (single-user, no malicious actor) this is benign for input written by the app itself; the residual risk is that any bug elsewhere that writes malformed entries silently corrupts the recent-pages strip until the user clears storage.
-
-**Fix:** filter via a `(item): item is RecentPage =>` type guard before returning. Drop malformed entries; do not throw. Cost is one helper function (~6 lines) plus a unit test that feeds malformed JSON.
-
-**Cost:** S
-**Risk:** S — pure tightening; cannot regress good inputs.
-**Impact:** S — robustness against in-app bugs writing bad entries.
-
 ### MAINT-96 — Decompose `AgentAccessSettingsTab.tsx` (910 lines) and extract inline `AddFilterRow` from `BacklinkFilterBuilder.tsx`
 
 **Problem:** AGENTS.md "Component decomposition" treats files >500 lines as candidates for extraction. A repo-wide line-count audit produced 12 frontend files over the threshold; most are acceptable as-is (cohesive primitives like `ui/sidebar.tsx` at 1042, or files already heavily decomposed via hooks like `BlockTree.tsx` at 868 and `JournalPage.tsx` at 646). Two specific cases are worth picking up because the extraction is mechanical and the maintenance cost of *not* doing them is real:
@@ -966,16 +885,6 @@ The function validates that the parsed value is an array but does not validate t
 **Risk:** S.
 **Impact:** M (sync option) — multi-device users see the same palette / S (doc-only).
 
-### MAINT-102 — `ResultCard.highlightText` prop accepted but never consumed
-
-**Problem:** `src/components/ResultCard.tsx:31-36` declares `highlightText?: string` with a JSDoc that admits it isn't used: "Currently accepted for API compatibility but rich content rendering takes priority over plain-text highlighting." `SearchPanel.tsx:517,554` passes `highlightText={debouncedQuery}` and the value is silently discarded. `FEATURE-MAP.md:38` claims the feature ("Query term highlighting in result cards (via HighlightMatch)") this prop was supposed to enable.
-
-**Fix:** either implement highlight propagation through `renderRichContent` (rich pipeline takes priority — that's why the prop is dead — but a non-rich fallback or post-render highlight pass is feasible) or drop the prop, drop the call sites, and remove the FEATURE-MAP line. The drop path is smaller and more honest; the implement path restores a documented feature.
-
-**Cost:** S (drop) / M (implement).
-**Risk:** S.
-**Impact:** S.
-
 ### MAINT-103 — `BlockPropertyEditor` inline editor uses absolute positioning without portal
 
 **Problem:** `src/components/BlockPropertyEditor.tsx:40-44` renders the inline edit popup with a plain `<div className="absolute z-50 ...">`. If the surrounding row is inside a scroll container with `overflow: hidden`, the popup gets clipped. Every other floating UI in the editor (suggestion popups, `BlockContextMenu`, `BlockDatePicker`) goes through `createPortal()` + `@floating-ui/dom` per AGENTS.md "Floating UI lifecycle logging".
@@ -985,16 +894,6 @@ The function validates that the parsed value is an array but does not validate t
 **Cost:** M.
 **Risk:** M — touches editor blur lifecycle; needs careful tests.
 **Impact:** S — closes a small clipping risk and aligns with the documented floating-UI pattern.
-
-### MAINT-104 — Hardcoded English error in `BacklinkFilterBuilder` property-key validation
-
-**Problem:** `src/components/BacklinkFilterBuilder.tsx:140` returns `{ error: \`No blocks have property "${trimmedKey}"\` }` — a raw English string baked into a UI message. Verified to be the only hardcoded user-visible English string surfaced in the review (other "hardcoded" findings turned out to be already-i18n'd).
-
-**Fix:** add an i18n key (e.g. `backlink.propertyNotFound`) with `{{key}}` interpolation in `src/lib/i18n.ts`; route through `t()`.
-
-**Cost:** S.
-**Risk:** S — pure i18n.
-**Impact:** S — closes an i18n hole on non-English locales.
 
 ### MAINT-105 — Misc small consistency cleanups across editor / shell / sync
 

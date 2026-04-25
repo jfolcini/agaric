@@ -35,7 +35,6 @@ The default view — one page per day, created automatically.
 - Debounced input with instant results
 - Paginated results with click-through to source page
 - Visible result count (live-updated)
-- Query term highlighting in result cards (via HighlightMatch)
 - SearchPanel supplements FTS results with alias-matched pages via `resolvePageByAlias`, displayed above results with "via alias" annotation (UX-153)
 - CJK support (3+ character minimum)
 
